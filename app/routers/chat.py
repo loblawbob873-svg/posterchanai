@@ -1,13 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query
+from fastapi.responses import FileResponse, Response
 from starlette.requests import Request
 from pydantic import BaseModel
 import asyncio
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from pathlib import Path
+from urllib.parse import unquote
 import json
 import logging
+import httpx
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -21,7 +23,7 @@ from app.services.command_service import CommandService
 from app.services.storage_service import StorageService
 from app.services.document_service import extract_pdf_text, extract_document_text, extract_image_text
 from app.services.email_service import EmailService
-from app.services.search_service import SearchService
+from app.services.search_service import SearchService, is_safe_url
 from app.services.plugin_service import PluginService
 from app.services.intent_service import IntentService
 
@@ -141,6 +143,34 @@ async def save_generated_image(
     except Exception as e:
         logger.error(f"Failed to save generated image: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/proxy-image")
+async def proxy_image(
+    url: str = Query(..., description="Image URL to proxy"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Proxy an image URL for Android image search thumbnails (avoids CDN/connection limits)."""
+    raw = unquote(url)
+    is_safe, err = is_safe_url(raw)
+    if not is_safe:
+        raise HTTPException(status_code=400, detail=err)
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            resp = await client.get(
+                raw,
+                headers={"User-Agent": "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36", "Accept": "image/*,*/*"},
+            )
+            resp.raise_for_status()
+            content = resp.content
+            ctype = resp.headers.get("content-type", "image/png").split(";")[0].strip() or "image/png"
+            return Response(content=content, media_type=ctype)
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail="Upstream error")
+    except Exception as e:
+        logger.debug(f"Proxy image failed: {e}")
+        raise HTTPException(status_code=502, detail="Failed to fetch image")
 
 
 @router.post("/save-mail-attachment")

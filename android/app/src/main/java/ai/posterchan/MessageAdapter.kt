@@ -64,12 +64,25 @@ class MessageAdapter(
         private val generatedImage: ImageView = itemView.findViewById(R.id.item_generated_image)
         private val imageSearchScroll: View = itemView.findViewById(R.id.item_image_search_scroll)
         private val imageSearchContainer: ViewGroup = itemView.findViewById<ViewGroup>(R.id.item_image_search_container)
+        private val imageThumbnails: List<ImageView>
         private val btnCopy: MaterialButton = itemView.findViewById(R.id.btn_copy)
         private val btnShare: MaterialButton = itemView.findViewById(R.id.btn_share)
         private val btnRegenerate: MaterialButton = itemView.findViewById(R.id.btn_regenerate)
 
         init {
             content.movementMethod = LinkMovementMethod.getInstance()
+            val density = itemView.context.resources.displayMetrics.density
+            val sizePx = (96 * density).roundToInt().coerceAtLeast(1)
+            val marginPx = (8 * density).roundToInt()
+            imageThumbnails = (0 until 10).map {
+                ImageView(itemView.context).apply {
+                    layoutParams = ViewGroup.MarginLayoutParams(sizePx, sizePx).apply {
+                        marginEnd = marginPx
+                    }
+                    scaleType = ImageView.ScaleType.CENTER_CROP
+                }
+            }
+            imageThumbnails.forEach { imageSearchContainer.addView(it) }
         }
 
         fun bind(msg: ChatMessage) {
@@ -95,24 +108,26 @@ class MessageAdapter(
             val imageResults = msg.imageSearchResults
             if (!imageResults.isNullOrEmpty()) {
                 imageSearchScroll.visibility = View.VISIBLE
-                imageSearchContainer.removeAllViews()
-                val density = itemView.context.resources.displayMetrics.density
-                val sizePx = (96 * density).roundToInt().coerceAtLeast(1)
-                val marginPx = (8 * density).roundToInt()
-                for ((index, item) in imageResults.withIndex()) {
-                    val iv = ImageView(itemView.context).apply {
-                        layoutParams = ViewGroup.MarginLayoutParams(sizePx, sizePx).apply {
-                            marginEnd = marginPx
-                        }
-                        scaleType = ImageView.ScaleType.CENTER_CROP
-                        setOnClickListener { onOpenUrl(item.url) }
+                imageThumbnails.forEachIndexed { index, iv ->
+                    if (index < imageResults.size) {
+                        iv.visibility = View.VISIBLE
+                        val tag = "img_${msg.id}_$index"
+                        if (iv.getTag(R.id.image_loader_tag) != tag) iv.setImageDrawable(null)
+                        iv.setOnClickListener { onOpenUrl(imageResults[index].url) }
+                        val thumbUrl = imageResults[index].thumbnailUrl
+                        val delayMs = if (thumbUrl.contains("/api/proxy-image")) 0L else index * 150L
+                        ImageLoader.load(thumbUrl, iv, tag, delayMs)
+                    } else {
+                        iv.visibility = View.GONE
+                        iv.setImageDrawable(null)
                     }
-                    imageSearchContainer.addView(iv)
-                    ImageLoader.load(item.thumbnailUrl, iv, "img_${msg.id}_$index")
                 }
             } else {
                 imageSearchScroll.visibility = View.GONE
-                imageSearchContainer.removeAllViews()
+                imageThumbnails.forEach { iv ->
+                    iv.visibility = View.GONE
+                    iv.setImageDrawable(null)
+                }
             }
             btnCopy.setOnClickListener { onCopy(msg.content) }
             btnShare.setOnClickListener { onShare(msg.content) }

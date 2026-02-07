@@ -2402,14 +2402,17 @@ class ChatHandler {
         // Handle different response types
         if (data.type === 'images' && data.images) {
             html = contentHtml;
+            const srcKey = (img) => img.img_src || img.thumbnail_src || img.thumbnail;
             html += '<div class="image-grid">';
             for (const img of data.images) {
-                const safeSrc = this.escapeUrl(img.img_src);
-                const safeUrl = this.escapeUrl(img.url);
+                const src = srcKey(img);
+                if (!src) continue;
+                const safeSrc = this.escapeUrl(src);
+                const safeUrl = this.escapeUrl(img.url || src);
                 const safeTitle = this.escapeHtml(img.title || '');
-                html += `<a href="${safeUrl}" target="_blank" class="image-link">
+                html += `<a href="${safeUrl}" target="_blank" class="image-link" style="display:inline-block;">
                     <img src="${safeSrc}" alt="${safeTitle}"
-                         onerror="this.parentElement.style.display='none';"
+                         onerror="this.closest('.image-link').style.display='none';"
                          loading="lazy">
                 </a>`;
             }

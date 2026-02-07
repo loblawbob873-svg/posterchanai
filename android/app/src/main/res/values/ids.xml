@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Key for ImageLoader load-tag so default tag is not overwritten by RecyclerView etc. -->
+    <item name="image_loader_tag" type="id" />
+</resources>

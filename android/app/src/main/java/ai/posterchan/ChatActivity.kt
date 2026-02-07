@@ -291,21 +291,25 @@ class ChatActivity : AppCompatActivity() {
         return sb.toString()
     }
 
-    /** Parse "images" command response into list for thumbnail strip. Server uses img_src / thumbnail_src / thumbnail. */
-    private fun parseImageSearchResults(data: org.json.JSONObject?): List<ImageSearchItem>? {
+    /** Parse "images" command response. If baseUrl+token set, thumbnailUrl = proxy URL so Android loads from our server (all 10 succeed). */
+    private fun parseImageSearchResults(data: org.json.JSONObject?, baseUrl: String, token: String): List<ImageSearchItem>? {
         if (data?.optString("type") != "images") return null
         val arr = data.optJSONArray("images") ?: return null
         val list = mutableListOf<ImageSearchItem>()
+        val useProxy = baseUrl.isNotBlank() && token.isNotBlank()
+        val base = baseUrl.trimEnd('/')
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
             val thumb = o.optString("img_src", "").takeIf { it.isNotBlank() }
                 ?: o.optString("thumbnail_src", "").takeIf { it.isNotBlank() }
                 ?: o.optString("thumbnail", "").takeIf { it.isNotBlank() }
             val url = o.optString("url", "").takeIf { it.isNotBlank() } ?: thumb ?: continue
+            val thumbUrl = thumb ?: continue
             val title = o.optString("title", "Image").take(60)
-            list.add(ImageSearchItem(thumbnailUrl = thumb ?: url, url = url, title = title))
+            val loadUrl = if (useProxy) "$base/api/proxy-image?url=${java.net.URLEncoder.encode(thumbUrl, "UTF-8")}&token=${java.net.URLEncoder.encode(token, "UTF-8")}" else thumbUrl
+            list.add(ImageSearchItem(thumbnailUrl = loadUrl, url = url, title = title))
         }
-        return list.takeIf { it.isNotEmpty() }
+        return list.take(10).takeIf { it.isNotEmpty() }
     }
 
     private fun sendMessage(text: String) {
@@ -372,7 +376,7 @@ class ChatActivity : AppCompatActivity() {
                         if (idx >= 0) {
                             val display = buildDisplayContentForResponse(fullContent, data)
                             val geniBase64 = if (data?.optString("type") == "generated_image") data.optString("image").takeIf { it.isNotBlank() } else null
-                            val imageSearch = parseImageSearchResults(data)
+                            val imageSearch = parseImageSearchResults(data, baseUrl, token)
                             messages[idx] = messages[idx].copy(content = display, isStreaming = false, generatedImageBase64 = geniBase64, imageSearchResults = imageSearch)
                             adapter.submitList(messages.toList())
                             scrollToBottom()
@@ -464,7 +468,7 @@ class ChatActivity : AppCompatActivity() {
                         if (idx >= 0) {
                             val display = buildDisplayContentForResponse(fullContent, data)
                             val geniBase64 = if (data?.optString("type") == "generated_image") data.optString("image").takeIf { it.isNotBlank() } else null
-                            val imageSearch = parseImageSearchResults(data)
+                            val imageSearch = parseImageSearchResults(data, baseUrl, token)
                             messages[idx] = messages[idx].copy(content = display, isStreaming = false, generatedImageBase64 = geniBase64, imageSearchResults = imageSearch)
                             adapter.submitList(messages.toList())
                             scrollToBottom()
