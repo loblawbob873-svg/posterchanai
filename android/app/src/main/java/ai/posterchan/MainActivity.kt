@@ -93,6 +93,11 @@ class MainActivity : AppCompatActivity() {
                     drawerLayout.closeDrawers()
                     true
                 }
+                R.id.nav_torrents -> {
+                    startActivity(Intent(this, TorrentsActivity::class.java))
+                    drawerLayout.closeDrawers()
+                    true
+                }
                 R.id.nav_settings -> {
                     startActivity(Intent(this, SettingsActivity::class.java))
                     drawerLayout.closeDrawers()

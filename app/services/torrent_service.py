@@ -217,9 +217,12 @@ def format_torrent_results(results: list[TorrentResult], category: str, title: s
 
         # Download button with numbered reference (magnet stored in cache)
         dl_cmd = f"torrents download {category} {i}"
+        # Magnet link for native Android app (encoded so ) in magnet doesn't break markdown)
+        from urllib.parse import quote
+        magnet_enc = quote(t.magnet, safe="")
 
         lines.append(f"**{i}. {title_display}**")
-        lines.append(f"   [Download](cmd:{dl_cmd}) | S:{t.seeders} L:{t.leechers} | {t.size}\n")
+        lines.append(f"   [Download](cmd:{dl_cmd}) [Add](magnet:{magnet_enc}) | S:{t.seeders} L:{t.leechers} | {t.size}\n")
 
     return "\n".join(lines)
 

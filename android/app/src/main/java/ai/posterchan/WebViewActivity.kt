@@ -347,6 +347,37 @@ class WebViewActivity : AppCompatActivity() {
         super.onPause()
     }
 
+    /** Called from bridge when the web calls PosterchanAndroid.addTorrent(magnet). */
+    fun addTorrentFromWeb(magnet: String) {
+        val m = magnet.trim()
+        if (m.isBlank() || !m.startsWith("magnet:")) {
+            Toast.makeText(this, getString(R.string.file_manager_download_failed), Toast.LENGTH_SHORT).show()
+            return
+        }
+        Toast.makeText(this, getString(R.string.file_manager_downloading), Toast.LENGTH_SHORT).show()
+        Thread {
+            val baseUrl = Prefs.getServerUrl(this@WebViewActivity)
+            val token = Prefs.getAccessToken(this@WebViewActivity)
+            if (baseUrl.isBlank() || token.isNullOrBlank()) {
+                runOnUiThread { Toast.makeText(this@WebViewActivity, getString(R.string.file_manager_error_login), Toast.LENGTH_LONG).show() }
+                return@Thread
+            }
+            try {
+                ApiClient(baseUrl, token).addTorrent(m)
+                runOnUiThread { Toast.makeText(this@WebViewActivity, getString(R.string.torrent_added), Toast.LENGTH_SHORT).show() }
+            } catch (e: ApiException) {
+                val msg = when (e.code) {
+                    401 -> getString(R.string.file_manager_error_login)
+                    503 -> getString(R.string.torrent_error)
+                    else -> e.message ?: getString(R.string.file_manager_download_failed)
+                }
+                runOnUiThread { Toast.makeText(this@WebViewActivity, msg, Toast.LENGTH_LONG).show() }
+            } catch (e: Exception) {
+                runOnUiThread { Toast.makeText(this@WebViewActivity, e.message ?: getString(R.string.file_manager_download_failed), Toast.LENGTH_LONG).show() }
+            }
+        }.start()
+    }
+
     /** JavaScript interface so the web can trigger file download (avoids link navigation / target=_blank issues). */
     private class WebViewDownloadBridge(activity: WebViewActivity) {
         private val activityRef = WeakReference(activity)
@@ -358,6 +389,13 @@ class WebViewActivity : AppCompatActivity() {
                     filePath.trim(),
                     fileName?.trim()?.takeIf { it.isNotBlank() }
                 )
+            }
+        }
+
+        @JavascriptInterface
+        fun addTorrent(magnet: String?) {
+            activityRef.get()?.runOnUiThread {
+                activityRef.get()?.addTorrentFromWeb(magnet ?: "")
             }
         }
     }
