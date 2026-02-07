@@ -2534,13 +2534,13 @@ class ChatHandler {
                                 </div>
                             </div>
                         </div>
-                        <div class="file-actions">
-                            <button class="file-action-btn" data-action="open" data-path="${escapedPath}" data-name="${escapedName}" title="Open">👁️</button>
-                            <button class="file-action-btn" data-action="download" data-path="${escapedPath}" data-name="${escapedName}" title="Download" onclick="var b=this,p=b.getAttribute('data-path')||'',n=b.getAttribute('data-name')||'';if(window.PosterchanAndroid&&typeof window.PosterchanAndroid.downloadFile==='function'){window.PosterchanAndroid.downloadFile(p,n);if(window.chatHandler&&window.chatHandler.showToast)window.chatHandler.showToast('Download started...');return false;}if(window.chatHandler&&window.chatHandler.downloadFile)window.chatHandler.downloadFile(p,n);return false;">⬇️</button>
-                            <button class="file-action-btn" data-action="preview" data-path="${escapedPath}" data-name="${escapedName}" title="Preview URL (Quick Share)">🔍</button>
-                            <button class="file-action-btn" data-action="share" data-path="${escapedPath}" data-name="${escapedName}" title="Share Public URL">🔗</button>
-                            <button class="file-action-btn" data-action="email" data-path="${escapedPath}" data-name="${escapedName}" title="Email">✉️</button>
-                            <button class="file-action-btn file-action-delete" data-action="delete" data-path="${escapedPath}" data-name="${escapedName}" title="Delete">🗑️</button>
+                        <div class="file-actions" style="display:flex;flex-wrap:wrap;gap:8px;padding-top:12px;border-top:1px solid #2a2a3e;">
+                            <button type="button" class="file-action-btn" data-action="open" data-path="${escapedPath}" data-name="${escapedName}" title="Open" style="padding:8px 10px;background:#4a4a6e;border:1px solid #6a6a8e;border-radius:6px;color:#fff;font-size:20px;line-height:1;cursor:pointer;min-width:36px;min-height:36px;-webkit-tap-highlight-color:transparent;">👁️</button>
+                            <button type="button" class="file-action-btn" data-action="download" data-path="${escapedPath}" data-name="${escapedName}" title="Download" style="padding:8px 10px;background:#4a4a6e;border:1px solid #6a6a8e;border-radius:6px;color:#fff;font-size:20px;line-height:1;cursor:pointer;min-width:36px;min-height:36px;-webkit-tap-highlight-color:transparent;" onclick="var b=this,p=b.getAttribute('data-path')||'',n=b.getAttribute('data-name')||'';if(window.PosterchanAndroid&&typeof window.PosterchanAndroid.downloadFile==='function'){window.PosterchanAndroid.downloadFile(p,n);if(window.chatHandler&&window.chatHandler.showToast)window.chatHandler.showToast('Download started...');return false;}if(window.chatHandler&&window.chatHandler.downloadFile)window.chatHandler.downloadFile(p,n);return false;">⬇️</button>
+                            <button type="button" class="file-action-btn" data-action="preview" data-path="${escapedPath}" data-name="${escapedName}" title="Preview URL (Quick Share)" style="padding:8px 10px;background:#4a4a6e;border:1px solid #6a6a8e;border-radius:6px;color:#fff;font-size:20px;line-height:1;cursor:pointer;min-width:36px;min-height:36px;-webkit-tap-highlight-color:transparent;">🔍</button>
+                            <button type="button" class="file-action-btn" data-action="share" data-path="${escapedPath}" data-name="${escapedName}" title="Share Public URL" style="padding:8px 10px;background:#4a4a6e;border:1px solid #6a6a8e;border-radius:6px;color:#fff;font-size:20px;line-height:1;cursor:pointer;min-width:36px;min-height:36px;-webkit-tap-highlight-color:transparent;">🔗</button>
+                            <button type="button" class="file-action-btn" data-action="email" data-path="${escapedPath}" data-name="${escapedName}" title="Email" style="padding:8px 10px;background:#4a4a6e;border:1px solid #6a6a8e;border-radius:6px;color:#fff;font-size:20px;line-height:1;cursor:pointer;min-width:36px;min-height:36px;-webkit-tap-highlight-color:transparent;">✉️</button>
+                            <button type="button" class="file-action-btn file-action-delete" data-action="delete" data-path="${escapedPath}" data-name="${escapedName}" title="Delete" style="padding:8px 10px;background:#6a2a2a;border:1px solid #8a3a3a;border-radius:6px;color:#fff;font-size:20px;line-height:1;cursor:pointer;min-width:36px;min-height:36px;-webkit-tap-highlight-color:transparent;">🗑️</button>
                         </div>
                     </div>`;
                 }
@@ -3892,19 +3892,20 @@ class ChatHandler {
             if (!link) return '';
             const linkText = link.text ?? '';
             if (link.isCommand) {
-                // Command button - clicking executes the command
+                // Command button - inline style so it looks correct in WebView (torrent Download, etc.)
                 const escapedCmd = this.escapeHtml(link.cmd ?? '');
-                return `<button class="cmd-btn" data-cmd="${escapedCmd}" onclick="window.chatHandler.executeCommand('${escapedCmd.replace(/'/g, "\\'")}')">${this.escapeHtml(linkText)}</button>`;
+                const btnStyle = 'display:inline-block;padding:8px 14px;margin:2px 4px 2px 0;background:rgba(0,200,200,0.25);border:1px solid #00c8c8;color:#00e5e5;border-radius:6px;cursor:pointer;font-size:14px;font-family:inherit;-webkit-tap-highlight-color:transparent;';
+                return `<button type="button" class="cmd-btn" data-cmd="${escapedCmd}" style="${btnStyle}" onclick="if(window.chatHandler&&window.chatHandler.executeCommand){window.chatHandler.executeCommand('${escapedCmd.replace(/'/g, "\\'")}');}return false;">${this.escapeHtml(linkText)}</button>`;
             }
             if (link.isEditEvent) {
-                // Edit event button - opens calendar modal
                 const escapedUid = this.escapeHtml(link.uid ?? '');
-                return `<button class="cmd-btn" onclick="window.chatHandler.openEditEventModal('${escapedUid.replace(/'/g, "\\'")}')">${this.escapeHtml(linkText)}</button>`;
+                const btnStyle = 'display:inline-block;padding:6px 12px;margin:2px 4px 2px 0;background:rgba(0,200,200,0.2);border:1px solid #00c8c8;color:#00e5e5;border-radius:6px;cursor:pointer;font-size:13px;font-family:inherit;';
+                return `<button type="button" class="cmd-btn" style="${btnStyle}" onclick="if(window.chatHandler&&window.chatHandler.openEditEventModal){window.chatHandler.openEditEventModal('${escapedUid.replace(/'/g, "\\'")}');}return false;">${this.escapeHtml(linkText)}</button>`;
             }
             if (link.isCopy) {
-                // Copy button - copies content to clipboard
                 const escapedContent = this.escapeHtml(link.content ?? '').replace(/'/g, "\\'").replace(/\n/g, '\\n');
-                return `<button class="cmd-btn copy-btn" onclick="window.chatHandler.copyToClipboard('${escapedContent}')">${this.escapeHtml(linkText)}</button>`;
+                const btnStyle = 'display:inline-block;padding:6px 12px;margin:2px 4px 2px 0;background:rgba(0,200,200,0.2);border:1px solid #00c8c8;color:#00e5e5;border-radius:6px;cursor:pointer;font-size:13px;font-family:inherit;';
+                return `<button type="button" class="cmd-btn copy-btn" style="${btnStyle}" onclick="if(window.chatHandler&&window.chatHandler.copyToClipboard){window.chatHandler.copyToClipboard('${escapedContent}')};return false;">${this.escapeHtml(linkText)}</button>`;
             }
             const target = link.external ? ' target="_blank"' : '';
             const download = link.download ? ' download' : '';
