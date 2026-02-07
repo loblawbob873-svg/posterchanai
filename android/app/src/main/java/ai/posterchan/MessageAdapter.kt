@@ -3,10 +3,14 @@ package ai.posterchan
 import ai.posterchan.ChatMessage
 import ai.posterchan.MarkdownUtils
 import ai.posterchan.R
+import android.graphics.BitmapFactory
+import android.util.Base64
 import android.text.method.LinkMovementMethod
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
+import kotlin.math.roundToInt
 import android.widget.TextView
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
@@ -20,6 +24,7 @@ class MessageAdapter(
     private val onRegenerateAssistant: () -> Unit,
     private val onEditUser: (Long, String) -> Unit,
     private val onResendUser: (Long) -> Unit,
+    private val onOpenUrl: (String) -> Unit = {},
 ) : ListAdapter<ChatMessage, RecyclerView.ViewHolder>(DiffCallback()) {
 
     companion object {
@@ -36,7 +41,7 @@ class MessageAdapter(
             UserViewHolder(v, onEditUser, onResendUser)
         } else {
             val v = LayoutInflater.from(parent.context).inflate(R.layout.item_message_assistant, parent, false)
-            AssistantViewHolder(v, lastAssistantMessageId, onCopy, onShare, onRegenerateAssistant)
+            AssistantViewHolder(v, lastAssistantMessageId, onCopy, onShare, onRegenerateAssistant, onOpenUrl)
         }
     }
 
@@ -53,8 +58,12 @@ class MessageAdapter(
         private val onCopy: (String) -> Unit,
         private val onShare: (String) -> Unit,
         private val onRegenerateAssistant: () -> Unit,
+        private val onOpenUrl: (String) -> Unit,
     ) : RecyclerView.ViewHolder(itemView) {
         private val content: TextView = itemView.findViewById(R.id.item_content)
+        private val generatedImage: ImageView = itemView.findViewById(R.id.item_generated_image)
+        private val imageSearchScroll: View = itemView.findViewById(R.id.item_image_search_scroll)
+        private val imageSearchContainer: ViewGroup = itemView.findViewById<ViewGroup>(R.id.item_image_search_container)
         private val btnCopy: MaterialButton = itemView.findViewById(R.id.btn_copy)
         private val btnShare: MaterialButton = itemView.findViewById(R.id.btn_share)
         private val btnRegenerate: MaterialButton = itemView.findViewById(R.id.btn_regenerate)
@@ -65,6 +74,46 @@ class MessageAdapter(
 
         fun bind(msg: ChatMessage) {
             content.text = MarkdownUtils.toSpannable(msg.content.ifBlank { "…" })
+            val b64 = msg.generatedImageBase64
+            if (!b64.isNullOrBlank()) {
+                try {
+                    val bytes = Base64.decode(b64, Base64.DEFAULT)
+                    val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    if (bmp != null) {
+                        generatedImage.setImageBitmap(bmp)
+                        generatedImage.visibility = View.VISIBLE
+                    } else {
+                        generatedImage.visibility = View.GONE
+                    }
+                } catch (_: Exception) {
+                    generatedImage.visibility = View.GONE
+                }
+            } else {
+                generatedImage.setImageDrawable(null)
+                generatedImage.visibility = View.GONE
+            }
+            val imageResults = msg.imageSearchResults
+            if (!imageResults.isNullOrEmpty()) {
+                imageSearchScroll.visibility = View.VISIBLE
+                imageSearchContainer.removeAllViews()
+                val density = itemView.context.resources.displayMetrics.density
+                val sizePx = (96 * density).roundToInt().coerceAtLeast(1)
+                val marginPx = (8 * density).roundToInt()
+                for ((index, item) in imageResults.withIndex()) {
+                    val iv = ImageView(itemView.context).apply {
+                        layoutParams = ViewGroup.MarginLayoutParams(sizePx, sizePx).apply {
+                            marginEnd = marginPx
+                        }
+                        scaleType = ImageView.ScaleType.CENTER_CROP
+                        setOnClickListener { onOpenUrl(item.url) }
+                    }
+                    imageSearchContainer.addView(iv)
+                    ImageLoader.load(item.thumbnailUrl, iv, "img_${msg.id}_$index")
+                }
+            } else {
+                imageSearchScroll.visibility = View.GONE
+                imageSearchContainer.removeAllViews()
+            }
             btnCopy.setOnClickListener { onCopy(msg.content) }
             btnShare.setOnClickListener { onShare(msg.content) }
             val showRegenerate = !msg.isStreaming && msg.id == lastAssistantMessageId()

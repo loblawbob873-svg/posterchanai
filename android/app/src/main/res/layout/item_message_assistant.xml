@@ -20,6 +20,32 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:orientation="vertical">
+        <ImageView
+            android:id="@+id/item_generated_image"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:maxWidth="280dp"
+            android:maxHeight="280dp"
+            android:scaleType="fitCenter"
+            android:adjustViewBounds="true"
+            android:visibility="gone"
+            android:contentDescription="@null" />
+        <HorizontalScrollView
+            android:id="@+id/item_image_search_scroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:visibility="gone"
+            android:scrollbars="none"
+            android:paddingHorizontal="12dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="4dp">
+            <LinearLayout
+                android:id="@+id/item_image_search_container"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="start" />
+        </HorizontalScrollView>
         <TextView
             android:id="@+id/item_content"
             android:layout_width="wrap_content"

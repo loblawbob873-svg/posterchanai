@@ -128,11 +128,16 @@ When the user selects “Generate” or “Web Search” / “Images”, the hin
 
 ---
 
-## Recent changes (quick actions, TTS, icon)
+## Recent changes (quick actions, TTS, icon, chat images)
 
 - **Quick actions:** Layout and menus (PIM, Files, Web, Generate, Translate, RAG) match web behavior. Commands sent as messages; mode prefix for search/images/geni; Translate/RAG and file-related actions open WebView. Hint updates for mode are consistent.
 - **TTS:** Switched from device TextToSpeech to server `/api/tts` (edge_tts). Same voice as web. MediaPlayer lifecycle and temp file cleanup are correct; isDestroyed check applied in TTS callback.
 - **Launcher icon:** Web `icon-192.png` (Poster Chan mascot) used as adaptive icon foreground; vector foreground removed.
+- **Chat images (geni + images search):**
+  - **Geni (generated image):** `ChatMessage.generatedImageBase64`; server sends `type: "generated_image"` with `image` (base64). `onResponse` passes it into the message; adapter decodes and shows in `item_generated_image` (max 280dp). No streaming overwrite: response is applied before stream_end.
+  - **Images search:** Server sends `type: "images"` with `images[]` (title, url, img_src/thumbnail_src/thumbnail). `parseImageSearchResults()` builds `List<ImageSearchItem>`; stored in `ChatMessage.imageSearchResults`. Assistant layout has `HorizontalScrollView` + `LinearLayout`; adapter fills with ImageViews (96dp), loads thumbnails via `ImageLoader.load(url, iv, tag)`. Tag check avoids applying to recycled views. Tap opens URL in browser via `onOpenUrl` (ACTION_VIEW).
+  - **ImageLoader:** OkHttp + fixed thread pool; decode on background, `mainHandler.post` to set bitmap only if `imageView.tag == tag`. No cache (optional future improvement). External image URLs only (SearXNG thumbnails); no auth.
+  - **Security/UX:** Geni image is server-provided base64 (trusted). Image search thumbnails are external URLs; opening link uses system browser. No downscaling in ImageLoader (typical thumbs are small; very large could be optimized later).
 
 ---
 
