@@ -2571,9 +2571,12 @@ async def _proxy_list_files(storage_server_url: str, username: str, path: str, d
             response = requests.get(url, headers=headers, params=params, timeout=30)
             if response.status_code == 200:
                 return response.json()
-            else:
-                logger.error(f"[FILES] Failed to proxy list_files: {response.status_code} - {response.text}")
-                raise Exception(f"Storage server error: {response.status_code}")
+            if response.status_code == 404:
+                # Path does not exist on storage (e.g. "Photos" folder not created yet) -> return empty list
+                logger.debug(f"[FILES] Storage list path not found (404): {path!r}, returning empty list")
+                return {"items": [], "path": path, "is_external": False}
+            logger.error(f"[FILES] Failed to proxy list_files: {response.status_code} - {response.text}")
+            raise Exception(f"Storage server error: {response.status_code}")
         
         return await asyncio.to_thread(_sync_proxy)
     except Exception as e:
