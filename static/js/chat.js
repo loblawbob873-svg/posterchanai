@@ -2382,9 +2382,12 @@ class ChatHandler {
         this.hideTypingIndicator();
         this.resetSendButton();
         
-        // Ensure we're not in streaming mode
+        // Remove streaming placeholder so we don't show it and the final response (e.g. 10 empty + 10 images)
+        if (this.streamingMessage) {
+            this.streamingMessage.remove();
+            this.streamingMessage = null;
+        }
         this.isStreaming = false;
-        this.streamingMessage = null;
 
         if (!data || typeof data !== 'object') {
             this.addMessage('assistant', 'No response data received.');
@@ -2401,10 +2404,13 @@ class ChatHandler {
 
         // Handle different response types
         if (data.type === 'images' && data.images) {
-            html = contentHtml;
+            // Single grid only: no contentHtml to avoid duplicate or extra empty slots
             const srcKey = (img) => (img.img_src || img.thumbnail_src || img.thumbnail || '').trim();
+            const textLine = data.content ? this.escapeHtml(String(data.content)) : '';
+            html = textLine ? `<p class="image-search-caption">${textLine}</p>` : '';
             html += '<div class="image-grid">';
-            for (const img of data.images) {
+            const imagesList = Array.isArray(data.images) ? data.images.slice(0, 10) : [];
+            for (const img of imagesList) {
                 const src = srcKey(img);
                 if (!src || (!src.startsWith('http') && !src.startsWith('data:'))) continue;
                 const safeSrc = this.escapeUrl(src);
