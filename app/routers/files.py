@@ -31,6 +31,13 @@ from app.utils.image_validation import validate_and_clean_image_data, validate_a
 logger = logging.getLogger(__name__)
 
 
+class _ProxyViewFileFailed(Exception):
+    """Raised when proxy returns non-200 or request fails; status_code None means connection/timeout error."""
+    def __init__(self, status_code):
+        self.status_code = status_code
+        super().__init__(f"Storage server error: {status_code}" if status_code else "Storage server request failed")
+
+
 def _is_same_server(storage_url: str) -> bool:
     """
     Check if storage_server_url points to the same server (localhost/127.0.0.1).
@@ -160,6 +167,26 @@ def get_file_cache(db: Session, force_reload: bool = False) -> FileListingCache:
             logger.info(f"[FileCache] Initialized with TTL={ttl}s, max_size={max_size}")
     
     return _file_cache
+
+
+@router.get("/config")
+def get_files_config(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Return the base URL clients should use for file operations (list, view, upload).
+    This is the storage proxy: the same server that proxies to the storage server when configured.
+    Uses X-Forwarded-Proto/Host when behind a reverse proxy so the client gets the correct URL.
+    """
+    scheme = request.headers.get("X-Forwarded-Proto", request.url.scheme) or "https"
+    host = request.headers.get("X-Forwarded-Host") or request.headers.get("Host") or (request.url.hostname or "")
+    if not host:
+        base = str(request.base_url).rstrip("/")
+    else:
+        host = host.split(",")[0].strip()
+        base = f"{scheme}://{host}".rstrip("/")
+    return {"base_url": base}
 
 
 @router.get("/search")
@@ -1340,8 +1367,8 @@ async def list_files(
                         stat = item.stat()
                         is_dir = item.is_dir()
                         
-                        # Calculate relative path (for user storage)
-                        item_path = str(item.relative_to(user_path))
+                        # Calculate relative path (for user storage); use forward slashes so client view requests match
+                        item_path = item.relative_to(user_path).as_posix()
                         
                         item_info = {
                             "name": item.name,
@@ -1541,16 +1568,16 @@ async def list_files(
                     stat = item.stat()
                     is_dir = item.is_dir()
                     
-                    # Calculate relative path
+                    # Calculate relative path; use forward slashes so client view requests match
                     if external_storage:
                         # For external storage, path is mount_point/relative_path
                         relative_to_mount = item.relative_to(Path(external_storage.mount_path))
                         if str(relative_to_mount) == '.':
                             item_path = external_storage.mount_point
                         else:
-                            item_path = f"{external_storage.mount_point}/{relative_to_mount}"
+                            item_path = f"{external_storage.mount_point}/{relative_to_mount.as_posix()}"
                     else:
-                        item_path = str(item.relative_to(user_path))
+                        item_path = item.relative_to(user_path).as_posix()
                     
                     item_info = {
                         "name": item.name,
@@ -1661,8 +1688,9 @@ async def view_file(
     current_user: User = Depends(get_current_user)
 ):
     """View/download a file. Returns image viewer HTML for images (unless download=1). Supports external storage. Proxies to storage server if configured (NO FALLBACK)."""
+    # Normalize path separators (list may return Windows backslashes; view must match)
+    file_path = file_path.replace("\\", "/")
     # Handle URL format: /api/files/view/{username}/{file_path} or /api/files/view/{file_path}
-    # Extract username if present in path
     from urllib.parse import unquote
     path_parts = file_path.split('/')
     actual_file_path = file_path
@@ -1712,8 +1740,9 @@ async def view_file(
                 logger.info(f"[FILES] Proxying view_file to storage server: {url}, username: {target_username}, path: {actual_file_path}")
                 try:
                     return await _proxy_view_file(url, target_username, actual_file_path, db, download=download)
-                except Exception as e:
-                    logger.warning(f"[FILES] Storage server view failed ({e}), trying local filesystem")
+                except (_ProxyViewFileFailed, Exception) as e:
+                    code = getattr(e, 'status_code', None)
+                    logger.warning(f"[FILES] Storage server view failed (code={code}, {e}), trying local filesystem")
             else:
                 raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")
 
@@ -1741,12 +1770,24 @@ async def view_file(
         if not content_type:
             content_type = "application/octet-stream"
 
-        # Read file
+        # Read file (catch OSError so we return 404/403 instead of 500)
+        import errno
         def _read_file_sync():
-            with open(file_path_obj, 'rb') as f:
-                return f.read()
+            try:
+                with open(file_path_obj, 'rb') as f:
+                    return f.read()
+            except FileNotFoundError:
+                raise
+            except OSError as e:
+                is_not_found = getattr(e, 'errno', None) == errno.ENOENT
+                raise HTTPException(status_code=404 if is_not_found else 403, detail="File not found" if is_not_found else "Access denied")
 
-        file_data = await asyncio.to_thread(_read_file_sync)
+        try:
+            file_data = await asyncio.to_thread(_read_file_sync)
+        except HTTPException:
+            raise
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="File not found")
 
         # When download=1 or non-image: return file as attachment
         from fastapi.responses import Response
@@ -2605,64 +2646,49 @@ async def _proxy_mkdir(storage_server_url: str, username: str, path: str, db: Se
 
 
 async def _proxy_view_file(storage_server_url: str, username: str, file_path: str, db: Session, download: bool = False):
-    """Proxy file view/download to storage server - uses synchronous requests to avoid event loop issues"""
+    """
+    Proxy file view/download to storage server.
+    Returns (Response, None) on success, (None, status_code) on non-200 so caller can fall back to local.
+    Raises only on connection/timeout errors.
+    """
     from app.models import Setting
     import requests
     from fastapi.responses import Response
-    
+
+    url = f"{storage_server_url.rstrip('/')}/api/storage/view-file"
+    headers = {"X-Posterchanai-Load-Balanced": "true"}
+    params = {"username": username, "file_path": file_path}
+    if download:
+        params["download"] = "1"
+
+    def _sync_proxy():
+        response = requests.get(url, headers=headers, params=params, timeout=300, stream=True)
+        if response.status_code == 200:
+            content = response.content
+            content_type = response.headers.get('Content-Type', 'application/octet-stream')
+            response_headers = {}
+            for key, value in response.headers.items():
+                if key.lower() in ['content-disposition', 'content-type']:
+                    response_headers[key] = value
+            return (Response(content=content, media_type=content_type, headers=response_headers), None)
+        try:
+            err_body = response.json().get("detail", response.text)
+            if isinstance(err_body, list):
+                err_body = str(err_body)
+        except Exception:
+            err_body = response.text[:500] if response.text else ""
+        logger.warning(f"[FILES] Storage server view_file returned {response.status_code}: {err_body}")
+        return (None, response.status_code)
+
     try:
-        # Server-to-server requests don't need authentication
-        url = f"{storage_server_url.rstrip('/')}/api/storage/view-file"
-        headers = {
-            "X-Posterchanai-Load-Balanced": "true"
-        }
-        
-        params = {
-            "username": username,
-            "file_path": file_path
-        }
-        if download:
-            params["download"] = "1"
-        
-        # Use synchronous requests in thread pool
-        def _sync_proxy():
-            response = requests.get(url, headers=headers, params=params, timeout=300, stream=True)
-            if response.status_code == 200:
-                # Read the content
-                content = response.content
-                # Get content type and headers
-                content_type = response.headers.get('Content-Type', 'application/octet-stream')
-                response_headers = {}
-                # Copy relevant headers
-                for key, value in response.headers.items():
-                    if key.lower() in ['content-disposition', 'content-type']:
-                        response_headers[key] = value
-                return {
-                    "content": content,
-                    "media_type": content_type,
-                    "headers": response_headers
-                }
-            else:
-                try:
-                    err_body = response.json().get("detail", response.text)
-                    if isinstance(err_body, list):
-                        err_body = str(err_body)
-                except Exception:
-                    err_body = response.text[:500] if response.text else ""
-                logger.error(f"[FILES] Failed to proxy view_file: {response.status_code} - {err_body}")
-                detail = err_body if err_body else str(response.status_code)
-                raise Exception(f"Storage server error: {response.status_code} - {detail}")
-        
-        result = await asyncio.to_thread(_sync_proxy)
-        # Return Response with the content
-        return Response(
-            content=result["content"],
-            media_type=result["media_type"],
-            headers=result["headers"]
-        )
-    except Exception as e:
-        logger.error(f"[FILES] Error proxying view_file: {e}", exc_info=True)
-        raise
+        result, err_code = await asyncio.to_thread(_sync_proxy)
+        if result is not None:
+            return result
+        # Non-200: return (None, err_code) so caller can fall back to local
+        raise _ProxyViewFileFailed(err_code)
+    except requests.RequestException as e:
+        logger.warning(f"[FILES] Storage server view_file request failed: {e}")
+        raise _ProxyViewFileFailed(None)
 
 
 async def _proxy_get_thumbnail(storage_server_url: str, username: str, file_path: str, size: int, db: Session):

@@ -194,6 +194,7 @@ When the user selects “Generate” or “Web Search” / “Images”, the hin
 
 ### API client (files)
 
+- **getFilesConfigBaseUrl:** GET `/api/files/config` (auth); returns the base URL to use for file operations (storage proxy), or null on failure. Used so list/download go through the proxy.
 - **listFiles:** GET `/api/files/list?path=...` (path URL-encoded); parses `items`, `path`, `is_external`, `external_name`. Uses `optString`/`optBoolean`/`optLong`/`optDouble` for resilience.
 - **downloadFileTo:** GET `/api/files/view/<encoded-path>?download=true`; segment-wise encoding preserves slashes; returns false on non-2xx or null body; streams into `destFile`.
 - **getExternalStorageMounts:** GET `/api/files/external-storage`; not yet used in UI (reserved for showing mounts in file manager).
@@ -204,6 +205,17 @@ When the user selects “Generate” or “Web Search” / “Images”, the hin
 - **MIME:** Known extensions map to specific types; unknown use `*/*` so the system can resolve by extension.
 - **Intent fallback:** If `startActivity(Intent.createChooser(intent, null))` throws, code retries with `intent.setDataAndType(uri, "*/*")` before showing the open-error toast.
 - **Permissions:** Intent carries both `FLAG_GRANT_READ_URI_PERMISSION` and `FLAG_GRANT_WRITE_URI_PERMISSION` for viewers that need write.
+
+### Storage proxy (files)
+
+- **FileManagerActivity** uses the storage proxy for all file operations: it resolves the file base URL via `getFilesConfigBaseUrl()` (GET `/api/files/config`) and uses that for `listFiles` and `downloadFileTo`. Fallback to `Prefs.getServerUrl()` if config fails.
+- **Caching:** The resolved files base URL is cached per activity session (`cachedFilesBaseUrl` / `cachedFilesBaseUrlForServer`) so we don’t call `/api/files/config` on every list or open.
+
+### Backend (files router – storage proxy & view_file)
+
+- **view_file fallback:** When the main server proxies to the storage server and gets non-200 (e.g. 404), it now falls back to serving from the local filesystem instead of returning 500. `_proxy_view_file` returns a result tuple and raises `_ProxyViewFileFailed` on non-200 so the caller can run the local block.
+- **Local read errors:** File read in the fallback path uses `errno.ENOENT` for “not found” and maps other `OSError` to 403, so we return 404/403 instead of 500.
+- **GET /api/files/config:** Returns `base_url` for client file operations. Uses `X-Forwarded-Proto` and `X-Forwarded-Host` when present so the URL is correct behind nginx/reverse proxy.
 
 ### Recommended next steps (file manager)
 

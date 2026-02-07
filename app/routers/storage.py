@@ -594,7 +594,7 @@ async def list_files(
                     # Always trust is_dir() - it's the correct filesystem check
                     file_size = stat.st_size
                     
-                    item_path = str(item.relative_to(user_path))
+                    item_path = item.relative_to(user_path).as_posix()
                     
                     item_info = {
                         "name": item.name,
@@ -1624,7 +1624,7 @@ async def list_files(
                     # Always trust is_dir() - it's the correct filesystem check
                     file_size = stat.st_size
 
-                    item_path = str(item.relative_to(user_path))
+                    item_path = item.relative_to(user_path).as_posix()
 
                     item_info = {
                         "name": item.name,
@@ -1648,7 +1648,7 @@ async def list_files(
                     try:
                         dir_item = root_path / dir_name
                         stat = dir_item.stat()
-                        item_path = str(dir_item.relative_to(user_path))
+                        item_path = dir_item.relative_to(user_path).as_posix()
 
                         item_info = {
                             "name": dir_name,
@@ -1668,7 +1668,7 @@ async def list_files(
                     try:
                         file_item = root_path / file_name
                         stat = file_item.stat()
-                        item_path = str(file_item.relative_to(user_path))
+                        item_path = file_item.relative_to(user_path).as_posix()
 
                         item_info = {
                             "name": file_name,
@@ -1732,7 +1732,10 @@ async def view_file(
     
     storage = StorageService(db)
     user_path = storage.get_user_path(username)
-    
+
+    # Normalize path separators (client or proxy may send backslashes from Windows list response)
+    file_path = file_path.replace("\\", "/")
+
     # Sanitize and validate path
     try:
         safe_path = Path(*[_sanitize_path_component(p) for p in file_path.split('/') if p])

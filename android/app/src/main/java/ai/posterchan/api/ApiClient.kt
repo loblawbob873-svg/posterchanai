@@ -285,12 +285,31 @@ class ApiClient(
     }
 
     /**
+     * Get the base URL to use for file operations (storage proxy).
+     * Uses downloadClient (trust-all SSL, long timeout) so it works behind nginx/self-signed certs.
+     * Returns the server's base_url, or null on failure; callers should fall back to Prefs.getServerUrl().
+     */
+    fun getFilesConfigBaseUrl(): String? {
+        val request = authRequest("/api/files/config")
+        return downloadClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return@use null
+            val body = response.body?.string() ?: return@use null
+            try {
+                JSONObject(body).optString("base_url").takeIf { it.isNotEmpty() }
+            } catch (_: JSONException) {
+                null
+            }
+        }
+    }
+
+    /**
      * List files and folders at the given path (empty string = root).
+     * Uses downloadClient (trust-all SSL, long timeout) so file manager works behind nginx/self-signed certs.
      */
     fun listFiles(path: String): FileListResponse {
         val query = if (path.isBlank()) "" else "?path=" + URLEncoder.encode(path, StandardCharsets.UTF_8.name())
         val request = authRequest("/api/files/list$query")
-        client.newCall(request).execute().use { response ->
+        downloadClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw ApiException(response.code, response.body?.string() ?: response.message)
             val bodyStr = response.body?.string() ?: throw ApiException(-1, "Empty response")
             try {
