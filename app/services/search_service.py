@@ -126,7 +126,7 @@ class SearchService:
                 return []
 
     async def image_search(self, query: str, limit: int = 10) -> list[dict]:
-        """Search for images using SearXNG"""
+        """Search for images using SearXNG. Only return results with a non-empty thumbnail URL."""
         if not self.searxng_url:
             return []
 
@@ -137,21 +137,27 @@ class SearchService:
                     params={
                         "q": query,
                         "format": "json",
-                        "categories": "images"
+                        "categories": "images",
+                        "image_proxy": "1",
                     }
                 )
                 response.raise_for_status()
                 data = response.json()
-                results = data.get("results", [])[:limit]
-                return [
-                    {
-                        "title": r.get("title", ""),
-                        "url": r.get("url", ""),
-                        "img_src": r.get("img_src", r.get("thumbnail_src", r.get("thumbnail", "")))
-                    }
-                    for r in results
-                    if r.get("img_src") or r.get("thumbnail_src") or r.get("thumbnail")
-                ]
+                results = data.get("results", [])[:limit * 2]
+                out = []
+                for r in results:
+                    thumb = (r.get("img_src") or r.get("thumbnail_src") or r.get("thumbnail") or "").strip()
+                    if not thumb:
+                        continue
+                    url = (r.get("url") or "").strip() or thumb
+                    out.append({
+                        "title": (r.get("title") or "Image")[:200],
+                        "url": url,
+                        "img_src": thumb,
+                    })
+                    if len(out) >= limit:
+                        break
+                return out
             except Exception as e:
                 logger.error(f"Image search error: {e}")
                 return []
