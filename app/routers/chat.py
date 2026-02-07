@@ -165,9 +165,10 @@ async def proxy_image(
             resp.raise_for_status()
             content = resp.content
             ctype = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
-            if not ctype.startswith("image/"):
+            if ctype and (ctype.startswith("text/") or "json" in ctype or "xml" in ctype):
                 raise HTTPException(status_code=502, detail="Upstream did not return an image")
-            return Response(content=content, media_type=ctype or "image/png")
+            media_type = ctype if (ctype and ctype.startswith("image/")) else "image/png"
+            return Response(content=content, media_type=media_type)
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code, detail="Upstream error")
     except HTTPException:
