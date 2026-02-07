@@ -124,7 +124,7 @@ class SettingsResponse(BaseModel):
     # Ollama settings (also used for native backend sampling parameters)
     ollama_url: str = "http://localhost:11434"
     ollama_api_format: str = "ollama"  # "ollama" for /api/chat, "openai" for /v1/chat/completions
-    ollama_model: str = "richardyoung/qwen3-14b-abliterated:Q5_K_M"
+    ollama_model: str = "llama3"  # Set in Admin → Settings; use a model you have in Ollama or your LLM backend
     ollama_timeout: str = "300000"  # 5 min (RSS/video summaries need longer)
     ollama_max_concurrent: str = "1"
     ollama_system_prompt: str = ""

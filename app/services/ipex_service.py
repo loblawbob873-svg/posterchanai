@@ -343,6 +343,15 @@ class IPEXService:
                     self._tokenizer = None  # llama.cpp handles tokenization
                     self._is_gguf = True
                     logger.info("GGUF model loaded successfully")
+                    # Intel SYCL (ggml-sycl) can crash with "UR error" when multiple inferences run
+                    # concurrently. Recommend max_concurrent=1 to avoid process exit.
+                    if gpu_layers != 0 and self.max_concurrent > 1:
+                        logger.warning(
+                            "[IPEX] GGUF with GPU (SYCL): llm_max_concurrent=%d. "
+                            "Intel SYCL often crashes (UR error) with concurrent requests. "
+                            "Set Admin → Settings → llm_max_concurrent to 1 to avoid crashes.",
+                            self.max_concurrent,
+                        )
                 else:
                     # Load HuggingFace model with IPEX-LLM
                     import torch

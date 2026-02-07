@@ -265,6 +265,38 @@ class ChatActivity : AppCompatActivity() {
         }.start()
     }
 
+    /** Build display string for command response (images, search, etc.) so results show as tappable links. */
+    private fun buildDisplayContentForResponse(fullContent: String, data: org.json.JSONObject?): String {
+        if (data == null) return fullContent
+        val type = data.optString("type", "")
+        val sb = StringBuilder(MarkdownUtils.stripThinkingTags(fullContent))
+        when (type) {
+            "images" -> {
+                val arr = data.optJSONArray("images") ?: return sb.toString()
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    val title = o.optString("title", "Image").replace("[", "(").replace("]", ")").take(60)
+                    val url = o.optString("url", "").takeIf { it.isNotBlank() } ?: o.optString("img_src", "")
+                    if (url.isNotBlank()) {
+                        sb.append("\n\n• [").append(title).append("](").append(url).append(")")
+                    }
+                }
+            }
+            "search" -> {
+                val arr = data.optJSONArray("results") ?: return sb.toString()
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    val title = o.optString("title", "Result").replace("[", "(").replace("]", ")").take(60)
+                    val url = o.optString("url", "")
+                    if (url.isNotBlank()) {
+                        sb.append("\n\n• [").append(title).append("](").append(url).append(")")
+                    }
+                }
+            }
+        }
+        return sb.toString()
+    }
+
     private fun sendMessage(text: String) {
         val baseUrl = Prefs.getServerUrl(this)
         val token = Prefs.getAccessToken(this)
@@ -327,7 +359,7 @@ class ChatActivity : AppCompatActivity() {
                         updateSendButtonState()
                         val idx = messages.indexOfFirst { it.id == streamingMessageId }
                         if (idx >= 0) {
-                            val display = MarkdownUtils.stripThinkingTags(fullContent)
+                            val display = buildDisplayContentForResponse(fullContent, data)
                             messages[idx] = messages[idx].copy(content = display, isStreaming = false)
                             adapter.submitList(messages.toList())
                             scrollToBottom()
@@ -417,7 +449,7 @@ class ChatActivity : AppCompatActivity() {
                         updateSendButtonState()
                         val idx = messages.indexOfFirst { it.id == streamingMessageId }
                         if (idx >= 0) {
-                            val display = MarkdownUtils.stripThinkingTags(fullContent)
+                            val display = buildDisplayContentForResponse(fullContent, data)
                             messages[idx] = messages[idx].copy(content = display, isStreaming = false)
                             adapter.submitList(messages.toList())
                             scrollToBottom()
