@@ -109,9 +109,19 @@ class PhotosActivity : AppCompatActivity() {
                     }
                     return@Thread
                 }
-                // List always from main server (has /api/files/list and proxies to storage if needed)
+                // List from main server; try "Photos" then discover folder from root (e.g. "photos", "Pictures")
                 val client = ApiClient(baseUrl, token)
-                val response = client.listFiles("Photos")
+                var response = client.listFiles("Photos")
+                if (response.items.isEmpty()) {
+                    val root = client.listFiles("")
+                    val photosFolder = root.items.asSequence()
+                        .filter { it.isDirectory }
+                        .map { it.name }
+                        .firstOrNull { name -> name.equals("photos", true) || name.equals("pictures", true) }
+                    if (photosFolder != null) {
+                        response = client.listFiles(photosFolder)
+                    }
+                }
                 val photoItems = response.items.filter { item ->
                     !item.isDirectory && item.name.substringAfterLast(".", "").lowercase() in photoExtensions
                 }.sortedWith(compareBy<FileItem> { !it.name.lowercase().endsWith(".mp4") }.thenBy { it.name })

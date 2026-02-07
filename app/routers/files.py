@@ -1246,8 +1246,14 @@ async def list_files(
                             is_external = True
                 
                 if not is_external:
-                    # Proxy to storage server - no fallback
-                    return await _proxy_list_files(url, current_user.username, path, db)
+                    # Try storage server first; on 404 fall back to local listing (files may be on main server only)
+                    try:
+                        result = await _proxy_list_files(url, current_user.username, path, db)
+                        if result is not None:
+                            return result
+                    except Exception as e:
+                        logger.warning(f"[FILES] Proxy list failed ({e}), falling back to local listing")
+                    # Fall through to local filesystem (404 from storage or proxy error)
     
     # On storage server: Check for external storage first, then use local filesystem
     storage = get_storage_service(db)
@@ -2558,34 +2564,25 @@ async def _proxy_upload_file(storage_server_url: str, username: str, filename: s
 
 
 async def _proxy_list_files(storage_server_url: str, username: str, path: str, db: Session):
-    """Proxy file listing to storage server"""
+    """Proxy file listing to storage server. Returns JSON dict on 200, None on 404 (caller can fall back to local)."""
     from app.models import Setting
     import requests
     
     try:
-        # Server-to-server requests don't need authentication
         url = f"{storage_server_url.rstrip('/')}/api/storage/list-files"
-        headers = {
-            "X-Posterchanai-Load-Balanced": "true"
-        }
-        
-        params = {
-            "username": username,
-            "path": path
-        }
-        
-        # Use synchronous requests in thread pool
+        headers = {"X-Posterchanai-Load-Balanced": "true"}
+        params = {"username": username, "path": path}
+
         def _sync_proxy():
             response = requests.get(url, headers=headers, params=params, timeout=30)
             if response.status_code == 200:
                 return response.json()
             if response.status_code == 404:
-                # Path does not exist on storage (e.g. "Photos" folder not created yet) -> return empty list
-                logger.debug(f"[FILES] Storage list path not found (404): {path!r}, returning empty list")
-                return {"items": [], "path": path, "is_external": False}
+                logger.debug(f"[FILES] Storage list path not found (404): {path!r}, caller may fall back to local")
+                return None
             logger.error(f"[FILES] Failed to proxy list_files: {response.status_code} - {response.text}")
             raise Exception(f"Storage server error: {response.status_code}")
-        
+
         return await asyncio.to_thread(_sync_proxy)
     except Exception as e:
         logger.error(f"[FILES] Error proxying list_files: {e}", exc_info=True)
