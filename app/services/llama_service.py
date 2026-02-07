@@ -71,6 +71,18 @@ def _get_inference_semaphore(max_concurrent: int = 1) -> threading.Semaphore:
     return _inference_semaphore
 
 
+def _close_llama_safe(model: Any) -> None:
+    """Close llama-cpp-python model without raising. Handles missing 'sampler' in some versions."""
+    if model is None:
+        return
+    try:
+        if hasattr(model, "close") and callable(getattr(model, "close")):
+            model.close()
+    except (AttributeError, Exception) as e:
+        # LlamaModel.close() can raise AttributeError if internal 'sampler' is missing (library bug)
+        logger.debug("Model close() raised (ignored): %s", e)
+
+
 class LlamaService:
     """
     Native LLM inference service using llama-cpp-python.
@@ -157,11 +169,7 @@ class LlamaService:
         # Unload previous model
         if self._model is not None:
             logger.info(f"Unloading previous model: {self._model_path}")
-            try:
-                del self._model
-            except AttributeError as e:
-                # Handle incomplete model objects (e.g., sampler not initialized)
-                logger.warning(f"Error during model cleanup (ignored): {e}")
+            _close_llama_safe(self._model)
             self._model = None
 
         logger.info(f"Loading model: {self.model_path}")
@@ -695,11 +703,7 @@ class LlamaService:
         """Force reload the model (useful after settings change)"""
         if self._model is not None:
             logger.info("Force reloading model...")
-            try:
-                del self._model
-            except AttributeError as e:
-                # Handle incomplete model objects (e.g., sampler not initialized)
-                logger.warning(f"Error during model cleanup (ignored): {e}")
+            _close_llama_safe(self._model)
             self._model = None
             self._model_path = None
         self._load_settings()
@@ -709,11 +713,7 @@ class LlamaService:
         """Unload the model from memory"""
         if self._model is not None:
             logger.info("Unloading model from memory")
-            try:
-                del self._model
-            except AttributeError as e:
-                # Handle incomplete model objects (e.g., sampler not initialized)
-                logger.warning(f"Error during model cleanup (ignored): {e}")
+            _close_llama_safe(self._model)
             self._model = None
             self._model_path = None
             

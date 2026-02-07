@@ -62,21 +62,23 @@
                 android:textSize="12sp" />
 
             <com.google.android.material.button.MaterialButton
-                android:id="@+id/quick_btn_web"
-                style="@style/Widget.PosterchanAI.Button.QuickAction"
-                android:layout_width="wrap_content"
-                android:layout_height="32dp"
-                android:text="@string/quick_web"
-                android:layout_marginStart="6dp"
-                android:textSize="12sp" />
-
-            <com.google.android.material.button.MaterialButton
                 android:id="@+id/quick_btn_generate"
                 style="@style/Widget.PosterchanAI.Button.QuickAction"
                 android:layout_width="wrap_content"
                 android:layout_height="32dp"
                 android:text="@string/quick_generate"
                 android:layout_marginStart="6dp"
+                android:contentDescription="@string/quick_generate"
+                android:textSize="12sp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/quick_btn_web"
+                style="@style/Widget.PosterchanAI.Button.QuickAction"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:text="@string/quick_web"
+                android:layout_marginStart="6dp"
+                android:contentDescription="@string/quick_web"
                 android:textSize="12sp" />
 
             <com.google.android.material.button.MaterialButton
