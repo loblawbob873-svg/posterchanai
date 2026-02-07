@@ -1925,19 +1925,18 @@ async def thumbnail_file(
         if not is_image and not is_video:
             raise HTTPException(status_code=400, detail="File is not an image or video")
         
-        # CRITICAL: Only use stored thumbnails - never generate on-the-fly!
-        # Thumbnails should be generated during upload, not when viewing gallery.
-        # This prevents ffmpeg from running every time the gallery loads.
+        # Prefer stored thumbnail; for images only, generate on-the-fly if missing (Android Photos / web)
         thumbnail_path = get_thumbnail_if_exists(user_path, full_path)
         if thumbnail_path and thumbnail_path.exists():
-            # Use stored thumbnail only
             thumbnail_data = await asyncio.to_thread(generate_thumbnail, thumbnail_path, (size, size))
             if thumbnail_data:
                 return JSONResponse({"thumbnail": thumbnail_data})
-        
-        # No stored thumbnail exists - return 404 instead of generating on-the-fly
-        # The frontend will handle this gracefully by showing a placeholder or the full image
-        raise HTTPException(status_code=404, detail="Thumbnail not found. Thumbnails are generated during upload.")
+        # No stored thumbnail: generate on-the-fly for images only
+        if is_image:
+            thumbnail_data = await asyncio.to_thread(generate_thumbnail, full_path, (size, size))
+            if thumbnail_data:
+                return JSONResponse({"thumbnail": thumbnail_data})
+        raise HTTPException(status_code=404, detail="Thumbnail not found.")
     except HTTPException:
         raise
     except Exception as e:
