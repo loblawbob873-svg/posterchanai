@@ -273,15 +273,8 @@ class ChatActivity : AppCompatActivity() {
         val sb = StringBuilder(MarkdownUtils.stripThinkingTags(fullContent))
         when (type) {
             "images" -> {
-                val arr = data.optJSONArray("images") ?: return sb.toString()
-                for (i in 0 until arr.length()) {
-                    val o = arr.optJSONObject(i) ?: continue
-                    val title = o.optString("title", "Image").replace("[", "(").replace("]", ")").take(60)
-                    val url = o.optString("url", "").takeIf { it.isNotBlank() } ?: o.optString("img_src", "")
-                    if (url.isNotBlank()) {
-                        sb.append("\n\n• [").append(title).append("](").append(url).append(")")
-                    }
-                }
+                // Thumbnail strip is shown via imageSearchResults; no link list below.
+                return sb.toString()
             }
             "search" -> {
                 val arr = data.optJSONArray("results") ?: return sb.toString()
