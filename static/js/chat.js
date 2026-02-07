@@ -2407,7 +2407,8 @@ class ChatHandler {
             for (const img of data.images) {
                 const src = srcKey(img);
                 if (!src || (!src.startsWith('http') && !src.startsWith('data:'))) continue;
-                const safeSrc = this.escapeUrl(src);
+                const imgSrc = src.startsWith('http') ? ('/api/proxy-image?url=' + encodeURIComponent(src)) : src;
+                const safeSrc = this.escapeUrl(imgSrc);
                 const safeUrl = this.escapeUrl(img.url || src);
                 const safeTitle = this.escapeHtml(img.title || '');
                 html += `<a href="${safeUrl}" target="_blank" class="image-link" style="display:inline-block;">

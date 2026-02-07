@@ -151,23 +151,27 @@ async def proxy_image(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Proxy an image URL for Android image search thumbnails (avoids CDN/connection limits)."""
+    """Proxy an image URL for image search thumbnails (web + Android)."""
     raw = unquote(url)
     is_safe, err = is_safe_url(raw)
     if not is_safe:
         raise HTTPException(status_code=400, detail=err)
     try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
             resp = await client.get(
                 raw,
                 headers={"User-Agent": "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36", "Accept": "image/*,*/*"},
             )
             resp.raise_for_status()
             content = resp.content
-            ctype = resp.headers.get("content-type", "image/png").split(";")[0].strip() or "image/png"
-            return Response(content=content, media_type=ctype)
+            ctype = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
+            if not ctype.startswith("image/"):
+                raise HTTPException(status_code=502, detail="Upstream did not return an image")
+            return Response(content=content, media_type=ctype or "image/png")
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code, detail="Upstream error")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.debug(f"Proxy image failed: {e}")
         raise HTTPException(status_code=502, detail="Failed to fetch image")

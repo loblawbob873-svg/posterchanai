@@ -146,8 +146,12 @@ class SearchService:
                 results = data.get("results", [])[:limit * 2]
                 out = []
                 for r in results:
-                    thumb = (r.get("img_src") or r.get("thumbnail_src") or r.get("thumbnail") or "").strip()
-                    if not thumb:
+                    thumb = (
+                        (r.get("thumbnail_src") or "").strip()
+                        or (r.get("img_src") or "").strip()
+                        or (r.get("thumbnail") or "").strip()
+                    )
+                    if not thumb or (not thumb.startswith("http") and not thumb.startswith("data:")):
                         continue
                     url = (r.get("url") or "").strip() or thumb
                     out.append({
