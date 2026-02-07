@@ -1,5 +1,6 @@
 package ai.posterchan.api
 
+import android.util.Base64
 import android.util.Log
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
@@ -340,8 +341,9 @@ class ApiClient(
     }
 
     /**
-     * Fetch thumbnail image bytes for a file path (GET /api/files/thumbnail/{path}).
-     * Returns null on failure or non-2xx. Use for on-demand thumbnail loading in Photos grid.
+     * Fetch thumbnail for a file path (GET /api/files/thumbnail/{path}).
+     * Server returns JSON {"thumbnail": "data:image/jpeg;base64,..."}. Decodes to bytes for BitmapFactory.
+     * Returns null on failure or non-2xx.
      */
     fun getThumbnailBytes(path: String, size: Int = 200): ByteArray? {
         val normalizedPath = path.trim().removeSurrounding("/")
@@ -352,7 +354,16 @@ class ApiClient(
         val request = authRequest("/api/files/thumbnail/$encodedPath?size=$size")
         return downloadClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) return@use null
-            response.body?.bytes()
+            val bodyStr = response.body?.string() ?: return@use null
+            try {
+                val json = JSONObject(bodyStr)
+                var b64 = json.optString("thumbnail", "").trim()
+                if (b64.isEmpty()) return@use null
+                if (b64.contains(",")) b64 = b64.substringAfter(",")
+                Base64.decode(b64, Base64.DEFAULT)
+            } catch (_: JSONException) {
+                null
+            }
         }
     }
 

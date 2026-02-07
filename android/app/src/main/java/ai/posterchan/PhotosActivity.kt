@@ -73,7 +73,7 @@ class PhotosActivity : AppCompatActivity() {
                 }
                 val client = ApiClient(baseUrl, token)
                 val bytes = client.getThumbnailBytes(path, 200)
-                val bmp = if (!bytes.isNullOrEmpty()) {
+                val bmp = if (bytes != null && bytes.isNotEmpty()) {
                     try {
                         BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                     } catch (_: Exception) {

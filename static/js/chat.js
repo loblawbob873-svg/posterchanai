@@ -3209,6 +3209,13 @@ class ChatHandler {
     
     async downloadFile(filePath, fileName) {
         try {
+            // Android WebView: use native bridge so download runs with auth (link click often doesn't navigate)
+            if (typeof window.PosterchanAndroid !== 'undefined' && typeof window.PosterchanAndroid.downloadFile === 'function') {
+                window.PosterchanAndroid.downloadFile(filePath, fileName || '');
+                this.showToast('Download started...');
+                return;
+            }
+
             // Encode path segments separately to preserve slashes
             const pathSegments = filePath.split('/').map(seg => encodeURIComponent(seg));
             const encodedPath = pathSegments.join('/');

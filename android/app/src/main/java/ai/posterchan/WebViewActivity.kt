@@ -9,6 +9,7 @@ import android.os.Environment
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.DownloadListener
+import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -26,6 +27,7 @@ import ai.posterchan.api.ApiException
 import java.io.File
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
+import java.lang.ref.WeakReference
 
 /**
  * Full web UI in a WebView. Injects access_token cookie so user is logged in.
@@ -194,6 +196,14 @@ class WebViewActivity : AppCompatActivity() {
                 }
             }
         })
+
+        // Let the web trigger downloads directly (torrent Download button uses this when link click doesn't navigate)
+        webView.addJavascriptInterface(WebViewDownloadBridge(this), "PosterchanAndroid")
+    }
+
+    /** Called from WebViewDownloadBridge when the web calls PosterchanAndroid.downloadFile(path, name). */
+    fun requestFileDownload(filePath: String, fileName: String?) {
+        startFileDownload(filePath, fileName, null)
     }
 
     /** Start authenticated download for same-origin file (torrent download button, file manager). */
@@ -330,5 +340,20 @@ class WebViewActivity : AppCompatActivity() {
         webView.onPause()
         webView.pauseTimers()
         super.onPause()
+    }
+
+    /** JavaScript interface so the web can trigger file download (avoids link navigation / target=_blank issues). */
+    private class WebViewDownloadBridge(activity: WebViewActivity) {
+        private val activityRef = WeakReference(activity)
+
+        @JavascriptInterface
+        fun downloadFile(filePath: String, fileName: String?) {
+            activityRef.get()?.runOnUiThread {
+                activityRef.get()?.requestFileDownload(
+                    filePath.trim(),
+                    fileName?.trim()?.takeIf { it.isNotBlank() }
+                )
+            }
+        }
     }
 }
