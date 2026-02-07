@@ -1552,6 +1552,7 @@ async def delete_file(
 
 @router.get("/list-files")
 async def list_files(
+    request: FastAPIRequest,
     username: str = Query(..., description="Username"),
     path: str = Query("", description="Directory path relative to user root"),
     depth: int = Query(1, description="Listing depth: 1=immediate children, >1=recursive"),

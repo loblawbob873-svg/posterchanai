@@ -64,6 +64,13 @@ htmlcov/
 test_load_balancing.py
 test_concurrent_requests.py
 
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.iml
+
 # Claude Code
 .claude/
 
