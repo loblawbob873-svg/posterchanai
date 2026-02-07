@@ -1750,7 +1750,8 @@ async def view_file(
         raise HTTPException(status_code=403, detail="Access denied")
     
     if not full_path.exists() or not full_path.is_file():
-        raise HTTPException(status_code=404, detail="File not found")
+        logger.warning(f"[STORAGE] view-file 404: path={file_path!r} resolved={full_path!s} (user={username})")
+        raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
     
     # Check if this is a video file - transcode on-the-fly for bandwidth savings (inline only)
     from app.services.thumbnail_service import is_video_file

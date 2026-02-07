@@ -1758,7 +1758,8 @@ async def view_file(
             raise HTTPException(status_code=403, detail="Access denied: path outside user directory")
 
         if not file_path_obj.exists():
-            raise HTTPException(status_code=404, detail="File not found")
+            logger.warning(f"[FILES] view_file 404: path={actual_file_path!r} resolved={file_path_obj!s} (user={target_username})")
+            raise HTTPException(status_code=404, detail=f"File not found: {actual_file_path}")
 
         if file_path_obj.is_dir():
             raise HTTPException(status_code=400, detail="Path is a directory, not a file")
