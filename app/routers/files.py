@@ -1688,9 +1688,9 @@ async def view_file(
     current_user: User = Depends(get_current_user)
 ):
     """View/download a file. Returns image viewer HTML for images (unless download=1). Supports external storage. Proxies to storage server if configured (NO FALLBACK)."""
-    # Decode path (URL may have %2F for slashes) then normalize
+    # Decode path: unquote first (%2B -> +, %2F -> /), then + as space (query-style), normalize slashes
     from urllib.parse import unquote
-    file_path = unquote(file_path).replace("\\", "/").strip("/")
+    file_path = unquote(file_path).replace("+", " ").replace("\\", "/").strip("/")
     if not file_path:
         raise HTTPException(status_code=400, detail="Invalid file path: empty path")
     # Handle URL format: /api/files/view/{username}/{file_path} or /api/files/view/{file_path}

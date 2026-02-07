@@ -52,6 +52,12 @@
             android:theme="@style/Theme.PosterchanAI" />
 
         <activity
+            android:name=".PhotosActivity"
+            android:exported="false"
+            android:parentActivityName=".MainActivity"
+            android:theme="@style/Theme.PosterchanAI" />
+
+        <activity
             android:name=".SettingsActivity"
             android:exported="false"
             android:parentActivityName=".MainActivity"

@@ -1564,6 +1564,10 @@ async def list_files(
     depth=1: immediate children only (default)
     depth>1: recursive listing of all descendants
     """
+    # Decode path: unquote then + as space (query string style)
+    from urllib.parse import unquote
+    path = (unquote(path) if path else "").replace("+", " ").strip("/")
+
     logger.info(f"[Storage API] list_files called: username={username}, path={path}, depth={depth}")
 
     # Check if this is a server-to-server request (load-balanced from another posterchanai node)
@@ -1733,9 +1737,9 @@ async def view_file(
     storage = StorageService(db)
     user_path = storage.get_user_path(username)
 
-    # Decode query param (proxy may send Photos%2Fimg.jpg) then normalize slashes
+    # Decode query param: unquote first (%2B -> +), then + as space (query string style), normalize slashes
     from urllib.parse import unquote
-    file_path = unquote(file_path).replace("\\", "/").strip("/")
+    file_path = unquote(file_path).replace("+", " ").replace("\\", "/").strip("/")
     if not file_path:
         raise HTTPException(status_code=400, detail="Invalid file path: empty path")
 
