@@ -3118,9 +3118,10 @@ class ChatHandler {
     }
 
     addSummarizeIcons(contentEl) {
-        // Find all external links (not local paths)
+        // Find all external links (not local paths). Skip image-search grid links (they are image thumbnails, not articles).
         const links = contentEl.querySelectorAll('a[href^="http"]');
         links.forEach(link => {
+            if (link.closest('.image-grid')) return; // no summarize on image search results
             // Skip if already has summarize button
             if (link.nextElementSibling?.classList?.contains('btn-summarize')) return;
 
