@@ -2404,19 +2404,19 @@ class ChatHandler {
 
         // Handle different response types
         if (data.type === 'images' && data.images) {
-            // Prevent duplicate: if we already added an images message in the last 3s, skip (e.g. same response delivered twice via WebSocket/pending)
-            const lastMsg = this.messagesContainer.lastElementChild;
-            if (lastMsg && lastMsg.classList.contains('assistant')) {
-                const grid = lastMsg.querySelector('.image-grid');
-                const addedAt = parseInt(lastMsg.dataset.addedAt, 10);
-                if (grid && addedAt && (Date.now() - addedAt) < 3000) {
-                    return; // already showed this response
+            // Remove any existing images message from the last 5s (e.g. streamed placeholder) so we only show one
+            const recent = this.messagesContainer.querySelectorAll('.message.assistant');
+            for (const el of recent) {
+                const hasGrid = el.querySelector('.image-grid');
+                const addedAt = parseInt(el.dataset.addedAt, 10);
+                if (hasGrid && addedAt && (Date.now() - addedAt) < 5000) {
+                    el.remove();
+                    break;
                 }
             }
-            // Exactly one grid, max 10 unique images (dedupe by src so we never render 20)
+            // Build grid with DOM only: one message, one grid, exactly N image links (max 10)
             const srcKey = (img) => (img.img_src || img.thumbnail_src || img.thumbnail || '').trim();
-            const textLine = data.content ? this.escapeHtml(String(data.content)) : '';
-            html = textLine ? `<p class="image-search-caption">${textLine}</p>` : '';
+            const textLine = data.content ? String(data.content) : '';
             const rawList = Array.isArray(data.images) ? data.images : [];
             const seen = new Set();
             const imagesList = [];
@@ -2428,19 +2428,8 @@ class ChatHandler {
                 seen.add(src);
                 imagesList.push(img);
             }
-            let linksHtml = '';
-            for (const img of imagesList) {
-                const src = srcKey(img);
-                const safeSrc = this.escapeUrl(src);
-                const safeUrl = this.escapeUrl(img.url || src);
-                const safeTitle = this.escapeHtml(img.title || '');
-                linksHtml += `<a href="${safeUrl}" target="_blank" class="image-link" style="display:inline-block;">
-                    <img src="${safeSrc}" alt="${safeTitle}"
-                         onerror="this.closest('.image-link').style.display='none';"
-                         loading="lazy" referrerpolicy="no-referrer">
-                </a>`;
-            }
-            if (linksHtml) html += '<div class="image-grid">' + linksHtml + '</div>';
+            this.addImagesMessage(textLine, imagesList);
+            return;
         } else if (data.type === 'generated_image') {
             console.log('[IMAGE] Received generated_image response:', {
                 hasImage: !!data.image,
@@ -3051,6 +3040,80 @@ class ChatHandler {
             this.addSummarizeIcons(contentEl);
         }
 
+        return messageEl;
+    }
+
+    /** Image search: one message, one grid, exactly N image links (max 10). No innerHTML for grid to avoid any duplicate/placeholder issues. */
+    addImagesMessage(captionText, imagesList) {
+        const messageEl = document.createElement('div');
+        messageEl.className = 'message assistant';
+        messageEl.dataset.addedAt = String(Date.now());
+
+        const contentEl = document.createElement('div');
+        contentEl.className = 'message-content';
+
+        const bodyEl = document.createElement('div');
+        bodyEl.className = 'message-body';
+
+        if (captionText && captionText.trim()) {
+            const p = document.createElement('p');
+            p.className = 'image-search-caption';
+            p.textContent = captionText.trim();
+            bodyEl.appendChild(p);
+        }
+
+        const gridEl = document.createElement('div');
+        gridEl.className = 'image-grid';
+        const srcKey = (img) => (img.img_src || img.thumbnail_src || img.thumbnail || '').trim();
+        for (const img of imagesList) {
+            const src = srcKey(img);
+            if (!src) continue;
+            const a = document.createElement('a');
+            a.href = img.url || src;
+            a.target = '_blank';
+            a.className = 'image-link';
+            a.style.display = 'inline-block';
+            const im = document.createElement('img');
+            im.src = src;
+            im.alt = (img.title || '').trim() || 'Image';
+            im.loading = 'lazy';
+            im.referrerPolicy = 'no-referrer';
+            im.onerror = function () { if (a.parentNode) a.style.display = 'none'; };
+            a.appendChild(im);
+            gridEl.appendChild(a);
+        }
+        bodyEl.appendChild(gridEl);
+        contentEl.appendChild(bodyEl);
+
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'btn-copy';
+        copyBtn.innerHTML = '📋';
+        copyBtn.title = 'Copy to clipboard';
+        copyBtn.onclick = () => this.copyText(bodyEl.textContent);
+        contentEl.appendChild(copyBtn);
+
+        const emailBtn = document.createElement('button');
+        emailBtn.className = 'btn-email';
+        emailBtn.innerHTML = '📧';
+        emailBtn.title = 'Email this response';
+        emailBtn.onclick = () => this.emailResponse(bodyEl.textContent);
+        contentEl.appendChild(emailBtn);
+
+        if (this.lastPayload) {
+            const prevRegenBtns = this.messagesContainer.querySelectorAll('.message.assistant .btn-regenerate');
+            prevRegenBtns.forEach(btn => btn.remove());
+            const regenBtn = document.createElement('button');
+            regenBtn.className = 'btn-regenerate';
+            regenBtn.innerHTML = '🔄';
+            regenBtn.title = 'Regenerate response';
+            regenBtn.onclick = () => this.regenerateResponse(messageEl);
+            contentEl.appendChild(regenBtn);
+        }
+
+        messageEl.appendChild(contentEl);
+        this.messagesContainer.appendChild(messageEl);
+        this.scrollToBottom();
+        this.addSummarizeIcons(contentEl);
         return messageEl;
     }
 
