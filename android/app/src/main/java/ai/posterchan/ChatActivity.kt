@@ -308,8 +308,8 @@ class ChatActivity : AppCompatActivity() {
             val thumbUrl = thumb ?: url
             val title = o.optString("title", "Image").take(60)
             when {
-                thumbId != null && useProxy -> list.add(ImageSearchItem(thumbnailUrl = "$base/api/proxy-image", url = url, title = title, postBodyThumbId = thumbId, authToken = token, directThumbUrl = thumbUrl))
-                useProxy -> list.add(ImageSearchItem(thumbnailUrl = "$base/api/proxy-image", url = url, title = title, postBodyUrl = thumbUrl, authToken = token, directThumbUrl = thumbUrl))
+                thumbId != null && useProxy -> list.add(ImageSearchItem(thumbnailUrl = "$base/api/proxy-image", url = url, title = title, postBodyThumbId = thumbId, authToken = token, directThumbUrl = if (thumb != null && thumb.startsWith("http")) thumb else null))
+                useProxy -> list.add(ImageSearchItem(thumbnailUrl = "$base/api/proxy-image", url = url, title = title, postBodyUrl = thumbUrl, authToken = token, directThumbUrl = if (thumb != null && thumb.startsWith("http")) thumb else null))
                 else -> list.add(ImageSearchItem(thumbnailUrl = thumbUrl, url = url, title = title))
             }
         }

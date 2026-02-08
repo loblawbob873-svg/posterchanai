@@ -451,7 +451,8 @@ class CommandService:
         if not results:
             return {"type": "text", "content": f"No images found for: {query}"}
         results = results[:10]
-        # Send thumb_id for proxy; always send img_src so Android can fall back to direct load if proxy fails.
+        # Send only thumb_id (no img_src) so WebSocket payload stays small and all 10 items reach Android (no truncation).
+        # When register fails we send img_src so client can POST that URL to proxy.
         images_payload = []
         for r in results:
             thumb_url = (r.get("img_src") or "").strip()
@@ -461,7 +462,7 @@ class CommandService:
             title = (r.get("title") or "Image")[:200]
             try:
                 thumb_id = proxy_image_register(thumb_url, self.db)
-                images_payload.append({"title": title, "url": page_url, "thumb_id": thumb_id, "img_src": thumb_url})
+                images_payload.append({"title": title, "url": page_url, "thumb_id": thumb_id})
             except Exception:
                 images_payload.append({"title": title, "url": page_url, "img_src": thumb_url})
         return {"type": "images", "content": f"Found {len(images_payload)} images for: {query}", "images": images_payload}
