@@ -7,9 +7,11 @@ data class ImageSearchItem(
     val title: String,
     /** When set, load via POST with {"url": postBodyUrl}. */
     val postBodyUrl: String? = null,
-    /** When set, load via POST with {"thumb_id": postBodyThumbId}. Most reliable on Android (no GET auth issues). */
+    /** When set, load via POST with {"thumb_id": postBodyThumbId}. */
     val postBodyThumbId: String? = null,
-    val authToken: String? = null
+    val authToken: String? = null,
+    /** When set, try this URL with a plain GET if proxy load fails (many CDNs allow direct access). */
+    val directThumbUrl: String? = null
 )
 
 data class ChatMessage(

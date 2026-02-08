@@ -123,7 +123,8 @@ class MessageAdapter(
                             onError = { iv.visibility = View.GONE },
                             postBodyUrl = item.postBodyUrl,
                             postBodyThumbId = item.postBodyThumbId,
-                            authToken = item.authToken
+                            authToken = item.authToken,
+                            directThumbUrl = item.directThumbUrl
                         )
                     } else {
                         iv.visibility = View.GONE

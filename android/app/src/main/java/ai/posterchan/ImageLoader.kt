@@ -46,22 +46,28 @@ object ImageLoader {
     private val mainHandler = Handler(Looper.getMainLooper())
 
     /**
-     * @param delayMs If > 0, submit to sequential executor with this start delay (stagger submit only); loads run one-by-one.
-     *                When 0 and url contains proxy-image, also use sequential executor so all 10 thumbnails load reliably (no concurrent limit).
-     * @param onError Optional callback on main thread when load fails (e.g. hide the ImageView).
-     * @param postBodyUrl When set with authToken, use POST with JSON body {"url": postBodyUrl}.
-     * @param postBodyThumbId When set with authToken, use POST with JSON body {"thumb_id": postBodyThumbId} (most reliable on Android).
+     * @param directThumbUrl If set and primary load fails, try GET this URL (no auth). Lets thumbnails load when proxy fails.
      */
-    fun load(url: String, imageView: ImageView, tag: Any, delayMs: Long = 0L, onError: (() -> Unit)? = null, postBodyUrl: String? = null, postBodyThumbId: String? = null, authToken: String? = null) {
+    fun load(url: String, imageView: ImageView, tag: Any, delayMs: Long = 0L, onError: (() -> Unit)? = null, postBodyUrl: String? = null, postBodyThumbId: String? = null, authToken: String? = null, directThumbUrl: String? = null) {
         if (url.isBlank()) return
         imageView.setTag(R.id.image_loader_tag, tag)
         val useSequential = delayMs > 0 || url.contains("/api/proxy-image")
         val run = Runnable {
             try {
-                val builder = Request.Builder()
-                    .url(url)
-                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
-                    .header("Accept", "image/*,*/*")
+                fun tryLoad(requestUrl: String, isPost: Boolean, bodyJson: String?, token: String?): ByteArray? {
+                    val builder = Request.Builder()
+                        .url(requestUrl)
+                        .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
+                        .header("Accept", "image/*,*/*")
+                    if (isPost && bodyJson != null && token != null) {
+                        builder.post(bodyJson.toRequestBody("application/json".toMediaType()))
+                        builder.header("Authorization", "Bearer $token")
+                    }
+                    val req = builder.build()
+                    val response = client.newCall(req).execute()
+                    if (!response.isSuccessful) return null
+                    return response.body?.bytes()
+                }
                 val bodyJson = when {
                     !postBodyThumbId.isNullOrBlank() && !authToken.isNullOrBlank() ->
                         JSONObject().put("thumb_id", postBodyThumbId).toString()
@@ -69,33 +75,25 @@ object ImageLoader {
                         JSONObject().put("url", postBodyUrl).toString()
                     else -> null
                 }
-                if (bodyJson != null && authToken != null) {
-                    builder.post(bodyJson.toRequestBody("application/json".toMediaType()))
-                    builder.header("Authorization", "Bearer $authToken")
-                } else if (!authToken.isNullOrBlank()) {
-                    builder.header("Authorization", "Bearer $authToken")
+                val isPost = bodyJson != null && authToken != null
+                var bytes = tryLoad(url, isPost, bodyJson, authToken)
+                if (bytes == null && !directThumbUrl.isNullOrBlank() && directThumbUrl.startsWith("http")) {
+                    bytes = tryLoad(directThumbUrl, false, null, null)
                 }
-                val request = builder.build()
-                client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        mainHandler.post { if (imageView.getTag(R.id.image_loader_tag) == tag) onError?.invoke() }
-                        return@Runnable
-                    }
-                    val bytes = response.body?.bytes() ?: run {
-                        mainHandler.post { if (imageView.getTag(R.id.image_loader_tag) == tag) onError?.invoke() }
-                        return@Runnable
-                    }
-                    val opts = Options().apply { inSampleSize = 2 }
-                    var bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
-                    if (bmp == null) bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                    if (bmp == null) {
-                        mainHandler.post { if (imageView.getTag(R.id.image_loader_tag) == tag) onError?.invoke() }
-                        return@Runnable
-                    }
-                    mainHandler.post {
-                        if (imageView.getTag(R.id.image_loader_tag) == tag) {
-                            imageView.setImageBitmap(bmp)
-                        }
+                if (bytes == null) {
+                    mainHandler.post { if (imageView.getTag(R.id.image_loader_tag) == tag) onError?.invoke() }
+                    return@Runnable
+                }
+                val opts = Options().apply { inSampleSize = 2 }
+                var bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+                if (bmp == null) bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                if (bmp == null) {
+                    mainHandler.post { if (imageView.getTag(R.id.image_loader_tag) == tag) onError?.invoke() }
+                    return@Runnable
+                }
+                mainHandler.post {
+                    if (imageView.getTag(R.id.image_loader_tag) == tag) {
+                        imageView.setImageBitmap(bmp)
                     }
                 }
             } catch (_: Exception) {
