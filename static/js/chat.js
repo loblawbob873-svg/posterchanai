@@ -2404,13 +2404,15 @@ class ChatHandler {
 
         // Handle different response types
         if (data.type === 'images' && data.images) {
-            // Remove any assistant message from the last 10s that has an image-search grid (duplicate or streamed) so we only show one
+            // Remove any recent assistant message that could be showing image search (grid) or streamed image placeholders (message-body img)
             const recent = this.messagesContainer.querySelectorAll('.message.assistant');
             const now = Date.now();
             for (const el of recent) {
                 const addedAt = parseInt(el.dataset.addedAt, 10);
                 if (!addedAt || (now - addedAt) > 10000) continue;
-                if (el.querySelector('.image-grid')) el.remove();
+                const hasGrid = el.querySelector('.image-grid');
+                const bodyImgs = el.querySelectorAll('.message-body img');
+                if (hasGrid || bodyImgs.length >= 10) el.remove();
             }
             // Build grid with DOM only: one message, one grid, exactly N image links (max 10)
             const srcKey = (img) => (img.img_src || img.thumbnail_src || img.thumbnail || '').trim();
@@ -3110,11 +3112,16 @@ class ChatHandler {
 
         messageEl.appendChild(contentEl);
         this.messagesContainer.appendChild(messageEl);
-        // Enforce max 10 links: remove any extra (e.g. from duplicate or other code)
         const grid = messageEl.querySelector('.image-grid');
         if (grid) {
             const links = grid.querySelectorAll('.image-link');
             for (let i = 10; i < links.length; i++) links[i].remove();
+        }
+        // Ensure only one image-search message: remove any other assistant message that has .image-grid (duplicate response)
+        const allWithGrid = this.messagesContainer.querySelectorAll('.message.assistant .image-grid');
+        for (const g of allWithGrid) {
+            const msg = g.closest('.message');
+            if (msg && msg !== messageEl) msg.remove();
         }
         this.scrollToBottom();
         // Do not add summarize icons to image-search messages (would add 10 extra elements)
