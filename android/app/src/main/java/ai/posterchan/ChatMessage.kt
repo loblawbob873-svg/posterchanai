@@ -4,7 +4,10 @@ package ai.posterchan
 data class ImageSearchItem(
     val thumbnailUrl: String,
     val url: String,
-    val title: String
+    val title: String,
+    /** When set, load via POST to thumbnailUrl with this URL in body (avoids GET query length limit). */
+    val postBodyUrl: String? = null,
+    val authToken: String? = null
 )
 
 data class ChatMessage(

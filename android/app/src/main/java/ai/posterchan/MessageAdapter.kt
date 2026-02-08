@@ -72,8 +72,8 @@ class MessageAdapter(
         init {
             content.movementMethod = LinkMovementMethod.getInstance()
             val density = itemView.context.resources.displayMetrics.density
-            val sizePx = (96 * density).roundToInt().coerceAtLeast(1)
-            val marginPx = (8 * density).roundToInt()
+            val sizePx = (88 * density).roundToInt().coerceAtLeast(1)
+            val marginPx = (6 * density).roundToInt()
             imageThumbnails = (0 until 10).map {
                 ImageView(itemView.context).apply {
                     layoutParams = ViewGroup.MarginLayoutParams(sizePx, sizePx).apply {
@@ -114,9 +114,16 @@ class MessageAdapter(
                         val tag = "img_${msg.id}_$index"
                         if (iv.getTag(R.id.image_loader_tag) != tag) iv.setImageDrawable(null)
                         iv.setOnClickListener { onOpenUrl(imageResults[index].url) }
-                        val thumbUrl = imageResults[index].thumbnailUrl
-                        val delayMs = if (thumbUrl.contains("/api/proxy-image")) 0L else index * 150L
-                        ImageLoader.load(thumbUrl, iv, tag, delayMs)
+                        val item = imageResults[index]
+                        ImageLoader.load(
+                            item.thumbnailUrl,
+                            iv,
+                            tag,
+                            0L,
+                            onError = { iv.visibility = View.GONE },
+                            postBodyUrl = item.postBodyUrl,
+                            authToken = item.authToken
+                        )
                     } else {
                         iv.visibility = View.GONE
                         iv.setImageDrawable(null)

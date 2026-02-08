@@ -145,30 +145,62 @@ async def save_generated_image(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+async def _proxy_fetch(url_raw: str):
+    """Fetch image from URL; returns (content, media_type) or raises HTTPException."""
+    is_safe, err = is_safe_url(url_raw)
+    if not is_safe:
+        raise HTTPException(status_code=400, detail=err)
+    async with httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
+        resp = await client.get(
+            url_raw,
+            headers={"User-Agent": "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36", "Accept": "image/*,*/*"},
+        )
+        resp.raise_for_status()
+        content = resp.content
+        ctype = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
+        if ctype and (ctype.startswith("text/") or "json" in ctype or "xml" in ctype):
+            raise HTTPException(status_code=502, detail="Upstream did not return an image")
+        media_type = ctype if (ctype and ctype.startswith("image/")) else "image/png"
+        return content, media_type
+
+
 @router.get("/proxy-image")
-async def proxy_image(
+async def proxy_image_get(
     url: str = Query(..., description="Image URL to proxy"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Proxy an image URL for image search thumbnails (web + Android)."""
+    """Proxy an image URL (GET; query length limit may truncate long URLs)."""
     raw = unquote(url)
-    is_safe, err = is_safe_url(raw)
-    if not is_safe:
-        raise HTTPException(status_code=400, detail=err)
     try:
-        async with httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
-            resp = await client.get(
-                raw,
-                headers={"User-Agent": "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36", "Accept": "image/*,*/*"},
-            )
-            resp.raise_for_status()
-            content = resp.content
-            ctype = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
-            if ctype and (ctype.startswith("text/") or "json" in ctype or "xml" in ctype):
-                raise HTTPException(status_code=502, detail="Upstream did not return an image")
-            media_type = ctype if (ctype and ctype.startswith("image/")) else "image/png"
-            return Response(content=content, media_type=media_type)
+        content, media_type = await _proxy_fetch(raw)
+        return Response(content=content, media_type=media_type)
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail="Upstream error")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.debug(f"Proxy image failed: {e}")
+        raise HTTPException(status_code=502, detail="Failed to fetch image")
+
+
+class ProxyImageBody(BaseModel):
+    url: str
+
+
+@router.post("/proxy-image")
+async def proxy_image_post(
+    body: ProxyImageBody,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Proxy an image URL (POST body); use for long URLs (e.g. Android image search)."""
+    raw = (body.url or "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="url required")
+    try:
+        content, media_type = await _proxy_fetch(raw)
+        return Response(content=content, media_type=media_type)
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code, detail="Upstream error")
     except HTTPException:

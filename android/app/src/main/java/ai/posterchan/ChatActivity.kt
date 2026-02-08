@@ -291,7 +291,7 @@ class ChatActivity : AppCompatActivity() {
         return sb.toString()
     }
 
-    /** Parse "images" command response. If baseUrl+token set, thumbnailUrl = proxy URL so Android loads from our server (all 10 succeed). */
+    /** Parse "images" command response. When baseUrl+token set, use proxy URL so server fetches thumbnails (reliable on Android). */
     private fun parseImageSearchResults(data: org.json.JSONObject?, baseUrl: String, token: String): List<ImageSearchItem>? {
         if (data?.optString("type") != "images") return null
         val arr = data.optJSONArray("images") ?: return null
@@ -306,8 +306,11 @@ class ChatActivity : AppCompatActivity() {
             val url = o.optString("url", "").takeIf { it.isNotBlank() } ?: thumb ?: continue
             val thumbUrl = thumb ?: url
             val title = o.optString("title", "Image").take(60)
-            val loadUrl = if (useProxy) "$base/api/proxy-image?url=${java.net.URLEncoder.encode(thumbUrl, "UTF-8")}&token=${java.net.URLEncoder.encode(token, "UTF-8")}" else thumbUrl
-            list.add(ImageSearchItem(thumbnailUrl = loadUrl, url = url, title = title))
+            if (useProxy) {
+                list.add(ImageSearchItem(thumbnailUrl = "$base/api/proxy-image", url = url, title = title, postBodyUrl = thumbUrl, authToken = token))
+            } else {
+                list.add(ImageSearchItem(thumbnailUrl = thumbUrl, url = url, title = title))
+            }
         }
         return list.takeIf { it.isNotEmpty() }
     }
