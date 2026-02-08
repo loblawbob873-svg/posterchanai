@@ -2404,25 +2404,33 @@ class ChatHandler {
 
         // Handle different response types
         if (data.type === 'images' && data.images) {
-            // Remove duplicate images message if the same response was delivered twice (e.g. WebSocket retry)
-            const existingImageMessages = this.messagesContainer.querySelectorAll('.message.assistant .image-grid');
-            if (existingImageMessages.length > 0) {
-                const lastGrid = existingImageMessages[existingImageMessages.length - 1];
-                const msgEl = lastGrid.closest('.message');
-                const addedAt = msgEl && parseInt(msgEl.dataset.addedAt, 10);
-                if (addedAt && (Date.now() - addedAt) < 800) {
-                    msgEl.remove();
+            // Prevent duplicate: if we already added an images message in the last 3s, skip (e.g. same response delivered twice via WebSocket/pending)
+            const lastMsg = this.messagesContainer.lastElementChild;
+            if (lastMsg && lastMsg.classList.contains('assistant')) {
+                const grid = lastMsg.querySelector('.image-grid');
+                const addedAt = parseInt(lastMsg.dataset.addedAt, 10);
+                if (grid && addedAt && (Date.now() - addedAt) < 3000) {
+                    return; // already showed this response
                 }
             }
-            // Single grid only, cap at 10 items
+            // Exactly one grid, max 10 unique images (dedupe by src so we never render 20)
             const srcKey = (img) => (img.img_src || img.thumbnail_src || img.thumbnail || '').trim();
             const textLine = data.content ? this.escapeHtml(String(data.content)) : '';
             html = textLine ? `<p class="image-search-caption">${textLine}</p>` : '';
-            const imagesList = Array.isArray(data.images) ? data.images.slice(0, 10) : [];
+            const rawList = Array.isArray(data.images) ? data.images : [];
+            const seen = new Set();
+            const imagesList = [];
+            for (const img of rawList) {
+                if (imagesList.length >= 10) break;
+                const src = srcKey(img);
+                if (!src || (!src.startsWith('http') && !src.startsWith('data:'))) continue;
+                if (seen.has(src)) continue;
+                seen.add(src);
+                imagesList.push(img);
+            }
             let linksHtml = '';
             for (const img of imagesList) {
                 const src = srcKey(img);
-                if (!src || (!src.startsWith('http') && !src.startsWith('data:'))) continue;
                 const safeSrc = this.escapeUrl(src);
                 const safeUrl = this.escapeUrl(img.url || src);
                 const safeTitle = this.escapeHtml(img.title || '');
