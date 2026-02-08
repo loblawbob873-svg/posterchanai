@@ -246,9 +246,25 @@ def _run_migrations():
                         logger.warning(f"[MIGRATE] Failed to add column {col_name} to notes: {e}")
                         pass
 
+    # Create proxy_image_cache table if missing (used for image search thumb IDs across workers)
+    if not inspector.has_table('proxy_image_cache'):
+        with engine.connect() as conn:
+            try:
+                conn.execute(text("""
+                    CREATE TABLE proxy_image_cache (
+                        id VARCHAR(32) PRIMARY KEY,
+                        url TEXT NOT NULL,
+                        expires_at INTEGER NOT NULL
+                    )
+                """))
+                conn.commit()
+                logger.info("[MIGRATE] Created proxy_image_cache table")
+            except Exception as e:
+                logger.warning(f"[MIGRATE] Failed to create proxy_image_cache: {e}")
+
 
 def init_db():
-    from app.models import User, Conversation, Message, Setting
+    from app.models import User, Conversation, Message, Setting, ProxyImageCache  # noqa: F401 - ProxyImageCache registers table for create_all
     logger.info("[INIT] Initializing database...")
     Base.metadata.create_all(bind=engine)
 

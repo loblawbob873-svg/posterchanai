@@ -451,21 +451,19 @@ class CommandService:
         if not results:
             return {"type": "text", "content": f"No images found for: {query}"}
         results = results[:10]
-        # Use short thumb_id in payload so WebSocket message stays small (avoids truncation on Android).
+        # Prefer short thumb_id so WebSocket stays small; if DB register fails, send img_src so client can use POST.
         images_payload = []
         for r in results:
             thumb_url = (r.get("img_src") or "").strip()
             if not thumb_url:
                 continue
+            page_url = (r.get("url") or thumb_url).strip()
+            title = (r.get("title") or "Image")[:200]
             try:
                 thumb_id = proxy_image_register(thumb_url, self.db)
+                images_payload.append({"title": title, "url": page_url, "thumb_id": thumb_id})
             except Exception:
-                continue
-            images_payload.append({
-                "title": (r.get("title") or "Image")[:200],
-                "url": (r.get("url") or thumb_url).strip(),
-                "thumb_id": thumb_id,
-            })
+                images_payload.append({"title": title, "url": page_url, "img_src": thumb_url})
         return {"type": "images", "content": f"Found {len(images_payload)} images for: {query}", "images": images_payload}
 
     async def _files_command(self, query: str) -> dict:
