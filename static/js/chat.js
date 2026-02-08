@@ -2404,15 +2404,13 @@ class ChatHandler {
 
         // Handle different response types
         if (data.type === 'images' && data.images) {
-            // Remove any existing images message from the last 5s (e.g. streamed placeholder) so we only show one
+            // Remove any assistant message from the last 10s that has an image-search grid (duplicate or streamed) so we only show one
             const recent = this.messagesContainer.querySelectorAll('.message.assistant');
+            const now = Date.now();
             for (const el of recent) {
-                const hasGrid = el.querySelector('.image-grid');
                 const addedAt = parseInt(el.dataset.addedAt, 10);
-                if (hasGrid && addedAt && (Date.now() - addedAt) < 5000) {
-                    el.remove();
-                    break;
-                }
+                if (!addedAt || (now - addedAt) > 10000) continue;
+                if (el.querySelector('.image-grid')) el.remove();
             }
             // Build grid with DOM only: one message, one grid, exactly N image links (max 10)
             const srcKey = (img) => (img.img_src || img.thumbnail_src || img.thumbnail || '').trim();
@@ -3112,8 +3110,14 @@ class ChatHandler {
 
         messageEl.appendChild(contentEl);
         this.messagesContainer.appendChild(messageEl);
+        // Enforce max 10 links: remove any extra (e.g. from duplicate or other code)
+        const grid = messageEl.querySelector('.image-grid');
+        if (grid) {
+            const links = grid.querySelectorAll('.image-link');
+            for (let i = 10; i < links.length; i++) links[i].remove();
+        }
         this.scrollToBottom();
-        this.addSummarizeIcons(contentEl);
+        // Do not add summarize icons to image-search messages (would add 10 extra elements)
         return messageEl;
     }
 
