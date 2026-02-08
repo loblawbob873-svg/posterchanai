@@ -2415,7 +2415,7 @@ class ChatHandler {
                 if (hasGrid || bodyImgs.length >= 10) el.remove();
             }
             // Build grid with DOM only: one message, one grid, exactly N image links (max 10)
-            const srcKey = (img) => (img.img_src || img.thumbnail_src || img.thumbnail || '').trim();
+            const srcKey = (img) => (img.thumb_id ? `/api/proxy-image/${img.thumb_id}` : (img.img_src || img.thumbnail_src || img.thumbnail || '').trim());
             const textLine = data.content ? String(data.content) : '';
             const rawList = Array.isArray(data.images) ? data.images : [];
             const seen = new Set();
@@ -2423,7 +2423,8 @@ class ChatHandler {
             for (const img of rawList) {
                 if (imagesList.length >= 10) break;
                 const src = srcKey(img);
-                if (!src || (!src.startsWith('http') && !src.startsWith('data:'))) continue;
+                if (!src) continue;
+                if (!img.thumb_id && !src.startsWith('http') && !src.startsWith('data:')) continue;
                 if (seen.has(src)) continue;
                 seen.add(src);
                 imagesList.push(img);
@@ -3064,7 +3065,7 @@ class ChatHandler {
 
         const gridEl = document.createElement('div');
         gridEl.className = 'image-grid';
-        const srcKey = (img) => (img.img_src || img.thumbnail_src || img.thumbnail || '').trim();
+        const srcKey = (img) => (img.thumb_id ? `/api/proxy-image/${img.thumb_id}` : (img.img_src || img.thumbnail_src || img.thumbnail || '').trim());
         for (const img of imagesList) {
             const src = srcKey(img);
             if (!src) continue;

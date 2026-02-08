@@ -28,6 +28,7 @@ from app.services.caldav_service import (
     update_event_in_calendar,
 )
 from app.services.chat_service import ChatService
+from app.services.proxy_image_cache import register as proxy_image_register
 from app.services.image_factory import generate_image_for_user
 from app.services.mail_service import (
     archive_message,
@@ -450,7 +451,22 @@ class CommandService:
         if not results:
             return {"type": "text", "content": f"No images found for: {query}"}
         results = results[:10]
-        return {"type": "images", "content": f"Found {len(results)} images for: {query}", "images": results}
+        # Use short thumb_id in payload so WebSocket message stays small (avoids truncation on Android).
+        images_payload = []
+        for r in results:
+            thumb_url = (r.get("img_src") or "").strip()
+            if not thumb_url:
+                continue
+            try:
+                thumb_id = proxy_image_register(thumb_url)
+            except Exception:
+                continue
+            images_payload.append({
+                "title": (r.get("title") or "Image")[:200],
+                "url": (r.get("url") or thumb_url).strip(),
+                "thumb_id": thumb_id,
+            })
+        return {"type": "images", "content": f"Found {len(images_payload)} images for: {query}", "images": images_payload}
 
     async def _files_command(self, query: str) -> dict:
         """Search for files in user's storage."""

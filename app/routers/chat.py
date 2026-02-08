@@ -24,6 +24,7 @@ from app.services.storage_service import StorageService
 from app.services.document_service import extract_pdf_text, extract_document_text, extract_image_text
 from app.services.email_service import EmailService
 from app.services.search_service import SearchService, is_safe_url
+from app.services.proxy_image_cache import get as proxy_cache_get
 from app.services.plugin_service import PluginService
 from app.services.intent_service import IntentService
 
@@ -162,6 +163,28 @@ async def _proxy_fetch(url_raw: str):
             raise HTTPException(status_code=502, detail="Upstream did not return an image")
         media_type = ctype if (ctype and ctype.startswith("image/")) else "image/png"
         return content, media_type
+
+
+@router.get("/proxy-image/{thumb_id}")
+async def proxy_image_by_id(
+    thumb_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Proxy an image by short id (from image search). Keeps WebSocket payload small."""
+    raw = proxy_cache_get(thumb_id)
+    if not raw:
+        raise HTTPException(status_code=404, detail="Unknown or expired image id")
+    try:
+        content, media_type = await _proxy_fetch(raw)
+        return Response(content=content, media_type=media_type)
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail="Upstream error")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.debug(f"Proxy image failed: {e}")
+        raise HTTPException(status_code=502, detail="Failed to fetch image")
 
 
 @router.get("/proxy-image")

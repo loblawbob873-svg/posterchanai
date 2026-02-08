@@ -300,16 +300,17 @@ class ChatActivity : AppCompatActivity() {
         val base = baseUrl.trimEnd('/')
         for (i in 0 until arr.length().coerceAtMost(10)) {
             val o = arr.optJSONObject(i) ?: continue
+            val thumbId = o.optString("thumb_id", "").takeIf { it.isNotBlank() }
             val thumb = o.optString("img_src", "").takeIf { it.isNotBlank() }
                 ?: o.optString("thumbnail_src", "").takeIf { it.isNotBlank() }
                 ?: o.optString("thumbnail", "").takeIf { it.isNotBlank() }
             val url = o.optString("url", "").takeIf { it.isNotBlank() } ?: thumb ?: continue
             val thumbUrl = thumb ?: url
             val title = o.optString("title", "Image").take(60)
-            if (useProxy) {
-                list.add(ImageSearchItem(thumbnailUrl = "$base/api/proxy-image", url = url, title = title, postBodyUrl = thumbUrl, authToken = token))
-            } else {
-                list.add(ImageSearchItem(thumbnailUrl = thumbUrl, url = url, title = title))
+            when {
+                thumbId != null && useProxy -> list.add(ImageSearchItem(thumbnailUrl = "$base/api/proxy-image/$thumbId?token=${java.net.URLEncoder.encode(token, "UTF-8")}", url = url, title = title))
+                useProxy -> list.add(ImageSearchItem(thumbnailUrl = "$base/api/proxy-image", url = url, title = title, postBodyUrl = thumbUrl, authToken = token))
+                else -> list.add(ImageSearchItem(thumbnailUrl = thumbUrl, url = url, title = title))
             }
         }
         return list.takeIf { it.isNotEmpty() }
