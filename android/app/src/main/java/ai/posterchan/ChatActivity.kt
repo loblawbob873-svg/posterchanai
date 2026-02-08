@@ -308,7 +308,7 @@ class ChatActivity : AppCompatActivity() {
             val thumbUrl = thumb ?: url
             val title = o.optString("title", "Image").take(60)
             when {
-                thumbId != null && useProxy -> list.add(ImageSearchItem(thumbnailUrl = "$base/api/proxy-image/$thumbId", url = url, title = title, authToken = token))
+                thumbId != null && useProxy -> list.add(ImageSearchItem(thumbnailUrl = "$base/api/proxy-image", url = url, title = title, postBodyThumbId = thumbId, authToken = token))
                 useProxy -> list.add(ImageSearchItem(thumbnailUrl = "$base/api/proxy-image", url = url, title = title, postBodyUrl = thumbUrl, authToken = token))
                 else -> list.add(ImageSearchItem(thumbnailUrl = thumbUrl, url = url, title = title))
             }
@@ -365,10 +365,16 @@ class ChatActivity : AppCompatActivity() {
                         updateSendButtonState()
                         val idx = messages.indexOfFirst { it.id == streamingMessageId }
                         if (idx >= 0) {
-                            val finalContent = MarkdownUtils.stripThinkingTags(messages[idx].content)
-                            messages[idx] = messages[idx].copy(content = finalContent, isStreaming = false)
+                            val msg = messages[idx]
+                            // Don't overwrite command result if response already arrived (stream_end can come after)
+                            if (msg.imageSearchResults != null || msg.generatedImageBase64 != null) {
+                                messages[idx] = msg.copy(isStreaming = false)
+                            } else {
+                                val finalContent = MarkdownUtils.stripThinkingTags(msg.content)
+                                messages[idx] = msg.copy(content = finalContent, isStreaming = false)
+                                speakIfEnabled(finalContent)
+                            }
                             adapter.submitList(messages.toList())
-                            speakIfEnabled(finalContent)
                         }
                     }
                 }
@@ -457,10 +463,15 @@ class ChatActivity : AppCompatActivity() {
                         updateSendButtonState()
                         val idx = messages.indexOfFirst { it.id == streamingMessageId }
                         if (idx >= 0) {
-                            val finalContent = MarkdownUtils.stripThinkingTags(messages[idx].content)
-                            messages[idx] = messages[idx].copy(content = finalContent, isStreaming = false)
+                            val msg = messages[idx]
+                            if (msg.imageSearchResults != null || msg.generatedImageBase64 != null) {
+                                messages[idx] = msg.copy(isStreaming = false)
+                            } else {
+                                val finalContent = MarkdownUtils.stripThinkingTags(msg.content)
+                                messages[idx] = msg.copy(content = finalContent, isStreaming = false)
+                                speakIfEnabled(finalContent)
+                            }
                             adapter.submitList(messages.toList())
-                            speakIfEnabled(finalContent)
                         }
                     }
                 }

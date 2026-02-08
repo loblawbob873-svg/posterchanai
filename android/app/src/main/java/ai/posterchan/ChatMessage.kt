@@ -5,8 +5,10 @@ data class ImageSearchItem(
     val thumbnailUrl: String,
     val url: String,
     val title: String,
-    /** When set, load via POST to thumbnailUrl with this URL in body (avoids GET query length limit). */
+    /** When set, load via POST with {"url": postBodyUrl}. */
     val postBodyUrl: String? = null,
+    /** When set, load via POST with {"thumb_id": postBodyThumbId}. Most reliable on Android (no GET auth issues). */
+    val postBodyThumbId: String? = null,
     val authToken: String? = null
 )
 

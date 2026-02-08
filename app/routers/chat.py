@@ -208,7 +208,8 @@ async def proxy_image_get(
 
 
 class ProxyImageBody(BaseModel):
-    url: str
+    url: Optional[str] = None
+    thumb_id: Optional[str] = None
 
 
 @router.post("/proxy-image")
@@ -217,10 +218,16 @@ async def proxy_image_post(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Proxy an image URL (POST body); use for long URLs (e.g. Android image search)."""
-    raw = (body.url or "").strip()
+    """Proxy an image: send url (long URLs) or thumb_id (short id from image search). Auth via header/cookie."""
+    raw = None
+    if (body.thumb_id or "").strip():
+        raw = proxy_cache_get((body.thumb_id or "").strip(), db)
+        if not raw:
+            raise HTTPException(status_code=404, detail="Unknown or expired image id")
+    elif (body.url or "").strip():
+        raw = (body.url or "").strip()
     if not raw:
-        raise HTTPException(status_code=400, detail="url required")
+        raise HTTPException(status_code=400, detail="url or thumb_id required")
     try:
         content, media_type = await _proxy_fetch(raw)
         return Response(content=content, media_type=media_type)

@@ -122,6 +122,7 @@ class MessageAdapter(
                             0L,
                             onError = { iv.visibility = View.GONE },
                             postBodyUrl = item.postBodyUrl,
+                            postBodyThumbId = item.postBodyThumbId,
                             authToken = item.authToken
                         )
                     } else {
