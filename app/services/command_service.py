@@ -458,7 +458,7 @@ class CommandService:
             if not thumb_url:
                 continue
             try:
-                thumb_id = proxy_image_register(thumb_url)
+                thumb_id = proxy_image_register(thumb_url, self.db)
             except Exception:
                 continue
             images_payload.append({

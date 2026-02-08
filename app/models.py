@@ -78,6 +78,15 @@ class Setting(Base):
     value = Column(Text)
 
 
+class ProxyImageCache(Base):
+    """Short-lived cache for image proxy thumb IDs (shared across workers)."""
+    __tablename__ = "proxy_image_cache"
+
+    id = Column(String(32), primary_key=True)
+    url = Column(Text, nullable=False)
+    expires_at = Column(Integer, nullable=False)  # Unix timestamp when this entry expires
+
+
 class UserSetting(Base):
     """Per-user settings (calendar configs, etc.)"""
     __tablename__ = "user_settings"

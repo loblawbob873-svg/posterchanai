@@ -49,6 +49,8 @@ object ImageLoader {
                     val body = JSONObject().put("url", postBodyUrl).toString()
                     builder.post(body.toRequestBody("application/json".toMediaType()))
                     builder.header("Authorization", "Bearer $authToken")
+                } else if (!authToken.isNullOrBlank()) {
+                    builder.header("Authorization", "Bearer $authToken")
                 }
                 val request = builder.build()
                 client.newCall(request).execute().use { response ->

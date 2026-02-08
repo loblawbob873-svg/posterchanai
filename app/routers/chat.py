@@ -172,7 +172,7 @@ async def proxy_image_by_id(
     current_user: User = Depends(get_current_user),
 ):
     """Proxy an image by short id (from image search). Keeps WebSocket payload small."""
-    raw = proxy_cache_get(thumb_id)
+    raw = proxy_cache_get(thumb_id, db)
     if not raw:
         raise HTTPException(status_code=404, detail="Unknown or expired image id")
     try:

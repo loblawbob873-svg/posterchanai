@@ -1,34 +1,37 @@
-"""In-memory cache for image proxy short IDs. Used to keep WebSocket image-search payload small (thumb_id instead of long URLs)."""
+"""Cache for image proxy short IDs. Uses DB so it works across workers (e.g. uvicorn --workers 2)."""
 import secrets
 import time
 import logging
+from sqlalchemy.orm import Session
+
+from app.models import ProxyImageCache as ProxyImageCacheModel
 
 logger = logging.getLogger(__name__)
-
-# id -> (url, expires_at)
-_cache: dict[str, tuple[str, float]] = {}
 _TTL_SEC = 300  # 5 minutes
 
 
-def register(url: str) -> str:
-    """Store URL and return a short id. Same URL can be registered multiple times (new id each time)."""
+def register(url: str, db: Session) -> str:
+    """Store URL in DB and return a short id."""
     raw = (url or "").strip()
     if not raw:
         raise ValueError("url required")
     sid = secrets.token_hex(4)  # 8 chars
-    _cache[sid] = (raw, time.monotonic() + _TTL_SEC)
+    expires_at = int(time.time()) + _TTL_SEC
+    row = ProxyImageCacheModel(id=sid, url=raw, expires_at=expires_at)
+    db.add(row)
+    db.commit()
     return sid
 
 
-def get(sid: str) -> str | None:
+def get(sid: str, db: Session) -> str | None:
     """Return stored URL for id, or None if missing/expired."""
     if not sid:
         return None
-    entry = _cache.get(sid)
-    if not entry:
+    row = db.query(ProxyImageCacheModel).filter(ProxyImageCacheModel.id == sid).first()
+    if not row:
         return None
-    url, expires = entry
-    if time.monotonic() > expires:
-        del _cache[sid]
+    if time.time() > row.expires_at:
+        db.delete(row)
+        db.commit()
         return None
-    return url
+    return row.url
