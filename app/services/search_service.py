@@ -161,7 +161,7 @@ class SearchService:
                     })
                     if len(out) >= limit:
                         break
-                return out
+                return out[:limit]
             except Exception as e:
                 logger.error(f"Image search error: {e}")
                 return []

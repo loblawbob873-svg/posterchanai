@@ -449,7 +449,7 @@ class CommandService:
         results = await self.search_service.image_search(query, limit=10)
         if not results:
             return {"type": "text", "content": f"No images found for: {query}"}
-
+        results = results[:10]
         return {"type": "images", "content": f"Found {len(results)} images for: {query}", "images": results}
 
     async def _files_command(self, query: str) -> dict:

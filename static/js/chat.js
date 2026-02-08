@@ -2404,25 +2404,35 @@ class ChatHandler {
 
         // Handle different response types
         if (data.type === 'images' && data.images) {
-            // Single grid only: no contentHtml to avoid duplicate or extra empty slots
+            // Remove duplicate images message if the same response was delivered twice (e.g. WebSocket retry)
+            const existingImageMessages = this.messagesContainer.querySelectorAll('.message.assistant .image-grid');
+            if (existingImageMessages.length > 0) {
+                const lastGrid = existingImageMessages[existingImageMessages.length - 1];
+                const msgEl = lastGrid.closest('.message');
+                const addedAt = msgEl && parseInt(msgEl.dataset.addedAt, 10);
+                if (addedAt && (Date.now() - addedAt) < 800) {
+                    msgEl.remove();
+                }
+            }
+            // Single grid only, cap at 10 items
             const srcKey = (img) => (img.img_src || img.thumbnail_src || img.thumbnail || '').trim();
             const textLine = data.content ? this.escapeHtml(String(data.content)) : '';
             html = textLine ? `<p class="image-search-caption">${textLine}</p>` : '';
-            html += '<div class="image-grid">';
             const imagesList = Array.isArray(data.images) ? data.images.slice(0, 10) : [];
+            let linksHtml = '';
             for (const img of imagesList) {
                 const src = srcKey(img);
                 if (!src || (!src.startsWith('http') && !src.startsWith('data:'))) continue;
                 const safeSrc = this.escapeUrl(src);
                 const safeUrl = this.escapeUrl(img.url || src);
                 const safeTitle = this.escapeHtml(img.title || '');
-                html += `<a href="${safeUrl}" target="_blank" class="image-link" style="display:inline-block;">
+                linksHtml += `<a href="${safeUrl}" target="_blank" class="image-link" style="display:inline-block;">
                     <img src="${safeSrc}" alt="${safeTitle}"
                          onerror="this.closest('.image-link').style.display='none';"
                          loading="lazy" referrerpolicy="no-referrer">
                 </a>`;
             }
-            html += '</div>';
+            if (linksHtml) html += '<div class="image-grid">' + linksHtml + '</div>';
         } else if (data.type === 'generated_image') {
             console.log('[IMAGE] Received generated_image response:', {
                 hasImage: !!data.image,
@@ -2942,6 +2952,7 @@ class ChatHandler {
     addMessage(role, content, isHtml = false, skipUserButtons = false, imagePath = null) {
         const messageEl = document.createElement('div');
         messageEl.className = `message ${role}`;
+        messageEl.dataset.addedAt = String(Date.now());
 
         const contentEl = document.createElement('div');
         contentEl.className = 'message-content';
