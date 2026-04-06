@@ -114,10 +114,19 @@ class LlamaService:
         # Context and generation settings
         # Track configured value separately from actual loaded value
         configured_num_ctx = int(get_setting("ollama_num_ctx", "4096"))
-        # Only update num_ctx if model not loaded yet (preserve actual loaded value)
-        if self._model is None:
-            self.num_ctx = configured_num_ctx
+        logger.info(f"[LLAMA] _load_settings: configured_num_ctx={configured_num_ctx}, _model is None: {self._model is None}")
+        
+        # Store old value for comparison
+        old_num_ctx = getattr(self, '_configured_num_ctx', None)
+        
+        # Always update num_ctx when loading settings
+        self.num_ctx = configured_num_ctx
         self._configured_num_ctx = configured_num_ctx
+        self.num_predict = int(get_setting("ollama_num_predict", "2048"))
+        
+        # Force reload model if context changed
+        if self._model is not None and old_num_ctx is not None and old_num_ctx != configured_num_ctx:
+            logger.info(f"[LLAMA] Context changed from {old_num_ctx} to {configured_num_ctx}, reloading model...")
         self.num_predict = int(get_setting("ollama_num_predict", "2048"))
 
         # GPU settings
@@ -265,13 +274,8 @@ class LlamaService:
 
             # Try loading with automatic context size reduction on failure
             context_sizes_to_try = [self.num_ctx]
-            # If context size is very large, add smaller fallback sizes
-            if self.num_ctx > 8192:
-                context_sizes_to_try.extend([8192, 4096, 2048])
-            elif self.num_ctx > 4096:
-                context_sizes_to_try.extend([4096, 2048])
-            elif self.num_ctx > 2048:
-                context_sizes_to_try.append(2048)
+            # Only add fallback sizes - don't auto-reduce unless offload is explicitly disabled
+            # (users with large contexts want their context size, not auto-reduced)
             
             last_error = None
             # If GPU layers is -1 (all layers) and we have a large model, this might fail
@@ -293,13 +297,15 @@ class LlamaService:
                         n_ctx=attempt_ctx,
                         n_gpu_layers=gpu_layers,
                         n_threads=self.n_threads,
-                        n_threads_batch=self.n_threads,  # Use same threads for batch processing
+                        n_threads_batch=self.n_threads,
                         n_batch=self.n_batch,
                         use_mmap=self.use_mmap,
                         use_mlock=self.use_mlock,
                         flash_attn=False,
+                        offload_kqv=True,
                         verbose=False,
                     )
+                    logger.info(f"[LLAMA] Model loaded with n_ctx={self._model.n_ctx()}")
                     # Success - update num_ctx if we used a smaller value
                     if attempt_ctx != self.num_ctx:
                         logger.warning(f"  Model loaded with reduced context size: {attempt_ctx} (configured: {self.num_ctx})")
@@ -310,6 +316,7 @@ class LlamaService:
                 except ValueError as ve:
                     # Catch ValueError specifically for llama_context errors
                     error_msg = str(ve)
+                    logger.error(f"[LLAMA] ValueError caught: {error_msg}")
                     if "llama_context" in error_msg.lower() or "create" in error_msg.lower():
                         last_error = ve
                         if attempt_ctx == context_sizes_to_try[-1]:

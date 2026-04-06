@@ -279,6 +279,7 @@ class OllamaService:
                                     "temperature": options.get("temperature", 0.7),
                                     "top_p": options.get("top_p", 0.9),
                                     "max_tokens": options.get("num_predict", 2048),
+                                    "max_context_tokens": options.get("num_ctx", self.num_ctx),
                                     "stop": options.get("stop", []) or None
                                 }
                             ) as response:

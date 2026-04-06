@@ -231,9 +231,9 @@ class IPEXService:
         # Context and generation settings
         # Track configured value separately from actual loaded value
         configured_num_ctx = int(get_setting("ollama_num_ctx", "4096"))
-        # Only update num_ctx if model not loaded yet (preserve actual loaded value)
-        if self._model is None:
-            self.num_ctx = configured_num_ctx
+        logger.info(f"[IPEX] _load_settings: configured_num_ctx={configured_num_ctx}, _model is None: {self._model is None}")
+        # Always update num_ctx when loading settings (for debug)
+        self.num_ctx = configured_num_ctx
         self._configured_num_ctx = configured_num_ctx
         self.num_predict = int(get_setting("ollama_num_predict", "2048"))
         self.n_batch = int(get_setting("llm_n_batch", "2048"))  # Batch size for prompt processing
@@ -351,6 +351,7 @@ class IPEXService:
                         n_threads_batch=self.n_threads,
                         use_mmap=self.use_mmap,
                         use_mlock=self.use_mlock,
+                        offload_kqv=True,  # Allow KV cache to use CPU when GPU memory insufficient
                         verbose=False,
                     )
                     self._tokenizer = None  # llama.cpp handles tokenization
