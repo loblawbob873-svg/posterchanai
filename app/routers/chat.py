@@ -1080,6 +1080,21 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                 except asyncio.TimeoutError:
                                     logger.warning(f"URL fetching timed out after 15s for URLs: {urls}")
                                     url_context = "\n\n[Note: Could not fetch URL content due to timeout]"
+                            
+                            # Get ACTUAL context size for intelligent truncation
+                            actual_ctx = 4096
+                            try:
+                                from app.services.inference_factory import get_inference_service
+                                service = get_inference_service(db)
+                                actual_ctx = getattr(service, 'num_ctx', 4096)
+                            except Exception:
+                                pass
+                            
+                            # Reserve ~2500 tokens for system/history/user/response, use rest for URL content
+                            max_url_chars = max(500, int(actual_ctx * 4) - 10000)
+                            if len(url_context) > max_url_chars:
+                                logger.info(f"Truncating URL context from {len(url_context):,} to {max_url_chars:,} chars")
+                                url_context = url_context[:max_url_chars] + "\n\n[URL content truncated to fit context window]"
 
                             # Add current message with file/image content if provided
                             if image_data:
@@ -1105,25 +1120,22 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                                         "content": f"{content or 'The user uploaded an image.'} [Note: An image was uploaded but no text could be extracted from it. Please ask the user to describe what they see.]"
                                     })
                             elif file_content:
-                                # Get context size to intelligently truncate file content
-                                # Leave room for system prompt, message history, user message, and response
+                                # Get ACTUAL context size (may be reduced from configured value due to memory)
+                                context_size = 4096  # Safe default
                                 try:
-                                    from app.database import safe_query_settings
-                                    settings = safe_query_settings(db)
-                                    context_size = int(settings.get("ollama_num_ctx", "4096"))
-                                    # Reserve space: system prompt (~500), history (~2000), user message (~500), response (~1000)
-                                    # Use ~60% of context for file content to be safe
-                                    max_file_chars = int(context_size * 0.6)
-                                    
-                                    if len(file_content) > max_file_chars:
-                                        logger.info(f"Truncating file content from {len(file_content):,} to {max_file_chars:,} chars (context size: {context_size})")
-                                        file_content = file_content[:max_file_chars] + "\n\n[File content truncated - document is too large for context window]"
+                                    from app.services.inference_factory import get_inference_service
+                                    service = get_inference_service(db)
+                                    context_size = getattr(service, 'num_ctx', 4096)
                                 except Exception as e:
-                                    logger.warning(f"Could not get context size for truncation: {e}")
-                                    # Fallback: use a conservative limit
-                                    max_file_chars = 20000
-                                    if len(file_content) > max_file_chars:
-                                        file_content = file_content[:max_file_chars] + "\n\n[File content truncated - document is too large]"
+                                    logger.debug(f"Could not get service context size: {e}")
+                                
+                                # Use ~50% of context tokens as chars for file content
+                                # (accounting for system/history/response overhead)
+                                max_file_chars = int(context_size * 2.0)
+                                
+                                if len(file_content) > max_file_chars:
+                                    logger.info(f"Truncating file content from {len(file_content):,} to {max_file_chars:,} chars (actual context: {context_size})")
+                                    file_content = file_content[:max_file_chars] + "\n\n[File content truncated - document is too large for context window]"
                                 
                                 # If user message is just "summarize" or similar, make the instruction explicit
                                 user_message_lower = (content or "").lower().strip()

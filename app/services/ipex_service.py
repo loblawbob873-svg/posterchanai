@@ -210,6 +210,7 @@ class IPEXService:
         self._tokenizer = None
         self._model_path: Optional[str] = None
         self._is_gguf: bool = False
+        self._configured_num_ctx: int = 4096  # Track configured context size
         self._load_settings()
         _start_idle_check()
 
@@ -228,7 +229,12 @@ class IPEXService:
         self.default_model = get_setting("ollama_model", "ipex")
 
         # Context and generation settings
-        self.num_ctx = int(get_setting("ollama_num_ctx", "4096"))
+        # Track configured value separately from actual loaded value
+        configured_num_ctx = int(get_setting("ollama_num_ctx", "4096"))
+        # Only update num_ctx if model not loaded yet (preserve actual loaded value)
+        if self._model is None:
+            self.num_ctx = configured_num_ctx
+        self._configured_num_ctx = configured_num_ctx
         self.num_predict = int(get_setting("ollama_num_predict", "2048"))
         self.n_batch = int(get_setting("llm_n_batch", "2048"))  # Batch size for prompt processing
         self.n_gpu_layers = int(get_setting("llm_gpu_layers", "-1"))  # -1 = all layers on GPU
@@ -272,17 +278,24 @@ class IPEXService:
         self.disable_thinking = get_setting("llm_disable_thinking", "false").lower() == "true"
 
     def _ensure_model_loaded(self):
-        """Load model if not already loaded or if path changed"""
+        """Load model if not already loaded, path changed, or configured context size changed"""
+        configured_changed = self._model is not None and self._configured_num_ctx != self.num_ctx
+        
         # Quick check without lock
-        if self._model is not None and self._model_path == self.model_path:
+        if self._model is not None and self._model_path == self.model_path and not configured_changed:
             return
+
+        # Reload if configured context size changed
+        if configured_changed:
+            logger.info(f"Configured context size changed from {self._configured_num_ctx} to {self.num_ctx}, reloading model...")
 
         # Use lock for actual loading to prevent race conditions
         with _model_load_lock:
             # Double-check after acquiring lock
-            if self._model is not None and self._model_path == self.model_path:
+            configured_changed = self._model is not None and self._configured_num_ctx != self.num_ctx
+            if self._model is not None and self._model_path == self.model_path and not configured_changed:
                 return
-
+            
             # Check and setup oneAPI environment before loading
             _check_and_setup_oneapi()
 

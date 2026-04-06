@@ -157,8 +157,15 @@ class MessageFormatter {
         // Inline code `text` (but not inside code blocks)
         html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
 
-        // Plain URLs (not already in a link)
-        html = html.replace(/(https?:\/\/[^\s<]+)(?![^<]*<\/a>)/g, '<a href="$1" target="_blank">$1</a>');
+        // Plain URLs (not already in a link) - exclude trailing emojis, emoji variation selector, and common punctuation
+        // Emoji regex pattern: excludes emoji characters and variation selectors
+        html = html.replace(/(https?:\/\/[^\s<]+?)([\u0000-\u1FFFF]*?)(?![^<]*<\/a>)/g, (match, url, trailing) => {
+            // Only keep trailing if it's not emoji-related (whitespace, letters, numbers, basic punctuation)
+            if (/^[\s\w.,;:!?()[\]{}'"\-]*$/.test(trailing)) {
+                return '<a href="' + url + '" target="_blank">' + url + trailing + '</a>';
+            }
+            return '<a href="' + url + '" target="_blank">' + url + '</a>';
+        });
 
         // Newlines
         html = html.replace(/\n/g, '<br>');

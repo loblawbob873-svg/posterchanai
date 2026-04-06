@@ -93,6 +93,7 @@ class LlamaService:
         self.db = db
         self._model = None
         self._model_path: Optional[str] = None
+        self._configured_num_ctx: int = 4096  # Track configured context size
         self._load_settings()
         _start_idle_check()
 
@@ -111,7 +112,12 @@ class LlamaService:
         self.default_model = get_setting("ollama_model", "native")
 
         # Context and generation settings
-        self.num_ctx = int(get_setting("ollama_num_ctx", "4096"))
+        # Track configured value separately from actual loaded value
+        configured_num_ctx = int(get_setting("ollama_num_ctx", "4096"))
+        # Only update num_ctx if model not loaded yet (preserve actual loaded value)
+        if self._model is None:
+            self.num_ctx = configured_num_ctx
+        self._configured_num_ctx = configured_num_ctx
         self.num_predict = int(get_setting("ollama_num_predict", "2048"))
 
         # GPU settings
@@ -162,9 +168,13 @@ class LlamaService:
         self.system_prompt = get_setting("ollama_system_prompt", "You are a helpful, friendly AI assistant.")
 
     def _ensure_model_loaded(self):
-        """Load model if not already loaded or if path changed"""
-        if self._model is not None and self._model_path == self.model_path:
+        """Load model if not already loaded, path changed, or configured context size changed"""
+        configured_changed = self._model is not None and self._configured_num_ctx != self.num_ctx
+        if self._model is not None and self._model_path == self.model_path and not configured_changed:
             return
+        
+        if configured_changed:
+            logger.info(f"Configured context size changed from {self._configured_num_ctx} to {self.num_ctx}, reloading model...")
 
         # Unload previous model
         if self._model is not None:
