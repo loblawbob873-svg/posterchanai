@@ -274,8 +274,17 @@ class LlamaService:
 
             # Try loading with automatic context size reduction on failure
             context_sizes_to_try = [self.num_ctx]
-            # Only add fallback sizes - don't auto-reduce unless offload is explicitly disabled
-            # (users with large contexts want their context size, not auto-reduced)
+            # Add fallback sizes for memory issues
+            if self.num_ctx > 32768:
+                context_sizes_to_try.extend([32768, 16384, 8192, 4096, 2048])
+            elif self.num_ctx > 16384:
+                context_sizes_to_try.extend([16384, 8192, 4096, 2048])
+            elif self.num_ctx > 8192:
+                context_sizes_to_try.extend([8192, 4096, 2048])
+            elif self.num_ctx > 4096:
+                context_sizes_to_try.extend([4096, 2048])
+            elif self.num_ctx > 2048:
+                context_sizes_to_try.append(2048)
             
             last_error = None
             # If GPU layers is -1 (all layers) and we have a large model, this might fail
