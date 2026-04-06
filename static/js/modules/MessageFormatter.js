@@ -134,6 +134,26 @@ class MessageFormatter {
             return `\x00LINK${index}\x00`;
         });
 
+        // Process markdown headers and blockquotes BEFORE escaping
+        // Headers: ### Header -> <h3>Header</h3>
+        processed = processed.replace(/^###\s+(.+)$/gm, '<h3>$1</h3>');
+        processed = processed.replace(/^##\s+(.+)$/gm, '<h2>$1</h2>');
+        processed = processed.replace(/^#\s+(.+)$/gm, '<h1>$1</h1>');
+        // Blockquotes: > text -> <blockquote>text</blockquote>
+        processed = processed.replace(/^(>+\s*)(.+)$/gm, (match, prefix, content) => {
+            return `<blockquote>${content}</blockquote>`;
+        });
+
+        // Handle raw HTML tags in LLM output
+        processed = processed.replace(/<(h[123]|blockquote)\b[^>]*>(.*?)<\/\1>/gi, (match, tag, content) => {
+            return `\x00HTMLTAG_${tag}\x00${content}\x00/HTMLTAG_${tag}\x00`;
+        });
+
+        // Handle LLM output that contains placeholder strings like "HTMLTAG_h3" without < >
+        processed = processed.replace(/HTMLTAG_(h[123]|blockquote)(.+?)\/HTMLTAG_\1/gi, (match, tag, content) => {
+            return `\x00HTMLTAG_${tag}\x00${content}\x00/HTMLTAG_${tag}\x00`;
+        });
+
         // Escape HTML
         let html = processed
             .replace(/&/g, '&amp;')
@@ -170,6 +190,16 @@ class MessageFormatter {
         // Newlines
         html = html.replace(/\n/g, '<br>');
 
+        // Restore preserved HTML tags (h3, h2, h1, blockquote)
+        html = html.replace(/&lt;(h[123]|blockquote)\b[^&]*&gt;(.*?)&lt;\/\1&gt;/gi, (match, tag, content) => {
+            return `<${tag}>${content}</${tag}>`;
+        });
+
+        // Fallback: directly replace any remaining HTMLTAG placeholders in HTML output
+        html = html.replace(/HTMLTAG_(h[123]|blockquote)(.+?)\/HTMLTAG_\1/gi, (match, tag, content) => {
+            return `<${tag}>${content}</${tag}>`;
+        });
+
         // Restore code blocks with proper formatting
         html = html.replace(/\x00CODEBLOCK(\d+)\x00/g, (match, index) => {
             const block = codeBlocks[parseInt(index)];
@@ -186,6 +216,9 @@ class MessageFormatter {
                 <pre${langClass}><code id="${blockId}">${escapedCode}</code></pre>
             </div>`;
         });
+
+        // Remove trailing emojis that LLM adds after links (📋, 📧, 🔄, ✏️, etc.)
+        html = html.replace(/((?:📋|📧|🔄|✏️|💬|📁|🌐|✨|🗂️|📎|📷|🎤|🏠|🔍|📝)\s*)+$/g, '');
 
         return html;
     }

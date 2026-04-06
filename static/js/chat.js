@@ -3959,11 +3959,43 @@ class ChatHandler {
             return `\x00LINK${index}\x00`;
         });
 
+        // Convert markdown headers and blockquotes BEFORE escaping
+        // Headers: ### Header -> <h3>Header</h3>
+        processed = processed.replace(/^###\s+(.+)$/gm, '<h3>$1</h3>');
+        processed = processed.replace(/^##\s+(.+)$/gm, '<h2>$1</h2>');
+        processed = processed.replace(/^#\s+(.+)$/gm, '<h1>$1</h1>');
+        // Blockquotes: > text -> <blockquote>text</blockquote>
+        // Handle single or multiple > at start of line (including nested blockquotes)
+        processed = processed.replace(/^(>+\s*)(.+)$/gm, (match, prefix, content) => {
+            return `<blockquote>${content}</blockquote>`;
+        });
+
+        // Also handle raw HTML tags already in the output (LLM sometimes generates them directly)
+        // Convert <h3>, <h2>, <h1>, <blockquote> tags to placeholders before escaping
+        processed = processed.replace(/<(h[123]|blockquote)\b[^>]*>(.*?)<\/\1>/gi, (match, tag, content) => {
+            return `\x00HTMLTAG_${tag}\x00${content}\x00/HTMLTAG_${tag}\x00`;
+        });
+
+        // Handle LLM output that contains placeholder strings like "HTMLTAG_h3" without < >
+        processed = processed.replace(/HTMLTAG_(h[123]|blockquote)(.+?)\/HTMLTAG_\1/gi, (match, tag, content) => {
+            return `\x00HTMLTAG_${tag}\x00${content}\x00/HTMLTAG_${tag}\x00`;
+        });
+
         // Escape HTML
         let html = processed
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;');
+
+        // Restore preserved HTML tags from escaped form
+        html = html.replace(/&lt;(h[123]|blockquote)\b[^&]*&gt;(.*?)&lt;\/\1&gt;/gi, (match, tag, content) => {
+            return `<${tag}>${content}</${tag}>`;
+        });
+
+        // Fallback: directly replace any remaining HTMLTAG placeholders in HTML output
+        html = html.replace(/HTMLTAG_(h[123]|blockquote)(.+?)\/HTMLTAG_\1/gi, (match, tag, content) => {
+            return `<${tag}>${content}</${tag}>`;
+        });
 
         // Restore markdown images as <img> (before links so order is preserved)
         html = html.replace(/\x00IMG(\d+)\x00/g, (match, index) => {
@@ -4059,6 +4091,9 @@ class ChatHandler {
                 <pre${langClass}><code id="${blockId}">${escapedCode}</code></pre>
             </div>`;
         });
+
+        // Remove trailing emojis that LLM adds after links (📋, 📧, 🔄, ✏️, etc.)
+        html = html.replace(/((?:📋|📧|🔄|✏️|💬|📁|🌐|✨|🗂️|📎|📷|🎤|🏠|🔍|📝)\s*)+$/g, '');
 
         return html;
     }
