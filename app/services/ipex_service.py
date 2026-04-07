@@ -342,18 +342,49 @@ class IPEXService:
                             f"Install with: pip install llama-cpp-python"
                         )
 
-                    self._model = Llama(
-                        model_path=self.model_path,
-                        n_ctx=self.num_ctx,
-                        n_gpu_layers=gpu_layers if not self.cpu_mode else 0,
-                        n_batch=self.n_batch,
-                        n_threads=self.n_threads,
-                        n_threads_batch=self.n_threads,
-                        use_mmap=self.use_mmap,
-                        use_mlock=self.use_mlock,
-                        offload_kqv=True,  # Allow KV cache to use CPU when GPU memory insufficient
-                        verbose=False,
-                    )
+                    context_sizes_to_try = [self.num_ctx]
+                    if self.num_ctx > 32768:
+                        context_sizes_to_try.extend([32768, 16384, 8192, 4096, 2048])
+                    elif self.num_ctx > 16384:
+                        context_sizes_to_try.extend([16384, 8192, 4096, 2048])
+                    elif self.num_ctx > 8192:
+                        context_sizes_to_try.extend([8192, 4096, 2048])
+                    elif self.num_ctx > 4096:
+                        context_sizes_to_try.extend([4096, 2048])
+                    elif self.num_ctx > 2048:
+                        context_sizes_to_try.append(2048)
+                    
+                    last_error = None
+                    model_loaded = False
+                    for attempt_ctx in context_sizes_to_try:
+                        try:
+                            logger.info(f"[IPEX] Attempting to load with n_ctx={attempt_ctx}")
+                            self._model = Llama(
+                                model_path=self.model_path,
+                                n_ctx=attempt_ctx,
+                                n_gpu_layers=gpu_layers if not self.cpu_mode else 0,
+                                n_batch=self.n_batch,
+                                n_threads=self.n_threads,
+                                n_threads_batch=self.n_threads,
+                                use_mmap=self.use_mmap,
+                                use_mlock=self.use_mlock,
+                                offload_kqv=True,
+                                verbose=False,
+                            )
+                            logger.info(f"[IPEX] GGUF model loaded with n_ctx={self._model.n_ctx()} (requested: {self.num_ctx})")
+                            self.num_ctx = attempt_ctx  # Update to working context
+                            model_loaded = True
+                            break
+                        except Exception as llama_err:
+                            last_error = llama_err
+                            error_msg = str(llama_err)
+                            logger.warning(f"[IPEX] Failed with n_ctx={attempt_ctx}: {error_msg}")
+                            if attempt_ctx == context_sizes_to_try[-1]:
+                                break  # Last one failed
+                    
+                    if not model_loaded:
+                        raise RuntimeError(f"Failed to load GGUF model: {last_error}")
+                    
                     self._tokenizer = None  # llama.cpp handles tokenization
                     self._is_gguf = True
                     logger.info("GGUF model loaded successfully")
