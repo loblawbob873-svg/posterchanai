@@ -178,7 +178,9 @@ class LlamaService:
 
     def _ensure_model_loaded(self):
         """Load model if not already loaded, path changed, or configured context size changed"""
-        configured_changed = self._model is not None and self._configured_num_ctx != self.num_ctx
+        # Check if configured context differs from what model was loaded with
+        actual_model_ctx = self._model.n_ctx() if self._model is not None else 0
+        configured_changed = self._model is not None and (self._configured_num_ctx != self.num_ctx or actual_model_ctx != self.num_ctx)
         if self._model is not None and self._model_path == self.model_path and not configured_changed:
             return
         
