@@ -10,6 +10,8 @@ from app.database import get_db
 from app.models import User, Setting
 from app.auth import get_current_user, get_admin_user
 from app.services.telegram_service import telegram_service
+from app.services.chat_service import ChatService
+from app.services.command_service import CommandService
 
 logger = logging.getLogger(__name__)
 
