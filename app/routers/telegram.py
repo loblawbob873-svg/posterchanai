@@ -191,21 +191,27 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                 
                 if ocr_text:
                     language = arg.replace("to", "").strip() or "Thai"
-                    logger.warning(f"TRANSLATE: Translating to {language}")
+                    logger.warning(f"TRANSLATE: Translating OCR text to {language}, text: {ocr_text[:50]}...")
+                    
+                    # Create a fresh chat service WITHOUT user context for translation
+                    from app.services.chat_service import ChatService as FreshChatService
+                    fresh_chat_service = FreshChatService(db, user=None)
                     
                     translate_messages = [
-                        {"role": "system", "content": f"Translate the following text to {language}. Output ONLY the translation, nothing else."},
+                        {"role": "system", "content": f"Translate the following text to {language}. Output ONLY the translation, nothing else. Do NOT add any commentary, emojis, or persona."},
                         {"role": "user", "content": ocr_text}
                     ]
                     
                     try:
-                        translated = await chat_service.chat(translate_messages)
+                        translated = await fresh_chat_service.chat(translate_messages)
+                        logger.warning(f"TRANSLATE: Got translation: {translated[:100]}...")
                         result = {"type": "text", "content": f"## Translation to {language}\n\n{translated}"}
                     except Exception as e:
                         logger.error(f"Translation error: {e}")
                         result = {"type": "text", "content": f"Translation failed: {str(e)}"}
                     
                     await telegram_service.send_message(chat_id, result.get("content", ""))
+                    logger.warning(f"TRANSLATE: Sent translation result")
                     return {"ok": True}
             
             # Download document
