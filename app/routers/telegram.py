@@ -525,7 +525,10 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                         result = {"type": "text", "content": f"Sorry, I encountered an error: {error_msg}"}
                     
                     # Save messages to conversation history
-                    if conversation:
+                    # Skip saving if response is an error (prevents polluting context)
+                    response_content = result.get("content", "")
+                    is_error_response = response_content.startswith("Error:") or response_content.startswith("Sorry, I encountered an error")
+                    if conversation and not is_error_response:
                         user_msg = Message(
                             conversation_id=conversation.id,
                             role="user",
@@ -535,12 +538,14 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                         assistant_msg = Message(
                             conversation_id=conversation.id,
                             role="assistant",
-                            content=result.get("content", "")
+                            content=response_content
                         )
                         db.add(assistant_msg)
                         conversation.updated_at = datetime.utcnow()
                         db.commit()
                         logger.info(f"Telegram: Saved messages to conversation {conversation.id}")
+                    elif is_error_response:
+                        logger.warning(f"Telegram: Skipping save of error response to conversation: {response_content[:80]}")
             
             # Handle the result
             response_type = result.get("type", "text")
