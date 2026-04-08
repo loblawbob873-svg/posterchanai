@@ -92,6 +92,11 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
             photos = message.get("photo", [])
             document = message.get("document", [])
             
+            logger.info(f"Full message keys: {list(message.keys())}")
+            logger.info(f"Photo field type: {type(photos)}, length: {len(photos) if photos else 0}")
+            logger.info(f"Document field: {document}")
+            logger.info(f"Message text: '{text}'")
+            
             logger.info(f"Received Telegram message from {username} (chat_id: {chat_id}): {text}, photos: {len(photos)}, document: {bool(document)}")
             
             # Find user by linked Telegram chat_id
@@ -143,12 +148,15 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
             # Download photos
             if photos:
                 logger.info(f"Processing {len(photos)} photos from Telegram")
-                for photo in photos:
+                # Get the highest resolution photo (last in array)
+                if photos:
+                    photo = photos[-1]  # Get highest resolution
                     file_id = photo.get("file_id")
+                    logger.info(f"Using photo file_id: {file_id}")
                     if file_id:
                         # Get the file path from Telegram
                         file_result = await telegram_service.get_file(file_id)
-                        logger.info(f"File result for {file_id}: {file_result.get('ok') if file_result else 'None'}")
+                        logger.info(f"File result: {file_result}")
                         if file_result and file_result.get("ok"):
                             file_path = file_result.get("result", {}).get("file_path")
                             logger.info(f"File path: {file_path}")
@@ -157,9 +165,10 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                                 downloaded_data = await telegram_service.download_file(file_path)
                                 if downloaded_data:
                                     import base64
+                                    b64_size = len(base64.b64encode(downloaded_data))
                                     attachments.append(("photo.jpg", downloaded_data, "image/jpeg"))
                                     has_images = True
-                                    logger.info(f"Downloaded photo, size: {len(downloaded_data)}")
+                                    logger.info(f"Downloaded photo, data size: {len(downloaded_data)}, base64 size: {b64_size}")
                                 else:
                                     logger.warning("Failed to download photo data")
             
