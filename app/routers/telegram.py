@@ -132,21 +132,18 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
             command_service = CommandService(db, user=user_obj)
             text_lower = text.lower().strip()
             
-            # Check if the message starts with a known command
-            command = None
-            arg = text
-            commands = ["geni", "mail", "cal", "contacts", "todo", "news", "search", "yt", "torrents", "budget", "flood", "logs", "translate"]
-            for cmd in commands:
-                if text_lower.startswith(cmd + " ") or text_lower == cmd:
-                    command = cmd
-                    arg = text[len(cmd):].strip()
-                    break
+            logger.info(f"Telegram message: '{text}'")
             
-            logger.info(f"Telegram message: '{text}', command: {command}, arg: '{arg}'")
-            
-            # Process attachments (photos, documents) - download and prepare for AI
+            # Process attachments (photos, documents) - download first
             attachments = []
             has_images = False
+            ocr_text = None
+            
+            # Download photos
+            if photos:
+                logger.info(f"Processing {len(photos)} photos from Telegram")
+                if photos:
+                    photo = photos[-1]  # Get highest resolution
             ocr_text = None
             
             # Download photos
@@ -222,8 +219,8 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                                 attachments.append((file_name, downloaded_data, content_type))
                                 logger.info(f"Downloaded document: {file_name}, size: {len(downloaded_data)}")
             
-            # If we have images and no command yet, try OCR
-            if has_images and attachments and not command:
+            # If we have images, always run OCR for later use
+            if has_images and attachments:
                 for filename, file_data, content_type in attachments:
                     if content_type.startswith("image/"):
                         import base64
@@ -233,15 +230,10 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                             ocr_result = extract_image_text(image_b64)
                             if ocr_result:
                                 ocr_text = ocr_result
-                                logger.info(f"Extracted OCR text for translate: {len(ocr_text)} chars")
+                                logger.info(f"Extracted OCR text: {len(ocr_text)} chars")
                         except Exception as e:
                             logger.error(f"OCR error: {e}")
                         break
-            
-            # If translate command with OCR text, append it to the argument
-            if command == "translate" and ocr_text:
-                arg = f"{ocr_text} to {arg}"
-                logger.info(f"Translate with OCR: {arg[:100]}...")
             
             # If translate command with OCR text, handle it directly
             if command == "translate" and ocr_text:
