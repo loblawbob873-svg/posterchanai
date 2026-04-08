@@ -1,4 +1,4 @@
-"""YouTube thumbnail proxy - serves img.youtube.com thumbnails from same origin so they load in RSS/chat."""
+"""YouTube thumbnail proxy - serves img.youtube.com thumbnails from same origin so they load in chat."""
 import logging
 import re
 
@@ -20,7 +20,7 @@ VIDEO_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{11}$")
 async def youtube_thumbnail(
     video_id: str = Query(..., description="YouTube video ID (e.g. 8o-WO5LmWbA)"),
 ):
-    """Proxy YouTube thumbnail so it loads from same origin (avoids referrer/blocking in RSS)."""
+    """Proxy YouTube thumbnail so it loads from same origin (avoids referrer/blocking in chat)."""
     video_id = (video_id or "").strip()
     if not VIDEO_ID_RE.match(video_id):
         return Response(status_code=400, content="Invalid video_id")

@@ -443,15 +443,9 @@ def delete_user(
         
         from app.models import (
             Conversation, Message, UserSetting, APIKey, VerificationToken,
-            RAGCollection, RAGDocument, RAGWatcher, Plugin
+            RAGCollection, RAGDocument, RAGWatcher
         )
         
-        # Try to import RSS models (they might not be loaded)
-        try:
-            from plugins.rss.models import RssFeed, RssEntry
-            rss_available = True
-        except ImportError:
-            rss_available = False
         
         # 1. Delete messages (referenced by conversations)
         # Get conversation IDs first to avoid subquery issues
@@ -462,14 +456,6 @@ def delete_user(
         # 2. Delete conversations
         db.query(Conversation).filter(Conversation.user_id == user_id).delete(synchronize_session=False)
         
-        # 3. Delete RSS entries (referenced by RSS feeds)
-        if rss_available:
-            # Get feed IDs first
-            feed_ids = [f.id for f in db.query(RssFeed.id).filter(RssFeed.user_id == user_id).all()]
-            if feed_ids:
-                db.query(RssEntry).filter(RssEntry.feed_id.in_(feed_ids)).delete(synchronize_session=False)
-            # Delete RSS feeds
-            db.query(RssFeed).filter(RssFeed.user_id == user_id).delete(synchronize_session=False)
         
         # 4. Delete RAG documents (referenced by collections)
         # Get collection IDs first
@@ -492,8 +478,6 @@ def delete_user(
         # 9. Delete verification tokens
         db.query(VerificationToken).filter(VerificationToken.user_id == user_id).delete(synchronize_session=False)
         
-        # 10. Delete plugins (user_id can be NULL for global plugins, so only delete user-specific ones)
-        db.query(Plugin).filter(Plugin.user_id == user_id).delete(synchronize_session=False)
         
         # 11. Finally, delete the user
         db.delete(user)
@@ -788,28 +772,6 @@ async def rescan_storage(
             },
             "results": processed_results
         }
-
-
-@router.post("/users/{user_id}/toggle-rss-skip")
-def toggle_rss_skip_summarization(
-    user_id: int,
-    db: Session = Depends(get_db),
-    admin: User = Depends(get_admin_user)
-):
-    """Toggle rss_skip_summarization for a user (for bot users that do their own summarization)"""
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-
-    user.rss_skip_summarization = not getattr(user, 'rss_skip_summarization', False)
-    db.commit()
-    return {
-        "message": "RSS skip summarization toggled",
-        "rss_skip_summarization": user.rss_skip_summarization
-    }
 
 
 class TestEmailRequest(BaseModel):

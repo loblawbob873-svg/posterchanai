@@ -16,10 +16,6 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models import User, UserSetting, Conversation, Message
 from app.services.chat_service import ChatService
-from app.services.caldav_service import (
-    get_all_user_events,
-    format_events_for_display
-)
 
 logger = logging.getLogger(__name__)
 
@@ -114,15 +110,8 @@ async def run_daily_schedule_for_user(user_id: int):
 
         logger.info(f"Generating daily schedule for user {user_id}...")
 
-        # Get today's events
-        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        tomorrow = today + timedelta(days=1)
-
-        events = get_all_user_events(user_id, today, tomorrow, db)
-        events_text = format_events_for_display(events, include_description=True)
-
-        if not events:
-            events_text = "No events scheduled for today."
+        # Calendar events feature disabled (CalDAV removed)
+        events_text = "Calendar integration temporarily unavailable."
 
         # Generate AI summary
         summary = await generate_schedule_summary(db, user, events_text)

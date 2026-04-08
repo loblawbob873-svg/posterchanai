@@ -63,15 +63,11 @@ class ChatHandler {
         this.historyIndex = -1;
 
         // Available commands for tab autocomplete
-        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'ytdl', 'torrents', 'nyaa', 'budget', 'firewall', 'news', 'dailynews', 'logs', 'rss', 'cal', 'contacts', 'mail', 'todo', 'files', '4chan'];
-        this.pluginActions = []; // Will be populated with plugin action hints
+        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'ytdl', 'torrents', 'nyaa', 'budget', 'firewall', 'news', 'dailynews', 'logs', 'dailynews', 'cal', 'contacts', 'mail', 'todo', 'files', '4chan'];
+        
 
-        // Load plugins and mail accounts for autocomplete
-        this.loadPluginsForAutocomplete();
-        // Chain mail accounts -> contact emails to avoid race condition
-        this.loadMailAccountsForAutocomplete().then(() => {
-            this.loadContactEmailsForAutocomplete();
-        });
+        // Load mail accounts for autocomplete
+        this.loadMailAccountsForAutocomplete();
         // Notes autocomplete removed
 
         // Enter to send (Shift+Enter for new line)
@@ -157,6 +153,55 @@ class ChatHandler {
         const emailInput = document.getElementById('notificationEmail');
         const statusEl = document.getElementById('settingsStatus');
 
+        // Open settings modal when button clicked
+        if (settingsBtn && settingsModal) {
+            settingsBtn.addEventListener('click', async () => {
+                settingsModal.style.display = 'flex';
+                await this.loadUserSettings();
+            });
+        }
+
+        // Close modal when close button clicked
+        if (closeBtn && settingsModal) {
+            closeBtn.addEventListener('click', () => {
+                settingsModal.style.display = 'none';
+            });
+        }
+
+        // Close modal when clicking outside
+        if (settingsModal) {
+            settingsModal.addEventListener('click', (e) => {
+                if (e.target === settingsModal) {
+                    settingsModal.style.display = 'none';
+                }
+            });
+        }
+
+        // Tab switching
+        const tabButtons = settingsModal?.querySelectorAll('.user-tab-btn');
+        const tabContents = settingsModal?.querySelectorAll('.user-tab-content');
+        
+        if (tabButtons && tabContents) {
+            tabButtons.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const tabId = btn.dataset.tab;
+                    
+                    // Remove active class from all buttons and contents
+                    tabButtons.forEach(b => b.classList.remove('active'));
+                    tabContents.forEach(c => c.classList.remove('active'));
+                    
+                    // Add active class to clicked button
+                    btn.classList.add('active');
+                    
+                    // Show corresponding content
+                    const targetContent = settingsModal.querySelector(`#user-tab-${tabId}`);
+                    if (targetContent) {
+                        targetContent.classList.add('active');
+                    }
+                });
+            });
+        }
+
         // Custom AI elements
         const customAiEnabled = document.getElementById('customAiEnabled');
         const customAiSettings = document.getElementById('customAiSettings');
@@ -179,134 +224,6 @@ class ChatHandler {
         const newsScheduleSettings = document.getElementById('newsScheduleSettings');
         const newsScheduleTime = document.getElementById('newsScheduleTime');
         const newsSources = document.getElementById('newsSources');
-
-        // Native RSS elements
-        const rssEnabled = document.getElementById('rssEnabled');
-        const rssSettings = document.getElementById('rssSettings');
-        const rssFeedList = document.getElementById('rssFeedList');
-        const addRssFeed = document.getElementById('addRssFeed');
-        const newRssFeedUrl = document.getElementById('newRssFeedUrl');
-        const newRssFeedName = document.getElementById('newRssFeedName');
-        const rssSkipSummarization = document.getElementById('rssSkipSummarization');
-
-        // RSS feed list management
-        let rssFeeds = [];
-
-        async function loadRssFeeds() {
-            try {
-                const resp = await fetch('/api/rss/feeds', { credentials: 'include' });
-                if (resp.ok) {
-                    rssFeeds = await resp.json();
-                    renderRssFeedList();
-                }
-            } catch (e) {
-                console.error('Failed to load RSS feeds:', e);
-            }
-        }
-
-        function renderRssFeedList() {
-            if (!rssFeedList) return;
-            rssFeedList.innerHTML = rssFeeds.map(feed => `
-                <div class="rss-feed-item" data-id="${feed.id}">
-                    <div class="feed-info">
-                        <span class="feed-status">${feed.enabled ? '✓' : '✗'}</span>
-                        <strong>${feed.display_name}</strong>
-                        <small class="feed-url">${feed.url}</small>
-                        ${feed.last_error ? `<span class="feed-error">⚠️ ${feed.last_error}</span>` : ''}
-                    </div>
-                    <div class="feed-actions">
-                        <button type="button" class="btn-small toggle-feed" data-id="${feed.id}">${feed.enabled ? 'Disable' : 'Enable'}</button>
-                        <button type="button" class="btn-danger btn-small remove-feed" data-id="${feed.id}">Remove</button>
-                    </div>
-                </div>
-            `).join('') || '<p class="empty-list">No RSS feeds configured. Add a feed URL below.</p>';
-
-            // Add toggle handlers
-            rssFeedList.querySelectorAll('.toggle-feed').forEach(btn => {
-                btn.addEventListener('click', async () => {
-                    const id = parseInt(btn.dataset.id);
-                    const csrfToken = document.cookie.split('; ')
-                        .find(row => row.startsWith('csrf_token='))?.split('=')[1];
-                    try {
-                        const resp = await fetch(`/api/rss/feeds/${id}/toggle`, {
-                            method: 'POST',
-                            credentials: 'include',
-                            headers: { 'X-CSRF-Token': csrfToken || '' }
-                        });
-                        if (resp.ok) loadRssFeeds();
-                    } catch (e) {
-                        console.error('Failed to toggle feed:', e);
-                    }
-                });
-            });
-
-            // Add remove handlers
-            rssFeedList.querySelectorAll('.remove-feed').forEach(btn => {
-                btn.addEventListener('click', async () => {
-                    const id = parseInt(btn.dataset.id);
-                    if (!confirm('Remove this RSS feed?')) return;
-                    const csrfToken = document.cookie.split('; ')
-                        .find(row => row.startsWith('csrf_token='))?.split('=')[1];
-                    try {
-                        const resp = await fetch(`/api/rss/feeds/${id}`, {
-                            method: 'DELETE',
-                            credentials: 'include',
-                            headers: { 'X-CSRF-Token': csrfToken || '' }
-                        });
-                        if (resp.ok) loadRssFeeds();
-                    } catch (e) {
-                        console.error('Failed to remove feed:', e);
-                    }
-                });
-            });
-        }
-
-        if (addRssFeed) {
-            addRssFeed.addEventListener('click', async () => {
-                const url = newRssFeedUrl?.value.trim();
-                const name = newRssFeedName?.value.trim();
-                if (!url) {
-                    alert('Please enter a feed URL');
-                    return;
-                }
-                const csrfToken = document.cookie.split('; ')
-                    .find(row => row.startsWith('csrf_token='))?.split('=')[1];
-                try {
-                    const resp = await fetch('/api/rss/feeds', {
-                        method: 'POST',
-                        headers: { 
-                            'Content-Type': 'application/json',
-                            'X-CSRF-Token': csrfToken || ''
-                        },
-                        credentials: 'include',
-                        body: JSON.stringify({ url, custom_name: name || null })
-                    });
-                    if (resp.ok) {
-                        if (newRssFeedUrl) newRssFeedUrl.value = '';
-                        if (newRssFeedName) newRssFeedName.value = '';
-                        loadRssFeeds();
-                    } else {
-                        alert('Failed to add feed');
-                    }
-                } catch (e) {
-                    console.error('Failed to add feed:', e);
-                    alert('Failed to add feed');
-                }
-            });
-        }
-
-        // Toggle RSS settings visibility
-        const rssSkipSettings = document.getElementById('rssSkipSettings');
-        if (rssEnabled && rssSettings) {
-            rssEnabled.addEventListener('change', () => {
-                const isEnabled = rssEnabled.checked;
-                rssSettings.style.display = isEnabled ? 'flex' : 'none';
-                if (rssSkipSettings) rssSkipSettings.style.display = isEnabled ? 'block' : 'none';
-                if (isEnabled && rssFeeds.length === 0) {
-                    loadRssFeeds();
-                }
-            });
-        }
 
         // Toggle Telegram settings visibility
         const telegramEnabled = document.getElementById('telegramEnabled');
@@ -368,1149 +285,262 @@ class ChatHandler {
             });
         }
 
-        // OPML import
-        const opmlFileInput = document.getElementById('opmlFileInput');
-        const importOpmlBtn = document.getElementById('importOpmlBtn');
-        const opmlImportStatus = document.getElementById('opmlImportStatus');
-
-        if (importOpmlBtn && opmlFileInput) {
-            importOpmlBtn.addEventListener('click', () => {
-                opmlFileInput.click();
-            });
-
-            opmlFileInput.addEventListener('change', async (e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-
-                if (opmlImportStatus) {
-                    opmlImportStatus.textContent = 'Importing...';
-                    opmlImportStatus.className = 'test-result';
-                }
-
-                try {
-                    const formData = new FormData();
-                    formData.append('file', file);
-
-                    // Get CSRF token
-                    const csrfToken = document.cookie.split('; ')
-                        .find(row => row.startsWith('csrf_token='))?.split('=')[1];
-
-                    const resp = await fetch('/api/rss/import/opml', {
-                        method: 'POST',
-                        credentials: 'include',
-                        headers: {
-                            'X-CSRF-Token': csrfToken || ''
-                        },
-                        body: formData
-                    });
-
-                    const result = await resp.json();
-
-                    if (resp.ok) {
-                        if (opmlImportStatus) {
-                            opmlImportStatus.textContent = result.message;
-                            opmlImportStatus.className = 'test-result success';
-                        }
-                        loadRssFeeds();
-                    } else {
-                        if (opmlImportStatus) {
-                            opmlImportStatus.textContent = result.detail || 'Import failed';
-                            opmlImportStatus.className = 'test-result error';
-                        }
-                    }
-                } catch (err) {
-                    console.error('OPML import error:', err);
-                    if (opmlImportStatus) {
-                        opmlImportStatus.textContent = 'Import failed';
-                        opmlImportStatus.className = 'test-result error';
-                    }
-                }
-
-                // Clear file input for re-import
-                opmlFileInput.value = '';
-            });
-        }
-
-        // OPML export
-        const exportOpmlBtn = document.getElementById('exportOpmlBtn');
-        if (exportOpmlBtn) {
-            exportOpmlBtn.addEventListener('click', async () => {
-                try {
-                    const resp = await fetch('/api/rss/export/opml', {
-                        method: 'GET',
-                        credentials: 'include'
-                    });
-
-                    if (resp.ok) {
-                        const blob = await resp.blob();
-                        const url = window.URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = 'feeds.opml';
-                        document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
-                        window.URL.revokeObjectURL(url);
-                    } else {
-                        const result = await resp.json();
-                        alert(result.detail || 'Export failed');
-                    }
-                } catch (err) {
-                    console.error('OPML export error:', err);
-                    alert('Export failed');
-                }
-            });
-        }
-
-        // Calendar import/export
-        const calendarImportFile = document.getElementById('calendarImportFile');
-        const importCalendarBtn = document.getElementById('importCalendarBtn');
-        const exportCalendarBtn = document.getElementById('exportCalendarBtn');
-        const calendarImportStatus = document.getElementById('calendarImportStatus');
-
-        if (importCalendarBtn && calendarImportFile) {
-            importCalendarBtn.addEventListener('click', () => {
-                calendarImportFile.click();
-            });
-
-            calendarImportFile.addEventListener('change', async (e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-
-                if (calendarImportStatus) {
-                    calendarImportStatus.textContent = 'Importing...';
-                    calendarImportStatus.className = 'test-result';
-                }
-
-                try {
-                    const formData = new FormData();
-                    formData.append('file', file);
-
-                    const response = await fetch('/api/caldav/import', {
-                        method: 'POST',
-                        credentials: 'include',
-                        body: formData
-                    });
-
-                    if (response.ok) {
-                        const result = await response.json();
-                        if (calendarImportStatus) {
-                            calendarImportStatus.textContent = `✓ Imported ${result.count || 0} event(s)`;
-                            calendarImportStatus.className = 'test-result success';
-                        }
-                    } else {
-                        const result = await response.json();
-                        if (calendarImportStatus) {
-                            calendarImportStatus.textContent = result.detail || 'Import failed';
-                            calendarImportStatus.className = 'test-result error';
-                        }
-                    }
-                } catch (err) {
-                    console.error('Calendar import error:', err);
-                    if (calendarImportStatus) {
-                        calendarImportStatus.textContent = 'Import failed';
-                        calendarImportStatus.className = 'test-result error';
-                    }
-                }
-
-                calendarImportFile.value = '';
-            });
-        }
-
-        if (exportCalendarBtn) {
-            exportCalendarBtn.addEventListener('click', async () => {
-                try {
-                    const resp = await fetch('/api/caldav/export', {
-                        method: 'GET',
-                        credentials: 'include'
-                    });
-
-                    if (resp.ok) {
-                        const blob = await resp.blob();
-                        const url = window.URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = 'calendar.ics';
-                        document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
-                        window.URL.revokeObjectURL(url);
-                    } else {
-                        const result = await resp.json();
-                        alert(result.detail || 'Export failed');
-                    }
-                } catch (err) {
-                    console.error('Calendar export error:', err);
-                    alert('Export failed');
-                }
-            });
-        }
-
-        // Contacts import/export
-        const contactsImportFile = document.getElementById('contactsImportFile');
-        const importContactsBtn = document.getElementById('importContactsBtn');
-        const exportContactsBtn = document.getElementById('exportContactsBtn');
-        const contactsImportStatus = document.getElementById('contactsImportStatus');
-
-        if (importContactsBtn && contactsImportFile) {
-            importContactsBtn.addEventListener('click', () => {
-                contactsImportFile.click();
-            });
-
-            contactsImportFile.addEventListener('change', async (e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-
-                if (contactsImportStatus) {
-                    contactsImportStatus.textContent = 'Importing...';
-                    contactsImportStatus.className = 'test-result';
-                }
-
-                try {
-                    const formData = new FormData();
-                    formData.append('file', file);
-
-                    const response = await fetch('/api/carddav/import', {
-                        method: 'POST',
-                        credentials: 'include',
-                        body: formData
-                    });
-
-                    if (response.ok) {
-                        const result = await response.json();
-                        if (contactsImportStatus) {
-                            contactsImportStatus.textContent = `✓ Imported ${result.count || 0} contact(s)`;
-                            contactsImportStatus.className = 'test-result success';
-                        }
-                    } else {
-                        const result = await response.json();
-                        if (contactsImportStatus) {
-                            contactsImportStatus.textContent = result.detail || 'Import failed';
-                            contactsImportStatus.className = 'test-result error';
-                        }
-                    }
-                } catch (err) {
-                    console.error('Contacts import error:', err);
-                    if (contactsImportStatus) {
-                        contactsImportStatus.textContent = 'Import failed';
-                        contactsImportStatus.className = 'test-result error';
-                    }
-                }
-
-                contactsImportFile.value = '';
-            });
-        }
-
-        if (exportContactsBtn) {
-            exportContactsBtn.addEventListener('click', async () => {
-                try {
-                    const resp = await fetch('/api/carddav/export', {
-                        method: 'GET',
-                        credentials: 'include'
-                    });
-
-                    if (resp.ok) {
-                        const blob = await resp.blob();
-                        const url = window.URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = 'contacts.vcf';
-                        document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
-                        window.URL.revokeObjectURL(url);
-                    } else {
-                        const result = await resp.json();
-                        alert(result.detail || 'Export failed');
-                    }
-                } catch (err) {
-                    console.error('Contacts export error:', err);
-                    alert('Export failed');
-                }
-            });
-        }
-
-        // Calendar & Contacts elements
-        const scheduleEnabled = document.getElementById('scheduleEnabled');
-        const calendarServerType = document.getElementById('calendarServerType');
-        const contactsServerType = document.getElementById('contactsServerType');
-        const externalCalendarSettings = document.getElementById('externalCalendarSettings');
-        const builtinCalendarInfo = document.getElementById('builtinCalendarInfo');
-        const externalContactsSettings = document.getElementById('externalContactsSettings');
-        const builtinContactsInfo = document.getElementById('builtinContactsInfo');
-        const caldavCalendarList = document.getElementById('caldavCalendarList');
-        const addCaldavCalendar = document.getElementById('addCaldavCalendar');
-        const carddavUrl = document.getElementById('carddavUrl');
-        const carddavUsername = document.getElementById('carddavUsername');
-        const carddavPassword = document.getElementById('carddavPassword');
-        const importRadicaleBtn = document.getElementById('importRadicaleBtn');
-
-        // Toggle calendar server type
-        if (calendarServerType) {
-            calendarServerType.addEventListener('change', () => {
-                const isExternal = calendarServerType.value === 'external';
-                if (externalCalendarSettings) externalCalendarSettings.style.display = isExternal ? 'block' : 'none';
-                if (builtinCalendarInfo) builtinCalendarInfo.style.display = isExternal ? 'none' : 'block';
-            });
-        }
-
-        // Toggle contacts server type
-        if (contactsServerType) {
-            contactsServerType.addEventListener('change', () => {
-                const isExternal = contactsServerType.value === 'external';
-                if (externalContactsSettings) externalContactsSettings.style.display = isExternal ? 'block' : 'none';
-                if (builtinContactsInfo) builtinContactsInfo.style.display = isExternal ? 'none' : 'block';
-            });
-        }
-
-        // Calendar list management
-        let caldavCalendars = [];
-
-        function renderCalendarList() {
-            if (!caldavCalendarList) return;
-            caldavCalendarList.innerHTML = caldavCalendars.map((cal, idx) => `
-                <div class="caldav-calendar-item" data-index="${idx}">
-                    <div class="form-group">
-                        <label>Calendar ${idx + 1} Name</label>
-                        <input type="text" class="cal-name" value="${cal.name || ''}" placeholder="Work Calendar">
-                    </div>
-                    <div class="form-group">
-                        <label>CalDAV URL</label>
-                        <input type="url" class="cal-url" value="${cal.url || ''}" placeholder="https://cal.example.com/user/calendar/">
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Username</label>
-                            <input type="text" class="cal-username" value="${cal.username || ''}" placeholder="username">
-                        </div>
-                        <div class="form-group">
-                            <label>Password</label>
-                            <input type="password" class="cal-password" value="${cal.password ? '********' : ''}" placeholder="password">
-                        </div>
-                    </div>
-                    <button type="button" class="btn-danger btn-small remove-calendar" data-index="${idx}">Remove</button>
-                </div>
-            `).join('') || '<p class="empty-list">No calendars configured. Click "+ Add Calendar" to add one.</p>';
-
-            // Add remove handlers
-            caldavCalendarList.querySelectorAll('.remove-calendar').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    const idx = parseInt(btn.dataset.index);
-                    caldavCalendars.splice(idx, 1);
-                    renderCalendarList();
-                });
-            });
-        }
-
-        // Import from Radicale button
-        if (importRadicaleBtn) {
-            importRadicaleBtn.addEventListener('click', async () => {
-                const radicaleUrl = prompt('Enter Radicale server URL (e.g., http://radicale.example.com:5232):');
-                if (!radicaleUrl) return;
-                
-                const username = prompt('Enter Radicale username:');
-                if (!username) return;
-                
-                const password = prompt('Enter Radicale password:');
-                if (!password) return;
-                
-                try {
-                    importRadicaleBtn.disabled = true;
-                    importRadicaleBtn.textContent = 'Importing...';
-                    
-                    const formData = new FormData();
-                    formData.append('radicale_url', radicaleUrl.trim());
-                    formData.append('username', username.trim());
-                    formData.append('password', password);
-                    
-                    const response = await csrfFetch('/api/auth/calendar/import/radicale', {
-                        method: 'POST',
-                        body: formData
-                    });
-                    
-                    const data = await response.json();
-                    
-                    if (response.ok && data.success) {
-                        alert(`Successfully imported ${data.imported} events from Radicale${data.errors > 0 ? ` (${data.errors} errors)` : ''}`);
-                    } else {
-                        alert(data.detail || data.message || 'Import failed');
-                    }
-                } catch (error) {
-                    console.error('Radicale import error:', error);
-                    alert('Failed to import from Radicale: ' + (error.message || 'Unknown error'));
-                } finally {
-                    importRadicaleBtn.disabled = false;
-                    importRadicaleBtn.textContent = '📥 Import from Radicale';
-                }
-            });
-        }
-        
-        // Export Calendar button
-        if (exportCalendarBtn) {
-            exportCalendarBtn.addEventListener('click', async () => {
-                try {
-                    exportCalendarBtn.disabled = true;
-                    exportCalendarBtn.textContent = 'Exporting...';
-                    
-                    const response = await fetch('/api/auth/calendar/export', {
-                        method: 'GET',
-                        credentials: 'include'
-                    });
-                    
-                    if (response.ok) {
-                        const blob = await response.blob();
-                        const url = window.URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        
-                        // Get filename from Content-Disposition header or use default
-                        const contentDisposition = response.headers.get('Content-Disposition');
-                        let filename = 'calendar.ics';
-                        if (contentDisposition) {
-                            const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
-                            if (filenameMatch) {
-                                filename = filenameMatch[1];
-                            }
-                        }
-                        
-                        a.download = filename;
-                        document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
-                        window.URL.revokeObjectURL(url);
-                    } else {
-                        const errorData = await response.json();
-                        alert(errorData.detail || 'Export failed');
-                    }
-                } catch (error) {
-                    console.error('Calendar export error:', error);
-                    alert('Failed to export calendar: ' + (error.message || 'Unknown error'));
-                } finally {
-                    exportCalendarBtn.disabled = false;
-                    exportCalendarBtn.textContent = '📤 Export Calendar';
-                }
-            });
-        }
-        
-        if (addCaldavCalendar) {
-            addCaldavCalendar.addEventListener('click', () => {
-                caldavCalendars.push({ name: '', url: '', username: '', password: '' });
-                renderCalendarList();
-            });
-        }
-
-        function collectCalendarData() {
-            const items = caldavCalendarList?.querySelectorAll('.caldav-calendar-item') || [];
-            return Array.from(items).map(item => {
-                const password = item.querySelector('.cal-password').value;
-                return {
-                    name: item.querySelector('.cal-name').value.trim(),
-                    url: item.querySelector('.cal-url').value.trim(),
-                    username: item.querySelector('.cal-username').value.trim(),
-                    password: password === '********' ? null : password  // null means keep existing
-                };
-            });
-        }
-
-        // Mail account elements
-        const mailAccountList = document.getElementById('mailAccountList');
-        const addMailAccount = document.getElementById('addMailAccount');
-
-
-        // Mail account list management
-        let mailAccounts = [];
-
-        function renderMailAccountList() {
-            if (!mailAccountList) return;
-            mailAccountList.innerHTML = mailAccounts.map((acc, idx) => `
-                <div class="mail-account-item" data-index="${idx}">
-                    <div class="form-group">
-                        <label>Email Address</label>
-                        <input type="email" class="mail-email" value="${acc.email || ''}" placeholder="user@example.com">
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>IMAP Server</label>
-                            <input type="text" class="mail-imap-server" value="${acc.imap_server || ''}" placeholder="imap.example.com">
-                        </div>
-                        <div class="form-group" style="max-width: 100px;">
-                            <label>IMAP Port</label>
-                            <input type="number" class="mail-imap-port" value="${acc.imap_port || 993}" placeholder="993">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>SMTP Server</label>
-                            <input type="text" class="mail-smtp-server" value="${acc.smtp_server || ''}" placeholder="smtp.example.com">
-                        </div>
-                        <div class="form-group" style="max-width: 100px;">
-                            <label>SMTP Port</label>
-                            <input type="number" class="mail-smtp-port" value="${acc.smtp_port || 587}" placeholder="587">
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label>Password</label>
-                        <input type="password" class="mail-password" value="${acc.password ? '********' : ''}" placeholder="Email password">
-                    </div>
-                    <button type="button" class="btn-danger btn-small remove-mail-account" data-index="${idx}">Remove</button>
-                </div>
-            `).join('') || '<p class="empty-list">No email accounts configured. Click "+ Add Email Account" to add one.</p>';
-
-            // Add remove handlers
-            mailAccountList.querySelectorAll('.remove-mail-account').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    const idx = parseInt(btn.dataset.index);
-                    mailAccounts.splice(idx, 1);
-                    renderMailAccountList();
-                });
-            });
-        }
-
-        if (addMailAccount) {
-            addMailAccount.addEventListener('click', () => {
-                mailAccounts.push({ email: '', imap_server: '', imap_port: 993, smtp_server: '', smtp_port: 587, password: '' });
-                renderMailAccountList();
-            });
-        }
-
-        function collectMailAccountData() {
-            const items = mailAccountList?.querySelectorAll('.mail-account-item') || [];
-            return Array.from(items).map(item => {
-                const password = item.querySelector('.mail-password').value;
-                return {
-                    email: item.querySelector('.mail-email').value.trim(),
-                    imap_server: item.querySelector('.mail-imap-server').value.trim(),
-                    imap_port: parseInt(item.querySelector('.mail-imap-port').value) || 993,
-                    smtp_server: item.querySelector('.mail-smtp-server').value.trim(),
-                    smtp_port: parseInt(item.querySelector('.mail-smtp-port').value) || 587,
-                    password: password === '********' ? null : password  // null means keep existing
-                };
-            });
-        }
-
-        // Quick AI Toggle elements (in user menu)
-        const aiToggleItem = document.getElementById('aiToggleItem');
-        const aiToggleLabel = document.getElementById('aiToggleLabel');
-        const quickAiToggle = document.getElementById('quickAiToggle');
-
-        // Load initial state for quick toggle
-        this.loadQuickToggleState = async () => {
-            try {
-                const response = await fetch('/api/auth/settings');
-                if (response.ok) {
-                    const data = await response.json();
-                    // Only show toggle if custom AI URL is configured
-                    if (data.custom_ai_url) {
-                        aiToggleItem.style.display = 'flex';
-                        quickAiToggle.checked = data.custom_ai_enabled || false;
-                        aiToggleLabel.textContent = data.custom_ai_enabled ? 'Using: Custom AI' : 'Using: Server AI';
-                    } else {
-                        aiToggleItem.style.display = 'none';
-                    }
-                }
-            } catch (e) {
-                console.error('Failed to load AI toggle state:', e);
-            }
-        };
-
-        // Quick toggle handler
-        if (quickAiToggle) {
-            quickAiToggle.addEventListener('change', async () => {
-                const enabled = quickAiToggle.checked;
-                aiToggleLabel.textContent = enabled ? 'Using: Custom AI' : 'Using: Server AI';
-
-                try {
-                    await csrfFetch('/api/auth/settings', {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ custom_ai_enabled: enabled })
-                    });
-                    // Also update the modal checkbox if open
-                    if (customAiEnabled) {
-                        customAiEnabled.checked = enabled;
-                    }
-                } catch (e) {
-                    console.error('Failed to toggle AI:', e);
-                }
-            });
-        }
-
-        // Load initial state
-        this.loadQuickToggleState();
-
-        // Toggle custom AI settings visibility
-        if (customAiEnabled && customAiSettings) {
-            customAiEnabled.addEventListener('change', () => {
-                customAiSettings.style.display = customAiEnabled.checked ? 'flex' : 'none';
-            });
-        }
-
-        // Update placeholders and API key hint based on service type
-        const apiKeySection = document.getElementById('apiKeySection');
-        const apiKeyHint = document.getElementById('apiKeyHint');
-        const updatePlaceholders = () => {
-            if (!customAiType || !customAiUrl || !customAiModel) return;
-            if (customAiType.value === 'ollama') {
-                customAiUrl.placeholder = 'http://192.168.1.100:11434';
-                customAiModel.placeholder = 'llama3:latest';
-                // Ollama typically doesn't need API key
-                if (apiKeyHint) apiKeyHint.textContent = '(not required for Ollama)';
-                if (apiKeySection) apiKeySection.style.display = 'none';
-            } else {
-                // OpenAI-compatible (Open-WebUI, Posterchanai)
-                customAiUrl.placeholder = 'http://192.168.1.100:3051';
-                customAiModel.placeholder = 'llama3';
-                if (apiKeyHint) apiKeyHint.textContent = '(required for Open-WebUI/Posterchanai)';
-                if (apiKeySection) apiKeySection.style.display = 'block';
-            }
-        };
-        if (customAiType) {
-            customAiType.addEventListener('change', updatePlaceholders);
-            updatePlaceholders(); // Set initial placeholders
-        }
-
-        // Toggle custom image settings visibility
-        if (customImageEnabled && customImageSettings) {
-            customImageEnabled.addEventListener('change', () => {
-                customImageSettings.style.display = customImageEnabled.checked ? 'flex' : 'none';
-            });
-        }
-
-        // Toggle news schedule settings visibility
-        if (newsScheduleEnabled && newsScheduleSettings) {
-            newsScheduleEnabled.addEventListener('change', () => {
-                newsScheduleSettings.style.display = newsScheduleEnabled.checked ? 'flex' : 'none';
-            });
-        }
-
-        // Test custom AI connection
-        if (testCustomAi) {
-            testCustomAi.addEventListener('click', async () => {
-                testAiResult.textContent = 'Testing...';
-                testAiResult.className = 'test-result';
-                try {
-                    // Don't send placeholder '********' as actual key - use null to indicate "use stored key"
-                    const apiKeyValue = customAiApiKey.value === '********' ? null : (customAiApiKey.value || null);
-                    const response = await csrfFetch('/api/auth/test-custom-ai', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            api_type: customAiType.value,
-                            url: customAiUrl.value,
-                            model: customAiModel.value,
-                            api_key: apiKeyValue,
-                            use_stored_key: customAiApiKey.value === '********'  // Tell backend to use stored key
-                        })
-                    });
-                    const data = await response.json();
-                    testAiResult.textContent = data.message;
-                    testAiResult.className = 'test-result ' + (data.success ? 'success' : 'error');
-                } catch (e) {
-                    testAiResult.textContent = 'Test failed';
-                    testAiResult.className = 'test-result error';
-                }
-            });
-        }
-
-        // Test custom image connection
-        if (testCustomImage) {
-            testCustomImage.addEventListener('click', async () => {
-                testImageResult.textContent = 'Testing...';
-                testImageResult.className = 'test-result';
-                try {
-                    const response = await csrfFetch('/api/auth/test-custom-image?url=' + encodeURIComponent(customImageUrl.value), {
-                        method: 'POST'
-                    });
-                    const data = await response.json();
-                    testImageResult.textContent = data.message;
-                    testImageResult.className = 'test-result ' + (data.success ? 'success' : 'error');
-                } catch (e) {
-                    testImageResult.textContent = 'Test failed';
-                    testImageResult.className = 'test-result error';
-                }
-            });
-        }
-
-        // Save custom LLM prompt button
-        const saveCustomPromptBtn = document.getElementById('saveCustomPromptBtn');
-        const customPromptStatus = document.getElementById('customPromptStatus');
-        if (saveCustomPromptBtn) {
-            saveCustomPromptBtn.addEventListener('click', async () => {
-                const customLlmPromptEl = document.getElementById('customLlmPrompt');
-                if (!customLlmPromptEl) return;
-                
-                if (customPromptStatus) {
-                    customPromptStatus.textContent = 'Saving...';
-                    customPromptStatus.className = 'test-result';
-                }
-                
-                try {
-                    const response = await csrfFetch('/api/auth/settings', {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            custom_llm_prompt: customLlmPromptEl.value
-                        })
-                    });
-                    
-                    if (response.ok) {
-                        if (customPromptStatus) {
-                            customPromptStatus.textContent = '✓ Saved';
-                            customPromptStatus.className = 'test-result success';
-                            setTimeout(() => { customPromptStatus.textContent = ''; }, 3000);
-                        }
-                    } else {
-                        throw new Error('Save failed');
-                    }
-                } catch (e) {
-                    if (customPromptStatus) {
-                        customPromptStatus.textContent = '✗ Failed to save';
-                        customPromptStatus.className = 'test-result error';
-                    }
-                }
-            });
-        }
-
-        // Music test functionality removed - elements no longer exist
-
-        if (settingsBtn && settingsModal) {
-            settingsBtn.addEventListener('click', async () => {
-                // Load current settings
-                try {
-                    const response = await fetch('/api/auth/settings');
-                    if (response.ok) {
-                        const data = await response.json();
-                        emailInput.value = data.notification_email || '';
-                        this.notificationEmail = data.notification_email;
-                        // Update avatar preview
-                        this.updateAvatarPreview(data.avatar);
-
-                        // Load custom AI settings
-                        if (customAiEnabled) {
-                            customAiEnabled.checked = data.custom_ai_enabled || false;
-                            customAiSettings.style.display = data.custom_ai_enabled ? 'flex' : 'none';
-                        }
-                        if (customAiType) customAiType.value = data.custom_ai_type || 'ollama';
-                        if (customAiUrl) customAiUrl.value = data.custom_ai_url || '';
-                        if (customAiModel) customAiModel.value = data.custom_ai_model || '';
-                        if (customAiApiKey) customAiApiKey.value = data.custom_ai_has_api_key ? '********' : '';
-                        // Update placeholders based on loaded service type
-                        updatePlaceholders();
-
-                        // Load custom image settings
-                        if (customImageEnabled) {
-                            customImageEnabled.checked = data.custom_image_enabled || false;
-                            customImageSettings.style.display = data.custom_image_enabled ? 'flex' : 'none';
-                        }
-                        if (customImageUrl) customImageUrl.value = data.custom_image_url || '';
-
-                        // Load custom LLM prompt
-                        const customLlmPrompt = document.getElementById('customLlmPrompt');
-                        if (customLlmPrompt) customLlmPrompt.value = data.custom_llm_prompt || '';
-
-                        // Load news schedule settings
-                        if (newsScheduleEnabled) {
-                            newsScheduleEnabled.checked = data.news_schedule_enabled || false;
-                            newsScheduleSettings.style.display = data.news_schedule_enabled ? 'flex' : 'none';
-                        }
-                        if (newsScheduleTime) newsScheduleTime.value = data.news_schedule_time || '12:00';
-                        if (newsSources) newsSources.value = data.news_sources || '';
-
-                        // Load Native RSS settings
-                        const rssSkipSettings = document.getElementById('rssSkipSettings');
-                        if (rssEnabled) {
-                            rssEnabled.checked = data.rss_enabled || false;
-                            if (rssSettings) rssSettings.style.display = data.rss_enabled ? 'flex' : 'none';
-                            if (rssSkipSettings) rssSkipSettings.style.display = data.rss_enabled ? 'block' : 'none';
-                            if (data.rss_enabled) loadRssFeeds();
-                        }
-                        if (rssSkipSummarization) {
-                            rssSkipSummarization.checked = data.rss_skip_summarization || false;
-                        }
-
-                        // Load Telegram settings
-                        const telegramEnabled = document.getElementById('telegramEnabled');
-                        const telegramSettings = document.getElementById('telegramSettings');
-                        if (telegramEnabled) {
-                            telegramEnabled.checked = data.telegram_enabled || false;
-                            if (telegramSettings) telegramSettings.style.display = data.telegram_enabled ? 'block' : 'none';
-                        }
-                        const telegramChatId = document.getElementById('telegramChatId');
-                        if (telegramChatId) telegramChatId.value = data.telegram_chat_id || '';
-                        const telegramNotifications = document.getElementById('telegramNotifications');
-                        if (telegramNotifications) telegramNotifications.value = data.telegram_notifications || '';
-
-                        // Load Calendar & Contacts settings
-                        if (scheduleEnabled) {
-                            scheduleEnabled.checked = data.schedule_enabled || false;
-                        }
-                        // Load calendar server type (default to builtin if not set)
-                        if (calendarServerType) {
-                            const useBuiltin = data.use_builtin_caldav === undefined || data.use_builtin_caldav === null || 
-                                             data.use_builtin_caldav === 'true' || data.use_builtin_caldav === true;
-                            calendarServerType.value = useBuiltin ? 'builtin' : 'external';
-                            // Trigger change event to show/hide sections
-                            calendarServerType.dispatchEvent(new Event('change'));
-                        }
-                        if (data.caldav_calendars) {
-                            caldavCalendars = data.caldav_calendars;
-                            renderCalendarList();
-                        }
-                        // Load contacts server type (default to builtin if not set)
-                        if (contactsServerType) {
-                            const useBuiltin = data.use_builtin_cardav === undefined || data.use_builtin_cardav === null || 
-                                             data.use_builtin_cardav === 'true' || data.use_builtin_cardav === true;
-                            contactsServerType.value = useBuiltin ? 'builtin' : 'external';
-                            // Trigger change event to show/hide sections
-                            contactsServerType.dispatchEvent(new Event('change'));
-                        }
-                        if (carddavUrl) carddavUrl.value = data.carddav_url || '';
-                        if (carddavUsername) carddavUsername.value = data.carddav_username || '';
-                        if (carddavPassword) carddavPassword.value = data.carddav_has_password ? '********' : '';
-
-                        // Load Mail account settings
-                        if (data.mail_accounts) {
-                            mailAccounts = data.mail_accounts;
-                            renderMailAccountList();
-                        }
-
-                        
-                        // Music settings removed
-                    }
-                } catch (e) {
-                    console.error('Failed to load settings:', e);
-                }
-                
-                // Load storage addresses and usage when opening settings (in case storage tab is already active)
-                this.loadStorageAddresses();
-                this.loadStorageUsage();
-                
-                // Setup scan user storage button
-                const scanUserStorageBtn = document.getElementById('scanUserStorageBtn');
-                const scanStorageStatus = document.getElementById('scanStorageStatus');
-                if (scanUserStorageBtn && !scanUserStorageBtn.hasAttribute('data-listener-added')) {
-                    scanUserStorageBtn.setAttribute('data-listener-added', 'true');
-                    scanUserStorageBtn.addEventListener('click', async () => {
-                        if (scanStorageStatus) {
-                            scanStorageStatus.textContent = 'Scanning storage...';
-                            scanStorageStatus.className = 'test-result';
-                            scanStorageStatus.style.display = 'block';
-                        }
-                        
-                        try {
-                            const response = await csrfFetch('/api/auth/scan-storage', {
-                                method: 'POST'
-                            });
-                            
-                            if (response.ok) {
-                                const data = await response.json();
-                                let message = `✓ ${data.message}\n`;
-                                message += `• Files: ${data.files.toLocaleString()}\n`;
-                                message += `• Directories: ${data.directories.toLocaleString()}\n`;
-                                
-                                if (data.storage_type === 'local') {
-                                    if (data.exif_restored) {
-                                        message += `• EXIF timestamps restored: ${data.exif_restored}\n`;
-                                    }
-                                    if (data.thumbnails_generated) {
-                                        message += `• Thumbnails generated: ${data.thumbnails_generated}\n`;
-                                    }
-                                } else if (data.storage_type === 'webdav') {
-                                    message += `\nNote: ${data.note || 'EXIF and thumbnail operations not available for WebDAV'}`;
-                                }
-                                
-                                if (scanStorageStatus) {
-                                    scanStorageStatus.textContent = message;
-                                    scanStorageStatus.className = 'test-result success';
-                                }
-                                
-                                // Reload storage usage
-                                this.loadStorageUsage();
-                            } else {
-                                const error = await response.json();
-                                if (scanStorageStatus) {
-                                    scanStorageStatus.textContent = '✗ ' + (error.detail || 'Failed to scan storage');
-                                    scanStorageStatus.className = 'test-result error';
-                                }
-                            }
-                        } catch (e) {
-                            if (scanStorageStatus) {
-                                scanStorageStatus.textContent = '✗ Error: ' + e.message;
-                                scanStorageStatus.className = 'test-result error';
-                            }
-                        }
-                    });
-                }
-                
-                settingsModal.style.display = 'flex';
-                // Close the user menu
-                document.getElementById('userMenu').classList.remove('active');
-            });
-
-            closeBtn.addEventListener('click', () => {
-                settingsModal.style.display = 'none';
-            });
-
-            // User Settings Tab Switching
-            const userTabs = settingsModal.querySelectorAll('.user-tab-btn');
-            const userTabContents = settingsModal.querySelectorAll('.user-tab-content');
-            console.log('User Settings tabs found:', userTabs.length, 'contents:', userTabContents.length);
-
-            userTabs.forEach(tab => {
-                tab.addEventListener('click', () => {
-                    const targetTab = tab.dataset.tab;
-                    console.log('Tab clicked:', targetTab);
-
-                    // Remove active from all tabs and content
-                    userTabs.forEach(t => t.classList.remove('active'));
-                    userTabContents.forEach(c => c.classList.remove('active'));
-
-                    // Add active to clicked tab and corresponding content
-                    tab.classList.add('active');
-                    const targetContent = document.getElementById(`user-tab-${targetTab}`);
-                    if (targetContent) {
-                        targetContent.classList.add('active');
-                    }
-
-                    // Load API keys when switching to that tab
-                    if (targetTab === 'apikeys' && typeof apiKeysManager !== 'undefined') {
-                        apiKeysManager.loadKeys();
-                    }
-                    
-                    // Load storage/cloud addresses when switching to that tab
-                    if (targetTab === 'storage') {
-                        this.loadStorageAddresses();
-                        this.loadStorageUsage();
-                    }
-                });
-            });
-            
-            // Also load storage addresses if storage tab is already active when modal opens
-            const activeTab = settingsModal.querySelector('.user-tab-btn.active');
-            if (activeTab && activeTab.dataset.tab === 'storage') {
-                this.loadStorageAddresses();
-                this.loadStorageUsage();
-            }
-
-            settingsModal.addEventListener('click', (e) => {
-                if (e.target === settingsModal) {
-                    settingsModal.style.display = 'none';
-                }
-            });
-
+        // Save settings button
+        if (saveBtn) {
             saveBtn.addEventListener('click', async () => {
-                const email = emailInput.value.trim();
-                statusEl.textContent = 'Saving...';
-                statusEl.className = 'settings-status';
+                const settings = {};
 
-                // Build settings object
-                const settingsData = {
-                    notification_email: email
-                };
+                // Profile settings
+                if (emailInput) settings.notification_email = emailInput.value;
 
-                // Add custom AI settings
-                if (customAiEnabled) {
-                    settingsData.custom_ai_enabled = customAiEnabled.checked;
-                }
-                if (customAiType) {
-                    settingsData.custom_ai_type = customAiType.value;
-                }
-                if (customAiUrl) {
-                    settingsData.custom_ai_url = customAiUrl.value.trim();
-                }
-                if (customAiModel) {
-                    settingsData.custom_ai_model = customAiModel.value.trim();
-                }
-                // Only update API key if it's not the placeholder
-                if (customAiApiKey && customAiApiKey.value !== '********') {
-                    settingsData.custom_ai_api_key = customAiApiKey.value;
-                }
+                // Custom AI settings
+                if (customAiEnabled) settings.custom_ai_enabled = customAiEnabled.checked;
+                if (customAiType) settings.custom_ai_type = customAiType.value;
+                if (customAiUrl) settings.custom_ai_url = customAiUrl.value;
+                if (customAiModel) settings.custom_ai_model = customAiModel.value;
+                if (customAiApiKey) settings.custom_ai_api_key = customAiApiKey.value;
 
-                // Add custom image settings
-                if (customImageEnabled) {
-                    settingsData.custom_image_enabled = customImageEnabled.checked;
-                }
-                if (customImageUrl) {
-                    settingsData.custom_image_url = customImageUrl.value.trim();
-                }
+                // Custom Image settings
+                if (customImageEnabled) settings.custom_image_enabled = customImageEnabled.checked;
+                if (customImageUrl) settings.custom_image_url = customImageUrl.value;
 
-                // Add custom LLM prompt
-                const customLlmPromptEl = document.getElementById('customLlmPrompt');
-                if (customLlmPromptEl) {
-                    settingsData.custom_llm_prompt = customLlmPromptEl.value;
-                }
+                // Schedule settings
+                const scheduleEnabled = document.getElementById('scheduleEnabled');
+                if (scheduleEnabled) settings.schedule_enabled = scheduleEnabled.checked;
 
-                // Add news schedule settings
-                if (newsScheduleEnabled) {
-                    settingsData.news_schedule_enabled = newsScheduleEnabled.checked;
-                }
-                if (newsScheduleTime) {
-                    settingsData.news_schedule_time = newsScheduleTime.value;
-                }
-                if (newsSources) {
-                    settingsData.news_sources = newsSources.value;
-                }
-
-                // Add Native RSS settings
-                if (rssEnabled) {
-                    settingsData.rss_enabled = rssEnabled.checked;
-                }
-                if (rssSkipSummarization) {
-                    settingsData.rss_skip_summarization = rssSkipSummarization.checked;
-                }
-
-                // Add Calendar & Contacts settings
-                if (scheduleEnabled) {
-                    settingsData.schedule_enabled = scheduleEnabled.checked;
-                }
-                // Calendar server type
-                if (calendarServerType) {
-                    settingsData.use_builtin_caldav = calendarServerType.value === 'builtin' ? 'true' : 'false';
-                }
-                // Collect calendar data from the dynamic list (only for external)
-                if (calendarServerType && calendarServerType.value === 'external') {
-                    settingsData.caldav_calendars = collectCalendarData();
-                }
-                // Contacts server type
-                if (contactsServerType) {
-                    settingsData.use_builtin_cardav = contactsServerType.value === 'builtin' ? 'true' : 'false';
-                }
-                // CardDAV settings (only for external)
-                if (contactsServerType && contactsServerType.value === 'external') {
-                    if (carddavUrl) {
-                        settingsData.carddav_url = carddavUrl.value.trim();
-                    }
-                    if (carddavUsername) {
-                        settingsData.carddav_username = carddavUsername.value.trim();
-                    }
-                    // Only update password if it's not the placeholder
-                    if (carddavPassword && carddavPassword.value !== '********') {
-                        settingsData.carddav_password = carddavPassword.value;
-                    }
-                }
-
-                // Add Mail account settings
-                settingsData.mail_accounts = collectMailAccountData();
-
-                // Add Telegram settings
+                // Telegram settings
                 const telegramEnabledEl = document.getElementById('telegramEnabled');
                 const telegramChatIdEl = document.getElementById('telegramChatId');
                 const telegramNotificationsEl = document.getElementById('telegramNotifications');
-                if (telegramEnabledEl) {
-                    settingsData.telegram_enabled = telegramEnabledEl.checked;
-                }
-                if (telegramChatIdEl) {
-                    settingsData.telegram_chat_id = telegramChatIdEl.value.trim();
-                }
-                if (telegramNotificationsEl) {
-                    settingsData.telegram_notifications = telegramNotificationsEl.value.trim();
-                }
-
-                
-                // Music settings removed
+                if (telegramEnabledEl) settings.telegram_enabled = telegramEnabledEl.checked;
+                if (telegramChatIdEl) settings.telegram_chat_id = telegramChatIdEl.value;
+                if (telegramNotificationsEl) settings.telegram_notifications = telegramNotificationsEl.value;
 
                 try {
                     const response = await csrfFetch('/api/auth/settings', {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(settingsData)
+                        body: JSON.stringify(settings)
                     });
 
                     if (response.ok) {
-                        this.notificationEmail = email;
-                        statusEl.textContent = 'Settings saved!';
-                        statusEl.className = 'settings-status success';
-                        setTimeout(() => { statusEl.textContent = ''; }, 2000);
-                        // Update quick toggle in user menu
-                        this.loadQuickToggleState();
+                        if (statusEl) {
+                            statusEl.textContent = 'Settings saved!';
+                            statusEl.className = 'settings-status success';
+                            setTimeout(() => {
+                                statusEl.textContent = '';
+                                statusEl.className = 'settings-status';
+                            }, 3000);
+                        }
+                        // Close modal after successful save
+                        if (settingsModal) settingsModal.style.display = 'none';
                     } else {
                         const data = await response.json();
-                        statusEl.textContent = data.detail || 'Failed to save';
-                        statusEl.className = 'settings-status error';
+                        if (statusEl) {
+                            statusEl.textContent = data.detail || 'Failed to save settings';
+                            statusEl.className = 'settings-status error';
+                        }
                     }
                 } catch (e) {
-                    statusEl.textContent = 'Failed to save settings';
-                    statusEl.className = 'settings-status error';
+                    console.error('Error saving settings:', e);
+                    if (statusEl) {
+                        statusEl.textContent = 'Error saving settings';
+                        statusEl.className = 'settings-status error';
+                    }
                 }
             });
+        }
 
-            // Avatar upload handlers
-            const avatarInput = document.getElementById('avatarInput');
-            const uploadAvatarBtn = document.getElementById('uploadAvatarBtn');
-            const deleteAvatarBtn = document.getElementById('deleteAvatarBtn');
-            const avatarStatus = document.getElementById('avatarStatus');
+        // Add Mail Account button
+        const addMailAccountBtn = document.getElementById('addMailAccount');
+        if (addMailAccountBtn) {
+            addMailAccountBtn.addEventListener('click', () => {
+                // Simple prompt-based account addition
+                const email = prompt('Email address:');
+                if (!email) return;
+                const password = prompt('Email password:');
+                if (!password) return;
+                const imapServer = prompt('IMAP server (e.g., imap.gmail.com):');
+                if (!imapServer) return;
+                const smtpServer = prompt('SMTP server (e.g., smtp.gmail.com):');
+                if (!smtpServer) return;
 
-            if (uploadAvatarBtn && avatarInput) {
-                uploadAvatarBtn.addEventListener('click', () => {
-                    avatarInput.click();
+                this.addMailAccount({
+                    email,
+                    password,
+                    imap_server: imapServer,
+                    smtp_server: smtpServer,
+                    imap_port: 993,
+                    smtp_port: 587,
+                    use_ssl: true
                 });
-
-                avatarInput.addEventListener('change', async (e) => {
-                    const file = e.target.files[0];
-                    if (!file) return;
-
-                    avatarStatus.textContent = 'Uploading...';
-                    avatarStatus.className = 'settings-status';
-
-                    const formData = new FormData();
-                    formData.append('file', file);
-
-                    try {
-                        console.log('Uploading avatar...', file.name, file.type, file.size);
-                        const response = await csrfFetch('/api/auth/avatar', {
-                            method: 'POST',
-                            body: formData
-                            // Don't set Content-Type header - browser will set it with boundary for FormData
-                        });
-
-                        console.log('Avatar upload response status:', response.status);
-                        
-                        if (response.ok) {
-                            const data = await response.json();
-                            console.log('Avatar upload success:', data);
-                            console.log('Avatar URL:', data.avatar);
-                            // Force reload by adding cache bust
-                            const avatarUrl = data.avatar + (data.avatar.includes('?') ? '&' : '?') + 't=' + Date.now();
-                            console.log('Avatar URL with cache bust:', avatarUrl);
-                            this.updateAvatarPreview(avatarUrl);
-                            avatarStatus.textContent = 'Avatar uploaded!';
-                            avatarStatus.className = 'settings-status success';
-                            setTimeout(() => { avatarStatus.textContent = ''; }, 2000);
-                        } else {
-                            const data = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
-                            console.error('Avatar upload failed:', data);
-                            avatarStatus.textContent = data.detail || `Upload failed (${response.status})`;
-                            avatarStatus.className = 'settings-status error';
-                        }
-                    } catch (e) {
-                        console.error('Avatar upload error:', e);
-                        avatarStatus.textContent = `Upload failed: ${e.message || 'Unknown error'}`;
-                        avatarStatus.className = 'settings-status error';
-                    }
-                    avatarInput.value = '';
-                });
-
-                if (deleteAvatarBtn) {
-                    deleteAvatarBtn.addEventListener('click', async () => {
-                        avatarStatus.textContent = 'Removing...';
-                        try {
-                            const response = await csrfFetch('/api/auth/avatar', { method: 'DELETE' });
-                            if (response.ok) {
-                                this.updateAvatarPreview(null);
-                                avatarStatus.textContent = 'Avatar removed';
-                                avatarStatus.className = 'settings-status success';
-                                setTimeout(() => { avatarStatus.textContent = ''; }, 2000);
-                            }
-                        } catch (e) {
-                            avatarStatus.textContent = 'Failed to remove';
-                            avatarStatus.className = 'settings-status error';
-                        }
-                    });
-                }
-            }
+            });
         }
     }
-    
+
+    async addMailAccount(account) {
+        try {
+            // Get existing accounts first
+            const response = await csrfFetch('/api/auth/settings');
+            let accounts = [];
+            if (response.ok) {
+                const settings = await response.json();
+                accounts = settings.mail_accounts || [];
+            }
+            
+            // Add new account
+            accounts.push(account);
+            
+            // Save all accounts
+            const saveResponse = await csrfFetch('/api/auth/settings', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mail_accounts: accounts })
+            });
+
+            if (saveResponse.ok) {
+                await this.loadUserSettings();
+            } else {
+                const data = await saveResponse.json();
+                alert(data.detail || 'Failed to add account');
+            }
+        } catch (e) {
+            console.error('Error adding mail account:', e);
+            alert('Error adding account');
+        }
+    }
+
+    async deleteMailAccount(index) {
+        if (!confirm('Delete this email account?')) return;
+        
+        try {
+            // Get existing accounts
+            const response = await csrfFetch('/api/auth/settings');
+            if (!response.ok) {
+                alert('Failed to load accounts');
+                return;
+            }
+            
+            const settings = await response.json();
+            let accounts = settings.mail_accounts || [];
+            
+            // Remove account at index
+            accounts.splice(index, 1);
+            
+            // Save updated accounts
+            const saveResponse = await csrfFetch('/api/auth/settings', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mail_accounts: accounts })
+            });
+
+            if (saveResponse.ok) {
+                await this.loadUserSettings();
+            } else {
+                const data = await saveResponse.json();
+                alert(data.detail || 'Failed to delete account');
+            }
+        } catch (e) {
+            console.error('Error deleting mail account:', e);
+            alert('Error deleting account');
+        }
+    }
+
+    async loadUserSettings() {
+        try {
+            const response = await csrfFetch('/api/auth/settings');
+            if (response.ok) {
+                const settings = await response.json();
+                console.log('User settings loaded:', settings);
+
+                // Profile settings
+                const notificationEmail = document.getElementById('notificationEmail');
+                if (notificationEmail) notificationEmail.value = settings.notification_email || '';
+
+                // Avatar
+                const avatarImage = document.getElementById('avatarImage');
+                const avatarPlaceholder = document.getElementById('avatarPlaceholder');
+                const deleteAvatarBtn = document.getElementById('deleteAvatarBtn');
+                if (settings.avatar && avatarImage && avatarPlaceholder) {
+                    avatarImage.src = settings.avatar;
+                    avatarImage.style.display = 'block';
+                    avatarPlaceholder.style.display = 'none';
+                    if (deleteAvatarBtn) deleteAvatarBtn.style.display = 'inline-block';
+                } else if (avatarImage && avatarPlaceholder) {
+                    avatarImage.style.display = 'none';
+                    avatarPlaceholder.style.display = 'block';
+                    if (deleteAvatarBtn) deleteAvatarBtn.style.display = 'none';
+                }
+
+                // Custom AI settings
+                const customAiEnabled = document.getElementById('customAiEnabled');
+                const customAiSettings = document.getElementById('customAiSettings');
+                if (customAiEnabled) customAiEnabled.checked = settings.custom_ai_enabled || false;
+                if (customAiSettings) customAiSettings.style.display = (settings.custom_ai_enabled) ? 'block' : 'none';
+
+                const customAiType = document.getElementById('customAiType');
+                if (customAiType) customAiType.value = settings.custom_ai_type || 'ollama';
+
+                const customAiUrl = document.getElementById('customAiUrl');
+                if (customAiUrl) customAiUrl.value = settings.custom_ai_url || '';
+
+                const customAiModel = document.getElementById('customAiModel');
+                if (customAiModel) customAiModel.value = settings.custom_ai_model || '';
+
+                const customAiApiKey = document.getElementById('customAiApiKey');
+                if (customAiApiKey) customAiApiKey.value = '';
+
+                // Custom Image settings
+                const customImageEnabled = document.getElementById('customImageEnabled');
+                const customImageSettings = document.getElementById('customImageSettings');
+                if (customImageEnabled) customImageEnabled.checked = settings.custom_image_enabled || false;
+                if (customImageSettings) customImageSettings.style.display = (settings.custom_image_enabled) ? 'block' : 'none';
+
+                const customImageUrl = document.getElementById('customImageUrl');
+                if (customImageUrl) customImageUrl.value = settings.custom_image_url || '';
+
+                // Schedule settings
+                const scheduleEnabled = document.getElementById('scheduleEnabled');
+                if (scheduleEnabled) scheduleEnabled.checked = settings.schedule_enabled || false;
+
+                // Mail accounts
+                if (settings.mail_accounts) {
+                    this.renderMailAccountList(settings.mail_accounts);
+                }
+
+                // Telegram settings
+                const telegramEnabled = document.getElementById('telegramEnabled');
+                const telegramSettings = document.getElementById('telegramSettings');
+                if (telegramEnabled) telegramEnabled.checked = settings.telegram_enabled || false;
+                if (telegramSettings) telegramSettings.style.display = (settings.telegram_enabled) ? 'block' : 'none';
+
+                const telegramChatId = document.getElementById('telegramChatId');
+                if (telegramChatId) telegramChatId.value = settings.telegram_chat_id || '';
+
+                const telegramNotifications = document.getElementById('telegramNotifications');
+                if (telegramNotifications) telegramNotifications.value = settings.telegram_notifications || 'news,downloads,mentions';
+
+                // News settings
+                const newsScheduleEnabled = document.getElementById('newsScheduleEnabled');
+                const newsScheduleSettings = document.getElementById('newsScheduleSettings');
+                if (newsScheduleEnabled) newsScheduleEnabled.checked = settings.news_schedule_enabled || false;
+                if (newsScheduleSettings) newsScheduleSettings.style.display = (settings.news_schedule_enabled) ? 'block' : 'none';
+
+                // Load storage usage
+                await this.loadStorageUsage();
+
+                // Load API keys
+                if (window.apiKeysManager) {
+                    window.apiKeysManager.loadApiKeys();
+                }
+            } else {
+                console.error('Failed to load user settings:', response.status);
+            }
+        } catch (e) {
+            console.error('Error loading user settings:', e);
+        }
+    }
+
     async loadStorageAddresses() {
         try {
             console.log('Loading storage addresses...');
@@ -2261,7 +1291,7 @@ class ChatHandler {
                 this.handleStreamChunk(typeof (data.data?.content ?? data.content) === 'string' ? (data.data?.content ?? data.content) : '');
                 break;
             case 'stream_clear':
-                // Clear current streaming content for follow-up (e.g., after plugin execution)
+                // Clear current streaming content for follow-up 
                 this.fullStreamContent = '';
                 if (this.streamingMessage) {
                     const contentEl = this.streamingMessage.querySelector('.message-content');
@@ -3595,11 +2625,6 @@ class ChatHandler {
             const emailToInput = document.getElementById('emailTo');
             if (emailToInput) emailToInput.value = '';
             
-            // Load contacts for autocomplete if function exists
-            if (window.fileManager && typeof window.fileManager.loadContactEmailsForAutocomplete === 'function') {
-                await window.fileManager.loadContactEmailsForAutocomplete();
-            }
-            
             // Show modal
             modal.style.display = 'flex';
             setTimeout(() => {
@@ -3938,7 +2963,7 @@ class ChatHandler {
             images.push({ alt: alt.trim(), url: url.trim() });
             return `\x00IMG${index}\x00`;
         });
-        // Relative URLs (e.g. /api/youtube-thumbnail?video_id=...) used by RSS YouTube thumbnails
+        // Relative URLs (e.g. /api/youtube-thumbnail?video_id=...) used by YouTube thumbnails
         processed = processed.replace(/!\[([^\]]*)\]\(\s*(\/[^)\s]+)\s*\)/g, (match, alt, url) => {
             const index = images.length;
             images.push({ alt: alt.trim(), url: url.trim() });
@@ -4089,7 +3114,7 @@ class ChatHandler {
             if (!img || !img.url) return '';
             const imgAlt = img.alt ?? '';
             let src = img.url;
-            // Use same-origin proxy for YouTube thumbnails so they load in RSS
+            // Use same-origin proxy for YouTube thumbnails so they load in chat
             const ytMatch = src.match(/^https?:\/\/img\.youtube\.com\/vi\/([a-zA-Z0-9_-]{11})\//);
             if (ytMatch) src = '/api/youtube-thumbnail?video_id=' + encodeURIComponent(ytMatch[1]);
             else if (src.startsWith('/')) src = src;  // Same-origin (e.g. /api/youtube-thumbnail?video_id=...)
@@ -4311,38 +3336,6 @@ class ChatHandler {
         this.messageInput.setSelectionRange(this.messageInput.value.length, this.messageInput.value.length);
     }
 
-    // Load plugins for autocomplete
-    async loadPluginsForAutocomplete() {
-        try {
-            const response = await fetch('/api/plugins');
-            if (response.ok) {
-                const plugins = await response.json();
-                this.pluginActions = [];
-                for (const plugin of plugins) {
-                    if (plugin.enabled) {
-                        // Add plugin name as a keyword
-                        const pluginKeyword = plugin.name.toLowerCase().replace(/\s+/g, '');
-                        if (!this.commands.includes(pluginKeyword)) {
-                            this.commands.push(pluginKeyword);
-                        }
-                        // Store plugin action hints
-                        if (plugin.actions) {
-                            for (const action of plugin.actions) {
-                                this.pluginActions.push({
-                                    plugin: plugin.name,
-                                    action: action.name,
-                                    description: action.description,
-                                    keyword: `${pluginKeyword} ${action.name}`.toLowerCase()
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-        } catch (e) {
-            console.error('Failed to load plugins for autocomplete:', e);
-        }
-    }
 
     async loadMailAccountsForAutocomplete() {
         try {
@@ -4378,18 +3371,13 @@ class ChatHandler {
                     this.subcommands['mail send'] = accountHints;
 
                     // Add folder hints after account for folder/read/summary/translate
-                    // Also set up placeholders for send/forward recipient hints (populated by loadContactEmailsForAutocomplete)
                     for (const account of accountHints) {
                         this.subcommands[`mail folder ${account}`] = folderHints.map(f => f.replace(':', ''));
                         this.subcommands[`mail read ${account}`] = folderHints;
                         this.subcommands[`mail summary ${account}`] = folderHints;
-                        this.subcommands[`mail send ${account}`] = [];  // Will be populated with contact emails
-                        this.subcommands[`mail forward ${account}`] = [];  // Will be populated with contact emails
                     }
                     this.subcommands['mail translate'] = accountHints; // language first, then account
 
-                    // Store account hints for contact email loading
-                    this.mailAccountHints = accountHints;
                     console.log('Mail subcommands set:', Object.keys(this.subcommands).filter(k => k.startsWith('mail')));
                 } else {
                     console.debug('No mail accounts configured');
@@ -4399,34 +3387,6 @@ class ChatHandler {
             }
         } catch (e) {
             console.error('Error loading mail accounts for autocomplete:', e);
-        }
-    }
-
-    async loadContactEmailsForAutocomplete() {
-        try {
-            const response = await fetch('/api/contacts/emails');
-            if (response.ok) {
-                const contacts = await response.json();
-                if (contacts && contacts.length > 0) {
-                    // Create email hints - use name or email prefix for easy matching
-                    const emailHints = contacts.map(c => c.email);
-                    console.log('Contact email hints loaded:', emailHints.length);
-
-                    // Store for use in autocomplete
-                    this.contactEmails = emailHints;
-
-                    // Add contact emails to mail send and mail forward subcommands
-                    // Use stored account hints from loadMailAccountsForAutocomplete
-                    const accountHints = this.mailAccountHints || [];
-                    for (const account of accountHints) {
-                        this.subcommands[`mail send ${account}`] = emailHints;
-                        this.subcommands[`mail forward ${account}`] = emailHints;
-                    }
-                    console.log('Contact emails added to mail subcommands for accounts:', accountHints);
-                }
-            }
-        } catch (e) {
-            console.debug('Could not load contact emails:', e);
         }
     }
 
@@ -4450,6 +3410,58 @@ class ChatHandler {
             }
         } catch (e) {
             console.debug('Could not load note titles:', e);
+        }
+    }
+
+    // Render mail account list in user settings
+    renderMailAccountList(accounts) {
+        const listContainer = document.getElementById('mailAccountList');
+        if (!listContainer) return;
+
+        if (!accounts || accounts.length === 0) {
+            listContainer.innerHTML = '<p class="no-accounts">No email accounts configured. Click "+ Add Email Account" to add one.</p>';
+            return;
+        }
+
+        listContainer.innerHTML = accounts.map((acc, index) => `
+            <div class="mail-account-item">
+                <div class="account-info">
+                    <strong>${this.escapeHtml(acc.email || acc.username || 'Unknown')}</strong>
+                    <span class="account-server">${this.escapeHtml(acc.imap_server || '')}</span>
+                </div>
+                <div class="account-actions">
+                    <button class="btn-small btn-danger" onclick="window.chatHandler.deleteMailAccount(${index})">Delete</button>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text || '';
+        return div.innerHTML;
+    }
+
+    async deleteMailAccount(index) {
+        if (!confirm('Delete this email account?')) return;
+        
+        try {
+            const response = await csrfFetch('/api/auth/mail-accounts', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ index })
+            });
+
+            if (response.ok) {
+                // Reload settings to refresh the list
+                await this.loadUserSettings();
+            } else {
+                const data = await response.json();
+                alert(data.detail || 'Failed to delete account');
+            }
+        } catch (e) {
+            console.error('Error deleting mail account:', e);
+            alert('Error deleting account');
         }
     }
 
@@ -4483,8 +3495,6 @@ class ChatHandler {
         // Todo subcommands
         'todo': ['add', 'rm', 'list'],
         // Notes subcommands removed
-        // RSS subcommands
-        'rss': ['sync', 'add', 'remove', 'list', 'search'],
         // YouTube download subcommands
         'ytdl': ['mp3', 'video'],
         // 4chan catalog boards
@@ -4613,20 +3623,8 @@ class ChatHandler {
         // Find matching commands
         const commandMatches = this.commands.filter(cmd => cmd.startsWith(textBeforeCursor));
 
-        // Find matching plugin actions
-        const actionMatches = this.pluginActions.filter(pa =>
-            pa.keyword.startsWith(textBeforeCursor) ||
-            pa.action.toLowerCase().startsWith(textBeforeCursor)
-        );
-
         // Combine matches
         const allMatches = [...commandMatches];
-        for (const am of actionMatches) {
-            const actionHint = `${am.plugin.toLowerCase().replace(/\s+/g, '')} ${am.action}`;
-            if (!allMatches.includes(actionHint)) {
-                allMatches.push(actionHint);
-            }
-        }
 
         if (allMatches.length === 1) {
             // Single match - complete it

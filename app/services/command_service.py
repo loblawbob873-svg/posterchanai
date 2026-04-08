@@ -8,25 +8,6 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.routers.news import fetch_news_from_source, get_user_news_sources
-from app.services.caldav_service import (
-    add_event_to_calendar,
-    add_todo_to_calendar,
-    add_user_contact,
-    delete_event_from_calendar,
-    delete_todo_from_calendar,
-    delete_user_contact,
-    edit_user_contact,
-    format_contacts_for_display,
-    format_events_for_display,
-    format_todos_for_display,
-    get_all_user_events,
-    get_all_user_todos,
-    get_event_by_uid,
-    get_user_calendars,
-    get_user_contact_by_uid,
-    get_user_contacts,
-    update_event_in_calendar,
-)
 from app.services.chat_service import ChatService
 from app.services.proxy_image_cache import register as proxy_image_register
 from app.services.image_factory import generate_image_for_user
@@ -49,7 +30,6 @@ from app.services.mail_service import (
     send_email,
 )
 from app.services.nyaa_service import NyaaResult, format_nyaa_results, search_nyaa
-from app.services.plugin_service import PluginService
 from app.utils.date_utils import get_month_end, get_month_start, get_next_month
 from app.services.search_service import SearchService
 from app.services.torrent_service import (
@@ -164,9 +144,7 @@ class CommandService:
         "ytdl": "Download YouTube or X: ytdl <url> (MP3 default), ytdl mp3/video <url>",
         "torrents": "Torrent search: torrents <query>",
         "nyaa": "Anime torrents: nyaa <query>",
-        "news": "RSS news (alias for rss sync)",
         "dailynews": "Web news: dailynews <source>",
-        "rss": "RSS feeds: rss | rss sync | rss add <url> | rss remove <id> | rss search <query>",
         "logs": "View system logs",
         "cal": "Calendar: cal | cal today | cal week | cal month | cal nextmonth | cal add <event> <time>",
         "contacts": "Contacts: contacts <query>",
@@ -355,13 +333,6 @@ class CommandService:
             return await self._dailynews_command(arg)
         elif command == "logs":
             return await self._logs_command(arg)
-        elif command == "rss":
-            # Delegate to RSS plugin
-            from plugins import get_command_handler
-            handler = get_command_handler("rss")
-            if handler:
-                return await handler(arg, self.user, self.db)
-            return {"type": "text", "content": "RSS plugin not enabled. Enable it in Admin → Services."}
         elif command == "cal":
             return await self._schedule_command(arg)
         elif command == "contacts":
@@ -386,35 +357,7 @@ class CommandService:
             help_text += f"**{cmd}** - {desc}\n"
 
         # Plugin commands
-        from plugins import get_plugin_commands
-        plugin_cmds = get_plugin_commands()
-        for cmd, desc in plugin_cmds.items():
-            help_text += f"**{cmd}** - {desc}\n"
 
-        # Get user's plugins
-        if self.user:
-            plugin_service = PluginService(self.db)
-            plugins = plugin_service.get_plugins_for_user(self.user.id)
-
-            if plugins:
-                help_text += "\n## AI Plugins\n\n"
-                help_text += "These plugins are used automatically by the AI when relevant to your request.\n\n"
-
-                for plugin in plugins:
-                    help_text += f"### {plugin.name}\n"
-                    help_text += f"{plugin.description}\n\n"
-
-                    try:
-                        actions = json.loads(plugin.actions)
-                        help_text += "**Actions:**\n"
-                        for action in actions:
-                            help_text += f"- `{action['name']}` - {action['description']}\n"
-                    except (json.JSONDecodeError, KeyError, TypeError):
-                        pass  # Skip malformed plugin actions
-
-                    help_text += "\n"
-
-        help_text += "\n---\n*Plugins are invoked automatically based on your chat message.*"
 
         return {"type": "text", "content": help_text}
 
@@ -705,166 +648,16 @@ class CommandService:
         return "\n".join(lines)
 
     async def _flood_command(self, arg: str) -> dict:
-        """Direct Flood torrent manager commands"""
-        if not self.user:
-            return {"type": "text", "content": "Please log in to use Flood commands."}
-
-        plugin_service = PluginService(self.db)
-        parts = arg.strip().split(maxsplit=1)
-        subcommand = parts[0].lower() if parts else "list"
-        param = parts[1] if len(parts) > 1 else ""
-
-        # Sanitize URL/magnet - remove any trailing non-URL characters (emojis, etc.)
-        if param and (param.startswith("magnet:") or param.startswith("http")):
-            import re
-
-            # Keep only valid URL characters
-            param = re.match(r"^[a-zA-Z0-9:/?#\[\]@!$&\'()*+,;=._~%-]+", param)
-            param = param.group(0) if param else ""
-
-        # Resolve number to hash if param is a number
-        if param and param.isdigit():
-            num = int(param)
-            user_map = _flood_hash_map.get(self.user.id, {})
-            if num in user_map:
-                param = user_map[num]
-            else:
-                return {"type": "text", "content": f"Invalid torrent number: {num}. Run `flood list` first."}
-
-        try:
-            if subcommand in ("list", "ls", ""):
-                result = await plugin_service.execute_tool_call("flood", "list", {}, self.user.id)
-                if "error" in result:
-                    return {"type": "text", "content": f"Flood error: {result['error']}"}
-                return {"type": "text", "content": self._format_torrent_list(result)}
-
-            elif subcommand == "add" and param:
-                result = await plugin_service.execute_tool_call("flood", "add", {"url": param}, self.user.id)
-                if "error" in result:
-                    return {"type": "text", "content": f"Flood error: {result['error']}"}
-                return {"type": "text", "content": "✅ Torrent added successfully!"}
-
-            elif subcommand in ("del", "delete", "rm") and param:
-                result = await plugin_service.execute_tool_call("flood", "delete", {"hashes": param}, self.user.id)
-                if "error" in result:
-                    return {"type": "text", "content": f"Flood error: {result['error']}"}
-                return {"type": "text", "content": "🗑️ Torrent deleted."}
-
-            elif subcommand in ("start", "resume") and param:
-                result = await plugin_service.execute_tool_call("flood", "start", {"hashes": param}, self.user.id)
-                if "error" in result:
-                    return {"type": "text", "content": f"Flood error: {result['error']}"}
-                return {"type": "text", "content": "▶️ Torrent started."}
-
-            elif subcommand in ("stop", "pause") and param:
-                result = await plugin_service.execute_tool_call("flood", "stop", {"hashes": param}, self.user.id)
-                if "error" in result:
-                    return {"type": "text", "content": f"Flood error: {result['error']}"}
-                return {"type": "text", "content": "⏸️ Torrent stopped."}
-
-            else:
-                return {
-                    "type": "text",
-                    "content": "Usage: `flood list` | `flood add <url>` | `flood start <#>` | `flood stop <#>` | `flood delete <#>`",
-                }
-
-        except Exception as e:
-            return {"type": "text", "content": f"Flood error: {str(e)}"}
+        """Flood command - disabled"""
+        return {"type": "text", "content": "The Flood plugin has been removed. Use the built-in torrent client instead."}
 
     async def _budget_command(self, arg: str) -> dict:
-        """Direct Budget manager commands"""
-        if not self.user:
-            return {"type": "text", "content": "Please log in to use Budget commands."}
-
-        plugin_service = PluginService(self.db)
-        parts = arg.strip().split()
-        subcommand = parts[0].lower() if parts else "summary"
-
-        try:
-            if subcommand in ("summary", ""):
-                result = await plugin_service.execute_tool_call("budget", "summary", {}, self.user.id)
-                action = "summary"
-            elif subcommand == "bills":
-                result = await plugin_service.execute_tool_call("budget", "bills", {}, self.user.id)
-                action = "bills"
-            elif subcommand == "add" and len(parts) >= 3:
-                name = parts[1]
-                # Strip $ and commas from amount
-                amount = parts[2].lstrip("$").replace(",", "")
-                result = await plugin_service.execute_tool_call(
-                    "budget", "add", {"name": name, "amount": amount}, self.user.id
-                )
-                if "error" not in result:
-                    return {"type": "text", "content": f"✅ Bill added: {name} - ${float(amount):,.2f}"}
-                action = "add"
-            elif subcommand == "extract":
-                # Extract bill from receipt text: budget extract <receipt text>
-                if len(parts) < 2:
-                    return {
-                        "type": "text",
-                        "content": "Usage: `budget extract <receipt text>`\n\nExample: `budget extract Mobile Order Receipt Hi Phillip, Thank you for placing your mobile order...`",
-                    }
-                receipt_text = " ".join(parts[1:])
-                logger.info(f"[Budget] Extracting bill from receipt text (length: {len(receipt_text)} chars)")
-                return await self._extract_bill_from_text(receipt_text)
-            elif subcommand in ("pay", "paid") and len(parts) >= 2:
-                name = " ".join(parts[1:])
-                result = await plugin_service.execute_tool_call("budget", "pay", {"name": name}, self.user.id)
-                if "error" in result:
-                    return {"type": "text", "content": f"❌ {result['error']}"}
-
-                # Show payment confirmation and remaining bills
-                formatted = plugin_service.format_result_for_display("budget", "pay", result)
-                bills_result = await plugin_service.execute_tool_call("budget", "bills", {}, self.user.id)
-                bills_formatted = plugin_service.format_result_for_display("budget", "bills", bills_result)
-
-                return {"type": "text", "content": f"{formatted}\n\n{bills_formatted}"}
-            else:
-                return {
-                    "type": "text",
-                    "content": "Usage: `budget` | `budget bills` | `budget add <name> <amount>` | `budget pay <name>` | `budget extract <receipt text>`",
-                }
-
-            formatted = plugin_service.format_result_for_display("budget", action, result)
-            return {"type": "text", "content": formatted}
-        except Exception as e:
-            return {"type": "text", "content": f"Budget error: {str(e)}"}
+        """Budget command - disabled"""
+        return {"type": "text", "content": "The Budget plugin has been removed."}
 
     async def _firewall_command(self, arg: str) -> dict:
-        """Direct Firewall status commands"""
-        if not self.user:
-            return {"type": "text", "content": "Please log in to use Firewall commands."}
-
-        plugin_service = PluginService(self.db)
-        parts = arg.strip().split()
-        subcommand = parts[0].lower() if parts else "status"
-
-        try:
-            if subcommand in ("status", ""):
-                result = await plugin_service.execute_tool_call("firewall", "status", {}, self.user.id)
-            elif subcommand == "search" and len(parts) >= 2:
-                ip = parts[1]
-                date = parts[2] if len(parts) >= 3 else ""
-                params = {"ip": ip}
-                if date:
-                    params["date"] = date
-                result = await plugin_service.execute_tool_call("firewall", "search", params, self.user.id)
-            elif subcommand in ("analyze", "ai") and len(parts) >= 2:
-                ip = parts[1]
-                result = await plugin_service.execute_tool_call("firewall", "analyze", {"ip": ip}, self.user.id)
-            else:
-                return {
-                    "type": "text",
-                    "content": "Usage: `firewall` | `firewall search <ip> [date]` | `firewall analyze <ip>`",
-                }
-
-            if "error" in result:
-                return {"type": "text", "content": f"Firewall error: {result['error']}"}
-
-            formatted = plugin_service.format_result_for_display("firewall", subcommand, result)
-            return {"type": "text", "content": formatted}
-        except Exception as e:
-            return {"type": "text", "content": f"Firewall error: {str(e)}"}
+        """Firewall command - disabled"""
+        return {"type": "text", "content": "The Firewall plugin has been removed."}
 
     async def _extract_bill_from_text(self, receipt_text: str) -> Optional[dict]:
         """Extract bill information from receipt text and add to budget."""
@@ -963,20 +756,8 @@ class CommandService:
                     "content": f"Extracted bill '{name}' but could not parse amount '{amount}'. Please add manually with: `budget add {name} <amount>`",
                 }
 
-            # Add to budget system using plugin
-            plugin_service = PluginService(self.db)
-            result = await plugin_service.execute_tool_call(
-                "budget", "add", {"name": name, "amount": str(amount)}, self.user.id
-            )
-
-            if "error" in result:
-                return {"type": "text", "content": f"Error adding bill: {result.get('error', 'Unknown error')}"}
-
-            due_str = f"\n📅 Date: {due_date}" if due_date else ""
-            return {
-                "type": "text",
-                "content": f"✅ Bill added from receipt: **{name}**\n\n💵 Amount: ${amount:.2f}{due_str}",
-            }
+            # Budget plugin removed
+            return {"type": "text", "content": "The Budget plugin has been removed."}
 
         except json.JSONDecodeError:
             return {
@@ -1756,30 +1537,8 @@ Files are saved to your Storage.""",
 
 
     async def _news_command(self, arg: str) -> dict:
-        """Get news - redirects to native RSS plugin or dailynews"""
-        if not self.user:
-            return {"type": "text", "content": "Please log in to use the news command."}
-
-        parts = arg.strip().split()
-        subcommand = parts[0].lower() if parts else ""
-
-        # Detect if user is trying to get news from a specific source (redirect to dailynews)
-        # Common news source indicators
-        news_source_keywords = ["npr", "cnn", "fox", "drudge", "nypost", "newsweek", ".com", ".org"]
-        if subcommand and any(kw in subcommand for kw in news_source_keywords):
-            return await self._dailynews_command(arg)
-
-        # Redirect to native RSS plugin with sync command
-        from plugins import get_command_handler
-        handler = get_command_handler("rss")
-        if handler:
-            # Pass "sync" to fetch and summarize articles
-            return await handler("sync", self.user, self.db)
-        
-        return {
-            "type": "text",
-            "content": "RSS plugin not enabled. Enable it in Admin → Services, then add feeds in User Settings.\n\nTip: Use `dailynews` to get news from web sources instead.",
-        }
+        """Get news from configured web sources"""
+        return await self._dailynews_command(arg)
 
     def _add_copy_buttons_to_news(self, markdown: str) -> str:
         """Add copy buttons to news article links in markdown."""
@@ -1940,436 +1699,12 @@ Files are saved to your Storage.""",
         return {"type": "text", "content": result}
 
     async def _schedule_command(self, arg: str) -> dict:
-        """Calendar/Schedule commands"""
-        import calendar
-        from datetime import datetime, timedelta
-
-        from dateutil import parser as date_parser
-
-        from app.services.caldav_service import (
-            add_event_to_calendar,
-            delete_event_from_calendar,
-            format_events_for_display,
-            get_all_user_events,
-            get_event_by_uid,
-            get_user_calendars,
-            update_event_in_calendar,
-        )
-
-        if not self.user:
-            return {"type": "text", "content": "Please log in to use the cal command."}
-
-        # Check if user has calendars configured
-        calendars = get_user_calendars(self.user.id, self.db)
-        if not calendars:
-            return {"type": "text", "content": "No calendars configured. Add calendars in User Settings."}
-
-        parts = arg.strip().split(maxsplit=1)
-        subcommand = parts[0].lower() if parts else "week"
-        param = parts[1] if len(parts) > 1 else ""
-
-        try:
-            if subcommand == "today":
-                # Get today's events
-                today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-                tomorrow = today + timedelta(days=1)
-                events = get_all_user_events(self.user.id, today, tomorrow, self.db)
-                events_text = format_events_for_display(events, include_description=True, cyberpunk=True)
-
-                date_str = today.strftime("%A, %B %d")
-                return {"type": "text", "content": f"## ◈ SCHEDULE - {date_str.upper()} ◈\n\n{events_text}"}
-
-            elif subcommand in ("week", ""):
-                # Get this week's events - show current calendar week (Monday through Sunday)
-                # This matches iPhone/calendar behavior where "this week" includes past days
-                today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-                # Calculate Monday of current week (weekday() returns 0 for Monday, 6 for Sunday)
-                days_since_monday = today.weekday()
-                week_start = today - timedelta(days=days_since_monday)
-                # Week ends on Sunday at 23:59:59 (6 days after Monday)
-                week_end = week_start + timedelta(days=6, hours=23, minutes=59, seconds=59)
-                logger.info(f"[cal week] Calendar week: {week_start.date()} (Mon) to {week_end.date()} (Sun)")
-
-                logger.info(f"[cal week] Fetching events for user {self.user.id} from {week_start.date()} to {week_end.date()}")
-                logger.info(f"[cal week] User has {len(calendars)} calendars configured")
-
-                events = get_all_user_events(self.user.id, week_start, week_end, self.db)
-                logger.info(f"[cal week] Found {len(events)} events")
-                
-                events_text = format_events_for_display(events, include_description=True, cyberpunk=True)
-
-                return {"type": "text", "content": f"## ◈ SCHEDULE FOR THE WEEK ◈\n\n{events_text}"}
-
-            elif subcommand == "month":
-                # Get this month's events
-                now = datetime.now()
-                start_date = get_month_start(now.year, now.month)
-                end_date = get_month_end(now.year, now.month)
-                events = get_all_user_events(self.user.id, start_date, end_date, self.db)
-                events_text = format_events_for_display(events, include_description=True, cyberpunk=True)
-                return {
-                    "type": "text",
-                    "content": f"## ◈ SCHEDULE FOR {now.strftime('%B %Y').upper()} ◈\n\n{events_text}",
-                }
-
-            elif subcommand == "nextmonth":
-                # Get next month's events
-                now = datetime.now()
-                next_year, next_month = get_next_month(now.year, now.month)
-                start_date = get_month_start(next_year, next_month)
-                end_date = get_month_end(next_year, next_month)
-                logger.info(f"[cal nextmonth] Fetching events for user {self.user.id} from {start_date.date()} to {end_date.date()}")
-                logger.info(f"[cal nextmonth] User has {len(calendars)} calendars configured")
-                
-                try:
-                    events = get_all_user_events(self.user.id, start_date, end_date, self.db)
-                    logger.info(f"[cal nextmonth] Found {len(events)} events")
-                    events_text = format_events_for_display(events, include_description=True, cyberpunk=True)
-                    return {
-                        "type": "text",
-                        "content": f"## ◈ SCHEDULE FOR {start_date.strftime('%B %Y').upper()} ◈\n\n{events_text}",
-                    }
-                except Exception as e:
-                    logger.error(f"[cal nextmonth] Error fetching events: {e}", exc_info=True)
-                    return {
-                        "type": "text",
-                        "content": f"❌ Error fetching calendar events: {str(e)}\n\nTry again or check server logs.",
-                    }
-
-            elif subcommand == "add":
-                if not param:
-                    return {
-                        "type": "text",
-                        "content": "Usage: `cal add <event name> <time>`\n\nExample: `cal add Meeting with John tomorrow at 3pm`",
-                    }
-
-                import time as time_module
-                from datetime import date
-
-                today = date.today()
-                local_tz = time_module.tzname[0]
-                messages = [
-                    {
-                        "role": "system",
-                        "content": f"""Parse this event and return JSON with:
-- summary: event name
-- description: any details mentioned
-- start_time: ISO format datetime WITHOUT timezone suffix
-- end_time: ISO format datetime WITHOUT timezone suffix
-- location: place/address if mentioned (look for "at <location>", "in <location>", or location after time)
-- rrule: iCalendar RRULE string if event repeats, null if not repeating
-
-IMPORTANT: Today is {today.strftime("%A, %B %d, %Y")}. Use the current year {today.year} for dates.
-Times are in local timezone ({local_tz}). Do NOT add Z suffix to times.
-If location is mentioned (e.g., "at 123 Main St" or "in New York"), extract it to the location field.
-Return ONLY valid JSON, no other text.""",
-                    },
-                    {"role": "user", "content": f"Parse this event: {param}"},
-                ]
-
-                try:
-                    import json
-                    import re
-                    # Use module-level logger (already imported at top of file)
-                    # logger is defined at module level, so it should be accessible here
-
-                    parsed = await self.chat_service.chat(messages)
-                    logger.info(f"[Cal] LLM response for event parsing: {parsed[:200]}...")
-                    parsed = parsed.strip()
-                    code_block_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", parsed)
-                    if code_block_match:
-                        parsed = code_block_match.group(1).strip()
-                        logger.debug(f"[Cal] Extracted JSON from code block")
-                    else:
-                        json_match = re.search(r"\{[\s\S]*\}", parsed)
-                        if json_match:
-                            parsed = json_match.group(0)
-                            logger.debug(f"[Cal] Extracted JSON from response")
-
-                    logger.info(f"[Cal] Parsing JSON: {parsed[:200]}...")
-                    event_data = json.loads(parsed)
-                    logger.info(f"[Cal] Successfully parsed JSON, got event_data keys: {list(event_data.keys())}")
-                    summary = event_data.get("summary", param)
-                    description = event_data.get("description", "")
-                    start_str = event_data.get("start_time", "").replace("Z", "")
-                    end_str = event_data.get("end_time", "").replace("Z", "")
-                    location = event_data.get("location")
-                    rrule = event_data.get("rrule")
-                    
-                    # Log parsed data for debugging
-                    logger.info(f"[Cal] Parsed event: summary={summary}, location={location}, description={description[:50] if description else 'None'}")
-                    if not location:
-                        logger.warning(f"[Cal] No location extracted from: {param}")
-
-                    start_time = date_parser.parse(start_str) if start_str else datetime.now() + timedelta(hours=1)
-                    end_time = date_parser.parse(end_str) if end_str else start_time + timedelta(hours=1)
-
-                    cal = calendars[0]
-                    logger.info(f"[Cal] Calling add_event_to_calendar: summary={summary}, start={start_time}, end={end_time}, location={location}")
-                    result = add_event_to_calendar(
-                        cal["url"],
-                        cal["username"],
-                        cal["password"],
-                        summary,
-                        description,
-                        start_time,
-                        end_time,
-                        location,
-                        rrule,
-                        user_id=self.user.id,
-                        db=self.db
-                    )
-                    logger.info(f"[Cal] add_event_to_calendar returned: {result}")
-                    if result:
-                        time_str = start_time.strftime("%A, %B %d at %I:%M %p")
-                        return {"type": "text", "content": f"✅ Event added: **{summary}**\n\n📅 {time_str}"}
-                    logger.warning(f"[Cal] add_event_to_calendar returned False - event was not saved")
-                    return {"type": "text", "content": "❌ Failed to add event to calendar."}
-                except Exception as e:
-                    logger.error(f"[Cal] Exception in cal add command: {e}", exc_info=True)
-                    return {"type": "text", "content": f"Error adding event: {str(e)}"}
-
-            elif subcommand == "delete":
-                if not param:
-                    return {"type": "text", "content": "Usage: `cal delete <event_uid>`"}
-                event_uid = param.strip()
-                for cal in calendars:
-                    if delete_event_from_calendar(
-                        cal["url"], cal["username"], cal["password"], event_uid,
-                        user_id=self.user.id,
-                        db=self.db
-                    ):
-                        return {"type": "text", "content": "✅ Event deleted successfully."}
-                return {"type": "text", "content": "❌ Event not found or could not be deleted."}
-
-            elif subcommand == "get":
-                if not param:
-                    return {"type": "text", "content": "Usage: `cal get <event_uid>`"}
-                event_uid = param.strip()
-                for cal in calendars:
-                    # Pass user_id and db for built-in calendars
-                    event = get_event_by_uid(
-                        cal["url"], 
-                        cal["username"], 
-                        cal["password"], 
-                        event_uid,
-                        user_id=self.user.id if cal.get("password") == "__USE_SESSION_AUTH__" else None,
-                        db=self.db if cal.get("password") == "__USE_SESSION_AUTH__" else None
-                    )
-                    if event:
-                        details = f"## Event Details\n\n**Title:** {event.summary}\n**Start:** {event.start.strftime('%Y-%m-%d %I:%M %p')}\n"
-                        if event.end:
-                            details += f"**End:** {event.end.strftime('%Y-%m-%d %I:%M %p')}\n"
-                        if event.location:
-                            details += f"**Location:** {event.location}\n"
-                        if event.description:
-                            details += f"**Description:** {event.description}\n"
-                        details += f"\n**UID:** `{event.uid}`"
-                        return {"type": "text", "content": details}
-                return {"type": "text", "content": "❌ Event not found."}
-
-            elif subcommand == "edit":
-                edit_parts = param.split(maxsplit=2) if param else []
-                if len(edit_parts) < 2:
-                    return {"type": "text", "content": "Usage: `cal edit <uid> <changes>`"}
-
-                event_uid = edit_parts[0]
-                change_request = edit_parts[1]
-                if len(edit_parts) > 2:
-                    change_request += " " + edit_parts[2]
-
-                # For built-in calendars, skip get_event_by_uid check and go directly to update
-                # (update_event_in_calendar will find the event itself)
-                is_builtin = any(cal.get("password") == "__USE_SESSION_AUTH__" for cal in calendars)
-                
-                if not is_builtin:
-                    # For external calendars, verify event exists first
-                    event = None
-                    for cal in calendars:
-                        if cal.get("password") != "__USE_SESSION_AUTH__":
-                            event = get_event_by_uid(
-                                cal["url"], 
-                                cal["username"], 
-                                cal["password"], 
-                                event_uid
-                            )
-                            if event:
-                                break
-
-                    if not event:
-                        return {"type": "text", "content": "❌ Event not found."}
-
-                change_lower = change_request.lower()
-                if change_lower.startswith("title "):
-                    new_title = change_request[6:].strip()
-                    updated = False
-                    for cal in calendars:
-                        if update_event_in_calendar(
-                            cal["url"], cal["username"], cal["password"], event_uid, 
-                            summary=new_title,
-                            user_id=self.user.id,
-                            db=self.db
-                        ):
-                            updated = True
-                            break
-                    if updated:
-                        return {"type": "text", "content": f"✅ Updated title to: **{new_title}**"}
-                    else:
-                        return {"type": "text", "content": "❌ Failed to update event. Event may not exist or update failed."}
-
-                elif change_lower.startswith("location "):
-                    new_location = change_request[9:].strip()
-                    updated = False
-                    for cal in calendars:
-                        if update_event_in_calendar(
-                            cal["url"], cal["username"], cal["password"], event_uid, 
-                            location=new_location,
-                            user_id=self.user.id,
-                            db=self.db
-                        ):
-                            updated = True
-                            break
-                    if updated:
-                        return {"type": "text", "content": f"✅ Updated location to: **{new_location}**"}
-                    else:
-                        return {"type": "text", "content": "❌ Failed to update event. Event may not exist or update failed."}
-
-                elif change_lower.startswith("description "):
-                    new_description = change_request[12:].strip()
-                    updated = False
-                    for cal in calendars:
-                        if update_event_in_calendar(
-                            cal["url"], cal["username"], cal["password"], event_uid, 
-                            description=new_description,
-                            user_id=self.user.id,
-                            db=self.db
-                        ):
-                            updated = True
-                            break
-                    if updated:
-                        return {"type": "text", "content": f"✅ Updated description to: **{new_description}**"}
-                    else:
-                        return {"type": "text", "content": "❌ Failed to update event. Event may not exist or update failed."}
-
-                elif change_lower.startswith("time ") or change_lower.startswith("move "):
-                    # AI-based time parsing for edit (abbreviated for size)
-                    time_request = change_request.split(maxsplit=1)[1]
-                    # Logic here typically involves calling AI to get new start/end
-                    return {
-                        "type": "text",
-                        "content": f"Rescheduling logic for '{time_request}' triggered (uid: {event_uid}).",
-                    }
-
-                elif change_lower.startswith("repeat ") or change_lower.startswith("rrule "):
-                    # Parse repeat pattern (e.g., "weekly Mon", "daily", "monthly")
-                    repeat_pattern = change_request.split(maxsplit=1)[1] if len(change_request.split()) > 1 else change_request[7:].strip()
-                    repeat_lower = repeat_pattern.lower()
-                    
-                    # Convert common patterns to RRULE format
-                    rrule_str = None
-                    if repeat_lower == "daily" or repeat_lower.startswith("daily "):
-                        rrule_str = "FREQ=DAILY"
-                    elif repeat_lower == "weekly" or repeat_lower.startswith("weekly "):
-                        # Try to extract day of week
-                        day_map = {"mon": "MO", "tue": "TU", "wed": "WE", "thu": "TH", "fri": "FR", "sat": "SA", "sun": "SU"}
-                        day_found = None
-                        for day_name, day_code in day_map.items():
-                            if day_name in repeat_lower:
-                                day_found = day_code
-                                break
-                        if day_found:
-                            rrule_str = f"FREQ=WEEKLY;BYDAY={day_found}"
-                        else:
-                            rrule_str = "FREQ=WEEKLY"
-                    elif repeat_lower == "monthly" or repeat_lower.startswith("monthly "):
-                        rrule_str = "FREQ=MONTHLY"
-                    elif repeat_lower == "yearly" or repeat_lower.startswith("yearly "):
-                        rrule_str = "FREQ=YEARLY"
-                    elif repeat_lower.startswith("none") or repeat_lower == "no repeat":
-                        rrule_str = ""  # Remove recurrence
-                    else:
-                        # Try to parse as RRULE directly
-                        if "FREQ=" in repeat_pattern.upper():
-                            rrule_str = repeat_pattern
-                        else:
-                            return {"type": "text", "content": f"❌ Unrecognized repeat pattern: {repeat_pattern}. Use: daily, weekly [Mon], monthly, yearly, or RRULE format."}
-                    
-                    updated = False
-                    for cal in calendars:
-                        if update_event_in_calendar(
-                            cal["url"], cal["username"], cal["password"], event_uid, 
-                            rrule=rrule_str,
-                            user_id=self.user.id,
-                            db=self.db
-                        ):
-                            updated = True
-                            break
-                    if updated:
-                        if rrule_str:
-                            return {"type": "text", "content": f"✅ Updated recurrence to: **{repeat_pattern}**"}
-                        else:
-                            return {"type": "text", "content": "✅ Removed recurrence from event."}
-                    else:
-                        return {"type": "text", "content": "❌ Failed to update event. Event may not exist or update failed."}
-
-                return {"type": "text", "content": "Usage: `cal edit <uid> title|location|description|time|repeat <value>`"}
-
-            else:
-                return {
-                    "type": "text",
-                    "content": "Usage:\n- `cal today` | `cal week` | `cal month` | `cal nextmonth`\n- `cal add <event> <time>`\n- `cal delete <uid>`",
-                }
-
-        except Exception as e:
-            logger.error(f"Schedule command error: {e}")
-            return {"type": "text", "content": f"Error: {str(e)}"}
+        """Calendar/Schedule commands - DISABLED (CalDAV removed)"""
+        return {"type": "text", "content": "⚠️ The calendar feature is temporarily unavailable."}
 
     async def _contacts_command(self, arg: str) -> dict:
-        """Search or add contacts"""
-        if not self.user:
-            return {"type": "text", "content": "Please log in to use the contacts command."}
-
-        if not arg.strip():
-            return {
-                "type": "text",
-                "content": "Usage:\n- `contacts all` - List all contacts\n- `contacts <query>` - Search contacts\n- `contacts add <name> <phone>` - Add a new contact",
-            }
-
-        parts = arg.strip().split(maxsplit=2)
-        subcommand = parts[0].lower()
-
-        # Handle all subcommand - list all contacts
-        if subcommand == "all":
-            try:
-                # Use empty query or wildcard to get all
-                contacts = get_user_contacts(self.user.id, "", self.db)
-                if not contacts:
-                    return {
-                        "type": "text",
-                        "content": "No contacts found. Add contacts in your CardDAV address book or use `contacts add <name> <phone>`.",
-                    }
-                return {"type": "text", "content": format_contacts_for_display(contacts)}
-            except Exception as e:
-                logger.error(f"Contacts all error: {e}")
-                return {"type": "text", "content": f"Error listing contacts: {str(e)}"}
-
-        # Handle search subcommand - explicit search (for autocomplete compatibility)
-        if subcommand == "search":
-            query = parts[1] if len(parts) > 1 else ""
-            if not query:
-                return {
-                    "type": "text",
-                    "content": "Usage: `contacts search <query>`\n\nExample: `contacts search john`",
-                }
-            try:
-                contacts = get_user_contacts(self.user.id, query, self.db)
-                if not contacts:
-                    return {"type": "text", "content": f"No contacts found matching '{query}'."}
-                contacts_text = format_contacts_for_display(contacts)
-                return {"type": "text", "content": f"## Contacts matching '{query}'\n{contacts_text}"}
-            except Exception as e:
-                logger.error(f"Contacts search error: {e}")
-                return {"type": "text", "content": f"Error searching contacts: {str(e)}"}
+        """Search or add contacts - DISABLED (CardDAV removed)"""
+        return {"type": "text", "content": "⚠️ The contacts feature is temporarily unavailable."}
 
         # Handle delete subcommand
         if subcommand == "delete" and len(parts) > 1:
@@ -3255,20 +2590,8 @@ Return ONLY valid JSON, no other text.""",
                             "content": f"Extracted bill '{name}' but could not parse amount '{amount}'. Please add manually with: `budget add {name} <amount>`",
                         }
 
-                    # Add to budget system using plugin
-                    plugin_service = PluginService(self.db)
-                    result = await plugin_service.execute_tool_call(
-                        "budget", "add", {"name": name, "amount": str(amount)}, self.user.id
-                    )
-
-                    if "error" in result:
-                        return {"type": "text", "content": f"Error adding bill: {result.get('error', 'Unknown error')}"}
-
-                    due_str = f"\n📅 Due: {due_date}" if due_date else ""
-                    return {
-                        "type": "text",
-                        "content": f"✅ Bill added from email: **{name}**\n\n💵 Amount: ${amount:.2f}{due_str}",
-                    }
+                    # Budget plugin removed
+                    return {"type": "text", "content": "The Budget plugin has been removed."}
 
                 except json.JSONDecodeError:
                     return {

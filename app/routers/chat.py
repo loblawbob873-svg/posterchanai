@@ -25,7 +25,6 @@ from app.services.document_service import extract_pdf_text, extract_document_tex
 from app.services.email_service import EmailService
 from app.services.search_service import SearchService, is_safe_url
 from app.services.proxy_image_cache import get as proxy_cache_get
-from app.services.plugin_service import PluginService
 from app.services.intent_service import IntentService
 
 router = APIRouter(prefix="/api", tags=["chat"])
@@ -619,7 +618,6 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
         command_service = CommandService(db, user=user)
         storage_service = StorageService(db)
         search_service = SearchService(db)
-        plugin_service = PluginService(db)
         intent_service = IntentService(db, user=user)
 
         try:
@@ -1043,10 +1041,6 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             system_prompt = chat_service.system_prompt.replace(
                                 "{{CURRENT_DATE}}", datetime.utcnow().strftime("%Y-%m-%d")
                             )
-                            # Add plugin information to system prompt
-                            plugin_prompt = plugin_service.build_system_prompt_addition(user.id)
-                            if plugin_prompt:
-                                system_prompt += plugin_prompt
                             
                             # Add user's custom LLM prompt if set
                             if hasattr(user, 'custom_llm_prompt') and user.custom_llm_prompt:
@@ -1059,9 +1053,14 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             for msg in conversation.messages[-21:-1]:
                                 messages.append({"role": msg.role, "content": msg.content})
 
-                            # Detect and fetch URLs in user message (with timeout to avoid hanging)
+                            # Detect and fetch URLs in user message AND system prompt (with timeout to avoid hanging)
                             url_context = ""
                             urls = SearchService.extract_urls(content)
+                            # Also extract URLs from system prompt (e.g., $xrp command URLs)
+                            system_urls = SearchService.extract_urls(system_prompt)
+                            for url in system_urls:
+                                if url not in urls:
+                                    urls.append(url)
                             if urls:
                                 logger.info(f"Detected URLs in message: {urls}")
                                 try:
@@ -1251,64 +1250,14 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                             if full_response:
                                 clean_response = chat_service.strip_thinking_tags(full_response)
 
-                                # Check for plugin tool calls in the response
-                                tool_calls = plugin_service.parse_tool_calls(clean_response)
-                                if tool_calls:
-                                    # Execute tool calls
-                                    stripped_response, results = await plugin_service.execute_all_tool_calls(
-                                        clean_response, user.id
-                                    )
-
-                                    # Send tool results to client (formatted for display)
-                                    for r in results:
-                                        formatted_result = plugin_service.format_result_for_display(
-                                            r['plugin'], r['action'], r['result']
-                                        )
-                                        await manager.send_json(user.id, {
-                                            "type": "plugin_result",
-                                            "plugin": r['plugin'],
-                                            "action": r['action'],
-                                            "result": formatted_result
-                                        }, conn_id)
-
-                                    # Get AI follow-up response with tool results
-                                    result_context = plugin_service.format_results_for_ai(results)
-                                    follow_up_messages = messages + [
-                                        {"role": "assistant", "content": stripped_response},
-                                        {"role": "user", "content": f"Plugin results:{result_context}\n\nRespond helpfully to the user based on these results. Be conversational but informative."}
-                                    ]
-
-                                    # Signal frontend to clear current content for follow-up
-                                    await manager.send_json(user.id, {
-                                        "type": "stream_clear"
-                                    }, conn_id)
-
-                                    # Stream follow-up response
-                                    follow_up_response = ""
-                                    async for chunk in chat_service.chat_stream(follow_up_messages):
-                                        if manager.should_stop(user.id, conn_id):
-                                            break
-                                        follow_up_response += chunk
-                                        await manager.send_json(user.id, {
-                                            "type": "stream",
-                                            "data": {"content": chunk}
-                                        }, conn_id)
-
-                                    # Save combined response
-                                    final_response = chat_service.strip_thinking_tags(follow_up_response) if follow_up_response else stripped_response
-                                    assistant_msg = Message(
-                                        conversation_id=conversation_id,
-                                        role="assistant",
-                                        content=final_response
-                                    )
-                                else:
-                                    assistant_msg = Message(
-                                        conversation_id=conversation_id,
-                                        role="assistant",
-                                        content=clean_response
-                                    )
-                                    db.add(assistant_msg)
-                                    db.commit()
+                                # Save assistant response
+                                assistant_msg = Message(
+                                    conversation_id=conversation_id,
+                                    role="assistant",
+                                    content=clean_response
+                                )
+                                db.add(assistant_msg)
+                                db.commit()
 
                         except Exception as stream_err:
                             logger.error(f"Error during streaming: {stream_err}", exc_info=True)

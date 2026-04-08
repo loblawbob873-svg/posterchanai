@@ -10,11 +10,8 @@
             <div class="user-tabs">
                 <button class="user-tab-btn active" data-tab="profile">Profile</button>
                 <button class="user-tab-btn" data-tab="ai">AI Services</button>
-                <button class="user-tab-btn" data-tab="calendar">Calendar & Contacts</button>
                 <button class="user-tab-btn" data-tab="mail">Mail</button>
-                <button class="user-tab-btn" data-tab="news">News & RSS</button>
                 <button class="user-tab-btn" data-tab="telegram">Telegram</button>
-                <button class="user-tab-btn" data-tab="storage">Storage & Cloud</button>
                 <button class="user-tab-btn" data-tab="apikeys">API Keys</button>
             </div>
 
@@ -43,6 +40,34 @@
                             <label for="notificationEmail">Notification Email</label>
                             <input type="email" id="notificationEmail" placeholder="your@email.com">
                             <small>Receive AI responses via email when enabled</small>
+                        </div>
+                    </fieldset>
+
+                    <fieldset>
+                        <legend>Daily Schedule</legend>
+                        <p class="fieldset-info">Get a daily summary at 6 AM in a "Today" conversation.</p>
+                        <div class="form-group">
+                            <div class="toggle-row">
+                                <label for="scheduleEnabled">Enable Daily Schedule</label>
+                                <input type="checkbox" id="scheduleEnabled">
+                            </div>
+                        </div>
+                    </fieldset>
+
+                    <fieldset>
+                        <legend>Storage Usage</legend>
+                        <div class="storage-usage-display" id="storageUsageDisplay">
+                            <div class="storage-bar-container">
+                                <div class="storage-bar" id="storageBar">
+                                    <div class="storage-bar-fill" id="storageBarFill"></div>
+                                </div>
+                                <div class="storage-text" id="storageText">Loading...</div>
+                            </div>
+                        </div>
+                        <div class="form-group" style="margin-top: 12px;">
+                            <button type="button" class="btn-secondary" id="scanUserStorageBtn">🔄 Scan My Storage</button>
+                            <small>Scan your storage to refresh file listings and update cache. For local storage, this also restores EXIF timestamps and generates thumbnails.</small>
+                            <div id="scanStorageStatus" class="test-result" style="display: none; margin-top: 10px;"></div>
                         </div>
                     </fieldset>
                 </div>
@@ -132,127 +157,7 @@ My name: John Smith"></textarea>
                     </fieldset>
                 </div>
 
-                <!-- Calendar & Contacts Tab -->
-                <div class="user-tab-content" id="user-tab-calendar">
-                    <fieldset>
-                        <legend>Daily Schedule</legend>
-                        <p class="fieldset-info">Get a daily summary of your calendar events at 6 AM in a "Today" conversation.</p>
-                        <div class="form-group">
-                            <div class="toggle-row">
-                                <label for="scheduleEnabled">Enable Daily Schedule</label>
-                                <input type="checkbox" id="scheduleEnabled">
-                            </div>
-                        </div>
-                    </fieldset>
-
-                    <fieldset>
-                        <legend>Calendar Server</legend>
-                        <p class="fieldset-info">Choose between the built-in CalDAV server or connect to an external one.</p>
-                        <div class="form-group">
-                            <label for="calendarServerType">Calendar Server Type</label>
-                            <select id="calendarServerType">
-                                <option value="builtin">Built-in CalDAV Server</option>
-                                <option value="external">External CalDAV Server(s)</option>
-                            </select>
-                            <small>Built-in server stores calendar data locally at <code>{storage}/caldav/*.ics</code></small>
-                        </div>
-                    </fieldset>
-
-                    <div id="externalCalendarSettings" class="conditional-settings" style="display: none;">
-                        <fieldset>
-                            <legend>External CalDAV Calendars</legend>
-                            <p class="fieldset-info">Connect to CalDAV calendars (Nextcloud, Baïkal, Radicale, etc.).</p>
-                            <div id="caldavCalendarList">
-                                <!-- Calendars added here dynamically -->
-                            </div>
-                            <div class="form-group" style="margin-top: 15px;">
-                                <button type="button" class="btn-secondary" id="addCaldavCalendar">+ Add Calendar</button>
-                            </div>
-                        </fieldset>
-                    </div>
-
-                    <div id="builtinCalendarInfo" class="conditional-settings">
-                        <fieldset>
-                            <legend>Built-in Calendar Info</legend>
-                            <p class="fieldset-info">
-                                Using the built-in CalDAV server. Calendar events are stored locally and accessible via:
-                            </p>
-                            <ul style="margin: 10px 0; padding-left: 20px; color: var(--text-secondary);">
-                                <li>Chat commands: <code>cal add</code>, <code>cal list</code>, <code>cal edit</code></li>
-                                <li>CalDAV protocol: See "Storage & Cloud" tab for sync URL</li>
-                                <li>File storage: <code>{storage}/caldav/*.ics</code></li>
-                            </ul>
-                            <div class="form-group" style="margin-top: 15px;">
-                                <label>Import/Export Calendar</label>
-                                <div style="display: flex; gap: 10px; margin-top: 8px;">
-                                    <input type="file" id="calendarImportFile" accept=".ics" style="display: none;">
-                                    <button type="button" class="btn-secondary" id="importCalendarBtn">📥 Import .ics</button>
-                                    <button type="button" class="btn-secondary" id="exportCalendarBtn">📤 Export .ics</button>
-                                    <span id="calendarImportStatus" class="test-result"></span>
-                                </div>
-                                <small class="form-hint">Import events from an iCalendar (.ics) file or export your calendar.</small>
-                            </div>
-                        </fieldset>
-                    </div>
-
-                    <fieldset>
-                        <legend>Contacts Server</legend>
-                        <p class="fieldset-info">Choose between the built-in CardDAV server or connect to an external one.</p>
-                        <div class="form-group">
-                            <label for="contactsServerType">Contacts Server Type</label>
-                            <select id="contactsServerType">
-                                <option value="builtin">Built-in CardDAV Server</option>
-                                <option value="external">External CardDAV Server</option>
-                            </select>
-                            <small>Built-in server stores contacts locally at <code>{storage}/carddav/*.vcf</code></small>
-                        </div>
-                    </fieldset>
-
-                    <div id="externalContactsSettings" class="conditional-settings" style="display: none;">
-                        <fieldset>
-                            <legend>External CardDAV Contacts</legend>
-                            <p class="fieldset-info">Connect to a CardDAV address book for contact search.</p>
-                            <div class="form-group">
-                                <label for="carddavUrl">CardDAV URL</label>
-                                <input type="url" id="carddavUrl" placeholder="https://cal.example.com/user/contacts/">
-                            </div>
-                            <div class="form-row">
-                                <div class="form-group">
-                                    <label for="carddavUsername">Username</label>
-                                    <input type="text" id="carddavUsername" placeholder="username">
-                                </div>
-                                <div class="form-group">
-                                    <label for="carddavPassword">Password</label>
-                                    <input type="password" id="carddavPassword" placeholder="Leave blank to keep current">
-                                </div>
-                            </div>
-                        </fieldset>
-                    </div>
-
-                    <div id="builtinContactsInfo" class="conditional-settings">
-                        <fieldset>
-                            <legend>Built-in Contacts Info</legend>
-                            <p class="fieldset-info">
-                                Using the built-in CardDAV server. Contacts are stored locally and accessible via:
-                            </p>
-                            <ul style="margin: 10px 0; padding-left: 20px; color: var(--text-secondary);">
-                                <li>Chat commands: <code>contacts add</code>, <code>contacts list</code>, <code>contacts edit</code></li>
-                                <li>CardDAV protocol: See "Storage & Cloud" tab for sync URL</li>
-                                <li>File storage: <code>{storage}/carddav/*.vcf</code></li>
-                            </ul>
-                            <div class="form-group" style="margin-top: 15px;">
-                                <label>Import/Export Contacts</label>
-                                <div style="display: flex; gap: 10px; margin-top: 8px;">
-                                    <input type="file" id="contactsImportFile" accept=".vcf" style="display: none;">
-                                    <button type="button" class="btn-secondary" id="importContactsBtn">📥 Import .vcf</button>
-                                    <button type="button" class="btn-secondary" id="exportContactsBtn">📤 Export .vcf</button>
-                                    <span id="contactsImportStatus" class="test-result"></span>
-                                </div>
-                                <small class="form-hint">Import contacts from a vCard (.vcf) file or export your contacts.</small>
-                            </div>
-                        </fieldset>
-                    </div>
-                </div>
+                <!-- Calendar & Contacts tab removed - features available via chat commands -->
 
                 <!-- Mail Tab -->
                 <div class="user-tab-content" id="user-tab-mail">
@@ -275,84 +180,7 @@ My name: John Smith"></textarea>
                 </div>
 
                 <!-- Music tab removed -->
-
-                <!-- News & RSS Tab -->
-                <div class="user-tab-content" id="user-tab-news">
-                    <fieldset>
-                        <legend>Daily News Schedule</legend>
-                        <p class="fieldset-info">Automatically create a news summary conversation at a scheduled time.</p>
-                        <div class="form-group">
-                            <div class="toggle-row">
-                                <label for="newsScheduleEnabled">Enable Daily News</label>
-                                <input type="checkbox" id="newsScheduleEnabled">
-                            </div>
-                        </div>
-                        <div id="newsScheduleSettings" class="conditional-settings" style="display: none;">
-                            <div class="form-group">
-                                <label for="newsScheduleTime">Scheduled Time (24-hour)</label>
-                                <input type="time" id="newsScheduleTime" value="12:00">
-                                <small>A "Daily News" conversation with AI summaries will be created at this time</small>
-                            </div>
-                        </div>
-                    </fieldset>
-
-                    <fieldset>
-                        <legend>News Sources</legend>
-                        <p class="fieldset-info">Customize your news sources for the News button. One per line.</p>
-                        <div class="form-group">
-                            <label for="newsSources">Custom Sources</label>
-                            <textarea id="newsSources" rows="6" placeholder="drudgereport.com|Drudge Report
-npr.org/sections/news|NPR
-nypost.com|NY Post
-foxnews.com|Fox News"></textarea>
-                            <small>Format: <code>url|Display Name</code> (e.g., <code>cnn.com|CNN</code>). Leave blank for defaults.</small>
-                        </div>
-                    </fieldset>
-
-                    <fieldset>
-                        <legend>Native RSS Feeds</legend>
-                        <p class="fieldset-info">Add RSS feeds directly. Articles are fetched every 30 minutes and summarized by AI.</p>
-                        <div class="form-group">
-                            <div class="toggle-row">
-                                <label for="rssEnabled">Enable Native RSS</label>
-                                <input type="checkbox" id="rssEnabled">
-                            </div>
-                        </div>
-                        <div id="rssSettings" class="conditional-settings" style="display: none;">
-                            <div id="rssFeedList">
-                                <!-- Feeds added here dynamically -->
-                            </div>
-                            <div class="form-group" style="margin-top: 15px;">
-                                <div class="rss-add-form">
-                                    <input type="text" id="newRssFeedUrl" placeholder="https://example.com/feed.xml">
-                                    <input type="text" id="newRssFeedName" placeholder="Feed Name (optional)">
-                                    <button type="button" class="btn-secondary" id="addRssFeed">+ Add Feed</button>
-                                </div>
-                            </div>
-                            <div class="form-group" style="margin-top: 10px;">
-                                <div class="rss-import-form">
-                                    <input type="file" id="opmlFileInput" accept=".opml,.xml" style="display: none;">
-                                    <button type="button" class="btn-secondary" id="importOpmlBtn">Import OPML</button>
-                                    <button type="button" class="btn-secondary" id="exportOpmlBtn">Export OPML</button>
-                                    <span id="opmlImportStatus" class="test-result"></span>
-                                </div>
-                                <small class="form-hint">Import/export feeds from an OPML file for portability between RSS readers.</small>
-                            </div>
-                            <div class="form-group">
-                                <small class="form-hint">Summaries appear in the "RSS News" conversation. Use <code>rss</code> or <code>news</code> command for manual fetch.</small>
-                            </div>
-                        </div>
-                        <div id="rssSkipSettings" class="conditional-settings" style="display: none;">
-                            <div class="form-group">
-                                <div class="toggle-row">
-                                    <label for="rssSkipSummarization">Skip AI Summarization</label>
-                                    <input type="checkbox" id="rssSkipSummarization">
-                                </div>
-                                <small class="form-hint">Enable if an external bot will summarize articles. Articles will still be fetched but not summarized by the system.</small>
-                            </div>
-                        </div>
-                    </fieldset>
-                </div>
+                <!-- News tab removed -->
 
                 <!-- Telegram Tab -->
                 <div class="user-tab-content" id="user-tab-telegram">
@@ -389,103 +217,6 @@ foxnews.com|Fox News"></textarea>
                                     <button type="button" class="btn-danger" id="unlinkTelegramBtn">Unlink Telegram</button>
                                 </div>
                             </div>
-                        </div>
-                    </fieldset>
-                </div>
-
-                <!-- Storage & Cloud Tab -->
-                <div class="user-tab-content" id="user-tab-storage">
-                    <fieldset>
-                        <legend>CalDAV Calendar</legend>
-                        <p class="fieldset-info">Sync your calendar with external apps (Thunderbird, Evolution, etc.).</p>
-                        <div class="form-group">
-                            <label>CalDAV Address</label>
-                            <div class="address-copy-box">
-                                <input type="text" id="caldavAddress" readonly value="" class="address-input">
-                                <button type="button" class="btn-secondary" id="copyCaldavBtn" onclick="copyAddress('caldavAddress')">📋 Copy</button>
-                            </div>
-                            <small>Use this URL in your calendar app. Username: <strong id="caldavUsername"></strong>, Password: your account password</small>
-                        </div>
-                        <div class="form-group">
-                            <label>iPhone/iPad Setup</label>
-                            <a href="/api/caldav/profile" class="btn-secondary" download style="display: inline-block; text-decoration: none;">📱 Download iOS Profile</a>
-                            <small>Download and install this profile on your iPhone/iPad for automatic CalDAV setup</small>
-                        </div>
-                        <div class="form-group">
-                            <button type="button" class="btn-secondary" id="importRadicaleBtn">📥 Import from Radicale</button>
-                            <small>Import calendars from an existing Radicale server</small>
-                        </div>
-                        <div class="form-group">
-                            <button type="button" class="btn-secondary" id="exportCalendarBtn">📤 Export Calendar</button>
-                            <small>Export your calendar to iCalendar (.ics) format</small>
-                        </div>
-                    </fieldset>
-
-                    <fieldset>
-                        <legend>CardDAV Contacts</legend>
-                        <p class="fieldset-info">Sync your contacts with external apps (Thunderbird, Evolution, DAVx⁵, etc.).</p>
-                        <div class="form-group">
-                            <label>CardDAV Address</label>
-                            <div class="address-copy-box">
-                                <input type="text" id="carddavAddress" readonly value="" class="address-input">
-                                <button type="button" class="btn-secondary" id="copyCarddavBtn" onclick="copyAddress('carddavAddress')">📋 Copy</button>
-                            </div>
-                            <small>Username: <strong id="carddavUsername"></strong> | Password: your account password</small>
-                        </div>
-                        <div class="form-group">
-                            <label>Setup Instructions</label>
-                            <div style="background: var(--bg-secondary); padding: 15px; border-radius: 8px; margin-top: 8px;">
-                                <p style="margin: 0 0 10px 0; font-weight: 600;">⚠️ Important for iOS/iPhone:</p>
-                                <p style="margin: 0 0 10px 0; font-size: 13px; opacity: 0.9; color: #ff6b6b;">
-                                    <strong>You MUST access this page using the domain name (https://ai.poster.place), NOT the IP address (192.168.0.1)!</strong><br>
-                                    iOS will not accept SSL certificates on IP addresses. Download the profile from the domain URL.
-                                </p>
-                                
-                                <p style="margin: 10px 0 5px 0; font-weight: 600;">iPhone/iPad:</p>
-                                <a href="/api/carddav/profile" class="btn-secondary" download style="display: inline-block; text-decoration: none; margin-bottom: 10px;">📱 Download iOS Profile</a>
-                                <p style="margin: 10px 0 0 0; font-size: 13px; opacity: 0.8;">Install the profile for automatic setup</p>
-                                
-                                <p style="margin: 15px 0 5px 0; font-weight: 600;">Android (DAVx⁵):</p>
-                                <ol style="margin: 5px 0; padding-left: 20px; font-size: 13px; opacity: 0.9;">
-                                    <li>Install DAVx⁵ from Play Store/F-Droid</li>
-                                    <li>Add account → Login with URL and credentials</li>
-                                    <li>Paste the CardDAV URL above</li>
-                                    <li>Enter username and password</li>
-                                </ol>
-                                
-                                <p style="margin: 15px 0 5px 0; font-weight: 600;">Thunderbird:</p>
-                                <ol style="margin: 5px 0; padding-left: 20px; font-size: 13px; opacity: 0.9;">
-                                    <li>Install CardBook or TbSync addon</li>
-                                    <li>Add new CardDAV address book</li>
-                                    <li>Paste the CardDAV URL above</li>
-                                    <li>Enter username and password</li>
-                                </ol>
-                                
-                                <p style="margin: 15px 0 5px 0; font-weight: 600;">Evolution (Linux):</p>
-                                <ol style="margin: 5px 0; padding-left: 20px; font-size: 13px; opacity: 0.9;">
-                                    <li>File → New → Address Book</li>
-                                    <li>Select "On the Web (CardDAV)"</li>
-                                    <li>Paste the CardDAV URL above</li>
-                                    <li>Enter username and password</li>
-                                </ol>
-                            </div>
-                        </div>
-                    </fieldset>
-
-                    <fieldset>
-                        <legend>Storage Usage</legend>
-                        <div class="storage-usage-display" id="storageUsageDisplay">
-                            <div class="storage-bar-container">
-                                <div class="storage-bar" id="storageBar">
-                                    <div class="storage-bar-fill" id="storageBarFill"></div>
-                                </div>
-                                <div class="storage-text" id="storageText">Loading...</div>
-                            </div>
-                        </div>
-                        <div class="form-group" style="margin-top: 12px;">
-                            <button type="button" class="btn-secondary" id="scanUserStorageBtn">🔄 Scan My Storage</button>
-                            <small>Scan your WebDAV storage to refresh file listings and update cache. For local storage, this also restores EXIF timestamps and generates thumbnails.</small>
-                            <div id="scanStorageStatus" class="test-result" style="display: none; margin-top: 10px;"></div>
                         </div>
                     </fieldset>
                 </div>

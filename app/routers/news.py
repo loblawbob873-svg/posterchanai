@@ -230,7 +230,7 @@ async def generate_daily_news_now(
     if conv_id is None:
         return {
             "conversation_id": None,
-            "error": "Could not generate daily news. Check that you have news sources (User Settings → News & RSS → News Sources) and that the server can fetch them (proxy may be required)."
+            "error": "Could not generate daily news. Check that you have news sources (User Settings → News Sources) and that the server can fetch them (proxy may be required)."
         }
     return {"conversation_id": conv_id}
 

@@ -892,9 +892,6 @@ class FileManager {
             emailToInput.value = '';
             this.updateEmailSubjectAndBody();
 
-            // Load contact emails for autocomplete
-            await this.loadContactEmailsForAutocomplete();
-            
             modal.style.display = 'flex'; // Use flex like other modals
             // Focus on email input
             setTimeout(() => {
@@ -930,40 +927,7 @@ class FileManager {
             emailBodyInput.value = `Please find the attached files:\n${fileNames}`;
         }
     }
-    
-    async loadContactEmailsForAutocomplete() {
-        try {
-            const response = await fetch('/api/contacts/emails');
-            if (response.ok) {
-                const contacts = await response.json();
-                const datalist = document.getElementById('emailToAutocomplete');
-                if (datalist && contacts && Array.isArray(contacts)) {
-                    // Clear existing options
-                    datalist.innerHTML = '';
-                    
-                    // Add contact emails to datalist
-                    contacts.forEach(contact => {
-                        const option = document.createElement('option');
-                        // Store email as value (what gets inserted when selected)
-                        option.value = contact.email;
-                        // Show formatted name+email in dropdown (what user sees)
-                        // This allows matching by name or email
-                        if (contact.name && contact.name.toLowerCase() !== contact.email.split('@')[0].toLowerCase()) {
-                            option.textContent = `${contact.name} <${contact.email}>`;
-                        } else {
-                            option.textContent = contact.email;
-                        }
-                        datalist.appendChild(option);
-                    });
-                    
-                    console.log(`Loaded ${contacts.length} contacts for email autocomplete`);
-                }
-            }
-        } catch (e) {
-            console.debug('Could not load contact emails for autocomplete:', e);
-        }
-    }
-    
+
     async shareFile(filePath, fileName) {
         // Show share modal
         const modal = document.getElementById('fileShareModal');

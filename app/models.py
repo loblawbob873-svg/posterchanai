@@ -33,9 +33,6 @@ class User(Base):
     news_schedule_time = Column(String(5), default="12:00")  # HH:MM format, default noon
     news_sources = Column(Text, default="")  # Custom news sources, one per line: url|name
 
-    # Native RSS settings (per-user)
-    rss_enabled = Column(Boolean, default=False)  # Whether native RSS is enabled for this user
-    rss_skip_summarization = Column(Boolean, default=False)  # Skip AI summarization (for bots that do their own)
 
     # Storage quota (in bytes, 0 = unlimited)
     storage_quota = Column(Integer, default=0)  # 0 means unlimited
@@ -197,28 +194,6 @@ class RAGWatcher(Base):
 
     user = relationship("User", backref="rag_watchers")
     collection = relationship("RAGCollection", back_populates="watchers")
-
-
-# AI Plugin System
-
-class Plugin(Base):
-    """User-defined AI plugins for external service integration"""
-    __tablename__ = "plugins"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)  # NULL = global plugin
-    name = Column(String(50), nullable=False)  # e.g., "budget", "flood"
-    description = Column(Text, nullable=False)  # Description for the AI to understand when to use it
-    base_url = Column(String(500), nullable=False)  # e.g., "https://budget.poster.place/api/v1"
-    auth_type = Column(String(20), default="none")  # "none", "bearer", "basic", "header"
-    auth_header = Column(String(100), default="X-API-Key")  # Header name for auth
-    auth_value = Column(String(500), nullable=True)  # API key or credentials
-    actions = Column(Text, nullable=False)  # JSON array of action definitions
-    enabled = Column(Boolean, default=True)
-    allowed_users = Column(Text, nullable=True)  # Comma-separated user IDs, NULL = all users
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    user = relationship("User", backref="plugins")
 
 
 # Junction table for ExternalStorage and User many-to-many relationship

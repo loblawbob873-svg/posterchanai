@@ -198,8 +198,6 @@ def _run_migrations():
         ("custom_llm_prompt", "TEXT"),  # Custom AI instructions from user
         ("custom_image_enabled", "BOOLEAN DEFAULT 0"),
         ("custom_image_url", "VARCHAR(500)"),
-        ("rss_enabled", "BOOLEAN DEFAULT 0"),
-        ("rss_skip_summarization", "BOOLEAN DEFAULT 0"),
         ("storage_quota", "INTEGER DEFAULT 0"),  # Storage quota in bytes (0 = unlimited)
         # Telegram columns
         ("telegram_enabled", "BOOLEAN DEFAULT 0"),
@@ -217,21 +215,6 @@ def _run_migrations():
                 except Exception:
                     # Column might already exist or other error - ignore
                     pass
-
-    # Add missing columns to rss_entries table (if it exists)
-    if inspector.has_table('rss_entries'):
-        rss_columns = {col['name'] for col in inspector.get_columns('rss_entries')}
-        new_rss_columns = [
-            ("is_posted", "BOOLEAN DEFAULT 0"),
-        ]
-        with engine.connect() as conn:
-            for col_name, col_type in new_rss_columns:
-                if col_name not in rss_columns:
-                    try:
-                        conn.execute(text(f"ALTER TABLE rss_entries ADD COLUMN {col_name} {col_type}"))
-                        conn.commit()
-                    except Exception:
-                        pass
 
     # Add missing columns to notes table (if it exists)
     if inspector.has_table('notes'):
@@ -315,7 +298,7 @@ def init_db():
             "ollama_url": "http://localhost:11434",
             "ollama_api_format": "ollama",  # "ollama" for /api/chat, "openai" for /v1/chat/completions
             "ollama_model": "llama3",  # Set in Admin → Settings to match your Ollama/LLM backend
-            "ollama_timeout": "300000",  # 5 min (RSS/video summaries need longer)
+            "ollama_timeout": "300000",  # 5 min (video summaries need longer)
             "ollama_max_concurrent": "1",
             "ollama_system_prompt": """You are an helpful, cute, funny, ditsy, and informative AI assistant that loves technology and politics. Your persona is a cute anime girl that responds in a cute manner. Your name is Poster-Chan! When greeting users, address them by their username, not your own name.
 
@@ -423,8 +406,6 @@ When asked to write or modify code or files:
             "imap_sent_folder": "Sent",
             # News sources
             "news_sources": "",
-            # Native RSS settings (default/global)
-            "rss_enabled": "false",
             # RAG (Retrieval-Augmented Generation) settings
             "rag_enabled": "true",
             "rag_embedding_model": "all-MiniLM-L6-v2",

@@ -26,7 +26,6 @@ class UserResponse(BaseModel):
     username: str
     email: Optional[str] = None
     is_admin: bool
-    rss_skip_summarization: bool = False
     storage_quota: int = 0  # 0 = unlimited
     telegram_enabled: bool = False
     telegram_chat_id: Optional[str] = None
@@ -128,7 +127,7 @@ class SettingsResponse(BaseModel):
     ollama_url: str = "http://localhost:11434"
     ollama_api_format: str = "ollama"  # "ollama" for /api/chat, "openai" for /v1/chat/completions
     ollama_model: str = "llama3"  # Set in Admin → Settings; use a model you have in Ollama or your LLM backend
-    ollama_timeout: str = "300000"  # 5 min (RSS/video summaries need longer)
+    ollama_timeout: str = "300000"  # 5 min (video summaries need longer)
     ollama_max_concurrent: str = "1"
     ollama_system_prompt: str = ""
     # Advanced model settings
@@ -417,9 +416,6 @@ class UserSettingsUpdate(BaseModel):
     news_schedule_enabled: Optional[bool] = None
     news_schedule_time: Optional[str] = None  # HH:MM format
     news_sources: Optional[str] = None  # Custom sources, one per line: url|name
-    # Native RSS settings
-    rss_enabled: Optional[bool] = None
-    rss_skip_summarization: Optional[bool] = None  # Skip AI summarization for external bots
     # Calendar & Contacts settings
     schedule_enabled: Optional[bool] = None
     caldav_calendars: Optional[List[dict]] = None  # List of {name, url, username, password}
@@ -452,9 +448,6 @@ class UserSettingsResponse(BaseModel):
     news_schedule_enabled: bool = False
     news_schedule_time: str = "12:00"
     news_sources: str = ""  # Custom sources, one per line: url|name
-    # Native RSS settings
-    rss_enabled: bool = False
-    rss_skip_summarization: bool = False  # Skip AI summarization for external bots
     # Calendar & Contacts settings
     schedule_enabled: bool = False
     caldav_calendars: List[dict] = []  # List of calendars (passwords masked)

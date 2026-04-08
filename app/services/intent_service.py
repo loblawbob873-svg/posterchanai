@@ -194,13 +194,6 @@ FIREWALL & LOGS:
 "Check firewall" -> firewall
 "Search firewall logs for 192.168.1.1" -> firewall search 192.168.1.1
 
-RSS/NEWS:
-"Check my news feeds" -> rss sync
-"Sync RSS feeds" -> rss sync
-"Add RSS feed https://example.com/feed" -> rss add https://example.com/feed
-"List my feeds" -> rss
-"Search RSS articles for python" -> rss search python
-"Find old articles about machine learning" -> rss search machine learning
 
 OTHER:
 "Show help" -> help
