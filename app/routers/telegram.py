@@ -88,7 +88,11 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
             user = message.get("from", {})
             username = user.get("username", "unknown")
             
-            logger.info(f"Received Telegram message from {username} (chat_id: {chat_id}): {text}")
+            # Check for attachments (photos, documents)
+            photos = message.get("photo", [])
+            document = message.get("document", [])
+            
+            logger.info(f"Received Telegram message from {username} (chat_id: {chat_id}): {text}, photos: {len(photos)}, document: {bool(document)}")
             
             # Find user by linked Telegram chat_id
             user_obj = db.query(User).filter(
@@ -132,10 +136,62 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
             
             logger.info(f"Telegram message: '{text}', command: {command}, arg: '{arg}'")
             
+            # Process attachments (photos, documents) - download and prepare for AI
+            attachments = []
+            has_images = False
+            
+            # Download photos
+            if photos:
+                logger.info(f"Processing {len(photos)} photos from Telegram")
+                for photo in photos:
+                    file_id = photo.get("file_id")
+                    if file_id:
+                        # Get the file path from Telegram
+                        file_result = await telegram_service.get_file(file_id)
+                        if file_result.get("ok"):
+                            file_path = file_result.get("result", {}).get("file_path")
+                            if file_path:
+                                # Download the file
+                                downloaded_data = await telegram_service.download_file(file_path)
+                                if downloaded_data:
+                                    import base64
+                                    attachments.append(("photo.jpg", downloaded_data, "image/jpeg"))
+                                    has_images = True
+                                    logger.info(f"Downloaded photo, size: {len(downloaded_data)}")
+            
+            # Download document
+            if document:
+                file_id = document.get("file_id")
+                file_name = document.get("file_name", "document")
+                if file_id:
+                    logger.info(f"Processing document: {file_name}")
+                    file_result = await telegram_service.get_file(file_id)
+                    if file_result.get("ok"):
+                        file_path = file_result.get("result", {}).get("file_path")
+                        if file_path:
+                            downloaded_data = await telegram_service.download_file(file_path)
+                            if downloaded_data:
+                                # Determine content type
+                                content_type = "application/octet-stream"
+                                if file_name.endswith('.pdf'):
+                                    content_type = "application/pdf"
+                                elif file_name.endswith(('.jpg', '.jpeg')):
+                                    content_type = "image/jpeg"
+                                elif file_name.endswith('.png'):
+                                    content_type = "image/png"
+                                elif file_name.endswith('.gif'):
+                                    content_type = "image/gif"
+                                attachments.append((file_name, downloaded_data, content_type))
+                                logger.info(f"Downloaded document: {file_name}, size: {len(downloaded_data)}")
+            
             if command:
                 logger.info(f"Executing command: {command} with arg: {arg}")
                 try:
-                    result = await command_service.execute_command(command, arg)
+                    # For mail command, pass attachments
+                    if command == "mail" and attachments:
+                        result = await command_service.execute_command(command, arg, attachments=attachments)
+                    else:
+                        result = await command_service.execute_command(command, arg)
                     logger.info(f"Command result: {result}")
                 except Exception as e:
                     logger.error(f"Command execution error: {e}", exc_info=True)
@@ -153,9 +209,18 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                     result = await command_service.execute_command(command, arg)
                 else:
                     # Regular chat - use the chat service
+                    # If there are attachments, include them in the message
+                    message_content = text
+                    if has_images:
+                        message_content = f"[Image attached]\n\n{text}"
+                    for filename, file_data, content_type in attachments:
+                        if content_type.startswith("image/"):
+                            message_content = f"[Image: {filename}]\n\n{text}"
+                            break
+                    
                     messages = [
                         {"role": "system", "content": chat_service.system_prompt},
-                        {"role": "user", "content": text}
+                        {"role": "user", "content": message_content}
                     ]
                     result = {"type": "text", "content": await chat_service.chat(messages)}
             

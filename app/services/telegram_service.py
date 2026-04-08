@@ -244,6 +244,41 @@ class TelegramService:
         except Exception as e:
             logger.error(f"Failed to edit message: {e}")
             return {"ok": False, "error": str(e)}
+    
+    async def get_file(self, file_id: str) -> dict:
+        """Get file information from Telegram."""
+        if not self.bot_token:
+            return {"ok": False, "error": "Bot token not configured"}
+        
+        url = f"{self.api_base}{self.bot_token}/getFile"
+        payload = {"file_id": file_id}
+        
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(url, json=payload)
+                return response.json()
+        except Exception as e:
+            logger.error(f"Failed to get file: {e}")
+            return {"ok": False, "error": str(e)}
+    
+    async def download_file(self, file_path: str) -> Optional[bytes]:
+        """Download a file from Telegram."""
+        if not self.bot_token:
+            return None
+        
+        url = f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}"
+        
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                response = await client.get(url)
+                if response.status_code == 200:
+                    return response.content
+                else:
+                    logger.error(f"Failed to download file: {response.status_code}")
+                    return None
+        except Exception as e:
+            logger.error(f"Failed to download file: {e}")
+            return None
 
 
 telegram_service = TelegramService()
