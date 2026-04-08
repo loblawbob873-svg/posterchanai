@@ -197,7 +197,7 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                     logger.error(f"Command execution error: {e}", exc_info=True)
                     result = {"type": "text", "content": f"Error: {str(e)}"}
             else:
-                # Regular chat - check for images and do OCR
+                # Regular chat - check for images and do OCR or pass to vision model
                 from app.services.intent_service import IntentService
                 intent_service = IntentService(db, user=user_obj)
                 intent = await intent_service.detect_intent(text)
@@ -212,31 +212,44 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                         result = await command_service.execute_command(command, arg)
                 else:
                     # Regular chat - use the chat service
-                    message_content = text
+                    messages = [
+                        {"role": "system", "content": chat_service.system_prompt},
+                    ]
                     
-                    # If there are image attachments, do OCR and include the text
-                    if has_images:
+                    # If there are image attachments, add them to the message for vision models
+                    if has_images and attachments:
+                        # Build vision-capable message content
+                        vision_content = []
                         for filename, file_data, content_type in attachments:
                             if content_type.startswith("image/"):
                                 import base64
                                 image_b64 = base64.b64encode(file_data).decode('utf-8')
+                                # Try OCR first
                                 try:
                                     from app.services.document_service import extract_image_text
                                     ocr_text = extract_image_text(image_b64)
                                     if ocr_text:
-                                        message_content = f"[Image OCR text:\n{ocr_text}]\n\nUser message: {text}"
+                                        vision_content.append({"type": "text", "text": f"[Image OCR text:\n{ocr_text}]"})
                                         logger.info(f"Extracted OCR text, length: {len(ocr_text)}")
                                     else:
-                                        message_content = f"[Image attached - OCR failed or no text found]\n\nUser message: {text}"
+                                        # No OCR - pass image directly for vision models
+                                        vision_content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}})
+                                        logger.info("No OCR text, passing image to vision model")
                                 except Exception as ocr_err:
                                     logger.error(f"OCR error: {ocr_err}")
-                                    message_content = f"[Image attached - could not extract text]\n\nUser message: {text}"
+                                    # Pass image directly for vision models
+                                    vision_content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}})
                                 break
+                        
+                        if vision_content:
+                            vision_content.append({"type": "text", "text": text})
+                            messages.append({"role": "user", "content": vision_content})
+                            logger.info(f"Sending vision message with {len(vision_content)} content parts")
+                        else:
+                            messages.append({"role": "user", "content": text})
+                    else:
+                        messages.append({"role": "user", "content": text})
                     
-                    messages = [
-                        {"role": "system", "content": chat_service.system_prompt},
-                        {"role": "user", "content": message_content}
-                    ]
                     result = {"type": "text", "content": await chat_service.chat(messages)}
             
             # Handle the result

@@ -199,7 +199,18 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
             user_message = ""
             for msg in reversed(messages):
                 if msg.get("role") == "user":
-                    user_message = msg.get("content", "")
+                    content = msg.get("content", "")
+                    # Handle multimodal content (list of content parts) - extract text only for RAG
+                    if isinstance(content, list):
+                        for part in content:
+                            if isinstance(part, dict) and part.get("type") == "text":
+                                user_message = part.get("text", "")
+                                break
+                            elif isinstance(part, str):
+                                user_message = part
+                                break
+                    else:
+                        user_message = content if isinstance(content, str) else ""
                     break
 
             # Inject RAG context if available
