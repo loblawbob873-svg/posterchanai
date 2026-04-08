@@ -40,6 +40,11 @@ class User(Base):
     # Storage quota (in bytes, 0 = unlimited)
     storage_quota = Column(Integer, default=0)  # 0 means unlimited
 
+    # Telegram integration settings
+    telegram_enabled = Column(Boolean, default=False)
+    telegram_chat_id = Column(String(50), nullable=True)
+    telegram_notifications = Column(Text, default="")  # Comma-separated: "news,downloads,mentions"
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")

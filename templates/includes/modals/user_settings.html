@@ -13,6 +13,7 @@
                 <button class="user-tab-btn" data-tab="calendar">Calendar & Contacts</button>
                 <button class="user-tab-btn" data-tab="mail">Mail</button>
                 <button class="user-tab-btn" data-tab="news">News & RSS</button>
+                <button class="user-tab-btn" data-tab="telegram">Telegram</button>
                 <button class="user-tab-btn" data-tab="storage">Storage & Cloud</button>
                 <button class="user-tab-btn" data-tab="apikeys">API Keys</button>
             </div>
@@ -348,6 +349,45 @@ foxnews.com|Fox News"></textarea>
                                     <input type="checkbox" id="rssSkipSummarization">
                                 </div>
                                 <small class="form-hint">Enable if an external bot will summarize articles. Articles will still be fetched but not summarized by the system.</small>
+                            </div>
+                        </div>
+                    </fieldset>
+                </div>
+
+                <!-- Telegram Tab -->
+                <div class="user-tab-content" id="user-tab-telegram">
+                    <fieldset>
+                        <legend>Telegram Integration</legend>
+                        <p class="fieldset-info">Interact with PosterChanAI via Telegram. Enable below and follow the setup instructions.</p>
+                        <div class="form-group">
+                            <div class="toggle-row">
+                                <label for="telegramEnabled">Enable Telegram</label>
+                                <input type="checkbox" id="telegramEnabled">
+                            </div>
+                        </div>
+                        <div id="telegramSettings" class="conditional-settings" style="display: none;">
+                            <div class="form-group">
+                                <label for="telegramChatId">Your Chat ID</label>
+                                <input type="text" id="telegramChatId" placeholder="123456789">
+                                <small>Send <code>/start</code> to <code>@userinfobot</code> on Telegram to get your Chat ID</small>
+                            </div>
+                            <div class="form-group">
+                                <label for="telegramNotifications">Notifications</label>
+                                <input type="text" id="telegramNotifications" placeholder="news,downloads,mentions">
+                                <small>Comma-separated: news, downloads, mentions</small>
+                            </div>
+                            <div class="form-group">
+                                <div class="toggle-row">
+                                    <label for="telegramLinkBtn">Link My Account</label>
+                                    <button type="button" class="btn-secondary" id="linkTelegramBtn">Link Telegram</button>
+                                </div>
+                                <small>Click to link your Telegram account with this PosterChanAI account</small>
+                            </div>
+                            <div class="form-group">
+                                <div class="toggle-row">
+                                    <label for="telegramUnlinkBtn">Unlink</label>
+                                    <button type="button" class="btn-danger" id="unlinkTelegramBtn">Unlink Telegram</button>
+                                </div>
                             </div>
                         </div>
                     </fieldset>

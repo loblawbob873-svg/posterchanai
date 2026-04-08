@@ -477,7 +477,11 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         carddav_username=carddav_username,
         carddav_has_password=carddav_has_password,
         # Mail settings
-        mail_accounts=mail_accounts
+        mail_accounts=mail_accounts,
+        # Telegram settings
+        telegram_enabled=current_user.telegram_enabled if hasattr(current_user, 'telegram_enabled') else False,
+        telegram_chat_id=current_user.telegram_chat_id if hasattr(current_user, 'telegram_chat_id') else None,
+        telegram_notifications=current_user.telegram_notifications if hasattr(current_user, 'telegram_notifications') else ""
     )
 
 
@@ -649,6 +653,14 @@ def update_user_settings(
             new_accounts.append(new_acc)
 
         save_user_setting("mail_accounts", json.dumps(new_accounts))
+
+    # Save Telegram settings
+    if settings.telegram_enabled is not None:
+        current_user.telegram_enabled = settings.telegram_enabled
+    if settings.telegram_chat_id is not None:
+        current_user.telegram_chat_id = settings.telegram_chat_id.strip() if settings.telegram_chat_id else None
+    if settings.telegram_notifications is not None:
+        current_user.telegram_notifications = settings.telegram_notifications
 
     try:
         # Flush changes to database before commit

@@ -394,6 +394,126 @@ document.getElementById('sendTestEmailBtn').addEventListener('click', async () =
     }
 });
 
+// Test Telegram connection
+document.getElementById('testTelegramBtn').addEventListener('click', async () => {
+    const statusDiv = document.getElementById('telegramStatus');
+    const tokenInput = document.getElementById('telegram_bot_token');
+    const token = tokenInput.value.trim();
+
+    if (!token) {
+        statusDiv.className = 'test-result error';
+        statusDiv.textContent = 'Please enter a bot token';
+        return;
+    }
+
+    statusDiv.className = 'test-result loading';
+    statusDiv.textContent = 'Testing connection...';
+
+    try {
+        const response = await csrfFetch('/api/telegram/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bot_token: token, enabled: true })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            statusDiv.className = 'test-result success';
+            statusDiv.textContent = `Connected! Bot: @${data.bot.username}. Token saved.`;
+            // Also save the token to settings by calling set-webhook with empty URL
+            await csrfFetch('/api/telegram/set-webhook', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ bot_token: token, webhook_url: "", enabled: true })
+            });
+        } else {
+            statusDiv.className = 'test-result error';
+            statusDiv.textContent = data.detail || 'Failed to connect to Telegram';
+        }
+    } catch (err) {
+        statusDiv.className = 'test-result error';
+        statusDiv.textContent = 'Error: ' + err.message;
+    }
+});
+
+// Setup Telegram webhook
+document.getElementById('setupWebhookBtn').addEventListener('click', async () => {
+    const statusDiv = document.getElementById('telegramStatus');
+    const tokenInput = document.getElementById('telegram_bot_token');
+    const webhookUrl = document.getElementById('telegram_webhook_url').value.trim();
+    const token = tokenInput.value.trim();
+
+    if (!webhookUrl) {
+        statusDiv.className = 'test-result error';
+        statusDiv.textContent = 'Please enter a webhook URL';
+        return;
+    }
+
+    if (!token) {
+        statusDiv.className = 'test-result error';
+        statusDiv.textContent = 'Please enter a bot token first';
+        return;
+    }
+
+    statusDiv.className = 'test-result loading';
+    statusDiv.textContent = 'Setting up webhook...';
+
+    try {
+        const response = await csrfFetch('/api/telegram/set-webhook', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bot_token: token, webhook_url: webhookUrl, enabled: true })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            statusDiv.className = 'test-result success';
+            statusDiv.textContent = 'Webhook configured successfully!';
+        } else {
+            statusDiv.className = 'test-result error';
+            statusDiv.textContent = data.detail || 'Failed to set webhook';
+        }
+    } catch (err) {
+        statusDiv.className = 'test-result error';
+        statusDiv.textContent = 'Error: ' + err.message;
+    }
+});
+
+// View Telegram users
+document.getElementById('viewTelegramUsersBtn').addEventListener('click', async () => {
+    const statusDiv = document.getElementById('telegramStatus');
+
+    statusDiv.className = 'test-result loading';
+    statusDiv.textContent = 'Loading users...';
+
+    try {
+        const response = await csrfFetch('/api/telegram/users', {
+            method: 'GET'
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            if (data.length === 0) {
+                statusDiv.className = 'test-result';
+                statusDiv.textContent = 'No users have linked Telegram yet';
+            } else {
+                const userList = data.map(u => `@${u.username}: ${u.telegram_chat_id}`).join('\n');
+                statusDiv.className = 'test-result';
+                statusDiv.textContent = `Linked users:\n${userList}`;
+            }
+        } else {
+            statusDiv.className = 'test-result error';
+            statusDiv.textContent = data.detail || 'Failed to get users';
+        }
+    } catch (err) {
+        statusDiv.className = 'test-result error';
+        statusDiv.textContent = 'Error: ' + err.message;
+    }
+});
+
 // Backend type switching
 function updateBackendUI() {
     const backend = document.getElementById('llm_backend').value;

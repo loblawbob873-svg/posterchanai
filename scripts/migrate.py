@@ -154,6 +154,10 @@ REQUIRED_SETTINGS = {
     "mcp_warmup": "true",
     # Native RSS settings
     "rss_enabled": "false",
+    # Telegram settings
+    "telegram_bot_token": "",
+    "telegram_webhook_url": "",
+    "telegram_enabled": "false",
 }
 
 
@@ -185,6 +189,9 @@ def run_schema_migration(session, verbose=True):
         ("users", "rss_enabled", "BOOLEAN", "0"),
         ("users", "rss_skip_summarization", "BOOLEAN", "0"),
         ("rss_entries", "is_posted", "BOOLEAN", "0"),
+        ("users", "telegram_enabled", "BOOLEAN", "0"),
+        ("users", "telegram_chat_id", "VARCHAR(50)", "NULL"),
+        ("users", "telegram_notifications", "TEXT", "''"),
     ]
 
     for table, column, col_type, default in schema_migrations:

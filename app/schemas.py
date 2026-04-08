@@ -28,6 +28,9 @@ class UserResponse(BaseModel):
     is_admin: bool
     rss_skip_summarization: bool = False
     storage_quota: int = 0  # 0 = unlimited
+    telegram_enabled: bool = False
+    telegram_chat_id: Optional[str] = None
+    telegram_notifications: str = ""
     created_at: datetime
 
     class Config:
@@ -253,6 +256,10 @@ class SettingsResponse(BaseModel):
     proxy_listen_port: str = "8118"
     proxy_socks_host: str = ""
     proxy_socks_port: str = "9052"
+    # Telegram Bot settings
+    telegram_bot_token: str = ""  # Bot token from @BotFather
+    telegram_webhook_url: str = ""  # Webhook URL for receiving updates
+    telegram_enabled: str = "false"  # Enable Telegram bot
 
     class Config:
         extra = "allow"  # Allow arbitrary extra settings
@@ -421,6 +428,10 @@ class UserSettingsUpdate(BaseModel):
     carddav_password: Optional[str] = None
     # Mail settings
     mail_accounts: Optional[List[dict]] = None  # List of {email, imap_server, imap_port, smtp_server, smtp_port, password}
+    # Telegram settings
+    telegram_enabled: Optional[bool] = None
+    telegram_chat_id: Optional[str] = None
+    telegram_notifications: Optional[str] = None
     # Music settings
 
 
@@ -452,6 +463,10 @@ class UserSettingsResponse(BaseModel):
     carddav_has_password: bool = False
     # Mail settings
     mail_accounts: List[dict] = []  # List of mail accounts (passwords masked)
+    # Telegram settings
+    telegram_enabled: bool = False
+    telegram_chat_id: Optional[str] = None
+    telegram_notifications: str = ""
 
 
 class TestConnectionRequest(BaseModel):

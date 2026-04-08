@@ -217,6 +217,32 @@
     </fieldset>
 
     <fieldset>
+        <legend>Telegram Bot</legend>
+        <div class="form-group">
+            <label for="telegram_enabled">
+                <input type="checkbox" id="telegram_enabled" name="telegram_enabled"> Enable Telegram Bot
+            </label>
+            <small>Allow users to interact with AI via Telegram</small>
+        </div>
+        <div class="form-group">
+            <label for="telegram_bot_token">Bot Token</label>
+            <input type="password" id="telegram_bot_token" name="telegram_bot_token" placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz">
+            <small>Get token from @BotFather on Telegram</small>
+        </div>
+        <div class="form-group">
+            <label for="telegram_webhook_url">Webhook URL</label>
+            <input type="url" id="telegram_webhook_url" name="telegram_webhook_url" placeholder="https://yourdomain.com/api/telegram/webhook">
+            <small>URL for receiving Telegram updates (must be publicly accessible)</small>
+        </div>
+        <div class="form-row" style="gap: 10px; margin-top: 15px;">
+            <button type="button" class="btn-secondary" id="testTelegramBtn">Test Connection</button>
+            <button type="button" class="btn-secondary" id="setupWebhookBtn">Setup Webhook</button>
+            <button type="button" class="btn-secondary" id="viewTelegramUsersBtn">View Linked Users</button>
+        </div>
+        <div id="telegramStatus" class="test-result"></div>
+    </fieldset>
+
+    <fieldset>
         <legend>External Storage (File Manager)</legend>
         <p class="fieldset-info">Mount external directories to make them accessible in the File Manager. Example: Mount <code>/raid/video</code> as <code>video</code>.</p>
         

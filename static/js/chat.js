@@ -308,6 +308,66 @@ class ChatHandler {
             });
         }
 
+        // Toggle Telegram settings visibility
+        const telegramEnabled = document.getElementById('telegramEnabled');
+        const telegramSettings = document.getElementById('telegramSettings');
+        if (telegramEnabled && telegramSettings) {
+            telegramEnabled.addEventListener('change', () => {
+                telegramSettings.style.display = telegramEnabled.checked ? 'block' : 'none';
+            });
+        }
+
+        // Telegram link/unlink buttons
+        const linkTelegramBtn = document.getElementById('linkTelegramBtn');
+        const unlinkTelegramBtn = document.getElementById('unlinkTelegramBtn');
+        if (linkTelegramBtn) {
+            linkTelegramBtn.addEventListener('click', async () => {
+                const chatId = document.getElementById('telegramChatId').value.trim();
+                const notifications = document.getElementById('telegramNotifications').value.trim() || 'news,downloads,mentions';
+                if (!chatId) {
+                    alert('Please enter your Telegram Chat ID first');
+                    return;
+                }
+                try {
+                    const response = await csrfFetch('/api/telegram/link', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ chat_id: chatId, notifications: notifications })
+                    });
+                    const data = await response.json();
+                    if (response.ok) {
+                        alert('Telegram account linked successfully!');
+                    } else {
+                        alert(data.detail || 'Failed to link Telegram');
+                    }
+                } catch (e) {
+                    alert('Error: ' + e.message);
+                }
+            });
+        }
+        if (unlinkTelegramBtn) {
+            unlinkTelegramBtn.addEventListener('click', async () => {
+                if (!confirm('Are you sure you want to unlink your Telegram account?')) return;
+                try {
+                    const response = await csrfFetch('/api/telegram/unlink', {
+                        method: 'POST'
+                    });
+                    const data = await response.json();
+                    if (response.ok) {
+                        alert('Telegram account unlinked');
+                        const telegramEnabledEl = document.getElementById('telegramEnabled');
+                        const telegramChatIdEl = document.getElementById('telegramChatId');
+                        if (telegramEnabledEl) telegramEnabledEl.checked = false;
+                        if (telegramChatIdEl) telegramChatIdEl.value = '';
+                    } else {
+                        alert(data.detail || 'Failed to unlink Telegram');
+                    }
+                } catch (e) {
+                    alert('Error: ' + e.message);
+                }
+            });
+        }
+
         // OPML import
         const opmlFileInput = document.getElementById('opmlFileInput');
         const importOpmlBtn = document.getElementById('importOpmlBtn');
@@ -1068,6 +1128,18 @@ class ChatHandler {
                             rssSkipSummarization.checked = data.rss_skip_summarization || false;
                         }
 
+                        // Load Telegram settings
+                        const telegramEnabled = document.getElementById('telegramEnabled');
+                        const telegramSettings = document.getElementById('telegramSettings');
+                        if (telegramEnabled) {
+                            telegramEnabled.checked = data.telegram_enabled || false;
+                            if (telegramSettings) telegramSettings.style.display = data.telegram_enabled ? 'block' : 'none';
+                        }
+                        const telegramChatId = document.getElementById('telegramChatId');
+                        if (telegramChatId) telegramChatId.value = data.telegram_chat_id || '';
+                        const telegramNotifications = document.getElementById('telegramNotifications');
+                        if (telegramNotifications) telegramNotifications.value = data.telegram_notifications || '';
+
                         // Load Calendar & Contacts settings
                         if (scheduleEnabled) {
                             scheduleEnabled.checked = data.schedule_enabled || false;
@@ -1319,6 +1391,20 @@ class ChatHandler {
 
                 // Add Mail account settings
                 settingsData.mail_accounts = collectMailAccountData();
+
+                // Add Telegram settings
+                const telegramEnabledEl = document.getElementById('telegramEnabled');
+                const telegramChatIdEl = document.getElementById('telegramChatId');
+                const telegramNotificationsEl = document.getElementById('telegramNotifications');
+                if (telegramEnabledEl) {
+                    settingsData.telegram_enabled = telegramEnabledEl.checked;
+                }
+                if (telegramChatIdEl) {
+                    settingsData.telegram_chat_id = telegramChatIdEl.value.trim();
+                }
+                if (telegramNotificationsEl) {
+                    settingsData.telegram_notifications = telegramNotificationsEl.value.trim();
+                }
 
                 
                 // Music settings removed
