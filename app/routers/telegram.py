@@ -378,13 +378,19 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                     ]
                     
                     # Get last 10 messages from conversation history (like web UI does)
+                    # Order by id to ensure correct ordering (timestamps can be identical)
                     recent_messages = db.query(Message).filter(
                         Message.conversation_id == conversation.id
-                    ).order_by(Message.created_at.desc()).limit(20).all()
+                    ).order_by(Message.id.desc()).limit(20).all()
                     
                     # Add history (newest first, but we need oldest first for the model)
+                    # Filter to ensure alternating roles (prevents "Conversation roles must alternate" error)
+                    last_role = "system"
                     for msg in reversed(recent_messages):
+                        if msg.role == last_role:
+                            continue
                         messages.append({"role": msg.role, "content": msg.content})
+                        last_role = msg.role
                     
                     # If there are image attachments, add them to the message for vision models
                     if has_images and attachments:
@@ -413,12 +419,27 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                         
                         if vision_content:
                             vision_content.append({"type": "text", "text": text})
-                            messages.append({"role": "user", "content": vision_content})
+                            # If last_role is user, merge with last message instead of creating duplicate
+                            if last_role == "user":
+                                if isinstance(messages[-1]["content"], list):
+                                    messages[-1]["content"].extend(vision_content)
+                                else:
+                                    messages[-1]["content"] += "\n\n" + str(vision_content)
+                            else:
+                                messages.append({"role": "user", "content": vision_content})
                             logger.info(f"Sending vision message with {len(vision_content)} content parts")
                         else:
-                            messages.append({"role": "user", "content": text})
+                            # If last_role is user, merge with last message instead of creating duplicate
+                            if last_role == "user":
+                                messages[-1]["content"] += "\n\n" + text
+                            else:
+                                messages.append({"role": "user", "content": text})
                     else:
-                        messages.append({"role": "user", "content": text})
+                        # If last_role is user, merge with last message instead of creating duplicate
+                        if last_role == "user":
+                            messages[-1]["content"] += "\n\n" + text
+                        else:
+                            messages.append({"role": "user", "content": text})
                     
                     # Detect and fetch URLs in user message (like web UI does)
                     from app.services.search_service import SearchService
@@ -476,7 +497,32 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                     if isinstance(messages[1]['content'], list):
                         logger.info(f"User content has {len(messages[1]['content'])} parts")
                     
-                    result = {"type": "text", "content": await chat_service.chat(messages)}
+                    # FINAL VALIDATION: Ensure messages alternate properly
+                    validated_messages = [messages[0]]  # Keep system message
+                    for msg in messages[1:]:
+                        if msg['role'] != validated_messages[-1]['role']:
+                            validated_messages.append(msg)
+                        else:
+                            validated_messages[-1]['content'] += f"\n\n{msg['content']}"
+                    messages = validated_messages
+                    logger.info(f"Validated message sequence: {[m['role'] for m in messages]}")
+                    
+                    # Log messages for debugging
+                    for i, m in enumerate(messages):
+                        content_preview = str(m.get('content', ''))[:50] if not isinstance(m.get('content'), list) else '[vision content]'
+                        logger.info(f"  Message {i}: role={m.get('role')}, content={content_preview}...")
+                    
+                    try:
+                        result = {"type": "text", "content": await chat_service.chat(messages)}
+                    except Exception as chat_err:
+                        error_msg = str(chat_err)
+                        logger.error(f"Telegram chat error: {error_msg}", exc_info=True)
+                        if "Conversation roles must alternate" in error_msg:
+                            logger.error(f"ROLE ERROR - Messages that caused error:")
+                            for i, m in enumerate(messages):
+                                content_preview = str(m.get('content', ''))[:100] if not isinstance(m.get('content'), list) else '[vision content]'
+                                logger.error(f"  Message {i}: role={m.get('role')}, content={content_preview}...")
+                        result = {"type": "text", "content": f"Sorry, I encountered an error: {error_msg}"}
                     
                     # Save messages to conversation history
                     if conversation:

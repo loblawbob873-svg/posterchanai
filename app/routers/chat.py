@@ -1050,8 +1050,16 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                 {"role": "system", "content": system_prompt}
                             ]
                             # Get last 19 messages (excluding the one we just added)
-                            for msg in conversation.messages[-21:-1]:
+                            # Sort by ID to ensure correct order (timestamps can be identical)
+                            sorted_messages = sorted(conversation.messages, key=lambda m: m.id)
+                            # Filter to ensure alternating roles (user/assistant/user/assistant)
+                            last_role = "system"
+                            for msg in sorted_messages[-21:-1]:
+                                # Skip if this role is same as last (prevents "Conversation roles must alternate" error)
+                                if msg.role == last_role:
+                                    continue
                                 messages.append({"role": msg.role, "content": msg.content})
+                                last_role = msg.role
 
                             # Detect and fetch URLs in user message AND system prompt (with timeout to avoid hanging)
                             url_context = ""
@@ -1141,26 +1149,44 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                                 summarize_keywords = ["summarize", "summarise", "summary", "summarie"]
                                 is_summarize_request = any(keyword in user_message_lower for keyword in summarize_keywords) and len(user_message_lower.split()) <= 3
                                 
+                                file_msg = ""
                                 if is_summarize_request or not content or len(content.strip()) < 5:
-                                    # User wants a summary or gave minimal instruction - be explicit
-                                    messages.append({
-                                        "role": "user",
-                                        "content": f"The user uploaded a file and asked you to summarize it. Please provide a comprehensive summary of the following file content:\n\n```\n{file_content}\n```\n\nProvide a detailed summary covering the main points, key information, and important details from the document."
-                                    })
+                                    file_msg = f"The user uploaded a file and asked you to summarize it. Please provide a comprehensive summary of the following file content:\n\n```\n{file_content}\n```\n\nProvide a detailed summary covering the main points, key information, and important details from the document."
                                 else:
-                                    # User provided specific instructions - include both file and their message
-                                    messages.append({
-                                        "role": "user",
-                                        "content": f"Here is a file the user uploaded:\n\n```\n{file_content}\n```\n\nUser's message: {content}"
-                                    })
+                                    file_msg = f"Here is a file the user uploaded:\n\n```\n{file_content}\n```\n\nUser's message: {content}"
+                                
+                                # If last_role is user, merge with last message instead of creating duplicate
+                                if last_role == "user":
+                                    messages[-1]["content"] += f"\n\n{file_msg}"
+                                else:
+                                    messages.append({"role": "user", "content": file_msg})
                             elif url_context:
                                 logger.info(f"Adding {len(url_context)} chars of URL context to message")
-                                messages.append({
-                                    "role": "user",
-                                    "content": f"{content}\n\n[The following web content was fetched from URLs mentioned in the user's message:]{url_context}"
-                                })
+                                # If last_role is user, merge with last message instead of creating duplicate
+                                if last_role == "user":
+                                    messages[-1]["content"] += f"\n\n[The following web content was fetched from URLs mentioned in the user's message:]{url_context}"
+                                else:
+                                    messages.append({
+                                        "role": "user",
+                                        "content": f"{content}\n\n[The following web content was fetched from URLs mentioned in the user's message:]{url_context}"
+                                    })
                             else:
-                                messages.append({"role": "user", "content": content})
+                                # If last_role is user, merge with last message instead of creating duplicate
+                                if last_role == "user":
+                                    messages[-1]["content"] += f"\n\n{content}"
+                                else:
+                                    messages.append({"role": "user", "content": content})
+
+                            # FINAL VALIDATION: Ensure messages alternate properly before sending to LLM
+                            validated_messages = [messages[0]]  # Keep system message
+                            for msg in messages[1:]:
+                                if msg['role'] != validated_messages[-1]['role']:
+                                    validated_messages.append(msg)
+                                else:
+                                    # Merge with previous message instead of skipping
+                                    validated_messages[-1]['content'] += f"\n\n{msg['content']}"
+                            messages = validated_messages
+                            logger.info(f"Final message sequence: {[m['role'] for m in messages]}")
 
                             # Stream response with thinking tag filtering
                             # Import from central location for consistency
@@ -1171,6 +1197,13 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                             buffer = ""
                             in_thinking = False
                             current_close_tag = None  # Track which closing tag we're looking for
+
+                            # DEBUG: Log the exact messages being sent
+                            logger.info(f"=== SENDING {len(messages)} MESSAGES TO LLM ===")
+                            for i, m in enumerate(messages):
+                                content_preview = str(m.get('content', ''))[:80] if not isinstance(m.get('content'), list) else '[vision content]'
+                                logger.info(f"  [{i}] {m.get('role')}: {content_preview}...")
+                            logger.info(f"=== END MESSAGE LOG ===")
 
                             async for chunk in chat_service.chat_stream(messages):
                                 # Check if user requested stop OR switched to another chat
