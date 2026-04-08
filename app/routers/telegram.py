@@ -147,6 +147,7 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
             # Process attachments (photos, documents) - download and prepare for AI
             attachments = []
             has_images = False
+            ocr_text = None
             
             # Download photos
             if photos:
@@ -175,6 +176,27 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                                 else:
                                     logger.warning("Failed to download photo data")
             
+            # If we have images and no command yet, try OCR
+            if has_images and attachments and not command:
+                for filename, file_data, content_type in attachments:
+                    if content_type.startswith("image/"):
+                        import base64
+                        image_b64 = base64.b64encode(file_data).decode('utf-8')
+                        try:
+                            from app.services.document_service import extract_image_text
+                            ocr_result = extract_image_text(image_b64)
+                            if ocr_result:
+                                ocr_text = ocr_result
+                                logger.info(f"Extracted OCR text for translate: {len(ocr_text)} chars")
+                        except Exception as e:
+                            logger.error(f"OCR error: {e}")
+                        break
+            
+            # If translate command with OCR text, append it to the argument
+            if command == "translate" and ocr_text:
+                arg = f"{ocr_text} to {arg}"
+                logger.info(f"Translate with OCR: {arg[:100]}...")
+            
             # Download document
             if document:
                 file_id = document.get("file_id")
@@ -199,6 +221,49 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                                     content_type = "image/gif"
                                 attachments.append((file_name, downloaded_data, content_type))
                                 logger.info(f"Downloaded document: {file_name}, size: {len(downloaded_data)}")
+            
+            # If we have images and no command yet, try OCR
+            if has_images and attachments and not command:
+                for filename, file_data, content_type in attachments:
+                    if content_type.startswith("image/"):
+                        import base64
+                        image_b64 = base64.b64encode(file_data).decode('utf-8')
+                        try:
+                            from app.services.document_service import extract_image_text
+                            ocr_result = extract_image_text(image_b64)
+                            if ocr_result:
+                                ocr_text = ocr_result
+                                logger.info(f"Extracted OCR text for translate: {len(ocr_text)} chars")
+                        except Exception as e:
+                            logger.error(f"OCR error: {e}")
+                        break
+            
+            # If translate command with OCR text, append it to the argument
+            if command == "translate" and ocr_text:
+                arg = f"{ocr_text} to {arg}"
+                logger.info(f"Translate with OCR: {arg[:100]}...")
+            
+            # If translate command with OCR text, handle it directly
+            if command == "translate" and ocr_text:
+                language = arg.replace("to", "").strip() or "Thai"
+                logger.info(f"Translating OCR text to {language}")
+                
+                # Build messages for translation
+                translate_messages = [
+                    {"role": "system", "content": f"Translate the following text to {language}. Output ONLY the translation, nothing else."},
+                    {"role": "user", "content": ocr_text}
+                ]
+                
+                try:
+                    translated = await chat_service.chat(translate_messages)
+                    result = {"type": "text", "content": f"## Translation to {language}\n\n{translated}"}
+                except Exception as e:
+                    logger.error(f"Translation error: {e}")
+                    result = {"type": "text", "content": f"Translation failed: {str(e)}"}
+                
+                # Send result and return early
+                await telegram_service.send_message(chat_id, result.get("content", ""))
+                return {"ok": True}
             
             if command:
                 logger.info(f"Executing command: {command} with arg: {arg}, attachments: {len(attachments)}")
