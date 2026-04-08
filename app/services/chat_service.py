@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.models import Setting
 from app.services.inference_factory import get_inference_service, prepare_vram_for_llm
 from app.services.custom_ai_service import CustomAIService
-from app.services.load_balancer import LoadBalancer, parse_server_urls
+from app.services.load_balancer import LoadBalancer, NoHealthyServersError, parse_server_urls
 
 if TYPE_CHECKING:
     from app.models import User
@@ -219,17 +219,22 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
             # Check for site-wide load balancer first
             load_balancer = self._get_load_balancer()
             if load_balancer:
-                result = await load_balancer.chat(
-                    messages=messages,
-                    temperature=self.temperature,
-                    top_p=self.top_p,
-                    max_tokens=self.num_predict,
-                    stop=self.stop
-                )
-                if "error" in result:
-                    return f"Error: {result['error'].get('message', 'Unknown error')}"
-                content = result["choices"][0]["message"]["content"]
-                return self.strip_thinking_tags(content)
+                try:
+                    result = await load_balancer.chat(
+                        messages=messages,
+                        temperature=self.temperature,
+                        top_p=self.top_p,
+                        max_tokens=self.num_predict,
+                        stop=self.stop
+                    )
+                    if "error" in result:
+                        return f"Error: {result['error'].get('message', 'Unknown error')}"
+                    content = result["choices"][0]["message"]["content"]
+                    return self.strip_thinking_tags(content)
+                except NoHealthyServersError:
+                    logger.info("Load balancer unavailable, using local inference for chat()")
+                except Exception as e:
+                    logger.warning(f"Load balancer error in chat(): {e}, falling back to local", exc_info=True)
 
             # Check if user has custom AI service enabled
             custom_service = self._get_custom_ai_service()
