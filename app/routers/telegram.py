@@ -89,15 +89,18 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
             username = user.get("username", "unknown")
             
             # Check for attachments (photos, documents)
+            # Photos in Telegram messages are in a list - get the highest res (last one)
             photos = message.get("photo", [])
             document = message.get("document", [])
             
-            logger.info(f"Full message keys: {list(message.keys())}")
-            logger.info(f"Photo field type: {type(photos)}, length: {len(photos) if photos else 0}")
-            logger.info(f"Document field: {document}")
-            logger.info(f"Message text: '{text}'")
+            # Also check for other common attachment types
+            audio = message.get("audio")
+            voice = message.get("voice")
             
-            logger.info(f"Received Telegram message from {username} (chat_id: {chat_id}): {text}, photos: {len(photos)}, document: {bool(document)}")
+            logger.warning(f"TELEGRAM DEBUG - Full message: {message}")
+            logger.warning(f"TELEGRAM DEBUG - Photos: {photos}, Document: {document}")
+            
+            logger.info(f"Received Telegram message from {username} (chat_id: {chat_id}): {text}, photos: {len(photos) if isinstance(photos, list) else 'not list'}, document: {bool(document)}")
             
             # Find user by linked Telegram chat_id
             user_obj = db.query(User).filter(
