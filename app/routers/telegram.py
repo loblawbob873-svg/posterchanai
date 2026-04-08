@@ -257,7 +257,8 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
             # If translate command with OCR text, handle it directly
             if command == "translate" and ocr_text:
                 language = arg.replace("to", "").strip() or "Thai"
-                logger.warning(f"TRANSLATE: Using OCR text ({len(ocr_text)} chars) to translate to {language}")
+                logger.warning(f"TRANSLATE: Final check - Using OCR text ({len(ocr_text)} chars) to translate to '{language}'")
+                logger.warning(f"TRANSLATE: ocr_text content: {ocr_text[:100]}...")
                 
                 # Build messages for translation
                 translate_messages = [
@@ -265,11 +266,14 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                     {"role": "user", "content": ocr_text}
                 ]
                 
+                logger.warning(f"TRANSLATE: Calling chat_service.chat with messages: {translate_messages}")
+                
                 try:
                     translated = await chat_service.chat(translate_messages)
+                    logger.warning(f"TRANSLATE: Got translation result: {translated[:100]}...")
                     result = {"type": "text", "content": f"## Translation to {language}\n\n{translated}"}
                 except Exception as e:
-                    logger.error(f"Translation error: {e}")
+                    logger.error(f"Translation error: {e}", exc_info=True)
                     result = {"type": "text", "content": f"Translation failed: {str(e)}"}
                 
                 # Send result and return early
