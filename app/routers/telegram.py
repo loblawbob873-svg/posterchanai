@@ -388,11 +388,14 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                     
                     # Add history (newest first, but we need oldest first for the model)
                     # Filter to ensure alternating roles (prevents "Conversation roles must alternate" error)
+                    # Truncate history messages to prevent context bloat from URL content
+                    HISTORY_CHAR_LIMIT = 500
                     last_role = "system"
                     for msg in reversed(recent_messages):
                         if msg.role == last_role:
                             continue
-                        messages.append({"role": msg.role, "content": msg.content})
+                        content = msg.content[:HISTORY_CHAR_LIMIT] if len(msg.content) > HISTORY_CHAR_LIMIT else msg.content
+                        messages.append({"role": msg.role, "content": content})
                         last_role = msg.role
                     
                     # If there are image attachments, add them to the message for vision models
