@@ -201,10 +201,10 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                 from app.services.intent_service import IntentService
                 intent_service = IntentService(db, user=user_obj)
                 intent = await intent_service.detect_intent(text)
-                command = intent.get("command")
+                command = intent.get("command") if intent else None
                 
                 if command:
-                    arg = intent.get("arg", "")
+                    arg = intent.get("arg", "") if intent else ""
                     logger.info(f"Detected intent: command={command}, arg={arg}")
                     if attachments:
                         result = await command_service.execute_command(command, arg, attachments=attachments)
