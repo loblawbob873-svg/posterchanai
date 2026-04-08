@@ -4,10 +4,10 @@ from pydantic import BaseModel
 from typing import Optional
 import logging
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.database import get_db
-from app.models import User, Setting
+from app.models import User, Setting, Conversation, Message
 from app.auth import get_current_user, get_admin_user
 from app.services.telegram_service import telegram_service
 from app.services.chat_service import ChatService
@@ -356,9 +356,35 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                         result = await command_service.execute_command(command, arg)
                 else:
                     # Regular chat - use the chat service
+                    from app.models import Conversation, Message
+                    
+                    # Get or create conversation for this user
+                    conversation = db.query(Conversation).filter(
+                        Conversation.user_id == user_obj.id
+                    ).order_by(Conversation.updated_at.desc()).first()
+                    
+                    # Create new conversation if none exists or was recently updated
+                    if not conversation or conversation.updated_at < datetime.utcnow() - timedelta(days=1):
+                        conversation = Conversation(
+                            user_id=user_obj.id,
+                            title="Telegram Chat"
+                        )
+                        db.add(conversation)
+                        db.commit()
+                        db.refresh(conversation)
+                    
                     messages = [
                         {"role": "system", "content": chat_service.system_prompt},
                     ]
+                    
+                    # Get last 10 messages from conversation history (like web UI does)
+                    recent_messages = db.query(Message).filter(
+                        Message.conversation_id == conversation.id
+                    ).order_by(Message.created_at.desc()).limit(20).all()
+                    
+                    # Add history (newest first, but we need oldest first for the model)
+                    for msg in reversed(recent_messages):
+                        messages.append({"role": msg.role, "content": msg.content})
                     
                     # If there are image attachments, add them to the message for vision models
                     if has_images and attachments:
@@ -399,6 +425,16 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                     search_service = SearchService(db)
                     url_context = ""
                     urls = SearchService.extract_urls(text)
+                    
+                    # Check if message is ONLY a URL (no other text) - summarize it
+                    is_only_url = False
+                    if urls and len(text.strip()) < 500:
+                        # Check if the entire message is just the URL(s)
+                        text_without_urls = text
+                        for url in urls:
+                            text_without_urls = text_without_urls.replace(url, '').strip()
+                        is_only_url = not text_without_urls
+                    
                     if urls:
                         logger.info(f"Telegram: Detected URLs in message: {urls}")
                         try:
@@ -420,6 +456,14 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                     
                     # Append URL context to user message if URLs were found
                     if url_context:
+                        # If message was ONLY a URL, add summarization instruction
+                        if is_only_url:
+                            if isinstance(messages[-1]["content"], list):
+                                messages[-1]["content"].append({"type": "text", "text": "\n\nPlease provide a detailed summary of the content at this URL."})
+                            else:
+                                messages[-1]["content"] += "\n\nPlease provide a detailed summary of the content at this URL."
+                            logger.info("Telegram: URL-only message - added summarization instruction")
+                        
                         if isinstance(messages[-1]["content"], list):
                             # Vision message - add URL context as text part
                             messages[-1]["content"].append({"type": "text", "text": url_context})
@@ -433,6 +477,24 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                         logger.info(f"User content has {len(messages[1]['content'])} parts")
                     
                     result = {"type": "text", "content": await chat_service.chat(messages)}
+                    
+                    # Save messages to conversation history
+                    if conversation:
+                        user_msg = Message(
+                            conversation_id=conversation.id,
+                            role="user",
+                            content=text
+                        )
+                        db.add(user_msg)
+                        assistant_msg = Message(
+                            conversation_id=conversation.id,
+                            role="assistant",
+                            content=result.get("content", "")
+                        )
+                        db.add(assistant_msg)
+                        conversation.updated_at = datetime.utcnow()
+                        db.commit()
+                        logger.info(f"Telegram: Saved messages to conversation {conversation.id}")
             
             # Handle the result
             response_type = result.get("type", "text")
