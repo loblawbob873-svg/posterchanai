@@ -361,6 +361,21 @@ async def run_logs_for_admin():
 
         logger.info(f"Added log summary to Logs chat for admin")
 
+        # Send to Telegram if admin has Telegram enabled
+        if admin.telegram_enabled and admin.telegram_chat_id:
+            from app.services.telegram_service import telegram_service
+            try:
+                telegram_service.set_token(
+                    db.query(Setting).filter(Setting.key == "telegram_bot_token").first().value
+                )
+                await telegram_service.send_message(
+                    admin.telegram_chat_id,
+                    message_text
+                )
+                logger.info(f"Sent log summary to Telegram for admin user {admin.id}")
+            except Exception as tg_err:
+                logger.error(f"Failed to send logs to Telegram: {tg_err}")
+
     except Exception as e:
         logger.error(f"Error in logs scheduler: {e}")
         db.rollback()
