@@ -394,6 +394,40 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                     else:
                         messages.append({"role": "user", "content": text})
                     
+                    # Detect and fetch URLs in user message (like web UI does)
+                    from app.services.search_service import SearchService
+                    search_service = SearchService(db)
+                    url_context = ""
+                    urls = SearchService.extract_urls(text)
+                    if urls:
+                        logger.info(f"Telegram: Detected URLs in message: {urls}")
+                        try:
+                            import asyncio
+                            fetched = await asyncio.wait_for(
+                                search_service.fetch_urls(urls, max_urls=3),
+                                timeout=15
+                            )
+                            for result in fetched:
+                                if result.get("content") and not result.get("error"):
+                                    logger.info(f"Telegram: Fetched {len(result['content'])} chars from {result['url']}")
+                                    url_context += f"\n\n---\nContent from {result['url']}:\nTitle: {result['title']}\n\n{result['content']}\n---"
+                                elif result.get("error"):
+                                    logger.warning(f"Telegram: Failed to fetch {result['url']}: {result['error']}")
+                                    url_context += f"\n\n[Failed to fetch {result['url']}: {result['error']}]"
+                        except asyncio.TimeoutError:
+                            logger.warning(f"Telegram: URL fetching timed out for: {urls}")
+                            url_context = "\n\n[Note: Could not fetch URL content due to timeout]"
+                    
+                    # Append URL context to user message if URLs were found
+                    if url_context:
+                        if isinstance(messages[-1]["content"], list):
+                            # Vision message - add URL context as text part
+                            messages[-1]["content"].append({"type": "text", "text": url_context})
+                        else:
+                            # Regular text message
+                            messages[-1]["content"] += url_context
+                        logger.info(f"Telegram: Added URL context ({len(url_context)} chars) to message")
+                    
                     logger.info(f"Final messages structure: system={messages[0]['content'][:50]}..., user content type={type(messages[1]['content'])}")
                     if isinstance(messages[1]['content'], list):
                         logger.info(f"User content has {len(messages[1]['content'])} parts")
