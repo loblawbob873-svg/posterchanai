@@ -185,10 +185,10 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                                 logger.info(f"Downloaded document: {file_name}, size: {len(downloaded_data)}")
             
             if command:
-                logger.info(f"Executing command: {command} with arg: {arg}")
+                logger.info(f"Executing command: {command} with arg: {arg}, attachments: {len(attachments)}")
                 try:
-                    # For mail command, pass attachments
-                    if command == "mail" and attachments:
+                    # Pass attachments to any command that supports them
+                    if attachments:
                         result = await command_service.execute_command(command, arg, attachments=attachments)
                     else:
                         result = await command_service.execute_command(command, arg)
@@ -197,7 +197,7 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                     logger.error(f"Command execution error: {e}", exc_info=True)
                     result = {"type": "text", "content": f"Error: {str(e)}"}
             else:
-                # Regular chat - use intent detection to see if it's a command
+                # Regular chat - check for images and do OCR
                 from app.services.intent_service import IntentService
                 intent_service = IntentService(db, user=user_obj)
                 intent = await intent_service.detect_intent(text)
@@ -206,17 +206,32 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                 if command:
                     arg = intent.get("arg", "")
                     logger.info(f"Detected intent: command={command}, arg={arg}")
-                    result = await command_service.execute_command(command, arg)
+                    if attachments:
+                        result = await command_service.execute_command(command, arg, attachments=attachments)
+                    else:
+                        result = await command_service.execute_command(command, arg)
                 else:
                     # Regular chat - use the chat service
-                    # If there are attachments, include them in the message
                     message_content = text
+                    
+                    # If there are image attachments, do OCR and include the text
                     if has_images:
-                        message_content = f"[Image attached]\n\n{text}"
-                    for filename, file_data, content_type in attachments:
-                        if content_type.startswith("image/"):
-                            message_content = f"[Image: {filename}]\n\n{text}"
-                            break
+                        for filename, file_data, content_type in attachments:
+                            if content_type.startswith("image/"):
+                                import base64
+                                image_b64 = base64.b64encode(file_data).decode('utf-8')
+                                try:
+                                    from app.services.document_service import extract_image_text
+                                    ocr_text = extract_image_text(image_b64)
+                                    if ocr_text:
+                                        message_content = f"[Image OCR text:\n{ocr_text}]\n\nUser message: {text}"
+                                        logger.info(f"Extracted OCR text, length: {len(ocr_text)}")
+                                    else:
+                                        message_content = f"[Image attached - OCR failed or no text found]\n\nUser message: {text}"
+                                except Exception as ocr_err:
+                                    logger.error(f"OCR error: {ocr_err}")
+                                    message_content = f"[Image attached - could not extract text]\n\nUser message: {text}"
+                                break
                     
                     messages = [
                         {"role": "system", "content": chat_service.system_prompt},
