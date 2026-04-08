@@ -1245,9 +1245,26 @@ async def get_transcode_status(
             "transcoded": len(transcoded_videos),
             "needs_transcoding": len(all_videos) - len(transcoded_videos)
         }
-    
     status = await asyncio.to_thread(_get_status)
+
     return status
+
+
+@router.post("/run-logs")
+async def run_logs_scheduler(
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """Manually trigger the logs scheduler."""
+    from app.services.logs_scheduler import run_logs_for_admin
+    import asyncio
+    
+    try:
+        await run_logs_for_admin()
+        return {"ok": True, "message": "Logs scheduler executed"}
+    except Exception as e:
+        logger.error(f"Error running logs scheduler: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # WebDAV sync config endpoints removed
