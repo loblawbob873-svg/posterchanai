@@ -201,6 +201,10 @@ def _run_migrations():
         ("rss_enabled", "BOOLEAN DEFAULT 0"),
         ("rss_skip_summarization", "BOOLEAN DEFAULT 0"),
         ("storage_quota", "INTEGER DEFAULT 0"),  # Storage quota in bytes (0 = unlimited)
+        # Telegram columns
+        ("telegram_enabled", "BOOLEAN DEFAULT 0"),
+        ("telegram_chat_id", "VARCHAR(50)"),
+        ("telegram_notifications", "TEXT DEFAULT ''"),
     ]
 
     # Add missing columns to users table
