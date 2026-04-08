@@ -102,7 +102,20 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
             
             logger.warning(f"TELEGRAM: text='{text}', reply_to='{reply_text[:50] if reply_text else ''}', photos={len(photos) if photos else 0}")
             
-            # If it's a reply, include the replied message text for translation
+            # Convert text to lowercase for command matching
+            text_lower = text.lower().strip()
+            
+            # Check if the message starts with a known command
+            command = None
+            arg = text
+            commands = ["geni", "mail", "cal", "contacts", "todo", "news", "search", "yt", "torrents", "budget", "flood", "logs", "translate"]
+            for cmd in commands:
+                if text_lower.startswith(cmd + " ") or text_lower == cmd:
+                    command = cmd
+                    arg = text[len(cmd):].strip()
+                    break
+            
+            # If it's a reply and translate command, handle it
             if reply_text and command == "translate":
                 logger.warning(f"TRANSLATE: Processing reply with text: {reply_text[:100]}...")
                 # Use the replied text for translation
