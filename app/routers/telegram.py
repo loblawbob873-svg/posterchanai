@@ -148,8 +148,10 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                     if file_id:
                         # Get the file path from Telegram
                         file_result = await telegram_service.get_file(file_id)
-                        if file_result.get("ok"):
+                        logger.info(f"File result for {file_id}: {file_result.get('ok') if file_result else 'None'}")
+                        if file_result and file_result.get("ok"):
                             file_path = file_result.get("result", {}).get("file_path")
+                            logger.info(f"File path: {file_path}")
                             if file_path:
                                 # Download the file
                                 downloaded_data = await telegram_service.download_file(file_path)
@@ -158,6 +160,8 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                                     attachments.append(("photo.jpg", downloaded_data, "image/jpeg"))
                                     has_images = True
                                     logger.info(f"Downloaded photo, size: {len(downloaded_data)}")
+                                else:
+                                    logger.warning("Failed to download photo data")
             
             # Download document
             if document:
@@ -249,6 +253,10 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                             messages.append({"role": "user", "content": text})
                     else:
                         messages.append({"role": "user", "content": text})
+                    
+                    logger.info(f"Final messages structure: system={messages[0]['content'][:50]}..., user content type={type(messages[1]['content'])}")
+                    if isinstance(messages[1]['content'], list):
+                        logger.info(f"User content has {len(messages[1]['content'])} parts")
                     
                     result = {"type": "text", "content": await chat_service.chat(messages)}
             
