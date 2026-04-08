@@ -144,17 +144,7 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                     arg = text[len(cmd):].strip()
                     break
             
-            # Check if the message starts with a known command
-            command = None
-            arg = text
-            commands = ["geni", "mail", "cal", "contacts", "todo", "news", "search", "yt", "torrents", "budget", "flood", "logs", "translate"]
-            for cmd in commands:
-                if text_lower.startswith(cmd + " ") or text_lower == cmd:
-                    command = cmd
-                    arg = text[len(cmd):].strip()
-                    break
-            
-            logger.warning(f"TELEGRAM DEBUG: text='{text}', text_lower='{text_lower}', command={command}, arg='{arg}', photos={len(photos)}, has_images={has_images}")
+            logger.warning(f"TELEGRAM: text='{text}', cmd={command}, arg='{arg}', photos={len(photos) if photos else 0}")
             
             # Download photos FIRST (before any command processing that needs OCR)
             if photos:
