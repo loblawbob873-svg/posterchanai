@@ -5,6 +5,7 @@ Provides both /v1/* and /api/* endpoints for maximum compatibility.
 """
 import json
 import logging
+import os
 import re
 from datetime import datetime
 from typing import Optional, AsyncGenerator
@@ -440,8 +441,13 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
             # Pass full server list to LoadBalancer - it will handle round-robin internally
             # This ensures proper load balancing across all servers
             timeout = int(settings.get("ollama_timeout", "300000")) / 1000
-            model = (settings.get("ollama_model") or "").strip() or "default"
-            logger.info(f"[OPENAI API] LoadBalancer model={model!r} (from ollama_model setting)")
+            # Use llm_model_path like the IPEX service does (extract filename from full path)
+            llm_path = settings.get("llm_model_path", "")
+            if llm_path:
+                model = os.path.basename(llm_path)
+            else:
+                model = "default"
+            logger.info(f"[OPENAI API] LoadBalancer model={model!r} (from llm_model_path setting)")
             load_balancer = LoadBalancer(servers, timeout=timeout, model=model)
 
             try:

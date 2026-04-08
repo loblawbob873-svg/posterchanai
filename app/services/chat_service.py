@@ -1,4 +1,5 @@
 import json
+import os
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
@@ -118,9 +119,13 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
         if servers:
             timeout_str = self._settings.get("ollama_timeout", "300000")
             timeout = int(timeout_str if timeout_str else "300000") / 1000
-            # Use admin setting "Default Model" (ollama_model) - each instance has its own DB, so set it on the instance that receives chat
-            model = (self._settings.get("ollama_model") or "").strip() or "default"
-            logger.info(f"[CHAT SERVICE] Creating LoadBalancer with {len(servers)} server(s): {servers}, model={model!r} (from ollama_model), timeout={timeout}s")
+            # Use llm_model_path like the IPEX service does (extract filename from full path)
+            llm_path = self._settings.get("llm_model_path", "")
+            if llm_path:
+                model = os.path.basename(llm_path)
+            else:
+                model = "default"
+            logger.info(f"[CHAT SERVICE] Creating LoadBalancer with {len(servers)} server(s): {servers}, model={model!r} (from llm_model_path), timeout={timeout}s")
             return LoadBalancer(servers, timeout=timeout, model=model)
         else:
             logger.debug(f"[CHAT SERVICE] No chat servers configured (chat_server_urls='{chat_server_urls}')")
