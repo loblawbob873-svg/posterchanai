@@ -323,12 +323,16 @@ async def run_logs_for_admin():
 
         # Collect logs from remote hosts
         remote_hosts = settings.get('hosts', [])
+        logger.info(f"Logs scheduler: remote hosts = {remote_hosts}")
+        
         for host in remote_hosts:
             if host:
                 logger.info(f"Collecting logs from remote host: {host}")
                 remote_log_data = collect_remote_logs(host, settings)
                 if remote_log_data:
                     log_data += " " + remote_log_data
+                else:
+                    logger.warning(f"No log data collected from {host} - SSH may have failed")
 
         if not log_data:
             logger.info("No log data collected")

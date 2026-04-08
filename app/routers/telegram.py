@@ -91,12 +91,42 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
             user = message.get("from", {})
             username = user.get("username", "unknown")
             
+            # Check for reply_to_message (when user replies to a message)
+            reply_to = message.get("reply_to_message", {})
+            reply_text = reply_to.get("text", "") if reply_to else ""
+            
             # Check for attachments (photos, documents)
             # Photos in Telegram messages are in a list - get the highest res (last one)
             photos = message.get("photo", [])
             document = message.get("document", [])
             
-            logger.warning(f"TELEGRAM: text='{text}', caption='{message.get('caption', '')}', photos={len(photos) if photos else 0}")
+            logger.warning(f"TELEGRAM: text='{text}', reply_to='{reply_text[:50] if reply_text else ''}', photos={len(photos) if photos else 0}")
+            
+            # If it's a reply, include the replied message text for translation
+            if reply_text and command == "translate":
+                logger.warning(f"TRANSLATE: Processing reply with text: {reply_text[:100]}...")
+                # Use the replied text for translation
+                language = arg.replace("to", "").strip() or "English"
+                
+                from app.services.chat_service import ChatService as FreshChatService
+                fresh_chat_service = FreshChatService(db, user=None)
+                
+                translate_messages = [
+                    {"role": "system", "content": f"Translate the following text to {language}. Output ONLY the translation, nothing else. Do NOT add any commentary, emojis, or persona."},
+                    {"role": "user", "content": reply_text}
+                ]
+                
+                try:
+                    translated = await fresh_chat_service.chat(translate_messages)
+                    logger.warning(f"TRANSLATE: Got translation: {translated[:100]}...")
+                    result = {"type": "text", "content": f"## Translation to {language}\n\n{translated}"}
+                except Exception as e:
+                    logger.error(f"Translation error: {e}")
+                    result = {"type": "text", "content": f"Translation failed: {str(e)}"}
+                
+                await telegram_service.send_message(chat_id, result.get("content", ""))
+                logger.warning(f"TRANSLATE: Sent translation result")
+                return {"ok": True}
             
             # Find user by linked Telegram chat_id
             user_obj = db.query(User).filter(
