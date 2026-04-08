@@ -82,11 +82,12 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
         telegram_service.set_token(bot_token.value)
         
         message = update.get("message")
-        logger.warning(f"TELEGRAM WEBHOOK: Received update, message keys: {list(message.keys()) if message else 'None'}")
+        logger.warning(f"TELEGRAM WEBHOOK: Received update")
         
         if message:
             chat_id = str(message.get("chat", {}).get("id"))
-            text = message.get("text", "")
+            # Get text OR caption (Telegram sends caption separately for photos)
+            text = message.get("text", "") or message.get("caption", "")
             user = message.get("from", {})
             username = user.get("username", "unknown")
             
@@ -95,7 +96,7 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
             photos = message.get("photo", [])
             document = message.get("document", [])
             
-            logger.warning(f"TELEGRAM: text='{text}', photos={len(photos) if photos else 0}")
+            logger.warning(f"TELEGRAM: text='{text}', caption='{message.get('caption', '')}', photos={len(photos) if photos else 0}")
             
             # Find user by linked Telegram chat_id
             user_obj = db.query(User).filter(
