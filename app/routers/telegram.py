@@ -139,12 +139,17 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
             has_images = False
             ocr_text = None
             
-            # Download photos
-            if photos:
-                logger.info(f"Processing {len(photos)} photos from Telegram")
-                if photos:
-                    photo = photos[-1]  # Get highest resolution
-            ocr_text = None
+            # Check if the message starts with a known command
+            command = None
+            arg = text
+            commands = ["geni", "mail", "cal", "contacts", "todo", "news", "search", "yt", "torrents", "budget", "flood", "logs", "translate"]
+            for cmd in commands:
+                if text_lower.startswith(cmd + " ") or text_lower == cmd:
+                    command = cmd
+                    arg = text[len(cmd):].strip()
+                    break
+            
+            logger.info(f"Command: {command}, arg: '{arg}'")
             
             # Download photos
             if photos:
@@ -173,8 +178,9 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                                 else:
                                     logger.warning("Failed to download photo data")
             
-            # If we have images and no command yet, try OCR
-            if has_images and attachments and not command:
+            # If translate command with OCR text, handle it directly
+            if command == "translate" and has_images and attachments:
+                # Run OCR on the image
                 for filename, file_data, content_type in attachments:
                     if content_type.startswith("image/"):
                         import base64
@@ -184,15 +190,29 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                             ocr_result = extract_image_text(image_b64)
                             if ocr_result:
                                 ocr_text = ocr_result
-                                logger.info(f"Extracted OCR text for translate: {len(ocr_text)} chars")
+                                logger.info(f"Extracted OCR text: {len(ocr_text)} chars")
                         except Exception as e:
                             logger.error(f"OCR error: {e}")
                         break
-            
-            # If translate command with OCR text, append it to the argument
-            if command == "translate" and ocr_text:
-                arg = f"{ocr_text} to {arg}"
-                logger.info(f"Translate with OCR: {arg[:100]}...")
+                
+                if ocr_text:
+                    language = arg.replace("to", "").strip() or "Thai"
+                    logger.info(f"Translating OCR text to {language}")
+                    
+                    translate_messages = [
+                        {"role": "system", "content": f"Translate the following text to {language}. Output ONLY the translation, nothing else."},
+                        {"role": "user", "content": ocr_text}
+                    ]
+                    
+                    try:
+                        translated = await chat_service.chat(translate_messages)
+                        result = {"type": "text", "content": f"## Translation to {language}\n\n{translated}"}
+                    except Exception as e:
+                        logger.error(f"Translation error: {e}")
+                        result = {"type": "text", "content": f"Translation failed: {str(e)}"}
+                    
+                    await telegram_service.send_message(chat_id, result.get("content", ""))
+                    return {"ok": True}
             
             # Download document
             if document:
