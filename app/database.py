@@ -216,22 +216,7 @@ def _run_migrations():
                     # Column might already exist or other error - ignore
                     pass
 
-    # Add missing columns to notes table (if it exists)
-    if inspector.has_table('notes'):
-        notes_columns = {col['name'] for col in inspector.get_columns('notes')}
-        new_notes_columns = [
-            ("attachments", "TEXT"),
-        ]
-        with engine.connect() as conn:
-            for col_name, col_type in new_notes_columns:
-                if col_name not in notes_columns:
-                    try:
-                        conn.execute(text(f"ALTER TABLE notes ADD COLUMN {col_name} {col_type}"))
-                        conn.commit()
-                        logger.info(f"[MIGRATE] Added column {col_name} to notes table")
-                    except Exception as e:
-                        logger.warning(f"[MIGRATE] Failed to add column {col_name} to notes: {e}")
-                        pass
+    
 
     # Create proxy_image_cache table if missing (used for image search thumb IDs across workers)
     if not inspector.has_table('proxy_image_cache'):
@@ -441,13 +426,6 @@ When asked to write or modify code or files:
             "bt_enabled": "false",
             "bt_server_url": "",              # Remote torrent server URL (empty = local)
             "storage_server_url": "",         # Remote storage server URL (empty = local)
-            # CalDAV/CardDAV server settings
-            "caldav_enabled": "false",         # Enable built-in CalDAV server
-            "caldav_port": "8081",            # CalDAV server port
-            "caldav_base_url": "",            # CalDAV base URL (e.g., https://ai.poster.place) - leave empty to auto-detect
-            "cardav_enabled": "false",        # Enable built-in CardDAV server
-            "cardav_port": "8082",            # CardDAV server port
-            "cardav_base_url": "",            # CardDAV base URL (e.g., https://ai.poster.place) - leave empty to auto-detect
             "file_cache_enabled": "true",     # Enable file listing cache
             "file_cache_ttl": "300",          # File cache TTL in seconds (5 minutes)
             "file_cache_max_size": "1000",    # Maximum cached directory listings

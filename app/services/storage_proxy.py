@@ -55,7 +55,7 @@ async def proxy_storage_request(
     Args:
         db: Database session
         request: Original FastAPI request
-        endpoint: API endpoint path (e.g., "/api/notes/files/user/1/file.pdf")
+        endpoint: API endpoint path (e.g., "/api/storage/files/user/1/file.pdf")
         method: HTTP method (GET, POST, etc.)
         json_body: JSON body for POST/PUT requests
         files: Dict of file uploads (e.g., {"file": (filename, content, content_type)})

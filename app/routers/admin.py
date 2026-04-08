@@ -1037,21 +1037,6 @@ def trigger_mcp_warmup(
         )
 
 
-@router.post("/generate-thumbnails")
-async def generate_thumbnails(
-    user_id: Optional[int] = Query(None, description="User ID to generate thumbnails for (None = all users)"),
-    db: Session = Depends(get_db),
-    admin: User = Depends(get_admin_user)
-):
-    """
-    DEPRECATED: Use /storage/rescan instead, which includes thumbnail generation + EXIF restoration.
-    
-    This endpoint is kept for backwards compatibility but just redirects to the unified scan endpoint.
-    """
-    logger.warning("[Thumbnails] /generate-thumbnails endpoint is deprecated, use /storage/rescan instead")
-    return await rescan_storage(user_id=user_id, db=db, admin=admin)
-
-
 @router.post("/transcode-video")
 async def transcode_video_admin(
     username: str = Query(..., description="Username to transcode videos for"),

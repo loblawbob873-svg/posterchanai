@@ -131,8 +131,6 @@ app.add_middleware(CSRFMiddleware)
 static_path = os.path.join(os.path.dirname(__file__), "..", "static")
 app.mount("/static", StaticFiles(directory=static_path), name="static")
 
-# WebDAV code removed
-
 # Templates
 templates_path = os.path.join(os.path.dirname(__file__), "..", "templates")
 templates = Jinja2Templates(directory=templates_path)

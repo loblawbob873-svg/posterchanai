@@ -391,16 +391,6 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
 
     avatar_url = f"/api/auth/avatar/{current_user.username}" if current_user.avatar else None
 
-    # Get calendar/contacts settings from UserSetting table
-    schedule_enabled = False
-
-    schedule_setting = db.query(UserSetting).filter(
-        UserSetting.user_id == current_user.id,
-        UserSetting.key == "schedule_enabled"
-    ).first()
-    if schedule_setting:
-        schedule_enabled = schedule_setting.value.lower() == "true"
-
     # Get mail account settings
     mail_accounts = []
     mail_setting = db.query(UserSetting).filter(
@@ -435,8 +425,6 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         news_schedule_enabled=current_user.news_schedule_enabled or False,
         news_schedule_time=current_user.news_schedule_time or "12:00",
         news_sources=current_user.news_sources or "",
-        # Calendar & Contacts settings
-        schedule_enabled=schedule_enabled,
         # Mail settings
         mail_accounts=mail_accounts,
         # Telegram settings
@@ -516,9 +504,6 @@ def update_user_settings(
             setting.value = value
         else:
             db.add(UserSetting(user_id=current_user.id, key=key, value=value))
-
-    if settings.schedule_enabled is not None:
-        save_user_setting("schedule_enabled", "true" if settings.schedule_enabled else "false")
 
     # Save mail account settings
     if settings.mail_accounts is not None:

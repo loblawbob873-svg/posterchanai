@@ -206,19 +206,6 @@ external_storage_users = Table(
 )
 
 
-class CalDAVSyncToken(Base):
-    """Track sync-token state for CalDAV sync-collection to properly report deletions."""
-    __tablename__ = "caldav_sync_tokens"
-    __table_args__ = (Index('ix_caldav_sync_tokens_user_calendar_token', 'user_id', 'calendar_name', 'sync_token'),)
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    calendar_name = Column(String(100), nullable=False)  # e.g., "main", "work"
-    sync_token = Column(String(255), nullable=False, index=True)  # Full sync-token URL
-    event_uids = Column(Text, nullable=False)  # JSON array of event UIDs that existed at this token
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
 class ExternalStorage(Base):
     """External storage mounts for File Manager"""
     __tablename__ = "external_storage"

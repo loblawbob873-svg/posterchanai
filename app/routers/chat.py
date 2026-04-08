@@ -939,35 +939,6 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             except Exception:
                                 pass
 
-                        # Add LLM follow-up for certain commands
-                        if command in ("flood", "budget", "firewall"):
-                            try:
-                                # Truncate result for LLM context if too long
-                                result_summary = result.get('content', '')
-                                if len(result_summary) > 500:
-                                    result_summary = result_summary[:500] + "..."
-
-                                # Build context for LLM
-                                follow_up_messages = [
-                                    {"role": "system", "content": "You are a helpful assistant. Respond conversationally and briefly. One sentence max."},
-                                    {"role": "user", "content": f"Command: {command} {arg}\nResult: {result_summary}\n\nGive a brief, friendly one-line response about this."}
-                                ]
-
-                                # Get LLM follow-up (non-streaming for simplicity)
-                                follow_up_text = await chat_service.chat(follow_up_messages)
-                                if follow_up_text:
-                                    result["content"] = result.get("content", "") + "\n\n" + follow_up_text
-                                    # Update saved message if it exists
-                                    if assistant_msg:
-                                        assistant_msg.content = result["content"]
-                                        db.commit()
-                            except Exception as e:
-                                logger.exception(f"LLM follow-up failed: {e}")
-                                try:
-                                    db.rollback()
-                                except Exception:
-                                    pass
-
                         # Send response (with conn_id to ensure it goes to correct chat, queue if stale)
                         # Log image generation responses for debugging
                         if result.get("type") == "generated_image":

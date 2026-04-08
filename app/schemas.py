@@ -227,13 +227,6 @@ class SettingsResponse(BaseModel):
     storage_server_url: str = ""  # Remote storage server URL (empty = local)
     ytdl_cookies_path: str = ""  # Optional Netscape cookies file for yt-dlp (YouTube 403 workaround)
     ytdl_no_ssl_verify: str = "false"  # Skip SSL cert verification for yt-dlp (proxy/firewall hostname mismatch)
-    # CalDAV/CardDAV server settings
-    caldav_enabled: str = "false"  # Enable built-in CalDAV server
-    caldav_port: str = "8081"  # CalDAV server port
-    caldav_base_url: str = ""  # CalDAV base URL (e.g., https://ai.poster.place) - leave empty to auto-detect
-    cardav_enabled: str = "false"  # Enable built-in CardDAV server
-    cardav_port: str = "8082"  # CardDAV server port
-    cardav_base_url: str = ""  # CardDAV base URL (e.g., https://ai.poster.place) - leave empty to auto-detect
     file_cache_enabled: str = "true"  # Enable file listing cache
     file_cache_ttl: str = "300"  # File cache TTL in seconds (default: 5 minutes)
     file_cache_max_size: str = "1000"  # Maximum number of cached directory listings
@@ -416,12 +409,6 @@ class UserSettingsUpdate(BaseModel):
     news_schedule_enabled: Optional[bool] = None
     news_schedule_time: Optional[str] = None  # HH:MM format
     news_sources: Optional[str] = None  # Custom sources, one per line: url|name
-    # Calendar & Contacts settings
-    schedule_enabled: Optional[bool] = None
-    caldav_calendars: Optional[List[dict]] = None  # List of {name, url, username, password}
-    carddav_url: Optional[str] = None
-    carddav_username: Optional[str] = None
-    carddav_password: Optional[str] = None
     # Mail settings
     mail_accounts: Optional[List[dict]] = None  # List of {email, imap_server, imap_port, smtp_server, smtp_port, password}
     # Telegram settings
@@ -448,12 +435,6 @@ class UserSettingsResponse(BaseModel):
     news_schedule_enabled: bool = False
     news_schedule_time: str = "12:00"
     news_sources: str = ""  # Custom sources, one per line: url|name
-    # Calendar & Contacts settings
-    schedule_enabled: bool = False
-    caldav_calendars: List[dict] = []  # List of calendars (passwords masked)
-    carddav_url: Optional[str] = None
-    carddav_username: Optional[str] = None
-    carddav_has_password: bool = False
     # Mail settings
     mail_accounts: List[dict] = []  # List of mail accounts (passwords masked)
     # Telegram settings

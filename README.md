@@ -1,6 +1,6 @@
 # Poster-chan AI
 
-**Poster-chan AI** is a self-hosted AI assistant and chat platform with a modern web UI, optional local LLM and image generation, and a native Android app. Run it on your own hardware and connect your calendars, contacts, email, notes, and codebases so one assistant can help with chat, search, scheduling, and more.
+**Poster-chan AI** is a self-hosted AI assistant and chat platform with a modern web UI, optional local LLM and image generation, and a native Android app. Run it on your own hardware and connect your email, search, and codebases so one assistant can help with chat, search, and more.
 
 The backend is **Python 3.10+** and **FastAPI**. You can use cloud APIs (OpenAI-compatible) or local backends (Ollama, llama.cpp, IPEX-LLM for Intel Arc). Image generation supports ComfyUI or a built-in diffusers backend. Everything is configurable via the web admin and optional install script.
 
@@ -14,7 +14,7 @@ The backend is **Python 3.10+** and **FastAPI**. You can use cloud APIs (OpenAI-
 - **OpenAI-compatible API** at `/v1/` for compatible clients and tools
 - **Local or remote LLM**: Ollama, llama-cpp-python (CPU/CUDA/HIP), or IPEX-LLM (Intel Arc)
 - **Load balancing**: round-robin across multiple chat servers
-- **Intent detection** and slash-style **commands** (e.g. `/notes`, `/image`, `/mail`)
+- **Intent detection** and slash-style **commands** (e.g. `/mail`, `/image`, `/search`)
 
 ### Voice & media
 
@@ -26,19 +26,17 @@ The backend is **Python 3.10+** and **FastAPI**. You can use cloud APIs (OpenAI-
 
 - **RAG (retrieval-augmented generation)** with ChromaDB and sentence-transformers: index git repos, folders, or zip uploads; code-aware chunking (Python, JS/TS, Go, Rust, etc.)
 - **MCP server** (Model Context Protocol) for Continue.dev, Claude Desktop, and other clients—expose RAG search to your IDE
-- **Notes**: searchable notes with folders, tags, and attachments; natural-language and voice commands
 
 ### PIM & productivity
 
-- **CalDAV** and **CardDAV** built in: use your own calendars and contacts; iOS/macOS discovery supported
-- **Email**: read and send mail; optional bill extraction and summaries
+- **Email**: read and send mail via IMAP/SMTP
 - **News**: RSS-style news sources with summaries
+- **Torrents**: built-in torrent client
 - **File storage** per user and per conversation; file manager in the UI
 
 ### Extensibility & admin
 
-- **Plugins** system for custom commands and integrations
-- **4chan** and **torrent** integrations (optional)
+- **4chan** integration (optional)
 - **Admin panel**: users, API keys, LLM/image/RAG/email settings, systemd service setup
 - **Multi-user** with registration (optional), email verification, and quotas
 
@@ -115,8 +113,8 @@ The **installer** sets up the virtual environment, dependencies, optional GPU ba
 - First run creates a **SQLite** database; use the **web UI** and **Admin** panel to configure:
   - LLM backend (Ollama, llama-cpp, IPEX) and model
   - Image generation (ComfyUI URL or native)
-  - RAG, TTS/STT, email, CalDAV/CardDAV, plugins
-- See **`docs/`** for detailed setup (CalDAV, IPEX, nginx, RAG/MCP, etc.).
+  - RAG, TTS/STT, email, plugins
+- See **`docs/`** for detailed setup (IPEX, nginx, RAG/MCP, etc.).
 
 ---
 
@@ -124,13 +122,13 @@ The **installer** sets up the virtual environment, dependencies, optional GPU ba
 
 | Path | Description |
 |------|-------------|
-| `app/` | FastAPI app, routers (auth, chat, admin, TTS, STT, RAG, mail, torrent, CalDAV/CardDAV, etc.), services |
+| `app/` | FastAPI app, routers (auth, chat, admin, TTS, STT, RAG, mail, torrent, etc.), services |
 | `templates/` | Jinja2 HTML (login, chat, admin, modals) |
 | `static/` | CSS, JS, icons, mascot assets |
 | `run.py` | Server entry (uvicorn) |
 | `requirements.txt` | Python dependencies |
 | `install.sh` | Interactive installer (Linux) |
-| `docs/` | [ADVANCED.md](docs/ADVANCED.md) (RAG, MCP, LLM, image, load balancing), CalDAV, IPEX, nginx, notes, etc. |
+| `docs/` | [ADVANCED.md](docs/ADVANCED.md) (RAG, MCP, LLM, image, load balancing), IPEX, nginx, etc. |
 
 ---
 
@@ -148,7 +146,7 @@ Set the app’s server URL to your instance (e.g. `http://YOUR_IP:3051`).
 ## Documentation
 
 - **[docs/ADVANCED.md](docs/ADVANCED.md)** — RAG, MCP server, LLM backends, image generation, load balancing, Intel IPEX
-- **docs/** — CalDAV/iPhone setup, email, Joplin, nginx, notes features, music controls, etc.
+- **docs/** — Email, nginx, and other feature documentation
 
 ---
 

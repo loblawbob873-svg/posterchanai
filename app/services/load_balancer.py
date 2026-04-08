@@ -134,19 +134,6 @@ async def should_use_remote(num_remote_servers: int) -> bool:
     return num_remote_servers > 0
 
 
-async def _get_next_server(servers: List[str]) -> str:
-    """Get next server using round-robin (async-safe) - legacy, use get_healthy_server instead"""
-    global _server_cycle, _server_list
-    async with _cycle_lock:
-        if _server_cycle is None or _server_list != servers:
-            _server_list = servers.copy()
-            _server_cycle = cycle(servers)
-            logger.info(f"Load balancer initialized with {len(servers)} server(s): {servers}")
-        server = next(_server_cycle)
-        logger.info(f"Selected server: {server}")
-        return server
-
-
 def sanitize_server_url(url: str) -> str:
     """Remove emojis and invalid characters from server URL"""
     if not url:

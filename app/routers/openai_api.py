@@ -426,6 +426,10 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     if rag_enabled:
         messages = await inject_rag_context(messages, db, user_id=1, top_k=3, rag_api_url=rag_api_url)
 
+    # Ensure messages alternate user/assistant properly (prevents "roles must alternate" errors)
+    from app.services.chat_service import ChatService
+    messages = ChatService._ensure_alternating_roles(messages)
+
     # Build kwargs
     temperature = request.temperature if request.temperature is not None else float(settings.get("ollama_temperature", "0.7"))
     top_p = request.top_p if request.top_p is not None else float(settings.get("ollama_top_p", "0.9"))

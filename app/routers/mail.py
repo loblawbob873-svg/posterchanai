@@ -20,12 +20,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/mail", tags=["mail"])
 
 
-@router.get("/contacts/emails")
-async def get_contact_emails_redirect():
-    """Redirect to new contacts API for backward compatibility."""
-    return RedirectResponse(url="/api/contacts/emails", status_code=307)
-
-
 @router.get("/attachment/{account_hint}/{uid}/{index}")
 async def download_attachment(
     account_hint: str,

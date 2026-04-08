@@ -92,15 +92,6 @@ TODO:
 "Remind me to buy groceries" -> todo add buy groceries
 "Show my todos" -> todo
 
-NOTES:
-"note find memes" -> notes search memes
-"find note about groceries" -> notes search groceries
-"show my notes" -> notes
-"open notes" -> notes
-"search notes for recipes" -> notes search recipes
-"note about project" -> notes search project
-"notes in work folder" -> notes folder work
-
 EMAIL:
 "Send email to john@example.com saying Hello" -> mail send john@example.com Hello
 "Check my email" -> mail
@@ -156,18 +147,6 @@ MUSIC:
 "I want to listen to Stairway to Heaven" -> music search Stairway to Heaven
 "put on some Beatles" -> music search Beatles
 
-NOTES:
-"note find memes" -> notes search memes
-"find note about groceries" -> notes search groceries
-"note about project" -> notes search project
-"search notes for recipes" -> notes search recipes
-"show my notes" -> notes
-"open notes" -> notes
-"notes in work folder" -> notes folder work
-"find note memes" -> notes search memes
-"note memes" -> notes search memes
-"search note memes" -> notes search memes
-
 TRANSLATION:
 "Translate to Spanish" -> translate Spanish
 "Translate email to German" -> translate email German
@@ -176,24 +155,10 @@ NEWS:
 "Check the news" -> news
 "News about technology" -> news technology
 
-BUDGET:
-"Show my bills" -> budget bills
-"list my bills" -> budget bills
-"list bills" -> budget bills
-"paid bill name" -> budget paid name
-"add a new bill" -> budget add Name amount
-"got a new bill" -> budget add Name amount
-"new bill for" -> budget add Name amount
-
 TORRENT:
 "Show torrents" -> torrents
 "Search for Ubuntu torrents" -> torrents search Ubuntu
 "Pause torrent 3" -> torrents pause 3
-
-FIREWALL & LOGS:
-"Check firewall" -> firewall
-"Search firewall logs for 192.168.1.1" -> firewall search 192.168.1.1
-
 
 OTHER:
 "Show help" -> help
@@ -203,18 +168,12 @@ NO ACTION (just chat):
 "How are you?" -> none
 
 IMPORTANT RULES:
-1. For calendar events, preserve the natural time description (e.g., "tomorrow at 3pm", "Friday at noon")
-2. For recurring events, preserve recurrence patterns naturally (e.g., "every Monday", "daily", "every weekday", "every Monday Wednesday Friday")
-3. Extract the key information from emails/context for event titles and details
-4. CRITICAL: "geni" is ONLY for VISUAL images/pictures/photos. If user wants TEXT (social media post, article, caption, message), respond "none" to use chat
+1. CRITICAL: "geni" is ONLY for VISUAL images/pictures/photos. If user wants TEXT (social media post, article, caption, message), respond "none" to use chat
 5. Social media posts, blog posts, articles, captions, tweets, LinkedIn posts = TEXT CONTENT = ALWAYS respond "none"
 6. Images, pictures, photos, artwork, drawings, illustrations = VISUAL CONTENT = use "geni" command
 7. When in doubt about create/generate/make, ask yourself: "Is this TEXT or a PICTURE?" - TEXT = none, PICTURE = geni
 8. DO NOT include any explanation - respond with ONLY the command or "none"
 9. DO NOT add quotes, markdown, or extra text
-10. For calendar events, pass the time description naturally - the system will parse it correctly and handle timezones
-11. When paying a bill with: budget pay or budget paid, do NOT add extra commentary, emojis, or enthusiastic responses. Simply acknowledge the action professionally.
-
 DOUBLE CHECK: If the request contains words like "post", "article", "tweet", "caption", "message" it is TEXT = respond "none"
 
 RESPOND WITH THE COMMAND ONLY!"""

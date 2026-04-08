@@ -84,7 +84,7 @@
         <div class="form-group">
             <label for="upload_path">Upload Path</label>
             <input type="text" id="upload_path" name="upload_path" value="/var/lib/posterchanai">
-            <small>Directory where user uploads, generated images, and notes attachments are stored (local node only)</small>
+            <small>Directory where user uploads and generated images are stored (local node only)</small>
         </div>
         <div class="form-group">
             <label for="storage_server_url">Storage Server URL</label>
@@ -105,45 +105,8 @@
     </fieldset>
 
     <fieldset>
-        <legend>CalDAV/CardDAV Servers</legend>
-        <div class="form-group">
-            <label for="caldav_enabled">
-                <input type="checkbox" id="caldav_enabled" name="caldav_enabled"> Enable CalDAV Server
-            </label>
-            <small>Built-in CalDAV server for calendar access. Supports Radicale import/export.</small>
-        </div>
-        <div class="form-group">
-            <label for="caldav_port">CalDAV Port</label>
-            <input type="number" id="caldav_port" name="caldav_port" value="8081" min="1024" max="65535">
-            <small>Port for CalDAV server (default: 8081). Restart required to change port.</small>
-        </div>
-        <div class="form-group">
-            <label for="caldav_base_url">CalDAV Base URL (optional)</label>
-            <input type="url" id="caldav_base_url" name="caldav_base_url" placeholder="https://ai.poster.place">
-            <small>Base URL for CalDAV (e.g., https://ai.poster.place). Leave empty to auto-detect from request (ports are omitted, assumes reverse proxy).</small>
-        </div>
-        <div class="form-group">
-            <label for="cardav_enabled">
-                <input type="checkbox" id="cardav_enabled" name="cardav_enabled"> Enable CardDAV Server
-            </label>
-            <small>Built-in CardDAV server for contact access.</small>
-        </div>
-        <div class="form-group">
-            <label for="cardav_port">CardDAV Port</label>
-            <input type="number" id="cardav_port" name="cardav_port" value="8082" min="1024" max="65535">
-            <small>Port for CardDAV server (default: 8082). Restart required to change port.</small>
-        </div>
-        <div class="form-group">
-            <label for="cardav_base_url">CardDAV Base URL (optional)</label>
-            <input type="url" id="cardav_base_url" name="cardav_base_url" placeholder="https://ai.poster.place">
-            <small>Base URL for CardDAV (e.g., https://ai.poster.place). Leave empty to auto-detect from request (ports are omitted, assumes reverse proxy).</small>
-        </div>
-        <div class="form-group" style="margin-top: 12px; padding: 10px; background: #1a1a2e; border: 1px solid #2a2a3e; border-radius: 6px;">
-            <small style="color: #aaa; display: block;">
-                <strong style="color: #4a9eff;">ℹ️ Note:</strong> After enabling/disabling servers or changing ports, restart the application for changes to take effect.
-            </small>
-        </div>
-        <div class="form-group" style="margin-top: 12px; padding: 12px; background: #1a1a2e; border: 1px solid #2a2a3e; border-radius: 6px;">
+        <legend>Load Balancing</legend>
+        <div class="form-group" style="padding: 12px; background: #1a1a2e; border: 1px solid #2a2a3e; border-radius: 6px;">
             <strong style="color: #4a9eff;">ℹ️ Load Balancing</strong>
             <p style="margin: 8px 0 0 0; color: #aaa; font-size: 0.9em; line-height: 1.5;">
                 For load-balanced setups, configure <strong>Storage Server URL</strong> to proxy file requests to a designated storage node.

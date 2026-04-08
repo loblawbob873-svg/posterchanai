@@ -72,97 +72,13 @@ async def generate_schedule_summary(db: Session, user: User, events_text: str) -
 
 
 async def run_daily_schedule_for_user(user_id: int):
-    """Generate daily schedule for a specific user."""
-    db = SessionLocal()
-    try:
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user:
-            logger.warning(f"User {user_id} not found")
-            return
-
-        # Check if user has schedule enabled
-        schedule_enabled = db.query(UserSetting).filter(
-            UserSetting.user_id == user_id,
-            UserSetting.key == "schedule_enabled"
-        ).first()
-
-        if not schedule_enabled or not schedule_enabled.value or schedule_enabled.value.lower() != "true":
-            logger.debug(f"Schedule disabled for user {user_id}")
-            return
-
-        # Check if today's schedule has already been sent (prevent duplicates)
-        date_str = datetime.now().strftime("%A, %B %d, %Y")
-        today_header = f"## Daily Schedule - {date_str}"
-
-        today_chat = db.query(Conversation).filter(
-            Conversation.user_id == user_id,
-            Conversation.title == TODAY_CHAT_TITLE
-        ).first()
-
-        if today_chat:
-            existing_msg = db.query(Message).filter(
-                Message.conversation_id == today_chat.id,
-                Message.content.like(f"{today_header}%")
-            ).first()
-            if existing_msg:
-                logger.info(f"Daily schedule already sent today for user {user_id}, skipping")
-                return
-
-        logger.info(f"Generating daily schedule for user {user_id}...")
-
-        # Calendar events feature disabled (CalDAV removed)
-        events_text = "Calendar integration temporarily unavailable."
-
-        # Generate AI summary
-        summary = await generate_schedule_summary(db, user, events_text)
-
-        # Get or create Today chat
-        today_chat = get_or_create_today_chat(db, user_id)
-
-        # Format the message (date_str already set above for dedup check)
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-        message_text = f"## Daily Schedule - {date_str}\n*{timestamp}*\n\n{summary}"
-
-        # Add message to chat
-        schedule_msg = Message(
-            conversation_id=today_chat.id,
-            role="assistant",
-            content=message_text
-        )
-        db.add(schedule_msg)
-
-        # Update conversation timestamp
-        today_chat.updated_at = datetime.utcnow()
-        db.commit()
-
-        logger.info(f"Added daily schedule to Today chat for user {user_id}")
-
-    except Exception as e:
-        logger.error(f"Error in schedule scheduler for user {user_id}: {e}")
-        db.rollback()
-    finally:
-        db.close()
+    """Schedule generation disabled - calendar integration removed."""
+    pass
 
 
 async def check_and_run_schedules():
-    """Check all users and run schedule for those with it enabled."""
-    db = SessionLocal()
-    try:
-        # Get all users with schedule enabled
-        enabled_users = db.query(UserSetting).filter(
-            UserSetting.key == "schedule_enabled",
-            UserSetting.value == "true"
-        ).all()
-
-        user_ids = [s.user_id for s in enabled_users]
-
-        for user_id in user_ids:
-            await run_daily_schedule_for_user(user_id)
-
-    except Exception as e:
-        logger.error(f"Error in schedule scheduler check: {e}")
-    finally:
-        db.close()
+    """Schedule generation disabled - calendar integration removed."""
+    pass
 
 
 def start_schedule_scheduler():

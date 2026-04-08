@@ -108,7 +108,7 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["geni", "mail", "cal", "contacts", "todo", "news", "search", "yt", "torrents", "budget", "flood", "logs", "translate"]
+            commands = ["geni", "mail", "news", "search", "yt", "torrents", "logs", "translate"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -181,7 +181,7 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["geni", "mail", "cal", "contacts", "todo", "news", "search", "yt", "torrents", "budget", "flood", "logs", "translate"]
+            commands = ["geni", "mail", "news", "search", "yt", "torrents", "logs", "translate"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd

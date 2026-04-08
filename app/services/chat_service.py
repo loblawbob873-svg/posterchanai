@@ -44,28 +44,15 @@ class ChatService:
 
 INTELLIGENT ACTIONS:
 The system automatically detects when you want to perform an action and executes it. Just describe what you want naturally:
-- "Add meeting with John tomorrow at 3pm to my calendar"
-- "Here's an event from my email: [paste content] - add this to calendar"
-- "Remind me to call mom" (adds to todo)
 - "Send an email to john@example.com saying I'll be late"
-- "Play some relaxing music"
 - "Search for the latest AI news"
 - "Generate an image of a sunset over mountains"
-- "Show my bills" (shows upcoming bills)
 
 The system will parse your request, extract relevant data, and take action automatically.
 
 AVAILABLE COMMANDS (can also be typed directly):
 
 EMAIL: mail, mail unread, mail send <to> <msg>, mail read/delete/archive <acct> <id>
-
-CALENDAR: cal, cal today, cal week, cal add <event> <time>
-
-CONTACTS: contacts all, contacts <name>, contacts add <name> <phone>
-
-TODO: todo, todo add <task>, todo rm <number>
-
-MUSIC: music, music search <query>, music mood <vibe>, music random, music skip, play music <query>
 
 NEWS: news, dailynews
 
@@ -79,9 +66,7 @@ TORRENTS: torrents, torrents list, torrents download/pause/resume/rm <num>
 
 TRANSLATE: translate <language>
 
-BUDGET: budget, budget bills, budget add <name> <amount>, budget pay <name>
-
-SYSTEM: firewall, logs, help
+SYSTEM: logs, help
 
 Provide clear, concise responses. Keep confirmations brief and professional."""
         self.system_prompt = self._settings.get("ollama_system_prompt") or default_prompt
@@ -192,6 +177,39 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
         from app.services.text_utils import strip_thinking_tags
         return strip_thinking_tags(response)
 
+    @staticmethod
+    def _ensure_alternating_roles(messages: list[dict]) -> list[dict]:
+        """Ensure messages alternate user/assistant/user/assistant... 
+        Merges consecutive same-role messages and removes invalid sequences."""
+        if not messages:
+            return messages
+        
+        result = []
+        prev_role = None
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            
+            if role == "system":
+                result.append(msg)
+                continue
+            
+            if role == prev_role and result:
+                last = result[-1]
+                if isinstance(last.get("content"), str) and isinstance(content, str):
+                    result[-1]["content"] = last["content"] + "\n\n" + content
+                elif isinstance(last.get("content"), str):
+                    result[-1]["content"] = last["content"]
+                continue
+            
+            result.append(msg)
+            prev_role = role
+        
+        if result and result[0].get("role") not in ("system", "user"):
+            result.insert(0, {"role": "user", "content": "Please respond."})
+        
+        return result
+
     async def chat(self, messages: list[dict]) -> str:
         """Non-streaming chat completion using inference factory or custom AI service"""
         try:
@@ -215,6 +233,9 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
 
             # Inject RAG context if available
             messages = self._inject_rag_context(messages, user_message)
+
+            # Ensure messages alternate user/assistant properly
+            messages = self._ensure_alternating_roles(messages)
 
             # Check for site-wide load balancer first
             load_balancer = self._get_load_balancer()
@@ -282,6 +303,9 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
 
             # Inject RAG context if available
             messages = self._inject_rag_context(messages, user_message)
+
+            # Ensure messages alternate user/assistant properly
+            messages = self._ensure_alternating_roles(messages)
 
             # Check for site-wide load balancer first
             load_balancer = self._get_load_balancer()
