@@ -82,6 +82,8 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
         telegram_service.set_token(bot_token.value)
         
         message = update.get("message")
+        logger.warning(f"TELEGRAM WEBHOOK: Received update, message keys: {list(message.keys()) if message else 'None'}")
+        
         if message:
             chat_id = str(message.get("chat", {}).get("id"))
             text = message.get("text", "")
@@ -93,14 +95,7 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
             photos = message.get("photo", [])
             document = message.get("document", [])
             
-            # Also check for other common attachment types
-            audio = message.get("audio")
-            voice = message.get("voice")
-            
-            logger.warning(f"TELEGRAM DEBUG - Full message: {message}")
-            logger.warning(f"TELEGRAM DEBUG - Photos: {photos}, Document: {document}")
-            
-            logger.info(f"Received Telegram message from {username} (chat_id: {chat_id}): {text}, photos: {len(photos) if isinstance(photos, list) else 'not list'}, document: {bool(document)}")
+            logger.warning(f"TELEGRAM: text='{text}', photos={len(photos) if photos else 0}")
             
             # Find user by linked Telegram chat_id
             user_obj = db.query(User).filter(
@@ -149,7 +144,17 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                     arg = text[len(cmd):].strip()
                     break
             
-            logger.warning(f"TELEGRAM DEBUG: text='{text}', text_lower='{text_lower}', command={command}, arg='{arg}', photos={len(photos)}")
+            # Check if the message starts with a known command
+            command = None
+            arg = text
+            commands = ["geni", "mail", "cal", "contacts", "todo", "news", "search", "yt", "torrents", "budget", "flood", "logs", "translate"]
+            for cmd in commands:
+                if text_lower.startswith(cmd + " ") or text_lower == cmd:
+                    command = cmd
+                    arg = text[len(cmd):].strip()
+                    break
+            
+            logger.warning(f"TELEGRAM DEBUG: text='{text}', text_lower='{text_lower}', command={command}, arg='{arg}', photos={len(photos)}, has_images={has_images}")
             
             # Download photos FIRST (before any command processing that needs OCR)
             if photos:
