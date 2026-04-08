@@ -151,7 +151,33 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
             
             logger.warning(f"TELEGRAM DEBUG: text='{text}', text_lower='{text_lower}', command={command}, arg='{arg}', photos={len(photos)}")
             
-            # If translate command with OCR text, handle it directly
+            # Download photos FIRST (before any command processing that needs OCR)
+            if photos:
+                logger.info(f"Processing {len(photos)} photos from Telegram")
+                if photos:
+                    photo = photos[-1]  # Get highest resolution
+                    file_id = photo.get("file_id")
+                    logger.info(f"Using photo file_id: {file_id}")
+                    if file_id:
+                        # Get the file path from Telegram
+                        file_result = await telegram_service.get_file(file_id)
+                        logger.info(f"File result: {file_result}")
+                        if file_result and file_result.get("ok"):
+                            file_path = file_result.get("result", {}).get("file_path")
+                            logger.info(f"File path: {file_path}")
+                            if file_path:
+                                # Download the file
+                                downloaded_data = await telegram_service.download_file(file_path)
+                                if downloaded_data:
+                                    import base64
+                                    b64_size = len(base64.b64encode(downloaded_data))
+                                    attachments.append(("photo.jpg", downloaded_data, "image/jpeg"))
+                                    has_images = True
+                                    logger.info(f"Downloaded photo, data size: {len(downloaded_data)}, base64 size: {b64_size}")
+                                else:
+                                    logger.warning("Failed to download photo data")
+            
+            # Now if translate command with images, do OCR
             if command == "translate" and has_images and attachments:
                 # Run OCR on the image
                 for filename, file_data, content_type in attachments:
@@ -163,14 +189,14 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                             ocr_result = extract_image_text(image_b64)
                             if ocr_result:
                                 ocr_text = ocr_result
-                                logger.info(f"Extracted OCR text: {len(ocr_text)} chars")
+                                logger.warning(f"TRANSLATE: Extracted OCR text: {len(ocr_text)} chars")
                         except Exception as e:
                             logger.error(f"OCR error: {e}")
                         break
                 
                 if ocr_text:
                     language = arg.replace("to", "").strip() or "Thai"
-                    logger.info(f"Translating OCR text to {language}")
+                    logger.warning(f"TRANSLATE: Translating to {language}")
                     
                     translate_messages = [
                         {"role": "system", "content": f"Translate the following text to {language}. Output ONLY the translation, nothing else."},
@@ -231,7 +257,7 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
             # If translate command with OCR text, handle it directly
             if command == "translate" and ocr_text:
                 language = arg.replace("to", "").strip() or "Thai"
-                logger.info(f"Translating OCR text to {language}")
+                logger.warning(f"TRANSLATE: Using OCR text ({len(ocr_text)} chars) to translate to {language}")
                 
                 # Build messages for translation
                 translate_messages = [
@@ -248,7 +274,10 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                 
                 # Send result and return early
                 await telegram_service.send_message(chat_id, result.get("content", ""))
+                logger.warning(f"TRANSLATE: Sent translation result")
                 return {"ok": True}
+            elif command == "translate" and has_images:
+                logger.warning(f"TRANSLATE: Command detected but no OCR text yet, has_images={has_images}, attachments={len(attachments)}")
             
             if command:
                 logger.info(f"Executing command: {command} with arg: {arg}, attachments: {len(attachments)}")
