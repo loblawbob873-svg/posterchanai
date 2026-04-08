@@ -113,40 +113,65 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                 )
                 return {"ok": True}
             
-            # Process the message through chat service
+            # Process the message - check for commands first
             chat_service = ChatService(db, user=user_obj)
+            command_service = CommandService(db, user=user_obj)
+            text_lower = text.lower().strip()
             
-            # Build messages for the chat
-            messages = [
-                {"role": "system", "content": chat_service.system_prompt},
-                {"role": "user", "content": text}
-            ]
+            # Check if the message starts with a known command
+            command = None
+            arg = text
+            commands = ["geni", "mail", "cal", "contacts", "todo", "news", "search", "yt", "torrents", "budget", "flood", "logs", "translate"]
+            for cmd in commands:
+                if text_lower.startswith(cmd + " ") or text_lower == cmd:
+                    command = cmd
+                    arg = text[len(cmd):].strip()
+                    break
             
-            # Send user message and get AI response
-            result = await chat_service.chat(messages)
-            logger.info(f"chat_service.chat result type: {type(result)}, is dict: {isinstance(result, dict)}")
+            logger.info(f"Telegram message: '{text}', command: {command}, arg: '{arg}'")
             
-            # Check if result is a dict (with type and content) or just a string
-            if isinstance(result, dict):
-                response_type = result.get("type", "text")
-                response_content = result.get("content", "")
-                image_data = result.get("image")  # base64 image if generated
-                logger.info(f"Result type: {response_type}, has image: {bool(image_data)}")
-                
-                if response_type == "generated_image" and image_data:
-                    logger.info(f"Generated image detected, sending via Telegram, image length: {len(image_data)}")
-                    # Send the image to Telegram
-                    photo_result = await telegram_service.send_photo(chat_id, image_data, response_content)
-                    if not photo_result.get("ok"):
-                        logger.error(f"Failed to send photo: {photo_result}")
-                        await telegram_service.send_message(chat_id, f"{response_content}\n\n(Image generation failed to send)")
-                    return {"ok": True}
-                else:
-                    await telegram_service.send_message(chat_id, response_content)
+            if command:
+                logger.info(f"Executing command: {command} with arg: {arg}")
+                try:
+                    result = await command_service.execute_command(command, arg)
+                    logger.info(f"Command result: {result}")
+                except Exception as e:
+                    logger.error(f"Command execution error: {e}", exc_info=True)
+                    result = {"type": "text", "content": f"Error: {str(e)}"}
             else:
-                logger.info(f"AI response: {result[:100]}...")
-                # Send the AI response back to Telegram
-                await telegram_service.send_message(chat_id, result)
+                # Regular chat - use intent detection to see if it's a command
+                from app.services.intent_service import IntentService
+                intent_service = IntentService(db, user=user_obj)
+                intent = await intent_service.detect_intent(text)
+                command = intent.get("command")
+                
+                if command:
+                    arg = intent.get("arg", "")
+                    logger.info(f"Detected intent: command={command}, arg={arg}")
+                    result = await command_service.execute_command(command, arg)
+                else:
+                    # Regular chat - use the chat service
+                    messages = [
+                        {"role": "system", "content": chat_service.system_prompt},
+                        {"role": "user", "content": text}
+                    ]
+                    result = {"type": "text", "content": await chat_service.chat(messages)}
+            
+            # Handle the result
+            response_type = result.get("type", "text")
+            response_content = result.get("content", "")
+            image_data = result.get("image")
+            
+            logger.info(f"Result type: {response_type}, has image: {bool(image_data)}")
+            
+            if response_type == "generated_image" and image_data:
+                logger.info(f"Generated image detected, sending via Telegram, image length: {len(image_data)}")
+                photo_result = await telegram_service.send_photo(chat_id, image_data, response_content)
+                if not photo_result.get("ok"):
+                    logger.error(f"Failed to send photo: {photo_result}")
+                    await telegram_service.send_message(chat_id, f"{response_content}\n\n(Image generation failed to send)")
+            else:
+                await telegram_service.send_message(chat_id, response_content)
             
             return {"ok": True}
         
