@@ -1024,12 +1024,15 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             # Sort by ID to ensure correct order (timestamps can be identical)
                             sorted_messages = sorted(conversation.messages, key=lambda m: m.id)
                             # Filter to ensure alternating roles (user/assistant/user/assistant)
+                            # Truncate history messages to prevent context bloat from URL content
+                            HISTORY_CHAR_LIMIT = 500
                             last_role = "system"
                             for msg in sorted_messages[-21:-1]:
                                 # Skip if this role is same as last (prevents "Conversation roles must alternate" error)
                                 if msg.role == last_role:
                                     continue
-                                messages.append({"role": msg.role, "content": msg.content})
+                                content_trunc = msg.content[:HISTORY_CHAR_LIMIT] if len(msg.content) > HISTORY_CHAR_LIMIT else msg.content
+                                messages.append({"role": msg.role, "content": content_trunc})
                                 last_role = msg.role
 
                             # Detect and fetch URLs in user message AND system prompt (with timeout to avoid hanging)
