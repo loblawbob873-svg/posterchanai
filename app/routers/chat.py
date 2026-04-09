@@ -38,7 +38,8 @@ def list_conversations(
     current_user: User = Depends(get_current_user)
 ):
     return db.query(Conversation).filter(
-        Conversation.user_id == current_user.id
+        Conversation.user_id == current_user.id,
+        ~Conversation.title.startswith("📱")
     ).order_by(Conversation.updated_at.desc()).all()
 
 

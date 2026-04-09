@@ -359,8 +359,8 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                     from app.models import Conversation, Message
                     
                     # Get or create a dedicated Telegram conversation for this user
-                    # Use title prefix to distinguish from web UI conversations
-                    telegram_conv_title = "Telegram"
+                    # Use a hidden title prefix so WebUI can filter it out
+                    telegram_conv_title = "📱 Telegram"
                     conversation = db.query(Conversation).filter(
                         Conversation.user_id == user_obj.id,
                         Conversation.title == telegram_conv_title
