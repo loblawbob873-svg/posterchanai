@@ -364,45 +364,31 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                     # Regular chat - use the chat service
                     from app.models import Conversation, Message
                     
-                    # Get or create a dedicated Telegram conversation for this user
-                    # Use a hidden title prefix so WebUI can filter it out
-                    telegram_conv_title = "📱 Telegram"
-                    conversation = db.query(Conversation).filter(
-                        Conversation.user_id == user_obj.id,
-                        Conversation.title == telegram_conv_title
-                    ).order_by(Conversation.updated_at.desc()).first()
-                    
-                    # Create new conversation if none exists or last activity was over 6 hours ago
-                    if not conversation or conversation.updated_at < datetime.utcnow() - timedelta(hours=6):
-                        conversation = Conversation(
-                            user_id=user_obj.id,
-                            title=telegram_conv_title
-                        )
-                        db.add(conversation)
-                        db.commit()
-                        db.refresh(conversation)
-                    
+                    # Build messages for the LLM - no DB conversation needed for Telegram
+                    # History is managed within the Telegram chat itself
                     messages = [
                         {"role": "system", "content": chat_service.system_prompt},
                     ]
                     
-                    # Get last 10 messages from conversation history (like web UI does)
-                    # Order by id to ensure correct ordering (timestamps can be identical)
-                    recent_messages = db.query(Message).filter(
-                        Message.conversation_id == conversation.id
-                    ).order_by(Message.id.desc()).limit(20).all()
+                    # Add recent message history from the Telegram conversation (limited, truncated)
+                    conversation = db.query(Conversation).filter(
+                        Conversation.user_id == user_obj.id,
+                        Conversation.title == "📱 Telegram"
+                    ).order_by(Conversation.updated_at.desc()).first()
                     
-                    # Add history (newest first, but we need oldest first for the model)
-                    # Filter to ensure alternating roles (prevents "Conversation roles must alternate" error)
-                    # Truncate history messages to prevent context bloat from URL content
-                    HISTORY_CHAR_LIMIT = 500
-                    last_role = "system"
-                    for msg in reversed(recent_messages):
-                        if msg.role == last_role:
-                            continue
-                        content = msg.content[:HISTORY_CHAR_LIMIT] if len(msg.content) > HISTORY_CHAR_LIMIT else msg.content
-                        messages.append({"role": msg.role, "content": content})
-                        last_role = msg.role
+                    if conversation:
+                        recent_messages = db.query(Message).filter(
+                            Message.conversation_id == conversation.id
+                        ).order_by(Message.id.desc()).limit(20).all()
+                        
+                        HISTORY_CHAR_LIMIT = 500
+                        last_role = "system"
+                        for msg in reversed(recent_messages):
+                            if msg.role == last_role:
+                                continue
+                            content = msg.content[:HISTORY_CHAR_LIMIT] if len(msg.content) > HISTORY_CHAR_LIMIT else msg.content
+                            messages.append({"role": msg.role, "content": content})
+                            last_role = msg.role
                     
                     # If there are image attachments, add them to the message for vision models
                     if has_images and attachments:
@@ -536,28 +522,8 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                                 logger.error(f"  Message {i}: role={m.get('role')}, content={content_preview}...")
                         result = {"type": "text", "content": f"Sorry, I encountered an error: {error_msg}"}
                     
-                    # Save messages to conversation history
-                    # Skip saving if response is an error (prevents polluting context)
-                    response_content = result.get("content", "")
-                    is_error_response = response_content.startswith("Error:") or response_content.startswith("Sorry, I encountered an error")
-                    if conversation and not is_error_response:
-                        user_msg = Message(
-                            conversation_id=conversation.id,
-                            role="user",
-                            content=text
-                        )
-                        db.add(user_msg)
-                        assistant_msg = Message(
-                            conversation_id=conversation.id,
-                            role="assistant",
-                            content=response_content
-                        )
-                        db.add(assistant_msg)
-                        conversation.updated_at = datetime.utcnow()
-                        db.commit()
-                        logger.info(f"Telegram: Saved messages to conversation {conversation.id}")
-                    elif is_error_response:
-                        logger.warning(f"Telegram: Skipping save of error response to conversation: {response_content[:80]}")
+                    # Telegram doesn't save messages to DB - it manages history in the chat itself
+                    # This prevents Telegram messages from appearing in the WebUI
             
             # Handle the result
             response_type = result.get("type", "text")
