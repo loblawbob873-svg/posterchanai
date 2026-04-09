@@ -85,12 +85,6 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
         logger.warning(f"TELEGRAM WEBHOOK: Received update")
         
         if message:
-            # Ignore stale messages (older than 300 seconds)
-            msg_date = message.get("date", 0)
-            msg_age = int(datetime.utcnow().timestamp()) - msg_date
-            if msg_date and msg_age > 300:
-                logger.warning(f"TELEGRAM: Ignoring stale message (age: {msg_age}s)")
-                return {"ok": True}
             
             chat_id = str(message.get("chat", {}).get("id"))
             # Get text OR caption (Telegram sends caption separately for photos)
