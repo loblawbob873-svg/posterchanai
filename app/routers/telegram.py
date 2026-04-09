@@ -365,6 +365,8 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                         {"role": "system", "content": chat_service.system_prompt},
                     ]
                     
+                    last_role = "system"
+                    
                     # Add recent message history from the Telegram conversation (limited, truncated)
                     conversation = db.query(Conversation).filter(
                         Conversation.user_id == user_obj.id,
@@ -377,7 +379,6 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                         ).order_by(Message.id.desc()).limit(20).all()
                         
                         HISTORY_CHAR_LIMIT = 500
-                        last_role = "system"
                         for msg in reversed(recent_messages):
                             if msg.role == last_role:
                                 continue
