@@ -309,8 +309,14 @@ Environment="HOME=$HOME"
 # - Sourcing oneapi-vars.sh for SYCL compiler support
 ExecStart=$RUN_SCRIPT
 
+# Quick restart - don't wait forever for stuck GPU processes
+TimeoutStopSec=10
+KillMode=mixed
+KillSignal=SIGTERM
+SendSIGKILL=yes
+
 Restart=always
-RestartSec=5
+RestartSec=3
 
 # Give extra time for model loading on restart
 TimeoutStartSec=120
@@ -336,8 +342,16 @@ WorkingDirectory=$SCRIPT_DIR
 Environment="PATH=$VENV_PATH/bin:/usr/local/bin:/usr/bin"
 Environment="VIRTUAL_ENV=$VENV_PATH"
 ExecStart=$RUN_SCRIPT
+
+# Quick restart - don't wait forever for stuck GPU processes
+TimeoutStopSec=10
+KillMode=mixed
+KillSignal=SIGTERM
+SendSIGKILL=yes
+
 Restart=always
-RestartSec=5
+RestartSec=3
+TimeoutStartSec=120
 
 [Install]
 WantedBy=multi-user.target
@@ -435,8 +449,14 @@ Environment="POSTERCHANAI_PORT=3052"
 # The run script (run-xpu-image.sh) handles oneAPI setup
 ExecStart=$RUN_SCRIPT
 
+# Quick restart - don't wait forever for stuck GPU processes
+TimeoutStopSec=10
+KillMode=mixed
+KillSignal=SIGTERM
+SendSIGKILL=yes
+
 Restart=always
-RestartSec=5
+RestartSec=3
 TimeoutStartSec=120
 
 [Install]
