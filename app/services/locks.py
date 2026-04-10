@@ -91,22 +91,25 @@ class GPUResourceLock:
         global _gpu_lock_holder
         
         self.wait_start = time.time()
-        
-        # First acquire file lock (cross-process) - using async version to not block event loop
         lock_name = "CPU" if self.cpu_mode else "GPU"
-        logger.info(f"[{lock_name}-LOCK] {self.request_type} request waiting for file lock...")
-        self._file_lock_fd = await _acquire_file_lock_async(self._lock_file)
         
-        # Then acquire async lock (within process)
+        # IMPORTANT: Acquire async lock FIRST (in-process), THEN file lock (cross-process)
+        # This prevents holding the file lock while waiting for in-process coordination
+        
+        # First acquire async lock (within process) - this serializes requests in this process
         if _gpu_lock_holder:
-            logger.info(f"[{lock_name}-LOCK] {self.request_type} request waiting for {lock_name} (currently held by {_gpu_lock_holder})")
+            logger.info(f"[{lock_name}-LOCK] {self.request_type} request{' ' + self.request_id if self.request_id else ''} waiting (held by {_gpu_lock_holder})")
         
+        await _gpu_lock_base.acquire()
+        
+        # Now acquire file lock (cross-process) - we're the only one in this process trying
+        logger.info(f"[{lock_name}-LOCK] {self.request_type} request{' ' + self.request_id if self.request_id else ''} acquired in-process lock, waiting for file lock...")
         try:
-            await _gpu_lock_base.acquire()
+            self._file_lock_fd = await _acquire_file_lock_async(self._lock_file)
         except Exception as e:
-            _release_file_lock(self._file_lock_fd)
-            self._file_lock_fd = None
-            logger.error(f"[{lock_name}-LOCK] Failed to acquire lock: {e}")
+            # Release async lock if file lock fails
+            _gpu_lock_base.release()
+            logger.error(f"[{lock_name}-LOCK] Failed to acquire file lock: {e}")
             raise
         
         wait_time = time.time() - self.wait_start
@@ -123,19 +126,23 @@ class GPUResourceLock:
         global _gpu_lock_holder
         
         lock_name = "CPU" if self.cpu_mode else "GPU"
+        hold_time = time.time() - self.acquired_at if self.acquired_at else 0
         
-        try:
-            hold_time = time.time() - self.acquired_at if self.acquired_at else 0
-            logger.info(f"[{lock_name}-LOCK] {self.request_type} request{' ' + self.request_id if self.request_id else ''} released {lock_name} (held for {hold_time:.2f}s)")
-            _gpu_lock_holder = None
-            _gpu_lock_base.release()
-        except Exception as e:
-            logger.error(f"[{lock_name}-LOCK] Error releasing async lock: {e}")
+        # Release in reverse order: file lock first, then async lock
+        # This allows other processes to acquire the file lock immediately
         
-        # Always release file lock
+        # Release file lock first (cross-process)
         if self._file_lock_fd:
             _release_file_lock(self._file_lock_fd)
             self._file_lock_fd = None
+        
+        # Then release async lock (in-process)
+        try:
+            _gpu_lock_holder = None
+            _gpu_lock_base.release()
+            logger.info(f"[{lock_name}-LOCK] {self.request_type} request{' ' + self.request_id if self.request_id else ''} released {lock_name} (held for {hold_time:.2f}s)")
+        except Exception as e:
+            logger.error(f"[{lock_name}-LOCK] Error releasing async lock: {e}")
 
 
 # For backwards compatibility
