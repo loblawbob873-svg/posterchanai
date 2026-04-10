@@ -608,87 +608,91 @@ class LlamaService:
         # uuid is already imported at module level
         request_id = f"LLAMA-STREAM-{uuid.uuid4().hex[:8]}"
         try:
-          async with GPUResourceLock("LLM", request_id, cpu_mode=self.cpu_mode):
-            def run_streaming():
-                """Run synchronous generation in thread, put SSE chunks in queue"""
-                token_timeout = self.token_timeout
-                last_token_time = time.time()
+            async with GPUResourceLock("LLM", request_id, cpu_mode=self.cpu_mode):
+                def run_streaming():
+                    """Run synchronous generation in thread, put SSE chunks in queue"""
+                    token_timeout = self.token_timeout
+                    last_token_time = time.time()
 
-                with _get_inference_semaphore(self.max_concurrent):
-                    try:
-                        for chunk in self._model.create_chat_completion(
-                            messages=messages,
-                            stream=True,
-                            **params
-                        ):
-                            # Check for timeout between tokens
-                            current_time = time.time()
-                            if current_time - last_token_time > token_timeout:
-                                logger.error(f"Streaming timeout: no token in {token_timeout}s")
-                                loop.call_soon_threadsafe(
-                                    queue.put_nowait,
-                                    f"data: {json.dumps({'error': {'message': f'Generation timed out after {token_timeout}s', 'type': 'timeout_error'}})}\n\n"
-                                )
-                                return
-                            last_token_time = current_time
+                    with _get_inference_semaphore(self.max_concurrent):
+                        try:
+                            for chunk in self._model.create_chat_completion(
+                                messages=messages,
+                                stream=True,
+                                **params
+                            ):
+                                # Check for timeout between tokens
+                                current_time = time.time()
+                                if current_time - last_token_time > token_timeout:
+                                    logger.error(f"Streaming timeout: no token in {token_timeout}s")
+                                    loop.call_soon_threadsafe(
+                                        queue.put_nowait,
+                                        f"data: {json.dumps({'error': {'message': f'Generation timed out after {token_timeout}s', 'type': 'timeout_error'}})}\n\n"
+                                    )
+                                    return
+                                last_token_time = current_time
 
-                            content = ""
-                            if "choices" in chunk and len(chunk["choices"]) > 0:
-                                delta = chunk["choices"][0].get("delta", {})
-                                content = delta.get("content", "")
+                                content = ""
+                                if "choices" in chunk and len(chunk["choices"]) > 0:
+                                    delta = chunk["choices"][0].get("delta", {})
+                                    content = delta.get("content", "")
 
-                            if content:
-                                sse_chunk = {
-                                    "id": completion_id,
-                                    "object": "chat.completion.chunk",
-                                    "created": created,
-                                    "model": model_name,
-                                    "choices": [{
-                                        "index": 0,
-                                        "delta": {"content": content},
-                                        "finish_reason": None
-                                    }]
+                                if content:
+                                    sse_chunk = {
+                                        "id": completion_id,
+                                        "object": "chat.completion.chunk",
+                                        "created": created,
+                                        "model": model_name,
+                                        "choices": [{
+                                            "index": 0,
+                                            "delta": {"content": content},
+                                            "finish_reason": None
+                                        }]
+                                    }
+                                    loop.call_soon_threadsafe(
+                                        queue.put_nowait,
+                                        f"data: {json.dumps(sse_chunk)}\n\n"
+                                    )
+
+                                # Check for finish
+                                if "choices" in chunk and len(chunk["choices"]) > 0:
+                                    finish_reason = chunk["choices"][0].get("finish_reason")
+                                    if finish_reason:
+                                        break
+
+                            loop.call_soon_threadsafe(queue.put_nowait, "data: [DONE]\n\n")
+                        except Exception as e:
+                            logger.error(f"Streaming error: {e}")
+                            error_chunk = {
+                                "error": {
+                                    "message": str(e),
+                                    "type": "inference_error"
                                 }
-                                loop.call_soon_threadsafe(
-                                    queue.put_nowait,
-                                    f"data: {json.dumps(sse_chunk)}\n\n"
-                                )
-
-                            # Check for finish
-                            if "choices" in chunk and len(chunk["choices"]) > 0:
-                                finish_reason = chunk["choices"][0].get("finish_reason")
-                                if finish_reason:
-                                    break
-
-                        loop.call_soon_threadsafe(queue.put_nowait, "data: [DONE]\n\n")
-                    except Exception as e:
-                        logger.error(f"Streaming error: {e}")
-                        error_chunk = {
-                            "error": {
-                                "message": str(e),
-                                "type": "inference_error"
                             }
-                        }
-                        loop.call_soon_threadsafe(
-                            queue.put_nowait,
-                            f"data: {json.dumps(error_chunk)}\n\n"
-                        )
-                    finally:
-                        # Update last used time for idle timeout
-                        global _last_used
-                        _last_used = time.time()
-                        # Don't unload here - let the outer finally handle it
-                        loop.call_soon_threadsafe(queue.put_nowait, None)
+                            loop.call_soon_threadsafe(
+                                queue.put_nowait,
+                                f"data: {json.dumps(error_chunk)}\n\n"
+                            )
+                        finally:
+                            # Update last used time for idle timeout
+                            global _last_used
+                            _last_used = time.time()
+                            # Don't unload here - let the outer finally handle it
+                            loop.call_soon_threadsafe(queue.put_nowait, None)
 
-            # Start streaming in background thread
-            _executor.submit(run_streaming)
+                # Start streaming in background thread
+                _executor.submit(run_streaming)
 
-            # Yield from queue as chunks arrive
-            while True:
-                chunk = await queue.get()
-                if chunk is None:
-                    break
-                yield chunk
+                # Yield from queue as chunks arrive
+                while True:
+                    chunk = await queue.get()
+                    if chunk is None:
+                        break
+                    yield chunk
+        except (TimeoutError, Exception) as e:
+            logger.error(f"[{request_id}] GPU lock error: {e}")
+            error_chunk = {"error": {"message": str(e), "type": "gpu_lock_error"}}
+            yield f"data: {json.dumps(error_chunk)}\n\n"
         finally:
             with _request_counter_lock:
                 _pending_requests -= 1

@@ -39,7 +39,11 @@ def _try_acquire_file_lock(lock_file: str) -> Optional[int]:
 
 
 async def _acquire_file_lock_async(lock_file: str, max_retries: int = 240) -> int:
-    """Acquire a file-based lock with async retry logic (non-blocking)"""
+    """Acquire a file-based lock with async retry logic (non-blocking).
+    
+    Raises TimeoutError if lock cannot be acquired within max_retries * 0.5 seconds.
+    NEVER blocks the event loop - uses non-blocking flock with polling.
+    """
     retries = 0
     
     while retries < max_retries:
@@ -50,10 +54,9 @@ async def _acquire_file_lock_async(lock_file: str, max_retries: int = 240) -> in
         await asyncio.sleep(0.5)  # Non-blocking sleep
         retries += 1
     
-    # Final blocking attempt (should rarely happen)
-    fd = os.open(lock_file, os.O_CREAT | os.O_RDWR)
-    fcntl.flock(fd, fcntl.LOCK_EX)
-    return fd
+    # DO NOT use blocking flock - it hangs the entire event loop!
+    # Instead, raise an error so the request can fail gracefully
+    raise TimeoutError(f"Failed to acquire file lock {lock_file} after {max_retries * 0.5:.0f} seconds")
 
 
 def _release_file_lock(fd: int):

@@ -152,91 +152,99 @@ class OllamaService:
         from app.services.locks import GPUResourceLock
         import uuid
         request_id = f"OLLAMA-{uuid.uuid4().hex[:8]}"
-        async with GPUResourceLock("LLM", request_id, cpu_mode=self.cpu_mode):
-            # Acquire semaphore for rate limiting
-            semaphore = await _get_semaphore(self.max_concurrent)
+        try:
+            async with GPUResourceLock("LLM", request_id, cpu_mode=self.cpu_mode):
+                # Acquire semaphore for rate limiting
+                semaphore = await _get_semaphore(self.max_concurrent)
 
-            async with semaphore:
-                host = self.ollama_url
-                client = await _get_http_client(timeout=self.timeout)
-                try:
-                    if self.api_format == "openai":
-                        # OpenAI-compatible API format (works with posterchanai, vLLM, etc.)
-                        response = await client.post(
-                            f"{host}/v1/chat/completions",
-                            json={
+                async with semaphore:
+                    host = self.ollama_url
+                    client = await _get_http_client(timeout=self.timeout)
+                    try:
+                        if self.api_format == "openai":
+                            # OpenAI-compatible API format (works with posterchanai, vLLM, etc.)
+                            response = await client.post(
+                                f"{host}/v1/chat/completions",
+                                json={
+                                    "model": model,
+                                    "messages": messages,
+                                    "stream": False,
+                                    "temperature": options.get("temperature", 0.7),
+                                    "top_p": options.get("top_p", 0.9),
+                                    "max_tokens": options.get("num_predict", 2048),
+                                    "stop": options.get("stop", []) or None
+                                }
+                            )
+                            response.raise_for_status()
+                            data = response.json()
+
+                            # Strip thinking tags from response
+                            if "choices" in data and data["choices"]:
+                                content = data["choices"][0].get("message", {}).get("content", "")
+                                data["choices"][0]["message"]["content"] = self.strip_thinking_tags(content)
+
+                            return data
+                        else:
+                            # Ollama native API format
+                            response = await client.post(
+                                f"{host}/api/chat",
+                                json={
+                                    "model": model,
+                                    "messages": messages,
+                                    "stream": False,
+                                    "options": options,
+                                    "keep_alive": self.keep_alive
+                                }
+                            )
+                            response.raise_for_status()
+                            ollama_data = response.json()
+
+                            # Convert to OpenAI format
+                            content = ollama_data.get("message", {}).get("content", "")
+                            content = self.strip_thinking_tags(content)
+
+                            data = {
+                                "id": f"chatcmpl-{int(time.time())}",
+                                "object": "chat.completion",
+                                "created": int(time.time()),
                                 "model": model,
-                                "messages": messages,
-                                "stream": False,
-                                "temperature": options.get("temperature", 0.7),
-                                "top_p": options.get("top_p", 0.9),
-                                "max_tokens": options.get("num_predict", 2048),
-                                "stop": options.get("stop", []) or None
+                                "system_fingerprint": "fp_ollama",
+                                "choices": [{
+                                    "index": 0,
+                                    "message": {"role": "assistant", "content": content},
+                                    "finish_reason": "stop"
+                                }],
+                                "usage": {
+                                    "prompt_tokens": ollama_data.get("prompt_eval_count", 0),
+                                    "completion_tokens": ollama_data.get("eval_count", 0),
+                                    "total_tokens": ollama_data.get("prompt_eval_count", 0) + ollama_data.get("eval_count", 0)
+                                }
                             }
-                        )
-                        response.raise_for_status()
-                        data = response.json()
 
-                        # Strip thinking tags from response
-                        if "choices" in data and data["choices"]:
-                            content = data["choices"][0].get("message", {}).get("content", "")
-                            data["choices"][0]["message"]["content"] = self.strip_thinking_tags(content)
+                            return data
 
-                        return data
-                    else:
-                        # Ollama native API format
-                        response = await client.post(
-                            f"{host}/api/chat",
-                            json={
-                                "model": model,
-                                "messages": messages,
-                                "stream": False,
-                                "options": options,
-                                "keep_alive": self.keep_alive
-                            }
-                        )
-                        response.raise_for_status()
-                        ollama_data = response.json()
-
-                        # Convert to OpenAI format
-                        content = ollama_data.get("message", {}).get("content", "")
-                        content = self.strip_thinking_tags(content)
-
-                        data = {
-                            "id": f"chatcmpl-{int(time.time())}",
-                            "object": "chat.completion",
-                            "created": int(time.time()),
-                            "model": model,
-                            "system_fingerprint": "fp_ollama",
-                            "choices": [{
-                                "index": 0,
-                                "message": {"role": "assistant", "content": content},
-                                "finish_reason": "stop"
-                            }],
-                            "usage": {
-                                "prompt_tokens": ollama_data.get("prompt_eval_count", 0),
-                                "completion_tokens": ollama_data.get("eval_count", 0),
-                                "total_tokens": ollama_data.get("prompt_eval_count", 0) + ollama_data.get("eval_count", 0)
+                    except httpx.HTTPStatusError as e:
+                        return {
+                            "error": {
+                                "message": f"API returned status {e.response.status_code}",
+                                "type": "api_error",
+                                "code": e.response.status_code
                             }
                         }
-
-                        return data
-
-                except httpx.HTTPStatusError as e:
-                    return {
-                        "error": {
-                            "message": f"API returned status {e.response.status_code}",
-                            "type": "api_error",
-                            "code": e.response.status_code
+                    except Exception as e:
+                        return {
+                            "error": {
+                                "message": str(e),
+                                "type": "api_error"
+                            }
                         }
-                    }
-                except Exception as e:
-                    return {
-                        "error": {
-                            "message": str(e),
-                            "type": "api_error"
-                        }
-                    }
+        except (TimeoutError, Exception) as e:
+            return {
+                "error": {
+                    "message": f"GPU lock error: {e}",
+                    "type": "gpu_lock_error"
+                }
+            }
 
     async def chat_completion_stream(
         self,
@@ -260,53 +268,110 @@ class OllamaService:
         # Acquire shared GPU/CPU lock to prevent LLM and image from running simultaneously
         from app.services.locks import GPUResourceLock
         request_id = f"OLLAMA-STREAM-{completion_id[:8]}"
-        async with GPUResourceLock("LLM", request_id, cpu_mode=self.cpu_mode):
-            # Acquire semaphore for rate limiting
-            semaphore = await _get_semaphore(self.max_concurrent)
+        try:
+            async with GPUResourceLock("LLM", request_id, cpu_mode=self.cpu_mode):
+                # Acquire semaphore for rate limiting
+                semaphore = await _get_semaphore(self.max_concurrent)
 
-            async with semaphore:
-                host = self.ollama_url
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
-                    try:
-                        if self.api_format == "openai":
-                            # OpenAI-compatible API format
-                            async with client.stream(
-                                "POST",
-                                f"{host}/v1/chat/completions",
-                                json={
-                                    "model": model,
-                                    "messages": messages,
-                                    "stream": True,
-                                    "temperature": options.get("temperature", 0.7),
-                                    "top_p": options.get("top_p", 0.9),
-                                    "max_tokens": options.get("num_predict", 2048),
-                                    "max_context_tokens": options.get("num_ctx", self.num_ctx),
-                                    "stop": options.get("stop", []) or None
-                                }
-                            ) as response:
-                                response.raise_for_status()
+                async with semaphore:
+                    host = self.ollama_url
+                    async with httpx.AsyncClient(timeout=self.timeout) as client:
+                        try:
+                            if self.api_format == "openai":
+                                # OpenAI-compatible API format
+                                async with client.stream(
+                                    "POST",
+                                    f"{host}/v1/chat/completions",
+                                    json={
+                                        "model": model,
+                                        "messages": messages,
+                                        "stream": True,
+                                        "temperature": options.get("temperature", 0.7),
+                                        "top_p": options.get("top_p", 0.9),
+                                        "max_tokens": options.get("num_predict", 2048),
+                                        "max_context_tokens": options.get("num_ctx", self.num_ctx),
+                                        "stop": options.get("stop", []) or None
+                                    }
+                                ) as response:
+                                    response.raise_for_status()
 
-                                buffer = ""
-                                thinking_done = False
+                                    buffer = ""
+                                    thinking_done = False
 
-                                async for line in response.aiter_lines():
-                                    line = line.strip()
-                                    if not line:
-                                        continue
+                                    async for line in response.aiter_lines():
+                                        line = line.strip()
+                                        if not line:
+                                            continue
 
-                                    # OpenAI SSE format: "data: {...}" or "data: [DONE]"
-                                    if line.startswith("data: "):
-                                        data_str = line[6:]  # Remove "data: " prefix
-                                        if data_str == "[DONE]":
-                                            yield "data: [DONE]\n\n"
-                                            break
+                                        # OpenAI SSE format: "data: {...}" or "data: [DONE]"
+                                        if line.startswith("data: "):
+                                            data_str = line[6:]  # Remove "data: " prefix
+                                            if data_str == "[DONE]":
+                                                yield "data: [DONE]\n\n"
+                                                break
+
+                                            try:
+                                                data = json.loads(data_str)
+                                                content = ""
+                                                if "choices" in data and data["choices"]:
+                                                    delta = data["choices"][0].get("delta", {})
+                                                    content = delta.get("content", "")
+
+                                                if content:
+                                                    buffer += content
+
+                                                    # Handle thinking tags
+                                                    if not thinking_done:
+                                                        match = re.search(r'</think(?:ing)?>', buffer, re.IGNORECASE)
+                                                        if match:
+                                                            thinking_done = True
+                                                            after_think = buffer[match.end():]
+                                                            if after_think:
+                                                                chunk = {
+                                                                    "id": completion_id,
+                                                                    "object": "chat.completion.chunk",
+                                                                    "created": created,
+                                                                    "model": model,
+                                                                    "choices": [{
+                                                                        "index": 0,
+                                                                        "delta": {"content": after_think},
+                                                                        "finish_reason": None
+                                                                    }]
+                                                                }
+                                                                yield f"data: {json.dumps(chunk)}\n\n"
+                                                            buffer = after_think
+                                                    else:
+                                                        # Pass through the chunk
+                                                        yield f"{line}\n\n"
+
+                                            except json.JSONDecodeError:
+                                                continue
+                            else:
+                                # Ollama native API format
+                                async with client.stream(
+                                    "POST",
+                                    f"{host}/api/chat",
+                                    json={
+                                        "model": model,
+                                        "messages": messages,
+                                        "stream": True,
+                                        "options": options,
+                                        "keep_alive": self.keep_alive
+                                    }
+                                ) as response:
+                                    response.raise_for_status()
+
+                                    buffer = ""
+                                    thinking_done = False
+
+                                    async for line in response.aiter_lines():
+                                        if not line.strip():
+                                            continue
 
                                         try:
-                                            data = json.loads(data_str)
-                                            content = ""
-                                            if "choices" in data and data["choices"]:
-                                                delta = data["choices"][0].get("delta", {})
-                                                content = delta.get("content", "")
+                                            # Parse native Ollama JSON response
+                                            data = json.loads(line)
+                                            content = data.get("message", {}).get("content", "")
 
                                             if content:
                                                 buffer += content
@@ -332,100 +397,52 @@ class OllamaService:
                                                             yield f"data: {json.dumps(chunk)}\n\n"
                                                         buffer = after_think
                                                 else:
-                                                    # Pass through the chunk
-                                                    yield f"{line}\n\n"
+                                                    # Normal content, convert to OpenAI SSE format
+                                                    chunk = {
+                                                        "id": completion_id,
+                                                        "object": "chat.completion.chunk",
+                                                        "created": created,
+                                                        "model": model,
+                                                        "choices": [{
+                                                            "index": 0,
+                                                            "delta": {"content": content},
+                                                            "finish_reason": None
+                                                        }]
+                                                    }
+                                                    yield f"data: {json.dumps(chunk)}\n\n"
+
+                                            # Check if done
+                                            if data.get("done", False):
+                                                yield "data: [DONE]\n\n"
+                                                break
 
                                         except json.JSONDecodeError:
                                             continue
-                        else:
-                            # Ollama native API format
-                            async with client.stream(
-                                "POST",
-                                f"{host}/api/chat",
-                                json={
-                                    "model": model,
-                                    "messages": messages,
-                                    "stream": True,
-                                    "options": options,
-                                    "keep_alive": self.keep_alive
+
+                        except httpx.HTTPStatusError as e:
+                            error_chunk = {
+                                "error": {
+                                    "message": f"Ollama returned status {e.response.status_code}",
+                                    "type": "api_error"
                                 }
-                            ) as response:
-                                response.raise_for_status()
-
-                                buffer = ""
-                                thinking_done = False
-
-                                async for line in response.aiter_lines():
-                                    if not line.strip():
-                                        continue
-
-                                    try:
-                                        # Parse native Ollama JSON response
-                                        data = json.loads(line)
-                                        content = data.get("message", {}).get("content", "")
-
-                                        if content:
-                                            buffer += content
-
-                                            # Handle thinking tags
-                                            if not thinking_done:
-                                                match = re.search(r'</think(?:ing)?>', buffer, re.IGNORECASE)
-                                                if match:
-                                                    thinking_done = True
-                                                    after_think = buffer[match.end():]
-                                                    if after_think:
-                                                        chunk = {
-                                                            "id": completion_id,
-                                                            "object": "chat.completion.chunk",
-                                                            "created": created,
-                                                            "model": model,
-                                                            "choices": [{
-                                                                "index": 0,
-                                                                "delta": {"content": after_think},
-                                                                "finish_reason": None
-                                                            }]
-                                                        }
-                                                        yield f"data: {json.dumps(chunk)}\n\n"
-                                                    buffer = after_think
-                                            else:
-                                                # Normal content, convert to OpenAI SSE format
-                                                chunk = {
-                                                    "id": completion_id,
-                                                    "object": "chat.completion.chunk",
-                                                    "created": created,
-                                                    "model": model,
-                                                    "choices": [{
-                                                        "index": 0,
-                                                        "delta": {"content": content},
-                                                        "finish_reason": None
-                                                    }]
-                                                }
-                                                yield f"data: {json.dumps(chunk)}\n\n"
-
-                                        # Check if done
-                                        if data.get("done", False):
-                                            yield "data: [DONE]\n\n"
-                                            break
-
-                                    except json.JSONDecodeError:
-                                        continue
-
-                    except httpx.HTTPStatusError as e:
-                        error_chunk = {
-                            "error": {
-                                "message": f"Ollama returned status {e.response.status_code}",
-                                "type": "api_error"
                             }
-                        }
-                        yield f"data: {json.dumps(error_chunk)}\n\n"
-                    except Exception as e:
-                        error_chunk = {
-                            "error": {
-                                "message": str(e),
-                                "type": "api_error"
+                            yield f"data: {json.dumps(error_chunk)}\n\n"
+                        except Exception as e:
+                            error_chunk = {
+                                "error": {
+                                    "message": str(e),
+                                    "type": "api_error"
+                                }
                             }
-                        }
-                        yield f"data: {json.dumps(error_chunk)}\n\n"
+                            yield f"data: {json.dumps(error_chunk)}\n\n"
+        except (TimeoutError, Exception) as e:
+            error_chunk = {
+                "error": {
+                    "message": f"GPU lock error: {e}",
+                    "type": "gpu_lock_error"
+                }
+            }
+            yield f"data: {json.dumps(error_chunk)}\n\n"
 
     async def generate(
         self,
@@ -445,32 +462,35 @@ class OllamaService:
         from app.services.locks import GPUResourceLock
         import uuid
         request_id = f"OLLAMA-GEN-{uuid.uuid4().hex[:8]}"
-        async with GPUResourceLock("LLM", request_id, cpu_mode=self.cpu_mode):
-            semaphore = await _get_semaphore(self.max_concurrent)
+        try:
+            async with GPUResourceLock("LLM", request_id, cpu_mode=self.cpu_mode):
+                semaphore = await _get_semaphore(self.max_concurrent)
 
-            async with semaphore:
-                host = self.ollama_url
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
-                    try:
-                        payload = {
-                            "model": model,
-                            "prompt": prompt,
-                            "stream": False,
-                            "options": options,
-                            "keep_alive": self.keep_alive
-                        }
-                        if system:
-                            payload["system"] = system
+                async with semaphore:
+                    host = self.ollama_url
+                    async with httpx.AsyncClient(timeout=self.timeout) as client:
+                        try:
+                            payload = {
+                                "model": model,
+                                "prompt": prompt,
+                                "stream": False,
+                                "options": options,
+                                "keep_alive": self.keep_alive
+                            }
+                            if system:
+                                payload["system"] = system
 
-                        response = await client.post(
-                            f"{host}/api/generate",
-                            json=payload
-                        )
-                        response.raise_for_status()
-                        return response.json()
+                            response = await client.post(
+                                f"{host}/api/generate",
+                                json=payload
+                            )
+                            response.raise_for_status()
+                            return response.json()
 
-                    except Exception as e:
-                        return {"error": str(e)}
+                        except Exception as e:
+                            return {"error": str(e)}
+        except (TimeoutError, Exception) as e:
+            return {"error": f"GPU lock error: {e}"}
 
 
 def get_ollama_service(db: Session) -> OllamaService:

@@ -26,8 +26,14 @@ Environment="POSTERCHANAI_PORT=3052"
 # The run script (run-xpu-image.sh) handles oneAPI setup
 ExecStart=/path/to/posterchanai/run-xpu-image.sh
 
+# Quick restart - don't wait forever for stuck GPU processes
+TimeoutStopSec=10
+KillMode=mixed
+KillSignal=SIGTERM
+SendSIGKILL=yes
+
 Restart=always
-RestartSec=5
+RestartSec=3
 TimeoutStartSec=120
 
 [Install]

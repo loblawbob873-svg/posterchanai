@@ -718,118 +718,125 @@ class IPEXService:
 
         # Acquire shared GPU/CPU lock to prevent LLM and image from running simultaneously
         from app.services.locks import GPUResourceLock
-        async with GPUResourceLock("LLM", f"STREAM-{request_id}", cpu_mode=self.cpu_mode):
-            def run_streaming():
-                """Run generation in thread, put tokens in queue"""
-                with _get_inference_semaphore(self.max_concurrent):
-                    try:
-                        if self._is_gguf:
-                            # Use llama.cpp streaming for GGUF
-                            for chunk in self._model.create_chat_completion(
-                                messages=messages_to_use,
-                                max_tokens=kwargs.get("max_tokens", self.num_predict),
-                                temperature=kwargs.get("temperature", self.temperature),
-                                top_p=kwargs.get("top_p", self.top_p),
-                                top_k=kwargs.get("top_k", self.top_k),
-                                repeat_penalty=kwargs.get("repeat_penalty", self.repeat_penalty),
-                                stop=stop if stop else None,
-                                stream=True,
-                            ):
-                                delta = chunk.get("choices", [{}])[0].get("delta", {})
-                                content = delta.get("content", "")
-                                if content:
-                                    sse_chunk = {
-                                        "id": completion_id,
-                                        "object": "chat.completion.chunk",
-                                        "created": created,
-                                        "model": model_name,
-                                        "choices": [{
-                                            "index": 0,
-                                            "delta": {"content": content},
-                                            "finish_reason": None
-                                        }]
-                                    }
-                                    loop.call_soon_threadsafe(
-                                        queue.put_nowait,
-                                        f"data: {json.dumps(sse_chunk)}\n\n"
-                                    )
-                        else:
-                            # Use HuggingFace streaming
-                            import torch
-                            from transformers import TextIteratorStreamer
+        try:
+            async with GPUResourceLock("LLM", f"STREAM-{request_id}", cpu_mode=self.cpu_mode):
+                def run_streaming():
+                    """Run generation in thread, put tokens in queue"""
+                    with _get_inference_semaphore(self.max_concurrent):
+                        try:
+                            if self._is_gguf:
+                                # Use llama.cpp streaming for GGUF
+                                for chunk in self._model.create_chat_completion(
+                                    messages=messages_to_use,
+                                    max_tokens=kwargs.get("max_tokens", self.num_predict),
+                                    temperature=kwargs.get("temperature", self.temperature),
+                                    top_p=kwargs.get("top_p", self.top_p),
+                                    top_k=kwargs.get("top_k", self.top_k),
+                                    repeat_penalty=kwargs.get("repeat_penalty", self.repeat_penalty),
+                                    stop=stop if stop else None,
+                                    stream=True,
+                                ):
+                                    delta = chunk.get("choices", [{}])[0].get("delta", {})
+                                    content = delta.get("content", "")
+                                    if content:
+                                        sse_chunk = {
+                                            "id": completion_id,
+                                            "object": "chat.completion.chunk",
+                                            "created": created,
+                                            "model": model_name,
+                                            "choices": [{
+                                                "index": 0,
+                                                "delta": {"content": content},
+                                                "finish_reason": None
+                                            }]
+                                        }
+                                        loop.call_soon_threadsafe(
+                                            queue.put_nowait,
+                                            f"data: {json.dumps(sse_chunk)}\n\n"
+                                        )
+                            else:
+                                # Use HuggingFace streaming
+                                import torch
+                                from transformers import TextIteratorStreamer
 
-                            prompt = self._build_prompt(messages)
-                            inputs = self._tokenizer(prompt, return_tensors="pt").to('xpu')
+                                prompt = self._build_prompt(messages)
+                                inputs = self._tokenizer(prompt, return_tensors="pt").to('xpu')
 
-                            streamer = TextIteratorStreamer(
-                                self._tokenizer,
-                                skip_prompt=True,
-                                skip_special_tokens=True
+                                streamer = TextIteratorStreamer(
+                                    self._tokenizer,
+                                    skip_prompt=True,
+                                    skip_special_tokens=True
+                                )
+
+                                generation_kwargs = {
+                                    **inputs,
+                                    "max_new_tokens": kwargs.get("max_tokens", self.num_predict),
+                                    "temperature": kwargs.get("temperature", self.temperature),
+                                    "top_p": kwargs.get("top_p", self.top_p),
+                                    "top_k": kwargs.get("top_k", self.top_k),
+                                    "repetition_penalty": kwargs.get("repeat_penalty", self.repeat_penalty),
+                                    "do_sample": True,
+                                    "pad_token_id": self._tokenizer.eos_token_id,
+                                    "streamer": streamer,
+                                }
+
+                                gen_thread = threading.Thread(
+                                    target=lambda: self._model.generate(**generation_kwargs)
+                                )
+                                gen_thread.start()
+
+                                for token in streamer:
+                                    if token:
+                                        sse_chunk = {
+                                            "id": completion_id,
+                                            "object": "chat.completion.chunk",
+                                            "created": created,
+                                            "model": model_name,
+                                            "choices": [{
+                                                "index": 0,
+                                                "delta": {"content": token},
+                                                "finish_reason": None
+                                            }]
+                                        }
+                                        loop.call_soon_threadsafe(
+                                            queue.put_nowait,
+                                            f"data: {json.dumps(sse_chunk)}\n\n"
+                                        )
+                                gen_thread.join()
+
+                            loop.call_soon_threadsafe(queue.put_nowait, "data: [DONE]\n\n")
+
+                        except Exception as e:
+                            logger.error(f"Streaming error: {e}")
+                            error_chunk = {"error": {"message": str(e), "type": "inference_error"}}
+                            loop.call_soon_threadsafe(
+                                queue.put_nowait,
+                                f"data: {json.dumps(error_chunk)}\n\n"
                             )
+                        finally:
+                            # Update last used time for idle timeout
+                            global _last_used
+                            _last_used = time.time()
+                            loop.call_soon_threadsafe(queue.put_nowait, None)
 
-                            generation_kwargs = {
-                                **inputs,
-                                "max_new_tokens": kwargs.get("max_tokens", self.num_predict),
-                                "temperature": kwargs.get("temperature", self.temperature),
-                                "top_p": kwargs.get("top_p", self.top_p),
-                                "top_k": kwargs.get("top_k", self.top_k),
-                                "repetition_penalty": kwargs.get("repeat_penalty", self.repeat_penalty),
-                                "do_sample": True,
-                                "pad_token_id": self._tokenizer.eos_token_id,
-                                "streamer": streamer,
-                            }
+                _executor.submit(run_streaming)
 
-                            gen_thread = threading.Thread(
-                                target=lambda: self._model.generate(**generation_kwargs)
-                            )
-                            gen_thread.start()
-
-                            for token in streamer:
-                                if token:
-                                    sse_chunk = {
-                                        "id": completion_id,
-                                        "object": "chat.completion.chunk",
-                                        "created": created,
-                                        "model": model_name,
-                                        "choices": [{
-                                            "index": 0,
-                                            "delta": {"content": token},
-                                            "finish_reason": None
-                                        }]
-                                    }
-                                    loop.call_soon_threadsafe(
-                                        queue.put_nowait,
-                                        f"data: {json.dumps(sse_chunk)}\n\n"
-                                    )
-                            gen_thread.join()
-
-                        loop.call_soon_threadsafe(queue.put_nowait, "data: [DONE]\n\n")
-
-                    except Exception as e:
-                        logger.error(f"Streaming error: {e}")
-                        error_chunk = {"error": {"message": str(e), "type": "inference_error"}}
-                        loop.call_soon_threadsafe(
-                            queue.put_nowait,
-                            f"data: {json.dumps(error_chunk)}\n\n"
-                        )
-                    finally:
-                        # Update last used time for idle timeout
-                        global _last_used
-                        _last_used = time.time()
-                        loop.call_soon_threadsafe(queue.put_nowait, None)
-
-            _executor.submit(run_streaming)
-
-            try:
-                while True:
-                    chunk = await queue.get()
-                    if chunk is None:
-                        break
-                    yield chunk
-            finally:
-                # Update request counter when stream completes
-                with _request_counter_lock:
-                    _pending_requests -= 1
+                try:
+                    while True:
+                        chunk = await queue.get()
+                        if chunk is None:
+                            break
+                        yield chunk
+                finally:
+                    # Update request counter when stream completes
+                    with _request_counter_lock:
+                        _pending_requests -= 1
+        except (TimeoutError, Exception) as e:
+            logger.error(f"[STREAM-{request_id}] GPU lock error: {e}")
+            with _request_counter_lock:
+                _pending_requests -= 1
+            error_chunk = {"error": {"message": str(e), "type": "gpu_lock_error"}}
+            yield f"data: {json.dumps(error_chunk)}\n\n"
 
     def stream_chat_content(
         self,
