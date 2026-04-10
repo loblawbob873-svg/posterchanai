@@ -4,6 +4,7 @@ import fcntl
 import logging
 import os
 import time
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -23,25 +24,33 @@ _gpu_lock_base = asyncio.Lock()
 _gpu_lock_holder = None
 
 
-def _acquire_file_lock(lock_file: str, max_retries: int = 240) -> int:
-    """Acquire a file-based lock with retry logic"""
+def _try_acquire_file_lock(lock_file: str) -> Optional[int]:
+    """Try to acquire file lock without blocking. Returns fd if acquired, None otherwise."""
+    try:
+        fd = os.open(lock_file, os.O_CREAT | os.O_RDWR)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return fd
+        except BlockingIOError:
+            os.close(fd)
+            return None
+    except Exception:
+        return None
+
+
+async def _acquire_file_lock_async(lock_file: str, max_retries: int = 240) -> int:
+    """Acquire a file-based lock with async retry logic (non-blocking)"""
     retries = 0
     
     while retries < max_retries:
-        try:
-            fd = os.open(lock_file, os.O_CREAT | os.O_RDWR)
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                return fd
-            except BlockingIOError:
-                os.close(fd)
-                fd = None
-        except Exception:
-            pass
+        fd = _try_acquire_file_lock(lock_file)
+        if fd is not None:
+            return fd
         
-        time.sleep(0.5)
+        await asyncio.sleep(0.5)  # Non-blocking sleep
         retries += 1
     
+    # Final blocking attempt (should rarely happen)
     fd = os.open(lock_file, os.O_CREAT | os.O_RDWR)
     fcntl.flock(fd, fcntl.LOCK_EX)
     return fd
@@ -80,10 +89,10 @@ class GPUResourceLock:
         
         self.wait_start = time.time()
         
-        # First acquire file lock (cross-process)
+        # First acquire file lock (cross-process) - using async version to not block event loop
         lock_name = "CPU" if self.cpu_mode else "GPU"
         logger.info(f"[{lock_name}-LOCK] {self.request_type} request waiting for file lock...")
-        self._file_lock_fd = _acquire_file_lock(self._lock_file)
+        self._file_lock_fd = await _acquire_file_lock_async(self._lock_file)
         
         # Then acquire async lock (within process)
         if _gpu_lock_holder:
