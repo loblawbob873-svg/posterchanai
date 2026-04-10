@@ -613,12 +613,16 @@ class IPEXService:
                         timeout=self.inference_timeout
                     )
                     elapsed = time.time() - start_time
-                    logger.info(f"[REQ-{request_id}] Completed in {elapsed:.1f}s (pending: {_pending_requests - 1})")
+                    pending_after = _pending_requests - 1
+                    logger.info(f"[REQ-{request_id}] Completed in {elapsed:.1f}s (pending: {pending_after})")
                     # Update last used time for idle timeout
                     global _last_used
                     _last_used = time.time()
-                    # Unload model to release VRAM after request
-                    self.unload_model()
+                    # Only unload model if no other requests are waiting
+                    if pending_after == 0:
+                        self.unload_model()
+                    else:
+                        logger.info(f"[REQ-{request_id}] Keeping model loaded for {pending_after} pending request(s)")
                 except asyncio.TimeoutError:
                     elapsed = time.time() - start_time
                     logger.error(f"[REQ-{request_id}] Timed out after {elapsed:.1f}s")
@@ -976,11 +980,15 @@ class IPEXService:
                 _current_request = None
                 with _request_counter_lock:
                     _pending_requests -= 1
+                    pending_after = _pending_requests
                 # Update last used time for idle timeout
                 global _last_used
                 _last_used = time.time()
-                # Unload model to release VRAM after request
-                self.unload_model()
+                # Only unload model if no other requests are waiting
+                if pending_after == 0:
+                    self.unload_model()
+                else:
+                    logger.info(f"[STREAM-{request_id}] Keeping model loaded for {pending_after} pending request(s)")
 
     async def list_models(self) -> List[Dict[str, Any]]:
         """List available models"""

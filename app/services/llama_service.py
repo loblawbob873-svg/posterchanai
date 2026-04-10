@@ -37,6 +37,10 @@ _last_used: float = 0
 _idle_check_thread: Optional[threading.Thread] = None
 _idle_check_stop = threading.Event()
 
+# Request tracking for smart unloading
+_pending_requests: int = 0
+_request_counter_lock = threading.Lock()
+
 
 def _start_idle_check():
     """Start the background idle check thread"""
@@ -493,8 +497,8 @@ class LlamaService:
         from app.services.text_utils import strip_thinking_tags
         return strip_thinking_tags(response)
 
-    def _sync_chat_completion(self, messages: List[Dict[str, Any]], **kwargs) -> Dict[str, Any]:
-        """Synchronous chat completion (runs in thread pool)"""
+    def _sync_chat_completion_no_unload(self, messages: List[Dict[str, Any]], **kwargs) -> Dict[str, Any]:
+        """Synchronous chat completion without unloading (caller handles unload)"""
         self._ensure_model_loaded()
         params = self._get_sampling_params(**kwargs)
 
@@ -513,9 +517,6 @@ class LlamaService:
                 # Update last used time for idle timeout
                 global _last_used
                 _last_used = time.time()
-                
-                # Unload model to release VRAM after request
-                self.unload_model()
 
                 return result
 
@@ -528,6 +529,12 @@ class LlamaService:
                     }
                 }
 
+    def _sync_chat_completion(self, messages: List[Dict[str, Any]], **kwargs) -> Dict[str, Any]:
+        """Synchronous chat completion (runs in thread pool) - legacy, unloads after"""
+        result = self._sync_chat_completion_no_unload(messages, **kwargs)
+        self.unload_model()
+        return result
+
     async def chat_completion(
         self,
         messages: List[Dict[str, Any]],
@@ -539,20 +546,36 @@ class LlamaService:
         Non-streaming chat completion.
         Returns OpenAI-compatible response format.
         """
-        # Acquire shared GPU lock to prevent LLM and image from running simultaneously
-        from app.services.locks import GPUResourceLock
-        import uuid
-        request_id = f"LLAMA-{uuid.uuid4().hex[:8]}"
-        async with GPUResourceLock("LLM", request_id, cpu_mode=self.cpu_mode):
-            loop = asyncio.get_event_loop()
+        global _pending_requests
+        
+        # Track pending requests
+        with _request_counter_lock:
+            _pending_requests += 1
+        
+        try:
+            # Acquire shared GPU lock to prevent LLM and image from running simultaneously
+            from app.services.locks import GPUResourceLock
+            request_id = f"LLAMA-{uuid.uuid4().hex[:8]}"
+            async with GPUResourceLock("LLM", request_id, cpu_mode=self.cpu_mode):
+                loop = asyncio.get_event_loop()
 
-            # Run synchronous inference in thread pool
-            result = await loop.run_in_executor(
-                _executor,
-                lambda: self._sync_chat_completion(messages, **kwargs)
-            )
+                # Run synchronous inference in thread pool (without unloading)
+                result = await loop.run_in_executor(
+                    _executor,
+                    lambda: self._sync_chat_completion_no_unload(messages, **kwargs)
+                )
 
-            return result
+                return result
+        finally:
+            with _request_counter_lock:
+                _pending_requests -= 1
+                pending_after = _pending_requests
+            
+            # Only unload if no other requests waiting
+            if pending_after == 0:
+                self.unload_model()
+            else:
+                logger.info(f"[{request_id}] Keeping model loaded for {pending_after} pending request(s)")
 
     async def chat_completion_stream(
         self,
@@ -565,6 +588,12 @@ class LlamaService:
         Yields SSE-formatted chunks compatible with OpenAI API.
         Uses async queue to avoid blocking the event loop.
         """
+        global _pending_requests
+        
+        # Track pending requests
+        with _request_counter_lock:
+            _pending_requests += 1
+        
         self._ensure_model_loaded()
         params = self._get_sampling_params(**kwargs)
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
@@ -578,7 +607,8 @@ class LlamaService:
         from app.services.locks import GPUResourceLock
         # uuid is already imported at module level
         request_id = f"LLAMA-STREAM-{uuid.uuid4().hex[:8]}"
-        async with GPUResourceLock("LLM", request_id, cpu_mode=self.cpu_mode):
+        try:
+          async with GPUResourceLock("LLM", request_id, cpu_mode=self.cpu_mode):
             def run_streaming():
                 """Run synchronous generation in thread, put SSE chunks in queue"""
                 token_timeout = self.token_timeout
@@ -647,8 +677,7 @@ class LlamaService:
                         # Update last used time for idle timeout
                         global _last_used
                         _last_used = time.time()
-                        # Unload model to release VRAM after request
-                        self.unload_model()
+                        # Don't unload here - let the outer finally handle it
                         loop.call_soon_threadsafe(queue.put_nowait, None)
 
             # Start streaming in background thread
@@ -660,6 +689,16 @@ class LlamaService:
                 if chunk is None:
                     break
                 yield chunk
+        finally:
+            with _request_counter_lock:
+                _pending_requests -= 1
+                pending_after = _pending_requests
+            
+            # Only unload if no other requests waiting
+            if pending_after == 0:
+                self.unload_model()
+            else:
+                logger.info(f"[{request_id}] Keeping model loaded for {pending_after} pending request(s)")
 
     def stream_chat_content(
         self,
