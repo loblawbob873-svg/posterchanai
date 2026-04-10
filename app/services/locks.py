@@ -10,6 +10,14 @@ logger = logging.getLogger(__name__)
 LOCK_DIR = "/tmp/posterchanai_locks"
 os.makedirs(LOCK_DIR, exist_ok=True)
 
+# Clear stale lock files on startup
+for lock_file in [os.path.join(LOCK_DIR, "gpu.lock"), os.path.join(LOCK_DIR, "cpu.lock")]:
+    try:
+        if os.path.exists(lock_file):
+            os.remove(lock_file)
+    except Exception:
+        pass
+
 GPU_LOCK_FILE = os.path.join(LOCK_DIR, "gpu.lock")
 CPU_LOCK_FILE = os.path.join(LOCK_DIR, "cpu.lock")  # For CPU mode (both LLM and image)
 
