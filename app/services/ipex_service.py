@@ -589,10 +589,10 @@ class IPEXService:
         logger.info(f"[REQ-{request_id}] Queued: \"{user_msg}...\" (pending: {_pending_requests})")
         start_time = time.time()
 
-        # Acquire shared GPU lock to prevent LLM and image from running simultaneously
+        # Acquire shared GPU/CPU lock to prevent LLM and image from running simultaneously
         from app.services.locks import GPUResourceLock
         try:
-            async with GPUResourceLock("LLM", f"REQ-{request_id}"):
+            async with GPUResourceLock("LLM", f"REQ-{request_id}", cpu_mode=self.cpu_mode):
                 def run_with_lock():
                     global _current_request
                     with _get_inference_semaphore(self.max_concurrent):
@@ -707,9 +707,9 @@ class IPEXService:
                         messages_to_use[i]["content"] += "\n(Respond directly without <think> tags)"
                         break
 
-        # Acquire shared GPU lock to prevent LLM and image from running simultaneously
+        # Acquire shared GPU/CPU lock to prevent LLM and image from running simultaneously
         from app.services.locks import GPUResourceLock
-        async with GPUResourceLock("LLM", f"STREAM-{request_id}"):
+        async with GPUResourceLock("LLM", f"STREAM-{request_id}", cpu_mode=self.cpu_mode):
             def run_streaming():
                 """Run generation in thread, put tokens in queue"""
                 with _get_inference_semaphore(self.max_concurrent):

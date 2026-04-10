@@ -163,19 +163,24 @@ async def generate_image_with_load_balancing(
                 logger.error(f"[IMAGE] Failed from {selected_server}: {type(e).__name__}: {e}", exc_info=True)
                 # Fall through to local backend
 
-    # Use local backend with GPU LOCK to prevent GPU overload
+    # Use local backend with GPU/CPU LOCK to prevent resource overload
     # This handles: no remote servers configured, remote request failed, or when "self" is selected by load balancer
     # Skip local if vram_mode is llm_only (force_remote)
     if force_remote:
         logger.warning("[IMAGE] vram_mode is 'llm_only' - skipping local generation, will try fallback to all remote servers")
         result = None
     else:
-        logger.info("Using local backend for image generation (serialized with GPU lock)")
+        logger.info("Using local backend for image generation (serialized with GPU/CPU lock)")
         result = None
         try:
-            # Use shared GPU lock to prevent LLM and image from running simultaneously
+            # Determine CPU vs GPU mode for lock
+            from app.services.diffusers_service import detect_device
+            image_device = detect_device()
+            image_cpu_mode = image_device == "cpu"
+            
+            # Use shared GPU/CPU lock to prevent LLM and image from running simultaneously
             from app.services.locks import GPUResourceLock, image_generation_lock
-            async with GPUResourceLock("Image", f"prompt={prompt[:30]}..."):
+            async with GPUResourceLock("Image", f"prompt={prompt[:30]}...", cpu_mode=image_cpu_mode):
                 async with image_generation_lock:
                     prepare_vram_for_image(db)
                     backend = get_image_backend(db)

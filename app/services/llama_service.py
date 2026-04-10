@@ -116,19 +116,11 @@ class LlamaService:
         configured_num_ctx = int(get_setting("ollama_num_ctx", "4096"))
         logger.info(f"[LLAMA] _load_settings: configured_num_ctx={configured_num_ctx}, _model is None: {self._model is None}")
         
-        # Store configured value for comparison
-        old_configured = getattr(self, '_configured_num_ctx', None)
-        
         # Only update num_ctx when model not loaded (avoid triggering reloads)
         if self._model is None:
             self.num_ctx = configured_num_ctx
         
         self._configured_num_ctx = configured_num_ctx
-        self.num_predict = int(get_setting("ollama_num_predict", "2048"))
-        
-        # Force reload model if context changed
-        if self._model is not None and old_num_ctx is not None and old_num_ctx != configured_num_ctx:
-            logger.info(f"[LLAMA] Context changed from {old_num_ctx} to {configured_num_ctx}, reloading model...")
         self.num_predict = int(get_setting("ollama_num_predict", "2048"))
 
         # GPU settings
@@ -548,7 +540,7 @@ class LlamaService:
         from app.services.locks import GPUResourceLock
         import uuid
         request_id = f"LLAMA-{uuid.uuid4().hex[:8]}"
-        async with GPUResourceLock("LLM", request_id):
+        async with GPUResourceLock("LLM", request_id, cpu_mode=self.cpu_mode):
             loop = asyncio.get_event_loop()
 
             # Run synchronous inference in thread pool
@@ -583,7 +575,7 @@ class LlamaService:
         from app.services.locks import GPUResourceLock
         # uuid is already imported at module level
         request_id = f"LLAMA-STREAM-{uuid.uuid4().hex[:8]}"
-        async with GPUResourceLock("LLM", request_id):
+        async with GPUResourceLock("LLM", request_id, cpu_mode=self.cpu_mode):
             def run_streaming():
                 """Run synchronous generation in thread, put SSE chunks in queue"""
                 token_timeout = self.token_timeout
