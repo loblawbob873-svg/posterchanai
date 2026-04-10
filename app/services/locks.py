@@ -19,8 +19,8 @@ _gpu_lock_base = asyncio.Lock()
 _gpu_lock_holder = None
 
 
-def _acquire_file_lock(lock_file: str, max_retries: int = 120) -> int:
-    """Acquire a file-based lock with retry logic and stale lock detection"""
+def _acquire_file_lock(lock_file: str, max_retries: int = 240) -> int:
+    """Acquire a file-based lock with retry logic"""
     retries = 0
     
     while retries < max_retries:
@@ -30,25 +30,6 @@ def _acquire_file_lock(lock_file: str, max_retries: int = 120) -> int:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 return fd
             except BlockingIOError:
-                # Check if lock holder process is still alive
-                try:
-                    with open(lock_file, 'r') as f:
-                        pid_str = f.read().strip()
-                        if pid_str:
-                            pid = int(pid_str)
-                            try:
-                                os.kill(pid, 0)  # Check if process exists
-                            except OSError:
-                                # Process is dead, truncate and retry lock
-                                os.ftruncate(fd, 0)
-                                os.lseek(fd, 0, 0)
-                                try:
-                                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                                    return fd
-                                except BlockingIOError:
-                                    pass
-                except Exception:
-                    pass
                 os.close(fd)
                 fd = None
         except Exception:
@@ -99,15 +80,6 @@ class GPUResourceLock:
         lock_name = "CPU" if self.cpu_mode else "GPU"
         logger.info(f"[{lock_name}-LOCK] {self.request_type} request waiting for file lock...")
         self._file_lock_fd = _acquire_file_lock(self._lock_file)
-        
-        # Write our PID to lock file so others can detect stale locks
-        try:
-            os.ftruncate(self._file_lock_fd, 0)
-            os.lseek(self._file_lock_fd, 0, 0)
-            os.write(self._file_lock_fd, str(os.getpid()).encode())
-            os.fsync(self._file_lock_fd)
-        except Exception:
-            pass
         
         # Then acquire async lock (within process)
         if _gpu_lock_holder:
