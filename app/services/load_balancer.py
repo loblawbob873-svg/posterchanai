@@ -50,9 +50,8 @@ async def check_server_health(server: str) -> bool:
 
 async def get_healthy_server(servers: List[str]) -> Optional[str]:
     """
-    Get next server using simple round-robin (50/50 distribution).
-    No health checking - just pure round-robin alternation.
-    Server-to-server requests don't require authentication.
+    Get next server using round-robin with health checking.
+    Skips unhealthy servers but auto-recovers them after HEALTH_CHECK_INTERVAL.
     """
     global _server_cycle, _server_list
 
@@ -74,12 +73,35 @@ async def get_healthy_server(servers: List[str]) -> Optional[str]:
             _server_list = servers.copy()
             _server_cycle = cycle(servers)
             logger.info(f"Load balancer reinitialized with {len(servers)} server(s): {servers} (list changed)")
-        # else: Cycle exists and servers haven't changed - just advance it (no logging to reduce noise)
 
-        # Simple round-robin - get next server (this advances the cycle)
-        server = next(_server_cycle)
-        logger.debug(f"[LOAD BALANCER] Selected server (round-robin): {server} (from {len(_server_list)} servers)")
-        return server
+        # Try to find a healthy server (with auto-recovery after HEALTH_CHECK_INTERVAL)
+        current_time = time.time()
+        attempts = 0
+        max_attempts = len(_server_list)
+        
+        while attempts < max_attempts:
+            server = next(_server_cycle)
+            attempts += 1
+            
+            # Check health status
+            if server in _server_health:
+                is_healthy, last_check = _server_health[server]
+                if not is_healthy:
+                    # Auto-recover after interval
+                    if current_time - last_check > HEALTH_CHECK_INTERVAL:
+                        logger.info(f"[LOAD BALANCER] Auto-recovering server {server} after {HEALTH_CHECK_INTERVAL}s")
+                        _server_health[server] = (True, current_time)
+                    else:
+                        # Still unhealthy, skip
+                        logger.debug(f"[LOAD BALANCER] Skipping unhealthy server {server}")
+                        continue
+            
+            # Server is healthy (or unknown = assumed healthy)
+            return server
+        
+        # All servers unhealthy - return first one anyway (let it fail and trigger local fallback)
+        logger.warning(f"[LOAD BALANCER] All {len(_server_list)} servers unhealthy, returning first one")
+        return _server_list[0] if _server_list else None
 
 
 def is_self_url(url: str, current_port: int = 3051) -> bool:
