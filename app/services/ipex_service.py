@@ -614,6 +614,8 @@ class IPEXService:
                     # Update last used time for idle timeout
                     global _last_used
                     _last_used = time.time()
+                    # Unload model to release VRAM after request
+                    self.unload_model()
                 except asyncio.TimeoutError:
                     elapsed = time.time() - start_time
                     logger.error(f"[REQ-{request_id}] Timed out after {elapsed:.1f}s")
@@ -974,6 +976,8 @@ class IPEXService:
                 # Update last used time for idle timeout
                 global _last_used
                 _last_used = time.time()
+                # Unload model to release VRAM after request
+                self.unload_model()
 
     async def list_models(self) -> List[Dict[str, Any]]:
         """List available models"""

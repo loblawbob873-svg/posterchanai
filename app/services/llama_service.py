@@ -513,6 +513,9 @@ class LlamaService:
                 # Update last used time for idle timeout
                 global _last_used
                 _last_used = time.time()
+                
+                # Unload model to release VRAM after request
+                self.unload_model()
 
                 return result
 
@@ -644,6 +647,8 @@ class LlamaService:
                         # Update last used time for idle timeout
                         global _last_used
                         _last_used = time.time()
+                        # Unload model to release VRAM after request
+                        self.unload_model()
                         loop.call_soon_threadsafe(queue.put_nowait, None)
 
             # Start streaming in background thread
