@@ -33,6 +33,20 @@ class TelegramService:
                 response = await client.post(url, json=payload)
                 result = response.json()
                 if not result.get("ok"):
+                    # If markdown parsing failed, retry without parse_mode
+                    error_desc = result.get("description", "")
+                    if "can't parse entities" in error_desc and parse_mode:
+                        logger.warning(f"Telegram markdown parse error, retrying without formatting: {error_desc}")
+                        payload_plain = {
+                            "chat_id": chat_id,
+                            "text": text
+                            # No parse_mode = plain text
+                        }
+                        response = await client.post(url, json=payload_plain)
+                        result = response.json()
+                        if not result.get("ok"):
+                            logger.error(f"Telegram API error (plain text fallback): {result}")
+                        return result
                     logger.error(f"Telegram API error: {result}")
                 return result
         except Exception as e:
