@@ -60,27 +60,25 @@ async def get_healthy_server(servers: List[str]) -> Optional[str]:
         return None
 
     async with _cycle_lock:
-        # Reset cycle only if server list actually changed (compare as tuples to ensure content comparison, preserve order)
-        servers_tuple = tuple(servers)
-        current_list_tuple = tuple(_server_list) if _server_list else ()
+        # Reset cycle only if server list actually changed (compare as sets to ignore order)
+        servers_set = set(servers)
+        current_set = set(_server_list) if _server_list else set()
         
-        # Only reset if cycle is None OR if the server list has actually changed
+        # Only reset if cycle is None OR if the server list has actually changed (different servers)
         if _server_cycle is None:
             _server_list = servers.copy()
             _server_cycle = cycle(servers)
             logger.info(f"Load balancer initialized with {len(servers)} server(s): {servers}")
-        elif current_list_tuple != servers_tuple:
-            # Server list changed - reset cycle
+        elif servers_set != current_set:
+            # Server list changed (different servers) - reset cycle
             _server_list = servers.copy()
             _server_cycle = cycle(servers)
             logger.info(f"Load balancer reinitialized with {len(servers)} server(s): {servers} (list changed)")
-        else:
-            # Cycle exists and list hasn't changed - just advance it
-            logger.debug(f"Cycle exists, list unchanged, advancing round-robin (current list: {_server_list})")
+        # else: Cycle exists and servers haven't changed - just advance it (no logging to reduce noise)
 
         # Simple round-robin - get next server (this advances the cycle)
         server = next(_server_cycle)
-        logger.info(f"[LOAD BALANCER] Selected server (round-robin): {server} (from {len(_server_list)} servers: {_server_list})")
+        logger.debug(f"[LOAD BALANCER] Selected server (round-robin): {server} (from {len(_server_list)} servers)")
         return server
 
 

@@ -97,6 +97,7 @@ class GPUResourceLock:
             await _gpu_lock_base.acquire()
         except Exception as e:
             _release_file_lock(self._file_lock_fd)
+            self._file_lock_fd = None
             logger.error(f"[{lock_name}-LOCK] Failed to acquire lock: {e}")
             raise
         

@@ -159,19 +159,24 @@ def prepare_for_image(db: Session) -> bool:
 
 
 def _ensure_llm_loaded(db: Session, settings: dict):
-    """Ensure LLM is loaded"""
+    """Ensure LLM service is initialized (model loaded on-demand during inference).
+    
+    Note: We don't preload the model here because model loading should happen
+    inside the GPU lock to prevent concurrent load attempts. The model will be
+    loaded lazily when the first inference request acquires the lock.
+    """
     try:
         if settings["llm_backend"] == "native":
             from app.services.llama_service import get_llama_service
-            service = get_llama_service(db)
-            service._ensure_model_loaded()
+            # Just initialize the service, don't pre-load model
+            get_llama_service(db)
         elif settings["llm_backend"] == "ipex":
             from app.services.ipex_service import get_ipex_service
-            service = get_ipex_service(db)
-            service._ensure_model_loaded()
+            # Just initialize the service, don't pre-load model
+            get_ipex_service(db)
         # Ollama backend - no local model to load, skip silently
     except Exception as e:
-        logger.error(f"Error loading LLM: {e}")
+        logger.error(f"Error initializing LLM service: {e}")
         raise
 
 

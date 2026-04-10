@@ -382,6 +382,9 @@ class IPEXService:
                             last_error = llama_err
                             error_msg = str(llama_err)
                             logger.warning(f"[IPEX] Failed with n_ctx={attempt_ctx}: {error_msg}")
+                            # Clear any partially initialized model to avoid __del__ errors
+                            # (llama-cpp-python's LlamaModel.__del__ can fail if sampler wasn't initialized)
+                            self._model = None
                             if attempt_ctx == context_sizes_to_try[-1]:
                                 break  # Last one failed
                     
