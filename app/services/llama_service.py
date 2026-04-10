@@ -112,15 +112,17 @@ class LlamaService:
         self.default_model = get_setting("ollama_model", "native")
 
         # Context and generation settings
-        # Track configured value separately from actual loaded value
+        # Only update num_ctx if model not loaded yet (preserve actual loaded value)
         configured_num_ctx = int(get_setting("ollama_num_ctx", "4096"))
         logger.info(f"[LLAMA] _load_settings: configured_num_ctx={configured_num_ctx}, _model is None: {self._model is None}")
         
-        # Store old value for comparison
-        old_num_ctx = getattr(self, '_configured_num_ctx', None)
+        # Store configured value for comparison
+        old_configured = getattr(self, '_configured_num_ctx', None)
         
-        # Always update num_ctx when loading settings
-        self.num_ctx = configured_num_ctx
+        # Only update num_ctx when model not loaded (avoid triggering reloads)
+        if self._model is None:
+            self.num_ctx = configured_num_ctx
+        
         self._configured_num_ctx = configured_num_ctx
         self.num_predict = int(get_setting("ollama_num_predict", "2048"))
         

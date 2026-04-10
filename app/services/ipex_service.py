@@ -229,11 +229,14 @@ class IPEXService:
         self.default_model = get_setting("ollama_model", "ipex")
 
         # Context and generation settings
-        # Track configured value separately from actual loaded value
+        # Only update num_ctx if model not loaded yet (preserve actual loaded value)
         configured_num_ctx = int(get_setting("ollama_num_ctx", "4096"))
         logger.info(f"[IPEX] _load_settings: configured_num_ctx={configured_num_ctx}, _model is None: {self._model is None}")
-        # Always update num_ctx when loading settings (for debug)
-        self.num_ctx = configured_num_ctx
+        
+        # Only update num_ctx when model not loaded (avoid triggering reloads)
+        if self._model is None:
+            self.num_ctx = configured_num_ctx
+        
         self._configured_num_ctx = configured_num_ctx
         self.num_predict = int(get_setting("ollama_num_predict", "2048"))
         self.n_batch = int(get_setting("llm_n_batch", "2048"))  # Batch size for prompt processing
