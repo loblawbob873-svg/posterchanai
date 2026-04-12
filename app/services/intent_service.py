@@ -230,6 +230,11 @@ RESPOND WITH THE COMMAND ONLY!"""
             if command.lower() == "none" or not command:
                 return None
 
+            # Filter out invalid single-character responses (LLM parsing errors)
+            if len(command) <= 1:
+                logger.warning(f"Intent detection returned invalid single char: {command!r}")
+                return None
+
             # HARD SAFETY CHECK: Block geni command for text content creation
             # This overrides LLM decision if text-creation keywords are detected
             if command.lower().startswith("geni"):
@@ -306,23 +311,18 @@ RESPOND WITH THE COMMAND ONLY!"""
 
     def _is_simple_greeting(self, message: str) -> bool:
         """Check if message is just a simple greeting (no action needed)."""
-        greetings = {
-            "hi",
-            "hello",
-            "hey",
-            "yo",
-            "sup",
-            "what's up",
-            "whats up",
-            "good morning",
-            "good afternoon",
-            "good evening",
-            "good night",
-            "how are you",
-            "how's it going",
-            "hows it going",
-        }
-        return message.lower().strip() in greetings
+        msg_lower = message.lower().strip()
+        
+        # If message is very short (under 15 chars), likely a greeting
+        if len(msg_lower) < 15:
+            return True
+        
+        # If starts with greeting word and is short, likely a greeting
+        greeting_prefixes = ("hi", "hey", "yo", "sup", "hello", "wassup", "wsup", "hiya", "greetings")
+        if len(msg_lower.split()) <= 4 and msg_lower.startswith(greeting_prefixes):
+            return True
+        
+        return False
 
 
 async def detect_and_execute(db: Session, user: "User", message: str, context: str = "") -> Optional[dict]:

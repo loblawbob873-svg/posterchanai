@@ -526,6 +526,13 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
             response_content = result.get("content", "")
             image_data = result.get("image")
             
+            # Clean response content - remove template artifacts
+            if response_content:
+                import re
+                response_content = re.sub(r'\[/?INST\]', '', response_content, flags=re.IGNORECASE)
+                response_content = re.sub(r'<\|im_(end|start)\|>', '', response_content, flags=re.IGNORECASE)
+                response_content = response_content.strip()
+            
             logger.info(f"Result type: {response_type}, has image: {bool(image_data)}")
             
             if response_type == "generated_image" and image_data:

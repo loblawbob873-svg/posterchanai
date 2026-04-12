@@ -446,9 +446,17 @@ class IPEXService:
                     raise
 
     def strip_thinking_tags(self, response: str) -> str:
-        """Strip thinking tags from AI response"""
+        """Strip thinking tags and template artifacts from AI response"""
         from app.services.text_utils import strip_thinking_tags
-        return strip_thinking_tags(response)
+        cleaned = strip_thinking_tags(response)
+        
+        # Also strip template artifacts that might leak
+        import re
+        # Strip [INST], [/INST], INST, /INST, <|im_end|>, <|im_start|>, etc.
+        cleaned = re.sub(r'\[/?INST\]', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'<\|im_(end|start)\|>', '', cleaned, flags=re.IGNORECASE)
+        
+        return cleaned.strip()
 
     def _generate_response(self, messages: List[Dict[str, Any]], **kwargs) -> str:
         """Generate a response synchronously with retry for transient errors"""
@@ -464,9 +472,9 @@ class IPEXService:
             max_retries = 2
             last_error = None
 
-            # Build stop sequences - add INST to prevent template leakage
+            # Build stop sequences - add INST and im_end to prevent template leakage
             stop = list(kwargs.get("stop", []) or [])
-            stop.extend(["[INST]", "[/INST]", "INST", "/INST"])
+            stop.extend(["[INST]", "[/INST]", "INST", "/INST", "<|im_end|>"])
 
             # Handle thinking mode for Qwen3-style models
             messages_to_use = messages
@@ -895,9 +903,9 @@ class IPEXService:
 
             try:
                 if self._is_gguf:
-                    # Build stop sequences - add INST to prevent template leakage
+                    # Build stop sequences - add INST and im_end to prevent template leakage
                     stop = list(kwargs.get("stop", []) or [])
-                    stop.extend(["[INST]", "[/INST]", "INST", "/INST"])
+                    stop.extend(["[INST]", "[/INST]", "INST", "/INST", "<|im_end|>"])
 
                     # Use llama.cpp streaming for GGUF with error recovery
                     last_token_time = time.time()
