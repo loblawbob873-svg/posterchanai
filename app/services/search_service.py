@@ -325,6 +325,11 @@ class SearchService:
                     if re.match(r'^\d+[\s.]', line):
                         continue
 
+                    # Skip question lines — FAQ questions cause the model to enter a Q&A loop,
+                    # hallucinating follow-up questions and answers after the real response.
+                    if line.endswith('?'):
+                        continue
+
                     # Skip lines that look like JS code
                     # — long unbroken strings (minified JS, base64, data URIs)
                     if len(line) > 120 and " " not in line:
