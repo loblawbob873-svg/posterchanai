@@ -499,7 +499,7 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                             else:
                                 # Instruction comes AFTER content so the model reads data first.
                                 # Explicit anti-Q&A instruction prevents hallucinated question loops.
-                                injected = url_context + "\n\nWrite a single concise paragraph summarizing the above. Do NOT generate questions. Do NOT use Q&A format. Do NOT invent follow-up questions. Write only the summary."
+                                injected = url_context + "\n\nWrite a single concise paragraph summarizing the above. Output ONLY the summary paragraph, then STOP. Do NOT repeat the content. Do NOT add ratings, labels, or verdicts. Do NOT ask or answer questions."
                         else:
                             injected = url_context
 

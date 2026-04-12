@@ -321,8 +321,9 @@ class SearchService:
                     if re.match(r'^[\d\s$%,.\-+/\\*:]+$', line):
                         continue
 
-                    # Skip lines starting with a rank/index number (table rows like "1 Bitcoin", "42 Solana")
-                    if re.match(r'^\d+[\s.]', line):
+                    # Skip lines starting with a rank/index number or percentage rating
+                    # e.g. "1 Bitcoin", "42 Solana", "100% accurate", "75% True"
+                    if re.match(r'^\d+[\s.%]', line):
                         continue
 
                     # Skip question lines — FAQ questions cause the model to enter a Q&A loop,
