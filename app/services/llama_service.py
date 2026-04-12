@@ -525,11 +525,30 @@ class LlamaService:
         if not self._should_use_mistral_template():
             return messages
         
+        system_content = ""
+        filtered_messages = []
+        for msg in messages:
+            if msg.get("role") == "system":
+                system_content += msg.get("content", "") + "\n\n"
+            else:
+                filtered_messages.append(msg)
+        
+        if system_content:
+            system_content = system_content.strip()
+            if filtered_messages and filtered_messages[0].get("role") == "user":
+                first_user = filtered_messages[0]
+                first_user["content"] = system_content + first_user.get("content", "")
+            else:
+                filtered_messages.insert(0, {"role": "user", "content": system_content + " Respond helpfully."})
+        
+        if not filtered_messages:
+            return [{"role": "user", "content": "Hello"}]
+        
         try:
             from llama_cpp.llama_chat_format import get_chat_completion_handler
             handler = get_chat_completion_handler("mistral")
             
-            formatted = handler.format_messages(messages)
+            formatted = handler.format_messages(filtered_messages)
             return [{"role": "user", "content": formatted}]
         except Exception as e:
             logger.warning(f"Mistral template handler failed: {e}, falling back to manual format")
@@ -565,6 +584,9 @@ class LlamaService:
         """Synchronous chat completion without unloading (caller handles unload)"""
         self._ensure_model_loaded()
         params = self._get_sampling_params(**kwargs)
+
+        if self._should_use_mistral_template():
+            messages = self._format_mistral_template(messages)
 
         with _get_inference_semaphore(self.max_concurrent):
             try:
@@ -660,6 +682,8 @@ class LlamaService:
         
         self._ensure_model_loaded()
         params = self._get_sampling_params(**kwargs)
+        if self._should_use_mistral_template():
+            messages = self._format_mistral_template(messages)
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         created = int(time.time())
         model_name = model or self.default_model
@@ -779,6 +803,8 @@ class LlamaService:
         """
         self._ensure_model_loaded()
         params = self._get_sampling_params(**kwargs)
+        if self._should_use_mistral_template():
+            messages = self._format_mistral_template(messages)
         token_timeout = self.token_timeout
         last_token_time = time.time()
 
