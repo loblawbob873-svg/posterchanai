@@ -521,6 +521,37 @@ class LlamaService:
         model_name = _os.path.basename(self.model_path).lower()
         return "mistral" in model_name or "mistral" in self._settings.get("chat_template", "").lower()
 
+    def _embed_system_for_mistral(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Embed system message content into the first user message for Mistral models.
+
+        Mistral's chat_handler applies [INST]...[/INST] formatting but ignores the
+        'system' role in many llama-cpp-python builds.  Prepending system content
+        to the first user message ensures it lands inside the first [INST] block
+        without double-templating (the handler still does the actual formatting).
+        """
+        if not self._should_use_mistral_template():
+            return messages
+
+        system_content = ""
+        filtered = []
+        for msg in messages:
+            if msg.get("role") == "system":
+                system_content += msg.get("content", "") + "\n\n"
+            else:
+                filtered.append(dict(msg))  # copy so we don't mutate caller's list
+
+        if not system_content:
+            return messages  # nothing to embed
+
+        system_content = system_content.strip()
+
+        if filtered and filtered[0].get("role") == "user":
+            filtered[0]["content"] = system_content + "\n\n" + filtered[0].get("content", "")
+        else:
+            filtered.insert(0, {"role": "user", "content": system_content + "\n\nRespond helpfully."})
+
+        return filtered
+
     def _format_mistral_template(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Format messages for Mistral-style models using llama-cpp-python's built-in handler."""
         if not self._should_use_mistral_template():
@@ -585,8 +616,9 @@ class LlamaService:
         """Synchronous chat completion without unloading (caller handles unload)"""
         self._ensure_model_loaded()
         params = self._get_sampling_params(**kwargs)
-        # chat_handler (set at model load time) applies the template inside create_chat_completion;
-        # do NOT pre-format messages here or the template gets applied twice.
+        # Embed system message into first user message for Mistral (chat_handler ignores system role).
+        # The handler then applies [INST]...[/INST] — we do NOT call format_messages() to avoid double-templating.
+        messages = self._embed_system_for_mistral(messages)
 
         with _get_inference_semaphore(self.max_concurrent):
             try:
@@ -682,7 +714,8 @@ class LlamaService:
         
         self._ensure_model_loaded()
         params = self._get_sampling_params(**kwargs)
-        # chat_handler (set at model load time) applies the template; do not pre-format here.
+        # Embed system message into first user message for Mistral (chat_handler ignores system role).
+        messages = self._embed_system_for_mistral(messages)
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         created = int(time.time())
         model_name = model or self.default_model
@@ -802,7 +835,8 @@ class LlamaService:
         """
         self._ensure_model_loaded()
         params = self._get_sampling_params(**kwargs)
-        # chat_handler (set at model load time) applies the template; do not pre-format here.
+        # Embed system message into first user message for Mistral (chat_handler ignores system role).
+        messages = self._embed_system_for_mistral(messages)
         token_timeout = self.token_timeout
         last_token_time = time.time()
 

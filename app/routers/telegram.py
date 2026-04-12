@@ -465,6 +465,7 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                     
                     if urls:
                         logger.info(f"Telegram: Detected URLs in message: {urls}")
+                        MAX_URL_CONTENT_CHARS = 3000  # Per-URL limit to avoid context overflow
                         try:
                             import asyncio
                             fetched = await asyncio.wait_for(
@@ -473,8 +474,11 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                             )
                             for result in fetched:
                                 if result.get("content") and not result.get("error"):
-                                    logger.info(f"Telegram: Fetched {len(result['content'])} chars from {result['url']}")
-                                    url_context += f"\n\n---\nContent from {result['url']}:\nTitle: {result['title']}\n\n{result['content']}\n---"
+                                    content = result['content']
+                                    if len(content) > MAX_URL_CONTENT_CHARS:
+                                        content = content[:MAX_URL_CONTENT_CHARS] + "\n...[content truncated]"
+                                    logger.info(f"Telegram: Fetched {len(result['content'])} chars (using {len(content)}) from {result['url']}")
+                                    url_context += f"\n\n---\nContent from {result['url']}:\nTitle: {result['title']}\n\n{content}\n---"
                                 elif result.get("error"):
                                     logger.warning(f"Telegram: Failed to fetch {result['url']}: {result['error']}")
                                     url_context += f"\n\n[Failed to fetch {result['url']}: {result['error']}]"

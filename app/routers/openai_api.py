@@ -139,12 +139,13 @@ async def filter_thinking_stream(stream: AsyncGenerator[str, None]) -> AsyncGene
             # Flush any remaining buffer
             if buffer:
                 clean = strip_thinking_tags(buffer)
+                buffer = ""  # clear so the post-loop cleanup doesn't re-emit
                 if clean and clean != "I apologize, I wasn't able to generate a proper response. Please try again.":
                     # Re-emit as SSE chunk
                     yield f"data: {json.dumps({'choices': [{'delta': {'content': clean}}]})}\n\n"
-            logger.debug(f"filter_thinking_stream: received [DONE] after {chunk_count} chunks, buffer_len={len(buffer)}")
+            logger.debug(f"filter_thinking_stream: received [DONE] after {chunk_count} chunks")
             yield "data: [DONE]\n\n"
-            continue
+            return  # stop — nothing valid can come after [DONE]
 
         try:
             data = json.loads(data_str)
