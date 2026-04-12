@@ -300,9 +300,45 @@ class SearchService:
                 # Extract plain text as fallback
                 text = main_content.get_text(separator="\n", strip=True)
 
-                # Clean up whitespace
-                lines = [line.strip() for line in text.split("\n") if line.strip()]
-                text = "\n".join(lines)
+                # Clean up whitespace and filter JS/data garbage
+                raw_lines = [line.strip() for line in text.split("\n") if line.strip()]
+                filtered = []
+                seen = set()
+                for line in raw_lines:
+                    # Deduplicate identical lines (repeated table rows, nav labels)
+                    key = line.lower()
+                    if key in seen:
+                        continue
+                    seen.add(key)
+
+                    # Skip very short tokens (nav labels, button text, currency symbols)
+                    if len(line) < 8:
+                        continue
+
+                    # Skip lines that look like JS code
+                    # — long unbroken strings (minified JS, base64, data URIs)
+                    if len(line) > 120 and " " not in line:
+                        continue
+                    # — high density of JS/JSON special characters
+                    js_chars = sum(1 for c in line if c in "{}[]();=>|\\")
+                    if len(line) > 0 and js_chars / len(line) > 0.12:
+                        continue
+                    # — starts with JS keywords
+                    js_kw = ("var ", "let ", "const ", "function ", "return ",
+                             "import ", "export ", "window.", "document.",
+                             "module.", "require(", "__NEXT", "undefined", "null,")
+                    if any(line.lstrip().startswith(kw) for kw in js_kw):
+                        continue
+
+                    # Skip lines that are predominantly non-alphabetic
+                    # (price rows, percentage tables, raw numbers)
+                    alpha = sum(1 for c in line if c.isalpha())
+                    if len(line) > 0 and alpha / len(line) < 0.30:
+                        continue
+
+                    filtered.append(line)
+
+                text = "\n".join(filtered)
 
                 # Prepend extracted links if we found any
                 if links_text:

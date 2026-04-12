@@ -465,28 +465,7 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                     
                     if urls:
                         logger.info(f"Telegram: Detected URLs in message: {urls}")
-                        MAX_URL_CONTENT_CHARS = 1500  # Per-URL limit to avoid context overflow/echoing
-
-                        def _clean_fetched_content(raw: str, max_chars: int) -> str:
-                            """Strip data-heavy lines (percentages, bare numbers) from scraped content."""
-                            cleaned = []
-                            for line in raw.splitlines():
-                                line = line.strip()
-                                if not line:
-                                    continue
-                                # Drop lines that are mostly non-alphabetic (numbers, %, $, symbols)
-                                alpha = sum(1 for c in line if c.isalpha())
-                                if len(line) > 0 and alpha / len(line) < 0.35:
-                                    continue
-                                # Drop very short lines (single words/tokens from nav/menus)
-                                if len(line) < 15:
-                                    continue
-                                cleaned.append(line)
-                            result = "\n".join(cleaned)
-                            if len(result) > max_chars:
-                                result = result[:max_chars] + "\n...[content truncated]"
-                            return result
-
+                        MAX_URL_CONTENT_CHARS = 2000  # Truncation only — no content cleaning
                         try:
                             import asyncio
                             fetched = await asyncio.wait_for(
@@ -495,8 +474,10 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                             )
                             for result in fetched:
                                 if result.get("content") and not result.get("error"):
-                                    content = _clean_fetched_content(result['content'], MAX_URL_CONTENT_CHARS)
-                                    logger.info(f"Telegram: Fetched {len(result['content'])} chars, cleaned to {len(content)} from {result['url']}")
+                                    content = result['content']
+                                    if len(content) > MAX_URL_CONTENT_CHARS:
+                                        content = content[:MAX_URL_CONTENT_CHARS] + "\n...[content truncated]"
+                                    logger.info(f"Telegram: Fetched {len(result['content'])} chars (using {len(content)}) from {result['url']}")
                                     url_context += f"\n\n---\nContent from {result['url']}:\nTitle: {result['title']}\n\n{content}\n---"
                                 elif result.get("error"):
                                     logger.warning(f"Telegram: Failed to fetch {result['url']}: {result['error']}")
