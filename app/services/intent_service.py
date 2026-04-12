@@ -295,32 +295,42 @@ RESPOND WITH THE COMMAND ONLY!"""
         """Check if command is valid (not garbage/none/emoji spam or model greeting)."""
         if not command:
             return False
-            
-        cmd_lower = command.lower()
         
-        # Filter "none" responses
-        if "none" in cmd_lower:
+        # Filter invalid cases
+        if not self._is_valid_command_format(command):
             return False
         
-        # Filter single char
-        if len(command) <= 1:
+        # Filter model greetings (model responded with a greeting instead of command)
+        if self._is_model_greeting(command):
             return False
-        
-        # Filter emoji/garbage (less than 3 alphanumeric chars)
-        alphanumeric = re.sub(r'[^\w]', '', command)
-        if len(alphanumeric) < 3:
-            logger.warning(f"Intent detection filtered emoji/garbage: {command!r}")
-            return False
-        
-        # Filter model greetings (emoji + greeting like "👋 Hi there!" or "💡 Here's...")
-        if re.match(r'^[\W_]*\w+\s', command) and len(alphanumeric) < 20:
-            # If response looks like a sentence/greeting (has spaces and normal words) but < 20 alphanum
-            words = command.split()
-            if len(words) >= 2 and any(w.lower() in ["hi", "hello", "hey", "here", "sure", "okay", "how", "what", "let"] for w in words[:3]):
-                logger.warning(f"Intent detection filtered greeting: {command!r}")
-                return False
         
         return True
+    
+    def _is_valid_command_format(self, command: str) -> bool:
+        """Check basic format validity (not none/short/emoji garbage)."""
+        cmd_lower = command.lower()
+        if "none" in cmd_lower:
+            return False
+        if len(command) <= 1:
+            return False
+        alphanumeric = re.sub(r'[^\w]', '', command)
+        if len(alphanumeric) < 3:
+            logger.warning(f"Filtered emoji/garbage: {command!r}")
+            return False
+        return True
+    
+    def _is_model_greeting(self, command: str) -> bool:
+        """Check if model responded with a greeting instead of a command."""
+        alphanumeric = re.sub(r'[^\w]', '', command)
+        if len(alphanumeric) >= 20:
+            return False
+        
+        words = command.split()
+        greeting_starters = {"hi", "hello", "hey", "here", "sure", "okay", "how", "what", "let"}
+        if len(words) >= 2 and any(w.lower() in greeting_starters for w in words[:3]):
+            logger.warning(f"Filtered model greeting: {command!r}")
+            return True
+        return False
     
     def _is_simple_greeting(self, message: str) -> bool:
         """Check if message is a simple greeting (no action needed)."""
