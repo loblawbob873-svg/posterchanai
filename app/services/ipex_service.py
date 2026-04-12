@@ -462,36 +462,6 @@ class IPEXService:
         
         return cleaned.strip()
 
-    def _embed_system_for_mistral(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Prepend system message content into the first user message for Mistral models.
-
-        llama-cpp-python's GGUF chat template handling may ignore the 'system' role on
-        some Mistral builds.  Embedding the system content in the first [INST] block
-        ensures it reaches the model without double-templating.
-        """
-        model_name = os.path.basename(self.model_path).lower()
-        if "mistral" not in model_name:
-            return messages
-
-        system_content = ""
-        filtered = []
-        for msg in messages:
-            if msg.get("role") == "system":
-                system_content += msg.get("content", "") + "\n\n"
-            else:
-                filtered.append(dict(msg))
-
-        if not system_content:
-            return messages
-
-        system_content = system_content.strip()
-        if filtered and filtered[0].get("role") == "user":
-            filtered[0]["content"] = system_content + "\n\n" + filtered[0].get("content", "")
-        else:
-            filtered.insert(0, {"role": "user", "content": system_content + "\n\nRespond helpfully."})
-
-        return filtered
-
     def _generate_response(self, messages: List[Dict[str, Any]], **kwargs) -> str:
         """Generate a response synchronously with retry for transient errors"""
         logger.info("[DEBUG] _generate_response called at 10:19")
@@ -500,8 +470,6 @@ class IPEXService:
         except Exception as e:
             logger.error(f"[DEBUG] Model loading failed: {e}")
             raise
-
-        messages = self._embed_system_for_mistral(messages)
 
         if self._is_gguf:
             # Use llama.cpp API for GGUF models with retry for transient errors
