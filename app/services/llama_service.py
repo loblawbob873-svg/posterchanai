@@ -168,7 +168,7 @@ class LlamaService:
         use_mistral_template = "mistral" in model_name
         
         if use_mistral_template:
-            mistral_stops = ["INST", "/INST", "<<", ">>"]
+            mistral_stops = ["]", "INST", "/INST", "<<", ">>"]
             self.stop_sequences = list(set(user_stop + mistral_stops))
         else:
             self.stop_sequences = user_stop
