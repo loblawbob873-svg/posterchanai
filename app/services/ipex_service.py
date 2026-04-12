@@ -455,8 +455,15 @@ class IPEXService:
         # Remove specific template tokens only - be precise to avoid breaking markdown
         cleaned = re.sub(r'\[INST\]', '', cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r'\[/INST\]', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'INST\]', '', cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r'<\|im_end\|>', '', cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r'<\|im_start\|>', '', cleaned, flags=re.IGNORECASE)
+        
+        # Remove any remaining [ or ] that are likely template artifacts (not part of text)
+        # Only remove if followed by whitespace or at end of line
+        cleaned = re.sub(r'\[(?=\s*$|\s)', '', cleaned)
+        cleaned = re.sub(r'(?<=\s)\[', '', cleaned)
+        cleaned = re.sub(r'^\]', '', cleaned)
         
         return cleaned.strip()
 
@@ -478,7 +485,7 @@ class IPEXService:
             # Only add specific patterns, not generic "[" which breaks markdown
             stop = list(kwargs.get("stop", []) or [])
             # Only stop on exact template tokens, not generic bracket
-            stop.extend(["INST", "/INST", "<|im_end|>", "<|im_start|>"])
+            stop.extend(["INST", "/INST", "<|im_end|>", "<|im_start|>", "INST]", "[/INST]"])
 
             # Handle thinking mode for Qwen3-style models
             messages_to_use = messages
@@ -910,7 +917,7 @@ class IPEXService:
                     # Build stop sequences - add template tokens to prevent leakage
                     stop = list(kwargs.get("stop", []) or [])
                     # Only stop on exact template tokens, not generic bracket
-                    stop.extend(["INST", "/INST", "<|im_end|>", "<|im_start|>"])
+                    stop.extend(["INST", "/INST", "<|im_end|>", "<|im_start|>", "INST]", "[/INST]"])
 
                     # Use llama.cpp streaming for GGUF with error recovery
                     last_token_time = time.time()

@@ -71,6 +71,16 @@ async def get_bot_info(db: Session = Depends(get_db), admin: User = Depends(get_
 async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
     """Handle incoming webhook updates from Telegram."""
     logger.info(f"Received Telegram webhook update: {update}")
+    
+    # Track last processed update to prevent duplicates
+    _last_update_id = [0]
+    
+    update_id = update.get("update_id", 0)
+    if update_id <= _last_update_id[0]:
+        logger.info(f"Skipping duplicate/old update_id: {update_id} (last: {_last_update_id[0]})")
+        return {"ok": True}
+    _last_update_id[0] = update_id
+    
     try:
         from app.services.chat_service import ChatService
         
@@ -532,8 +542,14 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                 # Remove specific template tokens only - be precise to avoid breaking markdown
                 response_content = re.sub(r'\[INST\]', '', response_content, flags=re.IGNORECASE)
                 response_content = re.sub(r'\[/INST\]', '', response_content, flags=re.IGNORECASE)
+                response_content = re.sub(r'INST\]', '', response_content, flags=re.IGNORECASE)
                 response_content = re.sub(r'<\|im_end\|>', '', response_content, flags=re.IGNORECASE)
                 response_content = re.sub(r'<\|im_start\|>', '', response_content, flags=re.IGNORECASE)
+                
+                # Remove any remaining [ or ] that are likely template artifacts
+                response_content = re.sub(r'\[(?=\s*$|\s)', '', response_content)
+                response_content = re.sub(r'(?<=\s)\[', '', response_content)
+                response_content = re.sub(r'^\]', '', response_content)
                 response_content = response_content.strip()
                 
                 # If response is now empty or just whitespace, return fallback
