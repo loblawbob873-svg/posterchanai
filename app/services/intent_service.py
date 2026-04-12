@@ -315,20 +315,16 @@ RESPOND WITH THE COMMAND ONLY!"""
             return False
         alphanumeric = re.sub(r'[^\w]', '', command)
         if len(alphanumeric) < 3:
-            logger.warning(f"Filtered emoji/garbage: {command!r}")
             return False
         return True
     
     def _is_model_greeting(self, command: str) -> bool:
         """Check if model responded with a greeting instead of a command."""
-        alphanumeric = re.sub(r'[^\w]', '', command)
-        if len(alphanumeric) >= 20:
-            return False
+        words = command.lower().split()
+        greeting_words = {"hi", "hello", "hey", "here", "sure", "okay", "how", "what", "let"}
         
-        words = command.split()
-        greeting_starters = {"hi", "hello", "hey", "here", "sure", "okay", "how", "what", "let"}
-        if len(words) >= 2 and any(w.lower() in greeting_starters for w in words[:3]):
-            logger.warning(f"Filtered model greeting: {command!r}")
+        # Check first word or any early word for greeting
+        if len(words) >= 2 and (words[0] in greeting_words or any(w in greeting_words for w in words[:3])):
             return True
         return False
     
