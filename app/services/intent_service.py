@@ -7,6 +7,7 @@ eliminating complex JSON parsing and field validation.
 
 import asyncio
 import logging
+import re
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
@@ -195,6 +196,7 @@ RESPOND WITH THE COMMAND ONLY!"""
             command = response.strip()
             
             # Log raw response for debugging
+            logger.info(f"Intent raw response: {command[:100]!r}")
             logger.debug(f"Raw intent response: {command[:200]}")
 
             # Remove common formatting artifacts
@@ -226,13 +228,17 @@ RESPOND WITH THE COMMAND ONLY!"""
             if command.startswith("'") and command.endswith("'"):
                 command = command[1:-1].strip()
 
-            # Check if it's "none" (no action)
-            if command.lower() == "none" or not command:
+            # Check if it's "none" (no action) - also handle cases like "📝 none"
+            if command.lower() == "none" or "none" in command.lower() or not command:
                 return None
 
             # Filter out invalid single-character responses (LLM parsing errors)
             if len(command) <= 1:
                 logger.warning(f"Intent detection returned invalid single char: {command!r}")
+                return None
+
+            # Filter out responses that contain "none" or emoji + command patterns
+            if "none" in command.lower() or re.match(r'^[^\w]*none', command.lower()):
                 return None
 
             # HARD SAFETY CHECK: Block geni command for text content creation
