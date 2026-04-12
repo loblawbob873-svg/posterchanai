@@ -292,14 +292,14 @@ RESPOND WITH THE COMMAND ONLY!"""
         return command if command else None
     
     def _is_valid_command(self, command: str) -> bool:
-        """Check if command is valid (not garbage/none/emoji spam)."""
+        """Check if command is valid (not garbage/none/emoji spam or model greeting)."""
         if not command:
             return False
             
         cmd_lower = command.lower()
         
         # Filter "none" responses
-        if cmd_lower == "none" or "none" in cmd_lower:
+        if "none" in cmd_lower:
             return False
         
         # Filter single char
@@ -311,6 +311,14 @@ RESPOND WITH THE COMMAND ONLY!"""
         if len(alphanumeric) < 3:
             logger.warning(f"Intent detection filtered emoji/garbage: {command!r}")
             return False
+        
+        # Filter model greetings (emoji + greeting like "👋 Hi there!" or "💡 Here's...")
+        if re.match(r'^[\W_]*\w+\s', command) and len(alphanumeric) < 20:
+            # If response looks like a sentence/greeting (has spaces and normal words) but < 20 alphanum
+            words = command.split()
+            if len(words) >= 2 and any(w.lower() in ["hi", "hello", "hey", "here", "sure", "okay", "how", "what", "let"] for w in words[:3]):
+                logger.warning(f"Intent detection filtered greeting: {command!r}")
+                return False
         
         return True
     
