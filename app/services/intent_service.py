@@ -319,12 +319,20 @@ RESPOND WITH THE COMMAND ONLY!"""
         return True
     
     def _is_model_greeting(self, command: str) -> bool:
-        """Check if model responded with a greeting instead of a command."""
+        """Check if model responded with a greeting or farewell instead of a command."""
         words = command.lower().split()
-        greeting_words = {"hi", "hello", "hey", "here", "sure", "okay", "how", "what", "let"}
-        
-        # Check first word or any early word for greeting
-        if len(words) >= 2 and (words[0] in greeting_words or any(w in greeting_words for w in words[:3])):
+        greeting_words = {"hi", "hello", "hey", "here", "sure", "okay", "how", "what", "let",
+                          "bye", "goodbye", "farewell", "ciao", "later", "cheers"}
+
+        # Strip leading emoji/punctuation from first word for matching
+        first_word = words[0].strip("!.,👋🖐✋") if words else ""
+
+        # Single-word farewell/greeting (e.g. "bye", "👋")
+        if len(words) == 1 and (first_word in greeting_words or not first_word.isalpha()):
+            return True
+
+        # Check first few words for greeting/farewell indicators
+        if len(words) >= 1 and (first_word in greeting_words or any(w.strip("!.,") in greeting_words for w in words[:3])):
             return True
         return False
     

@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/telegram", tags=["telegram"])
 
+# Module-level update tracking to prevent duplicate processing across requests
+_last_update_id: int = 0
+
 
 class TelegramWebhookUpdate(BaseModel):
     update_id: int
@@ -71,15 +74,13 @@ async def get_bot_info(db: Session = Depends(get_db), admin: User = Depends(get_
 async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
     """Handle incoming webhook updates from Telegram."""
     logger.info(f"Received Telegram webhook update: {update}")
-    
-    # Track last processed update to prevent duplicates
-    _last_update_id = [0]
-    
+
+    global _last_update_id
     update_id = update.get("update_id", 0)
-    if update_id <= _last_update_id[0]:
-        logger.info(f"Skipping duplicate/old update_id: {update_id} (last: {_last_update_id[0]})")
+    if update_id <= _last_update_id:
+        logger.info(f"Skipping duplicate/old update_id: {update_id} (last: {_last_update_id})")
         return {"ok": True}
-    _last_update_id[0] = update_id
+    _last_update_id = update_id
     
     try:
         from app.services.chat_service import ChatService
@@ -356,10 +357,12 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                 from app.services.intent_service import IntentService
                 intent_service = IntentService(db, user=user_obj)
                 intent = await intent_service.detect_intent(text)
-                command = intent.get("command") if intent else None
-                
+                # intent["command"] is the full command string (e.g. "geni a sunset")
+                # parse it to split command name from arguments
+                intent_command_str = intent.get("command", "") if intent else ""
+                command, arg = command_service.parse_command(intent_command_str) if intent_command_str else (None, "")
+
                 if command:
-                    arg = intent.get("arg", "") if intent else ""
                     logger.info(f"Detected intent: command={command}, arg={arg}")
                     if attachments:
                         result = await command_service.execute_command(command, arg, attachments=attachments)
@@ -497,17 +500,29 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                             messages[-1]["content"] += url_context
                         logger.info(f"Telegram: Added URL context ({len(url_context)} chars) to message")
                     
-                    logger.info(f"Final messages structure: system={messages[0]['content'][:50]}..., user content type={type(messages[1]['content'])}")
-                    if isinstance(messages[1]['content'], list):
-                        logger.info(f"User content has {len(messages[1]['content'])} parts")
-                    
+                    if len(messages) > 1:
+                        user_content = messages[1]['content']
+                        logger.info(f"Final messages structure: system={messages[0]['content'][:50]}..., user content type={type(user_content)}")
+                        if isinstance(user_content, list):
+                            logger.info(f"User content has {len(user_content)} parts")
+
                     # FINAL VALIDATION: Ensure messages alternate properly
                     validated_messages = [messages[0]]  # Keep system message
                     for msg in messages[1:]:
                         if msg['role'] != validated_messages[-1]['role']:
                             validated_messages.append(msg)
                         else:
-                            validated_messages[-1]['content'] += f"\n\n{msg['content']}"
+                            # Merge with previous same-role message; handle list content gracefully
+                            prev = validated_messages[-1]
+                            prev_content = prev['content']
+                            msg_content = msg['content']
+                            if isinstance(prev_content, list) or isinstance(msg_content, list):
+                                # Convert both sides to string for merging
+                                prev_str = str(prev_content) if isinstance(prev_content, list) else prev_content
+                                msg_str = str(msg_content) if isinstance(msg_content, list) else msg_content
+                                prev['content'] = prev_str + f"\n\n{msg_str}"
+                            else:
+                                prev['content'] += f"\n\n{msg_content}"
                     messages = validated_messages
                     logger.info(f"Validated message sequence: {[m['role'] for m in messages]}")
                     

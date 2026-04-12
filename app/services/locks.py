@@ -111,8 +111,9 @@ class GPUResourceLock:
         logger.info(f"[{lock_name}-LOCK] {self.request_type} request{' ' + self.request_id if self.request_id else ''} acquired in-process lock, waiting for file lock...")
         try:
             self._file_lock_fd = await _acquire_file_lock_async(self._lock_file)
-        except Exception as e:
-            # Release async lock if file lock fails
+        except BaseException as e:
+            # Release async lock if file lock fails (includes CancelledError from task cancellation)
+            _gpu_lock_holder = None
             _gpu_lock_base.release()
             logger.error(f"[{lock_name}-LOCK] Failed to acquire file lock: {e}")
             raise
