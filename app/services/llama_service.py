@@ -163,7 +163,16 @@ class LlamaService:
         self.seed = int(seed_str) if seed_str.strip() else -1
 
         # Stop sequences
-        self.stop_sequences = [s.strip() for s in get_setting("ollama_stop", "").split(",") if s.strip()]
+        user_stop = [s.strip() for s in get_setting("ollama_stop", "").split(",") if s.strip()]
+        
+        model_name = os.path.basename(self.model_path).lower()
+        use_mistral_template = "mistral" in model_name
+        
+        if use_mistral_template:
+            mistral_stops = ["INST", "/INST", "<<", ">>"]
+            self.stop_sequences = list(set(user_stop + mistral_stops))
+        else:
+            self.stop_sequences = user_stop
 
         # Idle timeout for automatic unloading (0 = disabled)
         self._idle_timeout = int(get_setting("llm_idle_timeout", "0"))
@@ -301,6 +310,15 @@ class LlamaService:
                     else:
                         logger.info(f"  Attempting to load model from: {resolved_path}")
                     
+                    chat_handler = None
+                    if self._should_use_mistral_template():
+                        try:
+                            from llama_cpp.llama_chat_format import get_chat_completion_handler
+                            chat_handler = get_chat_completion_handler("mistral")
+                            logger.info("  Using mistral chat handler for template")
+                        except Exception as e:
+                            logger.warning(f"  Could not load mistral chat handler: {e}")
+                    
                     self._model = Llama(
                         model_path=resolved_path,
                         n_ctx=attempt_ctx,
@@ -313,6 +331,7 @@ class LlamaService:
                         flash_attn=False,
                         offload_kqv=True,
                         verbose=False,
+                        chat_handler=chat_handler,
                     )
                     logger.info(f"[LLAMA] Model loaded with n_ctx={self._model.n_ctx()}")
                     # Success - update num_ctx if we used a smaller value
@@ -497,18 +516,28 @@ class LlamaService:
         from app.services.text_utils import strip_thinking_tags
         return strip_thinking_tags(response)
 
-    def _format_mistral_template(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Format messages for Mistral-style models that use [INST] /INST tags."""
+    def _should_use_mistral_template(self) -> bool:
+        """Check if Mistral chat template should be used for this model."""
         model_name = os.path.basename(self.model_path).lower()
-        
-        use_mistral_template = (
-            "mistral" in model_name or
-            "mistral" in self._settings.get("chat_template", "").lower()
-        )
-        
-        if not use_mistral_template:
+        return "mistral" in model_name or "mistral" in self._settings.get("chat_template", "").lower()
+
+    def _format_mistral_template(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Format messages for Mistral-style models using llama-cpp-python's built-in handler."""
+        if not self._should_use_mistral_template():
             return messages
         
+        try:
+            from llama_cpp.llama_chat_format import get_chat_completion_handler
+            handler = get_chat_completion_handler("mistral")
+            
+            formatted = handler.format_messages(messages)
+            return [{"role": "user", "content": formatted}]
+        except Exception as e:
+            logger.warning(f"Mistral template handler failed: {e}, falling back to manual format")
+            return self._manual_format_mistral(messages)
+
+    def _manual_format_mistral(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Manual formatting if handler fails."""
         formatted = []
         for msg in messages:
             role = msg.get("role", "user")
@@ -518,7 +547,7 @@ class LlamaService:
             
             if role == "system":
                 formatted.append({
-                    "role": "system",
+                    "role": "system", 
                     "content": f"<<sys>>\n{content.strip()}\n<</sys>>"
                 })
             elif role == "user":
@@ -531,17 +560,12 @@ class LlamaService:
                     "role": "assistant",
                     "content": content.strip()
                 })
-            else:
-                formatted.append(msg)
-        
         return formatted
 
     def _sync_chat_completion_no_unload(self, messages: List[Dict[str, Any]], **kwargs) -> Dict[str, Any]:
         """Synchronous chat completion without unloading (caller handles unload)"""
         self._ensure_model_loaded()
         params = self._get_sampling_params(**kwargs)
-
-        messages = self._format_mistral_template(messages)
 
         with _get_inference_semaphore(self.max_concurrent):
             try:
@@ -637,7 +661,6 @@ class LlamaService:
         
         self._ensure_model_loaded()
         params = self._get_sampling_params(**kwargs)
-        messages = self._format_mistral_template(messages)
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         created = int(time.time())
         model_name = model or self.default_model
@@ -757,7 +780,6 @@ class LlamaService:
         """
         self._ensure_model_loaded()
         params = self._get_sampling_params(**kwargs)
-        messages = self._format_mistral_template(messages)
         token_timeout = self.token_timeout
         last_token_time = time.time()
 
