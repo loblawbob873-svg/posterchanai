@@ -161,15 +161,16 @@ class LlamaService:
         seed_str = get_setting("ollama_seed", "")
         self.seed = int(seed_str) if seed_str.strip() else -1
 
-        # Stop sequences
+        # Stop sequences — start with user-configured values.
         user_stop = [s.strip() for s in get_setting("ollama_stop", "").split(",") if s.strip()]
-        
-        model_name = _os.path.basename(self.model_path).lower()
-        use_mistral_template = "mistral" in model_name
-        
-        if use_mistral_template:
-            mistral_stops = ["[", "]", "INST", "/INST", "<<", ">>"]
-            self.stop_sequences = list(set(user_stop + mistral_stops))
+
+        # For Mistral-family models add the correct end-of-turn stop strings.
+        # Use the full token strings, never bare "[" or "]" — those would cut off
+        # mid-generation whenever the model outputs any bracketed text.
+        model_name_lower = _os.path.basename(self.model_path).lower()
+        if "mistral" in model_name_lower:
+            mistral_stops = ["[INST]", "[/INST]", "</s>"]
+            self.stop_sequences = list(dict.fromkeys(user_stop + mistral_stops))  # preserve order, no dupes
         else:
             self.stop_sequences = user_stop
 
@@ -584,9 +585,8 @@ class LlamaService:
         """Synchronous chat completion without unloading (caller handles unload)"""
         self._ensure_model_loaded()
         params = self._get_sampling_params(**kwargs)
-
-        if self._should_use_mistral_template():
-            messages = self._format_mistral_template(messages)
+        # chat_handler (set at model load time) applies the template inside create_chat_completion;
+        # do NOT pre-format messages here or the template gets applied twice.
 
         with _get_inference_semaphore(self.max_concurrent):
             try:
@@ -682,8 +682,7 @@ class LlamaService:
         
         self._ensure_model_loaded()
         params = self._get_sampling_params(**kwargs)
-        if self._should_use_mistral_template():
-            messages = self._format_mistral_template(messages)
+        # chat_handler (set at model load time) applies the template; do not pre-format here.
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         created = int(time.time())
         model_name = model or self.default_model
@@ -803,8 +802,7 @@ class LlamaService:
         """
         self._ensure_model_loaded()
         params = self._get_sampling_params(**kwargs)
-        if self._should_use_mistral_template():
-            messages = self._format_mistral_template(messages)
+        # chat_handler (set at model load time) applies the template; do not pre-format here.
         token_timeout = self.token_timeout
         last_token_time = time.time()
 
