@@ -17,8 +17,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/telegram", tags=["telegram"])
 
-# Module-level update tracking to prevent duplicate processing across requests
-_last_update_id: int = 0
+# Module-level update tracking to prevent duplicate processing across requests.
+# A set of recently-seen update_ids handles restarts better than a single
+# max-id (Telegram can re-deliver updates after downtime).
+_seen_update_ids: set = set()
+_MAX_SEEN_IDS = 500  # Keep a bounded window; Telegram won't replay further back
 
 
 class TelegramWebhookUpdate(BaseModel):
@@ -77,12 +80,15 @@ async def telegram_webhook(update: dict, background_tasks: BackgroundTasks, db: 
     Returns 200 OK immediately so Telegram doesn't time out (60s limit),
     then processes the message in a background task.
     """
-    global _last_update_id
+    global _seen_update_ids
     update_id = update.get("update_id", 0)
-    if update_id <= _last_update_id:
-        logger.info(f"Skipping duplicate/old update_id: {update_id} (last: {_last_update_id})")
+    if update_id in _seen_update_ids:
+        logger.info(f"Skipping duplicate update_id: {update_id}")
         return {"ok": True}
-    _last_update_id = update_id
+    _seen_update_ids.add(update_id)
+    if len(_seen_update_ids) > _MAX_SEEN_IDS:
+        # Trim oldest entries — update_ids are monotonically increasing
+        _seen_update_ids = set(sorted(_seen_update_ids)[-_MAX_SEEN_IDS:])
 
     # Acknowledge immediately — processing may take longer than Telegram's 60s timeout
     background_tasks.add_task(_process_telegram_update, update)
