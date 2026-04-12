@@ -452,9 +452,12 @@ class IPEXService:
         
         # Also strip template artifacts that might leak
         import re
-        # Strip [INST], [/INST], INST, /INST, <|im_end|>, <|im_start|>, etc.
+        # Strip [INST], [/INST], INST, /INST, <|im_end|>, <|im_start|>, [ alone, etc.
         cleaned = re.sub(r'\[/?INST\]', '', cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r'<\|im_(end|start)\|>', '', cleaned, flags=re.IGNORECASE)
+        # Remove orphaned [ that's likely a template artifact (not part of markdown)
+        cleaned = re.sub(r'\[(?=\s|$)', '', cleaned)  # [ at end or before whitespace
+        cleaned = re.sub(r'^\[', '', cleaned)  # [ at start of line
         
         return cleaned.strip()
 
@@ -474,7 +477,7 @@ class IPEXService:
 
             # Build stop sequences - add INST and im_end to prevent template leakage
             stop = list(kwargs.get("stop", []) or [])
-            stop.extend(["[INST]", "[/INST]", "INST", "/INST", "<|im_end|>"])
+            stop.extend(["[", "INST", "[INST]", "[/INST]", "/INST", "<|im_end|>"])
 
             # Handle thinking mode for Qwen3-style models
             messages_to_use = messages
@@ -905,7 +908,7 @@ class IPEXService:
                 if self._is_gguf:
                     # Build stop sequences - add INST and im_end to prevent template leakage
                     stop = list(kwargs.get("stop", []) or [])
-                    stop.extend(["[INST]", "[/INST]", "INST", "/INST", "<|im_end|>"])
+                    stop.extend(["[", "INST", "[INST]", "[/INST]", "/INST", "<|im_end|>"])
 
                     # Use llama.cpp streaming for GGUF with error recovery
                     last_token_time = time.time()
