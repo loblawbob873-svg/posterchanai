@@ -489,18 +489,26 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
                     # Append URL context to user message if URLs were found
                     if url_context:
                         if is_only_url:
-                            # URL-only message: inject context first, then a clear summarization instruction.
-                            # Putting the instruction AFTER the content prevents the model from echoing
-                            # whatever text appears first in the fetched page (e.g. FAQ lists).
-                            injected = url_context + "\n\nBased on the content above, write a concise and informative summary. Do not repeat or list the source text."
+                            # Skip injection if the cleaned content is too thin to be useful —
+                            # sparse content puts the model into hallucination/FAQ-loop mode.
+                            content_text = url_context.replace("---", "").strip()
+                            if len(content_text) < 200:
+                                logger.info("Telegram: URL content too sparse after filtering, skipping injection")
+                                url_context = ""
+                                injected = ""
+                            else:
+                                # Instruction comes AFTER content so the model reads data first.
+                                # Explicit anti-Q&A instruction prevents hallucinated question loops.
+                                injected = url_context + "\n\nWrite a single concise paragraph summarizing the above. Do NOT generate questions. Do NOT use Q&A format. Do NOT invent follow-up questions. Write only the summary."
                         else:
                             injected = url_context
 
-                        if isinstance(messages[-1]["content"], list):
-                            messages[-1]["content"].append({"type": "text", "text": injected})
-                        else:
-                            messages[-1]["content"] += injected
-                        logger.info(f"Telegram: Added URL context ({len(url_context)} chars) to message")
+                        if injected:
+                            if isinstance(messages[-1]["content"], list):
+                                messages[-1]["content"].append({"type": "text", "text": injected})
+                            else:
+                                messages[-1]["content"] += injected
+                            logger.info(f"Telegram: Added URL context ({len(url_context)} chars) to message")
                     
                     if len(messages) > 1:
                         user_content = messages[1]['content']
