@@ -5,7 +5,7 @@ Supports Intel Arc (SYCL), NVIDIA (CUDA), and CPU fallback.
 import asyncio
 import json
 import logging
-import os
+import os as _os
 import threading
 import time
 import uuid
@@ -134,8 +134,7 @@ class LlamaService:
         # CPU settings - auto-detect threads if set to 0
         n_threads_setting = int(get_setting("llm_n_threads", "0"))
         if n_threads_setting <= 0:
-            import os
-            cpu_count = os.cpu_count() or 4
+            cpu_count = _os.cpu_count() or 4
             # Use physical cores (cpu_count // 2) for better performance
             # SMT/hyperthreading can cause contention during inference
             self.n_threads = max(1, cpu_count // 2)
@@ -165,7 +164,7 @@ class LlamaService:
         # Stop sequences
         user_stop = [s.strip() for s in get_setting("ollama_stop", "").split(",") if s.strip()]
         
-        model_name = os.path.basename(self.model_path).lower()
+        model_name = _os.path.basename(self.model_path).lower()
         use_mistral_template = "mistral" in model_name
         
         if use_mistral_template:
@@ -221,7 +220,7 @@ class LlamaService:
             raise ValueError(error_msg)
         
         # Check file permissions
-        if not os.access(self.model_path, os.R_OK):
+        if not _os.access(self.model_path, _os.R_OK):
             error_msg = f"Model file is not readable: {self.model_path}"
             logger.error(error_msg)
             logger.error(f"  File permissions: {oct(model_path_obj.stat().st_mode)}")
@@ -373,7 +372,7 @@ class LlamaService:
                     logger.debug(f"Full exception traceback: {traceback.format_exc()}")
                     logger.error(f"  Model path: {resolved_path}")
                     logger.error(f"  File exists: {model_path_obj.exists()}")
-                    logger.error(f"  File readable: {os.access(self.model_path, os.R_OK)}")
+                    logger.error(f"  File readable: {_os.access(self.model_path, _os.R_OK)}")
                     logger.error(f"  File size: {file_size:,} bytes")
                     logger.error(f"  Context size: {attempt_ctx} (configured: {self.num_ctx})")
                     logger.error(f"  GPU layers: {gpu_layers}")
@@ -452,17 +451,17 @@ class LlamaService:
                 logger.error("  - Setting llm_cpu_mode to true to use CPU instead")
                 logger.error("  - Checking GPU memory: nvidia-smi")
                 raise RuntimeError(f"Failed to create llama context: {e}. Try reducing context size or GPU layers.")
-            elif ("No such file" in error_msg or "not found" in error_msg.lower()) and not os.path.exists(self.model_path):
+            elif ("No such file" in error_msg or "not found" in error_msg.lower()) and not _os.path.exists(self.model_path):
                 logger.error(f"Model file not found: {self.model_path}")
                 raise FileNotFoundError(f"Model file not found: {self.model_path}")
             elif "load model from file" in error_msg.lower() or "failed to load" in error_msg.lower():
                 logger.error(f"Failed to load model from file: {e}")
                 logger.error(f"  Model path: {self.model_path}")
-                if os.path.exists(self.model_path):
-                    stat = os.stat(self.model_path)
+                if _os.path.exists(self.model_path):
+                    stat = _os.stat(self.model_path)
                     logger.error(f"  File exists: Yes")
                     logger.error(f"  File size: {stat.st_size:,} bytes ({stat.st_size / (1024**3):.2f} GB)")
-                    logger.error(f"  File readable: {os.access(self.model_path, os.R_OK)}")
+                    logger.error(f"  File readable: {_os.access(self.model_path, _os.R_OK)}")
                     logger.error(f"  File permissions: {oct(stat.st_mode)}")
                 else:
                     logger.error(f"  File exists: No")
@@ -518,7 +517,6 @@ class LlamaService:
 
     def _should_use_mistral_template(self) -> bool:
         """Check if Mistral chat template should be used for this model."""
-        import os as _os
         model_name = _os.path.basename(self.model_path).lower()
         return "mistral" in model_name or "mistral" in self._settings.get("chat_template", "").lower()
 
@@ -818,19 +816,17 @@ class LlamaService:
 
     async def list_models(self) -> List[Dict[str, Any]]:
         """List available models (returns the loaded model)"""
-        import os
-
         models = []
 
         # Check model directory for .gguf files
-        model_dir = os.path.dirname(self.model_path)
-        if os.path.isdir(model_dir):
-            for filename in os.listdir(model_dir):
+        model_dir = _os.path.dirname(self.model_path)
+        if _os.path.isdir(model_dir):
+            for filename in _os.listdir(model_dir):
                 if filename.endswith(".gguf"):
                     models.append({
                         "name": filename,
                         "model": filename,
-                        "size": os.path.getsize(os.path.join(model_dir, filename)),
+                        "size": _os.path.getsize(_os.path.join(model_dir, filename)),
                     })
 
         return models
