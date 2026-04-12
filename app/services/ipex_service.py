@@ -450,14 +450,13 @@ class IPEXService:
         from app.services.text_utils import strip_thinking_tags
         cleaned = strip_thinking_tags(response)
         
-        # Also strip template artifacts that might leak
+        # Also strip template artifacts that might leak from model
         import re
-        # Strip [INST], [/INST], INST, /INST, <|im_end|>, <|im_start|>, [ alone, etc.
-        cleaned = re.sub(r'\[/?INST\]', '', cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r'<\|im_(end|start)\|>', '', cleaned, flags=re.IGNORECASE)
-        # Remove orphaned [ that's likely a template artifact (not part of markdown)
-        cleaned = re.sub(r'\[(?=\s|$)', '', cleaned)  # [ at end or before whitespace
-        cleaned = re.sub(r'^\[', '', cleaned)  # [ at start of line
+        # Remove specific template tokens only - be precise to avoid breaking markdown
+        cleaned = re.sub(r'\[INST\]', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\[/INST\]', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'<\|im_end\|>', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'<\|im_start\|>', '', cleaned, flags=re.IGNORECASE)
         
         return cleaned.strip()
 
@@ -475,9 +474,11 @@ class IPEXService:
             max_retries = 2
             last_error = None
 
-            # Build stop sequences - add INST and im_end to prevent template leakage
+            # Build stop sequences - add template tokens to prevent leakage
+            # Only add specific patterns, not generic "[" which breaks markdown
             stop = list(kwargs.get("stop", []) or [])
-            stop.extend(["[", "INST", "[INST]", "[/INST]", "/INST", "<|im_end|>"])
+            # Only stop on exact template tokens, not generic bracket
+            stop.extend(["INST", "/INST", "<|im_end|>", "<|im_start|>"])
 
             # Handle thinking mode for Qwen3-style models
             messages_to_use = messages
@@ -906,9 +907,10 @@ class IPEXService:
 
             try:
                 if self._is_gguf:
-                    # Build stop sequences - add INST and im_end to prevent template leakage
+                    # Build stop sequences - add template tokens to prevent leakage
                     stop = list(kwargs.get("stop", []) or [])
-                    stop.extend(["[", "INST", "[INST]", "[/INST]", "/INST", "<|im_end|>"])
+                    # Only stop on exact template tokens, not generic bracket
+                    stop.extend(["INST", "/INST", "<|im_end|>", "<|im_start|>"])
 
                     # Use llama.cpp streaming for GGUF with error recovery
                     last_token_time = time.time()

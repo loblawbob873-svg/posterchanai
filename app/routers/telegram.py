@@ -529,14 +529,14 @@ async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
             # Clean response content - remove template artifacts
             if response_content:
                 import re
-                response_content = re.sub(r'\[/?INST\]', '', response_content, flags=re.IGNORECASE)
-                response_content = re.sub(r'<\|im_(end|start)\|>', '', response_content, flags=re.IGNORECASE)
-                # Remove orphaned [ that's likely a template artifact
-                response_content = re.sub(r'\[(?=\s|$)', '', response_content)
-                response_content = re.sub(r'^\[', '', response_content)
+                # Remove specific template tokens only - be precise to avoid breaking markdown
+                response_content = re.sub(r'\[INST\]', '', response_content, flags=re.IGNORECASE)
+                response_content = re.sub(r'\[/INST\]', '', response_content, flags=re.IGNORECASE)
+                response_content = re.sub(r'<\|im_end\|>', '', response_content, flags=re.IGNORECASE)
+                response_content = re.sub(r'<\|im_start\|>', '', response_content, flags=re.IGNORECASE)
                 response_content = response_content.strip()
                 
-                # If response is now empty or just whitespace, return None to trigger fallback
+                # If response is now empty or just whitespace, return fallback
                 if not response_content or len(response_content.strip()) == 0:
                     response_content = "I didn't get a proper response. Please try again."
             

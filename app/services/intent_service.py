@@ -310,17 +310,26 @@ RESPOND WITH THE COMMAND ONLY!"""
         return None
 
     def _is_simple_greeting(self, message: str) -> bool:
-        """Check if message is just a simple greeting (no action needed)."""
+        """Check if message is a simple greeting (no action needed)."""
         msg_lower = message.lower().strip()
         
-        # If message is very short (under 15 chars), likely a greeting
-        if len(msg_lower) < 15:
+        # Common greeting words (must start the message)
+        greeting_words = (
+            "hi", "hey", "yo", "sup", "hello", "wassup", "wsup", 
+            "hiya", "greetings", "howdy", "hola", "namaste"
+        )
+        
+        # Check exact match OR starts with greeting word followed by punctuation/space
+        if msg_lower in greeting_words:
             return True
         
-        # If starts with greeting word and is short, likely a greeting
-        greeting_prefixes = ("hi", "hey", "yo", "sup", "hello", "wassup", "wsup", "hiya", "greetings")
-        if len(msg_lower.split()) <= 4 and msg_lower.startswith(greeting_prefixes):
-            return True
+        # Must start with greeting word (not just contain it)
+        for g in greeting_words:
+            if msg_lower.startswith(g):
+                # After greeting, should have only punctuation or short words (max 3 more)
+                remaining = msg_lower[len(g):].strip()
+                if not remaining or len(remaining.split()) <= 2:
+                    return True
         
         return False
 
