@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
@@ -6,7 +6,7 @@ import logging
 import json
 from datetime import datetime, timedelta
 
-from app.database import get_db
+from app.database import get_db, SessionLocal
 from app.models import User, Setting, Conversation, Message
 from app.auth import get_current_user, get_admin_user
 from app.services.telegram_service import telegram_service
@@ -71,17 +71,39 @@ async def get_bot_info(db: Session = Depends(get_db), admin: User = Depends(get_
 
 
 @router.post("/webhook")
-async def telegram_webhook(update: dict, db: Session = Depends(get_db)):
-    """Handle incoming webhook updates from Telegram."""
-    logger.info(f"Received Telegram webhook update: {update}")
+async def telegram_webhook(update: dict, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """Handle incoming webhook updates from Telegram.
 
+    Returns 200 OK immediately so Telegram doesn't time out (60s limit),
+    then processes the message in a background task.
+    """
     global _last_update_id
     update_id = update.get("update_id", 0)
     if update_id <= _last_update_id:
         logger.info(f"Skipping duplicate/old update_id: {update_id} (last: {_last_update_id})")
         return {"ok": True}
     _last_update_id = update_id
-    
+
+    # Acknowledge immediately — processing may take longer than Telegram's 60s timeout
+    background_tasks.add_task(_process_telegram_update, update)
+    return {"ok": True}
+
+
+async def _process_telegram_update(update: dict):
+    """Process a Telegram update in the background with its own DB session."""
+    from app.database import SessionLocal
+    db = SessionLocal()
+    try:
+        await _handle_telegram_update(update, db)
+    except Exception as e:
+        logger.error(f"Background Telegram processing error: {e}", exc_info=True)
+    finally:
+        db.close()
+
+
+async def _handle_telegram_update(update: dict, db: Session):
+    """Core Telegram update processing logic."""
+    logger.info(f"Received Telegram webhook update: {update}")
     try:
         from app.services.chat_service import ChatService
         
