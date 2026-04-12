@@ -104,11 +104,11 @@ class LlamaService:
     def _load_settings(self):
         """Load settings from database"""
         from app.database import safe_query_settings
-        settings = safe_query_settings(self.db)
+        self._settings = safe_query_settings(self.db)
         
         # Helper to get setting with fallback for empty strings
         def get_setting(key: str, default: str) -> str:
-            val = settings.get(key, default)
+            val = self._settings.get(key, default)
             return val if val else default
 
         # Model settings
@@ -497,10 +497,51 @@ class LlamaService:
         from app.services.text_utils import strip_thinking_tags
         return strip_thinking_tags(response)
 
+    def _format_mistral_template(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Format messages for Mistral-style models that use [INST] /INST tags."""
+        model_name = os.path.basename(self.model_path).lower()
+        
+        use_mistral_template = (
+            "mistral" in model_name or
+            "mistral" in self._settings.get("chat_template", "").lower()
+        )
+        
+        if not use_mistral_template:
+            return messages
+        
+        formatted = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if not content:
+                continue
+            
+            if role == "system":
+                formatted.append({
+                    "role": "system",
+                    "content": f"<<sys>>\n{content.strip()}\n<</sys>>"
+                })
+            elif role == "user":
+                formatted.append({
+                    "role": "user",
+                    "content": f"[INST] {content.strip()} [/INST]"
+                })
+            elif role == "assistant":
+                formatted.append({
+                    "role": "assistant",
+                    "content": content.strip()
+                })
+            else:
+                formatted.append(msg)
+        
+        return formatted
+
     def _sync_chat_completion_no_unload(self, messages: List[Dict[str, Any]], **kwargs) -> Dict[str, Any]:
         """Synchronous chat completion without unloading (caller handles unload)"""
         self._ensure_model_loaded()
         params = self._get_sampling_params(**kwargs)
+
+        messages = self._format_mistral_template(messages)
 
         with _get_inference_semaphore(self.max_concurrent):
             try:
@@ -596,6 +637,7 @@ class LlamaService:
         
         self._ensure_model_loaded()
         params = self._get_sampling_params(**kwargs)
+        messages = self._format_mistral_template(messages)
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         created = int(time.time())
         model_name = model or self.default_model
@@ -715,6 +757,7 @@ class LlamaService:
         """
         self._ensure_model_loaded()
         params = self._get_sampling_params(**kwargs)
+        messages = self._format_mistral_template(messages)
         token_timeout = self.token_timeout
         last_token_time = time.time()
 
