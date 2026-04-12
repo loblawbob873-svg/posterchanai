@@ -518,7 +518,8 @@ class LlamaService:
 
     def _should_use_mistral_template(self) -> bool:
         """Check if Mistral chat template should be used for this model."""
-        model_name = os.path.basename(self.model_path).lower()
+        import os as _os
+        model_name = _os.path.basename(self.model_path).lower()
         return "mistral" in model_name or "mistral" in self._settings.get("chat_template", "").lower()
 
     def _format_mistral_template(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
