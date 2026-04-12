@@ -240,6 +240,12 @@ RESPOND WITH THE COMMAND ONLY!"""
             # Filter out responses that contain "none" or emoji + command patterns
             if "none" in command.lower() or re.match(r'^[^\w]*none', command.lower()):
                 return None
+            
+            # Filter out emoji spam and garbage responses - if mostly emojis/symbols, treat as no command
+            alphanumeric = re.sub(r'[^\w]', '', command)
+            if len(alphanumeric) < 3 and len(command) > 5:
+                logger.warning(f"Intent detection returned emoji garbage: {command!r}")
+                return None
 
             # HARD SAFETY CHECK: Block geni command for text content creation
             # This overrides LLM decision if text-creation keywords are detected
