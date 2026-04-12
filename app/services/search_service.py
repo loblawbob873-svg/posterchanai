@@ -279,8 +279,10 @@ class SearchService:
                     if any(nav in text_lower for nav in nav_patterns):
                         continue
 
-                    # Skip if just numbers or very generic
+                    # Skip if just numbers, ranking-prefixed (e.g. "7 Avalanche AVAX"), or very generic
                     if link_text.isdigit() or text_lower in ['read more', 'click here', 'learn more']:
+                        continue
+                    if re.match(r'^\d+[\s.]', link_text):
                         continue
 
                     # Skip duplicate headlines
@@ -315,6 +317,14 @@ class SearchService:
                     if len(line) < 8:
                         continue
 
+                    # Skip lines that are purely numeric/symbolic (price rows, rank numbers, percentages)
+                    if re.match(r'^[\d\s$%,.\-+/\\*:]+$', line):
+                        continue
+
+                    # Skip lines starting with a rank/index number (table rows like "1 Bitcoin", "42 Solana")
+                    if re.match(r'^\d+[\s.]', line):
+                        continue
+
                     # Skip lines that look like JS code
                     # — long unbroken strings (minified JS, base64, data URIs)
                     if len(line) > 120 and " " not in line:
@@ -342,8 +352,7 @@ class SearchService:
 
                 # Prepend extracted links if we found any
                 if links_text:
-                    # Limit to first 30 links to avoid overwhelming
-                    links_section = "\n".join(links_text[:30])
+                    links_section = "\n".join(links_text[:8])
                     text = f"ARTICLE LINKS:\n{links_section}\n\nPAGE TEXT:\n{text}"
 
                 # Truncate if too long
