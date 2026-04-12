@@ -359,6 +359,9 @@ class IPEXService:
                     
                     last_error = None
                     model_loaded = False
+                    _model_name_lower = os.path.basename(self.model_path).lower()
+                    _chat_format = "mistral-instruct" if "mistral" in _model_name_lower else None
+
                     for attempt_ctx in context_sizes_to_try:
                         try:
                             logger.info(f"[IPEX] Attempting to load with n_ctx={attempt_ctx}")
@@ -373,6 +376,7 @@ class IPEXService:
                                 use_mlock=self.use_mlock,
                                 offload_kqv=True,
                                 verbose=False,
+                                chat_format=_chat_format,
                             )
                             logger.info(f"[IPEX] GGUF model loaded with n_ctx={self._model.n_ctx()} (requested: {self.num_ctx})")
                             self.num_ctx = attempt_ctx  # Update to working context
@@ -462,14 +466,45 @@ class IPEXService:
         
         return cleaned.strip()
 
+    def _embed_system_for_mistral(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Embed system message into the first user turn for Mistral models.
+
+        The mistral-instruct chat format silently drops the system role.  We
+        manually prepend system content to the first user message so it reaches
+        the model, then remove the system message from the list.
+        """
+        model_name = os.path.basename(self.model_path).lower()
+        if "mistral" not in model_name:
+            return messages
+
+        system_content = ""
+        filtered = []
+        for msg in messages:
+            if msg.get("role") == "system":
+                system_content += msg.get("content", "") + "\n\n"
+            else:
+                filtered.append(dict(msg))
+
+        if not system_content:
+            return messages
+
+        system_content = system_content.strip()
+        if filtered and filtered[0].get("role") == "user":
+            filtered[0]["content"] = system_content + "\n\n" + filtered[0].get("content", "")
+        else:
+            filtered.insert(0, {"role": "user", "content": system_content})
+
+        return filtered
+
     def _generate_response(self, messages: List[Dict[str, Any]], **kwargs) -> str:
         """Generate a response synchronously with retry for transient errors"""
-        logger.info("[DEBUG] _generate_response called at 10:19")
         try:
             self._ensure_model_loaded()
         except Exception as e:
-            logger.error(f"[DEBUG] Model loading failed: {e}")
+            logger.error(f"Model loading failed: {e}")
             raise
+
+        messages = self._embed_system_for_mistral(messages)
 
         if self._is_gguf:
             # Use llama.cpp API for GGUF models with retry for transient errors
