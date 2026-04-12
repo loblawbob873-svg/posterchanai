@@ -464,8 +464,9 @@ class IPEXService:
             max_retries = 2
             last_error = None
 
-            # Build stop sequences
+            # Build stop sequences - add INST to prevent template leakage
             stop = list(kwargs.get("stop", []) or [])
+            stop.extend(["[INST]", "[/INST]", "INST", "/INST"])
 
             # Handle thinking mode for Qwen3-style models
             messages_to_use = messages
@@ -688,8 +689,9 @@ class IPEXService:
         queue = asyncio.Queue()
         loop = asyncio.get_running_loop()
 
-        # Build stop sequences
+        # Build stop sequences - add INST to prevent template leakage
         stop = list(kwargs.get("stop", []) or [])
+        stop.extend(["[INST]", "[/INST]", "INST", "/INST"])
 
         # Handle thinking mode for Qwen3-style models (same as non-streaming)
         messages_to_use = messages
@@ -893,8 +895,9 @@ class IPEXService:
 
             try:
                 if self._is_gguf:
-                    # Build stop sequences
+                    # Build stop sequences - add INST to prevent template leakage
                     stop = list(kwargs.get("stop", []) or [])
+                    stop.extend(["[INST]", "[/INST]", "INST", "/INST"])
 
                     # Use llama.cpp streaming for GGUF with error recovery
                     last_token_time = time.time()
