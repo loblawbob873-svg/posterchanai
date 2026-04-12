@@ -194,88 +194,27 @@ RESPOND WITH THE COMMAND ONLY!"""
 
             # Clean up response
             command = response.strip()
-            
-            # Log raw response for debugging
             logger.info(f"Intent raw response: {command[:100]!r}")
-            logger.debug(f"Raw intent response: {command[:200]}")
-
-            # Remove common formatting artifacts
-            if command.startswith("```"):
-                # Remove markdown code blocks - extract content between ```
-                lines = command.split("\n")
-                clean_lines = []
-                for line in lines:
-                    if line.startswith("```"):
-                        continue
-                    clean_lines.append(line)
-                command = "\n".join(clean_lines).strip()
             
-            # Take only the first non-empty line (command should be single line)
-            for line in command.split("\n"):
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    command = line
-                    break
+            # Parse and validate command from LLM response
+            command = self._parse_command(command)
             
-            # Remove common prefixes LLMs might add
-            prefixes_to_remove = ["command:", "output:", "result:", "answer:"]
-            for prefix in prefixes_to_remove:
-                if command.lower().startswith(prefix):
-                    command = command[len(prefix):].strip()
-            
-            if command.startswith('"') and command.endswith('"'):
-                command = command[1:-1].strip()
-            if command.startswith("'") and command.endswith("'"):
-                command = command[1:-1].strip()
-
-            # Check if it's "none" (no action) - also handle cases like "📝 none"
-            if command.lower() == "none" or "none" in command.lower() or not command:
-                return None
-
-            # Filter out invalid single-character responses (LLM parsing errors)
-            if len(command) <= 1:
-                logger.warning(f"Intent detection returned invalid single char: {command!r}")
-                return None
-
-            # Filter out responses that contain "none" or emoji + command patterns
-            if "none" in command.lower() or re.match(r'^[^\w]*none', command.lower()):
+            # Validate command is not garbage/none/emoji spam
+            if not self._is_valid_command(command):
                 return None
             
-            # Filter out emoji spam and garbage responses - if mostly emojis/symbols, treat as no command
-            alphanumeric = re.sub(r'[^\w]', '', command)
-            if len(alphanumeric) < 3 and len(command) > 5:
-                logger.warning(f"Intent detection returned emoji garbage: {command!r}")
-                return None
-
             # HARD SAFETY CHECK: Block geni command for text content creation
-            # This overrides LLM decision if text-creation keywords are detected
             if command.lower().startswith("geni"):
                 text_creation_keywords = [
-                    "post",
-                    "article",
-                    "tweet",
-                    "caption",
-                    "message",
-                    "blog",
-                    "content",
-                    "email",
-                    "draft",
-                    "write",
-                    "facebook",
-                    "twitter",
-                    "instagram",
-                    "linkedin",
-                    "social media",
+                    "post", "article", "tweet", "caption", "message", "blog",
+                    "content", "email", "draft", "write", "facebook", "twitter",
+                    "instagram", "linkedin", "social media",
                 ]
                 user_lower = user_message.lower()
-
-                # Check if user message contains text creation keywords
                 for keyword in text_creation_keywords:
                     if keyword in user_lower:
-                        logger.warning(
-                            f"Blocked geni command due to text creation keyword '{keyword}' in: {user_message}"
-                        )
-                        return None  # Return None to use chat instead
+                        logger.warning(f"Blocked geni command due to text creation keyword '{keyword}'")
+                        return None
 
             logger.info(f"Intent detected command: {command}")
 
@@ -321,6 +260,60 @@ RESPOND WITH THE COMMAND ONLY!"""
 
         return None
 
+    def _parse_command(self, raw_response: str) -> Optional[str]:
+        """Parse and validate command from LLM response."""
+        if not raw_response:
+            return None
+            
+        command = raw_response.strip()
+        
+        # Remove markdown code blocks
+        if command.startswith("```"):
+            lines = [l for l in command.split("\n") if not l.startswith("```")]
+            command = "\n".join(lines).strip()
+        
+        # Take first non-empty, non-comment line
+        for line in command.split("\n"):
+            line = line.strip()
+            if line and not line.startswith("#"):
+                command = line
+                break
+        
+        # Remove common prefixes
+        for prefix in ["command:", "output:", "result:", "answer:"]:
+            if command.lower().startswith(prefix):
+                command = command[len(prefix):].strip()
+        
+        # Remove quotes
+        if (command.startswith('"') and command.endswith('"')) or \
+           (command.startswith("'") and command.endswith("'")):
+            command = command[1:-1].strip()
+        
+        return command if command else None
+    
+    def _is_valid_command(self, command: str) -> bool:
+        """Check if command is valid (not garbage/none/emoji spam)."""
+        if not command:
+            return False
+            
+        cmd_lower = command.lower()
+        
+        # Filter "none" responses
+        if cmd_lower == "none" or "none" in cmd_lower:
+            return False
+        
+        # Filter single char
+        if len(command) <= 1:
+            return False
+        
+        # Filter emoji/garbage (less than 3 alphanumeric chars)
+        alphanumeric = re.sub(r'[^\w]', '', command)
+        if len(alphanumeric) < 3:
+            logger.warning(f"Intent detection filtered emoji/garbage: {command!r}")
+            return False
+        
+        return True
+    
     def _is_simple_greeting(self, message: str) -> bool:
         """Check if message is a simple greeting (no action needed)."""
         msg_lower = message.lower().strip()

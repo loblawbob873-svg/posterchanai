@@ -446,23 +446,18 @@ class IPEXService:
                     raise
 
     def strip_thinking_tags(self, response: str) -> str:
-        """Strip thinking tags and template artifacts from AI response"""
+        """Strip template artifacts from AI response."""
         from app.services.text_utils import strip_thinking_tags
+        import re
+        
         cleaned = strip_thinking_tags(response)
         
-        # Also strip template artifacts that might leak from model
-        import re
-        # Remove specific template tokens only - be precise to avoid breaking markdown
-        cleaned = re.sub(r'\[INST\]', '', cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r'\[/INST\]', '', cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r'INST\]', '', cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r'<\|im_end\|>', '', cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r'<\|im_start\|>', '', cleaned, flags=re.IGNORECASE)
+        # Remove template tokens
+        for pattern in [r'\[INST\]', r'\[/INST\]', r'INST\]', r'<\|im_end\|>', r'<\|im_start\|>']:
+            cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
         
-        # Remove any remaining [ or ] that are likely template artifacts (not part of text)
-        # Only remove if followed by whitespace or at end of line
-        cleaned = re.sub(r'\[(?=\s*$|\s)', '', cleaned)
-        cleaned = re.sub(r'(?<=\s)\[', '', cleaned)
+        # Remove orphan brackets that are template artifacts
+        cleaned = re.sub(r'\[(?=\s|$)', '', cleaned)
         cleaned = re.sub(r'^\]', '', cleaned)
         
         return cleaned.strip()
