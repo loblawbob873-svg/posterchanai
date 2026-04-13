@@ -135,12 +135,10 @@ AvoidDiskWrites 1
             self._monitor_thread.start()
 
             if self._wait_for_bootstrap():
-                logger.info(f"[TOR] Started - SOCKS5 on {self.listen_host}:{self.socks_port}")
-                return True
+                logger.info(f"[TOR] Started and bootstrapped - SOCKS5 on {self.listen_host}:{self.socks_port}")
             else:
-                logger.error("[TOR] Bootstrap timeout")
-                self.stop()
-                return False
+                logger.warning("[TOR] Bootstrap timed out but process is still running — may complete later")
+            return True
 
         except Exception as e:
             logger.error(f"[TOR] Failed to start: {e}")
@@ -170,11 +168,12 @@ AvoidDiskWrites 1
         response = sock.recv(1024)
         return b'250' in response
 
-    def _wait_for_bootstrap(self, timeout: int = 60) -> bool:
+    def _wait_for_bootstrap(self, timeout: int = 120) -> bool:
         """Wait for Tor to bootstrap via control port."""
         import socket
 
         start_time = time.time()
+        last_log = 0
         while time.time() - start_time < timeout:
             if not self._running or not self._process:
                 return False
@@ -190,13 +189,19 @@ AvoidDiskWrites 1
                     if b'Bootstrapped 100%' in response or b'TAG=done' in response:
                         logger.info("[TOR] Bootstrap complete")
                         return True
+                    # Log progress every 15s instead of spamming every 2s
+                    elapsed = time.time() - start_time
+                    if elapsed - last_log >= 15:
+                        logger.info(f"[TOR] Still bootstrapping... ({int(elapsed)}s elapsed)")
+                        last_log = elapsed
                 else:
                     sock.close()
             except Exception:
                 pass
 
-            time.sleep(2)
+            time.sleep(5)
 
+        logger.warning(f"[TOR] Bootstrap did not complete in {timeout}s — process will keep running")
         return False
 
     def _monitor(self):
@@ -204,10 +209,13 @@ AvoidDiskWrites 1
         while self._running and self._process:
             ret = self._process.poll()
             if ret is not None:
-                logger.warning(f"[TOR] Process exited: {ret}")
+                logger.warning(f"[TOR] Process exited with code: {ret}")
                 if self._running:
-                    logger.info("[TOR] Restarting...")
+                    logger.info("[TOR] Restarting in 5s...")
                     time.sleep(5)
+                    # Reset state so start() actually launches a new process
+                    self._running = False
+                    self._process = None
                     self.start()
                 break
             time.sleep(5)
