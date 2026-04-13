@@ -134,6 +134,14 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check for reply_to_message (when user replies to a message)
             reply_to = message.get("reply_to_message", {})
             reply_text = reply_to.get("text", "") if reply_to else ""
+
+            # Detect forwarded messages
+            is_forwarded = bool(
+                message.get("forward_date") or
+                message.get("forward_origin") or
+                message.get("forward_from") or
+                message.get("forward_from_chat")
+            )
             
             # Check for attachments (photos, documents)
             # Photos in Telegram messages are in a list - get the highest res (last one)
@@ -384,14 +392,30 @@ async def _handle_telegram_update(update: dict, db: Session):
                 # Regular chat - check for images and do OCR or pass to vision model
                 from app.services.intent_service import IntentService
                 intent_service = IntentService(db, user=user_obj)
+                text_stripped = text.strip()
+
+                # Detect YouTube URLs anywhere in the message
+                _yt_domains = ('youtube.com/watch', 'youtu.be/', 'youtube.com/shorts/')
+                _all_urls_in_text = [u for u in __import__('re').findall(r'https?://\S+', text_stripped)]
+                youtube_url = next((u for u in _all_urls_in_text if any(d in u for d in _yt_domains)), None)
+
+                # Route YouTube URLs (sent or forwarded) to the yt command
+                if youtube_url and (is_forwarded or not text_stripped.replace(youtube_url, '').strip()):
+                    logger.info(f"Telegram: YouTube URL detected, using yt command: {youtube_url}")
+                    try:
+                        result = await command_service.execute_command("yt", youtube_url)
+                    except Exception as e:
+                        result = {"type": "text", "content": f"Error summarizing video: {str(e)}"}
+                    await telegram_service.send_message(chat_id, result.get("content", "Error"))
+                    return {"ok": True}
+
                 # Skip intent detection for bare URLs — they are never commands and the
                 # LLM always fails or returns garbage for URL-only input.
-                text_stripped = text.strip()
                 is_bare_url = (
                     text_stripped.startswith(("http://", "https://")) and
                     " " not in text_stripped
                 )
-                intent = None if is_bare_url else await intent_service.detect_intent(text)
+                intent = None if (is_bare_url or is_forwarded) else await intent_service.detect_intent(text)
                 # intent["command"] is the full command string (e.g. "geni a sunset")
                 # parse it to split command name from arguments
                 intent_command_str = intent.get("command", "") if intent else ""
@@ -407,11 +431,11 @@ async def _handle_telegram_update(update: dict, db: Session):
                     # Regular chat - use the chat service
                     from app.models import Conversation, Message
 
-                    # For bare URLs use a clean summarization context — no history, focused system prompt.
-                    # History causes Mistral to pattern-match on previous responses and return garbage.
-                    if is_bare_url:
+                    # Forwarded messages and bare URLs use a clean summarization context —
+                    # no history, focused system prompt to avoid hallucination loops.
+                    if is_bare_url or is_forwarded:
                         messages = [
-                            {"role": "system", "content": "You are a concise summarizer. When given article content, write a single short paragraph summarizing the key points. Output only the summary, nothing else."},
+                            {"role": "system", "content": "You are a concise summarizer. Summarize the provided content clearly and in detail. Include key facts, main points, and any important details. Output only the summary, nothing else."},
                         ]
                         last_role = "system"
                     else:
@@ -468,7 +492,13 @@ async def _handle_telegram_update(update: dict, db: Session):
                                 break
                         
                         if vision_content:
-                            vision_content.append({"type": "text", "text": text})
+                            # If no user text, add an explicit instruction so the model summarizes
+                            # rather than echoing the OCR content back.
+                            user_instruction = text if text.strip() else (
+                                "Summarize the content in this image in detail." if is_forwarded
+                                else "What does this image show?"
+                            )
+                            vision_content.append({"type": "text", "text": user_instruction})
                             # If last_role is user, merge with last message instead of creating duplicate
                             if last_role == "user":
                                 if isinstance(messages[-1]["content"], list):

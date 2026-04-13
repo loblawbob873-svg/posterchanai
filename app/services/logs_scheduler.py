@@ -114,10 +114,11 @@ def run_command(cmd: str, sudo: bool = False) -> str:
 def run_ssh_command(host: str, cmd: str) -> str:
     """Run a command on a remote host via SSH."""
     try:
-        ssh_cmd = f"ssh -o ConnectTimeout=10 -o BatchMode=yes {host} '{cmd}'"
+        # Use list form (shell=False) so SSH receives cmd as a single argument;
+        # this avoids the local shell breaking single-quoted awk/grep expressions.
+        ssh_cmd = ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", host, cmd]
         result = subprocess.run(
             ssh_cmd,
-            shell=True,
             capture_output=True,
             text=True,
             timeout=60
@@ -162,6 +163,11 @@ def collect_remote_logs(host: str, settings: dict) -> str:
     root_usage = run_ssh_command(host, "df -h / | awk '{ print $5 }' | tail -1")
     if root_usage:
         log_parts.append(f"[Root Disk Usage] {root_usage}")
+
+    # RAID disk usage (only if /raid is mounted)
+    raid_usage = run_ssh_command(host, "df -h /raid 2>/dev/null | awk '{ print $5 }' | tail -1")
+    if raid_usage:
+        log_parts.append(f"[Raid Disk Usage] {raid_usage}")
 
     # Failed services
     failed = run_ssh_command(host, "systemctl list-units --state failed --no-pager")
@@ -287,38 +293,160 @@ def get_or_create_logs_chat(db: Session, user_id: int) -> Conversation:
     return logs_chat
 
 
-MAX_LOG_DATA_CHARS = 6000
+import re as _re
+
+def _parse_log_sections(log_data: str) -> list:
+    """Parse log_data string into a list of per-host dicts with named sections."""
+    # Split on server boundaries
+    blocks = _re.split(r'\[Server Name:', log_data)
+    results = []
+    for i, block in enumerate(blocks):
+        if not block.strip():
+            continue
+        # First block (before any [Server Name:]) belongs to local host
+        if i == 0:
+            server_name = socket.gethostname()
+            rest = block
+        else:
+            m = _re.match(r'([^\]]+)\]', block)
+            if not m:
+                continue
+            server_name = m.group(1).split(' - ')[0].strip()
+            rest = block[m.end():]
+
+        sections = {}
+        section_names = [
+            'App Errors', 'SysLog', 'DMESG', 'SMART',
+            'Root Disk Usage', '/boot EFI Disk Usage',
+            'Failed Services', 'Raid Status', 'Raid Disk Usage',
+            'BTRFS Scrub Status', 'Swap',
+        ]
+        for name in section_names:
+            pat = _re.compile(r'\[' + _re.escape(name) + r'\](.*?)(?=\[|$)', _re.DOTALL)
+            m2 = pat.search(rest)
+            if m2:
+                sections[name] = m2.group(1).strip()
+
+        results.append({'server': server_name, 'sections': sections})
+    return results
+
+
+def _format_metrics(parsed_hosts: list) -> tuple:
+    """Return (metrics_markdown, syslog_text_for_ai)."""
+    metrics_lines = []
+    syslog_parts = []
+
+    for host_data in parsed_hosts:
+        server = host_data['server']
+        s = host_data['sections']
+
+        metrics_lines.append(f"\n**{server}**")
+
+        # Disk usage
+        disk_parts = []
+        for label, display in [('Root Disk Usage', '/'), ('/boot EFI Disk Usage', '/boot'),
+                                ('Raid Disk Usage', '/raid')]:
+            val = s.get(label, '').strip()
+            if val:
+                try:
+                    pct = int(val.rstrip('%'))
+                    emoji = '🔴' if pct >= 90 else '🟡' if pct >= 75 else '🟢'
+                except ValueError:
+                    emoji = '❔'
+                disk_parts.append(f"{display}: {val} {emoji}")
+        if disk_parts:
+            metrics_lines.append(f"  💾 Disk: {', '.join(disk_parts)}")
+
+        # SMART
+        smart = s.get('SMART', '')
+        if smart:
+            drives = _re.findall(r'Drive (\S+):\s*(\w+)', smart)
+            if drives:
+                drive_strs = [f"{d} {'✅' if r == 'PASSED' else '❌ ' + r}" for d, r in drives]
+                metrics_lines.append(f"  🔧 SMART: {', '.join(drive_strs)}")
+
+        # Swap
+        swap = s.get('Swap', '').strip()
+        if swap:
+            metrics_lines.append(f"  🔄 Swap: {swap}")
+
+        # Failed services
+        failed = s.get('Failed Services', '').strip()
+        if failed and '0 loaded' not in failed and failed:
+            metrics_lines.append(f"  ❌ Failed: {failed[:120].strip()}")
+        else:
+            metrics_lines.append(f"  ✅ Services OK")
+
+        # RAID
+        raid = s.get('Raid Status', '').strip()
+        if raid:
+            metrics_lines.append(f"  💿 RAID: {raid[:80]}")
+        btrfs = s.get('BTRFS Scrub Status', '').strip()
+        if btrfs:
+            metrics_lines.append(f"  🗜️ BTRFS: {btrfs[:80]}")
+
+        # Collect syslog/errors for AI
+        error_bits = []
+        app_err = s.get('App Errors', '').strip()
+        if app_err and app_err not in ('-- No entries --', ''):
+            error_bits.append(f"[{server} App] {app_err[:400]}")
+        syslog = s.get('SysLog', '').strip()
+        if syslog:
+            error_bits.append(f"[{server} SysLog] {syslog[:600]}")
+        dmesg = s.get('DMESG', '').strip()
+        if dmesg:
+            error_bits.append(f"[{server} DMESG] {dmesg[:300]}")
+        if error_bits:
+            syslog_parts.append(' '.join(error_bits))
+
+    return '\n'.join(metrics_lines), '\n'.join(syslog_parts)
+
 
 async def generate_log_summary(db: Session, user: User, log_data: str) -> str:
-    """Use AI to summarize the collected logs."""
-    hostname = socket.gethostname()
-
-    # Clean up the log data — only strip curly quotes/backticks that can confuse shell
+    """Format metrics directly and use AI only for syslog/error narrative."""
+    # Clean up the log data
     clean_data = log_data.replace("\u2018", "'").replace("\u2019", "'").replace("\u201c", '"').replace("\u201d", '"')
 
-    # Truncate to avoid inference timeouts when many hosts report large logs
-    if len(clean_data) > MAX_LOG_DATA_CHARS:
-        clean_data = clean_data[:MAX_LOG_DATA_CHARS] + "\n[...truncated]"
+    parsed = _parse_log_sections(clean_data)
+    metrics_text, syslog_text = _format_metrics(parsed)
 
-    messages = [
-        {
-            "role": "system",
-            "content": "You are a system administrator assistant. Provide a concise summary of system logs. Focus on any warnings, errors, or issues that need attention. Use emojis to highlight status. Do not provide troubleshooting steps or suggestions."
-        },
-        {
-            "role": "user",
-            "content": f"Summarize the following system logs for {hostname}: {clean_data}"
-        }
-    ]
+    # Use AI only to narrate the warnings/errors portion
+    ai_narrative = ""
+    if syslog_text.strip():
+        messages = [
+            {
+                "role": "system",
+                "content": "You are a system administrator assistant. Briefly describe the warnings and errors in these log entries. Group repeated errors. Use emojis. Do not provide troubleshooting steps."
+            },
+            {
+                "role": "user",
+                "content": f"Summarize these log warnings: {syslog_text[:3000]}"
+            }
+        ]
+        try:
+            chat_service = ChatService(db, user)
+            chat_service.num_predict = min(chat_service.num_predict, 600)
+            ai_narrative = await chat_service.chat(messages)
+        except Exception as e:
+            logger.error(f"Error generating log narrative: {e}")
+            ai_narrative = syslog_text[:500]
 
-    try:
-        chat_service = ChatService(db, user)
-        chat_service.num_predict = 500  # Keep summaries concise to avoid inference timeout
-        summary = await chat_service.chat(messages)
-        return summary
-    except Exception as e:
-        logger.error(f"Error generating log summary: {e}")
-        return f"Error generating summary: {str(e)}\n\nRaw logs:\n{log_data[:2000]}"
+    if ai_narrative:
+        return f"{metrics_text}\n\n**Warnings/Errors:**\n{ai_narrative}"
+    else:
+        return f"{metrics_text}\n\n✅ No warnings or errors detected."
+
+
+def _to_telegram_markdown(text: str) -> str:
+    """Convert standard markdown to Telegram Markdown v1 format."""
+    import re
+    # ## Heading → *Heading* (bold)
+    text = re.sub(r'^## (.+)$', r'*\1*', text, flags=re.MULTILINE)
+    # **bold** → *bold*
+    text = re.sub(r'\*\*(.+?)\*\*', r'*\1*', text)
+    # Remove leading spaces from indented lines (Telegram ignores indentation)
+    text = re.sub(r'^  +', '', text, flags=re.MULTILINE)
+    return text
 
 
 async def run_logs_for_admin():
@@ -392,7 +520,7 @@ async def run_logs_for_admin():
                 )
                 await telegram_service.send_message(
                     admin.telegram_chat_id,
-                    message_text
+                    _to_telegram_markdown(message_text)
                 )
                 logger.info(f"Sent log summary to Telegram for admin user {admin.id}")
             except Exception as tg_err:
