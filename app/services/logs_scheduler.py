@@ -207,11 +207,11 @@ def collect_system_logs(db: Session = None) -> str:
 
     # Collect syslog (warnings and errors from last 6 hours)
     syslog = run_command(
-        f"journalctl -S '6 hours ago' | grep -Ei 'warn|error' | grep -Evi '{exclude_patterns}' | tail -100",
+        f"journalctl -S '6 hours ago' | grep -Ei 'warn|error' | grep -Evi '{exclude_patterns}' | grep -Evi 'aikey|inreplyto|identifiable' | tail -50",
         sudo=False
     )
     if syslog:
-        log_parts.append(f"[SysLog] {syslog[:3000]}")
+        log_parts.append(f"[SysLog] {syslog[:1500]}")
 
     # Collect dmesg
     dmesg = run_command(
@@ -313,6 +313,7 @@ async def generate_log_summary(db: Session, user: User, log_data: str) -> str:
 
     try:
         chat_service = ChatService(db, user)
+        chat_service.num_predict = 500  # Keep summaries concise to avoid inference timeout
         summary = await chat_service.chat(messages)
         return summary
     except Exception as e:
