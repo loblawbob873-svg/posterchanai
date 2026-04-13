@@ -1018,6 +1018,18 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             if hasattr(user, 'custom_llm_prompt') and user.custom_llm_prompt:
                                 system_prompt += f"\n\n## User's Custom Instructions\nThe user has provided these custom instructions that you should follow:\n\n{user.custom_llm_prompt}\n"
                             
+                            # When there is prior conversation history, append an independence
+                            # reminder to the system prompt so the model does not apply context
+                            # from a previous question to the current unrelated one.
+                            prior_count = len([m for m in conversation.messages if m.role != "system"])
+                            if prior_count > 1:
+                                system_prompt += (
+                                    "\n\nIMPORTANT: Answer the user's CURRENT question on its own merits. "
+                                    "Do NOT apply patterns, topics, or context from a previous question "
+                                    "to a new, unrelated question. Each question stands alone unless the "
+                                    "user explicitly refers to a prior topic."
+                                )
+
                             messages = [
                                 {"role": "system", "content": system_prompt}
                             ]
