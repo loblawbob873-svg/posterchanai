@@ -156,7 +156,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["geni", "mail", "news", "search", "yt", "torrents", "logs", "translate"]
+            commands = ["geni", "mail", "news", "search", "yt", "torrents", "logs", "translate", "post"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -189,6 +189,63 @@ async def _handle_telegram_update(update: dict, db: Session):
                 logger.warning(f"TRANSLATE: Sent translation result")
                 return {"ok": True}
             
+            # post command: generate a social media post from a replied-to link
+            if command == "post":
+                source_text = reply_text or text
+                if not source_text:
+                    await telegram_service.send_message(chat_id, "Reply to a message containing a link and send `post` to generate a social media post.")
+                    return {"ok": True}
+
+                # Extract the URL from the replied-to message
+                import re as _re
+                urls_in_reply = _re.findall(r'https?://\S+', source_text)
+                url_to_append = urls_in_reply[0].rstrip('.,)') if urls_in_reply else None
+
+                # Fetch URL content if available
+                article_context = source_text
+                if url_to_append:
+                    try:
+                        from app.services.search_service import SearchService
+                        _ss = SearchService(db)
+                        import asyncio as _asyncio
+                        fetched = await _asyncio.wait_for(_ss.fetch_urls([url_to_append], max_urls=1), timeout=15)
+                        if fetched and fetched[0].get("content") and not fetched[0].get("error"):
+                            article_context = f"Title: {fetched[0].get('title', '')}\n\n{fetched[0]['content'][:3000]}"
+                    except Exception as _fe:
+                        logger.warning(f"post command: failed to fetch URL: {_fe}")
+
+                tone = arg.strip() or "viral and engaging"
+                post_messages = [
+                    {
+                        "role": "system",
+                        "content": "You are a social media expert. Write compelling social media posts. Output ONLY the post text, nothing else."
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Write a {tone} social media post based on this content. "
+                            f"End the post with the link on its own line.\n\n"
+                            f"Content:\n{article_context}\n\n"
+                            + (f"Link to include at the end: {url_to_append}" if url_to_append else "")
+                        )
+                    }
+                ]
+
+                from app.services.chat_service import ChatService as _CS
+                _cs = _CS(db, user=None)
+                _cs.num_predict = min(_cs.num_predict, 600)
+                try:
+                    post_text = await _cs.chat(post_messages)
+                    # Ensure the URL is actually at the end
+                    if url_to_append and url_to_append not in post_text:
+                        post_text = post_text.rstrip() + f"\n\n{url_to_append}"
+                    result_content = post_text
+                except Exception as e:
+                    result_content = f"Error generating post: {str(e)}"
+
+                await telegram_service.send_message(chat_id, result_content)
+                return {"ok": True}
+
             # Find user by linked Telegram chat_id
             user_obj = db.query(User).filter(
                 User.telegram_chat_id == chat_id,
@@ -229,7 +286,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["geni", "mail", "news", "search", "yt", "torrents", "logs", "translate"]
+            commands = ["geni", "mail", "news", "search", "yt", "torrents", "logs", "translate", "post"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
