@@ -191,15 +191,36 @@ async def _handle_telegram_update(update: dict, db: Session):
             
             # post command: generate a social media post from a replied-to link
             if command == "post":
-                source_text = reply_text or text
-                if not source_text:
+                if not reply_to and not text:
                     await telegram_service.send_message(chat_id, "Reply to a message containing a link and send `post` to generate a social media post.")
                     return {"ok": True}
 
-                # Extract the URL from the replied-to message
                 import re as _re
-                urls_in_reply = _re.findall(r'https?://\S+', source_text)
-                url_to_append = urls_in_reply[0].rstrip('.,)') if urls_in_reply else None
+
+                # Extract URL from replied-to message — check text, entities, and caption
+                def _extract_url_from_msg(msg: dict) -> str:
+                    # 1. Raw URL in text
+                    for field in ("text", "caption"):
+                        val = msg.get(field, "") or ""
+                        found = _re.findall(r'https?://\S+', val)
+                        if found:
+                            return found[0].rstrip('.,)')
+                    # 2. URL entity (Telegram stores link-preview URLs here)
+                    for entity_field in ("entities", "caption_entities"):
+                        for ent in msg.get(entity_field, []) or []:
+                            if ent.get("type") in ("url", "text_link"):
+                                url = ent.get("url") or ""
+                                if url.startswith("http"):
+                                    return url.rstrip('.,)')
+                    # 3. Link preview metadata
+                    web = msg.get("web_page") or msg.get("link_preview") or {}
+                    if web.get("url"):
+                        return web["url"].rstrip('.,)')
+                    return ""
+
+                url_to_append = _extract_url_from_msg(reply_to or {}) or _extract_url_from_msg(message)
+                source_text = reply_text or url_to_append or text
+                logger.info(f"post command: url={url_to_append!r}, source_text={source_text[:80] if source_text else ''}...")
 
                 # Fetch URL content if available
                 article_context = source_text
@@ -218,14 +239,14 @@ async def _handle_telegram_update(update: dict, db: Session):
                 post_messages = [
                     {
                         "role": "system",
-                        "content": "You are a social media expert. Write compelling, detailed social media posts. Output ONLY the post text, nothing else. No introductions, no labels."
+                        "content": "You are a social media expert. Write compelling, detailed social media posts. Output ONLY the post text. No introductions, no 'here is your post', no URL placeholders like 'link' or 'read more'."
                     },
                     {
                         "role": "user",
                         "content": (
                             f"Write a {tone} social media post based on this content. "
-                            f"Make it detailed — include the key facts, context, and why it matters. "
-                            f"Use emojis and hashtags. Do not add a URL placeholder — the link will be added separately.\n\n"
+                            f"Be detailed — include key facts, context, and why it matters. "
+                            f"Use emojis and relevant hashtags. Stop after the last hashtag.\n\n"
                             f"Content:\n{article_context}"
                         )
                     }
