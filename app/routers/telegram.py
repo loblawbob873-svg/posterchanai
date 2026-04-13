@@ -218,26 +218,26 @@ async def _handle_telegram_update(update: dict, db: Session):
                 post_messages = [
                     {
                         "role": "system",
-                        "content": "You are a social media expert. Write compelling social media posts. Output ONLY the post text, nothing else."
+                        "content": "You are a social media expert. Write compelling, detailed social media posts. Output ONLY the post text, nothing else. No introductions, no labels."
                     },
                     {
                         "role": "user",
                         "content": (
                             f"Write a {tone} social media post based on this content. "
-                            f"End the post with the link on its own line.\n\n"
-                            f"Content:\n{article_context}\n\n"
-                            + (f"Link to include at the end: {url_to_append}" if url_to_append else "")
+                            f"Make it detailed — include the key facts, context, and why it matters. "
+                            f"Use emojis and hashtags. Do not add a URL placeholder — the link will be added separately.\n\n"
+                            f"Content:\n{article_context}"
                         )
                     }
                 ]
 
                 from app.services.chat_service import ChatService as _CS
                 _cs = _CS(db, user=None)
-                _cs.num_predict = min(_cs.num_predict, 600)
+                _cs.num_predict = min(_cs.num_predict, 900)
                 try:
                     post_text = await _cs.chat(post_messages)
-                    # Ensure the URL is actually at the end
-                    if url_to_append and url_to_append not in post_text:
+                    # Always append the real URL at the end — the model may mangle it
+                    if url_to_append:
                         post_text = post_text.rstrip() + f"\n\n{url_to_append}"
                     result_content = post_text
                 except Exception as e:
