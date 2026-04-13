@@ -1,0 +1,32 @@
+# Posterchan AI Service - Generic/NVIDIA/AMD/CPU
+# NOTE: This is a template file. The installer generates the actual service
+# file with the correct user and paths in /etc/systemd/system/
+#
+# To use this template manually, replace:
+#   - YOUR_USER with your username
+#   - /path/to/posterchanai with the actual installation path
+
+[Unit]
+Description=Posterchan AI
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USER
+WorkingDirectory=/path/to/posterchanai
+Environment="PATH=/path/to/posterchanai/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="VIRTUAL_ENV=/path/to/posterchanai/venv"
+ExecStart=/path/to/posterchanai/venv/bin/python run.py
+
+# Quick restart - don't wait forever for stuck GPU processes
+TimeoutStopSec=10
+KillMode=mixed
+KillSignal=SIGTERM
+SendSIGKILL=yes
+
+Restart=always
+RestartSec=3
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
