@@ -1018,18 +1018,6 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             if hasattr(user, 'custom_llm_prompt') and user.custom_llm_prompt:
                                 system_prompt += f"\n\n## User's Custom Instructions\nThe user has provided these custom instructions that you should follow:\n\n{user.custom_llm_prompt}\n"
                             
-                            # When there is prior conversation history, append an independence
-                            # reminder to the system prompt so the model does not apply context
-                            # from a previous question to the current unrelated one.
-                            prior_count = len([m for m in conversation.messages if m.role != "system"])
-                            if prior_count > 1:
-                                system_prompt += (
-                                    "\n\nIMPORTANT: Answer the user's CURRENT question on its own merits. "
-                                    "Do NOT apply patterns, topics, or context from a previous question "
-                                    "to a new, unrelated question. Each question stands alone unless the "
-                                    "user explicitly refers to a prior topic."
-                                )
-
                             messages = [
                                 {"role": "system", "content": system_prompt}
                             ]
@@ -1040,13 +1028,32 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             # Truncate history messages to prevent context bloat from URL content
                             HISTORY_CHAR_LIMIT = 500
                             last_role = "system"
-                            for msg in sorted_messages[-21:-1]:
-                                # Skip if this role is same as last (prevents "Conversation roles must alternate" error)
-                                if msg.role == last_role:
-                                    continue
-                                content_trunc = msg.content[:HISTORY_CHAR_LIMIT] if len(msg.content) > HISTORY_CHAR_LIMIT else msg.content
-                                messages.append({"role": msg.role, "content": content_trunc})
-                                last_role = msg.role
+
+                            # Context-sensitivity heuristic: short messages that don't
+                            # reference prior conversation (via pronouns/follow-up words) are
+                            # treated as standalone questions. Sending history for these causes
+                            # the model to pattern-match on the previous topic (e.g. answering
+                            # "2+2=" with "To convert 2+2 to days..."). Skip history in that case.
+                            _CONTEXT_REFS = {
+                                "it", "that", "this", "they", "them", "which", "those", "these",
+                                "previous", "last", "above", "said", "also", "more", "again",
+                                "continue", "same", "instead", "another", "shorter", "longer",
+                                "different", "decimal", "further", "else", "other",
+                            }
+                            _current_words = set(content.lower().split()) if isinstance(content, str) else set()
+                            _is_context_dependent = (
+                                bool(_current_words & _CONTEXT_REFS) or
+                                len(content.strip()) > 60
+                            )
+
+                            if _is_context_dependent:
+                                for msg in sorted_messages[-21:-1]:
+                                    # Skip if this role is same as last (prevents "Conversation roles must alternate" error)
+                                    if msg.role == last_role:
+                                        continue
+                                    content_trunc = msg.content[:HISTORY_CHAR_LIMIT] if len(msg.content) > HISTORY_CHAR_LIMIT else msg.content
+                                    messages.append({"role": msg.role, "content": content_trunc})
+                                    last_role = msg.role
 
                             # Detect and fetch URLs in user message AND system prompt (with timeout to avoid hanging)
                             url_context = ""
