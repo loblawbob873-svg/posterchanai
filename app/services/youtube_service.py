@@ -133,17 +133,19 @@ async def summarize_youtube(url: str, chat_service) -> Tuple[bool, str]:
     if not transcript:
         return False, "Could not fetch transcript. The video may not have captions available."
 
-    # Truncate transcript if too long (keep ~10k chars for context)
-    if len(transcript) > 10000:
-        transcript = transcript[:10000] + "..."
+    # Truncate transcript to avoid inference timeouts
+    if len(transcript) > 4000:
+        transcript = transcript[:4000] + "..."
 
-    # Use chat service to summarize
+    # Use the chat service's configured system prompt to avoid Mistral [INST] stop issues.
+    # Pass transcript as context + a simple user instruction.
     messages = [
-        {"role": "system", "content": "You are a helpful assistant that summarizes video transcripts. Provide a clear, concise summary highlighting the main points, key takeaways, and any important details."},
-        {"role": "user", "content": f"Please summarize this YouTube video transcript:\n\n{transcript}"}
+        {"role": "system", "content": chat_service.system_prompt},
+        {"role": "user", "content": f"Summarize this video transcript. Cover the main topic, key points, and important details:\n\n{transcript}"}
     ]
 
     try:
+        chat_service.num_predict = min(getattr(chat_service, 'num_predict', 2048), 800)
         summary = await chat_service.chat(messages)
         return True, f"## Video Summary\n\n{summary}"
     except Exception as e:
