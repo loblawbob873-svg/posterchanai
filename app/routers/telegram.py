@@ -152,7 +152,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             
             # Convert text to lowercase for command matching
             text_lower = text.lower().strip()
-            
+
             # Check if the message starts with a known command
             command = None
             arg = text
@@ -162,6 +162,11 @@ async def _handle_telegram_update(update: dict, db: Session):
                     command = cmd
                     arg = text[len(cmd):].strip()
                     break
+
+            # "post" can appear anywhere in a short reply message (e.g. "send post", "make a post")
+            if command is None and reply_to and len(text_lower.split()) <= 5 and "post" in text_lower:
+                command = "post"
+                arg = text_lower.replace("post", "").strip() or ""
             
             # If it's a reply and translate command, handle it
             if reply_text and command == "translate":
@@ -534,7 +539,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                         if conversation:
                             recent_messages = db.query(Message).filter(
                                 Message.conversation_id == conversation.id
-                            ).order_by(Message.id.desc()).limit(20).all()
+                            ).order_by(Message.id.desc()).limit(6).all()
 
                             HISTORY_CHAR_LIMIT = 2000  # large enough to hold a full URL summary
                             for msg in reversed(recent_messages):
