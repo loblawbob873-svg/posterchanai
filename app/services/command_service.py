@@ -1130,7 +1130,7 @@ Files are saved to your Storage.""",
         if category not in categories:
             return {
                 "type": "text",
-                    "content": f"Unknown category: `{subcommand}`\n\nAvailable: `torrents movies`, `torrents tv`, `torrents anime`",
+                "content": f"Unknown category: `{subcommand}`\n\nAvailable: `torrents movies`, `torrents tv`, `torrents music`, `torrents anime`",
             }
 
         try:
@@ -1152,18 +1152,6 @@ Files are saved to your Storage.""",
             return {"type": "text", "content": formatted}
 
         except Exception as e:
-            if isinstance(e, ValueError) and "proxy" in str(e).lower():
-                # Proxy requirement error
-                return {
-                    "type": "text",
-                    "content": f"{str(e)}\n\nConfigure proxy in Admin → Site Settings → BitTorrent Client → HTTP Proxy Host"
-                }
-            if isinstance(e, ValueError) and "proxy" in str(e).lower():
-                # Proxy requirement error
-                return {
-                    "type": "text",
-                    "content": f"{str(e)}\n\nConfigure proxy in Admin → Site Settings → BitTorrent Client → HTTP Proxy Host"
-                }
             if isinstance(e, ValueError) and "proxy" in str(e).lower():
                 # Proxy requirement error
                 return {
