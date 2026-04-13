@@ -194,13 +194,24 @@ def collect_system_logs(db: Session = None) -> str:
     log_parts = []
     log_parts.append(f"[Server Name: {hostname} - System Report {date_str}]")
 
+    # Collect app-specific errors first (run-intel.sh, run.py, posterchanai service)
+    app_logs = run_command(
+        "journalctl -S '6 hours ago' _COMM=run-intel.sh -p warning 2>/dev/null | tail -50"
+    )
+    if not app_logs:
+        app_logs = run_command(
+            "journalctl -S '6 hours ago' -u posterchanai -p warning 2>/dev/null | tail -50"
+        )
+    if app_logs:
+        log_parts.append(f"[App Errors] {app_logs[:2000]}")
+
     # Collect syslog (warnings and errors from last 6 hours)
     syslog = run_command(
-        f"journalctl -S '6 hours ago' | grep -Ei 'warn|error' | grep -Evi '{exclude_patterns}'",
-        sudo=True
+        f"journalctl -S '6 hours ago' | grep -Ei 'warn|error' | grep -Evi '{exclude_patterns}' | tail -100",
+        sudo=False
     )
     if syslog:
-        log_parts.append(f"[SysLog] {syslog[:2000]}")
+        log_parts.append(f"[SysLog] {syslog[:3000]}")
 
     # Collect dmesg
     dmesg = run_command(
@@ -280,8 +291,8 @@ async def generate_log_summary(db: Session, user: User, log_data: str) -> str:
     """Use AI to summarize the collected logs."""
     hostname = socket.gethostname()
 
-    # Clean up the log data
-    clean_data = log_data.replace('"', "'").replace("'", "")
+    # Clean up the log data — only strip curly quotes/backticks that can confuse shell
+    clean_data = log_data.replace("\u2018", "'").replace("\u2019", "'").replace("\u201c", '"').replace("\u201d", '"')
 
     messages = [
         {

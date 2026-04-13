@@ -307,7 +307,7 @@ RESPOND WITH THE COMMAND ONLY!"""
         return True
     
     def _is_valid_command_format(self, command: str) -> bool:
-        """Check basic format validity (not none/short/emoji garbage)."""
+        """Check basic format validity (not none/short/emoji garbage or a full sentence)."""
         cmd_lower = command.lower()
         if "none" in cmd_lower:
             return False
@@ -315,6 +315,15 @@ RESPOND WITH THE COMMAND ONLY!"""
             return False
         alphanumeric = re.sub(r'[^\w]', '', command)
         if len(alphanumeric) < 3:
+            return False
+        # Commands are short — reject anything that looks like a full sentence response
+        # (model produced a chat answer instead of a command keyword)
+        words = command.split()
+        if len(words) > 10:
+            return False
+        # Commands don't start with "to convert", "to calculate", "to", etc.
+        first_word = cmd_lower.split()[0].strip("!.,🔎") if words else ""
+        if first_word in {"to", "the", "i", "it", "this", "that", "you", "your", "please", "sorry", "of", "is", "are", "was"}:
             return False
         return True
     

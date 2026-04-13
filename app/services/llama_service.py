@@ -501,10 +501,13 @@ class LlamaService:
         if self.seed >= 0:
             params["seed"] = self.seed
 
-        # Add stop sequences
-        stop = list(overrides.get("stop", self.stop_sequences) or [])
-        if isinstance(stop, str):
-            stop = [stop]
+        # Add stop sequences — merge caller overrides with model-specific stops so that
+        # cross-model requests (e.g. a Qwen stop token sent to a Mistral model) don't
+        # silently drop the model's own end-of-turn tokens.
+        override_stop = overrides.get("stop") or []
+        if isinstance(override_stop, str):
+            override_stop = [override_stop]
+        stop = list(dict.fromkeys(list(override_stop) + list(self.stop_sequences)))
 
         if stop:
             params["stop"] = stop

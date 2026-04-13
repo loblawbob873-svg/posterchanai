@@ -408,9 +408,12 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     # Convert messages to dict format
     messages = [{"role": m.role, "content": m.content} for m in request.messages]
 
-    # Inject/prepend system prompt for API calls
+    # Inject/prepend system prompt for API calls.
+    # Skip when the request came from another posterchanai instance (load-balanced): the
+    # originating server already set the system prompt; re-injecting here would double it,
+    # corrupting intent-detection prompts and confusing the model.
     api_inject_system = settings.get("api_inject_system_prompt", "true").lower() == "true"
-    if api_inject_system:
+    if api_inject_system and not skip_load_balancer:
         system_prompt = settings.get("ollama_system_prompt", "")
         if system_prompt:
             has_system = messages and messages[0].get("role") == "system"
