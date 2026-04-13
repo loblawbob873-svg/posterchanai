@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from typing import Optional
 import logging
 import json
+import re
 from datetime import datetime, timedelta
 
 from app.database import get_db, SessionLocal
@@ -14,6 +15,99 @@ from app.services.chat_service import ChatService
 from app.services.command_service import CommandService
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Torrent inline keyboard helpers
+# ---------------------------------------------------------------------------
+
+def _strip_cmd_links(text: str) -> str:
+    """Remove [text](cmd:...) and [text](magnet:...) links that don't render in Telegram."""
+    # Remove [text](cmd:...) — non-clickable in Telegram
+    text = re.sub(r'\[([^\]]+)\]\(cmd:[^\)]+\)', '', text)
+    # Remove [text](magnet:...) — too long / non-clickable
+    text = re.sub(r'\[([^\]]+)\]\(magnet:[^\)]+\)', '', text)
+    # Clean up orphan leading/trailing pipes left after link removal
+    text = re.sub(r'^\s*\|\s*', '', text, flags=re.MULTILINE)
+    text = re.sub(r'\s*\|\s*$', '', text, flags=re.MULTILINE)
+    # Collapse runs of blank lines
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
+
+def _build_torrent_keyboard(arg_sub: str, content: str, user_id: int) -> Optional[dict]:
+    """Return a Telegram inline_keyboard dict for torrent results, or None."""
+    from app.services.command_service import _torrent_cache
+
+    if arg_sub in ("movies", "tv", "anime", "music"):
+        cached = _torrent_cache.get(user_id, {}).get(arg_sub, [])
+        if not cached:
+            return None
+        buttons: list = []
+        row: list = []
+        for i in range(1, len(cached) + 1):
+            row.append({"text": f"📥 {i}", "callback_data": f"t:dl:{arg_sub}:{i}"})
+            if len(row) == 5:
+                buttons.append(row)
+                row = []
+        if row:
+            buttons.append(row)
+        return {"inline_keyboard": buttons} if buttons else None
+
+    elif arg_sub in ("search", "s"):
+        cached = _torrent_cache.get(user_id, {}).get("search", [])
+        if not cached:
+            return None
+        buttons = []
+        row = []
+        for i in range(1, len(cached) + 1):
+            row.append({"text": f"📥 {i}", "callback_data": f"t:dl:search:{i}"})
+            if len(row) == 5:
+                buttons.append(row)
+                row = []
+        if row:
+            buttons.append(row)
+        return {"inline_keyboard": buttons} if buttons else None
+
+    elif arg_sub in ("list", "ls"):
+        # Count active torrents from the formatted result text
+        rm_matches = re.findall(r'cmd:torrents rm (\d+)', content)
+        count = len(rm_matches)
+        if count == 0:
+            return {"inline_keyboard": [[{"text": "🔄 Refresh", "callback_data": "t:list:0"}]]}
+        buttons = []
+        for i in range(1, count + 1):
+            # Detect pause vs resume state from the content
+            if f"torrents resume {i}" in content:
+                toggle = {"text": f"#{i} ▶ Resume", "callback_data": f"t:resume:{i}"}
+            else:
+                toggle = {"text": f"#{i} ⏸ Pause", "callback_data": f"t:pause:{i}"}
+            buttons.append([
+                toggle,
+                {"text": f"#{i} 🗑 Remove", "callback_data": f"t:rm:{i}"},
+            ])
+        buttons.append([{"text": "🔄 Refresh", "callback_data": "t:list:0"}])
+        return {"inline_keyboard": buttons}
+
+    return None
+
+
+_TORRENT_NAV_KEYBOARD = {
+    "inline_keyboard": [
+        [
+            {"text": "🎬 Movies", "callback_data": "t:cat:movies"},
+            {"text": "📺 TV", "callback_data": "t:cat:tv"},
+        ],
+        [
+            {"text": "🎵 Music", "callback_data": "t:cat:music"},
+            {"text": "🎌 Anime", "callback_data": "t:cat:anime"},
+        ],
+        [
+            {"text": "🔍 Search…", "callback_data": "t:search_hint:0"},
+            {"text": "📋 Active Downloads", "callback_data": "t:list:0"},
+        ],
+    ]
+}
 
 router = APIRouter(prefix="/api/telegram", tags=["telegram"])
 
@@ -323,7 +417,12 @@ async def _handle_telegram_update(update: dict, db: Session):
                     command = cmd
                     arg = text[len(cmd):].strip()
                     break
-            
+
+            # Auto-detect bare magnet links — route to "torrents add <magnet>"
+            if not command and text.strip().startswith("magnet:?"):
+                command = "torrents"
+                arg = f"add {text.strip()}"
+
             logger.warning(f"TELEGRAM: text='{text}', cmd={command}, arg='{arg}', photos={len(photos) if photos else 0}")
             
             # Download photos FIRST (before any command processing that needs OCR)
@@ -464,14 +563,34 @@ async def _handle_telegram_update(update: dict, db: Session):
             elif command == "translate" and has_images:
                 logger.warning(f"TRANSLATE: Command detected but no OCR text yet, has_images={has_images}, attachments={len(attachments)}")
             
+            reply_markup = None
             if command:
                 logger.info(f"Executing command: {command} with arg: {arg}, attachments: {len(attachments)}")
                 try:
-                    # Pass attachments to any command that supports them
-                    if attachments:
-                        result = await command_service.execute_command(command, arg, attachments=attachments)
+                    if command == "torrents":
+                        arg_parts = arg.strip().split()
+                        arg_sub = arg_parts[0].lower() if arg_parts else ""
+
+                        if not arg_sub:
+                            # Show category navigation menu without scraping all categories
+                            result = {"type": "text", "content": "🧲 **Torrents** — choose a category:"}
+                            reply_markup = _TORRENT_NAV_KEYBOARD
+                        else:
+                            if attachments:
+                                result = await command_service.execute_command(command, arg, attachments=attachments)
+                            else:
+                                result = await command_service.execute_command(command, arg)
+                            content = result.get("content", "")
+                            user_id = user_obj.id if user_obj else 0
+                            reply_markup = _build_torrent_keyboard(arg_sub, content, user_id)
+                            # Clean non-functional links from torrent result text
+                            result["content"] = _strip_cmd_links(content)
                     else:
-                        result = await command_service.execute_command(command, arg)
+                        # Pass attachments to any command that supports them
+                        if attachments:
+                            result = await command_service.execute_command(command, arg, attachments=attachments)
+                        else:
+                            result = await command_service.execute_command(command, arg)
                     logger.info(f"Command result: {result}")
                 except Exception as e:
                     logger.error(f"Command execution error: {e}", exc_info=True)
@@ -797,7 +916,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     logger.error(f"Failed to send photo: {photo_result}")
                     await telegram_service.send_message(chat_id, f"{response_content}\n\n(Image generation failed to send)")
             else:
-                await telegram_service.send_message(chat_id, response_content)
+                await telegram_service.send_message(chat_id, response_content, reply_markup=reply_markup)
             
             return {"ok": True}
         
@@ -807,12 +926,70 @@ async def _handle_telegram_update(update: dict, db: Session):
             chat_id = str(callback_query.get("message", {}).get("chat", {}).get("id"))
             data = callback_query.get("data", "")
             callback_query_id = callback_query.get("id")
-            
+
             logger.info(f"Received Telegram callback query: {data}")
-            
-            # Answer the callback query
+
+            # Acknowledge immediately so Telegram removes the loading spinner
             await telegram_service.answer_callback_query(callback_query_id)
-            
+
+            if data.startswith("t:"):
+                # Torrent inline button — look up the linked user and run the command
+                cb_user = db.query(User).filter(
+                    User.telegram_chat_id == chat_id,
+                    User.telegram_enabled == True
+                ).first()
+
+                if not cb_user:
+                    await telegram_service.send_message(chat_id, "Your Telegram account is not linked.")
+                    return {"ok": True}
+
+                cb_command_service = CommandService(db, user=cb_user)
+                parts = data.split(":")
+                action = parts[1] if len(parts) > 1 else ""
+
+                if action == "cat" and len(parts) >= 3:
+                    # Category browse: t:cat:movies
+                    category = parts[2]
+                    torrents_arg = category
+                elif action == "dl" and len(parts) >= 4:
+                    # Download from browse list: t:dl:movies:3
+                    category = parts[2]
+                    num = parts[3]
+                    torrents_arg = f"download {category} {num}"
+                elif action in ("pause", "resume", "rm") and len(parts) >= 3:
+                    # Manage active torrent: t:pause:2
+                    num = parts[2]
+                    torrents_arg = f"{action} {num}"
+                elif action == "list":
+                    torrents_arg = "list"
+                elif action == "search_hint":
+                    await telegram_service.send_message(
+                        chat_id,
+                        "Send `torrents search <query>` to search, e.g.:\n`torrents search dark knight`"
+                    )
+                    return {"ok": True}
+                else:
+                    return {"ok": True}
+
+                try:
+                    cb_result = await cb_command_service.execute_command("torrents", torrents_arg)
+                    cb_content = cb_result.get("content", "")
+
+                    # Build keyboard for the result.
+                    # pause/resume/rm return an updated list — treat them as "list" for keyboard.
+                    cb_arg_parts = torrents_arg.strip().split()
+                    cb_arg_sub = cb_arg_parts[0].lower() if cb_arg_parts else ""
+                    if cb_arg_sub in ("pause", "resume", "rm"):
+                        cb_arg_sub = "list"
+                    cb_reply_markup = _build_torrent_keyboard(cb_arg_sub, cb_content, cb_user.id)
+
+                    # Clean cmd:/magnet: links before sending
+                    cb_content = _strip_cmd_links(cb_content)
+                    await telegram_service.send_message(chat_id, cb_content, reply_markup=cb_reply_markup)
+                except Exception as cb_err:
+                    logger.error(f"Torrent callback error: {cb_err}", exc_info=True)
+                    await telegram_service.send_message(chat_id, f"Error: {cb_err}")
+
             return {"ok": True}
         
         return {"ok": True}

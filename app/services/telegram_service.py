@@ -15,19 +15,21 @@ class TelegramService:
     def set_token(self, token: str):
         self.bot_token = token
     
-    async def send_message(self, chat_id: str, text: str, parse_mode: str = "Markdown") -> dict:
+    async def send_message(self, chat_id: str, text: str, parse_mode: str = "Markdown", reply_markup: dict = None) -> dict:
         """Send a message to a Telegram chat."""
         if not self.bot_token:
             logger.warning("Telegram bot token not configured")
             return {"ok": False, "error": "Bot token not configured"}
-        
+
         url = f"{self.api_base}{self.bot_token}/sendMessage"
         payload = {
             "chat_id": chat_id,
             "text": text,
             "parse_mode": parse_mode
         }
-        
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(url, json=payload)
@@ -42,6 +44,8 @@ class TelegramService:
                             "text": text
                             # No parse_mode = plain text
                         }
+                        if reply_markup:
+                            payload_plain["reply_markup"] = reply_markup
                         response = await client.post(url, json=payload_plain)
                         result = response.json()
                         if not result.get("ok"):
