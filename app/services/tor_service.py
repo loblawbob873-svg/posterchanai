@@ -252,14 +252,15 @@ AvoidDiskWrites 1
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(10)
             sock.connect(('127.0.0.1', self.control_port))
-            if self._authenticate(sock):
-                sock.send(b'SIGNAL NEWNYM\r\n')
-                response = sock.recv(1024)
+            try:
+                if self._authenticate(sock):
+                    sock.send(b'SIGNAL NEWNYM\r\n')
+                    response = sock.recv(1024)
+                    if b'250' in response:
+                        logger.info("[TOR] New identity")
+                        return True
+            finally:
                 sock.close()
-                if b'250' in response:
-                    logger.info("[TOR] New identity")
-                    return True
-            sock.close()
         except Exception as e:
             logger.error(f"[TOR] New identity failed: {e}")
         return False
