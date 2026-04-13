@@ -406,33 +406,41 @@ async def _handle_telegram_update(update: dict, db: Session):
                 else:
                     # Regular chat - use the chat service
                     from app.models import Conversation, Message
-                    
-                    # Build messages for the LLM - no DB conversation needed for Telegram
-                    # History is managed within the Telegram chat itself
-                    messages = [
-                        {"role": "system", "content": chat_service.system_prompt},
-                    ]
-                    
-                    last_role = "system"
-                    
-                    # Add recent message history from the Telegram conversation (limited, truncated)
-                    conversation = db.query(Conversation).filter(
-                        Conversation.user_id == user_obj.id,
-                        Conversation.title == "📱 Telegram"
-                    ).order_by(Conversation.updated_at.desc()).first()
-                    
-                    if conversation:
-                        recent_messages = db.query(Message).filter(
-                            Message.conversation_id == conversation.id
-                        ).order_by(Message.id.desc()).limit(20).all()
-                        
-                        HISTORY_CHAR_LIMIT = 500
-                        for msg in reversed(recent_messages):
-                            if msg.role == last_role:
-                                continue
-                            content = msg.content[:HISTORY_CHAR_LIMIT] if len(msg.content) > HISTORY_CHAR_LIMIT else msg.content
-                            messages.append({"role": msg.role, "content": content})
-                            last_role = msg.role
+
+                    # For bare URLs use a clean summarization context — no history, focused system prompt.
+                    # History causes Mistral to pattern-match on previous responses and return garbage.
+                    if is_bare_url:
+                        messages = [
+                            {"role": "system", "content": "You are a concise summarizer. When given article content, write a single short paragraph summarizing the key points. Output only the summary, nothing else."},
+                        ]
+                        last_role = "system"
+                    else:
+                        # Build messages for the LLM - no DB conversation needed for Telegram
+                        # History is managed within the Telegram chat itself
+                        messages = [
+                            {"role": "system", "content": chat_service.system_prompt},
+                        ]
+
+                        last_role = "system"
+
+                        # Add recent message history from the Telegram conversation (limited, truncated)
+                        conversation = db.query(Conversation).filter(
+                            Conversation.user_id == user_obj.id,
+                            Conversation.title == "📱 Telegram"
+                        ).order_by(Conversation.updated_at.desc()).first()
+
+                        if conversation:
+                            recent_messages = db.query(Message).filter(
+                                Message.conversation_id == conversation.id
+                            ).order_by(Message.id.desc()).limit(20).all()
+
+                            HISTORY_CHAR_LIMIT = 500
+                            for msg in reversed(recent_messages):
+                                if msg.role == last_role:
+                                    continue
+                                content = msg.content[:HISTORY_CHAR_LIMIT] if len(msg.content) > HISTORY_CHAR_LIMIT else msg.content
+                                messages.append({"role": msg.role, "content": content})
+                                last_role = msg.role
                     
                     # If there are image attachments, add them to the message for vision models
                     if has_images and attachments:
