@@ -1091,13 +1091,9 @@ Files are saved to your Storage.""",
                 logger.error(f"Torrent search timed out for query: {query}")
                 return {"type": "text", "content": f"Search timed out. The torrent site may be slow or unavailable."}
             except ValueError as e:
-                # Proxy requirement error
-                if "proxy" in str(e).lower():
-                    return {
-                        "type": "text",
-                        "content": f"{str(e)}\n\nConfigure proxy in Admin → Site Settings → BitTorrent Client → HTTP Proxy Host"
-                    }
-                raise
+                msg = str(e)
+                suffix = "\n\nConfigure proxy in Admin → Site Settings → BitTorrent Client → HTTP Proxy Host" if "requires http proxy" in msg.lower() else ""
+                return {"type": "text", "content": f"{msg}{suffix}"}
             except Exception as e:
                 logger.error(f"Torrent search error: {e}")
                 return {"type": "text", "content": f"Error searching torrents: {str(e)}"}
@@ -1114,13 +1110,9 @@ Files are saved to your Storage.""",
                 formatted = format_all_categories(all_results)
                 return {"type": "text", "content": formatted}
             except ValueError as e:
-                # Proxy requirement error
-                if "proxy" in str(e).lower():
-                    return {
-                        "type": "text",
-                        "content": f"{str(e)}\n\nConfigure proxy in Admin → Site Settings → BitTorrent Client → HTTP Proxy Host"
-                    }
-                raise
+                msg = str(e)
+                suffix = "\n\nConfigure proxy in Admin → Site Settings → BitTorrent Client → HTTP Proxy Host" if "requires http proxy" in msg.lower() else ""
+                return {"type": "text", "content": f"{msg}{suffix}"}
             except Exception as e:
                 logger.error(f"Torrents command error: {e}")
                 return {"type": "text", "content": f"Error fetching torrents: {str(e)}"}
@@ -1151,13 +1143,11 @@ Files are saved to your Storage.""",
             formatted = format_torrent_results(results, category)
             return {"type": "text", "content": formatted}
 
+        except ValueError as e:
+            msg = str(e)
+            suffix = "\n\nConfigure proxy in Admin → Site Settings → BitTorrent Client → HTTP Proxy Host" if "requires http proxy" in msg.lower() else ""
+            return {"type": "text", "content": f"{msg}{suffix}"}
         except Exception as e:
-            if isinstance(e, ValueError) and "proxy" in str(e).lower():
-                # Proxy requirement error
-                return {
-                    "type": "text",
-                    "content": f"{str(e)}\n\nConfigure proxy in Admin → Site Settings → BitTorrent Client → HTTP Proxy Host"
-                }
             logger.error(f"Torrents command error: {e}")
             return {"type": "text", "content": f"Error fetching torrents: {str(e)}"}
 

@@ -91,17 +91,27 @@ async def scrape_torrents(db: Session, category: str = "movies", limit: int = 15
 
             soup = BeautifulSoup(response.text, "lxml")
 
+            # Detect Cloudflare/bot-protection pages
+            page_title = soup.title.string if soup.title else ""
+            if any(x in page_title.lower() for x in ("cloudflare", "just a moment", "ddos", "access denied")):
+                logger.warning(f"Torrent site returned bot-protection page: {page_title}")
+                raise ValueError(f"Torrent site is blocked by bot protection ({page_title}). Try a different torrent_site_url in Admin Settings.")
+
             # Find the section header for this category
             section_header = soup.find("h3", id=section_id)
             if not section_header:
-                logger.warning(f"Could not find section: {section_id}")
-                return []
+                # Log available h3 IDs to help diagnose site structure changes
+                h3_ids = [h.get("id") for h in soup.find_all("h3") if h.get("id")]
+                logger.warning(f"Could not find section '{section_id}'. Available h3 ids: {h3_ids}")
+                if h3_ids:
+                    raise ValueError(f"Section '{section_id}' not found on torrent site. Site may have changed structure. Available sections: {h3_ids}")
+                raise ValueError(f"No category sections found on torrent site ({base_url}). Site structure may have changed or the page returned invalid content.")
 
             # Find the parent panel containing the torrents
             panel = section_header.find_parent("div", class_="panel")
             if not panel:
                 logger.warning(f"Could not find panel for section: {section_id}")
-                return []
+                raise ValueError(f"Could not find torrent listing panel for section '{section_id}'. Site structure may have changed.")
 
             # Find all torrent rows within this panel
             torrent_rows = panel.find_all("div", class_="tgxtablerow")
@@ -174,17 +184,17 @@ async def scrape_torrents(db: Session, category: str = "movies", limit: int = 15
                     continue
 
     except httpx.HTTPStatusError as e:
-        logger.error(f"HTTP error scraping torrent site: {e.response.status_code}")
-        raise ValueError(f"HTTP error {e.response.status_code} accessing torrent site. Check proxy configuration.")
+        logger.error(f"HTTP error scraping torrent site: {e.response.status_code} from {base_url}")
+        raise ValueError(f"Torrent site returned HTTP {e.response.status_code}. The site may be down or blocking requests. Try a different torrent_site_url in Admin Settings.")
     except httpx.RequestError as e:
-        logger.error(f"Request error scraping torrent site: {e}")
-        raise ValueError(f"Failed to connect to torrent site. Check proxy configuration: {str(e)}")
+        logger.error(f"Request error scraping torrent site via {proxy_config}: {e}")
+        raise ValueError(f"Could not reach torrent site via proxy ({proxy_config}): {str(e)}\n\nCheck that the proxy is running and accessible.")
     except ValueError:
-        # Re-raise proxy requirement errors
+        # Re-raise descriptive errors from above
         raise
     except Exception as e:
         logger.error(f"Error scraping torrent site: {e}", exc_info=True)
-        raise ValueError(f"Error accessing torrent site: {str(e)}")
+        raise ValueError(f"Error scraping torrent site: {str(e)}")
 
     return results[:limit]
 
@@ -388,17 +398,17 @@ async def search_torrents(db: Session, query: str, limit: int = 15) -> list[Torr
                     continue
 
     except httpx.HTTPStatusError as e:
-        logger.error(f"HTTP error searching torrents: {e.response.status_code}")
-        raise ValueError(f"HTTP error {e.response.status_code} accessing torrent site. Check proxy configuration.")
+        logger.error(f"HTTP error searching torrents: {e.response.status_code} from {search_url}")
+        raise ValueError(f"Torrent site returned HTTP {e.response.status_code}. The site may be down or blocking requests.")
     except httpx.RequestError as e:
-        logger.error(f"Request error searching torrents: {e}")
-        raise ValueError(f"Failed to connect to torrent site. Check proxy configuration: {str(e)}")
+        logger.error(f"Request error searching torrents via {proxy_config}: {e}")
+        raise ValueError(f"Could not reach torrent site via proxy ({proxy_config}): {str(e)}\n\nCheck that the proxy is running and accessible.")
     except ValueError:
-        # Re-raise proxy requirement errors
+        # Re-raise descriptive errors from above
         raise
     except Exception as e:
         logger.error(f"Error searching torrents: {e}", exc_info=True)
-        raise ValueError(f"Error accessing torrent site: {str(e)}")
+        raise ValueError(f"Error searching torrents: {str(e)}")
 
     return results[:limit]
 
