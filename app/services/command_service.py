@@ -1126,7 +1126,7 @@ Files are saved to your Storage.""",
             }
 
         try:
-            results = await scrape_torrents(self.db, category, limit=15)
+            results = await scrape_torrents(self.db, category, limit=10)
 
             if not results:
                 return {

@@ -52,6 +52,13 @@ def _build_torrent_keyboard(arg_sub: str, content: str, user_id: int) -> Optiona
                 row = []
         if row:
             buttons.append(row)
+        # Back to category nav
+        buttons.append([
+            {"text": "🎬 Movies", "callback_data": "t:cat:movies"},
+            {"text": "📺 TV", "callback_data": "t:cat:tv"},
+            {"text": "🎵 Music", "callback_data": "t:cat:music"},
+            {"text": "🎌 Anime", "callback_data": "t:cat:anime"},
+        ])
         return {"inline_keyboard": buttons} if buttons else None
 
     elif arg_sub in ("search", "s"):
@@ -67,6 +74,32 @@ def _build_torrent_keyboard(arg_sub: str, content: str, user_id: int) -> Optiona
                 row = []
         if row:
             buttons.append(row)
+        buttons.append([
+            {"text": "🎬 Movies", "callback_data": "t:cat:movies"},
+            {"text": "📺 TV", "callback_data": "t:cat:tv"},
+            {"text": "🎵 Music", "callback_data": "t:cat:music"},
+            {"text": "🎌 Anime", "callback_data": "t:cat:anime"},
+        ])
+        return {"inline_keyboard": buttons} if buttons else None
+
+    elif arg_sub == "nyaa":
+        from app.services.command_service import _nyaa_cache
+        cached = _nyaa_cache.get(user_id, [])
+        if not cached:
+            return None
+        buttons = []
+        row = []
+        for i in range(1, min(len(cached) + 1, 11)):  # max 10 buttons
+            row.append({"text": f"📥 {i}", "callback_data": f"n:dl:{i}"})
+            if len(row) == 5:
+                buttons.append(row)
+                row = []
+        if row:
+            buttons.append(row)
+        buttons.append([
+            {"text": "🔎 New Nyaa Search", "callback_data": "n:search_hint:0"},
+            {"text": "📋 Active Downloads", "callback_data": "t:list:0"},
+        ])
         return {"inline_keyboard": buttons} if buttons else None
 
     elif arg_sub in ("list", "ls"):
@@ -106,6 +139,9 @@ def _torrent_nav_keyboard() -> dict:
             ],
             [
                 {"text": "🔍 Search…", "callback_data": "t:search_hint:0"},
+                {"text": "🔎 Nyaa Search", "callback_data": "n:search_hint:0"},
+            ],
+            [
                 {"text": "📋 Active Downloads", "callback_data": "t:list:0"},
             ],
         ]
@@ -252,7 +288,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["geni", "mail", "news", "search", "yt", "torrents", "logs", "translate", "post"]
+            commands = ["geni", "mail", "news", "search", "yt", "torrents", "nyaa", "logs", "translate", "post"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -413,7 +449,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["geni", "mail", "news", "search", "yt", "torrents", "logs", "translate", "post"]
+            commands = ["geni", "mail", "news", "search", "yt", "torrents", "nyaa", "logs", "translate", "post"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -587,6 +623,12 @@ async def _handle_telegram_update(update: dict, db: Session):
                             reply_markup = _build_torrent_keyboard(arg_sub, content, user_id)
                             # Clean non-functional links from torrent result text
                             result["content"] = _strip_cmd_links(content)
+                    elif command == "nyaa":
+                        result = await command_service.execute_command(command, arg)
+                        content = result.get("content", "")
+                        user_id = user_obj.id if user_obj else 0
+                        reply_markup = _build_torrent_keyboard("nyaa", content, user_id)
+                        result["content"] = _strip_cmd_links(content)
                     else:
                         # Pass attachments to any command that supports them
                         if attachments:
@@ -996,8 +1038,47 @@ async def _handle_telegram_update(update: dict, db: Session):
                     logger.error(f"Torrent callback error: {cb_err}", exc_info=True)
                     await telegram_service.send_message(chat_id, f"Error: {cb_err}")
 
+            elif data.startswith("n:"):
+                # Nyaa inline button
+                cb_user = db.query(User).filter(
+                    User.telegram_chat_id == chat_id,
+                    User.telegram_enabled == True
+                ).first()
+
+                if not cb_user:
+                    await telegram_service.send_message(chat_id, "Your Telegram account is not linked.")
+                    return {"ok": True}
+
+                parts = data.split(":")
+                action = parts[1] if len(parts) > 1 else ""
+
+                if action == "search_hint":
+                    await telegram_service.send_message(
+                        chat_id,
+                        "Send `nyaa <query>` to search anime, e.g.:\n`nyaa one piece 1080p`"
+                    )
+                    return {"ok": True}
+
+                if action == "dl" and len(parts) >= 3:
+                    nyaa_arg = f"download {parts[2]}"
+                else:
+                    return {"ok": True}
+
+                try:
+                    cb_command_service = CommandService(db, user=cb_user)
+                    cb_result = await cb_command_service.execute_command("nyaa", nyaa_arg)
+                    cb_content = _strip_cmd_links(cb_result.get("content", ""))
+                    cb_reply_markup = {"inline_keyboard": [[
+                        {"text": "🔎 New Nyaa Search", "callback_data": "n:search_hint:0"},
+                        {"text": "📋 Active Downloads", "callback_data": "t:list:0"},
+                    ]]}
+                    await telegram_service.send_message(chat_id, cb_content, reply_markup=cb_reply_markup)
+                except Exception as cb_err:
+                    logger.error(f"Nyaa callback error: {cb_err}", exc_info=True)
+                    await telegram_service.send_message(chat_id, f"Error: {cb_err}")
+
             return {"ok": True}
-        
+
         return {"ok": True}
     
     except Exception as e:
