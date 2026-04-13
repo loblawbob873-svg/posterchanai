@@ -434,6 +434,76 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     from app.services.chat_service import ChatService
     messages = ChatService._ensure_alternating_roles(messages)
 
+    # Fetch URL content from the last user message and inject it so the LLM can summarize.
+    # Only do this on the originating server (not on load-balanced hops).
+    if not skip_load_balancer:
+        try:
+            import asyncio as _asyncio
+            import re as _re
+            from app.services.search_service import SearchService as _SS
+
+            # Find the last user message
+            _last_user_idx = None
+            for _i in range(len(messages) - 1, -1, -1):
+                if messages[_i].get("role") == "user":
+                    _last_user_idx = _i
+                    break
+
+            if _last_user_idx is not None:
+                _user_content = messages[_last_user_idx].get("content", "")
+                if isinstance(_user_content, str):
+                    _urls = _SS.extract_urls(_user_content)
+                    # Deduplicate (www.x.com == x.com)
+                    if _urls:
+                        def _ukey(u):
+                            return _re.sub(r'^https?://(www\.)?', '', u.lower().rstrip('/'))
+                        _seen, _deduped = set(), []
+                        for _u in _urls:
+                            _k = _ukey(_u)
+                            if _k not in _seen:
+                                _seen.add(_k)
+                                _deduped.append(_u)
+                        _urls = _deduped
+
+                    if _urls:
+                        logger.info(f"[OPENAI-API] Fetching URLs for LLM context: {_urls}")
+                        try:
+                            from app.database import SessionLocal as _SL
+                            _tmp_db = _SL()
+                            _ss = _SS(_tmp_db)
+                            _fetched = await _asyncio.wait_for(
+                                _ss.fetch_urls(_urls, max_urls=3), timeout=15
+                            )
+                            _tmp_db.close()
+                        except Exception:
+                            _fetched = []
+
+                        _url_context = ""
+                        MAX_CHARS = 2000
+                        for _r in _fetched:
+                            if _r.get("content") and not _r.get("error"):
+                                _c = _r["content"][:MAX_CHARS]
+                                _url_context += f"\n\n---\nContent from {_r['url']}:\nTitle: {_r['title']}\n\n{_c}\n---"
+                            elif _r.get("error"):
+                                logger.warning(f"[OPENAI-API] Failed to fetch {_r['url']}: {_r['error']}")
+
+                        if _url_context:
+                            # Detect if the message is ONLY a URL (bare URL = summarize it)
+                            _text_without_urls = _user_content
+                            for _u in _urls:
+                                _text_without_urls = _text_without_urls.replace(_u, '').strip()
+                            _is_bare_url = not _text_without_urls
+
+                            if _is_bare_url:
+                                injected = _url_context + "\n\nWrite a single concise paragraph summarizing the above. Output ONLY the summary paragraph, then STOP."
+                            else:
+                                injected = f"\n\n[Web content fetched from URLs in message:]{_url_context}"
+
+                            messages[_last_user_idx]["content"] = _user_content + injected
+                            logger.info(f"[OPENAI-API] Injected {len(_url_context)} chars of URL context")
+        except Exception as _url_err:
+            logger.warning(f"[OPENAI-API] URL fetch failed, continuing without context: {_url_err}")
+
     # Build kwargs
     temperature = request.temperature if request.temperature is not None else float(settings.get("ollama_temperature", "0.7"))
     top_p = request.top_p if request.top_p is not None else float(settings.get("ollama_top_p", "0.9"))
