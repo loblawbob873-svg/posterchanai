@@ -1214,4 +1214,88 @@ async def run_logs_scheduler(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/proxy-test")
+async def test_proxy_chain(
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """Test each step of the proxy chain and report exactly where it fails."""
+    import asyncio
+    import socket
+    import httpx
+    from app.models import Setting
+
+    def get_setting(key, default=""):
+        s = db.query(Setting).filter(Setting.key == key).first()
+        return s.value if s and s.value else default
+
+    results = {}
+
+    # Step 1: Read configured values
+    bt_proxy_host = get_setting("bt_proxy_host")
+    bt_proxy_port = get_setting("bt_proxy_port", "8118")
+    proxy_socks_host = get_setting("proxy_socks_host")
+    proxy_socks_port = get_setting("proxy_socks_port", "9052")
+    torrent_site_url = get_setting("torrent_site_url", "https://torrentgalaxy.one")
+
+    results["config"] = {
+        "bt_proxy_host": bt_proxy_host or "(not set)",
+        "bt_proxy_port": bt_proxy_port,
+        "proxy_socks_host": proxy_socks_host or "(not set)",
+        "proxy_socks_port": proxy_socks_port,
+        "torrent_site_url": torrent_site_url,
+    }
+
+    # Step 2: TCP connection to HTTP proxy
+    if bt_proxy_host:
+        try:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                lambda: socket.create_connection((bt_proxy_host, int(bt_proxy_port)), timeout=5)
+            )
+            results["http_proxy_tcp"] = {"ok": True, "msg": f"TCP connect to {bt_proxy_host}:{bt_proxy_port} succeeded"}
+        except Exception as e:
+            results["http_proxy_tcp"] = {"ok": False, "msg": f"TCP connect to {bt_proxy_host}:{bt_proxy_port} FAILED: {e}"}
+    else:
+        results["http_proxy_tcp"] = {"ok": False, "msg": "bt_proxy_host not configured"}
+
+    # Step 3: TCP connection to SOCKS5 (Tor)
+    if proxy_socks_host:
+        try:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                lambda: socket.create_connection((proxy_socks_host, int(proxy_socks_port)), timeout=5)
+            )
+            results["socks5_tcp"] = {"ok": True, "msg": f"TCP connect to SOCKS5 {proxy_socks_host}:{proxy_socks_port} succeeded"}
+        except Exception as e:
+            results["socks5_tcp"] = {"ok": False, "msg": f"TCP connect to SOCKS5 {proxy_socks_host}:{proxy_socks_port} FAILED: {e}"}
+    else:
+        results["socks5_tcp"] = {"ok": False, "msg": "proxy_socks_host not configured — HTTP proxy has no SOCKS5 target"}
+
+    # Step 4: HTTP request through full proxy chain
+    if bt_proxy_host:
+        proxy_url = f"http://{bt_proxy_host}:{bt_proxy_port}"
+        try:
+            async with httpx.AsyncClient(proxy=proxy_url, timeout=15) as client:
+                resp = await client.get("https://check.torproject.org/api/ip")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    results["proxy_chain"] = {
+                        "ok": True,
+                        "msg": f"Request succeeded via proxy",
+                        "tor": data.get("IsTor", False),
+                        "ip": data.get("IP", "unknown"),
+                    }
+                else:
+                    results["proxy_chain"] = {"ok": False, "msg": f"HTTP {resp.status_code} from test URL"}
+        except Exception as e:
+            results["proxy_chain"] = {"ok": False, "msg": f"Request through proxy FAILED: {e}"}
+    else:
+        results["proxy_chain"] = {"ok": False, "msg": "bt_proxy_host not configured"}
+
+    return results
+
+
 # WebDAV sync config endpoints removed
