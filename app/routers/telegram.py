@@ -521,11 +521,20 @@ async def _handle_telegram_update(update: dict, db: Session):
                         else:
                             messages.append({"role": "user", "content": text})
                     
-                    # Detect and fetch URLs in user message (like web UI does)
+                    # If the user replied to a message, inject that context so the model
+                    # knows what content/URL to reference (e.g. "make a post with this URL").
+                    if reply_text:
+                        reply_prefix = f"[Replying to: {reply_text}]\n\n"
+                        if isinstance(messages[-1]["content"], list):
+                            messages[-1]["content"].append({"type": "text", "text": reply_prefix})
+                        else:
+                            messages[-1]["content"] = reply_prefix + messages[-1]["content"]
+
+                    # Detect and fetch URLs in user message and reply context (like web UI does)
                     from app.services.search_service import SearchService
                     search_service = SearchService(db)
                     url_context = ""
-                    urls = SearchService.extract_urls(text)
+                    urls = SearchService.extract_urls(text + " " + reply_text)
 
                     # Deduplicate URLs: www.example.com and example.com are the same article.
                     # Normalize by stripping scheme + www prefix for comparison.
