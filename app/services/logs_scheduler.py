@@ -287,12 +287,18 @@ def get_or_create_logs_chat(db: Session, user_id: int) -> Conversation:
     return logs_chat
 
 
+MAX_LOG_DATA_CHARS = 6000
+
 async def generate_log_summary(db: Session, user: User, log_data: str) -> str:
     """Use AI to summarize the collected logs."""
     hostname = socket.gethostname()
 
     # Clean up the log data — only strip curly quotes/backticks that can confuse shell
     clean_data = log_data.replace("\u2018", "'").replace("\u2019", "'").replace("\u201c", '"').replace("\u201d", '"')
+
+    # Truncate to avoid inference timeouts when many hosts report large logs
+    if len(clean_data) > MAX_LOG_DATA_CHARS:
+        clean_data = clean_data[:MAX_LOG_DATA_CHARS] + "\n[...truncated]"
 
     messages = [
         {
