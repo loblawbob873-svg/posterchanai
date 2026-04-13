@@ -109,7 +109,7 @@ AvoidDiskWrites 1
         return torrc_path
 
     def start(self) -> bool:
-        """Start the Tor process."""
+        """Start the Tor process. Returns immediately; bootstrap completes in background."""
         if self._running:
             logger.warning("[TOR] Already running")
             return True
@@ -130,19 +130,27 @@ AvoidDiskWrites 1
             )
 
             self._running = True
+            logger.info(f"[TOR] Process started (PID {self._process.pid}) - SOCKS5 will be on {self.listen_host}:{self.socks_port}")
 
-            self._monitor_thread = threading.Thread(target=self._monitor, daemon=True)
+            # Bootstrap check and process monitoring both run in the background
+            self._monitor_thread = threading.Thread(target=self._monitor_and_bootstrap, daemon=True)
             self._monitor_thread.start()
 
-            if self._wait_for_bootstrap():
-                logger.info(f"[TOR] Started and bootstrapped - SOCKS5 on {self.listen_host}:{self.socks_port}")
-            else:
-                logger.warning("[TOR] Bootstrap timed out but process is still running — may complete later")
             return True
 
         except Exception as e:
             logger.error(f"[TOR] Failed to start: {e}")
             return False
+
+    def _monitor_and_bootstrap(self):
+        """Background thread: wait for bootstrap then monitor for crashes."""
+        if self._wait_for_bootstrap():
+            logger.info(f"[TOR] Bootstrapped - SOCKS5 ready on {self.listen_host}:{self.socks_port}")
+        else:
+            logger.warning("[TOR] Bootstrap timed out — Tor may still connect later")
+
+        # Continue monitoring for crashes
+        self._monitor()
 
     def _read_cookie(self) -> Optional[bytes]:
         """Read the control auth cookie file."""
