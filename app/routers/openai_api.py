@@ -488,19 +488,34 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
                                 logger.warning(f"[OPENAI-API] Failed to fetch {_r['url']}: {_r['error']}")
 
                         if _url_context:
-                            # Detect if the message is ONLY a URL (bare URL = summarize it)
+                            # Detect what text the user wrote around the URL(s)
                             _text_without_urls = _user_content
                             for _u in _urls:
                                 _text_without_urls = _text_without_urls.replace(_u, '').strip()
-                            _is_bare_url = not _text_without_urls
 
-                            if _is_bare_url:
-                                injected = _url_context + "\n\nWrite a single concise paragraph summarizing the above. Output ONLY the summary paragraph, then STOP."
+                            # "summarize URL" or bare URL → clean summarization request.
+                            # Replace the user message entirely so the persona system prompt
+                            # doesn't confuse the model ("Sure thing!" / "👋 Goodbye!" etc.)
+                            _summarize_words = {"summarize", "summarise", "summary", "tldr", "tl;dr"}
+                            _is_summarize_req = (
+                                not _text_without_urls or
+                                _text_without_urls.lower().rstrip(".,!?:") in _summarize_words
+                            )
+
+                            if _is_summarize_req:
+                                # Clean message: article content first, then a single clear instruction
+                                messages[_last_user_idx]["content"] = (
+                                    _url_context.strip() +
+                                    "\n\nWrite a single concise paragraph summarizing the above article."
+                                )
                             else:
-                                injected = f"\n\n[Web content fetched from URLs in message:]{_url_context}"
+                                # User has a specific question/task — append the content as reference
+                                messages[_last_user_idx]["content"] = (
+                                    _user_content +
+                                    f"\n\nHere is the content from the URLs mentioned above:{_url_context}"
+                                )
 
-                            messages[_last_user_idx]["content"] = _user_content + injected
-                            logger.info(f"[OPENAI-API] Injected {len(_url_context)} chars of URL context")
+                            logger.info(f"[OPENAI-API] Injected {len(_url_context)} chars of URL context (summarize={_is_summarize_req})")
         except Exception as _url_err:
             logger.warning(f"[OPENAI-API] URL fetch failed, continuing without context: {_url_err}")
 

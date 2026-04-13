@@ -612,9 +612,32 @@ async def _handle_telegram_update(update: dict, db: Session):
                                 content_preview = str(m.get('content', ''))[:100] if not isinstance(m.get('content'), list) else '[vision content]'
                                 logger.error(f"  Message {i}: role={m.get('role')}, content={content_preview}...")
                         result = {"type": "text", "content": f"Sorry, I encountered an error: {error_msg}"}
-                    
-                    # Telegram doesn't save messages to DB - it manages history in the chat itself
-                    # This prevents Telegram messages from appearing in the WebUI
+
+                    # Save user message + bot response to the Telegram conversation so
+                    # follow-up messages ("turn that into a post", "translate it", etc.)
+                    # have the context they need.
+                    try:
+                        tg_conv = db.query(Conversation).filter(
+                            Conversation.user_id == user_obj.id,
+                            Conversation.title == "📱 Telegram"
+                        ).order_by(Conversation.updated_at.desc()).first()
+                        if not tg_conv:
+                            tg_conv = Conversation(user_id=user_obj.id, title="📱 Telegram")
+                            db.add(tg_conv)
+                            db.flush()
+                        # Save the raw user text (not the injected URL content — keep history short)
+                        db.add(Message(conversation_id=tg_conv.id, role="user", content=text))
+                        bot_reply = result.get("content", "")
+                        if bot_reply:
+                            db.add(Message(conversation_id=tg_conv.id, role="assistant", content=bot_reply[:500]))
+                        tg_conv.updated_at = datetime.utcnow()
+                        db.commit()
+                    except Exception as _save_err:
+                        logger.warning(f"Failed to save Telegram history: {_save_err}")
+                        try:
+                            db.rollback()
+                        except Exception:
+                            pass
             
             # Handle the result
             response_type = result.get("type", "text")
