@@ -1029,11 +1029,22 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             HISTORY_CHAR_LIMIT = 500
                             last_role = "system"
 
+                            # Bare URL check: if the message is just a URL, treat it as
+                            # a standalone summarization request — no history, no contamination.
+                            _content_stripped = content.strip() if isinstance(content, str) else ""
+                            _is_bare_url = (
+                                isinstance(content, str) and
+                                _content_stripped.startswith(("http://", "https://")) and
+                                " " not in _content_stripped
+                            )
+
                             # Context-sensitivity heuristic: short messages that don't
                             # reference prior conversation (via pronouns/follow-up words) are
                             # treated as standalone questions. Sending history for these causes
                             # the model to pattern-match on the previous topic (e.g. answering
                             # "2+2=" with "To convert 2+2 to days..."). Skip history in that case.
+                            # Also skip history for bare URLs — they are independent summarization
+                            # requests and history causes the model to produce garbage output.
                             _CONTEXT_REFS = {
                                 "it", "that", "this", "they", "them", "which", "those", "these",
                                 "previous", "last", "above", "said", "also", "more", "again",
@@ -1042,8 +1053,9 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             }
                             _current_words = set(content.lower().split()) if isinstance(content, str) else set()
                             _is_context_dependent = (
-                                bool(_current_words & _CONTEXT_REFS) or
-                                len(content.strip()) > 60
+                                not _is_bare_url and
+                                (bool(_current_words & _CONTEXT_REFS) or
+                                len(content.strip()) > 60)
                             )
 
                             if _is_context_dependent:
@@ -1063,6 +1075,21 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             for url in system_urls:
                                 if url not in urls:
                                     urls.append(url)
+                            # Deduplicate: www.example.com and example.com are the same article.
+                            if urls:
+                                import re as _re
+                                def _url_key(u: str) -> str:
+                                    return _re.sub(r'^https?://(www\.)?', '', u.lower().rstrip('/'))
+                                _seen_keys: set = set()
+                                _deduped: list = []
+                                for u in urls:
+                                    k = _url_key(u)
+                                    if k not in _seen_keys:
+                                        _seen_keys.add(k)
+                                        _deduped.append(u)
+                                if len(_deduped) < len(urls):
+                                    logger.info(f"Deduplicated URLs {urls} -> {_deduped}")
+                                urls = _deduped
                             if urls:
                                 logger.info(f"Detected URLs in message: {urls}")
                                 try:
@@ -1156,13 +1183,18 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                                     messages.append({"role": "user", "content": file_msg})
                             elif url_context:
                                 logger.info(f"Adding {len(url_context)} chars of URL context to message")
+                                if _is_bare_url:
+                                    # Bare URL: instruction goes AFTER content; explicit anti-loop stop.
+                                    user_msg_text = url_context + "\n\nWrite a single concise paragraph summarizing the above. Output ONLY the summary paragraph, then STOP."
+                                else:
+                                    user_msg_text = f"{content}\n\n[The following web content was fetched from URLs mentioned in the user's message:]{url_context}"
                                 # If last_role is user, merge with last message instead of creating duplicate
                                 if last_role == "user":
-                                    messages[-1]["content"] += f"\n\n[The following web content was fetched from URLs mentioned in the user's message:]{url_context}"
+                                    messages[-1]["content"] += f"\n\n{user_msg_text}"
                                 else:
                                     messages.append({
                                         "role": "user",
-                                        "content": f"{content}\n\n[The following web content was fetched from URLs mentioned in the user's message:]{url_context}"
+                                        "content": user_msg_text
                                     })
                             else:
                                 # If last_role is user, merge with last message instead of creating duplicate
