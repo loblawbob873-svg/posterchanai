@@ -384,7 +384,14 @@ async def _handle_telegram_update(update: dict, db: Session):
                 # Regular chat - check for images and do OCR or pass to vision model
                 from app.services.intent_service import IntentService
                 intent_service = IntentService(db, user=user_obj)
-                intent = await intent_service.detect_intent(text)
+                # Skip intent detection for bare URLs — they are never commands and the
+                # LLM always fails or returns garbage for URL-only input.
+                text_stripped = text.strip()
+                is_bare_url = (
+                    text_stripped.startswith(("http://", "https://")) and
+                    " " not in text_stripped
+                )
+                intent = None if is_bare_url else await intent_service.detect_intent(text)
                 # intent["command"] is the full command string (e.g. "geni a sunset")
                 # parse it to split command name from arguments
                 intent_command_str = intent.get("command", "") if intent else ""
@@ -481,7 +488,24 @@ async def _handle_telegram_update(update: dict, db: Session):
                     search_service = SearchService(db)
                     url_context = ""
                     urls = SearchService.extract_urls(text)
-                    
+
+                    # Deduplicate URLs: www.example.com and example.com are the same article.
+                    # Normalize by stripping scheme + www prefix for comparison.
+                    if urls:
+                        def _url_key(u: str) -> str:
+                            import re as _re
+                            return _re.sub(r'^https?://(www\.)?', '', u.lower().rstrip('/'))
+                        seen_keys: set = set()
+                        deduped: list = []
+                        for u in urls:
+                            k = _url_key(u)
+                            if k not in seen_keys:
+                                seen_keys.add(k)
+                                deduped.append(u)
+                        if len(deduped) < len(urls):
+                            logger.info(f"Telegram: Deduplicated URLs {urls} -> {deduped}")
+                        urls = deduped
+
                     # Check if message is ONLY a URL (no other text) - summarize it
                     is_only_url = False
                     if urls and len(text.strip()) < 500:
@@ -490,7 +514,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                         for url in urls:
                             text_without_urls = text_without_urls.replace(url, '').strip()
                         is_only_url = not text_without_urls
-                    
+
                     if urls:
                         logger.info(f"Telegram: Detected URLs in message: {urls}")
                         MAX_URL_CONTENT_CHARS = 2000  # Truncation only — no content cleaning

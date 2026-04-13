@@ -553,6 +553,14 @@ class LlamaService:
         else:
             filtered.insert(0, {"role": "user", "content": system_content + "\n\nRespond helpfully."})
 
+        # For multi-turn conversations, Mistral has no system role in later turns.
+        # Prepend a one-line reminder to each subsequent user turn so the model
+        # doesn't drift into answering based on the prior conversation's topic.
+        if len(filtered) > 1:
+            for msg in filtered[1:]:
+                if msg.get("role") == "user":
+                    msg["content"] = "[Follow your instructions. Answer the current question.]\n\n" + msg.get("content", "")
+
         return filtered
 
     def _format_mistral_template(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
