@@ -166,7 +166,9 @@ async def _handle_telegram_update(update: dict, db: Session):
             # "post" can appear anywhere in a short reply message (e.g. "send post", "make a post")
             if command is None and reply_to and len(text_lower.split()) <= 5 and "post" in text_lower:
                 command = "post"
-                arg = text_lower.replace("post", "").strip() or ""
+                # Only use words AFTER "post" as tone modifier (e.g. "post professional" → "professional")
+                parts = text_lower.split("post", 1)
+                arg = parts[1].strip() if len(parts) > 1 else ""
             
             # If it's a reply and translate command, handle it
             if reply_text and command == "translate":
@@ -237,6 +239,9 @@ async def _handle_telegram_update(update: dict, db: Session):
                         fetched = await _asyncio.wait_for(_ss.fetch_urls([url_to_append], max_urls=1), timeout=15)
                         if fetched and fetched[0].get("content") and not fetched[0].get("error"):
                             article_context = f"Title: {fetched[0].get('title', '')}\n\n{fetched[0]['content'][:3000]}"
+                            logger.info(f"post command: fetched article, {len(article_context)} chars")
+                        else:
+                            logger.warning(f"post command: fetch failed or empty: {fetched[0].get('error') if fetched else 'no result'}")
                     except Exception as _fe:
                         logger.warning(f"post command: failed to fetch URL: {_fe}")
 
