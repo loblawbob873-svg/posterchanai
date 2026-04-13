@@ -92,22 +92,24 @@ def _build_torrent_keyboard(arg_sub: str, content: str, user_id: int) -> Optiona
     return None
 
 
-_TORRENT_NAV_KEYBOARD = {
-    "inline_keyboard": [
-        [
-            {"text": "🎬 Movies", "callback_data": "t:cat:movies"},
-            {"text": "📺 TV", "callback_data": "t:cat:tv"},
-        ],
-        [
-            {"text": "🎵 Music", "callback_data": "t:cat:music"},
-            {"text": "🎌 Anime", "callback_data": "t:cat:anime"},
-        ],
-        [
-            {"text": "🔍 Search…", "callback_data": "t:search_hint:0"},
-            {"text": "📋 Active Downloads", "callback_data": "t:list:0"},
-        ],
-    ]
-}
+def _torrent_nav_keyboard() -> dict:
+    """Return a fresh category navigation keyboard dict."""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "🎬 Movies", "callback_data": "t:cat:movies"},
+                {"text": "📺 TV", "callback_data": "t:cat:tv"},
+            ],
+            [
+                {"text": "🎵 Music", "callback_data": "t:cat:music"},
+                {"text": "🎌 Anime", "callback_data": "t:cat:anime"},
+            ],
+            [
+                {"text": "🔍 Search…", "callback_data": "t:search_hint:0"},
+                {"text": "📋 Active Downloads", "callback_data": "t:list:0"},
+            ],
+        ]
+    }
 
 router = APIRouter(prefix="/api/telegram", tags=["telegram"])
 
@@ -574,7 +576,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                         if not arg_sub:
                             # Show category navigation menu without scraping all categories
                             result = {"type": "text", "content": "🧲 **Torrents** — choose a category:"}
-                            reply_markup = _TORRENT_NAV_KEYBOARD
+                            reply_markup = _torrent_nav_keyboard()
                         else:
                             if attachments:
                                 result = await command_service.execute_command(command, arg, attachments=attachments)
@@ -895,7 +897,6 @@ async def _handle_telegram_update(update: dict, db: Session):
             
             # Clean response content - remove template artifacts
             if response_content:
-                import re
                 # Remove template tokens
                 for pattern in [r'\[INST\]', r'\[/INST\]', r'INST\]', r'<\|im_end\|>', r'<\|im_start\|>']:
                     response_content = re.sub(pattern, '', response_content, flags=re.IGNORECASE)
@@ -977,11 +978,16 @@ async def _handle_telegram_update(update: dict, db: Session):
 
                     # Build keyboard for the result.
                     # pause/resume/rm return an updated list — treat them as "list" for keyboard.
+                    # download confirmation gets a shortcut to the active list.
                     cb_arg_parts = torrents_arg.strip().split()
                     cb_arg_sub = cb_arg_parts[0].lower() if cb_arg_parts else ""
                     if cb_arg_sub in ("pause", "resume", "rm"):
                         cb_arg_sub = "list"
                     cb_reply_markup = _build_torrent_keyboard(cb_arg_sub, cb_content, cb_user.id)
+                    if cb_arg_sub in ("download", "dl", "get") and cb_reply_markup is None:
+                        cb_reply_markup = {"inline_keyboard": [[
+                            {"text": "📋 Active Downloads", "callback_data": "t:list:0"}
+                        ]]}
 
                     # Clean cmd:/magnet: links before sending
                     cb_content = _strip_cmd_links(cb_content)
