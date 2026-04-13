@@ -1236,11 +1236,9 @@ Files are saved to your Storage.""",
             return {"type": "text", "content": formatted}
 
         except ValueError as e:
-            # Proxy requirement error
-            return {
-                "type": "text",
-                "content": f"{str(e)}\n\nConfigure proxy in Admin → Site Settings → BitTorrent Client → HTTP Proxy Host"
-            }
+            msg = str(e)
+            suffix = "\n\nConfigure proxy in Admin → Site Settings → BitTorrent Client → HTTP Proxy Host" if "requires http proxy" in msg.lower() else ""
+            return {"type": "text", "content": f"{msg}{suffix}"}
         except Exception as e:
             logger.error(f"Nyaa command error: {e}")
             return {"type": "text", "content": f"Error searching nyaa.si: {str(e)}"}
