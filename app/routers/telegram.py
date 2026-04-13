@@ -434,7 +434,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                                 Message.conversation_id == conversation.id
                             ).order_by(Message.id.desc()).limit(20).all()
 
-                            HISTORY_CHAR_LIMIT = 500
+                            HISTORY_CHAR_LIMIT = 2000  # large enough to hold a full URL summary
                             for msg in reversed(recent_messages):
                                 if msg.role == last_role:
                                     continue
@@ -625,11 +625,14 @@ async def _handle_telegram_update(update: dict, db: Session):
                             tg_conv = Conversation(user_id=user_obj.id, title="📱 Telegram")
                             db.add(tg_conv)
                             db.flush()
-                        # Save the raw user text (not the injected URL content — keep history short)
+                        # Save the raw user text (not the injected URL content — keep history short).
+                        # Save the full bot reply so follow-ups ("turn that into a post") have
+                        # complete context — truncating to 500 chars cut off summaries mid-sentence.
                         db.add(Message(conversation_id=tg_conv.id, role="user", content=text))
                         bot_reply = result.get("content", "")
-                        if bot_reply:
-                            db.add(Message(conversation_id=tg_conv.id, role="assistant", content=bot_reply[:500]))
+                        APOLOGY = "I apologize, I wasn't able to generate a proper response. Please try again."
+                        if bot_reply and bot_reply != APOLOGY:
+                            db.add(Message(conversation_id=tg_conv.id, role="assistant", content=bot_reply))
                         tg_conv.updated_at = datetime.utcnow()
                         db.commit()
                     except Exception as _save_err:
