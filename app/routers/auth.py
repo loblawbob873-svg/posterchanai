@@ -546,11 +546,7 @@ def update_user_settings(
 
         save_user_setting("mail_accounts", json.dumps(new_accounts))
 
-    # Save Telegram settings
-    if settings.telegram_enabled is not None:
-        current_user.telegram_enabled = settings.telegram_enabled
-    if settings.telegram_chat_id is not None:
-        current_user.telegram_chat_id = settings.telegram_chat_id.strip() if settings.telegram_chat_id else None
+    # Save Telegram settings — only notifications; linking/unlinking goes through /api/telegram/*
     if settings.telegram_notifications is not None:
         current_user.telegram_notifications = settings.telegram_notifications
 

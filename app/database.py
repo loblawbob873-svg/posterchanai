@@ -233,8 +233,8 @@ def _run_migrations():
                 "ON users(telegram_chat_id) WHERE telegram_chat_id IS NOT NULL"
             ))
             conn.commit()
-        except Exception:
-            pass  # Index may already exist or DB doesn't support partial indexes
+        except Exception as e:
+            logger.error(f"[MIGRATE] Failed to create unique index on telegram_chat_id: {e}")
 
     # Create proxy_image_cache table if missing (used for image search thumb IDs across workers)
     if not inspector.has_table('proxy_image_cache'):

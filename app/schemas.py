@@ -411,9 +411,7 @@ class UserSettingsUpdate(BaseModel):
     news_sources: Optional[str] = None  # Custom sources, one per line: url|name
     # Mail settings
     mail_accounts: Optional[List[dict]] = None  # List of {email, imap_server, imap_port, smtp_server, smtp_port, password}
-    # Telegram settings
-    telegram_enabled: Optional[bool] = None
-    telegram_chat_id: Optional[str] = None
+    # Telegram settings — linking/unlinking managed via /api/telegram/*, not here
     telegram_notifications: Optional[str] = None
     # Misskey settings
     misskey_enabled: Optional[bool] = None

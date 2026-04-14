@@ -1751,6 +1751,7 @@ async def generate_telegram_key(
     current_user.telegram_key = key
     current_user.telegram_key_expires_at = datetime.utcnow() + timedelta(hours=24)
     db.commit()
+    db.refresh(current_user)
     return {
         "ok": True,
         "key": key,
@@ -1768,6 +1769,7 @@ async def revoke_telegram_key(
     current_user.telegram_key = None
     current_user.telegram_key_expires_at = None
     db.commit()
+    db.refresh(current_user)
     return {"ok": True}
 
 
