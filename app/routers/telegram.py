@@ -926,6 +926,27 @@ async def _handle_telegram_update(update: dict, db: Session):
                     await telegram_service.send_message(chat_id, result.get("content", "Error"))
                     return {"ok": True}
 
+                # Forwarded messages with URLs prompt the user what to do (same as bare URL)
+                if is_forwarded:
+                    import re as _fwd_re
+                    _fwd_urls = _fwd_re.findall(r'https?://\S+', text_stripped)
+                    _fwd_urls = [u.rstrip('.,)>') for u in _fwd_urls]
+                    if _fwd_urls:
+                        logger.info(f"Telegram: Forwarded message with URL, prompting action: {_fwd_urls[0]}")
+                        _link_action_cache[chat_id] = _fwd_urls[0]
+                        await telegram_service.send_message(
+                            chat_id,
+                            "🔗 What would you like to do with this link?",
+                            reply_markup={
+                                "inline_keyboard": [[
+                                    {"text": "📋 Summary", "callback_data": "lnk:summary"},
+                                    {"text": "📣 Post",    "callback_data": "lnk:post"},
+                                    {"text": "❌ Cancel",  "callback_data": "lnk:cancel"},
+                                ]]
+                            },
+                        )
+                        return {"ok": True}
+
                 # Skip intent detection for bare URLs — they are never commands and the
                 # LLM always fails or returns garbage for URL-only input.
                 is_bare_url = (
