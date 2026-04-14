@@ -929,11 +929,32 @@ async def _handle_telegram_update(update: dict, db: Session):
                 # Forwarded messages with URLs prompt the user what to do (same as bare URL)
                 if is_forwarded:
                     import re as _fwd_re
-                    _fwd_urls = _fwd_re.findall(r'https?://\S+', text_stripped)
-                    _fwd_urls = [u.rstrip('.,)>') for u in _fwd_urls]
-                    if _fwd_urls:
-                        logger.info(f"Telegram: Forwarded message with URL, prompting action: {_fwd_urls[0]}")
-                        _link_action_cache[chat_id] = _fwd_urls[0]
+                    _fwd_url = None
+
+                    # 1. Check entities for text_link (Miniflux puts the real article URL here)
+                    for _ent in message.get("entities", []) or []:
+                        if _ent.get("type") == "text_link":
+                            _u = _ent.get("url", "")
+                            if _u.startswith("http"):
+                                _fwd_url = _u.rstrip(".,)>")
+                                break
+
+                    # 2. Check link_preview_options.url
+                    if not _fwd_url:
+                        _lpo = message.get("link_preview_options") or {}
+                        _u = _lpo.get("url", "")
+                        if _u.startswith("http"):
+                            _fwd_url = _u.rstrip(".,)>")
+
+                    # 3. Fall back to raw https:// URLs in the text
+                    if not _fwd_url:
+                        _fwd_raw = _fwd_re.findall(r'https?://\S+', text_stripped)
+                        if _fwd_raw:
+                            _fwd_url = _fwd_raw[0].rstrip(".,)>")
+
+                    if _fwd_url:
+                        logger.info(f"Telegram: Forwarded message with URL, prompting action: {_fwd_url}")
+                        _link_action_cache[chat_id] = _fwd_url
                         await telegram_service.send_message(
                             chat_id,
                             "🔗 What would you like to do with this link?",
