@@ -1457,12 +1457,12 @@ async def _handle_telegram_update(update: dict, db: Session):
                         _ss = _SS(db)
                         fetched = await _asyncio.wait_for(_ss.fetch_urls([cached_url], max_urls=1), timeout=15)
                         if fetched and fetched[0].get("content") and not fetched[0].get("error"):
-                            content = fetched[0]["content"][:2000]
+                            content = fetched[0]["content"][:4000]
                             title = fetched[0].get("title", "")
                             lnk_chat = ChatService(db, user=lnk_user)
                             summary_msgs = [
-                                {"role": "system", "content": "You are a concise summarizer. Output only the summary, nothing else."},
-                                {"role": "user", "content": f"Title: {title}\n\n{content}\n\nWrite a single concise paragraph summarizing the above."}
+                                {"role": "system", "content": "You are a thorough summarizer. Output only the summary, nothing else. No introductions or meta-commentary."},
+                                {"role": "user", "content": f"Title: {title}\n\n{content}\n\nWrite a detailed summary of the above. Include the key points, important facts, context, and any notable details. Use bullet points where helpful."}
                             ]
                             summary = await lnk_chat.chat(summary_msgs)
                             await telegram_service.send_message(chat_id, summary)
