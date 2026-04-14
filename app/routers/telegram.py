@@ -361,6 +361,8 @@ _MAX_SEEN_IDS = 500  # Keep a bounded window; Telegram won't replay further back
 
 # Pending Misskey posts: chat_id → post_text  (cleared once confirmed or cancelled)
 _misskey_post_cache: dict = {}
+# Pending link actions: chat_id → url (cleared once action is chosen)
+_link_action_cache: dict = {}
 
 
 class TelegramWebhookUpdate(BaseModel):
@@ -852,7 +854,6 @@ async def _handle_telegram_update(update: dict, db: Session):
                 logger.warning(f"TRANSLATE: Command detected but no OCR text yet, has_images={has_images}, attachments={len(attachments)}")
             
             reply_markup = None
-            _mk_link = None  # Set when a bare URL is detected and user has Misskey configured
             if command:
                 logger.info(f"Executing command: {command} with arg: {arg}, attachments: {len(attachments)}")
                 try:
@@ -1078,9 +1079,21 @@ async def _handle_telegram_update(update: dict, db: Session):
                             text_without_urls = text_without_urls.replace(url, '').strip()
                         is_only_url = not text_without_urls
 
-                    # If it's a bare link and the user has Misskey configured, flag it for a post prompt
-                    if is_only_url and urls and user_obj and getattr(user_obj, "misskey_enabled", False) and getattr(user_obj, "misskey_instance_url", None) and getattr(user_obj, "misskey_api_token", None):
-                        _mk_link = urls[0]
+                    # If message is only a URL, ask what the user wants to do with it
+                    if is_only_url and urls:
+                        _link_action_cache[chat_id] = urls[0]
+                        await telegram_service.send_message(
+                            chat_id,
+                            "🔗 What would you like to do with this link?",
+                            reply_markup={
+                                "inline_keyboard": [[
+                                    {"text": "📋 Summary", "callback_data": "lnk:summary"},
+                                    {"text": "📣 Post",    "callback_data": "lnk:post"},
+                                    {"text": "❌ Cancel",  "callback_data": "lnk:cancel"},
+                                ]]
+                            },
+                        )
+                        return {"ok": True}
 
                     if urls:
                         logger.info(f"Telegram: Detected URLs in message: {urls}")
@@ -1261,19 +1274,6 @@ async def _handle_telegram_update(update: dict, db: Session):
                         await asyncio.sleep(0.15)
             else:
                 await telegram_service.send_message(chat_id, response_content, reply_markup=reply_markup)
-                # If user shared a bare link and has Misskey configured, prompt to post it
-                if _mk_link:
-                    _misskey_post_cache[chat_id] = _mk_link
-                    await telegram_service.send_message(
-                        chat_id,
-                        "📣 *Post this link to Misskey?*",
-                        reply_markup={
-                            "inline_keyboard": [[
-                                {"text": "✅ Yes, post it", "callback_data": "mk:post"},
-                                {"text": "❌ No thanks",   "callback_data": "mk:skip"},
-                            ]]
-                        },
-                    )
 
             return {"ok": True}
         
@@ -1435,6 +1435,96 @@ async def _handle_telegram_update(update: dict, db: Session):
                         parse_mode="MarkdownV2",
                         reply_markup=back_button,
                     )
+
+            elif data.startswith("lnk:"):
+                action = data.split(":", 1)[1]
+                cached_url = _link_action_cache.pop(chat_id, None)
+
+                if action == "cancel" or cached_url is None:
+                    if action != "cancel":
+                        await telegram_service.send_message(chat_id, "No pending link found.")
+                    return {"ok": True}
+
+                lnk_user = db.query(User).filter(
+                    User.telegram_chat_id == chat_id,
+                    User.telegram_enabled == True
+                ).first()
+
+                if action == "summary":
+                    try:
+                        from app.services.search_service import SearchService as _SS
+                        import asyncio as _asyncio
+                        _ss = _SS(db)
+                        fetched = await _asyncio.wait_for(_ss.fetch_urls([cached_url], max_urls=1), timeout=15)
+                        if fetched and fetched[0].get("content") and not fetched[0].get("error"):
+                            content = fetched[0]["content"][:2000]
+                            title = fetched[0].get("title", "")
+                            lnk_chat = ChatService(db, user=lnk_user)
+                            summary_msgs = [
+                                {"role": "system", "content": "You are a concise summarizer. Output only the summary, nothing else."},
+                                {"role": "user", "content": f"Title: {title}\n\n{content}\n\nWrite a single concise paragraph summarizing the above."}
+                            ]
+                            summary = await lnk_chat.chat(summary_msgs)
+                            await telegram_service.send_message(chat_id, summary)
+                        else:
+                            await telegram_service.send_message(chat_id, "Could not fetch content from the URL.")
+                    except Exception as lnk_err:
+                        logger.error(f"Link summary error: {lnk_err}", exc_info=True)
+                        await telegram_service.send_message(chat_id, f"Error: {lnk_err}")
+
+                elif action == "post":
+                    try:
+                        from app.services.search_service import SearchService as _SS
+                        import asyncio as _asyncio
+                        _ss = _SS(db)
+                        fetched = await _asyncio.wait_for(_ss.fetch_urls([cached_url], max_urls=1), timeout=15)
+                        article_context = cached_url
+                        if fetched and fetched[0].get("content") and not fetched[0].get("error"):
+                            article_context = f"Title: {fetched[0].get('title', '')}\n\n{fetched[0]['content'][:3000]}"
+
+                        post_messages = [
+                            {
+                                "role": "system",
+                                "content": "You are a social media expert. Write compelling, detailed social media posts. Output ONLY the post text. No introductions, no 'here is your post', no URL placeholders like 'link' or 'read more'."
+                            },
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Write a viral and engaging social media post based on this content. "
+                                    "Be detailed — include key facts, context, and why it matters. "
+                                    "Use emojis and relevant hashtags. Stop after the last hashtag.\n\n"
+                                    f"Content:\n{article_context}"
+                                )
+                            }
+                        ]
+
+                        lnk_chat = ChatService(db, user=lnk_user)
+                        lnk_chat.num_predict = min(lnk_chat.num_predict, 900)
+                        post_text = await lnk_chat.chat(post_messages)
+                        post_text = post_text.rstrip() + f"\n\n{cached_url}"
+
+                        if (
+                            lnk_user
+                            and getattr(lnk_user, "misskey_enabled", False)
+                            and getattr(lnk_user, "misskey_instance_url", None)
+                            and getattr(lnk_user, "misskey_api_token", None)
+                        ):
+                            _misskey_post_cache[chat_id] = post_text
+                            await telegram_service.send_message(
+                                chat_id,
+                                post_text + "\n\n📣 *Post this to Misskey?*",
+                                reply_markup={
+                                    "inline_keyboard": [[
+                                        {"text": "✅ Yes, post it", "callback_data": "mk:post"},
+                                        {"text": "❌ No thanks",   "callback_data": "mk:skip"},
+                                    ]]
+                                },
+                            )
+                        else:
+                            await telegram_service.send_message(chat_id, post_text)
+                    except Exception as lnk_err:
+                        logger.error(f"Link post generation error: {lnk_err}", exc_info=True)
+                        await telegram_service.send_message(chat_id, f"Error generating post: {lnk_err}")
 
             elif data.startswith("mk:"):
                 action = data.split(":", 1)[1]
