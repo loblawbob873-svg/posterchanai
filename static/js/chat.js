@@ -225,12 +225,47 @@ class ChatHandler {
         const newsScheduleTime = document.getElementById('newsScheduleTime');
         const newsSources = document.getElementById('newsSources');
 
-        // Toggle Telegram settings visibility
-        const telegramEnabled = document.getElementById('telegramEnabled');
-        const telegramSettings = document.getElementById('telegramSettings');
-        if (telegramEnabled && telegramSettings) {
-            telegramEnabled.addEventListener('change', () => {
-                telegramSettings.style.display = telegramEnabled.checked ? 'block' : 'none';
+        // Telegram key generation
+        const generateTelegramKeyBtn = document.getElementById('generateTelegramKeyBtn');
+        const revokeTelegramKeyBtn = document.getElementById('revokeTelegramKeyBtn');
+        if (generateTelegramKeyBtn) {
+            generateTelegramKeyBtn.addEventListener('click', async () => {
+                try {
+                    const resp = await csrfFetch('/api/telegram/generate-key', { method: 'POST' });
+                    const data = await resp.json();
+                    if (resp.ok && data.key) {
+                        const keyDisplay = document.getElementById('telegramKeyDisplay');
+                        const keyValue = document.getElementById('telegramKeyValue');
+                        const startCmd = document.getElementById('telegramStartCommand');
+                        if (keyDisplay) keyDisplay.style.display = 'block';
+                        if (keyValue) keyValue.textContent = data.key;
+                        if (startCmd) startCmd.textContent = `/start ${data.key}`;
+                        if (revokeTelegramKeyBtn) revokeTelegramKeyBtn.style.display = 'inline-block';
+                        const statusEl = document.getElementById('telegramKeyStatus');
+                        if (statusEl) { statusEl.textContent = 'Key generated. Send the command above to your bot.'; statusEl.className = 'test-result success'; }
+                    } else {
+                        const statusEl = document.getElementById('telegramKeyStatus');
+                        if (statusEl) { statusEl.textContent = data.detail || 'Failed to generate key'; statusEl.className = 'test-result error'; }
+                    }
+                } catch (e) {
+                    const statusEl = document.getElementById('telegramKeyStatus');
+                    if (statusEl) { statusEl.textContent = 'Error: ' + e.message; statusEl.className = 'test-result error'; }
+                }
+            });
+        }
+        if (revokeTelegramKeyBtn) {
+            revokeTelegramKeyBtn.addEventListener('click', async () => {
+                try {
+                    await csrfFetch('/api/telegram/generate-key', { method: 'DELETE' });
+                    const keyDisplay = document.getElementById('telegramKeyDisplay');
+                    if (keyDisplay) keyDisplay.style.display = 'none';
+                    revokeTelegramKeyBtn.style.display = 'none';
+                    const statusEl = document.getElementById('telegramKeyStatus');
+                    if (statusEl) { statusEl.textContent = 'Key revoked.'; statusEl.className = 'test-result'; }
+                } catch (e) {
+                    const statusEl = document.getElementById('telegramKeyStatus');
+                    if (statusEl) { statusEl.textContent = 'Error: ' + e.message; statusEl.className = 'test-result error'; }
+                }
             });
         }
 
@@ -290,48 +325,16 @@ class ChatHandler {
             });
         }
 
-        // Telegram link/unlink buttons
-        const linkTelegramBtn = document.getElementById('linkTelegramBtn');
+        // Telegram unlink button
         const unlinkTelegramBtn = document.getElementById('unlinkTelegramBtn');
-        if (linkTelegramBtn) {
-            linkTelegramBtn.addEventListener('click', async () => {
-                const chatId = document.getElementById('telegramChatId').value.trim();
-                const notifications = document.getElementById('telegramNotifications').value.trim() || 'news,downloads,mentions';
-                if (!chatId) {
-                    alert('Please enter your Telegram Chat ID first');
-                    return;
-                }
-                try {
-                    const response = await csrfFetch('/api/telegram/link', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ chat_id: chatId, notifications: notifications })
-                    });
-                    const data = await response.json();
-                    if (response.ok) {
-                        alert('Telegram account linked successfully!');
-                    } else {
-                        alert(data.detail || 'Failed to link Telegram');
-                    }
-                } catch (e) {
-                    alert('Error: ' + e.message);
-                }
-            });
-        }
         if (unlinkTelegramBtn) {
             unlinkTelegramBtn.addEventListener('click', async () => {
                 if (!confirm('Are you sure you want to unlink your Telegram account?')) return;
                 try {
-                    const response = await csrfFetch('/api/telegram/unlink', {
-                        method: 'POST'
-                    });
+                    const response = await csrfFetch('/api/telegram/unlink', { method: 'POST' });
                     const data = await response.json();
                     if (response.ok) {
-                        alert('Telegram account unlinked');
-                        const telegramEnabledEl = document.getElementById('telegramEnabled');
-                        const telegramChatIdEl = document.getElementById('telegramChatId');
-                        if (telegramEnabledEl) telegramEnabledEl.checked = false;
-                        if (telegramChatIdEl) telegramChatIdEl.value = '';
+                        await this.loadUserSettings();
                     } else {
                         alert(data.detail || 'Failed to unlink Telegram');
                     }
@@ -365,11 +368,7 @@ class ChatHandler {
                 if (scheduleEnabled) settings.schedule_enabled = scheduleEnabled.checked;
 
                 // Telegram settings
-                const telegramEnabledEl = document.getElementById('telegramEnabled');
-                const telegramChatIdEl = document.getElementById('telegramChatId');
                 const telegramNotificationsEl = document.getElementById('telegramNotifications');
-                if (telegramEnabledEl) settings.telegram_enabled = telegramEnabledEl.checked;
-                if (telegramChatIdEl) settings.telegram_chat_id = telegramChatIdEl.value;
                 if (telegramNotificationsEl) settings.telegram_notifications = telegramNotificationsEl.value;
 
                 // Misskey — only persist the instance URL from the form (token is managed via MiAuth)
@@ -569,13 +568,14 @@ class ChatHandler {
                 }
 
                 // Telegram settings
-                const telegramEnabled = document.getElementById('telegramEnabled');
-                const telegramSettings = document.getElementById('telegramSettings');
-                if (telegramEnabled) telegramEnabled.checked = settings.telegram_enabled || false;
-                if (telegramSettings) telegramSettings.style.display = (settings.telegram_enabled) ? 'block' : 'none';
-
-                const telegramChatId = document.getElementById('telegramChatId');
-                if (telegramChatId) telegramChatId.value = settings.telegram_chat_id || '';
+                const telegramLinkedInfo = document.getElementById('telegramLinkedInfo');
+                const telegramLinkedMsg = document.getElementById('telegramLinkedMsg');
+                if (settings.telegram_enabled && settings.telegram_chat_id) {
+                    if (telegramLinkedInfo) telegramLinkedInfo.style.display = 'block';
+                    if (telegramLinkedMsg) telegramLinkedMsg.textContent = `Linked (Chat ID: ${settings.telegram_chat_id})`;
+                } else {
+                    if (telegramLinkedInfo) telegramLinkedInfo.style.display = 'none';
+                }
 
                 const telegramNotifications = document.getElementById('telegramNotifications');
                 if (telegramNotifications) telegramNotifications.value = settings.telegram_notifications || 'news,downloads,mentions';

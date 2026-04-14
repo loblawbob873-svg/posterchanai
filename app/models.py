@@ -41,6 +41,7 @@ class User(Base):
     telegram_enabled = Column(Boolean, default=False)
     telegram_chat_id = Column(String(50), nullable=True)
     telegram_notifications = Column(Text, default="")  # Comma-separated: "news,downloads,mentions"
+    telegram_key = Column(String(64), nullable=True, index=True)  # One-time link key generated from User Settings
 
     # Misskey integration settings
     misskey_enabled = Column(Boolean, default=False)

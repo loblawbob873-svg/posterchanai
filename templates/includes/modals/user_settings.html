@@ -187,37 +187,40 @@ My name: John Smith"></textarea>
                 <div class="user-tab-content" id="user-tab-telegram">
                     <fieldset>
                         <legend>Telegram Integration</legend>
-                        <p class="fieldset-info">Interact with PosterChanAI via Telegram. Enable below and follow the setup instructions.</p>
+                        <p class="fieldset-info">Interact with PosterChanAI via Telegram. Generate a key below, then send it to the bot to link your account.</p>
+
                         <div class="form-group">
-                            <div class="toggle-row">
-                                <label for="telegramEnabled">Enable Telegram</label>
-                                <input type="checkbox" id="telegramEnabled">
+                            <label>Link Your Account</label>
+                            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                                <button type="button" class="btn-secondary" id="generateTelegramKeyBtn">Generate Link Key</button>
+                                <button type="button" class="btn-danger" id="revokeTelegramKeyBtn" style="display: none;">Revoke Key</button>
                             </div>
+                            <div id="telegramKeyDisplay" style="display: none; margin-top: 12px;">
+                                <div style="background: var(--bg-secondary, #1a1a2e); border: 1px solid var(--border-color, #333); border-radius: 6px; padding: 12px; font-family: monospace; word-break: break-all;">
+                                    <code id="telegramKeyValue"></code>
+                                </div>
+                                <small style="display: block; margin-top: 6px;">Send this command to the bot in Telegram:</small>
+                                <div style="background: var(--bg-secondary, #1a1a2e); border: 1px solid var(--border-color, #333); border-radius: 6px; padding: 8px; font-family: monospace; margin-top: 4px; word-break: break-all;">
+                                    <code id="telegramStartCommand"></code>
+                                </div>
+                                <small>The key is consumed after use. Generate a new one if this one expires or is lost.</small>
+                            </div>
+                            <div id="telegramKeyStatus" class="test-result" style="margin-top: 8px;"></div>
                         </div>
-                        <div id="telegramSettings" class="conditional-settings" style="display: none;">
-                            <div class="form-group">
-                                <label for="telegramChatId">Your Chat ID</label>
-                                <input type="text" id="telegramChatId" placeholder="123456789">
-                                <small>Send <code>/start</code> to <code>@userinfobot</code> on Telegram to get your Chat ID</small>
-                            </div>
-                            <div class="form-group">
-                                <label for="telegramNotifications">Notifications</label>
-                                <input type="text" id="telegramNotifications" placeholder="news,downloads,mentions">
-                                <small>Comma-separated: news, downloads, mentions</small>
-                            </div>
-                            <div class="form-group">
-                                <div class="toggle-row">
-                                    <label for="telegramLinkBtn">Link My Account</label>
-                                    <button type="button" class="btn-secondary" id="linkTelegramBtn">Link Telegram</button>
-                                </div>
-                                <small>Click to link your Telegram account with this PosterChanAI account</small>
-                            </div>
-                            <div class="form-group">
-                                <div class="toggle-row">
-                                    <label for="telegramUnlinkBtn">Unlink</label>
-                                    <button type="button" class="btn-danger" id="unlinkTelegramBtn">Unlink Telegram</button>
-                                </div>
-                            </div>
+
+                        <div id="telegramLinkedInfo" style="display: none;">
+                            <div class="settings-status success" id="telegramLinkedMsg"></div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="telegramNotifications">Notifications</label>
+                            <input type="text" id="telegramNotifications" placeholder="news,downloads,mentions">
+                            <small>Comma-separated: news, downloads, mentions</small>
+                        </div>
+
+                        <div class="form-group" style="margin-top: 8px;">
+                            <button type="button" class="btn-danger" id="unlinkTelegramBtn">Unlink Telegram</button>
+                            <small style="display: block; margin-top: 4px;">Remove the link between your account and Telegram.</small>
                         </div>
                     </fieldset>
                 </div>

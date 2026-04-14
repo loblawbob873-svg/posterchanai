@@ -203,6 +203,7 @@ def _run_migrations():
         ("telegram_enabled", "BOOLEAN DEFAULT 0"),
         ("telegram_chat_id", "VARCHAR(50)"),
         ("telegram_notifications", "TEXT DEFAULT ''"),
+        ("telegram_key", "VARCHAR(64)"),
         # Misskey columns
         ("misskey_enabled", "BOOLEAN DEFAULT 0"),
         ("misskey_instance_url", "VARCHAR(500)"),

@@ -512,6 +512,38 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Convert text to lowercase for command matching
             text_lower = text.lower().strip()
 
+            # --- Authorization check ---
+            # Allow /start <key> for account linking; block all other messages from unlinked users.
+            _auth_user = db.query(User).filter(
+                User.telegram_chat_id == chat_id,
+                User.telegram_enabled == True
+            ).first()
+
+            if not _auth_user:
+                if text.startswith("/start "):
+                    key = text.replace("/start ", "").strip()
+                    keyed_user = db.query(User).filter(User.telegram_key == key).first()
+                    if keyed_user:
+                        keyed_user.telegram_chat_id = chat_id
+                        keyed_user.telegram_enabled = True
+                        keyed_user.telegram_key = None
+                        db.commit()
+                        await telegram_service.send_message(
+                            chat_id,
+                            f"Your Telegram account has been linked to {keyed_user.username}! You can now use the bot."
+                        )
+                    else:
+                        await telegram_service.send_message(
+                            chat_id,
+                            "Invalid or expired key. Please generate a new key from User Settings - Telegram and try again."
+                        )
+                else:
+                    await telegram_service.send_message(
+                        chat_id,
+                        "Your Telegram account is not linked. Generate a key from User Settings - Telegram tab and send /start <key> to this bot."
+                    )
+                return {"ok": True}
+
             # Check if the message starts with a known command
             command = None
             arg = text
@@ -528,7 +560,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                 # Only use words AFTER "post" as tone modifier (e.g. "post professional" → "professional")
                 parts = text_lower.split("post", 1)
                 arg = parts[1].strip() if len(parts) > 1 else ""
-            
+
             # If it's a reply and translate command, handle it
             if reply_text and command == "translate":
                 logger.warning(f"TRANSLATE: Processing reply with text: {reply_text[:100]}...")
@@ -661,31 +693,10 @@ async def _handle_telegram_update(update: dict, db: Session):
                     await telegram_service.send_message(chat_id, result_content)
                 return {"ok": True}
 
-            # Find user by linked Telegram chat_id
-            user_obj = db.query(User).filter(
-                User.telegram_chat_id == chat_id,
-                User.telegram_enabled == True
-            ).first()
-            
-            logger.info(f"Found user: {user_obj.username if user_obj else 'None'}")
-            
-            if not user_obj:
-                # Check if this is a /start command with a verification code
-                if text.startswith("/start "):
-                    code = text.replace("/start ", "").strip()
-                    # Handle verification code if implemented
-                    await telegram_service.send_message(
-                        chat_id,
-                        "Your Telegram account is not linked. Please enable Telegram in your account settings."
-                    )
-                    return {"ok": True}
-                
-                await telegram_service.send_message(
-                    chat_id,
-                    "Your Telegram account is not linked to any PosterChanAI user. Please enable Telegram in your account settings."
-                )
-                return {"ok": True}
-            
+            # User is guaranteed to be linked at this point (auth check above)
+            user_obj = _auth_user
+            logger.info(f"Found user: {user_obj.username}")
+
             # Process the message - check for commands first
             chat_service = ChatService(db, user=user_obj)
             command_service = CommandService(db, user=user_obj)
@@ -1699,6 +1710,30 @@ async def list_telegram_users(
         }
         for u in users
     ]
+
+
+@router.post("/generate-key")
+async def generate_telegram_key(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Generate a one-time key the user sends to the bot via /start to link their account."""
+    import secrets
+    key = secrets.token_urlsafe(32)
+    current_user.telegram_key = key
+    db.commit()
+    return {"ok": True, "key": key}
+
+
+@router.delete("/generate-key")
+async def revoke_telegram_key(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Revoke (clear) the pending Telegram link key."""
+    current_user.telegram_key = None
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/link")
