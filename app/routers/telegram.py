@@ -330,6 +330,24 @@ async def _handle_telegram_update(update: dict, db: Session):
             reply_to = message.get("reply_to_message", {})
             reply_text = reply_to.get("text", "") if reply_to else ""
 
+            # Detect replies to bot ForceReply prompts and route them as commands.
+            # We identify our prompts by their exact text content.
+            _NYAA_PROMPT = "🔎 Type your anime search:"
+            _TORRENT_SEARCH_PROMPT = "🔍 Type your torrent search:"
+            reply_from = (reply_to or {}).get("from", {})
+            if reply_from.get("is_bot") and text.strip():
+                if reply_text.strip() == _NYAA_PROMPT:
+                    # Treat the reply text as "nyaa <query>"
+                    text = f"nyaa {text.strip()}"
+                    text_lower = text.lower()
+                    reply_to = {}
+                    reply_text = ""
+                elif reply_text.strip() == _TORRENT_SEARCH_PROMPT:
+                    text = f"torrents search {text.strip()}"
+                    text_lower = text.lower()
+                    reply_to = {}
+                    reply_text = ""
+
             # Detect forwarded messages
             is_forwarded = bool(
                 message.get("forward_date") or
@@ -1083,7 +1101,8 @@ async def _handle_telegram_update(update: dict, db: Session):
                 elif action == "search_hint":
                     await telegram_service.send_message(
                         chat_id,
-                        "Send `torrents search <query>` to search, e.g.:\n`torrents search dark knight`"
+                        "🔍 Type your torrent search:",
+                        reply_markup={"force_reply": True, "selective": True, "input_field_placeholder": "e.g. dark knight 1080p"}
                     )
                     return {"ok": True}
                 else:
@@ -1130,7 +1149,8 @@ async def _handle_telegram_update(update: dict, db: Session):
                 if action == "search_hint":
                     await telegram_service.send_message(
                         chat_id,
-                        "Send `nyaa <query>` to search anime, e.g.:\n`nyaa one piece 1080p`"
+                        "🔎 Type your anime search:",
+                        reply_markup={"force_reply": True, "selective": True, "input_field_placeholder": "e.g. one piece 1080p"}
                     )
                     return {"ok": True}
 
