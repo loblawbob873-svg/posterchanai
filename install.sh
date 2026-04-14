@@ -88,10 +88,7 @@ main() {
     # Step 11: Setup systemd service
     setup_systemd
 
-    # Step 12: Install CLI control tool
-    setup_cli_tool
-
-    # Step 13: Show MCP server info
+    # Step 12: Show MCP server info
     setup_mcp_server
 
     # Step 13: Offer model download (if local LLM)
