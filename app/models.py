@@ -39,7 +39,7 @@ class User(Base):
 
     # Telegram integration settings
     telegram_enabled = Column(Boolean, default=False)
-    telegram_chat_id = Column(String(50), nullable=True, unique=True)
+    telegram_chat_id = Column(String(50), nullable=True)  # Uniqueness enforced by partial index (non-NULL only)
     telegram_notifications = Column(Text, default="")  # Comma-separated: "news,downloads,mentions"
     telegram_key = Column(String(64), nullable=True, index=True)  # One-time link key generated from User Settings
     telegram_key_expires_at = Column(DateTime, nullable=True)  # Expiry for the pending link key

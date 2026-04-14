@@ -597,20 +597,33 @@ class ChatHandler {
                 const revokeBtn = document.getElementById('revokeTelegramKeyBtn');
                 const keyStatus = document.getElementById('telegramKeyStatus');
                 if (settings.telegram_pending_key) {
-                    if (keyDisplay) keyDisplay.style.display = 'block';
-                    if (keyValue) keyValue.textContent = settings.telegram_pending_key;
-                    if (startCmd) startCmd.textContent = `/start ${settings.telegram_pending_key}`;
-                    if (revokeBtn) revokeBtn.style.display = 'inline-block';
-                    const expiry = settings.telegram_key_expires_at
-                        ? new Date(settings.telegram_key_expires_at + 'Z').toLocaleString()
-                        : null;
-                    if (keyStatus && expiry) {
-                        keyStatus.textContent = `Key expires: ${expiry}`;
-                        keyStatus.className = 'test-result';
+                    const isExpired = settings.telegram_key_expires_at
+                        && new Date(settings.telegram_key_expires_at + 'Z') < new Date();
+                    if (isExpired) {
+                        // Key exists in DB but is past its expiry — tell user to regenerate
+                        if (keyDisplay) keyDisplay.style.display = 'none';
+                        if (revokeBtn) revokeBtn.style.display = 'none';
+                        if (keyStatus) {
+                            keyStatus.textContent = 'Your previous key expired. Generate a new one.';
+                            keyStatus.className = 'test-result error';
+                        }
+                    } else {
+                        if (keyDisplay) keyDisplay.style.display = 'block';
+                        if (keyValue) keyValue.textContent = settings.telegram_pending_key;
+                        if (startCmd) startCmd.textContent = `/start ${settings.telegram_pending_key}`;
+                        if (revokeBtn) revokeBtn.style.display = 'inline-block';
+                        const expiry = settings.telegram_key_expires_at
+                            ? new Date(settings.telegram_key_expires_at + 'Z').toLocaleString()
+                            : null;
+                        if (keyStatus) {
+                            keyStatus.textContent = expiry ? `Key expires: ${expiry}` : '';
+                            keyStatus.className = 'test-result';
+                        }
                     }
                 } else {
                     if (keyDisplay) keyDisplay.style.display = 'none';
                     if (revokeBtn) revokeBtn.style.display = 'none';
+                    if (keyStatus) { keyStatus.textContent = ''; keyStatus.className = 'test-result'; }
                 }
 
                 const telegramNotifications = document.getElementById('telegramNotifications');

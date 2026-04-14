@@ -535,6 +535,13 @@ async def _handle_telegram_update(update: dict, db: Session):
                         )
                     )
                     if key_valid:
+                        # Reject if this user is already linked to a different Telegram chat
+                        if keyed_user.telegram_enabled and keyed_user.telegram_chat_id and keyed_user.telegram_chat_id != chat_id:
+                            await telegram_service.send_message(
+                                chat_id,
+                                "This account is already linked to a different Telegram chat. Unlink it first from User Settings."
+                            )
+                            return {"ok": True}
                         try:
                             keyed_user.telegram_chat_id = chat_id
                             keyed_user.telegram_enabled = True
@@ -549,7 +556,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                             db.rollback()
                             await telegram_service.send_message(
                                 chat_id,
-                                "This Telegram account is already linked to a different user. Unlink it first from that account's settings."
+                                "This Telegram chat is already linked to a different user. Unlink it first from that account's settings."
                             )
                     else:
                         await telegram_service.send_message(
@@ -1789,7 +1796,9 @@ async def unlink_telegram_chat(
     current_user.telegram_enabled = False
     current_user.telegram_chat_id = None
     current_user.telegram_notifications = ""
-    
+    current_user.telegram_key = None
+    current_user.telegram_key_expires_at = None
+
     db.commit()
     
     return {"ok": True, "message": "Telegram account unlinked"}
