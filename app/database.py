@@ -204,6 +204,7 @@ def _run_migrations():
         ("telegram_chat_id", "VARCHAR(50)"),
         ("telegram_notifications", "TEXT DEFAULT ''"),
         ("telegram_key", "VARCHAR(64)"),
+        ("telegram_key_expires_at", "DATETIME"),
         # Misskey columns
         ("misskey_enabled", "BOOLEAN DEFAULT 0"),
         ("misskey_instance_url", "VARCHAR(500)"),
@@ -222,6 +223,18 @@ def _run_migrations():
                     pass
 
     
+
+    # Ensure unique index on telegram_chat_id (partial: only for non-NULL values)
+    # This prevents two users from linking the same Telegram chat.
+    with engine.connect() as conn:
+        try:
+            conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_telegram_chat_id "
+                "ON users(telegram_chat_id) WHERE telegram_chat_id IS NOT NULL"
+            ))
+            conn.commit()
+        except Exception:
+            pass  # Index may already exist or DB doesn't support partial indexes
 
     # Create proxy_image_cache table if missing (used for image search thumb IDs across workers)
     if not inspector.has_table('proxy_image_cache'):

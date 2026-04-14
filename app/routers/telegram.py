@@ -521,17 +521,36 @@ async def _handle_telegram_update(update: dict, db: Session):
 
             if not _auth_user:
                 if text.startswith("/start "):
+                    import hmac
+                    from sqlalchemy.exc import IntegrityError
                     key = text.replace("/start ", "").strip()
                     keyed_user = db.query(User).filter(User.telegram_key == key).first()
-                    if keyed_user:
-                        keyed_user.telegram_chat_id = chat_id
-                        keyed_user.telegram_enabled = True
-                        keyed_user.telegram_key = None
-                        db.commit()
-                        await telegram_service.send_message(
-                            chat_id,
-                            f"Your Telegram account has been linked to {keyed_user.username}! You can now use the bot."
+                    # Constant-time compare as defense-in-depth (DB already did the lookup)
+                    key_valid = (
+                        keyed_user is not None
+                        and hmac.compare_digest(keyed_user.telegram_key or "", key)
+                        and (
+                            keyed_user.telegram_key_expires_at is None
+                            or keyed_user.telegram_key_expires_at > datetime.utcnow()
                         )
+                    )
+                    if key_valid:
+                        try:
+                            keyed_user.telegram_chat_id = chat_id
+                            keyed_user.telegram_enabled = True
+                            keyed_user.telegram_key = None
+                            keyed_user.telegram_key_expires_at = None
+                            db.commit()
+                            await telegram_service.send_message(
+                                chat_id,
+                                f"Your Telegram account has been linked to {keyed_user.username}! You can now use the bot."
+                            )
+                        except IntegrityError:
+                            db.rollback()
+                            await telegram_service.send_message(
+                                chat_id,
+                                "This Telegram account is already linked to a different user. Unlink it first from that account's settings."
+                            )
                     else:
                         await telegram_service.send_message(
                             chat_id,
@@ -1719,10 +1738,18 @@ async def generate_telegram_key(
 ):
     """Generate a one-time key the user sends to the bot via /start to link their account."""
     import secrets
+    from datetime import datetime, timedelta
+    previous_key_revoked = bool(current_user.telegram_key)
     key = secrets.token_urlsafe(32)
     current_user.telegram_key = key
+    current_user.telegram_key_expires_at = datetime.utcnow() + timedelta(hours=24)
     db.commit()
-    return {"ok": True, "key": key}
+    return {
+        "ok": True,
+        "key": key,
+        "expires_at": current_user.telegram_key_expires_at.isoformat(),
+        "previous_key_revoked": previous_key_revoked,
+    }
 
 
 @router.delete("/generate-key")
@@ -1732,6 +1759,7 @@ async def revoke_telegram_key(
 ):
     """Revoke (clear) the pending Telegram link key."""
     current_user.telegram_key = None
+    current_user.telegram_key_expires_at = None
     db.commit()
     return {"ok": True}
 

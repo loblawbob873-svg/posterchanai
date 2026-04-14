@@ -444,6 +444,8 @@ class UserSettingsResponse(BaseModel):
     telegram_enabled: bool = False
     telegram_chat_id: Optional[str] = None
     telegram_notifications: str = ""
+    telegram_pending_key: Optional[str] = None       # Pending link key (exposed to owner only)
+    telegram_key_expires_at: Optional[datetime] = None
     # Misskey settings
     misskey_enabled: bool = False
     misskey_instance_url: Optional[str] = None

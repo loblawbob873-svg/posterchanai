@@ -230,6 +230,12 @@ class ChatHandler {
         const revokeTelegramKeyBtn = document.getElementById('revokeTelegramKeyBtn');
         if (generateTelegramKeyBtn) {
             generateTelegramKeyBtn.addEventListener('click', async () => {
+                const statusEl = document.getElementById('telegramKeyStatus');
+                // Warn if a key is already pending (visible in the key display)
+                const existingKeyDisplay = document.getElementById('telegramKeyDisplay');
+                if (existingKeyDisplay && existingKeyDisplay.style.display !== 'none') {
+                    if (!confirm('You already have a pending key. Generating a new one will invalidate it. Continue?')) return;
+                }
                 try {
                     const resp = await csrfFetch('/api/telegram/generate-key', { method: 'POST' });
                     const data = await resp.json();
@@ -241,29 +247,36 @@ class ChatHandler {
                         if (keyValue) keyValue.textContent = data.key;
                         if (startCmd) startCmd.textContent = `/start ${data.key}`;
                         if (revokeTelegramKeyBtn) revokeTelegramKeyBtn.style.display = 'inline-block';
-                        const statusEl = document.getElementById('telegramKeyStatus');
-                        if (statusEl) { statusEl.textContent = 'Key generated. Send the command above to your bot.'; statusEl.className = 'test-result success'; }
+                        const expiry = data.expires_at
+                            ? new Date(data.expires_at + 'Z').toLocaleString()
+                            : null;
+                        const msg = expiry
+                            ? `Key generated — expires ${expiry}. Send the command above to the bot.`
+                            : 'Key generated. Send the command above to the bot.';
+                        if (statusEl) { statusEl.textContent = msg; statusEl.className = 'test-result success'; }
                     } else {
-                        const statusEl = document.getElementById('telegramKeyStatus');
                         if (statusEl) { statusEl.textContent = data.detail || 'Failed to generate key'; statusEl.className = 'test-result error'; }
                     }
                 } catch (e) {
-                    const statusEl = document.getElementById('telegramKeyStatus');
                     if (statusEl) { statusEl.textContent = 'Error: ' + e.message; statusEl.className = 'test-result error'; }
                 }
             });
         }
         if (revokeTelegramKeyBtn) {
             revokeTelegramKeyBtn.addEventListener('click', async () => {
+                const statusEl = document.getElementById('telegramKeyStatus');
                 try {
-                    await csrfFetch('/api/telegram/generate-key', { method: 'DELETE' });
-                    const keyDisplay = document.getElementById('telegramKeyDisplay');
-                    if (keyDisplay) keyDisplay.style.display = 'none';
-                    revokeTelegramKeyBtn.style.display = 'none';
-                    const statusEl = document.getElementById('telegramKeyStatus');
-                    if (statusEl) { statusEl.textContent = 'Key revoked.'; statusEl.className = 'test-result'; }
+                    const resp = await csrfFetch('/api/telegram/generate-key', { method: 'DELETE' });
+                    if (resp.ok) {
+                        const keyDisplay = document.getElementById('telegramKeyDisplay');
+                        if (keyDisplay) keyDisplay.style.display = 'none';
+                        revokeTelegramKeyBtn.style.display = 'none';
+                        if (statusEl) { statusEl.textContent = 'Key revoked.'; statusEl.className = 'test-result'; }
+                    } else {
+                        const data = await resp.json().catch(() => ({}));
+                        if (statusEl) { statusEl.textContent = data.detail || 'Failed to revoke key'; statusEl.className = 'test-result error'; }
+                    }
                 } catch (e) {
-                    const statusEl = document.getElementById('telegramKeyStatus');
                     if (statusEl) { statusEl.textContent = 'Error: ' + e.message; statusEl.className = 'test-result error'; }
                 }
             });
@@ -575,6 +588,29 @@ class ChatHandler {
                     if (telegramLinkedMsg) telegramLinkedMsg.textContent = `Linked (Chat ID: ${settings.telegram_chat_id})`;
                 } else {
                     if (telegramLinkedInfo) telegramLinkedInfo.style.display = 'none';
+                }
+
+                // Restore pending key display if one exists
+                const keyDisplay = document.getElementById('telegramKeyDisplay');
+                const keyValue = document.getElementById('telegramKeyValue');
+                const startCmd = document.getElementById('telegramStartCommand');
+                const revokeBtn = document.getElementById('revokeTelegramKeyBtn');
+                const keyStatus = document.getElementById('telegramKeyStatus');
+                if (settings.telegram_pending_key) {
+                    if (keyDisplay) keyDisplay.style.display = 'block';
+                    if (keyValue) keyValue.textContent = settings.telegram_pending_key;
+                    if (startCmd) startCmd.textContent = `/start ${settings.telegram_pending_key}`;
+                    if (revokeBtn) revokeBtn.style.display = 'inline-block';
+                    const expiry = settings.telegram_key_expires_at
+                        ? new Date(settings.telegram_key_expires_at + 'Z').toLocaleString()
+                        : null;
+                    if (keyStatus && expiry) {
+                        keyStatus.textContent = `Key expires: ${expiry}`;
+                        keyStatus.className = 'test-result';
+                    }
+                } else {
+                    if (keyDisplay) keyDisplay.style.display = 'none';
+                    if (revokeBtn) revokeBtn.style.display = 'none';
                 }
 
                 const telegramNotifications = document.getElementById('telegramNotifications');

@@ -431,6 +431,8 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         telegram_enabled=current_user.telegram_enabled if hasattr(current_user, 'telegram_enabled') else False,
         telegram_chat_id=current_user.telegram_chat_id if hasattr(current_user, 'telegram_chat_id') else None,
         telegram_notifications=current_user.telegram_notifications if hasattr(current_user, 'telegram_notifications') else "",
+        telegram_pending_key=current_user.telegram_key if hasattr(current_user, 'telegram_key') else None,
+        telegram_key_expires_at=current_user.telegram_key_expires_at if hasattr(current_user, 'telegram_key_expires_at') else None,
         # Misskey settings
         misskey_enabled=current_user.misskey_enabled if hasattr(current_user, 'misskey_enabled') else False,
         misskey_instance_url=current_user.misskey_instance_url if hasattr(current_user, 'misskey_instance_url') else None,
