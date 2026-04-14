@@ -106,6 +106,7 @@ class TelegramService:
                     data = {"chat_id": chat_id}
                     if caption:
                         data["caption"] = caption
+                        data["parse_mode"] = "Markdown"
                     response = await client.post(url, data=data, files=files)
                 else:
                     # Send as URL
@@ -115,6 +116,7 @@ class TelegramService:
                     }
                     if caption:
                         payload["caption"] = caption
+                        payload["parse_mode"] = "Markdown"
                     response = await client.post(url, json=payload)
                 
                 result = response.json()

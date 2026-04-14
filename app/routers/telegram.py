@@ -369,7 +369,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["geni", "mail", "news", "search", "yt", "torrents", "nyaa", "logs", "translate", "post"]
+            commands = ["geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "logs", "translate", "post"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -530,7 +530,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["geni", "mail", "news", "search", "yt", "torrents", "nyaa", "logs", "translate", "post"]
+            commands = ["geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "logs", "translate", "post"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -1045,6 +1045,38 @@ async def _handle_telegram_update(update: dict, db: Session):
                 if not photo_result.get("ok"):
                     logger.error(f"Failed to send photo: {photo_result}")
                     await telegram_service.send_message(chat_id, f"{response_content}\n\n(Image generation failed to send)")
+            elif response_type == "search":
+                # Send AI summary, then append top result links
+                search_results = result.get("results", [])
+                links = ""
+                if search_results:
+                    link_lines = []
+                    for r in search_results[:5]:
+                        title = (r.get("title") or r.get("url", ""))[:60]
+                        url = r.get("url", "")
+                        if url:
+                            link_lines.append(f"• [{title}]({url})")
+                    if link_lines:
+                        links = "\n\n**Sources:**\n" + "\n".join(link_lines)
+                await telegram_service.send_message(chat_id, response_content + links)
+            elif response_type == "images":
+                import asyncio
+                images = result.get("images", [])
+                if not images:
+                    await telegram_service.send_message(chat_id, response_content)
+                else:
+                    await telegram_service.send_message(chat_id, response_content)
+                    for img in images:
+                        img_url = img.get("img_src", "")
+                        page_url = img.get("url", img_url)
+                        title = (img.get("title") or "")[:80]
+                        if not img_url:
+                            continue
+                        caption = f"[{title}]({page_url})" if title and page_url else title
+                        photo_result = await telegram_service.send_photo(chat_id, img_url, caption or None)
+                        if not photo_result.get("ok"):
+                            logger.warning(f"Could not send image {img_url}: {photo_result.get('description', '')}")
+                        await asyncio.sleep(0.15)
             else:
                 await telegram_service.send_message(chat_id, response_content, reply_markup=reply_markup)
             
