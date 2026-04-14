@@ -148,6 +148,143 @@ def _torrent_nav_keyboard() -> dict:
     }
 
 
+def _help_main_keyboard() -> dict:
+    """Inline keyboard for the help main menu."""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "💬 Chat & URLs", "callback_data": "help:chat"},
+                {"text": "📰 News", "callback_data": "help:news"},
+            ],
+            [
+                {"text": "🔍 Search", "callback_data": "prompt:search"},
+                {"text": "ℹ️", "callback_data": "help:search"},
+            ],
+            [
+                {"text": "🖼 Image Search", "callback_data": "prompt:images"},
+                {"text": "ℹ️", "callback_data": "help:images"},
+            ],
+            [
+                {"text": "🎨 Image Gen", "callback_data": "prompt:geni"},
+                {"text": "ℹ️", "callback_data": "help:geni"},
+            ],
+            [
+                {"text": "🌐 Translate", "callback_data": "help:translate"},
+                {"text": "🧲 Torrents", "callback_data": "help:torrents"},
+            ],
+            [
+                {"text": "🎌 Nyaa", "callback_data": "help:nyaa"},
+                {"text": "✉️ Email", "callback_data": "help:mail"},
+            ],
+            [
+                {"text": "📱 Social Post", "callback_data": "help:post"},
+                {"text": "📋 Logs", "callback_data": "help:logs"},
+            ],
+        ]
+    }
+
+
+_HELP_SECTIONS = {
+    "chat": (
+        "💬 *Chat & URLs*\n\n"
+        "Just send any message to chat with the AI\\.\n\n"
+        "• Reply to a message to use it as context\n"
+        "• Send any URL to get a summary\n"
+        "• Send a YouTube link for a video summary\n"
+        "• Forward any article or link — auto\\-summarized\n"
+        "• Send a photo to describe it or extract text \\(OCR\\)\n"
+        "• The bot remembers recent conversation context"
+    ),
+    "search": (
+        "🔍 *Web Search*\n\n"
+        "`search <query>`\n"
+        "Searches the web and returns an AI\\-written summary with source links\\.\n\n"
+        "*Examples:*\n"
+        "`search latest SpaceX launch`\n"
+        "`search best Python frameworks 2025`"
+    ),
+    "images": (
+        "🖼 *Image Search*\n\n"
+        "`images <query>`\n"
+        "Searches for images and sends them directly in the chat\\.\n\n"
+        "*Examples:*\n"
+        "`images northern lights`\n"
+        "`images cyberpunk city art`"
+    ),
+    "translate": (
+        "🌐 *Translation*\n\n"
+        "`translate <text> to <language>`\n"
+        "Translates text to any language\\.\n\n"
+        "• Reply to any message with `translate` to translate it\n"
+        "• Reply with `translate to Spanish` to specify the language\n"
+        "• Send a photo with `translate` to OCR and translate the text in the image\n\n"
+        "*Examples:*\n"
+        "`translate hello world to Japanese`\n"
+        "\\(reply to a message\\) `translate to French`"
+    ),
+    "news": (
+        "📰 *News*\n\n"
+        "`news` — Latest headlines from all sources\n"
+        "`news <source>` — Headlines from a specific source\n\n"
+        "*Examples:*\n"
+        "`news`\n"
+        "`news bbc`\n"
+        "`news techcrunch`"
+    ),
+    "geni": (
+        "🎨 *Image Generation*\n\n"
+        "`geni <prompt>`\n"
+        "Generates an image from your description using the configured AI backend\\.\n\n"
+        "*Examples:*\n"
+        "`geni a sunset over a cyberpunk city`\n"
+        "`geni portrait of a samurai in watercolor style`"
+    ),
+    "torrents": (
+        "🧲 *Torrents*\n\n"
+        "`torrents` — Browse categories \\(Movies, TV, Music, Anime\\)\n"
+        "`torrents search <query>` — Search by title\n"
+        "`torrents list` — View & manage active downloads\n"
+        "`torrents pause/resume/rm <#>` — Manage a download\n\n"
+        "• Tap category buttons to browse top results\n"
+        "• Each result has its own Download button\n"
+        "• Send a magnet link directly to add it instantly\n\n"
+        "*Examples:*\n"
+        "`torrents search dark knight 1080p`\n"
+        "`torrents list`"
+    ),
+    "nyaa": (
+        "🎌 *Nyaa \\(Anime Torrents\\)*\n\n"
+        "`nyaa <query>` — Search nyaa\\.si for anime torrents\n\n"
+        "• Tap the *🔎 Nyaa Search* button and type your query when prompted\n"
+        "• Each result has its own Download button\n\n"
+        "*Examples:*\n"
+        "`nyaa one piece 1080p`\n"
+        "`nyaa attack on titan s4`"
+    ),
+    "mail": (
+        "✉️ *Email*\n\n"
+        "`mail <to> <body>`\n"
+        "Sends an email using your configured mail settings\\.\n\n"
+        "*Examples:*\n"
+        "`mail alice@example.com Hey, just checking in\\!`"
+    ),
+    "post": (
+        "📱 *Social Media Post Generator*\n\n"
+        "Reply to any message containing a link or text with `post` to generate a social media post\\.\n\n"
+        "• Add a tone modifier after `post` to style the output\n\n"
+        "*Examples:*\n"
+        "\\(reply to a news link\\) `post`\n"
+        "\\(reply to an article\\) `post professional`\n"
+        "\\(reply to a link\\) `post funny`"
+    ),
+    "logs": (
+        "📋 *System Logs*\n\n"
+        "`logs` — Shows recent system log entries\\.\n"
+        "Useful for checking errors or monitoring activity\\."
+    ),
+}
+
+
 async def _send_torrent_results(chat_id: str, category: str, user_id: int):
     """Send each torrent result as its own message with a download button beneath it."""
     import asyncio
@@ -332,18 +469,18 @@ async def _handle_telegram_update(update: dict, db: Session):
 
             # Detect replies to bot ForceReply prompts and route them as commands.
             # We identify our prompts by their exact text content.
-            _NYAA_PROMPT = "🔎 Type your anime search:"
-            _TORRENT_SEARCH_PROMPT = "🔍 Type your torrent search:"
+            _FORCE_REPLY_ROUTES = {
+                "🔎 Type your anime search:": "nyaa",
+                "🔍 Type your torrent search:": "torrents search",
+                "🔍 What would you like to search for?": "search",
+                "🖼 What images would you like to search for?": "images",
+                "🎨 Describe the image you want to generate:": "geni",
+            }
             reply_from = (reply_to or {}).get("from", {})
             if reply_from.get("is_bot") and text.strip():
-                if reply_text.strip() == _NYAA_PROMPT:
-                    # Treat the reply text as "nyaa <query>"
-                    text = f"nyaa {text.strip()}"
-                    text_lower = text.lower()
-                    reply_to = {}
-                    reply_text = ""
-                elif reply_text.strip() == _TORRENT_SEARCH_PROMPT:
-                    text = f"torrents search {text.strip()}"
+                route = _FORCE_REPLY_ROUTES.get(reply_text.strip())
+                if route:
+                    text = f"{route} {text.strip()}"
                     text_lower = text.lower()
                     reply_to = {}
                     reply_text = ""
@@ -687,44 +824,12 @@ async def _handle_telegram_update(update: dict, db: Session):
                 logger.info(f"Executing command: {command} with arg: {arg}, attachments: {len(attachments)}")
                 try:
                     if command == "help":
-                        help_text = (
-                            "🤖 *PosterChanAI Bot — Commands*\n\n"
-                            "*💬 Chat*\n"
-                            "Just send any message to chat with the AI\\.\n"
-                            "Reply to a message to use it as context\\.\n"
-                            "Send a URL to summarize its content\\.\n"
-                            "Send a YouTube link to get a summary\\.\n\n"
-                            "*🔍 Search*\n"
-                            "`search <query>` — Web search with AI summary\n"
-                            "`images <query>` — Image search\n"
-                            "`yt <query>` — YouTube search & summary\n\n"
-                            "*🌐 Translation*\n"
-                            "`translate <text> to <lang>` — Translate text\n"
-                            "Reply to a message with `translate` to translate it\n"
-                            "Send an image with `translate` to OCR and translate\n\n"
-                            "*📰 News*\n"
-                            "`news` — Latest headlines\n"
-                            "`news <source>` — News from a specific source\n\n"
-                            "*🎨 Image Generation*\n"
-                            "`geni <prompt>` — Generate an image from a description\n\n"
-                            "*🧲 Torrents*\n"
-                            "`torrents` — Browse movies, TV, music, anime\n"
-                            "`torrents search <query>` — Search torrents\n"
-                            "`torrents list` — View active downloads\n"
-                            "`nyaa <query>` — Search anime on nyaa\\.si\n"
-                            "Send a magnet link to add it directly\n\n"
-                            "*✉️ Email*\n"
-                            "`mail <to> <body>` — Send an email\n\n"
-                            "*📱 Social Media*\n"
-                            "Reply to any message/link with `post` to generate a social media post\n\n"
-                            "*📋 Logs*\n"
-                            "`logs` — View recent system logs\n\n"
-                            "*💡 Tips*\n"
-                            "• Forward any article or link for an instant summary\n"
-                            "• Send a photo to describe or extract text from it\n"
-                            "• The bot remembers recent conversation context"
+                        await telegram_service.send_message(
+                            chat_id,
+                            "🤖 *PosterChanAI* — tap a topic to learn more:",
+                            parse_mode="MarkdownV2",
+                            reply_markup=_help_main_keyboard(),
                         )
-                        await telegram_service.send_message(chat_id, help_text, parse_mode="MarkdownV2")
                         return {"ok": True}
                     elif command == "torrents":
                         arg_parts = arg.strip().split()
@@ -1243,6 +1348,41 @@ async def _handle_telegram_update(update: dict, db: Session):
                 except Exception as cb_err:
                     logger.error(f"Nyaa callback error: {cb_err}", exc_info=True)
                     await telegram_service.send_message(chat_id, f"Error: {cb_err}")
+
+            elif data.startswith("prompt:"):
+                action = data.split(":", 1)[1]
+                _PROMPT_CONFIGS = {
+                    "search": ("🔍 What would you like to search for?", "e.g. latest AI news"),
+                    "images": ("🖼 What images would you like to search for?", "e.g. northern lights"),
+                    "geni":   ("🎨 Describe the image you want to generate:", "e.g. a sunset over a cyberpunk city"),
+                }
+                cfg = _PROMPT_CONFIGS.get(action)
+                if cfg:
+                    prompt_text, placeholder = cfg
+                    await telegram_service.send_message(
+                        chat_id,
+                        prompt_text,
+                        reply_markup={"force_reply": True, "selective": True, "input_field_placeholder": placeholder},
+                    )
+
+            elif data.startswith("help:"):
+                section = data.split(":", 1)[1]
+                section_text = _HELP_SECTIONS.get(section)
+                back_button = {"inline_keyboard": [[{"text": "⬅️ Back", "callback_data": "help:menu"}]]}
+                if section == "menu":
+                    await telegram_service.send_message(
+                        chat_id,
+                        "🤖 *PosterChanAI* — tap a topic to learn more:",
+                        parse_mode="MarkdownV2",
+                        reply_markup=_help_main_keyboard(),
+                    )
+                elif section_text:
+                    await telegram_service.send_message(
+                        chat_id,
+                        section_text,
+                        parse_mode="MarkdownV2",
+                        reply_markup=back_button,
+                    )
 
             return {"ok": True}
 
