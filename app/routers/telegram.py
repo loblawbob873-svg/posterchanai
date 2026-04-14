@@ -369,7 +369,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "logs", "translate", "post"]
+            commands = ["help", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "logs", "translate", "post"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -530,7 +530,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "logs", "translate", "post"]
+            commands = ["help", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "logs", "translate", "post"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -686,7 +686,47 @@ async def _handle_telegram_update(update: dict, db: Session):
             if command:
                 logger.info(f"Executing command: {command} with arg: {arg}, attachments: {len(attachments)}")
                 try:
-                    if command == "torrents":
+                    if command == "help":
+                        help_text = (
+                            "🤖 *PosterChanAI Bot — Commands*\n\n"
+                            "*💬 Chat*\n"
+                            "Just send any message to chat with the AI\\.\n"
+                            "Reply to a message to use it as context\\.\n"
+                            "Send a URL to summarize its content\\.\n"
+                            "Send a YouTube link to get a summary\\.\n\n"
+                            "*🔍 Search*\n"
+                            "`search <query>` — Web search with AI summary\n"
+                            "`images <query>` — Image search\n"
+                            "`yt <query>` — YouTube search & summary\n\n"
+                            "*🌐 Translation*\n"
+                            "`translate <text> to <lang>` — Translate text\n"
+                            "Reply to a message with `translate` to translate it\n"
+                            "Send an image with `translate` to OCR and translate\n\n"
+                            "*📰 News*\n"
+                            "`news` — Latest headlines\n"
+                            "`news <source>` — News from a specific source\n\n"
+                            "*🎨 Image Generation*\n"
+                            "`geni <prompt>` — Generate an image from a description\n\n"
+                            "*🧲 Torrents*\n"
+                            "`torrents` — Browse movies, TV, music, anime\n"
+                            "`torrents search <query>` — Search torrents\n"
+                            "`torrents list` — View active downloads\n"
+                            "`nyaa <query>` — Search anime on nyaa\\.si\n"
+                            "Send a magnet link to add it directly\n\n"
+                            "*✉️ Email*\n"
+                            "`mail <to> <body>` — Send an email\n\n"
+                            "*📱 Social Media*\n"
+                            "Reply to any message/link with `post` to generate a social media post\n\n"
+                            "*📋 Logs*\n"
+                            "`logs` — View recent system logs\n\n"
+                            "*💡 Tips*\n"
+                            "• Forward any article or link for an instant summary\n"
+                            "• Send a photo to describe or extract text from it\n"
+                            "• The bot remembers recent conversation context"
+                        )
+                        await telegram_service.send_message(chat_id, help_text, parse_mode="MarkdownV2")
+                        return {"ok": True}
+                    elif command == "torrents":
                         arg_parts = arg.strip().split()
                         arg_sub = arg_parts[0].lower() if arg_parts else ""
 
