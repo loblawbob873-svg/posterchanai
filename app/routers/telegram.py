@@ -852,6 +852,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                 logger.warning(f"TRANSLATE: Command detected but no OCR text yet, has_images={has_images}, attachments={len(attachments)}")
             
             reply_markup = None
+            _mk_link = None  # Set when a bare URL is detected and user has Misskey configured
             if command:
                 logger.info(f"Executing command: {command} with arg: {arg}, attachments: {len(attachments)}")
                 try:
@@ -1077,6 +1078,10 @@ async def _handle_telegram_update(update: dict, db: Session):
                             text_without_urls = text_without_urls.replace(url, '').strip()
                         is_only_url = not text_without_urls
 
+                    # If it's a bare link and the user has Misskey configured, flag it for a post prompt
+                    if is_only_url and urls and user_obj and getattr(user_obj, "misskey_enabled", False) and getattr(user_obj, "misskey_instance_url", None) and getattr(user_obj, "misskey_api_token", None):
+                        _mk_link = urls[0]
+
                     if urls:
                         logger.info(f"Telegram: Detected URLs in message: {urls}")
                         MAX_URL_CONTENT_CHARS = 2000  # Truncation only — no content cleaning
@@ -1256,7 +1261,20 @@ async def _handle_telegram_update(update: dict, db: Session):
                         await asyncio.sleep(0.15)
             else:
                 await telegram_service.send_message(chat_id, response_content, reply_markup=reply_markup)
-            
+                # If user shared a bare link and has Misskey configured, prompt to post it
+                if _mk_link:
+                    _misskey_post_cache[chat_id] = _mk_link
+                    await telegram_service.send_message(
+                        chat_id,
+                        "📣 *Post this link to Misskey?*",
+                        reply_markup={
+                            "inline_keyboard": [[
+                                {"text": "✅ Yes, post it", "callback_data": "mk:post"},
+                                {"text": "❌ No thanks",   "callback_data": "mk:skip"},
+                            ]]
+                        },
+                    )
+
             return {"ok": True}
         
         callback_query = update.get("callback_query")
