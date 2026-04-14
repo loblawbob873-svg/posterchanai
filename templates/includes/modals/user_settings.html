@@ -12,6 +12,7 @@
                 <button class="user-tab-btn" data-tab="ai">AI Services</button>
                 <button class="user-tab-btn" data-tab="mail">Mail</button>
                 <button class="user-tab-btn" data-tab="telegram">Telegram</button>
+                <button class="user-tab-btn" data-tab="misskey">Misskey</button>
                 <button class="user-tab-btn" data-tab="apikeys">API Keys</button>
             </div>
 
@@ -217,6 +218,33 @@ My name: John Smith"></textarea>
                                     <button type="button" class="btn-danger" id="unlinkTelegramBtn">Unlink Telegram</button>
                                 </div>
                             </div>
+                        </div>
+                    </fieldset>
+                </div>
+
+                <!-- Misskey Tab -->
+                <div class="user-tab-content" id="user-tab-misskey">
+                    <fieldset>
+                        <legend>Misskey Integration</legend>
+                        <p class="fieldset-info">Connect to a Misskey server to post notes directly from the Telegram bot's <code>post</code> command.</p>
+
+                        <div class="form-group">
+                            <label for="misskeyInstanceUrl">Instance URL</label>
+                            <input type="url" id="misskeyInstanceUrl" placeholder="https://misskey.example.com">
+                            <small>The full URL of your Misskey instance</small>
+                        </div>
+
+                        <div class="form-group" id="misskeyAuthSection">
+                            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                                <button type="button" class="btn-primary" id="misskeyConnectBtn">Connect with MiAuth</button>
+                                <button type="button" class="btn-danger" id="misskeyDisconnectBtn" style="display: none;">Disconnect</button>
+                            </div>
+                            <div id="misskeyStatus" class="test-result" style="margin-top: 8px;"></div>
+                            <small>MiAuth opens a new tab on your Misskey instance to authorize PosterChanAI. No password is shared.</small>
+                        </div>
+
+                        <div class="form-group" id="misskeyConnectedInfo" style="display: none;">
+                            <div class="settings-status success" id="misskeyConnectedMsg"></div>
                         </div>
                     </fieldset>
                 </div>

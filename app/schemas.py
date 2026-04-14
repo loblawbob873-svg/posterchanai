@@ -415,7 +415,10 @@ class UserSettingsUpdate(BaseModel):
     telegram_enabled: Optional[bool] = None
     telegram_chat_id: Optional[str] = None
     telegram_notifications: Optional[str] = None
-    # Music settings
+    # Misskey settings
+    misskey_enabled: Optional[bool] = None
+    misskey_instance_url: Optional[str] = None
+    misskey_api_token: Optional[str] = None
 
 
 class UserSettingsResponse(BaseModel):
@@ -441,6 +444,10 @@ class UserSettingsResponse(BaseModel):
     telegram_enabled: bool = False
     telegram_chat_id: Optional[str] = None
     telegram_notifications: str = ""
+    # Misskey settings
+    misskey_enabled: bool = False
+    misskey_instance_url: Optional[str] = None
+    misskey_has_api_token: bool = False
 
 
 class TestConnectionRequest(BaseModel):

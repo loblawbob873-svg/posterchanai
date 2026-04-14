@@ -234,6 +234,62 @@ class ChatHandler {
             });
         }
 
+        // Misskey MiAuth connect button
+        const misskeyConnectBtn = document.getElementById('misskeyConnectBtn');
+        const misskeyDisconnectBtn = document.getElementById('misskeyDisconnectBtn');
+        if (misskeyConnectBtn) {
+            misskeyConnectBtn.addEventListener('click', async () => {
+                const instanceUrl = document.getElementById('misskeyInstanceUrl').value.trim();
+                if (!instanceUrl) {
+                    alert('Please enter your Misskey instance URL first.');
+                    return;
+                }
+                const statusEl = document.getElementById('misskeyStatus');
+                try {
+                    const resp = await csrfFetch('/api/misskey/miauth/start', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ instance_url: instanceUrl })
+                    });
+                    const data = await resp.json();
+                    if (!resp.ok) {
+                        if (statusEl) { statusEl.textContent = data.detail || 'Failed to start MiAuth'; statusEl.className = 'test-result error'; }
+                        return;
+                    }
+                    // Open MiAuth authorization in a new tab
+                    const authWindow = window.open(data.auth_url, '_blank');
+                    if (statusEl) { statusEl.textContent = 'Waiting for authorization…'; statusEl.className = 'test-result'; }
+                    // Listen for postMessage from the callback page
+                    const onMessage = async (event) => {
+                        if (event.data === 'misskey_connected') {
+                            window.removeEventListener('message', onMessage);
+                            if (statusEl) { statusEl.textContent = 'Connected!'; statusEl.className = 'test-result success'; }
+                            await this.loadUserSettings();
+                        }
+                    };
+                    window.addEventListener('message', onMessage);
+                } catch (e) {
+                    if (statusEl) { statusEl.textContent = 'Error: ' + e.message; statusEl.className = 'test-result error'; }
+                }
+            });
+        }
+        if (misskeyDisconnectBtn) {
+            misskeyDisconnectBtn.addEventListener('click', async () => {
+                if (!confirm('Disconnect your Misskey account?')) return;
+                try {
+                    const resp = await csrfFetch('/api/misskey/disconnect', { method: 'DELETE' });
+                    if (resp.ok) {
+                        await this.loadUserSettings();
+                    } else {
+                        const d = await resp.json();
+                        alert(d.detail || 'Failed to disconnect');
+                    }
+                } catch (e) {
+                    alert('Error: ' + e.message);
+                }
+            });
+        }
+
         // Telegram link/unlink buttons
         const linkTelegramBtn = document.getElementById('linkTelegramBtn');
         const unlinkTelegramBtn = document.getElementById('unlinkTelegramBtn');
@@ -315,6 +371,10 @@ class ChatHandler {
                 if (telegramEnabledEl) settings.telegram_enabled = telegramEnabledEl.checked;
                 if (telegramChatIdEl) settings.telegram_chat_id = telegramChatIdEl.value;
                 if (telegramNotificationsEl) settings.telegram_notifications = telegramNotificationsEl.value;
+
+                // Misskey — only persist the instance URL from the form (token is managed via MiAuth)
+                const misskeyInstanceUrlEl = document.getElementById('misskeyInstanceUrl');
+                if (misskeyInstanceUrlEl) settings.misskey_instance_url = misskeyInstanceUrlEl.value.trim();
 
                 try {
                     const response = await csrfFetch('/api/auth/settings', {
@@ -519,6 +579,24 @@ class ChatHandler {
 
                 const telegramNotifications = document.getElementById('telegramNotifications');
                 if (telegramNotifications) telegramNotifications.value = settings.telegram_notifications || 'news,downloads,mentions';
+
+                // Misskey settings
+                const misskeyInstanceUrl = document.getElementById('misskeyInstanceUrl');
+                const misskeyConnectBtn = document.getElementById('misskeyConnectBtn');
+                const misskeyDisconnectBtn = document.getElementById('misskeyDisconnectBtn');
+                const misskeyConnectedInfo = document.getElementById('misskeyConnectedInfo');
+                const misskeyConnectedMsg = document.getElementById('misskeyConnectedMsg');
+                if (misskeyInstanceUrl) misskeyInstanceUrl.value = settings.misskey_instance_url || '';
+                if (settings.misskey_enabled && settings.misskey_has_api_token) {
+                    if (misskeyConnectBtn) misskeyConnectBtn.style.display = 'none';
+                    if (misskeyDisconnectBtn) misskeyDisconnectBtn.style.display = 'inline-block';
+                    if (misskeyConnectedInfo) misskeyConnectedInfo.style.display = 'block';
+                    if (misskeyConnectedMsg) misskeyConnectedMsg.textContent = `Connected to ${settings.misskey_instance_url}`;
+                } else {
+                    if (misskeyConnectBtn) misskeyConnectBtn.style.display = 'inline-block';
+                    if (misskeyDisconnectBtn) misskeyDisconnectBtn.style.display = 'none';
+                    if (misskeyConnectedInfo) misskeyConnectedInfo.style.display = 'none';
+                }
 
                 // News settings
                 const newsScheduleEnabled = document.getElementById('newsScheduleEnabled');

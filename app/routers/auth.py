@@ -430,7 +430,11 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         # Telegram settings
         telegram_enabled=current_user.telegram_enabled if hasattr(current_user, 'telegram_enabled') else False,
         telegram_chat_id=current_user.telegram_chat_id if hasattr(current_user, 'telegram_chat_id') else None,
-        telegram_notifications=current_user.telegram_notifications if hasattr(current_user, 'telegram_notifications') else ""
+        telegram_notifications=current_user.telegram_notifications if hasattr(current_user, 'telegram_notifications') else "",
+        # Misskey settings
+        misskey_enabled=current_user.misskey_enabled if hasattr(current_user, 'misskey_enabled') else False,
+        misskey_instance_url=current_user.misskey_instance_url if hasattr(current_user, 'misskey_instance_url') else None,
+        misskey_has_api_token=bool(current_user.misskey_api_token) if hasattr(current_user, 'misskey_api_token') else False,
     )
 
 
@@ -547,6 +551,14 @@ def update_user_settings(
         current_user.telegram_chat_id = settings.telegram_chat_id.strip() if settings.telegram_chat_id else None
     if settings.telegram_notifications is not None:
         current_user.telegram_notifications = settings.telegram_notifications
+
+    # Save Misskey settings
+    if settings.misskey_enabled is not None:
+        current_user.misskey_enabled = settings.misskey_enabled
+    if settings.misskey_instance_url is not None:
+        current_user.misskey_instance_url = settings.misskey_instance_url.strip() if settings.misskey_instance_url else None
+    if settings.misskey_api_token is not None:
+        current_user.misskey_api_token = settings.misskey_api_token if settings.misskey_api_token else None
 
     try:
         # Flush changes to database before commit

@@ -359,6 +359,9 @@ router = APIRouter(prefix="/api/telegram", tags=["telegram"])
 _seen_update_ids: set = set()
 _MAX_SEEN_IDS = 500  # Keep a bounded window; Telegram won't replay further back
 
+# Pending Misskey posts: chat_id → post_text  (cleared once confirmed or cancelled)
+_misskey_post_cache: dict = {}
+
 
 class TelegramWebhookUpdate(BaseModel):
     update_id: int
@@ -628,7 +631,32 @@ async def _handle_telegram_update(update: dict, db: Session):
                 except Exception as e:
                     result_content = f"Error generating post: {str(e)}"
 
-                await telegram_service.send_message(chat_id, result_content)
+                # Check if the linked user has Misskey configured
+                _tg_user = db.query(User).filter(
+                    User.telegram_chat_id == chat_id,
+                    User.telegram_enabled == True
+                ).first()
+
+                if (
+                    _tg_user
+                    and getattr(_tg_user, "misskey_enabled", False)
+                    and getattr(_tg_user, "misskey_instance_url", None)
+                    and getattr(_tg_user, "misskey_api_token", None)
+                ):
+                    # Store the post and ask for confirmation via inline buttons
+                    _misskey_post_cache[chat_id] = result_content
+                    await telegram_service.send_message(
+                        chat_id,
+                        result_content + "\n\n📣 *Post this to Misskey?*",
+                        reply_markup={
+                            "inline_keyboard": [[
+                                {"text": "✅ Yes, post it", "callback_data": "mk:post"},
+                                {"text": "❌ No thanks",   "callback_data": "mk:skip"},
+                            ]]
+                        },
+                    )
+                else:
+                    await telegram_service.send_message(chat_id, result_content)
                 return {"ok": True}
 
             # Find user by linked Telegram chat_id
@@ -1389,6 +1417,44 @@ async def _handle_telegram_update(update: dict, db: Session):
                         parse_mode="MarkdownV2",
                         reply_markup=back_button,
                     )
+
+            elif data.startswith("mk:"):
+                action = data.split(":", 1)[1]
+                pending_post = _misskey_post_cache.pop(chat_id, None)
+
+                if action == "skip" or pending_post is None:
+                    if pending_post is None:
+                        await telegram_service.send_message(chat_id, "No pending post found.")
+                    else:
+                        await telegram_service.send_message(chat_id, "Post skipped.")
+                    return {"ok": True}
+
+                # action == "post"
+                mk_user = db.query(User).filter(
+                    User.telegram_chat_id == chat_id,
+                    User.telegram_enabled == True
+                ).first()
+
+                if (
+                    not mk_user
+                    or not getattr(mk_user, "misskey_enabled", False)
+                    or not getattr(mk_user, "misskey_instance_url", None)
+                    or not getattr(mk_user, "misskey_api_token", None)
+                ):
+                    await telegram_service.send_message(chat_id, "Misskey is not configured on your account.")
+                    return {"ok": True}
+
+                try:
+                    from app.services.misskey_service import post_note as _misskey_post_note
+                    await _misskey_post_note(
+                        mk_user.misskey_instance_url,
+                        mk_user.misskey_api_token,
+                        pending_post,
+                    )
+                    await telegram_service.send_message(chat_id, "✅ Posted to Misskey!")
+                except Exception as mk_err:
+                    logger.error(f"Misskey post error: {mk_err}", exc_info=True)
+                    await telegram_service.send_message(chat_id, f"❌ Failed to post to Misskey: {mk_err}")
 
             return {"ok": True}
 

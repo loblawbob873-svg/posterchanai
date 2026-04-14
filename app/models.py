@@ -42,6 +42,11 @@ class User(Base):
     telegram_chat_id = Column(String(50), nullable=True)
     telegram_notifications = Column(Text, default="")  # Comma-separated: "news,downloads,mentions"
 
+    # Misskey integration settings
+    misskey_enabled = Column(Boolean, default=False)
+    misskey_instance_url = Column(String(500), nullable=True)
+    misskey_api_token = Column(String(500), nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")

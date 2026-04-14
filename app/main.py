@@ -24,6 +24,7 @@ from app.models import User, VerificationToken, Setting
 from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, news, rag, mail, torrent, storage, files
 from app.routers import fourchan, youtube_thumb
 from app.routers.telegram import router as telegram_router
+from app.routers.misskey import router as misskey_router
 from app.services.load_balancer import NoHealthyServersError
 from fastapi.responses import JSONResponse
 
@@ -159,6 +160,7 @@ app.include_router(fourchan.router)
 app.include_router(youtube_thumb.router)
 app.include_router(storage.router)
 app.include_router(telegram_router)
+app.include_router(misskey_router)
 # Also include files_router if it exists (for storage server compatibility)
 if hasattr(storage, 'files_router'):
     app.include_router(storage.files_router)
