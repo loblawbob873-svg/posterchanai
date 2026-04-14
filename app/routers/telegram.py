@@ -147,6 +147,69 @@ def _torrent_nav_keyboard() -> dict:
         ]
     }
 
+
+async def _send_torrent_results(chat_id: str, category: str, user_id: int):
+    """Send each torrent result as its own message with a download button beneath it."""
+    import asyncio
+    from app.services.command_service import _torrent_cache
+
+    cached = _torrent_cache.get(user_id, {}).get(category, [])
+    if not cached:
+        await telegram_service.send_message(chat_id, "No results found.")
+        return
+
+    cat_label = {"movies": "🎬 Movies", "tv": "📺 TV", "music": "🎵 Music", "anime": "🎌 Anime", "search": "🔍 Search"}.get(category, category.upper())
+    await telegram_service.send_message(chat_id, f"**{cat_label}** — {len(cached)} results:")
+
+    for i, t in enumerate(cached, 1):
+        title = t.title[:80] + "..." if len(t.title) > 80 else t.title
+        title_escaped = title.replace("[", "(").replace("]", ")")
+        if t.url:
+            title_line = f"[{title_escaped}]({t.url})"
+        else:
+            title_line = title_escaped
+        text = f"**{i}. {title_line}**\n🌱 {t.seeders}  👤 {t.leechers}  📦 {t.size}"
+        markup = {"inline_keyboard": [[
+            {"text": f"📥 Download #{i}", "callback_data": f"t:dl:{category}:{i}"}
+        ]]}
+        await telegram_service.send_message(chat_id, text, reply_markup=markup)
+        await asyncio.sleep(0.1)
+
+    # Nav buttons at the end
+    await telegram_service.send_message(chat_id, "Choose another category:", reply_markup=_torrent_nav_keyboard())
+
+
+async def _send_nyaa_results(chat_id: str, user_id: int):
+    """Send each nyaa result as its own message with a download button beneath it."""
+    import asyncio
+    from app.services.command_service import _nyaa_cache
+
+    cached = _nyaa_cache.get(user_id, [])
+    if not cached:
+        await telegram_service.send_message(chat_id, "No results found.")
+        return
+
+    await telegram_service.send_message(chat_id, f"**🎌 Nyaa** — {len(cached)} results:")
+
+    for i, t in enumerate(cached, 1):
+        title = t.title[:80] + "..." if len(t.title) > 80 else t.title
+        title_escaped = title.replace("[", "(").replace("]", ")")
+        if t.url:
+            title_line = f"[{title_escaped}]({t.url})"
+        else:
+            title_line = title_escaped
+        text = f"**{i}. {title_line}**\n🌱 {t.seeders}  👤 {t.leechers}  📦 {t.size}"
+        markup = {"inline_keyboard": [[
+            {"text": f"📥 Download #{i}", "callback_data": f"n:dl:{i}"}
+        ]]}
+        await telegram_service.send_message(chat_id, text, reply_markup=markup)
+        await asyncio.sleep(0.1)
+
+    await telegram_service.send_message(chat_id, "Search again:", reply_markup={"inline_keyboard": [[
+        {"text": "🔎 New Nyaa Search", "callback_data": "n:search_hint:0"},
+        {"text": "📋 Active Downloads", "callback_data": "t:list:0"},
+    ]]})
+
 router = APIRouter(prefix="/api/telegram", tags=["telegram"])
 
 # Module-level update tracking to prevent duplicate processing across requests.
@@ -613,6 +676,13 @@ async def _handle_telegram_update(update: dict, db: Session):
                             # Show category navigation menu without scraping all categories
                             result = {"type": "text", "content": "🧲 **Torrents** — choose a category:"}
                             reply_markup = _torrent_nav_keyboard()
+                        elif arg_sub in ("movies", "tv", "anime", "music", "search", "s"):
+                            # Execute to populate the cache, then send individual result messages
+                            result = await command_service.execute_command(command, arg)
+                            user_id = user_obj.id if user_obj else 0
+                            cache_key = "search" if arg_sub in ("search", "s") else arg_sub
+                            await _send_torrent_results(chat_id, cache_key, user_id)
+                            return {"ok": True}
                         else:
                             if attachments:
                                 result = await command_service.execute_command(command, arg, attachments=attachments)
@@ -625,10 +695,9 @@ async def _handle_telegram_update(update: dict, db: Session):
                             result["content"] = _strip_cmd_links(content)
                     elif command == "nyaa":
                         result = await command_service.execute_command(command, arg)
-                        content = result.get("content", "")
                         user_id = user_obj.id if user_obj else 0
-                        reply_markup = _build_torrent_keyboard("nyaa", content, user_id)
-                        result["content"] = _strip_cmd_links(content)
+                        await _send_nyaa_results(chat_id, user_id)
+                        return {"ok": True}
                     else:
                         # Pass attachments to any command that supports them
                         if attachments:
@@ -991,9 +1060,15 @@ async def _handle_telegram_update(update: dict, db: Session):
                 action = parts[1] if len(parts) > 1 else ""
 
                 if action == "cat" and len(parts) >= 3:
-                    # Category browse: t:cat:movies
+                    # Category browse: send individual result messages
                     category = parts[2]
-                    torrents_arg = category
+                    try:
+                        await cb_command_service.execute_command("torrents", category)
+                        await _send_torrent_results(chat_id, category, cb_user.id)
+                    except Exception as cb_err:
+                        logger.error(f"Torrent callback error: {cb_err}", exc_info=True)
+                        await telegram_service.send_message(chat_id, f"Error: {cb_err}")
+                    return {"ok": True}
                 elif action == "dl" and len(parts) >= 4:
                     # Download from browse list: t:dl:movies:3
                     category = parts[2]
