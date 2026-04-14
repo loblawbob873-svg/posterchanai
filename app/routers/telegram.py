@@ -1780,12 +1780,15 @@ async def link_telegram_chat(
     db: Session = Depends(get_db)
 ):
     """Link current user's account to a Telegram chat."""
+    from sqlalchemy.exc import IntegrityError
     current_user.telegram_chat_id = data.chat_id
     current_user.telegram_enabled = True
     current_user.telegram_notifications = data.notifications
-    
-    db.commit()
-    
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="That Telegram chat ID is already linked to another account.")
     return {"ok": True, "message": f"Linked to chat {data.chat_id}"}
 
 
