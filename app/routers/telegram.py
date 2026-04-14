@@ -153,32 +153,36 @@ def _help_main_keyboard() -> dict:
     return {
         "inline_keyboard": [
             [
-                {"text": "💬 Chat & URLs", "callback_data": "help:chat"},
-                {"text": "📰 News", "callback_data": "help:news"},
-            ],
-            [
-                {"text": "🔍 Search", "callback_data": "prompt:search"},
-                {"text": "ℹ️", "callback_data": "help:search"},
+                {"text": "🔍 Search",      "callback_data": "prompt:search"},
+                {"text": "ℹ️",             "callback_data": "help:search"},
             ],
             [
                 {"text": "🖼 Image Search", "callback_data": "prompt:images"},
-                {"text": "ℹ️", "callback_data": "help:images"},
+                {"text": "ℹ️",             "callback_data": "help:images"},
             ],
             [
-                {"text": "🎨 Image Gen", "callback_data": "prompt:geni"},
-                {"text": "ℹ️", "callback_data": "help:geni"},
+                {"text": "🎨 Image Gen",   "callback_data": "prompt:geni"},
+                {"text": "ℹ️",             "callback_data": "help:geni"},
             ],
             [
-                {"text": "🌐 Translate", "callback_data": "help:translate"},
-                {"text": "🧲 Torrents", "callback_data": "help:torrents"},
+                {"text": "🧲 Torrents",    "callback_data": "prompt:torrents"},
+                {"text": "ℹ️",             "callback_data": "help:torrents"},
             ],
             [
-                {"text": "🎌 Nyaa", "callback_data": "help:nyaa"},
-                {"text": "✉️ Email", "callback_data": "help:mail"},
+                {"text": "🎌 Nyaa",        "callback_data": "prompt:nyaa"},
+                {"text": "ℹ️",             "callback_data": "help:nyaa"},
             ],
             [
+                {"text": "🌐 Translate",   "callback_data": "help:translate"},
+                {"text": "📰 News",        "callback_data": "help:news"},
+            ],
+            [
+                {"text": "✉️ Email",       "callback_data": "help:mail"},
                 {"text": "📱 Social Post", "callback_data": "help:post"},
-                {"text": "📋 Logs", "callback_data": "help:logs"},
+            ],
+            [
+                {"text": "💬 Chat & URLs", "callback_data": "help:chat"},
+                {"text": "📋 Logs",        "callback_data": "help:logs"},
             ],
         ]
     }
@@ -1352,9 +1356,11 @@ async def _handle_telegram_update(update: dict, db: Session):
             elif data.startswith("prompt:"):
                 action = data.split(":", 1)[1]
                 _PROMPT_CONFIGS = {
-                    "search": ("🔍 What would you like to search for?", "e.g. latest AI news"),
-                    "images": ("🖼 What images would you like to search for?", "e.g. northern lights"),
-                    "geni":   ("🎨 Describe the image you want to generate:", "e.g. a sunset over a cyberpunk city"),
+                    "search":   ("🔍 What would you like to search for?", "e.g. latest AI news"),
+                    "images":   ("🖼 What images would you like to search for?", "e.g. northern lights"),
+                    "geni":     ("🎨 Describe the image you want to generate:", "e.g. a sunset over a cyberpunk city"),
+                    "nyaa":     ("🔎 Type your anime search:", "e.g. one piece 1080p"),
+                    "torrents": ("🔍 Type your torrent search:", "e.g. dark knight 1080p"),
                 }
                 cfg = _PROMPT_CONFIGS.get(action)
                 if cfg:
