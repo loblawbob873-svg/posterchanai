@@ -22,27 +22,69 @@ def get_news_sources(db: Session) -> str:
     return setting.value if setting and setting.value else ""
 
 
+def _parse_rss_feed(content: str, base_url: str) -> list:
+    """Parse RSS or Atom feed XML and return headline links."""
+    import xml.etree.ElementTree as ET
+    links = []
+    try:
+        root = ET.fromstring(content)
+        # Strip namespaces for easier matching
+        ns_strip = lambda tag: tag.split('}', 1)[-1] if '}' in tag else tag
+
+        items = []
+        # RSS 2.0: <channel><item>
+        for item in root.iter():
+            if ns_strip(item.tag) in ('item', 'entry'):
+                items.append(item)
+
+        seen = set()
+        for item in items[:12]:
+            title = ''
+            link = ''
+            for child in item:
+                tag = ns_strip(child.tag)
+                if tag == 'title' and not title:
+                    title = (child.text or '').strip()
+                elif tag == 'link' and not link:
+                    # Atom uses href attribute; RSS uses text content
+                    link = child.get('href') or (child.text or '').strip()
+
+            if title and link and title.lower() not in seen:
+                seen.add(title.lower())
+                if link.startswith('/'):
+                    link = base_url + link
+                if link.startswith('http'):
+                    links.append(f"- [{title}]({link})")
+
+    except Exception as e:
+        logger.warning(f"RSS parse error: {e}")
+    return links
+
+
 async def fetch_headlines_from_url(url: str) -> dict:
-    """Fetch and extract headlines from a news site URL"""
+    """Fetch and extract headlines from a news site URL (HTML scrape or RSS/Atom feed)."""
     if not url.startswith("http"):
         url = f"https://{url}"
 
     # Proxy is required for news fetching
     proxy_config = require_proxy("News fetching")
-    
+
     # Validate proxy config
     if not proxy_config or not isinstance(proxy_config, str):
         logger.error(f"Invalid proxy config for news: {proxy_config}")
         raise ValueError(f"Invalid proxy configuration: {proxy_config}")
-    
+
     logger.info(f"News fetching via proxy: {proxy_config} for URL: {url}")
 
+    parsed = urlparse(url)
+    base_url = f"{parsed.scheme}://{parsed.netloc}"
+
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
     }
 
-    # Verify proxy is being used - httpx should use proxy parameter
     logger.debug(f"Creating httpx client with proxy={proxy_config}")
     async with httpx.AsyncClient(timeout=30, follow_redirects=True, proxy=proxy_config) as client:
         logger.debug(f"Making request to {url} through proxy {proxy_config}")
@@ -50,12 +92,26 @@ async def fetch_headlines_from_url(url: str) -> dict:
             response = await client.get(url, headers=headers)
             response.raise_for_status()
 
-            soup = BeautifulSoup(response.text, "lxml")
+            content_type = response.headers.get("content-type", "")
+            text = response.text
+
+            # Detect RSS/Atom feeds by content-type or XML declaration
+            is_feed = (
+                "xml" in content_type or
+                "rss" in content_type or
+                text.lstrip().startswith("<?xml") or
+                "<rss" in text[:500] or
+                "<feed" in text[:500]
+            )
+
+            if is_feed:
+                links = _parse_rss_feed(text, base_url)
+                return {"links": links, "error": None}
+
+            # --- HTML scraping path ---
+            soup = BeautifulSoup(text, "lxml")
             for el in soup(["script", "style", "nav", "footer", "header", "aside", "noscript"]):
                 el.decompose()
-
-            parsed = urlparse(url)
-            base_url = f"{parsed.scheme}://{parsed.netloc}"
 
             links = []
             seen = set()
