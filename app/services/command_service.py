@@ -1298,7 +1298,7 @@ Files are saved to your Storage.""",
                     # Add timeout per source to prevent hanging
                     async with asyncio.timeout(60):  # 60 second timeout per source (fetch + AI summary)
                         markdown = await fetch_news_from_source(source["url"], source["name"], self.db)
-                        return self._add_copy_buttons_to_news(markdown)
+                        return markdown
                 except asyncio.TimeoutError:
                     logger.warning(f"Timeout fetching news from {source['name']}")
                     return f"**{source['name']}:** Timeout fetching headlines"

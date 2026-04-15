@@ -365,6 +365,8 @@ _misskey_post_cache: dict = {}
 _link_action_cache: dict = {}
 # Pending YouTube actions: chat_id → url (cleared once action is chosen)
 _youtube_action_cache: dict = {}
+# Pending news Post actions: chat_id → list of (title, url) tuples
+_news_post_cache: dict = {}
 
 
 class TelegramWebhookUpdate(BaseModel):
@@ -1011,6 +1013,32 @@ async def _handle_telegram_update(update: dict, db: Session):
                         user_id = user_obj.id if user_obj else 0
                         await _send_nyaa_results(chat_id, user_id)
                         return {"ok": True}
+                    elif command == "news":
+                        result = await command_service.execute_command(command, arg)
+                        content = _strip_cmd_links(result.get("content", ""))
+                        result["content"] = content
+
+                        # If Misskey is configured, build Post buttons for each article
+                        has_misskey = (
+                            user_obj
+                            and getattr(user_obj, "misskey_enabled", False)
+                            and getattr(user_obj, "misskey_instance_url", None)
+                            and getattr(user_obj, "misskey_api_token", None)
+                        )
+                        if has_misskey:
+                            article_matches = re.findall(r'-\s+\[([^\]]+)\]\((https?://[^)]+)\)', content)
+                            if article_matches:
+                                _news_post_cache[chat_id] = article_matches
+                                buttons = []
+                                row = []
+                                for i in range(1, min(len(article_matches), 10) + 1):
+                                    row.append({"text": f"📣 Post {i}", "callback_data": f"nk:post:{i}"})
+                                    if len(row) == 5:
+                                        buttons.append(row)
+                                        row = []
+                                if row:
+                                    buttons.append(row)
+                                reply_markup = {"inline_keyboard": buttons}
                     else:
                         # Pass attachments to any command that supports them
                         if attachments:
@@ -1782,6 +1810,84 @@ async def _handle_telegram_update(update: dict, db: Session):
                         except Exception as yt_err:
                             logger.error(f"YouTube video callback error: {yt_err}", exc_info=True)
                             await telegram_service.send_message(chat_id, f"❌ Error: {yt_err}")
+
+            elif data.startswith("nk:"):
+                # News → Post to Misskey: nk:post:<article_number>
+                parts = data.split(":")
+                action = parts[1] if len(parts) > 1 else ""
+
+                if action == "post" and len(parts) >= 3:
+                    try:
+                        article_num = int(parts[2])
+                    except ValueError:
+                        return {"ok": True}
+
+                    cached_articles = _news_post_cache.get(chat_id)
+                    if not cached_articles or article_num < 1 or article_num > len(cached_articles):
+                        await telegram_service.send_message(chat_id, "⚠️ News article not found. Fetch the news again and try.")
+                        return {"ok": True}
+
+                    title, url = cached_articles[article_num - 1]
+
+                    nk_user = db.query(User).filter(
+                        User.telegram_chat_id == chat_id,
+                        User.telegram_enabled == True
+                    ).first()
+
+                    if (
+                        not nk_user
+                        or not getattr(nk_user, "misskey_enabled", False)
+                        or not getattr(nk_user, "misskey_instance_url", None)
+                        or not getattr(nk_user, "misskey_api_token", None)
+                    ):
+                        await telegram_service.send_message(chat_id, "⚠️ Misskey is not configured on your account.")
+                        return {"ok": True}
+
+                    await telegram_service.send_message(chat_id, f"⏳ Generating Misskey post for: {title}")
+
+                    try:
+                        from app.services.search_service import SearchService as _SS
+                        import asyncio as _asyncio
+                        _ss = _SS(db)
+                        fetched = await _asyncio.wait_for(_ss.fetch_urls([url], max_urls=1), timeout=15)
+                        article_context = f"Title: {title}\n\n{url}"
+                        if fetched and fetched[0].get("content") and not fetched[0].get("error"):
+                            article_context = f"Title: {fetched[0].get('title', title)}\n\n{fetched[0]['content'][:3000]}"
+
+                        nk_chat = ChatService(db, user=nk_user)
+                        nk_chat.num_predict = min(nk_chat.num_predict, 900)
+                        post_messages = [
+                            {
+                                "role": "system",
+                                "content": "You are a social media expert. Write compelling, detailed social media posts. Output ONLY the post text. No introductions, no 'here is your post', no URL placeholders like 'link' or 'read more'."
+                            },
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Write a viral and engaging social media post based on this news article. "
+                                    "Be detailed — include key facts, context, and why it matters. "
+                                    "Use emojis and relevant hashtags. Stop after the last hashtag.\n\n"
+                                    f"Content:\n{article_context}"
+                                )
+                            }
+                        ]
+                        post_text = await nk_chat.chat(post_messages)
+                        post_text = post_text.rstrip() + f"\n\n{url}"
+
+                        _misskey_post_cache[chat_id] = post_text
+                        await telegram_service.send_message(
+                            chat_id,
+                            post_text + "\n\n📣 *Post this to Misskey?*",
+                            reply_markup={
+                                "inline_keyboard": [[
+                                    {"text": "✅ Yes, post it", "callback_data": "mk:post"},
+                                    {"text": "❌ No thanks",   "callback_data": "mk:skip"},
+                                ]]
+                            },
+                        )
+                    except Exception as nk_err:
+                        logger.error(f"News Misskey post generation error: {nk_err}", exc_info=True)
+                        await telegram_service.send_message(chat_id, f"❌ Error generating post: {nk_err}")
 
             elif data.startswith("mk:"):
                 action = data.split(":", 1)[1]
