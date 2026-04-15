@@ -285,9 +285,9 @@ class TelegramService:
         """Download a file from Telegram."""
         if not self.bot_token:
             return None
-        
+
         url = f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}"
-        
+
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.get(url)
@@ -299,6 +299,39 @@ class TelegramService:
         except Exception as e:
             logger.error(f"Failed to download file: {e}")
             return None
+
+    async def send_audio(self, chat_id: str, file_path: str, title: str = None, performer: str = None, duration: int = None, caption: str = None) -> dict:
+        """Send an audio file to a Telegram chat."""
+        if not self.bot_token:
+            return {"ok": False, "error": "Bot token not configured"}
+
+        url = f"{self.api_base}{self.bot_token}/sendAudio"
+
+        try:
+            with open(file_path, "rb") as f:
+                audio_bytes = f.read()
+
+            data = {"chat_id": chat_id}
+            if title:
+                data["title"] = title
+            if performer:
+                data["performer"] = performer
+            if duration is not None:
+                data["duration"] = str(duration)
+            if caption:
+                data["caption"] = caption
+
+            files = {"audio": (title or "audio.mp3", audio_bytes, "audio/mpeg")}
+
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                response = await client.post(url, data=data, files=files)
+                result = response.json()
+                if not result.get("ok"):
+                    logger.error(f"Telegram sendAudio error: {result}")
+                return result
+        except Exception as e:
+            logger.error(f"Failed to send audio: {e}")
+            return {"ok": False, "error": str(e)}
 
 
 telegram_service = TelegramService()

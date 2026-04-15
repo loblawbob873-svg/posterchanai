@@ -573,7 +573,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "logs", "translate", "post"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "logs", "translate", "post"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -738,7 +738,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "logs", "translate", "post"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "logs", "translate", "post"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -901,6 +901,83 @@ async def _handle_telegram_update(update: dict, db: Session):
                             parse_mode="MarkdownV2",
                             reply_markup=_help_main_keyboard(),
                         )
+                        return {"ok": True}
+                    elif command == "new":
+                        # Clear the Telegram conversation history for this user
+                        tg_conv = db.query(Conversation).filter(
+                            Conversation.user_id == user_obj.id,
+                            Conversation.title == "📱 Telegram"
+                        ).order_by(Conversation.updated_at.desc()).first()
+                        if tg_conv:
+                            db.query(Message).filter(Message.conversation_id == tg_conv.id).delete()
+                            db.commit()
+                        await telegram_service.send_message(chat_id, "Conversation cleared. Starting fresh!")
+                        return {"ok": True}
+                    elif command == "ytdl":
+                        if not arg:
+                            await telegram_service.send_message(
+                                chat_id,
+                                "Usage: `ytdl <youtube_url>`\n\nDownloads the video as MP3 and sends it here."
+                            )
+                            return {"ok": True}
+
+                        from app.services.youtube_service import (
+                            check_ytdlp_available,
+                            download_as_mp3,
+                            extract_download_urls,
+                        )
+                        import tempfile, shutil, os as _os, asyncio as _asyncio
+
+                        if not check_ytdlp_available():
+                            await telegram_service.send_message(chat_id, "❌ yt-dlp is not installed on the server.")
+                            return {"ok": True}
+
+                        urls = extract_download_urls(arg)
+                        if not urls:
+                            await telegram_service.send_message(chat_id, "❌ Could not find a valid YouTube URL in your message.")
+                            return {"ok": True}
+
+                        await telegram_service.send_message(chat_id, "⏳ Downloading MP3, please wait...")
+
+                        from app.models import Setting as _Setting
+                        _cookies_s = db.query(_Setting).filter(_Setting.key == "ytdl_cookies_path").first()
+                        _cookies_path = str(_cookies_s.value).strip() if _cookies_s and _cookies_s.value else None
+                        if _cookies_path and not _os.path.isfile(_cookies_path):
+                            _cookies_path = None
+                        _ssl_s = db.query(_Setting).filter(_Setting.key == "ytdl_no_ssl_verify").first()
+                        _no_ssl = (
+                            str(_ssl_s.value).strip().lower() in ("true", "1", "yes")
+                            if _ssl_s and _ssl_s.value else False
+                        )
+
+                        temp_dir = tempfile.mkdtemp(prefix="tg_ytdl_")
+                        try:
+                            dl_result = await _asyncio.to_thread(
+                                download_as_mp3, urls[0], temp_dir, _cookies_path, _no_ssl
+                            )
+                            if not dl_result.success:
+                                await telegram_service.send_message(chat_id, f"❌ Download failed: {dl_result.error}")
+                                return {"ok": True}
+
+                            file_size = _os.path.getsize(dl_result.local_path)
+                            if file_size > 50 * 1024 * 1024:
+                                await telegram_service.send_message(
+                                    chat_id,
+                                    f"❌ File is too large to send via Telegram ({file_size // (1024*1024)} MB). Telegram's limit is 50 MB."
+                                )
+                                return {"ok": True}
+
+                            duration_int = int(dl_result.duration) if dl_result.duration else None
+                            await telegram_service.send_audio(
+                                chat_id=chat_id,
+                                file_path=dl_result.local_path,
+                                title=dl_result.title,
+                                performer=dl_result.artist,
+                                duration=duration_int,
+                            )
+                        finally:
+                            shutil.rmtree(temp_dir, ignore_errors=True)
+
                         return {"ok": True}
                     elif command == "torrents":
                         arg_parts = arg.strip().split()
