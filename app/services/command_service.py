@@ -1285,8 +1285,8 @@ Files are saved to your Storage.""",
                 arg_lower = arg.strip().lower()
                 sources = [s for s in all_sources if arg_lower in s["url"].lower() or arg_lower in s["name"].lower()]
                 if not sources:
-                    # Try as a direct URL
-                    sources = [{"url": arg.strip(), "name": arg.strip().split("/")[0]}]
+                    source_names = ", ".join(s["name"] for s in all_sources)
+                    return {"type": "text", "content": f"No news source matching '{arg.strip()}'. Available sources: {source_names}"}
             else:
                 sources = all_sources
 
