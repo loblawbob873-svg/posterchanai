@@ -408,21 +408,19 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     # Convert messages to dict format
     messages = [{"role": m.role, "content": m.content} for m in request.messages]
 
-    # Inject/prepend system prompt for API calls.
-    # Skip when the request came from another posterchanai instance (load-balanced): the
-    # originating server already set the system prompt; re-injecting here would double it,
-    # corrupting intent-detection prompts and confusing the model.
+    # Inject the admin system prompt only when the caller did NOT supply one.
+    # If the caller already has a system message they have set the context intentionally
+    # (e.g. Sharkey's summarize / viral-post endpoints, or any focused task call) and
+    # appending the bot personality would contaminate the prompt and cause the model to
+    # echo it back or ignore the caller's instructions.
+    # Skip entirely when the request came from another posterchanai instance (load-balanced)
+    # to prevent double-injection.
     api_inject_system = settings.get("api_inject_system_prompt", "true").lower() == "true"
-    if api_inject_system and not skip_load_balancer:
+    has_system = bool(messages and messages[0].get("role") == "system")
+    if api_inject_system and not skip_load_balancer and not has_system:
         system_prompt = settings.get("ollama_system_prompt", "")
         if system_prompt:
-            has_system = messages and messages[0].get("role") == "system"
-            if has_system:
-                # Append database prompt to existing system message (bot personality takes priority)
-                messages[0]["content"] = messages[0]["content"] + "\n\n" + system_prompt
-            else:
-                # No system message - inject database prompt
-                messages.insert(0, {"role": "system", "content": system_prompt})
+            messages.insert(0, {"role": "system", "content": system_prompt})
 
     # Inject RAG context if enabled
     rag_enabled = settings.get("api_rag_enabled", "true").lower() == "true"
