@@ -380,6 +380,10 @@ class ChatHandler {
                 const scheduleEnabled = document.getElementById('scheduleEnabled');
                 if (scheduleEnabled) settings.schedule_enabled = scheduleEnabled.checked;
 
+                // News sources
+                const userNewsSourcesEl = document.getElementById('userNewsSources');
+                if (userNewsSourcesEl) settings.news_sources = userNewsSourcesEl.value;
+
                 // Telegram settings
                 const telegramNotificationsEl = document.getElementById('telegramNotifications');
                 if (telegramNotificationsEl) settings.telegram_notifications = telegramNotificationsEl.value;
@@ -574,6 +578,10 @@ class ChatHandler {
                 // Schedule settings
                 const scheduleEnabled = document.getElementById('scheduleEnabled');
                 if (scheduleEnabled) scheduleEnabled.checked = settings.schedule_enabled || false;
+
+                // News sources
+                const userNewsSources = document.getElementById('userNewsSources');
+                if (userNewsSources) userNewsSources.value = settings.news_sources || '';
 
                 // Mail accounts
                 if (settings.mail_accounts) {

@@ -56,6 +56,18 @@
                     </fieldset>
 
                     <fieldset>
+                        <legend>News Sources</legend>
+                        <p class="fieldset-info">Custom news sources for the <code>news</code> command. Leave empty to use the server defaults.</p>
+                        <div class="form-group">
+                            <label for="userNewsSources">News Websites</label>
+                            <textarea id="userNewsSources" rows="6" placeholder="drudgereport.com|Drudge Report
+npr.org/sections/news|NPR
+www.coindesk.com/price/xrp/news|XRP News"></textarea>
+                            <small>One per line: <code>url|Display Name</code> — e.g. <code>www.coindesk.com/price/xrp/news|XRP News</code></small>
+                        </div>
+                    </fieldset>
+
+                    <fieldset>
                         <legend>Storage Usage</legend>
                         <div class="storage-usage-display" id="storageUsageDisplay">
                             <div class="storage-bar-container">
