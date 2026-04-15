@@ -27,9 +27,8 @@ def _parse_rss_feed(content: str, base_url: str) -> tuple:
     import xml.etree.ElementTree as ET
     links = []
     try:
-        # Strip XML declaration encoding issues by encoding to bytes first
-        content_bytes = content.encode("utf-8", errors="replace")
-        root = ET.fromstring(content_bytes)
+        # Strip UTF-8 BOM (\ufeff) which appears before <?xml in some feeds
+        root = ET.fromstring(content.lstrip('\ufeff'))
 
         ns_strip = lambda tag: tag.split('}', 1)[-1] if '}' in tag else tag
 
