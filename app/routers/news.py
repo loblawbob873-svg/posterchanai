@@ -22,20 +22,23 @@ def get_news_sources(db: Session) -> str:
     return setting.value if setting and setting.value else ""
 
 
-def _parse_rss_feed(content: str, base_url: str) -> list:
-    """Parse RSS or Atom feed XML and return headline links."""
+def _parse_rss_feed(content: str, base_url: str) -> tuple:
+    """Parse RSS or Atom feed XML. Returns (links, error_str)."""
     import xml.etree.ElementTree as ET
     links = []
     try:
-        root = ET.fromstring(content)
-        # Strip namespaces for easier matching
+        # Strip XML declaration encoding issues by encoding to bytes first
+        content_bytes = content.encode("utf-8", errors="replace")
+        root = ET.fromstring(content_bytes)
+
         ns_strip = lambda tag: tag.split('}', 1)[-1] if '}' in tag else tag
 
         items = []
-        # RSS 2.0: <channel><item>
         for item in root.iter():
             if ns_strip(item.tag) in ('item', 'entry'):
                 items.append(item)
+
+        logger.info(f"RSS: found {len(items)} items")
 
         seen = set()
         for item in items[:12]:
@@ -46,8 +49,13 @@ def _parse_rss_feed(content: str, base_url: str) -> list:
                 if tag == 'title' and not title:
                     title = (child.text or '').strip()
                 elif tag == 'link' and not link:
-                    # Atom uses href attribute; RSS uses text content
+                    # Atom: <link href="..."/> RSS: <link>url</link>
                     link = child.get('href') or (child.text or '').strip()
+                elif tag == 'guid' and not link:
+                    # Some feeds use <guid> as the URL
+                    val = (child.text or '').strip()
+                    if val.startswith('http'):
+                        link = val
 
             if title and link and title.lower() not in seen:
                 seen.add(title.lower())
@@ -56,9 +64,17 @@ def _parse_rss_feed(content: str, base_url: str) -> list:
                 if link.startswith('http'):
                     links.append(f"- [{title}]({link})")
 
+        if not links and items:
+            return links, f"Feed had {len(items)} items but none had parseable title+link"
+        if not items:
+            return links, "Feed parsed but contained no items (wrong URL or empty feed)"
+
+    except ET.ParseError as e:
+        return links, f"XML parse error: {e}"
     except Exception as e:
-        logger.warning(f"RSS parse error: {e}")
-    return links
+        return links, f"RSS parse error: {e}"
+
+    return links, None
 
 
 async def fetch_headlines_from_url(url: str) -> dict:
@@ -107,8 +123,8 @@ async def fetch_headlines_from_url(url: str) -> dict:
             )
 
             if is_feed:
-                links = _parse_rss_feed(text, base_url)
-                return {"links": links, "error": None}
+                links, feed_error = _parse_rss_feed(text, base_url)
+                return {"links": links, "error": feed_error}
 
             # --- HTML scraping path ---
             soup = BeautifulSoup(text, "lxml")
@@ -214,7 +230,8 @@ async def fetch_news_from_source(source_url: str, source_name: str, db: Session)
     links = result["links"][:10]
 
     if not links:
-        return f"**{source_name}:** Could not fetch headlines. {result.get('error', '')}"
+        err = result.get('error') or 'No headlines found'
+        return f"**{source_name}:** Could not fetch headlines. {err}"
 
     # Use AI to summarize
     ai_result = await summarize_with_ai(links, db)
