@@ -22,13 +22,15 @@ def get_news_sources(db: Session) -> str:
     return setting.value if setting and setting.value else ""
 
 
-def _parse_rss_feed(content: str, base_url: str) -> tuple:
-    """Parse RSS or Atom feed XML. Returns (links, error_str)."""
+def _parse_rss_feed(raw: bytes, base_url: str) -> tuple:
+    """Parse RSS or Atom feed XML from raw bytes. Returns (links, error_str)."""
     import xml.etree.ElementTree as ET
     links = []
     try:
-        # Strip UTF-8 BOM (\ufeff) which appears before <?xml in some feeds
-        root = ET.fromstring(content.lstrip('\ufeff'))
+        # Strip UTF-8 BOM bytes if present — ET handles encoding declarations in bytes mode
+        if raw.startswith(b'\xef\xbb\xbf'):
+            raw = raw[3:]
+        root = ET.fromstring(raw)
 
         ns_strip = lambda tag: tag.split('}', 1)[-1] if '}' in tag else tag
 
@@ -110,20 +112,23 @@ async def fetch_headlines_from_url(url: str) -> dict:
             response.raise_for_status()
 
             content_type = response.headers.get("content-type", "")
-            text = response.text
+            raw = response.content  # bytes — avoids encoding roundtrip issues
 
-            # Detect RSS/Atom feeds by content-type or XML declaration
+            # Detect RSS/Atom feeds by content-type or raw byte sniff
+            sniff = raw.lstrip(b'\xef\xbb\xbf')[:500]
             is_feed = (
                 "xml" in content_type or
                 "rss" in content_type or
-                text.lstrip().startswith("<?xml") or
-                "<rss" in text[:500] or
-                "<feed" in text[:500]
+                sniff.startswith(b"<?xml") or
+                b"<rss" in sniff or
+                b"<feed" in sniff
             )
 
             if is_feed:
-                links, feed_error = _parse_rss_feed(text, base_url)
+                links, feed_error = _parse_rss_feed(raw, base_url)
                 return {"links": links, "error": feed_error}
+
+            text = response.text
 
             # --- HTML scraping path ---
             soup = BeautifulSoup(text, "lxml")
