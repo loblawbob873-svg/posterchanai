@@ -199,6 +199,10 @@ def _run_migrations():
         ("custom_image_enabled", "BOOLEAN DEFAULT 0"),
         ("custom_image_url", "VARCHAR(500)"),
         ("storage_quota", "INTEGER DEFAULT 0"),  # Storage quota in bytes (0 = unlimited)
+        # Scheduled news / custom news sources
+        ("news_schedule_enabled", "BOOLEAN DEFAULT 0"),
+        ("news_schedule_time", "VARCHAR(5) DEFAULT '12:00'"),
+        ("news_sources", "TEXT DEFAULT ''"),
         # Telegram columns
         ("telegram_enabled", "BOOLEAN DEFAULT 0"),
         ("telegram_chat_id", "VARCHAR(50)"),
