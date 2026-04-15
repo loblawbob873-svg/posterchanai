@@ -21,6 +21,38 @@ logger = logging.getLogger(__name__)
 # Torrent inline keyboard helpers
 # ---------------------------------------------------------------------------
 
+def _split_news_into_articles(content: str) -> list:
+    """Split news markdown into individual (source_name, title, url, message_text) tuples."""
+    results = []
+
+    # Split multiple sources on the --- divider
+    source_sections = re.split(r'\n\n---\n\n', content)
+
+    for section in source_sections:
+        # Extract source name from **Name:** line
+        source_match = re.search(r'\*\*([^*]+)\*\*', section)
+        source_name = source_match.group(1).rstrip(':').strip() if source_match else 'News'
+
+        # Each article starts with "- [title](url)" then optional indented summary lines
+        article_re = re.compile(
+            r'-\s+\[([^\]]+)\]\((https?://[^)]+)\)([\s\S]*?)(?=\n-\s+\[|\Z)',
+            re.MULTILINE,
+        )
+        for m in article_re.finditer(section):
+            title   = m.group(1).strip()
+            url     = m.group(2).strip()
+            summary = m.group(3).strip()
+
+            # Build the per-article Telegram message
+            msg = f"📰 *{source_name}*\n\n[{title}]({url})"
+            if summary:
+                msg += f"\n\n{summary}"
+
+            results.append((source_name, title, url, msg))
+
+    return results
+
+
 def _strip_cmd_links(text: str) -> str:
     """Remove [text](cmd:...) and [text](magnet:...) links that don't render in Telegram."""
     # Remove [text](cmd:...) — non-clickable in Telegram
@@ -1016,29 +1048,37 @@ async def _handle_telegram_update(update: dict, db: Session):
                     elif command == "news":
                         result = await command_service.execute_command(command, arg)
                         content = _strip_cmd_links(result.get("content", ""))
-                        result["content"] = content
 
-                        # If Misskey is configured, build Post buttons for each article
                         has_misskey = (
                             user_obj
                             and getattr(user_obj, "misskey_enabled", False)
                             and getattr(user_obj, "misskey_instance_url", None)
                             and getattr(user_obj, "misskey_api_token", None)
                         )
-                        if has_misskey:
-                            article_matches = re.findall(r'-\s+\[([^\]]+)\]\((https?://[^)]+)\)', content)
-                            if article_matches:
-                                _news_post_cache[chat_id] = article_matches
-                                buttons = []
-                                row = []
-                                for i in range(1, min(len(article_matches), 10) + 1):
-                                    row.append({"text": f"📣 Post {i}", "callback_data": f"nk:post:{i}"})
-                                    if len(row) == 5:
-                                        buttons.append(row)
-                                        row = []
-                                if row:
-                                    buttons.append(row)
-                                reply_markup = {"inline_keyboard": buttons}
+
+                        articles = _split_news_into_articles(content)
+                        if articles:
+                            # Cache (title, url) pairs for the Post callbacks
+                            _news_post_cache[chat_id] = [(title, url) for (_, title, url, _) in articles]
+
+                            # Send header (date/source summary line) if present
+                            header_match = re.match(r'^(##[^\n]+)', content)
+                            if header_match:
+                                await telegram_service.send_message(chat_id, header_match.group(1))
+
+                            # Send each article as its own message
+                            for i, (_, title, url, msg_text) in enumerate(articles[:10], 1):
+                                kbd = (
+                                    {"inline_keyboard": [[
+                                        {"text": "📣 Post to Misskey", "callback_data": f"nk:post:{i}"}
+                                    ]]}
+                                    if has_misskey else None
+                                )
+                                await telegram_service.send_message(chat_id, msg_text, reply_markup=kbd)
+                            return {"ok": True}
+
+                        # Fallback: no articles parsed — send raw content
+                        result["content"] = content
                     else:
                         # Pass attachments to any command that supports them
                         if attachments:
