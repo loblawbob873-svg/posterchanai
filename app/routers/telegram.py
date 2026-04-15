@@ -363,6 +363,8 @@ _MAX_SEEN_IDS = 500  # Keep a bounded window; Telegram won't replay further back
 _misskey_post_cache: dict = {}
 # Pending link actions: chat_id → url (cleared once action is chosen)
 _link_action_cache: dict = {}
+# Pending YouTube actions: chat_id → url (cleared once action is chosen)
+_youtube_action_cache: dict = {}
 
 
 class TelegramWebhookUpdate(BaseModel):
@@ -1030,14 +1032,21 @@ async def _handle_telegram_update(update: dict, db: Session):
                 _all_urls_in_text = [u for u in __import__('re').findall(r'https?://\S+', text_stripped)]
                 youtube_url = next((u for u in _all_urls_in_text if any(d in u for d in _yt_domains)), None)
 
-                # Route YouTube URLs (sent or forwarded) to the yt command
+                # YouTube URL (bare or forwarded): ask the user what they want to do
                 if youtube_url and (is_forwarded or not text_stripped.replace(youtube_url, '').strip()):
-                    logger.info(f"Telegram: YouTube URL detected, using yt command: {youtube_url}")
-                    try:
-                        result = await command_service.execute_command("yt", youtube_url)
-                    except Exception as e:
-                        result = {"type": "text", "content": f"Error summarizing video: {str(e)}"}
-                    await telegram_service.send_message(chat_id, result.get("content", "Error"))
+                    logger.info(f"Telegram: YouTube URL detected, prompting action: {youtube_url}")
+                    _youtube_action_cache[chat_id] = youtube_url
+                    await telegram_service.send_message(
+                        chat_id,
+                        "🎬 What would you like to do with this video?",
+                        reply_markup={
+                            "inline_keyboard": [[
+                                {"text": "📋 Summary",  "callback_data": "yt:summary"},
+                                {"text": "🎵 MP3",      "callback_data": "yt:mp3"},
+                                {"text": "🎬 Movie",    "callback_data": "yt:video"},
+                            ]]
+                        },
+                    )
                     return {"ok": True}
 
                 # Forwarded messages with URLs prompt the user what to do (same as bare URL)
@@ -1681,6 +1690,98 @@ async def _handle_telegram_update(update: dict, db: Session):
                     except Exception as lnk_err:
                         logger.error(f"Link post generation error: {lnk_err}", exc_info=True)
                         await telegram_service.send_message(chat_id, f"Error generating post: {lnk_err}")
+
+            elif data.startswith("yt:"):
+                action = data.split(":", 1)[1]
+                yt_url = _youtube_action_cache.pop(chat_id, None)
+
+                if yt_url is None:
+                    await telegram_service.send_message(chat_id, "No pending YouTube URL found.")
+                    return {"ok": True}
+
+                yt_user = db.query(User).filter(
+                    User.telegram_chat_id == chat_id,
+                    User.telegram_enabled == True
+                ).first()
+
+                if action == "summary":
+                    await telegram_service.send_message(chat_id, "⏳ Summarizing video, please wait...")
+                    try:
+                        yt_cmd_service = CommandService(db, user=yt_user)
+                        yt_result = await yt_cmd_service.execute_command("yt", yt_url)
+                        await telegram_service.send_message(chat_id, yt_result.get("content", "Error generating summary."))
+                    except Exception as yt_err:
+                        logger.error(f"YouTube summary callback error: {yt_err}", exc_info=True)
+                        await telegram_service.send_message(chat_id, f"❌ Error: {yt_err}")
+
+                elif action in ("mp3", "video"):
+                    from app.services.youtube_service import (
+                        check_ytdlp_available,
+                        download_as_mp3,
+                        download_video_and_save_to_storage,
+                    )
+                    import tempfile, shutil, os as _os, asyncio as _asyncio
+
+                    if not check_ytdlp_available():
+                        await telegram_service.send_message(chat_id, "❌ yt-dlp is not installed on the server.")
+                        return {"ok": True}
+
+                    if action == "mp3":
+                        await telegram_service.send_message(chat_id, "⏳ Downloading MP3, please wait...")
+                        from app.models import Setting as _Setting
+                        _cookies_s = db.query(_Setting).filter(_Setting.key == "ytdl_cookies_path").first()
+                        _cookies_path = str(_cookies_s.value).strip() if _cookies_s and _cookies_s.value else None
+                        if _cookies_path and not _os.path.isfile(_cookies_path):
+                            _cookies_path = None
+                        _ssl_s = db.query(_Setting).filter(_Setting.key == "ytdl_no_ssl_verify").first()
+                        _no_ssl = (
+                            str(_ssl_s.value).strip().lower() in ("true", "1", "yes")
+                            if _ssl_s and _ssl_s.value else False
+                        )
+                        temp_dir = tempfile.mkdtemp(prefix="tg_ytdl_")
+                        try:
+                            dl_result = await _asyncio.to_thread(
+                                download_as_mp3, yt_url, temp_dir, _cookies_path, _no_ssl
+                            )
+                            if not dl_result.success:
+                                await telegram_service.send_message(chat_id, f"❌ Download failed: {dl_result.error}")
+                                return {"ok": True}
+                            file_size = _os.path.getsize(dl_result.local_path)
+                            if file_size > 50 * 1024 * 1024:
+                                await telegram_service.send_message(
+                                    chat_id,
+                                    f"❌ File too large to send via Telegram ({file_size // (1024*1024)} MB). Limit is 50 MB."
+                                )
+                                return {"ok": True}
+                            duration_int = int(dl_result.duration) if dl_result.duration else None
+                            await telegram_service.send_audio(
+                                chat_id=chat_id,
+                                file_path=dl_result.local_path,
+                                title=dl_result.title,
+                                performer=dl_result.artist,
+                                duration=duration_int,
+                            )
+                        except Exception as yt_err:
+                            logger.error(f"YouTube MP3 callback error: {yt_err}", exc_info=True)
+                            await telegram_service.send_message(chat_id, f"❌ Error: {yt_err}")
+                        finally:
+                            shutil.rmtree(temp_dir, ignore_errors=True)
+
+                    else:  # video
+                        await telegram_service.send_message(chat_id, "⏳ Downloading video to storage, please wait...")
+                        try:
+                            yt_cmd_service = CommandService(db, user=yt_user)
+                            dl_result = await download_video_and_save_to_storage(
+                                url=yt_url,
+                                user_id=yt_user.id,
+                                db=db,
+                                subfolder="YouTube Videos",
+                            )
+                            from app.services.youtube_service import format_download_result
+                            await telegram_service.send_message(chat_id, format_download_result(dl_result))
+                        except Exception as yt_err:
+                            logger.error(f"YouTube video callback error: {yt_err}", exc_info=True)
+                            await telegram_service.send_message(chat_id, f"❌ Error: {yt_err}")
 
             elif data.startswith("mk:"):
                 action = data.split(":", 1)[1]
