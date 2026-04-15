@@ -425,7 +425,7 @@ async def generate_log_summary(db: Session, user: User, log_data: str) -> str:
         ]
         try:
             chat_service = ChatService(db, user)
-            chat_service.num_predict = min(chat_service.num_predict, 600)
+            chat_service.num_predict = min(chat_service.num_predict, 1200)
             ai_narrative = await chat_service.chat(messages)
         except Exception as e:
             logger.error(f"Error generating log narrative: {e}")
