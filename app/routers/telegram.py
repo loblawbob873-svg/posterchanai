@@ -180,6 +180,195 @@ def _torrent_nav_keyboard() -> dict:
     }
 
 
+def _4chan_board_keyboard(board: str = "g") -> dict:
+    """Return 4chan board selection keyboard."""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "🖥 /g/ Technology", "callback_data": "4c:board:g"},
+                {"text": "🌎 /pol/", "callback_data": "4c:board:pol"},
+            ],
+        ]
+    }
+
+
+def _4chan_catalog_keyboard(threads: list, board: str, page: int = 0) -> dict:
+    """Build inline keyboard for 4chan catalog with pagination."""
+    buttons = []
+    threads_per_page = 10
+    start = page * threads_per_page
+    end = start + threads_per_page
+    page_threads = threads[start:end]
+
+    for i, t in enumerate(page_threads, start + 1):
+        title = (t.get("title") or "No title")[:35]
+        if len(title) >= 35:
+            title += "..."
+        replies = t.get("replies", 0)
+        row = [{"text": f"{i}. {title} ({replies}💬)", "callback_data": f"4c:thread:{board}:{t['thread_id']}"}]
+        buttons.append(row)
+
+    # Pagination row
+    nav_row = []
+    if page > 0:
+        nav_row.append({"text": "⬅️ Prev", "callback_data": f"4c:page:{board}:{page - 1}"})
+    if end < len(threads):
+        nav_row.append({"text": "Next ➡️", "callback_data": f"4c:page:{board}:{page + 1}"})
+    if nav_row:
+        buttons.append(nav_row)
+
+    # Board switcher row
+    buttons.append([
+        {"text": "🖥 /g/", "callback_data": "4c:board:g"},
+        {"text": "🌎 /pol/", "callback_data": "4c:board:pol"},
+    ])
+
+    return {"inline_keyboard": buttons}
+
+
+def _4chan_thread_keyboard(board: str, thread_id: int, has_summary: bool = False) -> dict:
+    """Build inline keyboard for viewing a 4chan thread."""
+    buttons = []
+    if not has_summary:
+        buttons.append([{"text": "📝 Summarize Thread", "callback_data": f"4c:summarize:{board}:{thread_id}"}])
+    buttons.append([
+        {"text": "🔗 Open on 4chan", "url": f"https://boards.4chan.org/{board}/thread/{thread_id}"},
+    ])
+    buttons.append([
+        {"text": "⬅️ Back to Catalog", "callback_data": f"4c:board:{board}"},
+    ])
+    return {"inline_keyboard": buttons}
+
+
+def _format_4chan_post(post: dict, max_len: int = 800) -> str:
+    """Format a single 4chan post for Telegram display."""
+    name = post.get("name", "Anonymous")
+    com = post.get("com", "")
+    no = post.get("no", 0)
+
+    # Escape markdown chars
+    com = com.replace("*", "\\*").replace("_", "\\_").replace("[", "\\[").replace("]", "\\]")
+
+    # Truncate if needed
+    if len(com) > max_len:
+        com = com[:max_len] + "..."
+
+    text = f"*No.{no}* — _{name}_\n{com}"
+    return text
+
+
+async def _send_4chan_catalog(chat_id: str, board: str, user_id: int):
+    """Fetch and display 4chan catalog for a board."""
+    from app.routers.fourchan import get_catalog
+
+    result = await get_catalog(board=board)
+    if "error" in result:
+        await telegram_service.send_message(chat_id, f"❌ Error: {result['error']}")
+        return
+
+    threads = result.get("threads", [])
+    if not threads:
+        await telegram_service.send_message(chat_id, f"No threads found on /{board}/")
+        return
+
+    # Cache threads for this user
+    _4chan_cache[user_id] = {board: threads}
+
+    board_label = {"g": "🖥 Technology", "pol": "🌎 Politically Incorrect"}.get(board, board)
+    header = f"🍀 *4chan /{board}/ — {board_label}*\n\n*Top {min(10, len(threads))} threads:*"
+
+    await telegram_service.send_message(
+        chat_id,
+        header,
+        reply_markup=_4chan_catalog_keyboard(threads, board, page=0)
+    )
+
+
+async def _send_4chan_thread(chat_id: str, board: str, thread_id: int, user_id: int, summarize: bool = False):
+    """Fetch and display a 4chan thread."""
+    from app.routers.fourchan import get_thread, summarize_thread
+    from app.database import SessionLocal
+
+    if summarize:
+        # Get AI summary
+        db = SessionLocal()
+        try:
+            result = await summarize_thread(board=board, thread_id=thread_id, db=db, current_user=None)
+            if "error" in result:
+                await telegram_service.send_message(chat_id, f"❌ Error: {result['error']}")
+                return
+
+            summary = result.get("summary", "No summary available.")
+            summary = summary.replace("*", "\\*").replace("_", "\\_")
+
+            text = f"📝 *Thread Summary*\n\n_{summary[:3500]}_"
+            if len(summary) > 3500:
+                text += "..."
+
+            await telegram_service.send_message(
+                chat_id,
+                text,
+                reply_markup=_4chan_thread_keyboard(board, thread_id, has_summary=True)
+            )
+        finally:
+            db.close()
+        return
+
+    # Get thread posts
+    result = await get_thread(board=board, thread_id=thread_id)
+    if "error" in result:
+        await telegram_service.send_message(chat_id, f"❌ Error: {result['error']}")
+        return
+
+    posts = result.get("posts", [])
+    if not posts:
+        await telegram_service.send_message(chat_id, "No posts found in this thread.")
+        return
+
+    # Cache thread for navigation
+    _4chan_thread_cache[chat_id] = {"board": board, "thread_id": thread_id, "posts": posts}
+
+    # Send thread header (OP post)
+    op = posts[0]
+    title = result.get("title", "Untitled Thread")
+    title = title.replace("*", "\\*").replace("_", "\\_")
+
+    header = f"🍀 *{title}*\n📋 /{board}/ — {len(posts)} posts\n"
+    await telegram_service.send_message(chat_id, header)
+
+    # Send OP post with image if available
+    op_text = _format_4chan_post(op, max_len=1000)
+    # Use direct CDN URL for Telegram (Telegram downloads it directly)
+    op_image = op.get("image_url_direct") or op.get("image_url")
+
+    if op_image:
+        # Send photo with caption
+        photo_result = await telegram_service.send_photo(chat_id, op_image, op_text)
+        if not photo_result.get("ok"):
+            await telegram_service.send_message(chat_id, op_text)
+    else:
+        await telegram_service.send_message(chat_id, op_text)
+
+    # Send a few more posts (up to 3 more)
+    for post in posts[1:4]:
+        post_text = _format_4chan_post(post, max_len=600)
+        post_image = post.get("image_url_direct") or post.get("image_url")
+
+        if post_image:
+            photo_result = await telegram_service.send_photo(chat_id, post_image, post_text)
+            if not photo_result.get("ok"):
+                await telegram_service.send_message(chat_id, post_text)
+        else:
+            await telegram_service.send_message(chat_id, post_text)
+
+    # Send navigation keyboard
+    await telegram_service.send_message(
+        chat_id,
+        f"📖 Showing {min(4, len(posts))} of {len(posts)} posts",
+        reply_markup=_4chan_thread_keyboard(board, thread_id)
+    )
+
+
 def _help_main_keyboard() -> dict:
     """Inline keyboard for the help main menu."""
     return {
@@ -205,6 +394,10 @@ def _help_main_keyboard() -> dict:
                 {"text": "ℹ️",             "callback_data": "help:nyaa"},
             ],
             [
+                {"text": "🍀 4chan",       "callback_data": "4c:board:g"},
+                {"text": "ℹ️",             "callback_data": "help:4chan"},
+            ],
+            [
                 {"text": "🌐 Translate",   "callback_data": "help:translate"},
                 {"text": "📰 News",        "callback_data": "help:news"},
             ],
@@ -221,6 +414,19 @@ def _help_main_keyboard() -> dict:
 
 
 _HELP_SECTIONS = {
+    "4chan": (
+        "🍀 *4chan Browser*\n\n"
+        "`4chan` — Browse /g/ (Technology) catalog\n"
+        "`4chan g` — View /g/ catalog\n"
+        "`4chan pol` — View /pol/ catalog\n\n"
+        "*Features:*\n"
+        "• Browse thread catalog with reply counts\n"
+        "• Tap any thread to view posts with images\n"
+        "• Summarize long threads with AI\n"
+        "• Navigate with inline buttons\n"
+        "• Open threads directly on 4chan\n\n"
+        "*Note:* Only /g/ (Technology) and /pol/ boards are supported\\."
+    ),
     "chat": (
         "💬 *Chat & URLs*\n\n"
         "Just send any message to chat with the AI\\.\n\n"
@@ -399,6 +605,10 @@ _link_action_cache: dict = {}
 _youtube_action_cache: dict = {}
 # Pending news Post actions: chat_id → list of (title, url) tuples
 _news_post_cache: dict = {}
+# 4chan cache: user_id → {board: [threads]}
+_4chan_cache: dict = {}
+# 4chan thread cache: chat_id → {board, thread_id, posts}
+_4chan_thread_cache: dict = {}
 
 
 class TelegramWebhookUpdate(BaseModel):
@@ -609,7 +819,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "logs", "translate", "post"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -774,7 +984,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "logs", "translate", "post"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -1044,6 +1254,15 @@ async def _handle_telegram_update(update: dict, db: Session):
                         result = await command_service.execute_command(command, arg)
                         user_id = user_obj.id if user_obj else 0
                         await _send_nyaa_results(chat_id, user_id)
+                        return {"ok": True}
+                    elif command == "4chan":
+                        # Parse board from argument
+                        arg_parts = arg.strip().split()
+                        board = arg_parts[0].lower() if arg_parts else "g"
+                        if board not in ("g", "pol"):
+                            board = "g"
+                        user_id = user_obj.id if user_obj else 0
+                        await _send_4chan_catalog(chat_id, board, user_id)
                         return {"ok": True}
                     elif command == "news":
                         result = await command_service.execute_command(command, arg)
@@ -1632,6 +1851,53 @@ async def _handle_telegram_update(update: dict, db: Session):
                     logger.error(f"Nyaa callback error: {cb_err}", exc_info=True)
                     await telegram_service.send_message(chat_id, f"Error: {cb_err}")
 
+            elif data.startswith("4c:"):
+                # 4chan inline button
+                cb_user = db.query(User).filter(
+                    User.telegram_chat_id == chat_id,
+                    User.telegram_enabled == True
+                ).first()
+
+                if not cb_user:
+                    await telegram_service.send_message(chat_id, "Your Telegram account is not linked.")
+                    return {"ok": True}
+
+                parts = data.split(":")
+                action = parts[1] if len(parts) > 1 else ""
+
+                if action == "board" and len(parts) >= 3:
+                    board = parts[2]
+                    user_id = cb_user.id if cb_user else 0
+                    await _send_4chan_catalog(chat_id, board, user_id)
+                    return {"ok": True}
+
+                elif action == "page" and len(parts) >= 4:
+                    board = parts[2]
+                    page = int(parts[3])
+                    user_id = cb_user.id if cb_user else 0
+                    threads = _4chan_cache.get(user_id, {}).get(board, [])
+                    if threads:
+                        await telegram_service.send_message(
+                            chat_id,
+                            f"🍀 *4chan /{board}/ — Page {page + 1}*",
+                            reply_markup=_4chan_catalog_keyboard(threads, board, page=page)
+                        )
+                    return {"ok": True}
+
+                elif action == "thread" and len(parts) >= 4:
+                    board = parts[2]
+                    thread_id = int(parts[3])
+                    user_id = cb_user.id if cb_user else 0
+                    await _send_4chan_thread(chat_id, board, thread_id, user_id)
+                    return {"ok": True}
+
+                elif action == "summarize" and len(parts) >= 4:
+                    board = parts[2]
+                    thread_id = int(parts[3])
+                    user_id = cb_user.id if cb_user else 0
+                    await _send_4chan_thread(chat_id, board, thread_id, user_id, summarize=True)
+                    return {"ok": True}
+
             elif data.startswith("prompt:"):
                 action = data.split(":", 1)[1]
                 _PROMPT_CONFIGS = {
@@ -1640,6 +1906,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     "geni":     ("🎨 Describe the image you want to generate:", "e.g. a sunset over a cyberpunk city"),
                     "nyaa":     ("🔎 Type your anime search:", "e.g. one piece 1080p"),
                     "torrents": ("🔍 Type your torrent search:", "e.g. dark knight 1080p"),
+                    "4chan":    ("🍀 Which board? (g or pol)", "e.g. g"),
                 }
                 cfg = _PROMPT_CONFIGS.get(action)
                 if cfg:
