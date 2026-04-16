@@ -2398,6 +2398,34 @@ async def _handle_telegram_update(update: dict, db: Session):
                         parse_mode="MarkdownV2",
                         reply_markup=_help_main_keyboard(),
                     )
+                elif section == "logs":
+                    # Execute the logs command directly instead of showing help text
+                    cb_user = db.query(User).filter(
+                        User.telegram_chat_id == chat_id,
+                        User.telegram_enabled == True
+                    ).first()
+                    if cb_user:
+                        cb_command_service = CommandService(db, user=cb_user)
+                        try:
+                            result = await cb_command_service.execute_command("logs", "")
+                            await telegram_service.send_message(
+                                chat_id,
+                                result.get("content", "No logs available."),
+                                reply_markup=back_button,
+                            )
+                        except Exception as logs_err:
+                            logger.error(f"Logs command error: {logs_err}", exc_info=True)
+                            await telegram_service.send_message(
+                                chat_id,
+                                f"Error fetching logs: {logs_err}",
+                                reply_markup=back_button,
+                            )
+                    else:
+                        await telegram_service.send_message(
+                            chat_id,
+                            "Your Telegram account is not linked.",
+                            reply_markup=back_button,
+                        )
                 elif section_text:
                     await telegram_service.send_message(
                         chat_id,
