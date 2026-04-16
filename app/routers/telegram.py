@@ -1418,12 +1418,15 @@ async def _handle_telegram_update(update: dict, db: Session):
 
                             # Send each article as its own message
                             for i, (_, title, url, msg_text) in enumerate(articles[:10], 1):
-                                kbd = (
-                                    {"inline_keyboard": [[
-                                        {"text": "📣 Post to Misskey", "callback_data": f"nk:post:{i}"}
-                                    ]]}
-                                    if has_misskey else None
-                                )
+                                # Build keyboard with Summarize and Post buttons
+                                buttons = []
+                                row = []
+                                row.append({"text": "📝 Summarize", "callback_data": f"news:summarize:{i}"})
+                                row.append({"text": "📣 Post", "callback_data": f"news:post:{i}"})
+                                buttons.append(row)
+                                if has_misskey:
+                                    buttons.append([{"text": "📣 Post to Misskey", "callback_data": f"nk:post:{i}"}])
+                                kbd = {"inline_keyboard": buttons}
                                 await telegram_service.send_message(chat_id, msg_text, reply_markup=kbd)
                             return {"ok": True}
 
@@ -2097,7 +2100,40 @@ async def _handle_telegram_update(update: dict, db: Session):
                     # Fetch news from all sources
                     cb_command_service = CommandService(db, user=cb_user)
                     result = await cb_command_service.execute_command("news", "")
-                    await telegram_service.send_message(chat_id, result.get("content", "No news available."))
+                    content = _strip_cmd_links(result.get("content", ""))
+                    
+                    # Parse articles and add buttons (same as regular news command)
+                    has_misskey = (
+                        cb_user
+                        and getattr(cb_user, "misskey_enabled", False)
+                        and getattr(cb_user, "misskey_instance_url", None)
+                        and getattr(cb_user, "misskey_api_token", None)
+                    )
+                    
+                    articles = _split_news_into_articles(content)
+                    if articles:
+                        # Cache (title, url) pairs for the Post callbacks
+                        _news_post_cache[chat_id] = [(title, url) for (_, title, url, _) in articles]
+                        
+                        # Send header (date/source summary line) if present
+                        header_match = re.match(r'^(##[^\n]+)', content)
+                        if header_match:
+                            await telegram_service.send_message(chat_id, header_match.group(1))
+                        
+                        # Send each article as its own message with buttons
+                        for i, (_, title, url, msg_text) in enumerate(articles[:10], 1):
+                            buttons = []
+                            row = []
+                            row.append({"text": "📝 Summarize", "callback_data": f"news:summarize:{i}"})
+                            row.append({"text": "📣 Post", "callback_data": f"news:post:{i}"})
+                            buttons.append(row)
+                            if has_misskey:
+                                buttons.append([{"text": "📣 Post to Misskey", "callback_data": f"nk:post:{i}"}])
+                            kbd = {"inline_keyboard": buttons}
+                            await telegram_service.send_message(chat_id, msg_text, reply_markup=kbd)
+                    else:
+                        # Fallback: no articles parsed — send raw content
+                        await telegram_service.send_message(chat_id, content)
                     return {"ok": True}
 
                 elif action == "source" and len(parts) >= 3:
@@ -2109,7 +2145,110 @@ async def _handle_telegram_update(update: dict, db: Session):
                             source_name = sources[source_idx].get("name", "")
                             cb_command_service = CommandService(db, user=cb_user)
                             result = await cb_command_service.execute_command("news", source_name)
-                            await telegram_service.send_message(chat_id, result.get("content", f"No news from {source_name}."))
+                            content = _strip_cmd_links(result.get("content", ""))
+                            
+                            # Parse articles and add buttons (same as regular news command)
+                            has_misskey = (
+                                cb_user
+                                and getattr(cb_user, "misskey_enabled", False)
+                                and getattr(cb_user, "misskey_instance_url", None)
+                                and getattr(cb_user, "misskey_api_token", None)
+                            )
+                            
+                            articles = _split_news_into_articles(content)
+                            if articles:
+                                # Cache (title, url) pairs for the Post callbacks
+                                _news_post_cache[chat_id] = [(title, url) for (_, title, url, _) in articles]
+                                
+                                # Send header (date/source summary line) if present
+                                header_match = re.match(r'^(##[^\n]+)', content)
+                                if header_match:
+                                    await telegram_service.send_message(chat_id, header_match.group(1))
+                                
+                                # Send each article as its own message with buttons
+                                for i, (_, title, url, msg_text) in enumerate(articles[:10], 1):
+                                    buttons = []
+                                    row = []
+                                    row.append({"text": "📝 Summarize", "callback_data": f"news:summarize:{i}"})
+                                    row.append({"text": "📣 Post", "callback_data": f"news:post:{i}"})
+                                    buttons.append(row)
+                                    if has_misskey:
+                                        buttons.append([{"text": "📣 Post to Misskey", "callback_data": f"nk:post:{i}"}])
+                                    kbd = {"inline_keyboard": buttons}
+                                    await telegram_service.send_message(chat_id, msg_text, reply_markup=kbd)
+                            else:
+                                # Fallback: no articles parsed — send raw content
+                                await telegram_service.send_message(chat_id, content)
+                        else:
+                            await telegram_service.send_message(chat_id, "❌ Source not found. Please try again.")
+                    except (ValueError, IndexError):
+                        await telegram_service.send_message(chat_id, "❌ Invalid source selection.")
+                    return {"ok": True}
+
+                elif action == "summarize" and len(parts) >= 3:
+                    # Summarize a news article
+                    try:
+                        article_idx = int(parts[2]) - 1  # Convert to 0-based index
+                        cached_articles = _news_post_cache.get(chat_id, [])
+                        if 0 <= article_idx < len(cached_articles):
+                            title, url = cached_articles[article_idx]
+                            await telegram_service.send_message(chat_id, f"📝 Summarizing article...")
+                            # Use AI to summarize
+                            from app.services.chat_service import ChatService
+                            chat_service = ChatService(db, user=cb_user)
+                            messages = [
+                                {"role": "system", "content": "Summarize the following news article in 2-3 sentences. Be concise and factual."},
+                                {"role": "user", "content": f"Title: {title}\nURL: {url}\n\nPlease summarize this article."}
+                            ]
+                            summary = await chat_service.chat(messages)
+                            await telegram_service.send_message(
+                                chat_id,
+                                f"📝 *Summary*\n\n*{title}*\n\n{summary}\n\n[Read full article]({url})"
+                            )
+                        else:
+                            await telegram_service.send_message(chat_id, "❌ Article not found. Please fetch news again.")
+                    except (ValueError, IndexError):
+                        await telegram_service.send_message(chat_id, "❌ Invalid article selection.")
+                    return {"ok": True}
+
+                elif action == "post" and len(parts) >= 3:
+                    # Generate social media post for a news article
+                    try:
+                        article_idx = int(parts[2]) - 1  # Convert to 0-based index
+                        cached_articles = _news_post_cache.get(chat_id, [])
+                        if 0 <= article_idx < len(cached_articles):
+                            title, url = cached_articles[article_idx]
+                            await telegram_service.send_message(chat_id, f"📣 Generating social media post...")
+                            # Use AI to generate post
+                            from app.services.chat_service import ChatService
+                            chat_service = ChatService(db, user=cb_user)
+                            messages = [
+                                {"role": "system", "content": "Generate a short, engaging social media post (under 280 characters) for this news article. Include relevant hashtags."},
+                                {"role": "user", "content": f"Title: {title}\nURL: {url}\n\nGenerate a social media post."}
+                            ]
+                            post_text = await chat_service.chat(messages)
+                            # Store for potential Misskey posting
+                            _misskey_post_cache[chat_id] = post_text
+                            # Check if user has Misskey
+                            has_misskey = (
+                                cb_user
+                                and getattr(cb_user, "misskey_enabled", False)
+                                and getattr(cb_user, "misskey_instance_url", None)
+                                and getattr(cb_user, "misskey_api_token", None)
+                            )
+                            if has_misskey:
+                                await telegram_service.send_message(
+                                    chat_id,
+                                    post_text + "\n\n📣 *Post this to Misskey?*",
+                                    reply_markup={
+                                        "inline_keyboard": [[
+                                            {"text": "✅ Yes, post it", "callback_data": "mk:post"},
+                                            {"text": "❌ No thanks", "callback_data": "mk:skip"},
+                                        ]]
+                                    }
+                                )
+                            else:
+                                await telegram_service.send_message(chat_id, post_text)
                         else:
                             await telegram_service.send_message(chat_id, "❌ Source not found. Please try again.")
                     except (ValueError, IndexError):
