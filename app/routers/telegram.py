@@ -275,6 +275,23 @@ def _format_4chan_post(post: dict, max_len: int = 800) -> str:
     return text
 
 
+def _news_menu_keyboard() -> dict:
+    """Return news main menu keyboard."""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "📰 All Sources", "callback_data": "news:all"},
+            ],
+            [
+                {"text": "🔍 Search by Source", "callback_data": "news:select"},
+            ],
+            [
+                {"text": "⚙️ Configure Sources", "callback_data": "news:config_hint"},
+            ],
+        ]
+    }
+
+
 def _news_source_keyboard(sources: list, has_misskey: bool = False) -> dict:
     """Build inline keyboard for news source selection."""
     buttons = []
@@ -501,7 +518,7 @@ def _help_main_keyboard() -> dict:
             ],
             [
                 {"text": "🌐 Translate",   "callback_data": "help:translate"},
-                {"text": "📰 News",        "callback_data": "help:news"},
+                {"text": "📰 News",        "callback_data": "news:menu"},
             ],
             [
                 {"text": "✉️ Email",       "callback_data": "help:mail"},
@@ -2033,7 +2050,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     await _send_4chan_thread(chat_id, board, thread_id, user_id)
                     return {"ok": True}
 
-            elif data.startswith("news"):
+            elif data.startswith("news:"):
                 # News source selection callback
                 cb_user = db.query(User).filter(
                     User.telegram_chat_id == chat_id,
@@ -2047,7 +2064,36 @@ async def _handle_telegram_update(update: dict, db: Session):
                 parts = data.split(":")
                 action = parts[1] if len(parts) > 1 else ""
 
-                if action == "all":
+                if action == "menu":
+                    # Show news main menu
+                    await telegram_service.send_message(
+                        chat_id,
+                        "📰 *News Menu*\n\nChoose an option:",
+                        reply_markup=_news_menu_keyboard()
+                    )
+                    return {"ok": True}
+
+                elif action == "select":
+                    # Fetch user's news sources and show selector
+                    from app.routers.news import get_user_news_sources
+                    sources = get_user_news_sources(cb_user, db)
+                    if not sources:
+                        await telegram_service.send_message(
+                            chat_id,
+                            "📰 *News Sources*\n\nNo news sources configured.\n\nAdd sources in User Settings → News Sources."
+                        )
+                        return {"ok": True}
+                    await _send_news_source_selector(chat_id, sources)
+                    return {"ok": True}
+
+                elif action == "config_hint":
+                    await telegram_service.send_message(
+                        chat_id,
+                        "⚙️ *Configure News Sources*\n\nTo add or manage news sources:\n1. Open the Web UI\n2. Go to User Settings\n3. Click on 'News Sources'\n\nYou can add RSS feeds or news websites there."
+                    )
+                    return {"ok": True}
+
+                elif action == "all":
                     # Fetch news from all sources
                     cb_command_service = CommandService(db, user=cb_user)
                     result = await cb_command_service.execute_command("news", "")
