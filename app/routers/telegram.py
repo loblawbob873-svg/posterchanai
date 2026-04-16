@@ -1966,7 +1966,6 @@ async def _handle_telegram_update(update: dict, db: Session):
 
                 if action == "all":
                     # Fetch news from all sources
-                    from app.services.command_service import CommandService
                     cb_command_service = CommandService(db, user=cb_user)
                     result = await cb_command_service.execute_command("news", "")
                     await telegram_service.send_message(chat_id, result.get("content", "No news available."))
@@ -1979,7 +1978,6 @@ async def _handle_telegram_update(update: dict, db: Session):
                         sources = _news_source_cache.get(chat_id, [])
                         if 0 <= source_idx < len(sources):
                             source_name = sources[source_idx].get("name", "")
-                            from app.services.command_service import CommandService
                             cb_command_service = CommandService(db, user=cb_user)
                             result = await cb_command_service.execute_command("news", source_name)
                             await telegram_service.send_message(chat_id, result.get("content", f"No news from {source_name}."))
