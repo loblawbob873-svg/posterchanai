@@ -480,8 +480,8 @@ async def _send_4chan_thread(chat_id: str, board: str, thread_id: int, user_id: 
     else:
         await telegram_service.send_message(chat_id, op_text)
 
-    # Send more posts (up to 20 replies)
-    for post in posts[1:21]:
+    # Send more posts (up to 50 replies)
+    for post in posts[1:51]:
         post_text = _format_4chan_post(post, max_len=600)
         post_image = post.get("image_url_direct") or post.get("image_url")
 
@@ -495,7 +495,7 @@ async def _send_4chan_thread(chat_id: str, board: str, thread_id: int, user_id: 
     # Send navigation keyboard
     await telegram_service.send_message(
         chat_id,
-        f"📖 Showing {min(21, len(posts))} of {len(posts)} posts",
+        f"📖 Showing {min(51, len(posts))} of {len(posts)} posts",
         reply_markup=_4chan_thread_keyboard(board, thread_id)
     )
 
