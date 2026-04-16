@@ -276,19 +276,42 @@ def _torrents_menu_keyboard() -> dict:
 
 
 def _format_4chan_post(post: dict, max_len: int = 800) -> str:
-    """Format a single 4chan post for Telegram display."""
+    """Format a single 4chan post for Telegram display.
+    
+    Handles 4chan's HTML content: converts <br> to newlines, strips other tags,
+    decodes HTML entities, and escapes Telegram markdown characters.
+    """
+    import html
+    
     name = post.get("name", "Anonymous")
     com = post.get("com", "")
     no = post.get("no", 0)
-
-    # Escape markdown chars
+    
+    if not com:
+        com = ""
+    
+    # Convert <br> tags to newlines first (4chan uses these for line breaks)
+    com = re.sub(r"<br\s*/?>", "\n", com, flags=re.IGNORECASE)
+    
+    # Remove other HTML tags (quotes, links, spans, etc.)
+    com = re.sub(r"<[^>]+>", "", com)
+    
+    # Decode HTML entities (&gt; -> >, &lt; -> <, &quot; -> ", etc.)
+    com = html.unescape(com)
+    
+    # Clean up whitespace (collapse multiple spaces, but preserve newlines)
+    lines = com.split("\n")
+    lines = [" ".join(line.split()) for line in lines]  # Collapse spaces per line
+    com = "\n".join(line for line in lines if line)  # Remove empty lines
+    
+    # Escape markdown chars for Telegram (do this AFTER HTML decoding)
     com = com.replace("*", "\\*").replace("_", "\\_").replace("[", "\\[").replace("]", "\\]")
-
-    # Truncate if needed
+    
+    # Truncate if needed (respecting line breaks)
     if len(com) > max_len:
-        com = com[:max_len] + "..."
-
-    text = f"*No.{no}* — _{name}_\n{com}"
+        com = com[:max_len].rsplit("\n", 1)[0] + "..."
+    
+    text = f"*No.{no}* — _{name}_\n{com}" if com else f"*No.{no}* — _{name}_"
     return text
 
 
@@ -1536,16 +1559,36 @@ async def _handle_telegram_update(update: dict, db: Session):
                 if youtube_url and (is_forwarded or not text_stripped.replace(youtube_url, '').strip()):
                     logger.info(f"Telegram: YouTube URL detected, prompting action: {youtube_url}")
                     _youtube_action_cache[chat_id] = youtube_url
+                    
+                    # Check if user has Misskey configured
+                    _yt_user_for_misskey = db.query(User).filter(
+                        User.telegram_chat_id == chat_id,
+                        User.telegram_enabled == True
+                    ).first()
+                    has_misskey = (
+                        _yt_user_for_misskey
+                        and getattr(_yt_user_for_misskey, "misskey_enabled", False)
+                        and getattr(_yt_user_for_misskey, "misskey_instance_url", None)
+                        and getattr(_yt_user_for_misskey, "misskey_api_token", None)
+                    )
+                    
+                    # Build keyboard with Misskey option if configured
+                    yt_keyboard = [
+                        [
+                            {"text": "📋 Summary",  "callback_data": "yt:summary"},
+                            {"text": "🎵 MP3",      "callback_data": "yt:mp3"},
+                            {"text": "🎬 Movie",    "callback_data": "yt:video"},
+                        ]
+                    ]
+                    if has_misskey:
+                        yt_keyboard.append([
+                            {"text": "📣 Post to Misskey", "callback_data": "yt:post"}
+                        ])
+                    
                     await telegram_service.send_message(
                         chat_id,
                         "🎬 What would you like to do with this video?",
-                        reply_markup={
-                            "inline_keyboard": [[
-                                {"text": "📋 Summary",  "callback_data": "yt:summary"},
-                                {"text": "🎵 MP3",      "callback_data": "yt:mp3"},
-                                {"text": "🎬 Movie",    "callback_data": "yt:video"},
-                            ]]
-                        },
+                        reply_markup={"inline_keyboard": yt_keyboard},
                     )
                     return {"ok": True}
 
@@ -2546,6 +2589,66 @@ async def _handle_telegram_update(update: dict, db: Session):
                     except Exception as yt_err:
                         logger.error(f"YouTube summary callback error: {yt_err}", exc_info=True)
                         await telegram_service.send_message(chat_id, f"❌ Error: {yt_err}")
+
+                elif action == "post":
+                    # Generate a social media post for the YouTube video
+                    await telegram_service.send_message(chat_id, "⏳ Generating Misskey post...")
+                    try:
+                        from app.services.youtube_service import fetch_video_info
+                        import asyncio as _asyncio
+                        
+                        # Fetch video info for context
+                        video_info = await _asyncio.wait_for(
+                            fetch_video_info(yt_url),
+                            timeout=15
+                        )
+                        
+                        if video_info and video_info.get("title"):
+                            video_context = f"Title: {video_info.get('title')}\n\n"
+                            if video_info.get("description"):
+                                desc = video_info.get("description", "")[:1000]
+                                video_context += f"Description: {desc}\n\n"
+                            if video_info.get("channel"):
+                                video_context += f"Channel: {video_info.get('channel')}\n"
+                        else:
+                            video_context = f"YouTube Video: {yt_url}"
+                        
+                        # Generate social media post
+                        yt_chat = ChatService(db, user=yt_user)
+                        yt_chat.num_predict = min(yt_chat.num_predict, 900)
+                        post_messages = [
+                            {
+                                "role": "system",
+                                "content": "You are a social media expert. Write compelling, detailed social media posts. Output ONLY the post text. No introductions, no 'here is your post', no URL placeholders like 'link' or 'read more'."
+                            },
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Write a viral and engaging social media post for this YouTube video. "
+                                    "Be detailed — include key facts, context, and why it matters. "
+                                    "Use emojis and relevant hashtags. Stop after the last hashtag.\n\n"
+                                    f"Content:\n{video_context}"
+                                )
+                            }
+                        ]
+                        post_text = await yt_chat.chat(post_messages)
+                        post_text = post_text.rstrip() + f"\n\n{yt_url}"
+                        
+                        # Store and ask for confirmation
+                        _misskey_post_cache[chat_id] = post_text
+                        await telegram_service.send_message(
+                            chat_id,
+                            post_text + "\n\n📣 *Post this to Misskey?*",
+                            reply_markup={
+                                "inline_keyboard": [[
+                                    {"text": "✅ Yes, post it", "callback_data": "mk:post"},
+                                    {"text": "❌ No thanks",   "callback_data": "mk:skip"},
+                                ]]
+                            },
+                        )
+                    except Exception as yt_err:
+                        logger.error(f"YouTube post generation error: {yt_err}", exc_info=True)
+                        await telegram_service.send_message(chat_id, f"❌ Error generating post: {yt_err}")
 
                 elif action in ("mp3", "video"):
                     from app.services.youtube_service import (

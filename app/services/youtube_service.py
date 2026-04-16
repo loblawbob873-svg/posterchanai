@@ -820,3 +820,45 @@ def format_download_result(result: DownloadResult) -> str:
         lines.append(f"\n**Saved to:** `{result.storage_path}`")
 
     return "\n".join(lines)
+
+
+async def fetch_video_info(url: str) -> Dict[str, Any]:
+    """
+    Fetch YouTube video metadata (title, description, channel, etc.) without downloading.
+    
+    Returns:
+        Dict with keys: title, description, channel, duration, etc. (empty dict if failed)
+    """
+    try:
+        import yt_dlp
+        
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'skip_download': True,
+            'extract_flat': False,
+        }
+        
+        def _extract():
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                return ydl.extract_info(url, download=False)
+        
+        # Run in thread pool to not block
+        import asyncio
+        info = await asyncio.get_event_loop().run_in_executor(None, _extract)
+        
+        if not info:
+            return {}
+        
+        return {
+            'title': info.get('title', ''),
+            'description': info.get('description', ''),
+            'channel': info.get('channel') or info.get('uploader', ''),
+            'duration': info.get('duration'),
+            'thumbnail': info.get('thumbnail', ''),
+            'upload_date': info.get('upload_date', ''),
+            'view_count': info.get('view_count'),
+        }
+    except Exception as e:
+        logger.error(f"Error fetching video info for {url}: {e}")
+        return {}
