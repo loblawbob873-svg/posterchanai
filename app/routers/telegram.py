@@ -1950,6 +1950,45 @@ async def _handle_telegram_update(update: dict, db: Session):
                     await _send_4chan_thread(chat_id, board, thread_id, user_id, summarize=True)
                     return {"ok": True}
 
+            elif data.startswith("news:"):
+                # News source selection callback
+                cb_user = db.query(User).filter(
+                    User.telegram_chat_id == chat_id,
+                    User.telegram_enabled == True
+                ).first()
+
+                if not cb_user:
+                    await telegram_service.send_message(chat_id, "Your Telegram account is not linked.")
+                    return {"ok": True}
+
+                parts = data.split(":")
+                action = parts[1] if len(parts) > 1 else ""
+
+                if action == "all":
+                    # Fetch news from all sources
+                    from app.services.command_service import CommandService
+                    cb_command_service = CommandService(db, user=cb_user)
+                    result = await cb_command_service.execute_command("news", "")
+                    await telegram_service.send_message(chat_id, result.get("content", "No news available."))
+                    return {"ok": True}
+
+                elif action == "source" and len(parts) >= 3:
+                    # Fetch news from specific source
+                    try:
+                        source_idx = int(parts[2]) - 1  # Convert to 0-based index
+                        sources = _news_source_cache.get(chat_id, [])
+                        if 0 <= source_idx < len(sources):
+                            source_name = sources[source_idx].get("name", "")
+                            from app.services.command_service import CommandService
+                            cb_command_service = CommandService(db, user=cb_user)
+                            result = await cb_command_service.execute_command("news", source_name)
+                            await telegram_service.send_message(chat_id, result.get("content", f"No news from {source_name}."))
+                        else:
+                            await telegram_service.send_message(chat_id, "❌ Source not found. Please try again.")
+                    except (ValueError, IndexError):
+                        await telegram_service.send_message(chat_id, "❌ Invalid source selection.")
+                    return {"ok": True}
+
             elif data.startswith("prompt:"):
                 action = data.split(":", 1)[1]
                 _PROMPT_CONFIGS = {
