@@ -36,6 +36,7 @@ def _strip_html(html: str) -> str:
     # Remove tags and decode common entities
     text = re.sub(r"<[^>]+>", " ", html)
     text = text.replace("&quot;", '"').replace("&#039;", "'").replace("&amp;", "&")
+    text = text.replace("&gt;", ">").replace("&lt;", "<")
     return " ".join(text.split())[:200]
 
 

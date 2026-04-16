@@ -3829,6 +3829,21 @@ window.sendMessage = function(text) {
         return div.innerHTML;
     }
 
+    // Decode HTML entities (e.g., &gt; -> >, &lt; -> <, &quot; -> ", etc.)
+    function decodeHtmlEntities(s) {
+        if (!s) return '';
+        const textarea = document.createElement('textarea');
+        textarea.innerHTML = s;
+        return textarea.value;
+    }
+
+    // Clean 4chan HTML content: decode entities then escape for display
+    function clean4chanHtml(s) {
+        if (!s) return '';
+        // First decode HTML entities, then escape for safe display
+        return escapeHtml(decodeHtmlEntities(s));
+    }
+
     function setLoading(show) {
         if (loading) loading.style.display = show ? 'block' : 'none';
     }
@@ -3861,7 +3876,7 @@ window.sendMessage = function(text) {
                 card.rel = 'noopener noreferrer';
                 card.dataset.board = board;
                 card.dataset.threadId = String(t.thread_id || t.no || '');
-                const title = escapeHtml(t.title);
+                const title = clean4chanHtml(t.title);
                 const thumbSrc = t.thumb_url ? ('/api/4chan/proxy?url=' + encodeURIComponent(t.thumb_url)) : '';
                 const thumbPlaceholder = '<div class="fourchan-card-thumb" style="background:#222;"></div>';
                 const thumbPlaceholderForAttr = thumbPlaceholder.replace(/'/g, "\\'").replace(/"/g, '&quot;');
@@ -3915,11 +3930,22 @@ window.sendMessage = function(text) {
                     threadPostsEl.innerHTML = '<div class="fourchan-error">' + escapeHtml(data.error) + '</div>';
                     return;
                 }
-                threadTitleEl.textContent = data.title || ('Thread ' + currentThreadId);
+                threadTitleEl.textContent = decodeHtmlEntities(data.title) || ('Thread ' + currentThreadId);
                 if (data.link) threadOpenLink.href = data.link;
                 threadPostsEl.innerHTML = (data.posts || []).map(function(p) {
-                    const name = escapeHtml(p.name || 'Anonymous');
-                    const com = escapeHtml(p.com || '');
+                    const name = clean4chanHtml(p.name || 'Anonymous');
+                    // Handle 4chan post HTML: decode entities, convert <br> to newlines, strip other tags
+                    let com = decodeHtmlEntities(p.com || '');
+                    // Convert <br> tags to newlines
+                    com = com.replace(/<br\s*\/?>/gi, '\n');
+                    // Remove other HTML tags
+                    com = com.replace(/<[^>]+>/g, '');
+                    // Clean up whitespace (collapse multiple spaces, preserve newlines)
+                    com = com.split('\n').map(function(line) { return line.replace(/\s+/g, ' ').trim(); }).filter(function(line) { return line; }).join('\n');
+                    // Escape for display
+                    com = escapeHtml(com);
+                    // Convert newlines to <br> for HTML display
+                    com = com.replace(/\n/g, '<br>');
                     let thumb = '';
                     if (p.thumb_url) {
                         const img = '<img src="' + escapeHtml(p.thumb_url) + '" alt="" class="fourchan-thread-post-thumb" loading="lazy">';

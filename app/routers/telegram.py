@@ -275,6 +275,21 @@ def _torrents_menu_keyboard() -> dict:
     }
 
 
+def _clean_4chan_text(text: str) -> str:
+    """Clean 4chan HTML text for Telegram display.
+    
+    Decodes HTML entities and escapes Telegram markdown characters.
+    """
+    import html
+    if not text:
+        return ""
+    # Decode HTML entities (&gt; -> >, &lt; -> <, &quot; -> ", etc.)
+    text = html.unescape(text)
+    # Escape Telegram markdown chars
+    text = text.replace("*", "\\*").replace("_", "\\_").replace("[", "\\[").replace("]", "\\]")
+    return text
+
+
 def _format_4chan_post(post: dict, max_len: int = 800) -> str:
     """Format a single 4chan post for Telegram display.
     
