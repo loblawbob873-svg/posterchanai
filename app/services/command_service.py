@@ -1296,15 +1296,15 @@ Files are saved to your Storage.""",
             async def fetch_single_source(source):
                 try:
                     # Add timeout per source to prevent hanging
-                    async with asyncio.timeout(60):  # 60 second timeout per source (fetch + AI summary)
+                    async with asyncio.timeout(45):  # 45 second timeout per source (fetch + AI summary)
                         markdown = await fetch_news_from_source(source["url"], source["name"], self.db)
                         return markdown
                 except asyncio.TimeoutError:
                     logger.warning(f"Timeout fetching news from {source['name']}")
-                    return f"**{source['name']}:** Timeout fetching headlines"
+                    return f"**{source['name']}:** ⚠️ Timeout fetching headlines (took too long)"
                 except Exception as e:
                     logger.error(f"Error fetching news from {source['name']}: {e}")
-                    return f"**{source['name']}:** Error fetching headlines"
+                    return f"**{source['name']}:** ❌ Error fetching headlines: {str(e)[:100]}"
 
             results = await asyncio.gather(*[fetch_single_source(s) for s in sources], return_exceptions=True)
             # Filter out any exception results

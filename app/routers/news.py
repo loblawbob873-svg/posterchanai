@@ -106,7 +106,7 @@ async def fetch_headlines_from_url(url: str) -> dict:
     }
 
     logger.debug(f"Creating httpx client with proxy={proxy_config}")
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True, proxy=proxy_config) as client:
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True, proxy=proxy_config) as client:
         logger.debug(f"Making request to {url} through proxy {proxy_config}")
         try:
             response = await client.get(url, headers=headers)
@@ -185,6 +185,7 @@ async def fetch_headlines_from_url(url: str) -> dict:
 
 async def summarize_with_ai(links: list, db: Session) -> str:
     """Use native inference service to create clickable summaries"""
+    import asyncio
     try:
         prepare_vram_for_llm(db)
         service = get_inference_service(db)
@@ -208,20 +209,27 @@ Provide informative summaries that give readers context about each story."""},
             {"role": "user", "content": "\n".join(links)}
         ]
 
-        result = await service.chat_completion(
-            messages=messages,
-            temperature=0.3,
-            max_tokens=4096
-        )
+        # Add timeout for AI summarization
+        try:
+            async with asyncio.timeout(25):  # 25 second timeout for AI
+                result = await service.chat_completion(
+                    messages=messages,
+                    temperature=0.3,
+                    max_tokens=4096
+                )
 
-        if "error" in result:
-            logger.warning(f"AI summarization error: {result['error']}")
+            if "error" in result:
+                logger.warning(f"AI summarization error: {result['error']}")
+                return None
+
+            content = result["choices"][0]["message"]["content"]
+            if content:
+                from app.services.text_utils import strip_thinking_tags
+                return strip_thinking_tags(content.strip())
+                
+        except asyncio.TimeoutError:
+            logger.warning("AI summarization timed out after 25 seconds")
             return None
-
-        content = result["choices"][0]["message"]["content"]
-        if content:
-            from app.services.text_utils import strip_thinking_tags
-            return strip_thinking_tags(content.strip())
 
     except Exception as e:
         logger.warning(f"AI summarization failed: {e}")
