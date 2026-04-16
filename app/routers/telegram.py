@@ -1428,14 +1428,17 @@ async def _handle_telegram_update(update: dict, db: Session):
 
                             # Send each article as its own message
                             for i, (_, title, url, msg_text) in enumerate(articles[:10], 1):
-                                # Build keyboard with Summarize and Post buttons
+                                # Build keyboard with Summarize and Post buttons (only if Misskey configured)
                                 buttons = []
-                                row = []
-                                row.append({"text": "📝 Summarize", "callback_data": f"news:summarize:{i}"})
-                                row.append({"text": "📣 Post", "callback_data": f"news:post:{i}"})
-                                buttons.append(row)
                                 if has_misskey:
-                                    buttons.append([{"text": "📣 Post to Misskey", "callback_data": f"nk:post:{i}"}])
+                                    buttons.append([
+                                        {"text": "📝 Summarize", "callback_data": f"news:summarize:{i}"},
+                                        {"text": "📣 Post to Misskey", "callback_data": f"nk:post:{i}"}
+                                    ])
+                                else:
+                                    buttons.append([
+                                        {"text": "📝 Summarize", "callback_data": f"news:summarize:{i}"}
+                                    ])
                                 kbd = {"inline_keyboard": buttons}
                                 await telegram_service.send_message(chat_id, msg_text, reply_markup=kbd)
                             return {"ok": True}
@@ -2130,15 +2133,18 @@ async def _handle_telegram_update(update: dict, db: Session):
                         if header_match:
                             await telegram_service.send_message(chat_id, header_match.group(1))
                         
-                        # Send each article as its own message with buttons
+                        # Send each article as its own message with buttons (only if Misskey configured)
                         for i, (_, title, url, msg_text) in enumerate(articles[:10], 1):
                             buttons = []
-                            row = []
-                            row.append({"text": "📝 Summarize", "callback_data": f"news:summarize:{i}"})
-                            row.append({"text": "📣 Post", "callback_data": f"news:post:{i}"})
-                            buttons.append(row)
                             if has_misskey:
-                                buttons.append([{"text": "📣 Post to Misskey", "callback_data": f"nk:post:{i}"}])
+                                buttons.append([
+                                    {"text": "📝 Summarize", "callback_data": f"news:summarize:{i}"},
+                                    {"text": "📣 Post to Misskey", "callback_data": f"nk:post:{i}"}
+                                ])
+                            else:
+                                buttons.append([
+                                    {"text": "📝 Summarize", "callback_data": f"news:summarize:{i}"}
+                                ])
                             kbd = {"inline_keyboard": buttons}
                             await telegram_service.send_message(chat_id, msg_text, reply_markup=kbd)
                     else:
@@ -2175,15 +2181,18 @@ async def _handle_telegram_update(update: dict, db: Session):
                                 if header_match:
                                     await telegram_service.send_message(chat_id, header_match.group(1))
                                 
-                                # Send each article as its own message with buttons
+                                # Send each article as its own message with buttons (only if Misskey configured)
                                 for i, (_, title, url, msg_text) in enumerate(articles[:10], 1):
                                     buttons = []
-                                    row = []
-                                    row.append({"text": "📝 Summarize", "callback_data": f"news:summarize:{i}"})
-                                    row.append({"text": "📣 Post", "callback_data": f"news:post:{i}"})
-                                    buttons.append(row)
                                     if has_misskey:
-                                        buttons.append([{"text": "📣 Post to Misskey", "callback_data": f"nk:post:{i}"}])
+                                        buttons.append([
+                                            {"text": "📝 Summarize", "callback_data": f"news:summarize:{i}"},
+                                            {"text": "📣 Post to Misskey", "callback_data": f"nk:post:{i}"}
+                                        ])
+                                    else:
+                                        buttons.append([
+                                            {"text": "📝 Summarize", "callback_data": f"news:summarize:{i}"}
+                                        ])
                                     kbd = {"inline_keyboard": buttons}
                                     await telegram_service.send_message(chat_id, msg_text, reply_markup=kbd)
                             else:
