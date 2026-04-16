@@ -185,12 +185,12 @@ def _4chan_initial_keyboard() -> dict:
     return {
         "inline_keyboard": [
             [
-                {"text": "🖥 /g/ Technology", "callback_data": "4c:board:g"},
-                {"text": "🌎 /pol/", "callback_data": "4c:board:pol"},
+                {"text": "🖥 /g/ Technology", "callback_data": "4c:board:g:0"},
+                {"text": "🌎 /pol/", "callback_data": "4c:board:pol:0"},
             ],
             [
-                {"text": "🇯🇵 /a/ Anime", "callback_data": "4c:board:a"},
-                {"text": "🔞 /h/ Hentai", "callback_data": "4c:board:h"},
+                {"text": "🇯🇵 /a/ Anime", "callback_data": "4c:board:a:0"},
+                {"text": "🔞 /h/ Hentai", "callback_data": "4c:board:h:0"},
             ],
         ]
     }
@@ -201,12 +201,12 @@ def _4chan_board_keyboard(board: str = "g") -> dict:
     return {
         "inline_keyboard": [
             [
-                {"text": "🖥 /g/ Technology", "callback_data": "4c:board:g"},
-                {"text": "🌎 /pol/", "callback_data": "4c:board:pol"},
+                {"text": "🖥 /g/ Technology", "callback_data": "4c:board:g:0"},
+                {"text": "🌎 /pol/", "callback_data": "4c:board:pol:0"},
             ],
             [
-                {"text": "🇯🇵 /a/ Anime", "callback_data": "4c:board:a"},
-                {"text": "🔞 /h/ Hentai", "callback_data": "4c:board:h"},
+                {"text": "🇯🇵 /a/ Anime", "callback_data": "4c:board:a:0"},
+                {"text": "🔞 /h/ Hentai", "callback_data": "4c:board:h:0"},
             ],
         ]
     }
@@ -347,7 +347,7 @@ async def _send_news_source_selector(chat_id: str, sources: list, has_misskey: b
     )
 
 
-async def _send_4chan_catalog(chat_id: str, board: str, user_id: int):
+async def _send_4chan_catalog(chat_id: str, board: str, user_id: int, offset: int = 0):
     """Fetch and display 4chan catalog for a board with thumbnails."""
     import asyncio
     from app.routers.fourchan import get_catalog
@@ -362,21 +362,33 @@ async def _send_4chan_catalog(chat_id: str, board: str, user_id: int):
         await telegram_service.send_message(chat_id, f"No threads found on /{board}/")
         return
 
-    # Cache threads for this user
-    _4chan_cache[user_id] = {board: threads}
+    # Cache threads for this user (per board)
+    if user_id not in _4chan_cache:
+        _4chan_cache[user_id] = {}
+    _4chan_cache[user_id][board] = threads
 
+    threads_per_page = 10
+    total_threads = len(threads)
+    end_offset = min(offset + threads_per_page, total_threads)
+    
     board_label = {"g": "🖥 Technology", "pol": "🌎 Politically Incorrect"}.get(board, board)
 
-    # Send header
-    header = f"🍀 *4chan /{board}/ — {board_label}*\n\n*Showing top {min(10, len(threads))} threads:*"
+    # Send header with page info
+    header = f"🍀 *4chan /{board}/ — {board_label}*"
+    if offset > 0:
+        header += f"\n📄 Page {offset // threads_per_page + 1} of {(total_threads - 1) // threads_per_page + 1}"
+    header += f"\n\n*Showing threads {offset + 1}-{end_offset} of {total_threads}:*"
     await telegram_service.send_message(chat_id, header)
 
+    # Get current page of threads
+    page_threads = threads[offset:end_offset]
+
     # Send each thread with thumbnail (2 per message group for cleaner look)
-    for i in range(0, min(10, len(threads)), 2):
+    for i in range(0, len(page_threads), 2):
         # Get up to 2 threads
-        thread_batch = threads[i:i+2]
+        thread_batch = page_threads[i:i+2]
         
-        for j, t in enumerate(thread_batch, i + 1):
+        for j, t in enumerate(thread_batch, offset + i + 1):
             title = (t.get("title") or "No title")[:80]
             replies = t.get("replies", 0)
             images = t.get("images", 0)
@@ -408,28 +420,43 @@ async def _send_4chan_catalog(chat_id: str, board: str, user_id: int):
 
             await asyncio.sleep(0.05)
 
-    # Send board switcher at the end
+    # Send board switcher with pagination at the end
     await telegram_service.send_message(
         chat_id,
-        f"📋 Showing {min(10, len(threads))} of {len(threads)} threads",
-        reply_markup=_4chan_board_switcher_keyboard(board)
+        f"📋 Threads {offset + 1}-{end_offset} of {total_threads}",
+        reply_markup=_4chan_board_switcher_keyboard(board, offset=offset, total_threads=total_threads)
     )
 
 
-def _4chan_board_switcher_keyboard(current_board: str = "g") -> dict:
-    """Return board switcher keyboard."""
-    return {
-        "inline_keyboard": [
-            [
-                {"text": "🖥 /g/" if current_board != "g" else "✅ /g/", "callback_data": "4c:board:g"},
-                {"text": "🌎 /pol/" if current_board != "pol" else "✅ /pol/", "callback_data": "4c:board:pol"},
-            ],
-            [
-                {"text": "🇯🇵 /a/" if current_board != "a" else "✅ /a/", "callback_data": "4c:board:a"},
-                {"text": "🔞 /h/" if current_board != "h" else "✅ /h/", "callback_data": "4c:board:h"},
-            ],
-        ]
-    }
+def _4chan_board_switcher_keyboard(current_board: str = "g", offset: int = 0, total_threads: int = 0) -> dict:
+    """Return board switcher keyboard with pagination."""
+    buttons = []
+    threads_per_page = 10
+    
+    # First row: Pagination (Previous/Next)
+    row1 = []
+    if offset > 0:
+        prev_offset = max(0, offset - threads_per_page)
+        row1.append({"text": "⬅️ Previous", "callback_data": f"4c:catalogprev:{current_board}:{prev_offset}"})
+    # Show Next if there are more threads
+    remaining = total_threads - offset - threads_per_page
+    if remaining > 0:
+        next_offset = offset + threads_per_page
+        row1.append({"text": "Next ➡️", "callback_data": f"4c:catalognext:{current_board}:{next_offset}"})
+    if row1:
+        buttons.append(row1)
+    
+    # Second row: Board switcher
+    buttons.append([
+        {"text": "🖥 /g/" if current_board != "g" else "✅ /g/", "callback_data": f"4c:board:g:0"},
+        {"text": "🌎 /pol/" if current_board != "pol" else "✅ /pol/", "callback_data": f"4c:board:pol:0"},
+    ])
+    buttons.append([
+        {"text": "🇯🇵 /a/" if current_board != "a" else "✅ /a/", "callback_data": f"4c:board:a:0"},
+        {"text": "🔞 /h/" if current_board != "h" else "✅ /h/", "callback_data": f"4c:board:h:0"},
+    ])
+    
+    return {"inline_keyboard": buttons}
 
 
 async def _send_4chan_thread(chat_id: str, board: str, thread_id: int, user_id: int, summarize: bool = False, offset: int = 0):
@@ -2071,14 +2098,23 @@ async def _handle_telegram_update(update: dict, db: Session):
 
                 elif action == "board" and len(parts) >= 3:
                     board = parts[2]
+                    offset = int(parts[3]) if len(parts) >= 4 else 0
                     user_id = cb_user.id if cb_user else 0
-                    await _send_4chan_catalog(chat_id, board, user_id)
+                    await _send_4chan_catalog(chat_id, board, user_id, offset=offset)
                     return {"ok": True}
 
-                elif action == "refresh":
-                    board = parts[2] if len(parts) >= 3 else "g"
+                elif action == "catalognext" and len(parts) >= 4:
+                    board = parts[2]
+                    offset = int(parts[3])
                     user_id = cb_user.id if cb_user else 0
-                    await _send_4chan_catalog(chat_id, board, user_id)
+                    await _send_4chan_catalog(chat_id, board, user_id, offset=offset)
+                    return {"ok": True}
+
+                elif action == "catalogprev" and len(parts) >= 4:
+                    board = parts[2]
+                    offset = int(parts[3])
+                    user_id = cb_user.id if cb_user else 0
+                    await _send_4chan_catalog(chat_id, board, user_id, offset=offset)
                     return {"ok": True}
 
                 elif action == "thread" and len(parts) >= 4:
