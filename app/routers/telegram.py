@@ -285,41 +285,42 @@ async def _send_4chan_catalog(chat_id: str, board: str, user_id: int):
     header = f"🍀 *4chan /{board}/ — {board_label}*\n\n*Showing top {min(10, len(threads))} threads:*"
     await telegram_service.send_message(chat_id, header)
 
-    # Send each thread with thumbnail
-    for i, t in enumerate(threads[:10], 1):
-        title = (t.get("title") or "No title")[:80]
-        replies = t.get("replies", 0)
-        images = t.get("images", 0)
-        thread_id = t.get("thread_id")
-        thumb_url = t.get("thumb_url")
+    # Send each thread with thumbnail (2 per message group for cleaner look)
+    for i in range(0, min(10, len(threads)), 2):
+        # Get up to 2 threads
+        thread_batch = threads[i:i+2]
+        
+        for j, t in enumerate(thread_batch, i + 1):
+            title = (t.get("title") or "No title")[:80]
+            replies = t.get("replies", 0)
+            images = t.get("images", 0)
+            thread_id = t.get("thread_id")
+            thumb_url = t.get("thumb_url")
 
-        # Build caption
-        caption = f"*{i}. {title}*\n💬 {replies} replies | 🖼 {images} images"
-        caption = caption.replace("*", "\\*").replace("_", "\\_")
-        caption = caption[:1000]  # Telegram caption limit
+            # Build caption
+            caption = f"*{j}. {title}*\n💬 {replies} replies | 🖼 {images} images"
+            caption = caption.replace("*", "\\*").replace("_", "\\_")
+            caption = caption[:1000]  # Telegram caption limit
 
-        # Build keyboard for this thread
-        kbd = {
-            "inline_keyboard": [[
-                {"text": "👁 View Thread", "callback_data": f"4c:thread:{board}:{thread_id}"}
-            ]]
-        }
+            # Build keyboard for this thread
+            kbd = {
+                "inline_keyboard": [[
+                    {"text": "👁 View Thread", "callback_data": f"4c:thread:{board}:{thread_id}"}
+                ]]
+            }
 
-        if thumb_url:
-            # Send photo with caption
-            photo_result = await telegram_service.send_photo(chat_id, thumb_url, caption)
-            if not photo_result.get("ok"):
-                # Fallback to text only
-                text = f"{caption}\n[Thumbnail unavailable]"
-                await telegram_service.send_message(chat_id, text, reply_markup=kbd)
+            if thumb_url:
+                # Send photo with caption and keyboard together
+                photo_result = await telegram_service.send_photo(chat_id, thumb_url, caption, reply_markup=kbd)
+                if not photo_result.get("ok"):
+                    # Fallback to text only
+                    text = f"{caption}\n[Thumbnail unavailable]"
+                    await telegram_service.send_message(chat_id, text, reply_markup=kbd)
             else:
-                # Add button as separate message or edit - but for simplicity send button after
-                await telegram_service.send_message(chat_id, "👆", reply_markup=kbd)
-        else:
-            # No thumbnail - send text with button
-            await telegram_service.send_message(chat_id, caption, reply_markup=kbd)
+                # No thumbnail - send text with button
+                await telegram_service.send_message(chat_id, caption, reply_markup=kbd)
 
-        await asyncio.sleep(0.1)
+            await asyncio.sleep(0.05)
 
     # Send board switcher at the end
     await telegram_service.send_message(

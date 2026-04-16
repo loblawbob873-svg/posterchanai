@@ -57,11 +57,12 @@ class TelegramService:
             logger.error(f"Failed to send Telegram message: {e}")
             return {"ok": False, "error": str(e)}
     
-    async def send_photo(self, chat_id: str, photo_data: str, caption: str = None) -> dict:
+    async def send_photo(self, chat_id: str, photo_data: str, caption: str = None, reply_markup: dict = None) -> dict:
         """Send a photo to a Telegram chat. Can accept URL or base64 data."""
         import base64
         import tempfile
         import os
+        import json
         
         if not self.bot_token:
             logger.warning("Telegram bot token not configured")
@@ -107,6 +108,8 @@ class TelegramService:
                     if caption:
                         data["caption"] = caption
                         data["parse_mode"] = "Markdown"
+                    if reply_markup:
+                        data["reply_markup"] = json.dumps(reply_markup)
                     response = await client.post(url, data=data, files=files)
                 else:
                     # Send as URL
@@ -117,6 +120,8 @@ class TelegramService:
                     if caption:
                         payload["caption"] = caption
                         payload["parse_mode"] = "Markdown"
+                    if reply_markup:
+                        payload["reply_markup"] = reply_markup
                     response = await client.post(url, json=payload)
                 
                 result = response.json()
