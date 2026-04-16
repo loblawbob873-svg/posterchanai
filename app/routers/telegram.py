@@ -233,6 +233,31 @@ def _4chan_thread_keyboard(board: str, thread_id: int, has_summary: bool = False
     return {"inline_keyboard": buttons}
 
 
+def _torrents_menu_keyboard() -> dict:
+    """Return torrents main menu keyboard."""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "🎬 Movies", "callback_data": "t:cat:movies"},
+                {"text": "📺 TV", "callback_data": "t:cat:tv"},
+            ],
+            [
+                {"text": "🎵 Music", "callback_data": "t:cat:music"},
+                {"text": "🎌 Anime", "callback_data": "t:cat:anime"},
+            ],
+            [
+                {"text": "🔍 Search Torrents", "callback_data": "t:search_hint:0"},
+            ],
+            [
+                {"text": "📋 Active Downloads", "callback_data": "t:list:0"},
+            ],
+            [
+                {"text": "🔎 Nyaa Search", "callback_data": "n:search_hint:0"},
+            ],
+        ]
+    }
+
+
 def _format_4chan_post(post: dict, max_len: int = 800) -> str:
     """Format a single 4chan post for Telegram display."""
     name = post.get("name", "Anonymous")
@@ -468,7 +493,7 @@ def _help_main_keyboard() -> dict:
             ],
             [
                 {"text": "🎨 Image Gen",   "callback_data": "help:geni"},
-                {"text": "🧲 Torrents",    "callback_data": "help:torrents"},
+                {"text": "🧲 Torrents",    "callback_data": "t:menu"},
             ],
             [
                 {"text": "🎌 Nyaa",        "callback_data": "help:nyaa"},
@@ -1845,7 +1870,16 @@ async def _handle_telegram_update(update: dict, db: Session):
                 parts = data.split(":")
                 action = parts[1] if len(parts) > 1 else ""
 
-                if action == "cat" and len(parts) >= 3:
+                if action == "menu":
+                    # Show torrents main menu
+                    await telegram_service.send_message(
+                        chat_id,
+                        "🧲 *Torrents Menu*\n\nChoose an option:",
+                        reply_markup=_torrents_menu_keyboard()
+                    )
+                    return {"ok": True}
+
+                elif action == "cat" and len(parts) >= 3:
                     # Category browse: send individual result messages
                     category = parts[2]
                     try:
