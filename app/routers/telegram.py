@@ -449,28 +449,16 @@ def _help_main_keyboard() -> dict:
     return {
         "inline_keyboard": [
             [
-                {"text": "🔍 Search",      "callback_data": "prompt:search"},
-                {"text": "ℹ️",             "callback_data": "help:search"},
+                {"text": "🔍 Search",      "callback_data": "help:search"},
+                {"text": "🖼 Image Search", "callback_data": "help:images"},
             ],
             [
-                {"text": "🖼 Image Search", "callback_data": "prompt:images"},
-                {"text": "ℹ️",             "callback_data": "help:images"},
+                {"text": "🎨 Image Gen",   "callback_data": "help:geni"},
+                {"text": "🧲 Torrents",    "callback_data": "help:torrents"},
             ],
             [
-                {"text": "🎨 Image Gen",   "callback_data": "prompt:geni"},
-                {"text": "ℹ️",             "callback_data": "help:geni"},
-            ],
-            [
-                {"text": "🧲 Torrents",    "callback_data": "prompt:torrents"},
-                {"text": "ℹ️",             "callback_data": "help:torrents"},
-            ],
-            [
-                {"text": "🎌 Nyaa",        "callback_data": "prompt:nyaa"},
-                {"text": "ℹ️",             "callback_data": "help:nyaa"},
-            ],
-            [
-                {"text": "🍀 4chan",       "callback_data": "4c:select"},
-                {"text": "ℹ️",             "callback_data": "help:4chan"},
+                {"text": "🎌 Nyaa",        "callback_data": "help:nyaa"},
+                {"text": "🍀 4chan",       "callback_data": "help:4chan"},
             ],
             [
                 {"text": "🌐 Translate",   "callback_data": "help:translate"},
@@ -2049,7 +2037,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                 if section == "menu":
                     await telegram_service.send_message(
                         chat_id,
-                        "🤖 *PosterChanAI* — tap a topic to learn more:",
+                        "🤖 *PosterChanAI Help*\n\nTap any button below to learn about a feature:",
                         parse_mode="MarkdownV2",
                         reply_markup=_help_main_keyboard(),
                     )
