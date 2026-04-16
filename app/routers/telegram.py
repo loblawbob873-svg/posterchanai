@@ -180,6 +180,21 @@ def _torrent_nav_keyboard() -> dict:
     }
 
 
+def _4chan_initial_keyboard() -> dict:
+    """Return initial board selection keyboard when user types '4chan' without a board."""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "🖥 /g/ Technology", "callback_data": "4c:board:g"},
+                {"text": "🌎 /pol/", "callback_data": "4c:board:pol"},
+            ],
+            [
+                {"text": "🔞 /h/ Hentai", "callback_data": "4c:board:h"},
+            ],
+        ]
+    }
+
+
 def _4chan_board_keyboard(board: str = "g") -> dict:
     """Return 4chan board selection keyboard."""
     return {
@@ -187,6 +202,7 @@ def _4chan_board_keyboard(board: str = "g") -> dict:
             [
                 {"text": "🖥 /g/ Technology", "callback_data": "4c:board:g"},
                 {"text": "🌎 /pol/", "callback_data": "4c:board:pol"},
+                {"text": "🔞 /h/ Hentai", "callback_data": "4c:board:h"},
             ],
         ]
     }
@@ -337,6 +353,7 @@ def _4chan_board_switcher_keyboard(current_board: str = "g") -> dict:
             [
                 {"text": "🖥 /g/" if current_board != "g" else "✅ /g/", "callback_data": "4c:board:g"},
                 {"text": "🌎 /pol/" if current_board != "pol" else "✅ /pol/", "callback_data": "4c:board:pol"},
+                {"text": "🔞 /h/" if current_board != "h" else "✅ /h/", "callback_data": "4c:board:h"},
             ],
         ]
     }
@@ -452,7 +469,7 @@ def _help_main_keyboard() -> dict:
                 {"text": "ℹ️",             "callback_data": "help:nyaa"},
             ],
             [
-                {"text": "🍀 4chan",       "callback_data": "4c:board:g"},
+                {"text": "🍀 4chan",       "callback_data": "4c:select"},
                 {"text": "ℹ️",             "callback_data": "help:4chan"},
             ],
             [
@@ -474,16 +491,16 @@ def _help_main_keyboard() -> dict:
 _HELP_SECTIONS = {
     "4chan": (
         "🍀 *4chan Browser*\n\n"
-        "`4chan` — Browse /g/ (Technology) catalog\n"
-        "`4chan g` — View /g/ catalog\n"
-        "`4chan pol` — View /pol/ catalog\n\n"
+        "`4chan` — Select a board to browse\n"
+        "`4chan g` — View /g/ (Technology) catalog\n"
+        "`4chan pol` — View /pol/ catalog\n"
+        "`4chan h` — View /h/ (Hentai) catalog\n\n"
         "*Features:*\n"
         "• Browse thread catalog with reply counts\n"
         "• Tap any thread to view posts with images\n"
         "• Summarize long threads with AI\n"
         "• Navigate with inline buttons\n"
-        "• Open threads directly on 4chan\n\n"
-        "*Note:* Only /g/ (Technology) and /pol/ boards are supported\\."
+        "• Open threads directly on 4chan"
     ),
     "chat": (
         "💬 *Chat & URLs*\n\n"
@@ -1318,11 +1335,20 @@ async def _handle_telegram_update(update: dict, db: Session):
                     elif command == "4chan":
                         # Parse board from argument
                         arg_parts = arg.strip().split()
-                        board = arg_parts[0].lower() if arg_parts else "g"
-                        if board not in ("g", "pol"):
-                            board = "g"
-                        user_id = user_obj.id if user_obj else 0
-                        await _send_4chan_catalog(chat_id, board, user_id)
+                        board = arg_parts[0].lower() if arg_parts else None
+                        allowed_boards = ("g", "pol", "h")
+                        
+                        if board and board in allowed_boards:
+                            # Valid board specified, show catalog
+                            user_id = user_obj.id if user_obj else 0
+                            await _send_4chan_catalog(chat_id, board, user_id)
+                        else:
+                            # No board specified or invalid board, show board selector
+                            await telegram_service.send_message(
+                                chat_id,
+                                "🍀 *4chan Board Selector*\n\nChoose a board to browse:",
+                                reply_markup=_4chan_initial_keyboard()
+                            )
                         return {"ok": True}
                     elif command == "news":
                         result = await command_service.execute_command(command, arg)
@@ -1925,7 +1951,16 @@ async def _handle_telegram_update(update: dict, db: Session):
                 parts = data.split(":")
                 action = parts[1] if len(parts) > 1 else ""
 
-                if action == "board" and len(parts) >= 3:
+                if action == "select":
+                    # Show board selector
+                    await telegram_service.send_message(
+                        chat_id,
+                        "🍀 *4chan Board Selector*\n\nChoose a board to browse:",
+                        reply_markup=_4chan_initial_keyboard()
+                    )
+                    return {"ok": True}
+
+                elif action == "board" and len(parts) >= 3:
                     board = parts[2]
                     user_id = cb_user.id if cb_user else 0
                     await _send_4chan_catalog(chat_id, board, user_id)
@@ -1996,7 +2031,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     "geni":     ("🎨 Describe the image you want to generate:", "e.g. a sunset over a cyberpunk city"),
                     "nyaa":     ("🔎 Type your anime search:", "e.g. one piece 1080p"),
                     "torrents": ("🔍 Type your torrent search:", "e.g. dark knight 1080p"),
-                    "4chan":    ("🍀 Which board? (g or pol)", "e.g. g"),
+                    "4chan":    ("🍀 Which board? (g, pol, or h)", "e.g. g"),
                 }
                 cfg = _PROMPT_CONFIGS.get(action)
                 if cfg:

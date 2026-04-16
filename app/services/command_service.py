@@ -143,7 +143,7 @@ class CommandService:
         "logs": "View system logs",
         "mail": "Email: mail <to> [subject] <body>",
         "translate": "Translate: translate <text> to <lang>",
-        "4chan": "4chan browser: 4chan [g|pol] - view catalog",
+        "4chan": "4chan browser: 4chan [g|pol|h] - view catalog",
     }
     # Command aliases (alias -> canonical command)
     COMMAND_ALIASES = {
@@ -2355,9 +2355,10 @@ Files are saved to your Storage.""",
             return {"type": "text", "content": f"Translation failed: {str(e)}"}
 
     async def _4chan_command(self, arg: str) -> dict:
-        """Open 4chan catalog browser. Optional board: g or pol."""
+        """Open 4chan catalog browser. Optional board: g, pol, or h."""
+        allowed_boards = ("g", "pol", "h")
         board = (arg or "g").strip().lower()
-        if board not in ("g", "pol"):
+        if board not in allowed_boards:
             board = "g"
         return {
             "type": "4chan",
