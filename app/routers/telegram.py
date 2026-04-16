@@ -1396,6 +1396,16 @@ async def _handle_telegram_update(update: dict, db: Session):
                             )
                         return {"ok": True}
                     elif command == "news":
+                        # If no argument provided, show the news menu
+                        if not arg.strip():
+                            await telegram_service.send_message(
+                                chat_id,
+                                "📰 *News Menu*\n\nChoose an option:",
+                                reply_markup=_news_menu_keyboard()
+                            )
+                            return {"ok": True}
+                        
+                        # Otherwise, fetch news from specific source
                         result = await command_service.execute_command(command, arg)
                         content = _strip_cmd_links(result.get("content", ""))
 
