@@ -192,40 +192,6 @@ def _4chan_board_keyboard(board: str = "g") -> dict:
     }
 
 
-def _4chan_catalog_keyboard(threads: list, board: str, page: int = 0) -> dict:
-    """Build inline keyboard for 4chan catalog with pagination."""
-    buttons = []
-    threads_per_page = 10
-    start = page * threads_per_page
-    end = start + threads_per_page
-    page_threads = threads[start:end]
-
-    for i, t in enumerate(page_threads, start + 1):
-        title = (t.get("title") or "No title")[:35]
-        if len(title) >= 35:
-            title += "..."
-        replies = t.get("replies", 0)
-        row = [{"text": f"{i}. {title} ({replies}💬)", "callback_data": f"4c:thread:{board}:{t['thread_id']}"}]
-        buttons.append(row)
-
-    # Pagination row
-    nav_row = []
-    if page > 0:
-        nav_row.append({"text": "⬅️ Prev", "callback_data": f"4c:page:{board}:{page - 1}"})
-    if end < len(threads):
-        nav_row.append({"text": "Next ➡️", "callback_data": f"4c:page:{board}:{page + 1}"})
-    if nav_row:
-        buttons.append(nav_row)
-
-    # Board switcher row
-    buttons.append([
-        {"text": "🖥 /g/", "callback_data": "4c:board:g"},
-        {"text": "🌎 /pol/", "callback_data": "4c:board:pol"},
-    ])
-
-    return {"inline_keyboard": buttons}
-
-
 def _4chan_thread_keyboard(board: str, thread_id: int, has_summary: bool = False) -> dict:
     """Build inline keyboard for viewing a 4chan thread."""
     buttons = []
@@ -257,8 +223,47 @@ def _format_4chan_post(post: dict, max_len: int = 800) -> str:
     return text
 
 
+def _news_source_keyboard(sources: list, has_misskey: bool = False) -> dict:
+    """Build inline keyboard for news source selection."""
+    buttons = []
+
+    # "All Sources" button at the top
+    buttons.append([{"text": "📰 All Sources", "callback_data": "news:all"}])
+
+    # Individual source buttons (2 per row)
+    row = []
+    for i, source in enumerate(sources[:8], 1):  # Limit to 8 sources
+        source_name = source.get("name", f"Source {i}")
+        # Use short name for button
+        short_name = source_name[:15] + "..." if len(source_name) > 15 else source_name
+        row.append({"text": f"📄 {short_name}", "callback_data": f"news:source:{i}"})
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+
+    return {"inline_keyboard": buttons}
+
+
+async def _send_news_source_selector(chat_id: str, sources: list, has_misskey: bool = False):
+    """Send news source selection menu."""
+    # Cache sources for callback handling
+    _news_source_cache[chat_id] = sources
+
+    source_list = "\n".join([f"• {s.get('name', 'Unknown')}" for s in sources[:8]])
+    text = f"📰 *Select a news source:*\n\n{source_list}"
+
+    await telegram_service.send_message(
+        chat_id,
+        text,
+        reply_markup=_news_source_keyboard(sources, has_misskey)
+    )
+
+
 async def _send_4chan_catalog(chat_id: str, board: str, user_id: int):
-    """Fetch and display 4chan catalog for a board."""
+    """Fetch and display 4chan catalog for a board with thumbnails."""
+    import asyncio
     from app.routers.fourchan import get_catalog
 
     result = await get_catalog(board=board)
@@ -275,13 +280,65 @@ async def _send_4chan_catalog(chat_id: str, board: str, user_id: int):
     _4chan_cache[user_id] = {board: threads}
 
     board_label = {"g": "🖥 Technology", "pol": "🌎 Politically Incorrect"}.get(board, board)
-    header = f"🍀 *4chan /{board}/ — {board_label}*\n\n*Top {min(10, len(threads))} threads:*"
 
+    # Send header
+    header = f"🍀 *4chan /{board}/ — {board_label}*\n\n*Showing top {min(10, len(threads))} threads:*"
+    await telegram_service.send_message(chat_id, header)
+
+    # Send each thread with thumbnail
+    for i, t in enumerate(threads[:10], 1):
+        title = (t.get("title") or "No title")[:80]
+        replies = t.get("replies", 0)
+        images = t.get("images", 0)
+        thread_id = t.get("thread_id")
+        thumb_url = t.get("thumb_url")
+
+        # Build caption
+        caption = f"*{i}. {title}*\n💬 {replies} replies | 🖼 {images} images"
+        caption = caption.replace("*", "\\*").replace("_", "\\_")
+        caption = caption[:1000]  # Telegram caption limit
+
+        # Build keyboard for this thread
+        kbd = {
+            "inline_keyboard": [[
+                {"text": "👁 View Thread", "callback_data": f"4c:thread:{board}:{thread_id}"}
+            ]]
+        }
+
+        if thumb_url:
+            # Send photo with caption
+            photo_result = await telegram_service.send_photo(chat_id, thumb_url, caption)
+            if not photo_result.get("ok"):
+                # Fallback to text only
+                text = f"{caption}\n[Thumbnail unavailable]"
+                await telegram_service.send_message(chat_id, text, reply_markup=kbd)
+            else:
+                # Add button as separate message or edit - but for simplicity send button after
+                await telegram_service.send_message(chat_id, "👆", reply_markup=kbd)
+        else:
+            # No thumbnail - send text with button
+            await telegram_service.send_message(chat_id, caption, reply_markup=kbd)
+
+        await asyncio.sleep(0.1)
+
+    # Send board switcher at the end
     await telegram_service.send_message(
         chat_id,
-        header,
-        reply_markup=_4chan_catalog_keyboard(threads, board, page=0)
+        f"📋 Showing {min(10, len(threads))} of {len(threads)} threads",
+        reply_markup=_4chan_board_switcher_keyboard(board)
     )
+
+
+def _4chan_board_switcher_keyboard(current_board: str = "g") -> dict:
+    """Return board switcher keyboard."""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "🖥 /g/" if current_board != "g" else "✅ /g/", "callback_data": "4c:board:g"},
+                {"text": "🌎 /pol/" if current_board != "pol" else "✅ /pol/", "callback_data": "4c:board:pol"},
+            ],
+        ]
+    }
 
 
 async def _send_4chan_thread(chat_id: str, board: str, thread_id: int, user_id: int, summarize: bool = False):
@@ -605,6 +662,8 @@ _link_action_cache: dict = {}
 _youtube_action_cache: dict = {}
 # Pending news Post actions: chat_id → list of (title, url) tuples
 _news_post_cache: dict = {}
+# News source cache: chat_id → list of news sources
+_news_source_cache: dict = {}
 # 4chan cache: user_id → {board: [threads]}
 _4chan_cache: dict = {}
 # 4chan thread cache: chat_id → {board, thread_id, posts}
@@ -1871,17 +1930,10 @@ async def _handle_telegram_update(update: dict, db: Session):
                     await _send_4chan_catalog(chat_id, board, user_id)
                     return {"ok": True}
 
-                elif action == "page" and len(parts) >= 4:
-                    board = parts[2]
-                    page = int(parts[3])
+                elif action == "refresh":
+                    board = parts[2] if len(parts) >= 3 else "g"
                     user_id = cb_user.id if cb_user else 0
-                    threads = _4chan_cache.get(user_id, {}).get(board, [])
-                    if threads:
-                        await telegram_service.send_message(
-                            chat_id,
-                            f"🍀 *4chan /{board}/ — Page {page + 1}*",
-                            reply_markup=_4chan_catalog_keyboard(threads, board, page=page)
-                        )
+                    await _send_4chan_catalog(chat_id, board, user_id)
                     return {"ok": True}
 
                 elif action == "thread" and len(parts) >= 4:
