@@ -1332,7 +1332,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                         # Parse board from argument
                         arg_parts = arg.strip().split()
                         board = arg_parts[0].lower() if arg_parts else None
-                        allowed_boards = ("g", "pol", "h")
+                        allowed_boards = ("g", "pol", "a", "h")
                         
                         if board and board in allowed_boards:
                             # Valid board specified, show catalog
@@ -2027,7 +2027,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     "geni":     ("🎨 Describe the image you want to generate:", "e.g. a sunset over a cyberpunk city"),
                     "nyaa":     ("🔎 Type your anime search:", "e.g. one piece 1080p"),
                     "torrents": ("🔍 Type your torrent search:", "e.g. dark knight 1080p"),
-                    "4chan":    ("🍀 Which board? (g, pol, or h)", "e.g. g"),
+                    "4chan":    ("🍀 Which board? (g, pol, a, or h)", "e.g. g"),
                 }
                 cfg = _PROMPT_CONFIGS.get(action)
                 if cfg:
