@@ -212,21 +212,38 @@ def _4chan_board_keyboard(board: str = "g") -> dict:
     }
 
 
-def _4chan_thread_keyboard(board: str, thread_id: int, has_summary: bool = False) -> dict:
+def _4chan_thread_keyboard(board: str, thread_id: int, has_summary: bool = False, offset: int = 0, total_posts: int = 0) -> dict:
     """Build inline keyboard for viewing a 4chan thread."""
     buttons = []
+    posts_per_page = 10
+    
     # First row: Summarize and Refresh
     row1 = []
     if not has_summary:
         row1.append({"text": "📝 Summarize", "callback_data": f"4c:summarize:{board}:{thread_id}"})
-    row1.append({"text": "🔄 Refresh", "callback_data": f"4c:refreshthread:{board}:{thread_id}"})
+    row1.append({"text": "🔄 Refresh", "callback_data": f"4c:refreshthread:{board}:{thread_id}:{offset}"})
     if row1:
         buttons.append(row1)
-    # Second row: Open on 4chan
+    
+    # Second row: Pagination buttons (Previous/Next)
+    row2 = []
+    if offset > 0:
+        prev_offset = max(0, offset - posts_per_page)
+        row2.append({"text": "⬅️ Previous", "callback_data": f"4c:prevpage:{board}:{thread_id}:{prev_offset}"})
+    # Show Next button if there are more replies after current page
+    total_replies = total_posts - 1  # Exclude OP
+    remaining_replies = total_replies - offset - posts_per_page
+    if remaining_replies > 0:
+        next_offset = offset + posts_per_page
+        row2.append({"text": "Next ➡️", "callback_data": f"4c:nextpage:{board}:{thread_id}:{next_offset}"})
+    if row2:
+        buttons.append(row2)
+    
+    # Third row: Open on 4chan
     buttons.append([
         {"text": "🔗 Open on 4chan", "url": f"https://boards.4chan.org/{board}/thread/{thread_id}"},
     ])
-    # Third row: Back to catalog
+    # Fourth row: Back to catalog
     buttons.append([
         {"text": "⬅️ Back to Catalog", "callback_data": f"4c:board:{board}"},
     ])
@@ -415,7 +432,7 @@ def _4chan_board_switcher_keyboard(current_board: str = "g") -> dict:
     }
 
 
-async def _send_4chan_thread(chat_id: str, board: str, thread_id: int, user_id: int, summarize: bool = False):
+async def _send_4chan_thread(chat_id: str, board: str, thread_id: int, user_id: int, summarize: bool = False, offset: int = 0):
     """Fetch and display a 4chan thread."""
     from app.routers.fourchan import get_thread, summarize_thread
     from app.database import SessionLocal
@@ -457,31 +474,40 @@ async def _send_4chan_thread(chat_id: str, board: str, thread_id: int, user_id: 
         return
 
     # Cache thread for navigation
-    _4chan_thread_cache[chat_id] = {"board": board, "thread_id": thread_id, "posts": posts}
+    _4chan_thread_cache[chat_id] = {"board": board, "thread_id": thread_id, "posts": posts, "offset": offset}
+
+    posts_per_page = 10
+    total_posts = len(posts)
+    
+    # Calculate range of posts to show (OP is always shown, replies are paginated)
+    # offset is the index in the replies (posts[1:])
+    reply_start = 1 + offset
+    reply_end = min(1 + offset + posts_per_page, total_posts)
 
     # Send thread header (OP post)
     op = posts[0]
     title = result.get("title", "Untitled Thread")
     title = title.replace("*", "\\*").replace("_", "\\_")
 
-    header = f"🍀 *{title}*\n📋 /{board}/ — {len(posts)} posts\n"
+    header = f"🍀 *{title}*\n📋 /{board}/ — {total_posts} posts\n"
+    if offset > 0:
+        header += f"📄 Page {offset // posts_per_page + 1} of {(total_posts - 2) // posts_per_page + 1}\n"
     await telegram_service.send_message(chat_id, header)
 
-    # Send OP post with image if available
-    op_text = _format_4chan_post(op, max_len=1000)
-    # Use direct CDN URL for Telegram (Telegram downloads it directly)
-    op_image = op.get("image_url_direct") or op.get("image_url")
+    # Send OP post with image if available (only on first page)
+    if offset == 0:
+        op_text = _format_4chan_post(op, max_len=1000)
+        op_image = op.get("image_url_direct") or op.get("image_url")
 
-    if op_image:
-        # Send photo with caption
-        photo_result = await telegram_service.send_photo(chat_id, op_image, op_text)
-        if not photo_result.get("ok"):
+        if op_image:
+            photo_result = await telegram_service.send_photo(chat_id, op_image, op_text)
+            if not photo_result.get("ok"):
+                await telegram_service.send_message(chat_id, op_text)
+        else:
             await telegram_service.send_message(chat_id, op_text)
-    else:
-        await telegram_service.send_message(chat_id, op_text)
 
-    # Send more posts (up to 50 replies)
-    for post in posts[1:51]:
+    # Send replies for current page
+    for post in posts[reply_start:reply_end]:
         post_text = _format_4chan_post(post, max_len=600)
         post_image = post.get("image_url_direct") or post.get("image_url")
 
@@ -492,11 +518,24 @@ async def _send_4chan_thread(chat_id: str, board: str, thread_id: int, user_id: 
         else:
             await telegram_service.send_message(chat_id, post_text)
 
+    # Calculate shown count and reply range
+    reply_count = reply_end - reply_start
+    shown_count = reply_count + (1 if offset == 0 else 0)  # Include OP on first page
+    start_reply = offset + 1
+    end_reply = offset + reply_count
+    total_replies = total_posts - 1
+    
+    # Build status message
+    if offset == 0:
+        status_text = f"📖 OP + {reply_count} replies ({start_reply}-{end_reply} of {total_replies})"
+    else:
+        status_text = f"📖 Replies {start_reply}-{end_reply} of {total_replies}"
+    
     # Send navigation keyboard
     await telegram_service.send_message(
         chat_id,
-        f"📖 Showing {min(51, len(posts))} of {len(posts)} posts",
-        reply_markup=_4chan_thread_keyboard(board, thread_id)
+        status_text,
+        reply_markup=_4chan_thread_keyboard(board, thread_id, offset=offset, total_posts=total_posts)
     )
 
 
@@ -2059,11 +2098,30 @@ async def _handle_telegram_update(update: dict, db: Session):
                 elif action == "refreshthread" and len(parts) >= 4:
                     board = parts[2]
                     thread_id = int(parts[3])
+                    offset = int(parts[4]) if len(parts) >= 5 else 0
                     user_id = cb_user.id if cb_user else 0
                     # Send loading message
                     await telegram_service.send_message(chat_id, "🔄 Refreshing thread...")
-                    # Reload the thread
-                    await _send_4chan_thread(chat_id, board, thread_id, user_id)
+                    # Reload the thread at current offset
+                    await _send_4chan_thread(chat_id, board, thread_id, user_id, offset=offset)
+                    return {"ok": True}
+
+                elif action == "nextpage" and len(parts) >= 5:
+                    board = parts[2]
+                    thread_id = int(parts[3])
+                    offset = int(parts[4])
+                    user_id = cb_user.id if cb_user else 0
+                    # Load next page
+                    await _send_4chan_thread(chat_id, board, thread_id, user_id, offset=offset)
+                    return {"ok": True}
+
+                elif action == "prevpage" and len(parts) >= 5:
+                    board = parts[2]
+                    thread_id = int(parts[3])
+                    offset = int(parts[4])
+                    user_id = cb_user.id if cb_user else 0
+                    # Load previous page
+                    await _send_4chan_thread(chat_id, board, thread_id, user_id, offset=offset)
                     return {"ok": True}
 
             elif data.startswith("news:"):
