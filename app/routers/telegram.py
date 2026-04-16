@@ -189,6 +189,7 @@ def _4chan_initial_keyboard() -> dict:
                 {"text": "🌎 /pol/", "callback_data": "4c:board:pol"},
             ],
             [
+                {"text": "🇯🇵 /a/ Anime", "callback_data": "4c:board:a"},
                 {"text": "🔞 /h/ Hentai", "callback_data": "4c:board:h"},
             ],
         ]
@@ -202,6 +203,9 @@ def _4chan_board_keyboard(board: str = "g") -> dict:
             [
                 {"text": "🖥 /g/ Technology", "callback_data": "4c:board:g"},
                 {"text": "🌎 /pol/", "callback_data": "4c:board:pol"},
+            ],
+            [
+                {"text": "🇯🇵 /a/ Anime", "callback_data": "4c:board:a"},
                 {"text": "🔞 /h/ Hentai", "callback_data": "4c:board:h"},
             ],
         ]
@@ -353,6 +357,9 @@ def _4chan_board_switcher_keyboard(current_board: str = "g") -> dict:
             [
                 {"text": "🖥 /g/" if current_board != "g" else "✅ /g/", "callback_data": "4c:board:g"},
                 {"text": "🌎 /pol/" if current_board != "pol" else "✅ /pol/", "callback_data": "4c:board:pol"},
+            ],
+            [
+                {"text": "🇯🇵 /a/" if current_board != "a" else "✅ /a/", "callback_data": "4c:board:a"},
                 {"text": "🔞 /h/" if current_board != "h" else "✅ /h/", "callback_data": "4c:board:h"},
             ],
         ]
@@ -458,7 +465,7 @@ def _help_main_keyboard() -> dict:
             ],
             [
                 {"text": "🎌 Nyaa",        "callback_data": "help:nyaa"},
-                {"text": "🍀 4chan",       "callback_data": "help:4chan"},
+                {"text": "🍀 4chan",       "callback_data": "4c:select"},
             ],
             [
                 {"text": "🌐 Translate",   "callback_data": "help:translate"},
@@ -482,6 +489,7 @@ _HELP_SECTIONS = {
         "`4chan` — Select a board to browse\n"
         "`4chan g` — View /g/ (Technology) catalog\n"
         "`4chan pol` — View /pol/ catalog\n"
+        "`4chan a` — View /a/ (Anime) catalog\n"
         "`4chan h` — View /h/ (Hentai) catalog\n\n"
         "*Features:*\n"
         "• Browse thread catalog with reply counts\n"

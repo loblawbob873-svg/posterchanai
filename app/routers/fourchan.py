@@ -24,7 +24,7 @@ CHROME_UA = (
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 
-ALLOWED_BOARDS = ("g", "pol", "h")
+ALLOWED_BOARDS = ("g", "pol", "h", "a")
 
 # Allowed image hosts for proxy (avoid hotlink/referrer blocking)
 ALLOWED_IMAGE_HOSTS = ("i.4cdn.org", "is2.4channel.org")
