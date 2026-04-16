@@ -2355,8 +2355,8 @@ Files are saved to your Storage.""",
             return {"type": "text", "content": f"Translation failed: {str(e)}"}
 
     async def _4chan_command(self, arg: str) -> dict:
-        """Open 4chan catalog browser. Optional board: g, pol, or h."""
-        allowed_boards = ("g", "pol", "h")
+        """Open 4chan catalog browser. Optional board: g, pol, a, or h."""
+        allowed_boards = ("g", "pol", "a", "h")
         board = (arg or "g").strip().lower()
         if board not in allowed_boards:
             board = "g"

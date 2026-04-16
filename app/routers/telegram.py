@@ -215,11 +215,18 @@ def _4chan_board_keyboard(board: str = "g") -> dict:
 def _4chan_thread_keyboard(board: str, thread_id: int, has_summary: bool = False) -> dict:
     """Build inline keyboard for viewing a 4chan thread."""
     buttons = []
+    # First row: Summarize and Refresh
+    row1 = []
     if not has_summary:
-        buttons.append([{"text": "📝 Summarize Thread", "callback_data": f"4c:summarize:{board}:{thread_id}"}])
+        row1.append({"text": "📝 Summarize", "callback_data": f"4c:summarize:{board}:{thread_id}"})
+    row1.append({"text": "🔄 Refresh", "callback_data": f"4c:refreshthread:{board}:{thread_id}"})
+    if row1:
+        buttons.append(row1)
+    # Second row: Open on 4chan
     buttons.append([
         {"text": "🔗 Open on 4chan", "url": f"https://boards.4chan.org/{board}/thread/{thread_id}"},
     ])
+    # Third row: Back to catalog
     buttons.append([
         {"text": "⬅️ Back to Catalog", "callback_data": f"4c:board:{board}"},
     ])
@@ -1982,7 +1989,17 @@ async def _handle_telegram_update(update: dict, db: Session):
                     await _send_4chan_thread(chat_id, board, thread_id, user_id, summarize=True)
                     return {"ok": True}
 
-            elif data.startswith("news:"):
+                elif action == "refreshthread" and len(parts) >= 4:
+                    board = parts[2]
+                    thread_id = int(parts[3])
+                    user_id = cb_user.id if cb_user else 0
+                    # Send loading message
+                    await telegram_service.send_message(chat_id, "🔄 Refreshing thread...")
+                    # Reload the thread
+                    await _send_4chan_thread(chat_id, board, thread_id, user_id)
+                    return {"ok": True}
+
+            elif data.startswith("news"):
                 # News source selection callback
                 cb_user = db.query(User).filter(
                     User.telegram_chat_id == chat_id,
