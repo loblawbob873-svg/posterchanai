@@ -505,15 +505,15 @@ def _help_main_keyboard() -> dict:
     return {
         "inline_keyboard": [
             [
-                {"text": "🔍 Search",      "callback_data": "help:search"},
-                {"text": "🖼 Image Search", "callback_data": "help:images"},
+                {"text": "🔍 Search",      "callback_data": "prompt:search"},
+                {"text": "🖼 Image Search", "callback_data": "prompt:images"},
             ],
             [
                 {"text": "🎨 Image Gen",   "callback_data": "help:geni"},
                 {"text": "🧲 Torrents",    "callback_data": "t:menu"},
             ],
             [
-                {"text": "🎌 Nyaa",        "callback_data": "help:nyaa"},
+                {"text": "🎌 Nyaa",        "callback_data": "n:prompt"},
                 {"text": "🍀 4chan",       "callback_data": "4c:select"},
             ],
             [
