@@ -169,9 +169,9 @@ def collect_remote_logs(host: str, settings: dict) -> str:
     if raid_usage:
         log_parts.append(f"[Raid Disk Usage] {raid_usage}")
 
-    # RAID status (md0) - report if found
+    # RAID status (md0) - report if active RAID device found
     raid = run_ssh_command(host, "cat /proc/mdstat 2>/dev/null")
-    if raid and "md" in raid:
+    if raid and "active" in raid:
         log_parts.append(f"[Raid Status] {raid[:500]}")
 
     # Failed services
@@ -260,9 +260,9 @@ def collect_system_logs(db: Session = None) -> str:
     if failed:
         log_parts.append(f"[Failed Services] {failed}")
 
-    # RAID info - report if md0/RAID found
+    # RAID info - report if active RAID device found
     raid = run_command("cat /proc/mdstat 2>/dev/null")
-    if raid and "md" in raid:
+    if raid and "active" in raid:
         log_parts.append(f"[Raid Status] {raid[:500]}")
 
     # RAID disk usage (only if /raid is mounted)
