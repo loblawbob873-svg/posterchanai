@@ -262,8 +262,14 @@ def collect_system_logs(db: Session = None) -> str:
 
     # RAID info - report if active RAID device found
     raid = run_command("cat /proc/mdstat 2>/dev/null")
+    logger.debug(f"RAID raw output: {repr(raid)}")
     if raid and "active" in raid:
         log_parts.append(f"[Raid Status] {raid[:500]}")
+        logger.debug(f"RAID status added: {raid[:100]}")
+    else:
+        # Explicitly add "No RAID" so it shows up in the report
+        log_parts.append("[Raid Status] No RAID detected")
+        logger.debug(f"RAID not detected - has content: {bool(raid)}, has 'active': {'active' in raid if raid else False}")
 
     # RAID disk usage (only if /raid is mounted)
     raid_usage = run_command("df -h /raid 2>/dev/null | awk '{ print $5 }' | tail -1")
