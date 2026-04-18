@@ -422,7 +422,7 @@ def _format_metrics(parsed_hosts: list) -> tuple:
         raid = s.get('Raid Status', '').strip()
         logger.info(f"Formatting RAID for {server}: {repr(raid[:100] if raid else 'EMPTY')}")
         if raid:
-            metrics_lines.append(f"  💿 RAID: {raid[:80]}")
+            metrics_lines.append(f"  💿 RAID: {raid[:200]}")
         else:
             metrics_lines.append(f"  💿 RAID: None")
         btrfs = s.get('BTRFS Scrub Status', '').strip()
