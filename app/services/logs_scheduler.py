@@ -171,8 +171,13 @@ def collect_remote_logs(host: str, settings: dict) -> str:
 
     # RAID status (md0) - report if active RAID device found
     raid = run_ssh_command(host, "cat /proc/mdstat 2>/dev/null")
+    logger.info(f"RAID check for {host}: {repr(raid[:100] if raid else 'EMPTY')}")
     if raid and "active" in raid:
-        log_parts.append(f"[Raid Status] {raid[:500]}")
+        # Replace newlines with spaces to prevent parsing issues
+        raid_oneline = raid.replace('\n', ' ').replace('\r', '')
+        log_parts.append(f"[Raid Status] {raid_oneline[:500]}")
+    else:
+        log_parts.append("[Raid Status] No RAID detected")
 
     # Failed services
     failed = run_ssh_command(host, "systemctl list-units --state failed --no-pager")
@@ -264,8 +269,10 @@ def collect_system_logs(db: Session = None) -> str:
     raid = run_command("cat /proc/mdstat 2>/dev/null")
     logger.info(f"RAID check - raw output: {repr(raid[:200] if raid else 'EMPTY')}")
     if raid and "active" in raid:
-        log_parts.append(f"[Raid Status] {raid[:500]}")
-        logger.info(f"RAID detected and added: {raid[:100]}")
+        # Replace newlines with spaces to prevent parsing issues
+        raid_oneline = raid.replace('\n', ' ').replace('\r', '')
+        log_parts.append(f"[Raid Status] {raid_oneline[:500]}")
+        logger.info(f"RAID detected and added: {raid_oneline[:100]}")
     else:
         # Explicitly add "No RAID" so it shows up in the report
         log_parts.append("[Raid Status] No RAID detected")
