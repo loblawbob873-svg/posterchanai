@@ -387,6 +387,8 @@ def _format_metrics(parsed_hosts: list) -> tuple:
         raid = s.get('Raid Status', '').strip()
         if raid:
             metrics_lines.append(f"  💿 RAID: {raid[:80]}")
+        else:
+            metrics_lines.append(f"  💿 RAID: None")
         btrfs = s.get('BTRFS Scrub Status', '').strip()
         if btrfs:
             metrics_lines.append(f"  🗜️ BTRFS: {btrfs[:80]}")
