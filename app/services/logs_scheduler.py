@@ -169,6 +169,11 @@ def collect_remote_logs(host: str, settings: dict) -> str:
     if raid_usage:
         log_parts.append(f"[Raid Disk Usage] {raid_usage}")
 
+    # RAID status (md0) - report if found
+    raid = run_ssh_command(host, "cat /proc/mdstat 2>/dev/null")
+    if raid and "md" in raid:
+        log_parts.append(f"[Raid Status] {raid[:500]}")
+
     # Failed services
     failed = run_ssh_command(host, "systemctl list-units --state failed --no-pager")
     if failed and "0 loaded" not in failed:
@@ -255,19 +260,20 @@ def collect_system_logs(db: Session = None) -> str:
     if failed:
         log_parts.append(f"[Failed Services] {failed}")
 
-    # RAID info (if on NAS)
-    if "nas" in hostname.lower():
-        raid = run_command("cat /proc/mdstat")
-        if raid:
-            log_parts.append(f"[Raid Status] {raid[:500]}")
+    # RAID info - report if md0/RAID found
+    raid = run_command("cat /proc/mdstat 2>/dev/null")
+    if raid and "md" in raid:
+        log_parts.append(f"[Raid Status] {raid[:500]}")
 
-        raid_usage = run_command("df -h /raid | awk '{ print $5 }' | tail -1")
-        if raid_usage:
-            log_parts.append(f"[Raid Disk Usage] {raid_usage}")
+    # RAID disk usage (only if /raid is mounted)
+    raid_usage = run_command("df -h /raid 2>/dev/null | awk '{ print $5 }' | tail -1")
+    if raid_usage:
+        log_parts.append(f"[Raid Disk Usage] {raid_usage}")
 
-        btrfs = run_command("btrfs scrub status /raid | grep Error")
-        if btrfs:
-            log_parts.append(f"[BTRFS Scrub Status] {btrfs}")
+    # BTRFS scrub status - report if /raid is btrfs
+    btrfs = run_command("btrfs scrub status /raid 2>/dev/null | grep Error")
+    if btrfs:
+        log_parts.append(f"[BTRFS Scrub Status] {btrfs}")
 
     return " ".join(log_parts)
 
