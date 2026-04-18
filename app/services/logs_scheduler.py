@@ -366,7 +366,8 @@ def _parse_log_sections(log_data: str) -> list:
             if m2:
                 sections[name] = m2.group(1).strip()
                 if name == 'Raid Status':
-                    logger.info(f"Parsed RAID for {server_name}: {repr(sections[name][:100])}")
+                    logger.info(f"Parsed RAID for {server_name}: {repr(sections[name])}")
+                    logger.info(f"RAW match group: {repr(m2.group(0))}")
 
         results.append({'server': server_name, 'sections': sections})
     return results
@@ -420,7 +421,7 @@ def _format_metrics(parsed_hosts: list) -> tuple:
 
         # RAID
         raid = s.get('Raid Status', '').strip()
-        logger.info(f"Formatting RAID for {server}: {repr(raid[:100] if raid else 'EMPTY')}")
+        logger.info(f"Formatting RAID for {server}: {repr(raid)}")
         if raid:
             metrics_lines.append(f"  💿 RAID: {raid}")
         else:
