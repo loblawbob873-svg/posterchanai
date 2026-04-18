@@ -183,8 +183,8 @@ def collect_remote_logs(host: str, settings: dict) -> str:
                 if i + 1 < len(lines) and lines[i + 1].strip():
                     raid_lines.append(lines[i + 1].strip())
         raid_status = ' | '.join(raid_lines)
-        # Remove square brackets to prevent parsing issues
-        raid_clean = raid_status.replace('[', '(').replace(']', ')')
+        # Remove square brackets and convert underscore to X for visibility
+        raid_clean = raid_status.replace('[', '(').replace(']', ')').replace('_', '❌')
         log_parts.append(f"[Raid Status] {raid_clean}")
     else:
         log_parts.append("[Raid Status] No RAID detected")
@@ -289,8 +289,8 @@ def collect_system_logs(db: Session = None) -> str:
                 if i + 1 < len(lines) and lines[i + 1].strip():
                     raid_lines.append(lines[i + 1].strip())
         raid_status = ' | '.join(raid_lines)
-        # Remove square brackets to prevent parsing issues
-        raid_clean = raid_status.replace('[', '(').replace(']', ')')
+        # Remove square brackets and convert underscore to X for visibility
+        raid_clean = raid_status.replace('[', '(').replace(']', ')').replace('_', '❌')
         log_parts.append(f"[Raid Status] {raid_clean}")
         logger.info(f"RAID detected and added: {raid_clean[:100]}")
     else:
@@ -491,9 +491,9 @@ def _to_telegram_markdown(text: str) -> str:
     """Convert standard markdown to Telegram Markdown v1 format."""
     import re
     # ## Heading → *Heading* (bold)
-    text = re.sub(r'^## (.+)$', r'*\1*', text, flags=re.MULTILINE)
+    text = re.sub(r'^## (.+)$', r'\*\1\*', text, flags=re.MULTILINE)
     # **bold** → *bold*
-    text = re.sub(r'\*\*(.+?)\*\*', r'*\1*', text)
+    text = re.sub(r'\*\*(.+?)\*\*', r'\*\1\*', text)
     # Remove leading spaces from indented lines (Telegram ignores indentation)
     text = re.sub(r'^  +', '', text, flags=re.MULTILINE)
     return text
