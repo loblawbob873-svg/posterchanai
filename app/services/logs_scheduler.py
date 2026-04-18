@@ -173,8 +173,18 @@ def collect_remote_logs(host: str, settings: dict) -> str:
     raid = run_ssh_command(host, "cat /proc/mdstat 2>/dev/null")
     logger.info(f"RAID check for {host}: {repr(raid[:100] if raid else 'EMPTY')}")
     if raid and "active" in raid:
-        # Replace newlines with spaces and remove square brackets to prevent parsing issues
-        raid_clean = raid.replace('\n', ' ').replace('\r', '').replace('[', '(').replace(']', ')')
+        # Extract 'active' line and the following line (status info)
+        raid_lines = []
+        lines = raid.split('\n')
+        for i, line in enumerate(lines):
+            if 'active' in line:
+                raid_lines.append(line.strip())
+                # Include next line if it exists (contains blocks/status info)
+                if i + 1 < len(lines) and lines[i + 1].strip():
+                    raid_lines.append(lines[i + 1].strip())
+        raid_status = ' | '.join(raid_lines)
+        # Remove square brackets to prevent parsing issues
+        raid_clean = raid_status.replace('[', '(').replace(']', ')')
         log_parts.append(f"[Raid Status] {raid_clean[:500]}")
     else:
         log_parts.append("[Raid Status] No RAID detected")
@@ -269,8 +279,18 @@ def collect_system_logs(db: Session = None) -> str:
     raid = run_command("cat /proc/mdstat 2>/dev/null")
     logger.info(f"RAID check - raw output: {repr(raid[:200] if raid else 'EMPTY')}")
     if raid and "active" in raid:
-        # Replace newlines with spaces and remove square brackets to prevent parsing issues
-        raid_clean = raid.replace('\n', ' ').replace('\r', '').replace('[', '(').replace(']', ')')
+        # Extract 'active' line and the following line (status info)
+        raid_lines = []
+        lines = raid.split('\n')
+        for i, line in enumerate(lines):
+            if 'active' in line:
+                raid_lines.append(line.strip())
+                # Include next line if it exists (contains blocks/status info)
+                if i + 1 < len(lines) and lines[i + 1].strip():
+                    raid_lines.append(lines[i + 1].strip())
+        raid_status = ' | '.join(raid_lines)
+        # Remove square brackets to prevent parsing issues
+        raid_clean = raid_status.replace('[', '(').replace(']', ')')
         log_parts.append(f"[Raid Status] {raid_clean[:500]}")
         logger.info(f"RAID detected and added: {raid_clean[:100]}")
     else:
