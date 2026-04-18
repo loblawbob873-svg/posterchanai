@@ -262,14 +262,14 @@ def collect_system_logs(db: Session = None) -> str:
 
     # RAID info - report if active RAID device found
     raid = run_command("cat /proc/mdstat 2>/dev/null")
-    logger.debug(f"RAID raw output: {repr(raid)}")
+    logger.info(f"RAID check - raw output: {repr(raid[:200] if raid else 'EMPTY')}")
     if raid and "active" in raid:
         log_parts.append(f"[Raid Status] {raid[:500]}")
-        logger.debug(f"RAID status added: {raid[:100]}")
+        logger.info(f"RAID detected and added: {raid[:100]}")
     else:
         # Explicitly add "No RAID" so it shows up in the report
         log_parts.append("[Raid Status] No RAID detected")
-        logger.debug(f"RAID not detected - has content: {bool(raid)}, has 'active': {'active' in raid if raid else False}")
+        logger.info(f"RAID not detected - has content: {bool(raid)}, has 'active': {'active' in raid if raid else False}")
 
     # RAID disk usage (only if /raid is mounted)
     raid_usage = run_command("df -h /raid 2>/dev/null | awk '{ print $5 }' | tail -1")
@@ -338,6 +338,8 @@ def _parse_log_sections(log_data: str) -> list:
             m2 = pat.search(rest)
             if m2:
                 sections[name] = m2.group(1).strip()
+                if name == 'Raid Status':
+                    logger.info(f"Parsed RAID for {server_name}: {repr(sections[name][:100])}")
 
         results.append({'server': server_name, 'sections': sections})
     return results
@@ -391,6 +393,7 @@ def _format_metrics(parsed_hosts: list) -> tuple:
 
         # RAID
         raid = s.get('Raid Status', '').strip()
+        logger.info(f"Formatting RAID for {server}: {repr(raid[:100] if raid else 'EMPTY')}")
         if raid:
             metrics_lines.append(f"  💿 RAID: {raid[:80]}")
         else:
@@ -420,8 +423,13 @@ async def generate_log_summary(db: Session, user: User, log_data: str) -> str:
     """Format metrics directly and use AI only for syslog/error narrative."""
     # Clean up the log data
     clean_data = log_data.replace("\u2018", "'").replace("\u2019", "'").replace("\u201c", '"').replace("\u201d", '"')
+    
+    # Log the raw data for debugging
+    logger.info(f"generate_log_summary - log_data length: {len(log_data)}")
+    logger.info(f"generate_log_summary - contains 'Raid Status': {'[Raid Status]' in log_data}")
 
     parsed = _parse_log_sections(clean_data)
+    logger.info(f"generate_log_summary - parsed {len(parsed)} hosts")
     metrics_text, syslog_text = _format_metrics(parsed)
 
     # Use AI only to narrate the warnings/errors portion
