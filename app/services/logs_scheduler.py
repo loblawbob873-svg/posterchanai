@@ -185,7 +185,7 @@ def collect_remote_logs(host: str, settings: dict) -> str:
         raid_status = ' | '.join(raid_lines)
         # Remove square brackets to prevent parsing issues
         raid_clean = raid_status.replace('[', '(').replace(']', ')')
-        log_parts.append(f"[Raid Status] {raid_clean[:500]}")
+        log_parts.append(f"[Raid Status] {raid_clean}")
     else:
         log_parts.append("[Raid Status] No RAID detected")
 
@@ -291,7 +291,7 @@ def collect_system_logs(db: Session = None) -> str:
         raid_status = ' | '.join(raid_lines)
         # Remove square brackets to prevent parsing issues
         raid_clean = raid_status.replace('[', '(').replace(']', ')')
-        log_parts.append(f"[Raid Status] {raid_clean[:500]}")
+        log_parts.append(f"[Raid Status] {raid_clean}")
         logger.info(f"RAID detected and added: {raid_clean[:100]}")
     else:
         # Explicitly add "No RAID" so it shows up in the report
@@ -422,7 +422,7 @@ def _format_metrics(parsed_hosts: list) -> tuple:
         raid = s.get('Raid Status', '').strip()
         logger.info(f"Formatting RAID for {server}: {repr(raid[:100] if raid else 'EMPTY')}")
         if raid:
-            metrics_lines.append(f"  💿 RAID: {raid[:200]}")
+            metrics_lines.append(f"  💿 RAID: {raid}")
         else:
             metrics_lines.append(f"  💿 RAID: None")
         btrfs = s.get('BTRFS Scrub Status', '').strip()
