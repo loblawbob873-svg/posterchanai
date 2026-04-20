@@ -338,5 +338,54 @@ class TelegramService:
             logger.error(f"Failed to send audio: {e}")
             return {"ok": False, "error": str(e)}
 
+    async def send_video(self, chat_id: str, file_path: str, caption: str = None, duration: int = None, width: int = None, height: int = None) -> dict:
+        """Send a video file to a Telegram chat.
+
+        Args:
+            chat_id: Telegram chat ID
+            file_path: Path to the video file
+            caption: Optional caption for the video
+            duration: Video duration in seconds
+            width: Video width in pixels
+            height: Video height in pixels
+        """
+        if not self.bot_token:
+            return {"ok": False, "error": "Bot token not configured"}
+
+        url = f"{self.api_base}{self.bot_token}/sendVideo"
+
+        try:
+            with open(file_path, "rb") as f:
+                video_bytes = f.read()
+
+            # Determine content type from file extension
+            ext = os.path.splitext(file_path)[1].lower()
+            content_type = "video/mp4" if ext == ".mp4" else "video/webm" if ext == ".webm" else "video/x-matroska" if ext == ".mkv" else "video/mp4"
+
+            filename = os.path.basename(file_path)
+
+            data = {"chat_id": chat_id}
+            if caption:
+                data["caption"] = caption
+                data["parse_mode"] = "Markdown"
+            if duration is not None:
+                data["duration"] = str(duration)
+            if width is not None:
+                data["width"] = str(width)
+            if height is not None:
+                data["height"] = str(height)
+
+            files = {"video": (filename, video_bytes, content_type)}
+
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                response = await client.post(url, data=data, files=files)
+                result = response.json()
+                if not result.get("ok"):
+                    logger.error(f"Telegram sendVideo error: {result}")
+                return result
+        except Exception as e:
+            logger.error(f"Failed to send video: {e}")
+            return {"ok": False, "error": str(e)}
+
 
 telegram_service = TelegramService()

@@ -1389,13 +1389,15 @@ async def _handle_telegram_update(update: dict, db: Session):
                         if not arg:
                             await telegram_service.send_message(
                                 chat_id,
-                                "Usage: `ytdl <youtube_url>`\n\nDownloads the video as MP3 and sends it here."
+                                "Usage:\n`ytdl <youtube_url>` - Download as MP3\n`ytdl video <youtube_url>` - Download as video"
                             )
                             return {"ok": True}
 
                         from app.services.youtube_service import (
                             check_ytdlp_available,
                             download_as_mp3,
+                            download_as_video,
+                            download_video_and_save_to_storage,
                             extract_download_urls,
                         )
                         import tempfile, shutil, os as _os, asyncio as _asyncio
@@ -1404,12 +1406,23 @@ async def _handle_telegram_update(update: dict, db: Session):
                             await telegram_service.send_message(chat_id, "❌ yt-dlp is not installed on the server.")
                             return {"ok": True}
 
-                        urls = extract_download_urls(arg)
+                        # Check if user wants video or MP3
+                        arg_parts = arg.strip().split(maxsplit=1)
+                        first_word = arg_parts[0].lower() if arg_parts else ""
+                        if first_word == "video" and len(arg_parts) > 1:
+                            as_video = True
+                            url_arg = arg_parts[1]
+                        elif first_word == "mp3" and len(arg_parts) > 1:
+                            as_video = False
+                            url_arg = arg_parts[1]
+                        else:
+                            as_video = False
+                            url_arg = arg
+
+                        urls = extract_download_urls(url_arg)
                         if not urls:
                             await telegram_service.send_message(chat_id, "❌ Could not find a valid YouTube URL in your message.")
                             return {"ok": True}
-
-                        await telegram_service.send_message(chat_id, "⏳ Downloading MP3, please wait...")
 
                         from app.models import Setting as _Setting
                         _cookies_s = db.query(_Setting).filter(_Setting.key == "ytdl_cookies_path").first()
@@ -1422,33 +1435,82 @@ async def _handle_telegram_update(update: dict, db: Session):
                             if _ssl_s and _ssl_s.value else False
                         )
 
-                        temp_dir = tempfile.mkdtemp(prefix="tg_ytdl_")
-                        try:
-                            dl_result = await _asyncio.to_thread(
-                                download_as_mp3, urls[0], temp_dir, _cookies_path, _no_ssl
-                            )
-                            if not dl_result.success:
-                                await telegram_service.send_message(chat_id, f"❌ Download failed: {dl_result.error}")
-                                return {"ok": True}
-
-                            file_size = _os.path.getsize(dl_result.local_path)
-                            if file_size > 50 * 1024 * 1024:
-                                await telegram_service.send_message(
-                                    chat_id,
-                                    f"❌ File is too large to send via Telegram ({file_size // (1024*1024)} MB). Telegram's limit is 50 MB."
+                        if as_video:
+                            # Download and send video
+                            await telegram_service.send_message(chat_id, "⏳ Downloading video, please wait...")
+                            temp_dir = tempfile.mkdtemp(prefix="tg_ytdlvideo_")
+                            try:
+                                dl_result = await _asyncio.to_thread(
+                                    download_as_video, urls[0], temp_dir, "best", _cookies_path, _no_ssl
                                 )
-                                return {"ok": True}
+                                if not dl_result.success:
+                                    await telegram_service.send_message(chat_id, f"❌ Download failed: {dl_result.error}")
+                                    return {"ok": True}
 
-                            duration_int = int(dl_result.duration) if dl_result.duration else None
-                            await telegram_service.send_audio(
-                                chat_id=chat_id,
-                                file_path=dl_result.local_path,
-                                title=dl_result.title,
-                                performer=dl_result.artist,
-                                duration=duration_int,
-                            )
-                        finally:
-                            shutil.rmtree(temp_dir, ignore_errors=True)
+                                file_size = _os.path.getsize(dl_result.local_path)
+                                # Telegram bot limit is 50 MB for videos
+                                if file_size > 50 * 1024 * 1024:
+                                    # File too large - save to storage and notify
+                                    save_result = await download_video_and_save_to_storage(
+                                        url=urls[0],
+                                        user_id=user_obj.id,
+                                        db=db,
+                                        subfolder="YouTube Videos",
+                                    )
+                                    from app.services.youtube_service import format_download_result
+                                    await telegram_service.send_message(
+                                        chat_id,
+                                        f"❌ Video is too large to send via Telegram ({file_size // (1024*1024)} MB).\n\n{format_download_result(save_result)}"
+                                    )
+                                    return {"ok": True}
+
+                                # Send the video
+                                duration_int = int(dl_result.duration) if dl_result.duration else None
+                                caption = f"🎬 **{dl_result.title}**" if dl_result.title else "🎬 Video"
+                                if dl_result.artist:
+                                    caption += f"\n👤 {dl_result.artist}"
+
+                                video_result = await telegram_service.send_video(
+                                    chat_id=chat_id,
+                                    file_path=dl_result.local_path,
+                                    caption=caption,
+                                    duration=duration_int,
+                                )
+                                if not video_result.get("ok"):
+                                    logger.error(f"Failed to send video: {video_result}")
+                                    await telegram_service.send_message(chat_id, f"❌ Failed to send video: {video_result.get('description', 'Unknown error')}")
+                            finally:
+                                shutil.rmtree(temp_dir, ignore_errors=True)
+                        else:
+                            # Download and send MP3 (default)
+                            await telegram_service.send_message(chat_id, "⏳ Downloading MP3, please wait...")
+                            temp_dir = tempfile.mkdtemp(prefix="tg_ytdl_")
+                            try:
+                                dl_result = await _asyncio.to_thread(
+                                    download_as_mp3, urls[0], temp_dir, _cookies_path, _no_ssl
+                                )
+                                if not dl_result.success:
+                                    await telegram_service.send_message(chat_id, f"❌ Download failed: {dl_result.error}")
+                                    return {"ok": True}
+
+                                file_size = _os.path.getsize(dl_result.local_path)
+                                if file_size > 50 * 1024 * 1024:
+                                    await telegram_service.send_message(
+                                        chat_id,
+                                        f"❌ File is too large to send via Telegram ({file_size // (1024*1024)} MB). Telegram's limit is 50 MB."
+                                    )
+                                    return {"ok": True}
+
+                                duration_int = int(dl_result.duration) if dl_result.duration else None
+                                await telegram_service.send_audio(
+                                    chat_id=chat_id,
+                                    file_path=dl_result.local_path,
+                                    title=dl_result.title,
+                                    performer=dl_result.artist,
+                                    duration=duration_int,
+                                )
+                            finally:
+                                shutil.rmtree(temp_dir, ignore_errors=True)
 
                         return {"ok": True}
                     elif command == "torrents":
@@ -2719,20 +2781,69 @@ async def _handle_telegram_update(update: dict, db: Session):
                             shutil.rmtree(temp_dir, ignore_errors=True)
 
                     else:  # video
-                        await telegram_service.send_message(chat_id, "⏳ Downloading video to storage, please wait...")
+                        await telegram_service.send_message(chat_id, "⏳ Downloading video, please wait...")
+                        import tempfile as _tempfile
+                        import shutil as _shutil
+                        import os as _os
+                        from app.services.youtube_service import download_as_video
+
+                        temp_dir = _tempfile.mkdtemp(prefix="tg_ytdlvideo_")
                         try:
-                            yt_cmd_service = CommandService(db, user=yt_user)
-                            dl_result = await download_video_and_save_to_storage(
-                                url=yt_url,
-                                user_id=yt_user.id,
-                                db=db,
-                                subfolder="YouTube Videos",
+                            from app.models import Setting as _Setting
+                            _cookies_s = db.query(_Setting).filter(_Setting.key == "ytdl_cookies_path").first()
+                            _cookies_path = str(_cookies_s.value).strip() if _cookies_s and _cookies_s.value else None
+                            if _cookies_path and not _os.path.isfile(_cookies_path):
+                                _cookies_path = None
+                            _ssl_s = db.query(_Setting).filter(_Setting.key == "ytdl_no_ssl_verify").first()
+                            _no_ssl = (
+                                str(_ssl_s.value).strip().lower() in ("true", "1", "yes")
+                                if _ssl_s and _ssl_s.value else False
                             )
-                            from app.services.youtube_service import format_download_result
-                            await telegram_service.send_message(chat_id, format_download_result(dl_result))
+
+                            dl_result = await _asyncio.to_thread(
+                                download_as_video, yt_url, temp_dir, "best", _cookies_path, _no_ssl
+                            )
+                            if not dl_result.success:
+                                await telegram_service.send_message(chat_id, f"❌ Download failed: {dl_result.error}")
+                                return {"ok": True}
+
+                            file_size = _os.path.getsize(dl_result.local_path)
+                            # Telegram bot limit is 50 MB for videos
+                            if file_size > 50 * 1024 * 1024:
+                                # File too large - save to storage and notify
+                                save_result = await download_video_and_save_to_storage(
+                                    url=yt_url,
+                                    user_id=yt_user.id,
+                                    db=db,
+                                    subfolder="YouTube Videos",
+                                )
+                                from app.services.youtube_service import format_download_result
+                                await telegram_service.send_message(
+                                    chat_id,
+                                    f"❌ Video is too large to send via Telegram ({file_size // (1024*1024)} MB).\n\n{format_download_result(save_result)}"
+                                )
+                                return {"ok": True}
+
+                            # Send the video
+                            duration_int = int(dl_result.duration) if dl_result.duration else None
+                            caption = f"🎬 **{dl_result.title}**" if dl_result.title else "🎬 Video"
+                            if dl_result.artist:
+                                caption += f"\n👤 {dl_result.artist}"
+
+                            video_result = await telegram_service.send_video(
+                                chat_id=chat_id,
+                                file_path=dl_result.local_path,
+                                caption=caption,
+                                duration=duration_int,
+                            )
+                            if not video_result.get("ok"):
+                                logger.error(f"Failed to send video: {video_result}")
+                                await telegram_service.send_message(chat_id, f"❌ Failed to send video: {video_result.get('description', 'Unknown error')}")
                         except Exception as yt_err:
                             logger.error(f"YouTube video callback error: {yt_err}", exc_info=True)
                             await telegram_service.send_message(chat_id, f"❌ Error: {yt_err}")
+                        finally:
+                            _shutil.rmtree(temp_dir, ignore_errors=True)
 
             elif data.startswith("nk:"):
                 # News → Post to Misskey: nk:post:<article_number>
