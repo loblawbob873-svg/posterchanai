@@ -1470,21 +1470,21 @@ async def _handle_telegram_update(update: dict, db: Session):
                                 if dl_result.artist:
                                     caption += f"\n👤 {dl_result.artist}"
 
-                            video_result = await telegram_service.send_video(
-                                chat_id=chat_id,
-                                file_path=dl_result.local_path,
-                                caption=caption,
-                                duration=duration_int,
-                            )
-                            if not video_result.get("ok"):
-                                error_desc = video_result.get('description', video_result.get('error', 'Unknown error'))
-                                logger.error(f"Failed to send video: {video_result}")
-                                await telegram_service.send_message(chat_id, f"❌ Failed to send video: {error_desc}")
-                        except Exception as yt_err:
-                            logger.error(f"YouTube video callback error: {yt_err}", exc_info=True)
-                            await telegram_service.send_message(chat_id, f"❌ Error: {yt_err}")
-                        finally:
-                            shutil.rmtree(temp_dir, ignore_errors=True)
+                                video_result = await telegram_service.send_video(
+                                    chat_id=chat_id,
+                                    file_path=dl_result.local_path,
+                                    caption=caption,
+                                    duration=duration_int,
+                                )
+                                if not video_result.get("ok"):
+                                    error_desc = video_result.get('description', video_result.get('error', 'Unknown error'))
+                                    logger.error(f"Failed to send video: {video_result}")
+                                    await telegram_service.send_message(chat_id, f"❌ Failed to send video: {error_desc}")
+                            except Exception as yt_err:
+                                logger.error(f"YouTube video callback error: {yt_err}", exc_info=True)
+                                await telegram_service.send_message(chat_id, f"❌ Error: {yt_err}")
+                            finally:
+                                shutil.rmtree(temp_dir, ignore_errors=True)
                         return {"ok": True}
                     elif command == "torrents":
                         arg_parts = arg.strip().split()
