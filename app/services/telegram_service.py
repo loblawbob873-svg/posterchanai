@@ -352,6 +352,14 @@ class TelegramService:
         if not self.bot_token:
             return {"ok": False, "error": "Bot token not configured"}
 
+        # Validate file exists and is readable
+        if not os.path.exists(file_path):
+            logger.error(f"send_video: File does not exist: {file_path}")
+            return {"ok": False, "error": f"File not found: {file_path}"}
+
+        file_size = os.path.getsize(file_path)
+        logger.info(f"send_video: Sending file {file_path}, size={file_size} bytes, chat_id={chat_id}")
+
         url = f"{self.api_base}{self.bot_token}/sendVideo"
 
         try:
@@ -364,7 +372,7 @@ class TelegramService:
 
             filename = os.path.basename(file_path)
 
-            data = {"chat_id": chat_id}
+            data = {"chat_id": chat_id, "supports_streaming": "true"}
             if caption:
                 data["caption"] = caption
                 data["parse_mode"] = "Markdown"
@@ -376,15 +384,22 @@ class TelegramService:
                 data["height"] = str(height)
 
             files = {"video": (filename, video_bytes, content_type)}
+            logger.debug(f"send_video: POST to {url.replace(self.bot_token, '***')} with data={data}")
 
             async with httpx.AsyncClient(timeout=300.0) as client:
                 response = await client.post(url, data=data, files=files)
-                result = response.json()
+                try:
+                    result = response.json()
+                except Exception as json_err:
+                    # If JSON parsing fails, capture the raw response
+                    raw_text = response.text[:500] if response.text else "<empty>"
+                    logger.error(f"Telegram sendVideo JSON parse error: {json_err}, status={response.status_code}, body={raw_text}")
+                    return {"ok": False, "error": f"HTTP {response.status_code}: {raw_text}"}
                 if not result.get("ok"):
                     logger.error(f"Telegram sendVideo error: {result}")
                 return result
         except Exception as e:
-            logger.error(f"Failed to send video: {e}")
+            logger.error(f"Failed to send video: {e}", exc_info=True)
             return {"ok": False, "error": str(e)}
 
 

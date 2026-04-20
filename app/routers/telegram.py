@@ -1470,48 +1470,21 @@ async def _handle_telegram_update(update: dict, db: Session):
                                 if dl_result.artist:
                                     caption += f"\n👤 {dl_result.artist}"
 
-                                video_result = await telegram_service.send_video(
-                                    chat_id=chat_id,
-                                    file_path=dl_result.local_path,
-                                    caption=caption,
-                                    duration=duration_int,
-                                )
-                                if not video_result.get("ok"):
-                                    logger.error(f"Failed to send video: {video_result}")
-                                    await telegram_service.send_message(chat_id, f"❌ Failed to send video: {video_result.get('description', 'Unknown error')}")
-                            finally:
-                                shutil.rmtree(temp_dir, ignore_errors=True)
-                        else:
-                            # Download and send MP3 (default)
-                            await telegram_service.send_message(chat_id, "⏳ Downloading MP3, please wait...")
-                            temp_dir = tempfile.mkdtemp(prefix="tg_ytdl_")
-                            try:
-                                dl_result = await _asyncio.to_thread(
-                                    download_as_mp3, urls[0], temp_dir, _cookies_path, _no_ssl
-                                )
-                                if not dl_result.success:
-                                    await telegram_service.send_message(chat_id, f"❌ Download failed: {dl_result.error}")
-                                    return {"ok": True}
-
-                                file_size = _os.path.getsize(dl_result.local_path)
-                                if file_size > 50 * 1024 * 1024:
-                                    await telegram_service.send_message(
-                                        chat_id,
-                                        f"❌ File is too large to send via Telegram ({file_size // (1024*1024)} MB). Telegram's limit is 50 MB."
-                                    )
-                                    return {"ok": True}
-
-                                duration_int = int(dl_result.duration) if dl_result.duration else None
-                                await telegram_service.send_audio(
-                                    chat_id=chat_id,
-                                    file_path=dl_result.local_path,
-                                    title=dl_result.title,
-                                    performer=dl_result.artist,
-                                    duration=duration_int,
-                                )
-                            finally:
-                                shutil.rmtree(temp_dir, ignore_errors=True)
-
+                            video_result = await telegram_service.send_video(
+                                chat_id=chat_id,
+                                file_path=dl_result.local_path,
+                                caption=caption,
+                                duration=duration_int,
+                            )
+                            if not video_result.get("ok"):
+                                error_desc = video_result.get('description', video_result.get('error', 'Unknown error'))
+                                logger.error(f"Failed to send video: {video_result}")
+                                await telegram_service.send_message(chat_id, f"❌ Failed to send video: {error_desc}")
+                        except Exception as yt_err:
+                            logger.error(f"YouTube video callback error: {yt_err}", exc_info=True)
+                            await telegram_service.send_message(chat_id, f"❌ Error: {yt_err}")
+                        finally:
+                            shutil.rmtree(temp_dir, ignore_errors=True)
                         return {"ok": True}
                     elif command == "torrents":
                         arg_parts = arg.strip().split()
@@ -2837,8 +2810,9 @@ async def _handle_telegram_update(update: dict, db: Session):
                                 duration=duration_int,
                             )
                             if not video_result.get("ok"):
+                                error_desc = video_result.get('description', video_result.get('error', 'Unknown error'))
                                 logger.error(f"Failed to send video: {video_result}")
-                                await telegram_service.send_message(chat_id, f"❌ Failed to send video: {video_result.get('description', 'Unknown error')}")
+                                await telegram_service.send_message(chat_id, f"❌ Failed to send video: {error_desc}")
                         except Exception as yt_err:
                             logger.error(f"YouTube video callback error: {yt_err}", exc_info=True)
                             await telegram_service.send_message(chat_id, f"❌ Error: {yt_err}")
