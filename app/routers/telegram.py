@@ -813,6 +813,65 @@ async def _send_nyaa_results(chat_id: str, user_id: int):
         {"text": "📋 Active Downloads", "callback_data": "t:list:0"},
     ]]})
 
+
+async def _send_active_torrents(chat_id: str, raw_content: str) -> None:
+    """Send each active torrent as its own message with Pause/Remove buttons beneath it."""
+    import asyncio
+
+    refresh_btn = {"inline_keyboard": [[{"text": "🔄 Refresh", "callback_data": "t:list:0"}]]}
+
+    if not raw_content or raw_content.strip() == "No torrents.":
+        await telegram_service.send_message(chat_id, "No active torrents.", reply_markup=refresh_btn)
+        return
+
+    # Separate any leading status message (e.g. "⏸️ Paused torrent #1") from the list
+    header = ""
+    list_content = raw_content
+    if "**Torrents:**" in raw_content:
+        pre, _, rest = raw_content.partition("**Torrents:**")
+        header = pre.strip()
+        list_content = "**Torrents:**" + rest
+    else:
+        # No torrent list — forward as-is with refresh button
+        await telegram_service.send_message(chat_id, _strip_cmd_links(raw_content), reply_markup=refresh_btn)
+        return
+
+    if header:
+        await telegram_service.send_message(chat_id, header)
+        await asyncio.sleep(0.1)
+
+    # Split into individual torrent blocks on lines starting with **N.
+    blocks = re.split(r'\n(?=\*\*\d+\. )', list_content)
+    torrent_blocks = [b for b in blocks if re.match(r'\*\*\d+\. ', b)]
+
+    if not torrent_blocks:
+        await telegram_service.send_message(chat_id, _strip_cmd_links(list_content), reply_markup=refresh_btn)
+        return
+
+    for block in torrent_blocks:
+        num_match = re.match(r'\*\*(\d+)\. ', block)
+        if not num_match:
+            continue
+        i = int(num_match.group(1))
+
+        is_paused = f"cmd:torrents resume {i}" in block
+        if is_paused:
+            toggle = {"text": "▶ Resume", "callback_data": f"t:resume:{i}"}
+        else:
+            toggle = {"text": "⏸ Pause", "callback_data": f"t:pause:{i}"}
+        remove = {"text": "🗑 Remove", "callback_data": f"t:rm:{i}"}
+
+        markup = {"inline_keyboard": [[toggle, remove]]}
+        await telegram_service.send_message(chat_id, _strip_cmd_links(block), reply_markup=markup)
+        await asyncio.sleep(0.1)
+
+    await telegram_service.send_message(
+        chat_id,
+        "Manage active downloads:",
+        reply_markup=refresh_btn,
+    )
+
+
 router = APIRouter(prefix="/api/telegram", tags=["telegram"])
 
 # Module-level update tracking to prevent duplicate processing across requests.
@@ -1508,6 +1567,9 @@ async def _handle_telegram_update(update: dict, db: Session):
                                 result = await command_service.execute_command(command, arg)
                             content = result.get("content", "")
                             user_id = user_obj.id if user_obj else 0
+                            if arg_sub in ("list", "ls"):
+                                await _send_active_torrents(chat_id, content)
+                                return {"ok": True}
                             reply_markup = _build_torrent_keyboard(arg_sub, content, user_id)
                             # Clean non-functional links from torrent result text
                             result["content"] = _strip_cmd_links(content)
@@ -2106,22 +2168,19 @@ async def _handle_telegram_update(update: dict, db: Session):
                     cb_result = await cb_command_service.execute_command("torrents", torrents_arg)
                     cb_content = cb_result.get("content", "")
 
-                    # Build keyboard for the result.
-                    # pause/resume/rm return an updated list — treat them as "list" for keyboard.
-                    # download confirmation gets a shortcut to the active list.
                     cb_arg_parts = torrents_arg.strip().split()
                     cb_arg_sub = cb_arg_parts[0].lower() if cb_arg_parts else ""
-                    if cb_arg_sub in ("pause", "resume", "rm"):
-                        cb_arg_sub = "list"
-                    cb_reply_markup = _build_torrent_keyboard(cb_arg_sub, cb_content, cb_user.id)
-                    if cb_arg_sub in ("download", "dl", "get") and cb_reply_markup is None:
-                        cb_reply_markup = {"inline_keyboard": [[
-                            {"text": "📋 Active Downloads", "callback_data": "t:list:0"}
-                        ]]}
-
-                    # Clean cmd:/magnet: links before sending
-                    cb_content = _strip_cmd_links(cb_content)
-                    await telegram_service.send_message(chat_id, cb_content, reply_markup=cb_reply_markup)
+                    if cb_arg_sub in ("list", "ls", "pause", "resume", "rm"):
+                        # Send each torrent as its own message with buttons beneath it
+                        await _send_active_torrents(chat_id, cb_content)
+                    else:
+                        cb_reply_markup = _build_torrent_keyboard(cb_arg_sub, cb_content, cb_user.id)
+                        if cb_arg_sub in ("download", "dl", "get") and cb_reply_markup is None:
+                            cb_reply_markup = {"inline_keyboard": [[
+                                {"text": "📋 Active Downloads", "callback_data": "t:list:0"}
+                            ]]}
+                        cb_content = _strip_cmd_links(cb_content)
+                        await telegram_service.send_message(chat_id, cb_content, reply_markup=cb_reply_markup)
                 except Exception as cb_err:
                     logger.error(f"Torrent callback error: {cb_err}", exc_info=True)
                     await telegram_service.send_message(chat_id, f"Error: {cb_err}")
