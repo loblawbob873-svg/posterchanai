@@ -207,7 +207,9 @@ def collect_remote_logs(host: str, settings: dict) -> str:
     fw_india = run_ssh_command(host, "journalctl -k -S today | grep -i India | cut -d ' ' -f9 | sort -u | wc -l")
     fw_china = run_ssh_command(host, "journalctl -k -S today | grep -i China | cut -d ' ' -f9 | sort -u | wc -l")
     fw_israel = run_ssh_command(host, "journalctl -k -S today | grep -i Israel | cut -d ' ' -f9 | sort -u | wc -l")
-    fw_stats = f"🇮🇳:{fw_india or '0'} 🇨🇳:{fw_china or '0'} 🇮🇱:{fw_israel or '0'}"
+    fw_indonesia = run_ssh_command(host, "journalctl -k -S today | grep -i Indonesia | cut -d ' ' -f9 | sort -u | wc -l")
+    fw_singapore = run_ssh_command(host, "journalctl -k -S today | grep -i Singapore | cut -d ' ' -f9 | sort -u | wc -l")
+    fw_stats = f"🇮🇳:{fw_india or '0'} 🇨🇳:{fw_china or '0'} 🇮🇱:{fw_israel or '0'} 🇸🇬:{fw_singapore or '0'} 🇮🇩:{fw_indonesia or '0'}"
     log_parts.append(f"[Firewall Stats] {fw_stats}")
 
     return " ".join(log_parts)
