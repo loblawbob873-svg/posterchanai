@@ -203,6 +203,13 @@ def collect_remote_logs(host: str, settings: dict) -> str:
     if smart_data:
         log_parts.append(f"[SMART] {' '.join(smart_data)}")
 
+    # Firewall stats: unique blocked IPs per country today
+    fw_india = run_ssh_command(host, "journalctl -k -S today | grep -i India | cut -d ' ' -f9 | sort -u | wc -l")
+    fw_china = run_ssh_command(host, "journalctl -k -S today | grep -i China | cut -d ' ' -f9 | sort -u | wc -l")
+    fw_israel = run_ssh_command(host, "journalctl -k -S today | grep -i Israel | cut -d ' ' -f9 | sort -u | wc -l")
+    fw_stats = f"🇮🇳:{fw_india or '0'} 🇨🇳:{fw_china or '0'} 🇮🇱:{fw_israel or '0'}"
+    log_parts.append(f"[Firewall Stats] {fw_stats}")
+
     return " ".join(log_parts)
 
 
@@ -308,6 +315,13 @@ def collect_system_logs(db: Session = None) -> str:
     if btrfs:
         log_parts.append(f"[BTRFS Scrub Status] {btrfs}")
 
+    # Firewall stats: unique blocked IPs per country today
+    fw_india = run_command("journalctl -k -S today | grep -i India | cut -d ' ' -f9 | sort -u | wc -l")
+    fw_china = run_command("journalctl -k -S today | grep -i China | cut -d ' ' -f9 | sort -u | wc -l")
+    fw_israel = run_command("journalctl -k -S today | grep -i Israel | cut -d ' ' -f9 | sort -u | wc -l")
+    fw_stats = f"🇮🇳:{fw_india or '0'} 🇨🇳:{fw_china or '0'} 🇮🇱:{fw_israel or '0'}"
+    log_parts.append(f"[Firewall Stats] {fw_stats}")
+
     return " ".join(log_parts)
 
 
@@ -358,7 +372,7 @@ def _parse_log_sections(log_data: str) -> list:
             'App Errors', 'SysLog', 'DMESG', 'SMART',
             'Root Disk Usage', '/boot EFI Disk Usage',
             'Failed Services', 'Raid Status', 'Raid Disk Usage',
-            'BTRFS Scrub Status', 'Swap',
+            'BTRFS Scrub Status', 'Swap', 'Firewall Stats',
         ]
         for name in section_names:
             pat = _re.compile(r'\[' + _re.escape(name) + r'\](.*?)(?=\[|$)', _re.DOTALL)
@@ -429,6 +443,11 @@ def _format_metrics(parsed_hosts: list) -> tuple:
         btrfs = s.get('BTRFS Scrub Status', '').strip()
         if btrfs:
             metrics_lines.append(f"  🗜️ BTRFS: {btrfs[:80]}")
+
+        # Firewall stats
+        fw = s.get('Firewall Stats', '').strip()
+        if fw:
+            metrics_lines.append(f"  🛡️ Firewall: {fw}")
 
         # Collect syslog/errors for AI
         error_bits = []
