@@ -4,6 +4,7 @@ Uses system Tor binary with configurable exit nodes.
 """
 
 import os
+import socket
 import subprocess
 import threading
 import logging
@@ -29,12 +30,14 @@ class TorService:
         listen_host: str = "127.0.0.1",
         socks_port: int = 9052,
         control_port: int = 9053,
+        dns_port: int = 9055,
         exit_nodes: str = "{us}",
         data_dir: str = "/var/lib/posterchanai/tor",
     ):
         self.listen_host = listen_host
         self.socks_port = socks_port
         self.control_port = control_port
+        self.dns_port = dns_port
         self.exit_nodes = exit_nodes
         self.data_dir = Path(data_dir)
 
@@ -48,6 +51,7 @@ class TorService:
         listen_host: str = "127.0.0.1",
         socks_port: int = 9052,
         control_port: int = 9053,
+        dns_port: int = 9055,
         exit_nodes: str = "{us}",
         data_dir: str = "/var/lib/posterchanai/tor",
     ) -> 'TorService':
@@ -58,6 +62,7 @@ class TorService:
                     listen_host=listen_host,
                     socks_port=socks_port,
                     control_port=control_port,
+                    dns_port=dns_port,
                     exit_nodes=exit_nodes,
                     data_dir=data_dir,
                 )
@@ -84,6 +89,7 @@ class TorService:
         config = f"""# Posterchanai Tor instance
 SocksPort {self.listen_host}:{self.socks_port}
 ControlPort {self.control_port}
+DNSPort {self.listen_host}:{self.dns_port}
 DataDirectory {self.data_dir}
 
 # Control port authentication (for nyx monitoring)
@@ -104,7 +110,7 @@ Log notice file {self.data_dir}/tor.log
 # Disable unnecessary features
 AvoidDiskWrites 1
 """
-        logger.info(f"[TOR] Creating torrc: SOCKS {self.listen_host}:{self.socks_port}, exits={self.exit_nodes}")
+        logger.info(f"[TOR] Creating torrc: SOCKS {self.listen_host}:{self.socks_port}, DNS {self.listen_host}:{self.dns_port}, exits={self.exit_nodes}")
         torrc_path.write_text(config)
         return torrc_path
 
@@ -178,8 +184,6 @@ AvoidDiskWrites 1
 
     def _wait_for_bootstrap(self, timeout: int = 120) -> bool:
         """Wait for Tor to bootstrap via control port."""
-        import socket
-
         start_time = time.time()
         last_log = 0
         while time.time() - start_time < timeout:
@@ -189,20 +193,20 @@ AvoidDiskWrites 1
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(5)
-                sock.connect(('127.0.0.1', self.control_port))
-                if self._authenticate(sock):
-                    sock.send(b'GETINFO status/bootstrap-phase\r\n')
-                    response = sock.recv(1024)
-                    sock.close()
-                    if b'Bootstrapped 100%' in response or b'TAG=done' in response:
-                        logger.info("[TOR] Bootstrap complete")
-                        return True
-                    # Log progress every 15s instead of spamming every 2s
-                    elapsed = time.time() - start_time
-                    if elapsed - last_log >= 15:
-                        logger.info(f"[TOR] Still bootstrapping... ({int(elapsed)}s elapsed)")
-                        last_log = elapsed
-                else:
+                try:
+                    sock.connect(('127.0.0.1', self.control_port))
+                    if self._authenticate(sock):
+                        sock.send(b'GETINFO status/bootstrap-phase\r\n')
+                        response = sock.recv(1024)
+                        if b'Bootstrapped 100%' in response or b'TAG=done' in response:
+                            logger.info("[TOR] Bootstrap complete")
+                            return True
+                        # Log progress every 15s instead of spamming every 2s
+                        elapsed = time.time() - start_time
+                        if elapsed - last_log >= 15:
+                            logger.info(f"[TOR] Still bootstrapping... ({int(elapsed)}s elapsed)")
+                            last_log = elapsed
+                finally:
                     sock.close()
             except Exception:
                 pass
@@ -248,7 +252,6 @@ AvoidDiskWrites 1
     def get_new_identity(self) -> bool:
         """Request a new Tor circuit."""
         try:
-            import socket
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(10)
             sock.connect(('127.0.0.1', self.control_port))
@@ -275,6 +278,7 @@ AvoidDiskWrites 1
             "running": self.is_running(),
             "socks_port": self.socks_port,
             "control_port": self.control_port,
+            "dns_port": self.dns_port,
             "exit_nodes": self.exit_nodes,
             "listen_host": self.listen_host,
         }
@@ -284,6 +288,7 @@ def start_tor_service(
     listen_host: str = "127.0.0.1",
     socks_port: int = 9052,
     control_port: int = 9053,
+    dns_port: int = 9055,
     exit_nodes: str = "{us}",
     data_dir: str = "/var/lib/posterchanai/tor",
 ) -> Optional[TorService]:
@@ -292,6 +297,7 @@ def start_tor_service(
         listen_host=listen_host,
         socks_port=socks_port,
         control_port=control_port,
+        dns_port=dns_port,
         exit_nodes=exit_nodes,
         data_dir=data_dir,
     )

@@ -277,10 +277,12 @@ async def startup():
                 from app.services.tor_service import start_tor_service
                 listen_host = get_tor_setting("tor_listen_host", "127.0.0.1")
                 socks_port = get_tor_setting("tor_socks_port", "9052")
+                control_port = int(get_tor_setting("tor_control_port", "9053"))
                 tor_service = start_tor_service(
                     listen_host=listen_host,
                     socks_port=int(socks_port),
-                    control_port=int(get_tor_setting("tor_control_port", "9053")),
+                    control_port=control_port,
+                    dns_port=int(get_tor_setting("tor_dns_port", str(control_port + 2))),
                     exit_nodes=get_tor_setting("tor_exit_nodes", "{us}"),
                     data_dir=get_tor_setting("tor_data_dir", "/var/lib/posterchanai/tor"),
                 )

@@ -4,10 +4,12 @@ Replaces Privoxy for torrent traffic routing.
 """
 
 import asyncio
+import ipaddress
 import socket
 import logging
 import threading
 from typing import Optional
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,7 @@ class HttpToSocksProxy:
         self.socks_port = socks_port
 
         self._server: Optional[asyncio.AbstractServer] = None
+        self._semaphore: Optional[asyncio.Semaphore] = None
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -90,11 +93,15 @@ class HttpToSocksProxy:
 
     async def _start_server(self):
         """Start the async TCP server."""
+        # 512 slots: well above Sharkey's deliverJobConcurrency (~300) with headroom for bursts
+        self._semaphore = asyncio.Semaphore(512)
         self._server = await asyncio.start_server(
             self._handle_client,
             self.listen_host,
             self.listen_port,
             reuse_address=True,
+            backlog=256,
+            limit=65536,
         )
         logger.info(f"HTTP proxy listening on {self.listen_host}:{self.listen_port}")
 
@@ -102,49 +109,48 @@ class HttpToSocksProxy:
         """Handle incoming HTTP proxy request."""
         client_addr = writer.get_extra_info('peername')
 
-        try:
-            # Read the HTTP request line
-            request_line = await asyncio.wait_for(reader.readline(), timeout=30)
-            if not request_line:
-                return
-
-            request_line = request_line.decode('utf-8', errors='ignore').strip()
-            parts = request_line.split()
-
-            if len(parts) < 3:
-                writer.write(b"HTTP/1.1 400 Bad Request\r\n\r\n")
-                await writer.drain()
-                return
-
-            method, target, _ = parts[0], parts[1], parts[2]
-
-            # Read headers
-            headers = []
-            while True:
-                line = await asyncio.wait_for(reader.readline(), timeout=30)
-                if line == b'\r\n' or line == b'\n' or not line:
-                    break
-                headers.append(line)
-
-            if method == 'CONNECT':
-                # HTTPS tunneling (CONNECT method)
-                await self._handle_connect(reader, writer, target, client_addr)
-            else:
-                # Regular HTTP request
-                await self._handle_http(reader, writer, method, target, headers, client_addr)
-
-        except asyncio.TimeoutError:
-            logger.debug(f"Client {client_addr} timeout")
-        except ConnectionResetError:
-            logger.debug(f"Client {client_addr} connection reset")
-        except Exception as e:
-            logger.error(f"Error handling client {client_addr}: {e}")
-        finally:
+        async with self._semaphore:
             try:
-                writer.close()
-                await writer.wait_closed()
-            except Exception:
-                pass
+                # Read the HTTP request line
+                request_line = await asyncio.wait_for(reader.readline(), timeout=30)
+                if not request_line:
+                    return
+
+                request_line = request_line.decode('utf-8', errors='ignore').strip()
+                parts = request_line.split()
+
+                if len(parts) < 3:
+                    writer.write(b"HTTP/1.1 400 Bad Request\r\n\r\n")
+                    await writer.drain()
+                    return
+
+                method, target, _ = parts[0], parts[1], parts[2]
+
+                # Read headers
+                headers = []
+                while True:
+                    line = await asyncio.wait_for(reader.readline(), timeout=30)
+                    if line == b'\r\n' or line == b'\n' or not line:
+                        break
+                    headers.append(line)
+
+                if method == 'CONNECT':
+                    await self._handle_connect(reader, writer, target, client_addr)
+                else:
+                    await self._handle_http(reader, writer, method, target, headers, client_addr)
+
+            except asyncio.TimeoutError:
+                logger.debug(f"Client {client_addr} timeout")
+            except ConnectionResetError:
+                logger.debug(f"Client {client_addr} connection reset")
+            except Exception as e:
+                logger.error(f"Error handling client {client_addr}: {e}")
+            finally:
+                try:
+                    writer.close()
+                    await writer.wait_closed()
+                except Exception:
+                    pass
 
     async def _handle_connect(self, reader, writer, target, client_addr):
         """Handle CONNECT method (HTTPS tunneling)."""
@@ -155,7 +161,7 @@ class HttpToSocksProxy:
         else:
             host, port = target, 443
 
-        logger.info(f"[PROXY] CONNECT request: {host}:{port} from {client_addr}")
+        logger.debug(f"[PROXY] CONNECT request: {host}:{port} from {client_addr}")
 
         try:
             # Connect to target through SOCKS5
@@ -176,10 +182,7 @@ class HttpToSocksProxy:
 
     async def _handle_http(self, reader, writer, method, target, headers, client_addr):
         """Handle regular HTTP request."""
-        # Parse URL
         if target.startswith('http://'):
-            # Absolute URL
-            from urllib.parse import urlparse
             parsed = urlparse(target)
             host = parsed.hostname
             port = parsed.port or 80
@@ -187,46 +190,62 @@ class HttpToSocksProxy:
             if parsed.query:
                 path += '?' + parsed.query
         else:
-            # Should not happen for proxy requests
             writer.write(b"HTTP/1.1 400 Bad Request\r\n\r\n")
             await writer.drain()
             return
 
         try:
-            # Connect to target through SOCKS5
             remote_reader, remote_writer = await self._socks_connect(host, port)
 
-            # Reconstruct and forward the request
+            # Reconstruct request line and headers
             request = f"{method} {path} HTTP/1.1\r\n"
-
-            # Forward headers, update Host
+            content_length = 0
             host_set = False
             for header in headers:
                 header_str = header.decode('utf-8', errors='ignore')
-                if header_str.lower().startswith('host:'):
+                header_lower = header_str.lower()
+                if header_lower.startswith('host:'):
                     request += f"Host: {host}\r\n"
                     host_set = True
-                elif header_str.lower().startswith('proxy-'):
-                    # Skip proxy headers
+                elif header_lower.startswith('proxy-'):
                     continue
                 else:
                     request += header_str
+                    if header_lower.startswith('content-length:'):
+                        try:
+                            content_length = int(header_lower.split(':', 1)[1].strip())
+                        except ValueError:
+                            pass
 
             if not host_set:
                 request += f"Host: {host}\r\n"
-
             request += "\r\n"
 
             remote_writer.write(request.encode())
+
+            # Forward request body (e.g. HTTP tracker POST announce)
+            if content_length > 0:
+                remaining = content_length
+                while remaining > 0:
+                    chunk = await asyncio.wait_for(
+                        reader.read(min(65536, remaining)), timeout=60
+                    )
+                    if not chunk:
+                        break
+                    remote_writer.write(chunk)
+                    remaining -= len(chunk)
+
             await remote_writer.drain()
 
             # Forward response
             while True:
-                data = await asyncio.wait_for(remote_reader.read(8192), timeout=60)
+                data = await asyncio.wait_for(remote_reader.read(65536), timeout=60)
                 if not data:
                     break
                 writer.write(data)
-                await writer.drain()
+                if writer.transport.get_write_buffer_size() > 65536:
+                    await writer.drain()
+            await writer.drain()
 
             remote_writer.close()
             await remote_writer.wait_closed()
@@ -267,7 +286,7 @@ class HttpToSocksProxy:
 
             return reader, writer
 
-        except Exception as e:
+        except Exception:
             writer.close()
             await writer.wait_closed()
             raise
@@ -332,7 +351,7 @@ class HttpToSocksProxy:
 
             return reader, writer
 
-        except Exception as e:
+        except Exception:
             writer.close()
             await writer.wait_closed()
             raise
@@ -346,11 +365,11 @@ class HttpToSocksProxy:
             return await self._socks5_connect(host, port)
 
     def _is_ip(self, host: str) -> bool:
-        """Check if host is an IP address."""
+        """Check if host is an IP address (IPv4 or IPv6)."""
         try:
-            socket.inet_aton(host)
+            ipaddress.ip_address(host)
             return True
-        except socket.error:
+        except ValueError:
             return False
 
     async def _tunnel(self, client_reader, client_writer, remote_reader, remote_writer):
@@ -358,22 +377,26 @@ class HttpToSocksProxy:
         async def forward(src, dst):
             try:
                 while True:
-                    data = await asyncio.wait_for(src.read(8192), timeout=300)
+                    data = await src.read(65536)
                     if not data:
                         break
                     dst.write(data)
-                    await dst.drain()
-            except asyncio.TimeoutError:
-                pass
+                    if dst.transport.get_write_buffer_size() > 65536:
+                        await dst.drain()
+                await dst.drain()
             except Exception:
                 pass
 
-        # Run both directions concurrently
-        await asyncio.gather(
-            forward(client_reader, remote_writer),
-            forward(remote_reader, client_writer),
-            return_exceptions=True
-        )
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(
+                    forward(client_reader, remote_writer),
+                    forward(remote_reader, client_writer),
+                ),
+                timeout=1800,
+            )
+        except asyncio.TimeoutError:
+            pass
 
         try:
             remote_writer.close()
