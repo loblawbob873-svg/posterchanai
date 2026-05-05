@@ -173,7 +173,7 @@ class HttpToSocksProxy:
         try:
             remote_reader, remote_writer = await self._socks_connect(host, port)
         except Exception as e:
-            logger.error(f"[PROXY] CONNECT to {target} failed: {e}")
+            logger.error(f"[PROXY] CONNECT to {target} failed: {type(e).__name__}: {e}")
             writer.write(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
             await writer.drain()
             return
@@ -213,7 +213,7 @@ class HttpToSocksProxy:
         try:
             remote_reader, remote_writer = await self._socks_connect(host, port)
         except Exception as e:
-            logger.error(f"[PROXY] HTTP connect to {host}:{port} failed: {e}")
+            logger.error(f"[PROXY] HTTP connect to {host}:{port} failed: {type(e).__name__}: {e}")
             writer.write(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
             await writer.drain()
             return
