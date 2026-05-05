@@ -285,7 +285,10 @@ class HttpToSocksProxy:
     async def _socks4a_connect(self, host: str, port: int) -> tuple:
         """Connect to a host through SOCKS4a proxy (supports domain names like .onion)."""
         logger.debug(f"[PROXY] Connecting via SOCKS4a to {self.socks_host}:{self.socks_port} for {host}:{port}")
-        reader, writer = await asyncio.open_connection(self.socks_host, self.socks_port)
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(self.socks_host, self.socks_port),
+            timeout=30,
+        )
 
         try:
             # SOCKS4a connect request
@@ -321,7 +324,10 @@ class HttpToSocksProxy:
     async def _socks5_connect(self, host: str, port: int) -> tuple:
         """Connect to a host through the SOCKS5 proxy."""
         logger.debug(f"[PROXY] Connecting via SOCKS5 to {self.socks_host}:{self.socks_port} for {host}:{port}")
-        reader, writer = await asyncio.open_connection(self.socks_host, self.socks_port)
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(self.socks_host, self.socks_port),
+            timeout=30,
+        )
 
         try:
             # SOCKS5 greeting
@@ -345,6 +351,8 @@ class HttpToSocksProxy:
             except ValueError:
                 addr_type = 0x03
                 host_bytes = host.encode('utf-8')
+                if len(host_bytes) > 255:
+                    raise ValueError(f"Hostname too long for SOCKS5 ({len(host_bytes)} bytes): {host[:64]}")
                 addr_bytes = bytes([len(host_bytes)]) + host_bytes
 
             request = bytes([0x05, 0x01, 0x00, addr_type]) + addr_bytes + port.to_bytes(2, 'big')
