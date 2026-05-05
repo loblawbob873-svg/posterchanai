@@ -182,22 +182,32 @@ class HttpToSocksProxy:
 
     async def _handle_http(self, reader, writer, method, target, headers, client_addr):
         """Handle regular HTTP request."""
-        if target.startswith('http://'):
-            parsed = urlparse(target)
-            host = parsed.hostname
-            port = parsed.port or 80
-            path = parsed.path or '/'
-            if parsed.query:
-                path += '?' + parsed.query
-        else:
+        if not target.startswith('http://'):
             writer.write(b"HTTP/1.1 400 Bad Request\r\n\r\n")
             await writer.drain()
             return
 
+        parsed = urlparse(target)
+        host = parsed.hostname
+        if not host:
+            writer.write(b"HTTP/1.1 400 Bad Request\r\n\r\n")
+            await writer.drain()
+            return
+        port = parsed.port or 80
+        path = parsed.path or '/'
+        if parsed.query:
+            path += '?' + parsed.query
+
         try:
             remote_reader, remote_writer = await self._socks_connect(host, port)
+        except Exception as e:
+            logger.error(f"[PROXY] HTTP connect to {host}:{port} failed: {e}")
+            writer.write(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
+            await writer.drain()
+            return
 
-            # Reconstruct request line and headers
+        try:
+            # Reconstruct request line and headers; strip hop-by-hop, force close
             request = f"{method} {path} HTTP/1.1\r\n"
             content_length = 0
             host_set = False
@@ -207,7 +217,7 @@ class HttpToSocksProxy:
                 if header_lower.startswith('host:'):
                     request += f"Host: {host}\r\n"
                     host_set = True
-                elif header_lower.startswith('proxy-'):
+                elif header_lower.startswith(('proxy-', 'connection:', 'keep-alive:')):
                     continue
                 else:
                     request += header_str
@@ -219,7 +229,7 @@ class HttpToSocksProxy:
 
             if not host_set:
                 request += f"Host: {host}\r\n"
-            request += "\r\n"
+            request += "Connection: close\r\n\r\n"
 
             remote_writer.write(request.encode())
 
@@ -247,13 +257,19 @@ class HttpToSocksProxy:
                     await writer.drain()
             await writer.drain()
 
-            remote_writer.close()
-            await remote_writer.wait_closed()
-
         except Exception as e:
-            logger.error(f"HTTP request to {host}:{port} failed: {e}")
-            writer.write(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
-            await writer.drain()
+            logger.error(f"[PROXY] HTTP request to {host}:{port} failed: {e}")
+            try:
+                writer.write(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
+                await writer.drain()
+            except Exception:
+                pass
+        finally:
+            try:
+                remote_writer.close()
+                await remote_writer.wait_closed()
+            except Exception:
+                pass
 
     async def _socks4a_connect(self, host: str, port: int) -> tuple:
         """Connect to a host through SOCKS4a proxy (supports domain names like .onion)."""
@@ -308,12 +324,15 @@ class HttpToSocksProxy:
 
             # SOCKS5 connect request
             # Version, Connect, Reserved, Address type
-            if self._is_ip(host):
-                # IPv4
-                addr_type = 0x01
-                addr_bytes = socket.inet_aton(host)
-            else:
-                # Domain name
+            try:
+                addr = ipaddress.ip_address(host)
+                if addr.version == 4:
+                    addr_type = 0x01
+                    addr_bytes = socket.inet_aton(host)
+                else:
+                    addr_type = 0x04
+                    addr_bytes = addr.packed
+            except ValueError:
                 addr_type = 0x03
                 host_bytes = host.encode('utf-8')
                 addr_bytes = bytes([len(host_bytes)]) + host_bytes
@@ -363,14 +382,6 @@ class HttpToSocksProxy:
         except Exception as e:
             logger.debug(f"[PROXY] SOCKS4a failed, trying SOCKS5: {e}")
             return await self._socks5_connect(host, port)
-
-    def _is_ip(self, host: str) -> bool:
-        """Check if host is an IP address (IPv4 or IPv6)."""
-        try:
-            ipaddress.ip_address(host)
-            return True
-        except ValueError:
-            return False
 
     async def _tunnel(self, client_reader, client_writer, remote_reader, remote_writer):
         """Bidirectional data tunnel."""

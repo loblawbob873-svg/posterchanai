@@ -44,6 +44,7 @@ class TorService:
         self._process: Optional[subprocess.Popen] = None
         self._running = False
         self._monitor_thread: Optional[threading.Thread] = None
+        self._restart_failures = 0
 
     @classmethod
     def get_instance(
@@ -88,7 +89,7 @@ class TorService:
 
         config = f"""# Posterchanai Tor instance
 SocksPort {self.listen_host}:{self.socks_port}
-ControlPort {self.control_port}
+ControlPort {self.listen_host}:{self.control_port}
 DNSPort {self.listen_host}:{self.dns_port}
 DataDirectory {self.data_dir}
 
@@ -152,10 +153,10 @@ AvoidDiskWrites 1
         """Background thread: wait for bootstrap then monitor for crashes."""
         if self._wait_for_bootstrap():
             logger.info(f"[TOR] Bootstrapped - SOCKS5 ready on {self.listen_host}:{self.socks_port}")
+            self._restart_failures = 0
         else:
             logger.warning("[TOR] Bootstrap timed out — Tor may still connect later")
 
-        # Continue monitoring for crashes
         self._monitor()
 
     def _read_cookie(self) -> Optional[bytes]:
@@ -172,10 +173,8 @@ AvoidDiskWrites 1
         """Authenticate to control port using cookie or empty auth."""
         cookie = self._read_cookie()
         if cookie:
-            # Use cookie authentication
             auth_cmd = b'AUTHENTICATE ' + cookie.hex().encode() + b'\r\n'
         else:
-            # Fall back to empty auth (during bootstrap before cookie exists)
             auth_cmd = b'AUTHENTICATE ""\r\n'
 
         sock.send(auth_cmd)
@@ -194,7 +193,7 @@ AvoidDiskWrites 1
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(5)
                 try:
-                    sock.connect(('127.0.0.1', self.control_port))
+                    sock.connect((self.listen_host, self.control_port))
                     if self._authenticate(sock):
                         sock.send(b'GETINFO status/bootstrap-phase\r\n')
                         response = sock.recv(1024)
@@ -223,9 +222,11 @@ AvoidDiskWrites 1
             if ret is not None:
                 logger.warning(f"[TOR] Process exited with code: {ret}")
                 if self._running:
-                    logger.info("[TOR] Restarting in 5s...")
-                    time.sleep(5)
-                    # Reset state so start() actually launches a new process
+                    self._restart_failures += 1
+                    # Backoff: 5s, 10s, 20s, ... capped at 60s
+                    delay = min(5 * self._restart_failures, 60)
+                    logger.info(f"[TOR] Restarting in {delay}s (attempt {self._restart_failures})...")
+                    time.sleep(delay)
                     self._running = False
                     self._process = None
                     self.start()
@@ -254,8 +255,8 @@ AvoidDiskWrites 1
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(10)
-            sock.connect(('127.0.0.1', self.control_port))
             try:
+                sock.connect((self.listen_host, self.control_port))
                 if self._authenticate(sock):
                     sock.send(b'SIGNAL NEWNYM\r\n')
                     response = sock.recv(1024)
