@@ -76,6 +76,7 @@ class HttpToSocksProxy:
         self._running = False
         if self._server and self._loop:
             self._loop.call_soon_threadsafe(self._server.close)
+            self._loop.call_soon_threadsafe(self._loop.stop)
         logger.info("HTTP proxy stopped")
 
     def _run_server(self):
@@ -155,8 +156,13 @@ class HttpToSocksProxy:
     async def _handle_connect(self, reader, writer, target, client_addr):
         """Handle CONNECT method (HTTPS tunneling)."""
         if ':' in target:
-            host, port = target.rsplit(':', 1)
-            port = int(port)
+            host, port_str = target.rsplit(':', 1)
+            try:
+                port = int(port_str)
+            except ValueError:
+                writer.write(b"HTTP/1.1 400 Bad Request\r\n\r\n")
+                await writer.drain()
+                return
         else:
             host, port = target, 443
 

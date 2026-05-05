@@ -131,8 +131,8 @@ AvoidDiskWrites 1
 
             self._process = subprocess.Popen(
                 [tor_binary, "-f", str(torrc_path)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 start_new_session=True,
             )
 
@@ -223,7 +223,7 @@ AvoidDiskWrites 1
                 logger.warning(f"[TOR] Process exited with code: {ret}")
                 if self._running:
                     self._restart_failures += 1
-                    # Backoff: 5s, 10s, 20s, ... capped at 60s
+                    # Backoff: 5s, 10s, 15s, ... capped at 60s
                     delay = min(5 * self._restart_failures, 60)
                     logger.info(f"[TOR] Restarting in {delay}s (attempt {self._restart_failures})...")
                     time.sleep(delay)
