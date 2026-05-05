@@ -158,6 +158,7 @@ class HttpToSocksProxy:
         """Handle CONNECT method (HTTPS tunneling)."""
         if ':' in target:
             host, port_str = target.rsplit(':', 1)
+            host = host.strip('[]')  # strip IPv6 brackets e.g. [::1]:443 → ::1
             try:
                 port = int(port_str)
             except ValueError:
@@ -427,12 +428,11 @@ class HttpToSocksProxy:
         except Exception:
             for task in [t1, t2]:
                 task.cancel()
-
-        try:
-            remote_writer.close()
-            await remote_writer.wait_closed()
-        except Exception:
-            pass
+            for task in [t1, t2]:
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
 
 
 def start_http_proxy(
