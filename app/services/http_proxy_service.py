@@ -90,6 +90,7 @@ class HttpToSocksProxy:
         except Exception as e:
             logger.error(f"Proxy server error: {e}")
         finally:
+            self._running = False
             self._loop.close()
 
     async def _start_server(self):
@@ -319,7 +320,6 @@ class HttpToSocksProxy:
 
     async def _socks5_connect(self, host: str, port: int) -> tuple:
         """Connect to a host through the SOCKS5 proxy."""
-        # Connect to SOCKS5 proxy
         logger.debug(f"[PROXY] Connecting via SOCKS5 to {self.socks_host}:{self.socks_port} for {host}:{port}")
         reader, writer = await asyncio.open_connection(self.socks_host, self.socks_port)
 
