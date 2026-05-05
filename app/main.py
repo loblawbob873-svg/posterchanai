@@ -255,7 +255,6 @@ async def startup():
             db2.close()
 
         # Start integrated MCP server if enabled (only on main instance to avoid port conflicts)
-        app_port = int(os.environ.get("POSTERCHANAI_PORT", "3051"))
         if app_port == 3051:
             try:
                 from app.services.mcp_service import start_mcp_server
@@ -371,8 +370,6 @@ async def shutdown():
     # Only stop schedulers on main instance (port 3051)
     app_port = int(os.environ.get("POSTERCHANAI_PORT", "3051"))
     if app_port == 3051:
-
-
         # Stop Logs scheduler
         from app.services.logs_scheduler import stop_logs_scheduler
         stop_logs_scheduler()

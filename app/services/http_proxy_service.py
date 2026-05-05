@@ -154,7 +154,6 @@ class HttpToSocksProxy:
 
     async def _handle_connect(self, reader, writer, target, client_addr):
         """Handle CONNECT method (HTTPS tunneling)."""
-        # Parse host:port from target
         if ':' in target:
             host, port = target.rsplit(':', 1)
             port = int(port)
@@ -164,21 +163,26 @@ class HttpToSocksProxy:
         logger.debug(f"[PROXY] CONNECT request: {host}:{port} from {client_addr}")
 
         try:
-            # Connect to target through SOCKS5
             remote_reader, remote_writer = await self._socks_connect(host, port)
-
-            # Send success response
-            writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
-            await writer.drain()
-            logger.debug(f"[PROXY] Tunnel established: {host}:{port}")
-
-            # Bidirectional tunnel
-            await self._tunnel(reader, writer, remote_reader, remote_writer)
-
         except Exception as e:
             logger.error(f"[PROXY] CONNECT to {target} failed: {e}")
             writer.write(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
             await writer.drain()
+            return
+
+        try:
+            writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+            await writer.drain()
+            logger.debug(f"[PROXY] Tunnel established: {host}:{port}")
+            await self._tunnel(reader, writer, remote_reader, remote_writer)
+        except Exception as e:
+            logger.error(f"[PROXY] CONNECT tunnel to {target} failed: {e}")
+        finally:
+            try:
+                remote_writer.close()
+                await remote_writer.wait_closed()
+            except Exception:
+                pass
 
     async def _handle_http(self, reader, writer, method, target, headers, client_addr):
         """Handle regular HTTP request."""
@@ -290,7 +294,7 @@ class HttpToSocksProxy:
             await writer.drain()
 
             # Read response (8 bytes)
-            response = await reader.readexactly(8)
+            response = await asyncio.wait_for(reader.readexactly(8), timeout=30)
             # Response: null byte + status + 2 bytes port + 4 bytes IP
             if response[1] != 0x5A:  # 0x5A = request granted
                 error_codes = {
@@ -318,7 +322,7 @@ class HttpToSocksProxy:
             writer.write(b'\x05\x01\x00')  # Version 5, 1 auth method, no auth
             await writer.drain()
 
-            response = await reader.readexactly(2)
+            response = await asyncio.wait_for(reader.readexactly(2), timeout=30)
             if response[0] != 0x05 or response[1] != 0x00:
                 raise Exception(f"SOCKS5 auth failed: {response.hex()}")
 
@@ -342,7 +346,7 @@ class HttpToSocksProxy:
             await writer.drain()
 
             # Read response header
-            response = await reader.readexactly(4)
+            response = await asyncio.wait_for(reader.readexactly(4), timeout=30)
             if response[0] != 0x05:
                 raise Exception(f"Invalid SOCKS5 response version")
             if response[1] != 0x00:
@@ -361,12 +365,12 @@ class HttpToSocksProxy:
             # Read bound address (we don't need it, but must consume)
             addr_type = response[3]
             if addr_type == 0x01:  # IPv4
-                await reader.readexactly(4 + 2)
+                await asyncio.wait_for(reader.readexactly(6), timeout=30)
             elif addr_type == 0x03:  # Domain
-                length = (await reader.readexactly(1))[0]
-                await reader.readexactly(length + 2)
+                length = (await asyncio.wait_for(reader.readexactly(1), timeout=30))[0]
+                await asyncio.wait_for(reader.readexactly(length + 2), timeout=30)
             elif addr_type == 0x04:  # IPv6
-                await reader.readexactly(16 + 2)
+                await asyncio.wait_for(reader.readexactly(18), timeout=30)
 
             return reader, writer
 
