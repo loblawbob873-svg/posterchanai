@@ -184,7 +184,7 @@ class HttpToSocksProxy:
             logger.debug(f"[PROXY] Tunnel established: {host}:{port}")
             await self._tunnel(reader, writer, remote_reader, remote_writer)
         except Exception as e:
-            logger.error(f"[PROXY] CONNECT tunnel to {target} failed: {e}")
+            logger.error(f"[PROXY] CONNECT tunnel to {target} failed: {type(e).__name__}: {e}")
         finally:
             try:
                 remote_writer.close()
@@ -268,7 +268,7 @@ class HttpToSocksProxy:
                 await writer.drain()
 
         except Exception as e:
-            logger.error(f"[PROXY] HTTP request to {host}:{port} failed: {e}")
+            logger.error(f"[PROXY] HTTP request to {host}:{port} failed: {type(e).__name__}: {e}")
             try:
                 writer.write(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
                 await writer.drain()
