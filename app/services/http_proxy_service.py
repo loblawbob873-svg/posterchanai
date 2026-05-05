@@ -322,8 +322,9 @@ class HttpToSocksProxy:
             writer.write(bytes([0x05, 0x01, 0x00, addr_type]) + addr_bytes + port.to_bytes(2, 'big'))
             await asyncio.wait_for(writer.drain(), timeout=10)
 
-            # Response — Tor must build the circuit before replying; allow 60s
-            response = await asyncio.wait_for(reader.readexactly(4), timeout=60)
+            # Response — Tor must build the circuit before replying; allow 45s
+            # (SocksTimeout 30 in torrc ensures Tor responds within 30s)
+            response = await asyncio.wait_for(reader.readexactly(4), timeout=45)
             if response[0] != 0x05:
                 raise Exception(f"Invalid SOCKS5 response version: 0x{response[0]:02x}")
             if response[1] != 0x00:

@@ -99,12 +99,12 @@ CookieAuthentication 1
 
 # Exit node restrictions
 ExitNodes {self.exit_nodes}
-StrictNodes 1
 
 # Performance
 CircuitBuildTimeout 30
 LearnCircuitBuildTimeout 0
 MaxCircuitDirtiness 600
+SocksTimeout 30
 
 # Logging
 Log notice file {self.data_dir}/tor.log
