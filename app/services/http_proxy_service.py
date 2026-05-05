@@ -221,13 +221,14 @@ class HttpToSocksProxy:
         try:
             # Reconstruct request line and headers; strip hop-by-hop, force close
             request = f"{method} {path} HTTP/1.1\r\n"
+            host_header = host if port == 80 else f"{host}:{port}"
             content_length = 0
             host_set = False
             for header in headers:
                 header_str = header.decode('utf-8', errors='ignore')
                 header_lower = header_str.lower()
                 if header_lower.startswith('host:'):
-                    request += f"Host: {host}\r\n"
+                    request += f"Host: {host_header}\r\n"
                     host_set = True
                 elif header_lower.startswith(('proxy-', 'connection:', 'keep-alive:')):
                     continue
@@ -240,10 +241,11 @@ class HttpToSocksProxy:
                             pass
 
             if not host_set:
-                request += f"Host: {host}\r\n"
+                request += f"Host: {host_header}\r\n"
             request += "Connection: close\r\n\r\n"
 
             remote_writer.write(request.encode())
+            await remote_writer.drain()
 
             # Forward request body (e.g. HTTP tracker POST announce)
             if content_length > 0:
@@ -255,9 +257,8 @@ class HttpToSocksProxy:
                     if not chunk:
                         break
                     remote_writer.write(chunk)
+                    await remote_writer.drain()
                     remaining -= len(chunk)
-
-            await remote_writer.drain()
 
             # Forward response
             while True:
