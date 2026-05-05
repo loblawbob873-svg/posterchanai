@@ -301,7 +301,7 @@ class HttpToSocksProxy:
             request += host.encode('utf-8') + b'\x00'  # Hostname, null terminated
 
             writer.write(request)
-            await writer.drain()
+            await asyncio.wait_for(writer.drain(), timeout=30)
 
             # Read response (8 bytes)
             response = await asyncio.wait_for(reader.readexactly(8), timeout=30)
@@ -332,7 +332,7 @@ class HttpToSocksProxy:
         try:
             # SOCKS5 greeting
             writer.write(b'\x05\x01\x00')  # Version 5, 1 auth method, no auth
-            await writer.drain()
+            await asyncio.wait_for(writer.drain(), timeout=30)
 
             response = await asyncio.wait_for(reader.readexactly(2), timeout=30)
             if response[0] != 0x05 or response[1] != 0x00:
@@ -357,7 +357,7 @@ class HttpToSocksProxy:
 
             request = bytes([0x05, 0x01, 0x00, addr_type]) + addr_bytes + port.to_bytes(2, 'big')
             writer.write(request)
-            await writer.drain()
+            await asyncio.wait_for(writer.drain(), timeout=30)
 
             # Read response header
             response = await asyncio.wait_for(reader.readexactly(4), timeout=30)

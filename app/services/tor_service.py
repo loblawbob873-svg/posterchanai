@@ -3,6 +3,7 @@ Built-in Tor client service.
 Uses system Tor binary with configurable exit nodes.
 """
 
+import ipaddress
 import os
 import socket
 import subprocess
@@ -190,7 +191,8 @@ AvoidDiskWrites 1
                 return False
 
             try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                family = socket.AF_INET6 if isinstance(ipaddress.ip_address(self.listen_host), ipaddress.IPv6Address) else socket.AF_INET
+                sock = socket.socket(family, socket.SOCK_STREAM)
                 sock.settimeout(5)
                 try:
                     sock.connect((self.listen_host, self.control_port))
@@ -253,7 +255,8 @@ AvoidDiskWrites 1
     def get_new_identity(self) -> bool:
         """Request a new Tor circuit."""
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            family = socket.AF_INET6 if isinstance(ipaddress.ip_address(self.listen_host), ipaddress.IPv6Address) else socket.AF_INET
+            sock = socket.socket(family, socket.SOCK_STREAM)
             sock.settimeout(10)
             try:
                 sock.connect((self.listen_host, self.control_port))
