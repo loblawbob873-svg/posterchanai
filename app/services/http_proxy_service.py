@@ -264,9 +264,7 @@ class HttpToSocksProxy:
                 if not data:
                     break
                 writer.write(data)
-                if writer.transport.get_write_buffer_size() > 65536:
-                    await writer.drain()
-            await writer.drain()
+                await writer.drain()
 
         except Exception as e:
             logger.error(f"[PROXY] HTTP request to {host}:{port} failed: {e}")
@@ -410,22 +408,25 @@ class HttpToSocksProxy:
                     if not data:
                         break
                     dst.write(data)
-                    if dst.transport.get_write_buffer_size() > 65536:
-                        await dst.drain()
-                await dst.drain()
+                    await dst.drain()
             except Exception:
                 pass
 
+        t1 = asyncio.ensure_future(forward(client_reader, remote_writer))
+        t2 = asyncio.ensure_future(forward(remote_reader, client_writer))
         try:
-            await asyncio.wait_for(
-                asyncio.gather(
-                    forward(client_reader, remote_writer),
-                    forward(remote_reader, client_writer),
-                ),
-                timeout=1800,
+            _, pending = await asyncio.wait(
+                [t1, t2], timeout=1800, return_when=asyncio.FIRST_COMPLETED
             )
-        except asyncio.TimeoutError:
-            pass
+            for task in pending:
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+        except Exception:
+            for task in [t1, t2]:
+                task.cancel()
 
         try:
             remote_writer.close()
