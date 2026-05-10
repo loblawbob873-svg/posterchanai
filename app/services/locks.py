@@ -100,12 +100,12 @@ class GPUResourceLock:
         if _gpu_lock_holder:
             logger.info(f"[{lock_name}-LOCK] {self.request_type} request{' ' + self.request_id if self.request_id else ''} waiting (held by {_gpu_lock_holder})")
         
-        # Add timeout to prevent indefinite blocking - 60 seconds max
+        # 180s timeout — thinking models can hold the GPU for 90-120s (think + respond)
         try:
-            await asyncio.wait_for(_gpu_lock_base.acquire(), timeout=60.0)
+            await asyncio.wait_for(_gpu_lock_base.acquire(), timeout=180.0)
         except asyncio.TimeoutError:
-            logger.error(f"[{lock_name}-LOCK] Timeout acquiring in-process lock after 60s (held by {_gpu_lock_holder})")
-            raise TimeoutError(f"Failed to acquire {lock_name} lock within 60 seconds, currently held by: {_gpu_lock_holder}")
+            logger.error(f"[{lock_name}-LOCK] Timeout acquiring in-process lock after 180s (held by {_gpu_lock_holder})")
+            raise TimeoutError(f"Failed to acquire {lock_name} lock within 180 seconds, currently held by: {_gpu_lock_holder}")
         
         # Now acquire file lock (cross-process) - we're the only one in this process trying
         logger.info(f"[{lock_name}-LOCK] {self.request_type} request{' ' + self.request_id if self.request_id else ''} acquired in-process lock, waiting for file lock...")

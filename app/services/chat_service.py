@@ -350,12 +350,6 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
                                             thinking_done = True
                                             yield buffer
                                             buffer = ""
-                                        # For very short responses, yield after a small delay to avoid empty bubbles
-                                        elif len(buffer) >= 10 and not has_thinking_open(buffer):
-                                            # Small buffer with no thinking tag - yield immediately for short responses
-                                            thinking_done = True
-                                            yield buffer
-                                            buffer = ""
                                     else:
                                         yield content
                             except json.JSONDecodeError:
@@ -486,10 +480,6 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
                             if after_think.strip():
                                 yield after_think
                         elif len(buffer) >= 50 and not has_thinking_open(buffer):
-                            thinking_done = True
-                            yield buffer
-                            buffer = ""
-                        elif len(buffer) >= 10 and not has_thinking_open(buffer):
                             thinking_done = True
                             yield buffer
                             buffer = ""
