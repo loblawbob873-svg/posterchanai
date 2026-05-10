@@ -93,6 +93,11 @@ def strip_thinking_tags(response: str) -> str:
         if m:
             # Explicit "**Response:**\n" section found — take everything after it
             cleaned = cleaned[m.end():]
+        elif THINKING_CLOSE_PATTERN.search(cleaned):
+            # Model uses plain-text "Thinking Process:" header but closes with </think>
+            # Everything after </think> is the actual response
+            close_m = THINKING_CLOSE_PATTERN.search(cleaned)
+            cleaned = cleaned[close_m.end():]
         else:
             # No explicit response header.
             # This model embeds the response inside the thinking as a bullet:
