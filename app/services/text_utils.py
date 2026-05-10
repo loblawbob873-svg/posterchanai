@@ -94,20 +94,32 @@ def strip_thinking_tags(response: str) -> str:
             cleaned = cleaned[m.end():]
         else:
             # No explicit response header.
-            # Model outputs: "Thinking Process:\n\n1.  **Step:**...\n2.  **Step:**...\n\nResponse"
-            # Split on double-newlines and discard:
+            # Model outputs:
+            #   "Thinking Process:\n\n1.  **Step:**...\n2.  **Step:**...\n\n    continuation\n\nResponse"
+            # Split on double-newlines and discard thinking paragraphs:
             #   - the thinking header paragraph
-            #   - any paragraph whose first line is a numbered bold step ("1.  **...")
+            #   - numbered bold steps ("1.  **...")
+            #   - indented continuation paragraphs (leading spaces = part of a thinking step)
+            #   - bullet-point paragraphs within thinking ("-   ..." / "*   ...")
             paragraphs = re.split(r'\n\n+', cleaned)
             response_paras = []
             for para in paragraphs:
-                stripped = para.strip()
-                if not stripped:
+                if not para.strip():
                     continue
-                if _THINKING_HEADER_RE.match(stripped):
+                # Use first non-empty line *before* stripping to preserve indentation info
+                first_line = next((l for l in para.split('\n') if l.strip()), '')
+                stripped_first = first_line.strip()
+                # Thinking header
+                if _THINKING_HEADER_RE.match(stripped_first):
                     continue
                 # Numbered bold thinking steps: "1.  **Step name:**..."
-                if re.match(r'\d+\.\s+\*\*', stripped):
+                if re.match(r'\d+\.\s+\*\*', stripped_first):
+                    continue
+                # Indented paragraphs — continuation of a thinking step
+                if first_line != first_line.lstrip():
+                    continue
+                # Bullet-point paragraphs within thinking
+                if re.match(r'[-*]\s+', stripped_first):
                     continue
                 response_paras.append(para)
             cleaned = '\n\n'.join(response_paras)
