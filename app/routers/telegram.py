@@ -2040,8 +2040,10 @@ async def _handle_telegram_update(update: dict, db: Session):
             response_content = result.get("content", "")
             image_data = result.get("image")
             
-            # Clean response content - remove template artifacts
+            # Clean response content - remove template artifacts and any leaked thinking
             if response_content:
+                from app.services.text_utils import strip_thinking_tags
+                response_content = strip_thinking_tags(response_content)
                 # Remove template tokens
                 for pattern in [r'\[INST\]', r'\[/INST\]', r'INST\]', r'<\|im_end\|>', r'<\|im_start\|>']:
                     response_content = re.sub(pattern, '', response_content, flags=re.IGNORECASE)
