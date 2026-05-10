@@ -52,21 +52,27 @@ if ! command -v patchelf &>/dev/null; then
     fi
 fi
 
-# Check for Intel oneAPI
+# Check for Intel oneAPI — detect version and set ONEAPI_ROOT / ICX / ICPX
 ONEAPI_FOUND=0
-if [ -f /opt/intel/oneapi/2025.0/oneapi-vars.sh ]; then
-    source /opt/intel/oneapi/2025.0/oneapi-vars.sh
-    ONEAPI_FOUND=1
-elif [ -f /opt/intel/oneapi/2024.2/oneapi-vars.sh ]; then
-    source /opt/intel/oneapi/2024.2/oneapi-vars.sh
-    ONEAPI_FOUND=1
-elif [ -f /opt/intel/oneapi/setvars.sh ]; then
-    source /opt/intel/oneapi/setvars.sh
-    ONEAPI_FOUND=1
-elif [ -f ~/intel/oneapi/setvars.sh ]; then
-    source ~/intel/oneapi/setvars.sh
-    ONEAPI_FOUND=1
-fi
+ONEAPI_ROOT=""
+ICX=""
+ICPX=""
+
+for CANDIDATE_VARS in \
+    /opt/intel/oneapi/2025.3/oneapi-vars.sh \
+    /opt/intel/oneapi/2025.2/oneapi-vars.sh \
+    /opt/intel/oneapi/2025.1/oneapi-vars.sh \
+    /opt/intel/oneapi/2025.0/oneapi-vars.sh \
+    /opt/intel/oneapi/2024.2/oneapi-vars.sh \
+    /opt/intel/oneapi/setvars.sh \
+    ~/intel/oneapi/setvars.sh; do
+    if [ -f "$CANDIDATE_VARS" ]; then
+        source "$CANDIDATE_VARS" --force 2>/dev/null || true
+        ONEAPI_FOUND=1
+        ONEAPI_ROOT="$(dirname "$CANDIDATE_VARS")"
+        break
+    fi
+done
 
 if [ "$ONEAPI_FOUND" -eq 0 ]; then
     echo "ERROR: Intel oneAPI not found!"
@@ -75,7 +81,41 @@ if [ "$ONEAPI_FOUND" -eq 0 ]; then
     exit 1
 fi
 
-echo "Intel oneAPI found."
+# Resolve icx/icpx full paths (cmake needs them explicit for SYCL builds)
+if command -v icx &>/dev/null && command -v icpx &>/dev/null; then
+    ICX="$(command -v icx)"
+    ICPX="$(command -v icpx)"
+else
+    # Fallback: search under known compiler dirs
+    for CBIN in /opt/intel/oneapi/compiler/latest/bin /opt/intel/oneapi/compiler/2025.0/bin /opt/intel/oneapi/compiler/2024.2/bin; do
+        if [ -x "$CBIN/icx" ] && [ -x "$CBIN/icpx" ]; then
+            ICX="$CBIN/icx"
+            ICPX="$CBIN/icpx"
+            break
+        fi
+    done
+fi
+
+if [ -z "$ICX" ] || [ -z "$ICPX" ]; then
+    echo "ERROR: icx/icpx not found after sourcing oneAPI environment."
+    exit 1
+fi
+
+# Resolve MKL cmake dir
+MKL_CMAKE_DIR=""
+for D in /opt/intel/oneapi/mkl/latest/lib/cmake/mkl /opt/intel/oneapi/mkl/2025.0/lib/cmake/mkl /opt/intel/oneapi/mkl/2024.2/lib/cmake/mkl; do
+    if [ -d "$D" ]; then MKL_CMAKE_DIR="$D"; break; fi
+done
+
+# Resolve IntelSYCL cmake dir
+SYCL_CMAKE_DIR=""
+for D in "$ONEAPI_ROOT/lib/cmake/IntelSYCL" /opt/intel/oneapi/2025.0/lib/cmake/IntelSYCL /opt/intel/oneapi/2024.2/lib/cmake/IntelSYCL; do
+    if [ -d "$D" ]; then SYCL_CMAKE_DIR="$D"; break; fi
+done
+
+echo "Intel oneAPI found: $ONEAPI_ROOT"
+echo "  icx:  $ICX"
+echo "  icpx: $ICPX"
 
 # Create upload directory
 UPLOAD_PATH="/var/lib/posterchanai"
@@ -131,17 +171,114 @@ if command -v patchelf &>/dev/null; then
     done
 fi
 
-# Also install llama-cpp-python with SYCL support as fallback
+# Build llama-cpp-python with SYCL support for Intel Arc GPU
+# We build from source because:
+#   1. We need llama-cpp-python >= 0.3.22 for Qwen3.5 (qwen35 arch) support
+#   2. oneAPI 2025.0 is missing work_group_static.hpp — we inject a stub
+#   3. oneAPI 2025.0 is missing some newer GPU arch enums — we patch sycl_hw.cpp
+#      (bmg_g31/ptl_h/ptl_u/wcl, not needed for Arc B580/B770 which are bmg_g21)
 echo ""
-echo "Installing llama-cpp-python with Intel GPU support (fallback)..."
-echo "This may take several minutes..."
+echo "Building llama-cpp-python 0.3.22 with Intel SYCL support..."
+echo "This may take 5-10 minutes..."
 
-# Set build flags for Intel SYCL backend
-export CMAKE_ARGS="-DGGML_SYCL=ON -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx"
+# Install build tools required by scikit-build-core
+pip install --quiet scikit-build-core cmake ninja
 
-pip install llama-cpp-python --force-reinstall --no-cache-dir
+# Download source
+LLAMA_VERSION="0.3.22"
+LLAMA_TMP="$(mktemp -d)"
+LLAMA_SRC_DIR="$LLAMA_TMP/llama_cpp_python-${LLAMA_VERSION}"
+pip download "llama-cpp-python==${LLAMA_VERSION}" --no-deps -d "$LLAMA_TMP" --quiet
+tar xzf "$LLAMA_TMP/llama_cpp_python-${LLAMA_VERSION}.tar.gz" -C "$LLAMA_TMP"
 
-# Pin numpy<2 one more time (ipex-llm may have pulled in numpy 2.x)
+# Patch sycl_hw.cpp: remove GPU arch entries not in oneAPI 2025.0 headers
+# (bmg_g31=future Battlemage, ptl_h/ptl_u=Panther Lake, wcl=Wildcat Lake)
+# Arc B580/B770 are bmg_g21 which IS present — unknown archs fall back gracefully
+SYCL_HW="$LLAMA_SRC_DIR/vendor/llama.cpp/ggml/src/ggml-sycl/sycl_hw.cpp"
+if [ -f "$SYCL_HW" ]; then
+    python3 - "$SYCL_HW" <<'PYEOF'
+import re, sys
+path = sys.argv[1]
+text = open(path).read()
+remove = [
+    r'[ \t]*\{gpu_arch::intel_gpu_bmg_g31,[^\n]*\},?\n',
+    r'[ \t]*\{gpu_arch::intel_gpu_ptl_h,[^\n]*\},?\n',
+    r'[ \t]*\{gpu_arch::intel_gpu_ptl_u,[^\n]*\},?\n',
+    r'[ \t]*\{gpu_arch::intel_gpu_wcl,[^\n]*\}\n',
+]
+for pat in remove:
+    text = re.sub(pat, '', text)
+# Fix trailing comma on last map entry if needed
+text = re.sub(r',\s*\n(\s*\})', r'\n\1', text)
+open(path, 'w').write(text)
+print(f"  Patched sycl_hw.cpp: removed future GPU arch entries")
+PYEOF
+fi
+
+# Create work_group_static.hpp stub (missing from oneAPI 2025.0/2024.2 headers)
+# This header was added in a later oneAPI release; the stub is the upstream content
+# from intel/llvm and is needed to compile the SYCL flash attention tile kernel.
+STUB_DIR="$(mktemp -d)"
+mkdir -p "$STUB_DIR/sycl/ext/oneapi/experimental"
+cat > "$STUB_DIR/sycl/ext/oneapi/experimental/work_group_static.hpp" <<'HEOF'
+#pragma once
+#include <sycl/detail/defines_elementary.hpp>
+#include <sycl/exception.hpp>
+#include <type_traits>
+namespace sycl { inline namespace _V1 { namespace ext::oneapi { namespace experimental {
+#ifdef __SYCL_DEVICE_ONLY__
+#define __SYCL_WG_SCOPE [[__sycl_detail__::wg_scope]]
+#else
+#define __SYCL_WG_SCOPE
+#endif
+template <typename T> class __SYCL_WG_SCOPE work_group_static final {
+public:
+  static_assert(std::is_trivially_destructible_v<T> && std::is_trivially_constructible_v<T>,
+      "Can only be used with trivially constructible and destructible types");
+  static_assert(!std::is_const_v<T> && !std::is_volatile_v<T>,
+      "Can only be used with non const and non volatile types");
+  __SYCL_ALWAYS_INLINE work_group_static() = default;
+  work_group_static(const work_group_static &) = delete;
+  work_group_static &operator=(const work_group_static &) = delete;
+  operator T &() noexcept { return data; }
+  template <class TArg = T, typename = std::enable_if_t<!std::is_array_v<TArg>>>
+  work_group_static &operator=(const T &value) noexcept { data = value; return *this; }
+  T *operator&() noexcept { return &data; }
+private:
+  T data;
+};
+#undef __SYCL_WG_SCOPE
+} } } }
+HEOF
+echo "  Created work_group_static.hpp stub"
+
+# Build with SYCL, injecting stub header via CPLUS_INCLUDE_PATH
+# CMAKE_PREFIX_PATH and MKL_DIR/IntelSYCL_DIR let cmake find oneAPI libraries
+CMAKE_PREFIX="${ONEAPI_ROOT}/lib/cmake"
+CMAKE_ARGS_VAL="-DGGML_SYCL=ON \
+  -DCMAKE_C_COMPILER=${ICX} \
+  -DCMAKE_CXX_COMPILER=${ICPX} \
+  -DCMAKE_PREFIX_PATH=${CMAKE_PREFIX} \
+  -DCMAKE_CXX_FLAGS=-I${STUB_DIR}"
+
+if [ -n "$MKL_CMAKE_DIR" ]; then
+    CMAKE_ARGS_VAL="$CMAKE_ARGS_VAL -DMKL_DIR=${MKL_CMAKE_DIR}"
+fi
+if [ -n "$SYCL_CMAKE_DIR" ]; then
+    CMAKE_ARGS_VAL="$CMAKE_ARGS_VAL -DIntelSYCL_DIR=${SYCL_CMAKE_DIR}"
+fi
+
+CPLUS_INCLUDE_PATH="$STUB_DIR" \
+CMAKE_ARGS="$CMAKE_ARGS_VAL" \
+pip install "$LLAMA_SRC_DIR" \
+    --force-reinstall \
+    --no-cache-dir \
+    --no-build-isolation
+
+# Clean up temp dirs
+rm -rf "$LLAMA_TMP" "$STUB_DIR"
+
+# Pin numpy<2 — ipex-llm/bigdl requires numpy 1.x; llama-cpp-python pulled in 2.x
 pip install "numpy<2" --quiet
 
 echo ""

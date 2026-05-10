@@ -383,6 +383,7 @@ When asked to write or modify code or files:
             "llm_use_mlock": "true",  # Lock model in RAM for faster inference
             "llm_idle_timeout": "0",  # Seconds before unloading LLM (0=disabled)
             "llm_token_timeout": "600",  # Max seconds between tokens during streaming (10 min default)
+            "llm_flash_attn": "false",  # Flash attention (disabled by default; enable for Qwen3/3.5 on CUDA builds)
             # LLM health check
             "ollama_ping_enabled": "false",
             "ollama_restart_command": "sudo systemctl restart ollama",

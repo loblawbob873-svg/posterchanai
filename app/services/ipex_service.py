@@ -258,6 +258,7 @@ class IPEXService:
         self.cpu_mode = get_setting("llm_cpu_mode", "false").lower() == "true"
         self.use_mmap = get_setting("llm_use_mmap", "true").lower() == "true"
         self.use_mlock = get_setting("llm_use_mlock", "true").lower() == "true"
+        self.flash_attn = get_setting("llm_flash_attn", "false").lower() == "true"
 
         # Sampling settings
         self.temperature = float(get_setting("ollama_temperature", "0.7"))
@@ -322,7 +323,7 @@ class IPEXService:
 
             logger.info(f"Loading model with IPEX-LLM: {self.model_path}")
             logger.info(f"  ctx: {self.num_ctx}, batch: {self.n_batch}, gpu_layers: {gpu_layers}, threads: {self.n_threads}")
-            logger.info(f"  CPU mode: {self.cpu_mode}, mmap: {self.use_mmap}, mlock: {self.use_mlock}")
+            logger.info(f"  CPU mode: {self.cpu_mode}, mmap: {self.use_mmap}, mlock: {self.use_mlock}, flash_attn: {self.flash_attn}")
 
             try:
                 # Check if GGUF model - use llama-cpp-python
@@ -374,6 +375,7 @@ class IPEXService:
                                 n_threads_batch=self.n_threads,
                                 use_mmap=self.use_mmap,
                                 use_mlock=self.use_mlock,
+                                flash_attn=self.flash_attn,
                                 offload_kqv=True,
                                 verbose=False,
                                 chat_format=_chat_format,

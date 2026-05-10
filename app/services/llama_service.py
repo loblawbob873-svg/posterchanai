@@ -147,6 +147,7 @@ class LlamaService:
         self.n_batch = int(get_setting("llm_n_batch", "2048"))
         self.use_mmap = get_setting("llm_use_mmap", "true").lower() == "true"
         self.use_mlock = get_setting("llm_use_mlock", "true").lower() == "true"
+        self.flash_attn = get_setting("llm_flash_attn", "false").lower() == "true"
 
         # Sampling settings
         self.temperature = float(get_setting("ollama_temperature", "0.7"))
@@ -254,7 +255,7 @@ class LlamaService:
             # Determine GPU layers - force 0 if CPU mode enabled
             gpu_layers = 0 if self.cpu_mode else self.n_gpu_layers
             logger.info(f"  GPU layers: {gpu_layers} (CPU mode: {self.cpu_mode})")
-            logger.info(f"  Batch size: {self.n_batch}, mmap: {self.use_mmap}, mlock: {self.use_mlock}")
+            logger.info(f"  Batch size: {self.n_batch}, mmap: {self.use_mmap}, mlock: {self.use_mlock}, flash_attn: {self.flash_attn}")
 
             # Validate context size - warn if very large
             if self.num_ctx > 8192:
@@ -328,7 +329,7 @@ class LlamaService:
                         n_batch=self.n_batch,
                         use_mmap=self.use_mmap,
                         use_mlock=self.use_mlock,
-                        flash_attn=False,
+                        flash_attn=self.flash_attn,
                         offload_kqv=True,
                         verbose=False,
                         chat_handler=chat_handler,

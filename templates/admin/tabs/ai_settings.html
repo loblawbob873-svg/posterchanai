@@ -55,6 +55,16 @@
                 <small>Max time between tokens (for long generations)</small>
             </div>
         </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="llm_flash_attn">Flash Attention</label>
+                <select id="llm_flash_attn" name="llm_flash_attn">
+                    <option value="false">Disabled (safe default)</option>
+                    <option value="true">Enabled (Qwen3/3.5, requires SYCL/CUDA support)</option>
+                </select>
+                <small>Enable for Qwen3/3.5 and other models that benefit from flash attention. Requires llama-cpp-python compiled with flash attention support. Leave disabled for Mistral, older models, or if unsure.</small>
+            </div>
+        </div>
         <div class="form-group">
             <button type="button" class="btn-secondary" id="reloadModelBtn">Reload Model</button>
             <small>Force reload the model after changing settings</small>
