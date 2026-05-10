@@ -148,6 +148,7 @@ class LlamaService:
         self.use_mmap = get_setting("llm_use_mmap", "true").lower() == "true"
         self.use_mlock = get_setting("llm_use_mlock", "true").lower() == "true"
         self.flash_attn = get_setting("llm_flash_attn", "false").lower() == "true"
+        self.disable_thinking = get_setting("llm_disable_thinking", "false").lower() == "true"
 
         # Sampling settings
         self.temperature = float(get_setting("ollama_temperature", "0.7"))
@@ -312,6 +313,7 @@ class LlamaService:
                         logger.info(f"  Attempting to load model from: {resolved_path}")
                     
                     chat_handler = None
+                    _model_lower = _os.path.basename(resolved_path).lower()
                     if self._should_use_mistral_template():
                         try:
                             from llama_cpp.llama_chat_format import get_chat_completion_handler
@@ -319,7 +321,13 @@ class LlamaService:
                             logger.info("  Using mistral chat handler for template")
                         except Exception as e:
                             logger.warning(f"  Could not load mistral chat handler: {e}")
-                    
+                        _chat_format = None
+                    elif "qwen3" in _model_lower:
+                        # Bypass the embedded Jinja2 template which prepends <think> blocks
+                        _chat_format = "chatml"
+                    else:
+                        _chat_format = None
+
                     self._model = Llama(
                         model_path=resolved_path,
                         n_ctx=attempt_ctx,
@@ -333,6 +341,7 @@ class LlamaService:
                         offload_kqv=True,
                         verbose=False,
                         chat_handler=chat_handler,
+                        chat_format=_chat_format,
                     )
                     logger.info(f"[LLAMA] Model loaded with n_ctx={self._model.n_ctx()}")
                     # Success - update num_ctx if we used a smaller value
@@ -616,6 +625,23 @@ class LlamaService:
                 })
         return formatted
 
+    def _build_no_think_prompt(self, messages: List[Dict[str, Any]]) -> str:
+        """Build a raw ChatML prompt with an empty <think> block pre-filled."""
+        parts = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                content = " ".join(
+                    p.get("text", "") for p in content
+                    if isinstance(p, dict) and p.get("type") == "text"
+                )
+            if role == "user":
+                content = content.replace(" /no_think", "").replace("\n/no_think", "").strip()
+            parts.append(f"<|im_start|>{role}\n{content}<|im_end|>")
+        parts.append("<|im_start|>assistant\n<think>\n\n</think>\n\n")
+        return "\n".join(parts)
+
     def _sync_chat_completion_no_unload(self, messages: List[Dict[str, Any]], **kwargs) -> Dict[str, Any]:
         """Synchronous chat completion without unloading (caller handles unload)"""
         self._ensure_model_loaded()
@@ -624,17 +650,24 @@ class LlamaService:
         # The handler then applies [INST]...[/INST] — we do NOT call format_messages() to avoid double-templating.
         messages = self._embed_system_for_mistral(messages)
 
+        _model_lower = _os.path.basename(self.model_path).lower()
+        use_prefill = self.disable_thinking and "qwen3" in _model_lower
         with _get_inference_semaphore(self.max_concurrent):
             try:
-                result = self._model.create_chat_completion(
-                    messages=messages,
-                    **params
-                )
-
-                # Strip thinking tags from response
-                content = result["choices"][0]["message"]["content"]
-                content = self.strip_thinking_tags(content)
-                result["choices"][0]["message"]["content"] = content
+                if use_prefill:
+                    raw_prompt = self._build_no_think_prompt(messages)
+                    result_raw = self._model.create_completion(prompt=raw_prompt, **params)
+                    content = result_raw["choices"][0]["text"]
+                    content = self.strip_thinking_tags(content)
+                    result = {
+                        "choices": [{"message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
+                        "object": "chat.completion",
+                    }
+                else:
+                    result = self._model.create_chat_completion(messages=messages, **params)
+                    content = result["choices"][0]["message"]["content"]
+                    content = self.strip_thinking_tags(content)
+                    result["choices"][0]["message"]["content"] = content
 
                 # Update last used time for idle timeout
                 global _last_used
@@ -737,14 +770,19 @@ class LlamaService:
                     """Run synchronous generation in thread, put SSE chunks in queue"""
                     token_timeout = self.token_timeout
                     last_token_time = time.time()
+                    _mlower = _os.path.basename(self.model_path).lower()
+                    _use_pf = self.disable_thinking and "qwen3" in _mlower
 
                     with _get_inference_semaphore(self.max_concurrent):
                         try:
-                            for chunk in self._model.create_chat_completion(
-                                messages=messages,
-                                stream=True,
-                                **params
-                            ):
+                            if _use_pf:
+                                _prompt = self._build_no_think_prompt(messages)
+                                _iter = self._model.create_completion(prompt=_prompt, stream=True, **params)
+                                def _get_content(c): return c.get("choices", [{}])[0].get("text", "")
+                            else:
+                                _iter = self._model.create_chat_completion(messages=messages, stream=True, **params)
+                                def _get_content(c): return c.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                            for chunk in _iter:
                                 # Check for timeout between tokens
                                 current_time = time.time()
                                 if current_time - last_token_time > token_timeout:
@@ -756,10 +794,7 @@ class LlamaService:
                                     return
                                 last_token_time = current_time
 
-                                content = ""
-                                if "choices" in chunk and len(chunk["choices"]) > 0:
-                                    delta = chunk["choices"][0].get("delta", {})
-                                    content = delta.get("content", "")
+                                content = _get_content(chunk)
 
                                 if content:
                                     sse_chunk = {
@@ -844,13 +879,18 @@ class LlamaService:
         token_timeout = self.token_timeout
         last_token_time = time.time()
 
+        _mlower = _os.path.basename(self.model_path).lower()
+        _use_pf = self.disable_thinking and "qwen3" in _mlower
         with _get_inference_semaphore(self.max_concurrent):
             try:
-                for chunk in self._model.create_chat_completion(
-                    messages=messages,
-                    stream=True,
-                    **params
-                ):
+                if _use_pf:
+                    _prompt = self._build_no_think_prompt(messages)
+                    _iter = self._model.create_completion(prompt=_prompt, stream=True, **params)
+                    def _tok(c): return c.get("choices", [{}])[0].get("text", "")
+                else:
+                    _iter = self._model.create_chat_completion(messages=messages, stream=True, **params)
+                    def _tok(c): return c.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                for chunk in _iter:
                     # Check for timeout between tokens
                     current_time = time.time()
                     if current_time - last_token_time > token_timeout:
@@ -859,15 +899,13 @@ class LlamaService:
                         return
                     last_token_time = current_time
 
-                    if "choices" in chunk and len(chunk["choices"]) > 0:
-                        delta = chunk["choices"][0].get("delta", {})
-                        content = delta.get("content", "")
-                        if content:
-                            yield content
+                    content = _tok(chunk)
+                    if content:
+                        yield content
 
-                        finish_reason = chunk["choices"][0].get("finish_reason")
-                        if finish_reason:
-                            break
+                    finish_reason = chunk.get("choices", [{}])[0].get("finish_reason")
+                    if finish_reason:
+                        break
             except Exception as e:
                 logger.error(f"Stream content error: {e}")
                 yield f"Error: {e}"
