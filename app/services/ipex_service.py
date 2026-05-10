@@ -451,6 +451,49 @@ class IPEXService:
                     logger.error(f"Failed to load model: {e}")
                     raise
 
+    def _apply_no_think(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Suppress thinking for the current model.
+
+        For Qwen3/3.5 GGUF: append /no_think to the last user message so the
+        chat template disables thinking at the tokenizer level (no text visible
+        to the model's reasoning, so it cannot narrate the instruction).
+
+        For other thinking models (DeepSeek-R1, etc.): inject a system-level
+        text instruction as before.
+        """
+        model_name = self.model_path.lower()
+        is_qwen3 = "qwen3" in model_name
+        is_other_thinker = "deepseek-r1" in model_name or "reasoning" in model_name
+
+        if not (is_qwen3 or is_other_thinker):
+            return messages
+
+        msgs = [dict(m) for m in messages]  # shallow copy each message
+
+        if is_qwen3:
+            # /no_think is recognized by the Qwen3/3.5 chat template at tokenization
+            # time — the model never "sees" it as content, so it cannot narrate it.
+            for i in range(len(msgs) - 1, -1, -1):
+                if msgs[i].get("role") == "user":
+                    content = msgs[i]["content"]
+                    if isinstance(content, str) and not content.rstrip().endswith("/no_think"):
+                        msgs[i]["content"] = content.rstrip() + "\n/no_think"
+                    break
+        else:
+            # Text instruction for non-Qwen3 thinking models
+            instruction = (
+                "You must respond directly without thinking tags. "
+                "Do NOT use <think> or show reasoning. "
+                "Give ONLY the final answer immediately."
+            )
+            if msgs and msgs[0].get("role") == "system":
+                msgs[0]["content"] = instruction + "\n\n" + msgs[0]["content"]
+            else:
+                msgs.insert(0, {"role": "system", "content": instruction})
+
+        logger.info(f"Thinking suppression applied ({'qwen3 /no_think' if is_qwen3 else 'text instruction'})")
+        return msgs
+
     def strip_thinking_tags(self, response: str) -> str:
         """Strip template artifacts from AI response."""
         from app.services.text_utils import strip_thinking_tags
@@ -526,34 +569,7 @@ class IPEXService:
             # Handle thinking mode for Qwen3-style models
             messages_to_use = messages
             if self.disable_thinking:
-                # For Qwen3-abliterated and similar thinking models:
-                # Add strong system instruction + modify user message to reinforce
-                model_name = self.model_path.lower()
-                if "qwen3" in model_name or "deepseek-r1" in model_name or "reasoning" in model_name:
-                    logger.info(f"Detected thinking model: {self.model_path}")
-                    logger.info("Adding instructions to suppress thinking mode")
-
-                    messages_to_use = messages.copy()
-
-                    # Add/modify system message
-                    system_instruction = (
-                        "You must respond directly without thinking tags. "
-                        "Do NOT use <think> or show reasoning. "
-                        "Give ONLY the final answer immediately."
-                    )
-
-                    if messages_to_use and messages_to_use[0].get("role") == "system":
-                        messages_to_use[0]["content"] = system_instruction + "\n\n" + messages_to_use[0]["content"]
-                    else:
-                        messages_to_use.insert(0, {"role": "system", "content": system_instruction})
-
-                    # Also reinforce in the last user message
-                    for i in range(len(messages_to_use) - 1, -1, -1):
-                        if messages_to_use[i].get("role") == "user":
-                            messages_to_use[i]["content"] += "\n(Respond directly without <think> tags)"
-                            break
-                else:
-                    logger.info(f"Thinking mode disabled (disable_thinking={self.disable_thinking})")
+                messages_to_use = self._apply_no_think(messages)
 
             logger.info(f"Generating response with max_tokens={kwargs.get('max_tokens', self.num_predict)}, stop={stop}")
 
@@ -755,27 +771,7 @@ class IPEXService:
         # Handle thinking mode for Qwen3-style models (same as non-streaming)
         messages_to_use = messages
         if self.disable_thinking:
-            model_name_lower = self.model_path.lower()
-            if "qwen3" in model_name_lower or "deepseek-r1" in model_name_lower or "reasoning" in model_name_lower:
-                messages_to_use = messages.copy()
-
-                # Add/modify system message
-                system_instruction = (
-                    "You must respond directly without thinking tags. "
-                    "Do NOT use <think> or show reasoning. "
-                    "Give ONLY the final answer immediately."
-                )
-
-                if messages_to_use and messages_to_use[0].get("role") == "system":
-                    messages_to_use[0]["content"] = system_instruction + "\n\n" + messages_to_use[0]["content"]
-                else:
-                    messages_to_use.insert(0, {"role": "system", "content": system_instruction})
-
-                # Reinforce in last user message
-                for i in range(len(messages_to_use) - 1, -1, -1):
-                    if messages_to_use[i].get("role") == "user":
-                        messages_to_use[i]["content"] += "\n(Respond directly without <think> tags)"
-                        break
+            messages_to_use = self._apply_no_think(messages)
 
         # Acquire shared GPU/CPU lock to prevent LLM and image from running simultaneously
         from app.services.locks import GPUResourceLock
@@ -930,27 +926,7 @@ class IPEXService:
             # Handle thinking mode for Qwen3-style models (same as non-streaming)
             messages_to_use = messages
             if self.disable_thinking:
-                model_name_lower = self.model_path.lower()
-                if "qwen3" in model_name_lower or "deepseek-r1" in model_name_lower or "reasoning" in model_name_lower:
-                    messages_to_use = messages.copy()
-
-                    # Add/modify system message
-                    system_instruction = (
-                        "You must respond directly without thinking tags. "
-                        "Do NOT use <think> or show reasoning. "
-                        "Give ONLY the final answer immediately."
-                    )
-
-                    if messages_to_use and messages_to_use[0].get("role") == "system":
-                        messages_to_use[0]["content"] = system_instruction + "\n\n" + messages_to_use[0]["content"]
-                    else:
-                        messages_to_use.insert(0, {"role": "system", "content": system_instruction})
-
-                    # Reinforce in last user message
-                    for i in range(len(messages_to_use) - 1, -1, -1):
-                        if messages_to_use[i].get("role") == "user":
-                            messages_to_use[i]["content"] += "\n(Respond directly without <think> tags)"
-                            break
+                messages_to_use = self._apply_no_think(messages)
 
             try:
                 if self._is_gguf:
