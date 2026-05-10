@@ -464,7 +464,9 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
                 # Start streaming in background thread
                 _stream_executor.submit(run_streaming)
 
-                # Stream content directly (thinking tags will be stripped on save)
+                # Stream with thinking tag filtering (same logic as load balancer path)
+                buffer = ""
+                thinking_done = False
                 while True:
                     content = await queue.get()
                     if content is None:
@@ -474,7 +476,30 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
                         yield content
                         return
 
-                    yield content
+                    if not thinking_done:
+                        buffer += content
+                        match = THINKING_CLOSE_PATTERN.search(buffer)
+                        if match:
+                            thinking_done = True
+                            after_think = buffer[match.end():]
+                            buffer = ""
+                            if after_think.strip():
+                                yield after_think
+                        elif len(buffer) >= 50 and not has_thinking_open(buffer):
+                            thinking_done = True
+                            yield buffer
+                            buffer = ""
+                        elif len(buffer) >= 10 and not has_thinking_open(buffer):
+                            thinking_done = True
+                            yield buffer
+                            buffer = ""
+                    else:
+                        yield content
+
+                if buffer:
+                    clean = self.strip_thinking_tags(buffer)
+                    if clean:
+                        yield clean
             else:
                 # Fallback to SSE parsing for Ollama - with thinking tag filtering
                 buffer = ""

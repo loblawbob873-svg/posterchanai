@@ -15,6 +15,13 @@ THINKING_TAGS = [
 # Prefixes for detecting opening tags (covers all variants above)
 THINKING_OPEN_PREFIXES = ('<think', '<thought', '<reasoning', '<internal')
 
+# Plain-text thinking section headers used by some fine-tuned models instead of XML tags
+# e.g. "**Thinking Process:**\n..." or "Thinking:\n..."
+_THINKING_HEADER_RE = re.compile(
+    r'^[\s*]*(?:thinking\s+process|thinking|reasoning\s+process|internal\s+thought)[\s*]*:',
+    re.IGNORECASE | re.MULTILINE
+)
+
 # Compiled regex for detecting closing tags
 THINKING_CLOSE_PATTERN = re.compile(
     r'</(?:think(?:ing)?|thought|reasoning|internal[_-]?thought)>',
@@ -23,9 +30,11 @@ THINKING_CLOSE_PATTERN = re.compile(
 
 
 def has_thinking_open(text: str) -> bool:
-    """Check if text contains any thinking tag opening"""
+    """Check if text contains any thinking tag opening or plain-text thinking header"""
     lower = text.lower()
-    return any(prefix in lower for prefix in THINKING_OPEN_PREFIXES)
+    if any(prefix in lower for prefix in THINKING_OPEN_PREFIXES):
+        return True
+    return bool(_THINKING_HEADER_RE.search(text))
 
 
 def find_thinking_open(text: str):
@@ -68,6 +77,22 @@ def strip_thinking_tags(response: str) -> str:
     cleaned = re.sub(r'<thought[^>]*>[\s\S]*$', '', cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r'<reasoning[^>]*>[\s\S]*$', '', cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r'<internal[_-]?thought[^>]*>[\s\S]*$', '', cleaned, flags=re.IGNORECASE)
+
+    # Strip plain-text thinking sections used by some uncensored fine-tunes:
+    # "**Thinking Process:**\n...\n\n**Response:**\n..." → keep only the Response section
+    # Also handles: "Thinking:\n...\n\nActual response"
+    response_header = re.compile(
+        r'\*{0,2}(?:response|answer|reply|output)\*{0,2}\s*:\s*\n',
+        re.IGNORECASE
+    )
+    if _THINKING_HEADER_RE.search(cleaned):
+        m = response_header.search(cleaned)
+        if m:
+            cleaned = cleaned[m.end():]
+        else:
+            # No explicit response header — strip from "Thinking Process:" to first double newline
+            cleaned = _THINKING_HEADER_RE.sub('', cleaned)
+            cleaned = re.sub(r'^.+\n', '', cleaned)  # drop the first (header) line
 
     result = cleaned.strip()
 
