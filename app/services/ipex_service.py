@@ -361,7 +361,14 @@ class IPEXService:
                     last_error = None
                     model_loaded = False
                     _model_name_lower = os.path.basename(self.model_path).lower()
-                    _chat_format = "mistral-instruct" if "mistral" in _model_name_lower else None
+                    if "mistral" in _model_name_lower:
+                        _chat_format = "mistral-instruct"
+                    elif "qwen3" in _model_name_lower or "qwen3.5" in _model_name_lower:
+                        # Force chatml format to bypass the embedded Jinja2 template which
+                        # always prepends <think> blocks before assistant turns.
+                        _chat_format = "chatml"
+                    else:
+                        _chat_format = None
 
                     for attempt_ctx in context_sizes_to_try:
                         try:
@@ -541,6 +548,30 @@ class IPEXService:
 
         return filtered
 
+    def _build_no_think_prompt(self, messages: List[Dict[str, Any]]) -> str:
+        """Build a raw ChatML prompt with an empty <think> block pre-filled.
+
+        This causes the model to generate the actual response immediately after
+        </think> instead of spending tokens on its own reasoning phase.
+        """
+        parts = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                text_parts = []
+                for p in content:
+                    if isinstance(p, dict) and p.get("type") == "text":
+                        text_parts.append(p.get("text", ""))
+                content = " ".join(text_parts)
+            # Remove /no_think from user message — it was for the template, not the model
+            if role == "user":
+                content = content.replace(" /no_think", "").replace("\n/no_think", "").strip()
+            parts.append(f"<|im_start|>{role}\n{content}<|im_end|>")
+        # Prefill the assistant turn past an empty think block
+        parts.append("<|im_start|>assistant\n<think>\n\n</think>\n\n")
+        return "\n".join(parts)
+
     def _generate_response(self, messages: List[Dict[str, Any]], **kwargs) -> str:
         """Generate a response synchronously with retry for transient errors"""
         try:
@@ -567,6 +598,33 @@ class IPEXService:
                 stop.extend(["[INST]", "[/INST]", "<|im_end|>", "<|im_start|>"])
 
             # Handle thinking mode for Qwen3-style models
+            is_qwen3_thinker = "qwen3" in os.path.basename(self.model_path).lower()
+            if self.disable_thinking and is_qwen3_thinker:
+                # Prefill the assistant turn past an empty think block so the model
+                # generates the answer directly without spending tokens on reasoning.
+                raw_prompt = self._build_no_think_prompt(messages)
+                logger.info(f"Generating response (no-think prefill) with max_tokens={kwargs.get('max_tokens', self.num_predict)}")
+                for attempt in range(max_retries + 1):
+                    try:
+                        result = self._model.create_completion(
+                            prompt=raw_prompt,
+                            max_tokens=kwargs.get("max_tokens", self.num_predict),
+                            temperature=kwargs.get("temperature", self.temperature),
+                            top_p=kwargs.get("top_p", self.top_p),
+                            top_k=kwargs.get("top_k", self.top_k),
+                            repeat_penalty=kwargs.get("repeat_penalty", self.repeat_penalty),
+                            stop=stop if stop else None,
+                        )
+                        content = result["choices"][0]["text"]
+                        return self.strip_thinking_tags(content)
+                    except IndexError as e:
+                        last_error = e
+                        if attempt < max_retries:
+                            logger.warning(f"Inference IndexError (attempt {attempt + 1}/{max_retries + 1}): {e}, retrying...")
+                            continue
+                        raise
+                raise last_error
+
             messages_to_use = messages
             if self.disable_thinking:
                 messages_to_use = self._apply_no_think(messages)
@@ -770,9 +828,14 @@ class IPEXService:
             stop.extend(["[INST]", "[/INST]", "<|im_end|>", "<|im_start|>"])
 
         # Handle thinking mode for Qwen3-style models (same as non-streaming)
-        messages_to_use = messages
-        if self.disable_thinking:
+        is_qwen3_thinker = "qwen3" in os.path.basename(self.model_path).lower()
+        use_no_think_prefill = self.disable_thinking and is_qwen3_thinker
+        if use_no_think_prefill:
+            raw_prompt_for_stream = self._build_no_think_prompt(messages)
+        elif self.disable_thinking:
             messages_to_use = self._apply_no_think(messages)
+        else:
+            messages_to_use = messages
 
         # Acquire shared GPU/CPU lock to prevent LLM and image from running simultaneously
         from app.services.locks import GPUResourceLock
@@ -784,18 +847,34 @@ class IPEXService:
                         try:
                             if self._is_gguf:
                                 # Use llama.cpp streaming for GGUF
-                                for chunk in self._model.create_chat_completion(
-                                    messages=messages_to_use,
-                                    max_tokens=kwargs.get("max_tokens", self.num_predict),
-                                    temperature=kwargs.get("temperature", self.temperature),
-                                    top_p=kwargs.get("top_p", self.top_p),
-                                    top_k=kwargs.get("top_k", self.top_k),
-                                    repeat_penalty=kwargs.get("repeat_penalty", self.repeat_penalty),
-                                    stop=stop if stop else None,
-                                    stream=True,
-                                ):
-                                    delta = chunk.get("choices", [{}])[0].get("delta", {})
-                                    content = delta.get("content", "")
+                                if use_no_think_prefill:
+                                    stream_iter = self._model.create_completion(
+                                        prompt=raw_prompt_for_stream,
+                                        max_tokens=kwargs.get("max_tokens", self.num_predict),
+                                        temperature=kwargs.get("temperature", self.temperature),
+                                        top_p=kwargs.get("top_p", self.top_p),
+                                        top_k=kwargs.get("top_k", self.top_k),
+                                        repeat_penalty=kwargs.get("repeat_penalty", self.repeat_penalty),
+                                        stop=stop if stop else None,
+                                        stream=True,
+                                    )
+                                    def get_content(chunk):
+                                        return chunk.get("choices", [{}])[0].get("text", "")
+                                else:
+                                    stream_iter = self._model.create_chat_completion(
+                                        messages=messages_to_use,
+                                        max_tokens=kwargs.get("max_tokens", self.num_predict),
+                                        temperature=kwargs.get("temperature", self.temperature),
+                                        top_p=kwargs.get("top_p", self.top_p),
+                                        top_k=kwargs.get("top_k", self.top_k),
+                                        repeat_penalty=kwargs.get("repeat_penalty", self.repeat_penalty),
+                                        stop=stop if stop else None,
+                                        stream=True,
+                                    )
+                                    def get_content(chunk):
+                                        return chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                                for chunk in stream_iter:
+                                    content = get_content(chunk)
                                     if content:
                                         sse_chunk = {
                                             "id": completion_id,
@@ -925,33 +1004,45 @@ class IPEXService:
             logger.info(f"[STREAM-{request_id}] Processing started")
 
             # Handle thinking mode for Qwen3-style models (same as non-streaming)
-            messages_to_use = messages
-            if self.disable_thinking:
+            _ml2 = os.path.basename(self.model_path).lower()
+            is_qwen3_thinker2 = "qwen3" in _ml2
+            use_no_think_prefill2 = self.disable_thinking and is_qwen3_thinker2
+            if use_no_think_prefill2:
+                raw_prompt_stream2 = self._build_no_think_prompt(messages)
+                messages_to_use = messages  # unused but keep for else branch
+            elif self.disable_thinking:
                 messages_to_use = self._apply_no_think(messages)
+            else:
+                messages_to_use = messages
 
             try:
                 if self._is_gguf:
                     # Build stop sequences using full tokens only.
                     stop = list(kwargs.get("stop", []) or [])
-                    _ml = os.path.basename(self.model_path).lower()
-                    if "mistral" in _ml:
+                    if "mistral" in _ml2:
                         stop.extend(["[INST]", "[/INST]", "</s>"])
                     else:
                         stop.extend(["[INST]", "[/INST]", "<|im_end|>", "<|im_start|>"])
 
                     # Use llama.cpp streaming for GGUF with error recovery
                     last_token_time = time.time()
+                    _gguf_kwargs = dict(
+                        max_tokens=kwargs.get("max_tokens", self.num_predict),
+                        temperature=kwargs.get("temperature", self.temperature),
+                        top_p=kwargs.get("top_p", self.top_p),
+                        top_k=kwargs.get("top_k", self.top_k),
+                        repeat_penalty=kwargs.get("repeat_penalty", self.repeat_penalty),
+                        stop=stop if stop else None,
+                        stream=True,
+                    )
                     try:
-                        for chunk in self._model.create_chat_completion(
-                            messages=messages_to_use,
-                            max_tokens=kwargs.get("max_tokens", self.num_predict),
-                            temperature=kwargs.get("temperature", self.temperature),
-                            top_p=kwargs.get("top_p", self.top_p),
-                            top_k=kwargs.get("top_k", self.top_k),
-                            repeat_penalty=kwargs.get("repeat_penalty", self.repeat_penalty),
-                            stop=stop if stop else None,
-                            stream=True,
-                        ):
+                        if use_no_think_prefill2:
+                            _stream2 = self._model.create_completion(prompt=raw_prompt_stream2, **_gguf_kwargs)
+                            def _get_tok2(c): return c.get("choices", [{}])[0].get("text", "")
+                        else:
+                            _stream2 = self._model.create_chat_completion(messages=messages_to_use, **_gguf_kwargs)
+                            def _get_tok2(c): return c.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                        for chunk in _stream2:
                             # Check for timeout between tokens
                             current_time = time.time()
                             if current_time - last_token_time > token_timeout:
@@ -960,8 +1051,7 @@ class IPEXService:
                                 return
                             last_token_time = current_time
 
-                            delta = chunk.get("choices", [{}])[0].get("delta", {})
-                            content = delta.get("content", "")
+                            content = _get_tok2(chunk)
                             if content:
                                 yield content
                     except Exception as stream_error:

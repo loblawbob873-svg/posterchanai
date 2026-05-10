@@ -32,6 +32,32 @@ THINKING_CLOSE_PATTERN = re.compile(
 )
 
 
+def inject_no_think(messages: list[dict]) -> list[dict]:
+    """Append /no_think to the last user message to disable Qwen3 thinking mode.
+
+    Qwen3 models only respect /no_think when it appears in the user turn, not
+    just the system prompt.  This is safe to call unconditionally — non-Qwen3
+    models will simply treat it as trailing text.
+    """
+    messages = [dict(m) for m in messages]
+    for i in reversed(range(len(messages))):
+        if messages[i].get("role") == "user":
+            content = messages[i].get("content", "")
+            if isinstance(content, str):
+                if "/no_think" not in content:
+                    messages[i]["content"] = content.rstrip() + " /no_think"
+            elif isinstance(content, list):
+                for j in reversed(range(len(content))):
+                    part = content[j]
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        text = part.get("text", "")
+                        if "/no_think" not in text:
+                            content[j] = {**part, "text": text.rstrip() + " /no_think"}
+                        break
+            break
+    return messages
+
+
 def has_thinking_open(text: str) -> bool:
     """Check if text contains any thinking tag opening or plain-text thinking header"""
     lower = text.lower()
