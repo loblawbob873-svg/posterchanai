@@ -96,15 +96,24 @@ def strip_thinking_tags(response: str) -> str:
         else:
             # No explicit response header.
             # This model embeds the response inside the thinking as a bullet:
-            #   "-   Response: \"Hello!\""  or  "- Final Response: \"Hi\""
-            # Try to extract that bullet's content first.
-            bullet_response = re.search(
-                r'[-*]\s+(?:final\s+)?(?:response|answer|reply)\s*:\s*["“]?(.+?)["”]?\s*(?:\([^)]*\))?\s*$',
-                cleaned,
-                re.IGNORECASE | re.MULTILINE
+            #   '-   Response: “Hello!”'  or  '- Final Response: Hi there!'
+            # Try quoted form first, then unquoted.
+            _bullet_re = re.compile(
+                r'[-*]\s+(?:final\s+)?(?:response|answer|reply)\s*:\s*',
+                re.IGNORECASE
             )
-            if bullet_response:
-                cleaned = bullet_response.group(1).strip().strip('"“”')
+            bullet_m = _bullet_re.search(cleaned)
+            if bullet_m:
+                after = cleaned[bullet_m.end():]
+                # Quoted: grab content between first pair of double-quotes
+                quoted = re.match(r'”([^”]+)”', after)
+                if quoted:
+                    cleaned = quoted.group(1).strip()
+                else:
+                    # Unquoted: take rest of line, strip trailing parenthetical comment
+                    line = after.split('\n')[0]
+                    line = re.sub(r'\s*\([^)]*\)\s*$', '', line)
+                    cleaned = line.strip().strip('”')
             else:
                 # Fall back: discard all thinking paragraphs, keep clean non-indented ones
                 paragraphs = re.split(r'\n\n+', cleaned)
