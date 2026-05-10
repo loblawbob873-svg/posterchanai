@@ -239,7 +239,7 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
 
             # Inject /no_think for Qwen3 thinking models
             _llm_path = self._settings.get("llm_model_path", "").lower()
-            if "qwen3" in _llm_path or "qwen" in _llm_path:
+            if "qwen3" in _llm_path:
                 from app.services.text_utils import inject_no_think
                 messages = inject_no_think(messages)
 
@@ -315,7 +315,7 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
 
             # Inject /no_think for Qwen3 thinking models
             _llm_path = self._settings.get("llm_model_path", "").lower()
-            if "qwen3" in _llm_path or "qwen" in _llm_path:
+            if "qwen3" in _llm_path:
                 from app.services.text_utils import inject_no_think
                 messages = inject_no_think(messages)
 

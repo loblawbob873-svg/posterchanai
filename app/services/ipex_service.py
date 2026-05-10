@@ -363,7 +363,7 @@ class IPEXService:
                     _model_name_lower = os.path.basename(self.model_path).lower()
                     if "mistral" in _model_name_lower:
                         _chat_format = "mistral-instruct"
-                    elif "qwen3" in _model_name_lower or "qwen3.5" in _model_name_lower:
+                    elif "qwen3" in _model_name_lower:
                         # Force chatml format to bypass the embedded Jinja2 template which
                         # always prepends <think> blocks before assistant turns.
                         _chat_format = "chatml"
@@ -1004,12 +1004,11 @@ class IPEXService:
             logger.info(f"[STREAM-{request_id}] Processing started")
 
             # Handle thinking mode for Qwen3-style models (same as non-streaming)
-            _ml2 = os.path.basename(self.model_path).lower()
-            is_qwen3_thinker2 = "qwen3" in _ml2
-            use_no_think_prefill2 = self.disable_thinking and is_qwen3_thinker2
-            if use_no_think_prefill2:
-                raw_prompt_stream2 = self._build_no_think_prompt(messages)
-                messages_to_use = messages  # unused but keep for else branch
+            _model_lower = os.path.basename(self.model_path).lower()
+            use_no_think_prefill = self.disable_thinking and "qwen3" in _model_lower
+            if use_no_think_prefill:
+                no_think_raw_prompt = self._build_no_think_prompt(messages)
+                messages_to_use = messages
             elif self.disable_thinking:
                 messages_to_use = self._apply_no_think(messages)
             else:
@@ -1019,7 +1018,7 @@ class IPEXService:
                 if self._is_gguf:
                     # Build stop sequences using full tokens only.
                     stop = list(kwargs.get("stop", []) or [])
-                    if "mistral" in _ml2:
+                    if "mistral" in _model_lower:
                         stop.extend(["[INST]", "[/INST]", "</s>"])
                     else:
                         stop.extend(["[INST]", "[/INST]", "<|im_end|>", "<|im_start|>"])
@@ -1036,13 +1035,13 @@ class IPEXService:
                         stream=True,
                     )
                     try:
-                        if use_no_think_prefill2:
-                            _stream2 = self._model.create_completion(prompt=raw_prompt_stream2, **_gguf_kwargs)
-                            def _get_tok2(c): return c.get("choices", [{}])[0].get("text", "")
+                        if use_no_think_prefill:
+                            _stream = self._model.create_completion(prompt=no_think_raw_prompt, **_gguf_kwargs)
+                            def _get_tok(c): return c.get("choices", [{}])[0].get("text", "")
                         else:
-                            _stream2 = self._model.create_chat_completion(messages=messages_to_use, **_gguf_kwargs)
-                            def _get_tok2(c): return c.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                        for chunk in _stream2:
+                            _stream = self._model.create_chat_completion(messages=messages_to_use, **_gguf_kwargs)
+                            def _get_tok(c): return c.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                        for chunk in _stream:
                             # Check for timeout between tokens
                             current_time = time.time()
                             if current_time - last_token_time > token_timeout:
@@ -1051,7 +1050,7 @@ class IPEXService:
                                 return
                             last_token_time = current_time
 
-                            content = _get_tok2(chunk)
+                            content = _get_tok(chunk)
                             if content:
                                 yield content
                     except Exception as stream_error:
