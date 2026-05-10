@@ -1,5 +1,8 @@
 """Shared text processing utilities."""
+import logging
 import re
+
+_log = logging.getLogger(__name__)
 
 # Thinking tag definitions - single source of truth for all tag variants
 # Used by streaming filters in chat.py, chat_service.py, and strip_thinking_tags()
@@ -90,9 +93,24 @@ def strip_thinking_tags(response: str) -> str:
         if m:
             cleaned = cleaned[m.end():]
         else:
-            # No explicit response header — strip from "Thinking Process:" to first double newline
-            cleaned = _THINKING_HEADER_RE.sub('', cleaned)
-            cleaned = re.sub(r'^.+\n', '', cleaned)  # drop the first (header) line
+            # No explicit response header.
+            # Model outputs: "Thinking Process:\n\n1.  **Step:**...\n2.  **Step:**...\n\nResponse"
+            # Split on double-newlines and discard:
+            #   - the thinking header paragraph
+            #   - any paragraph whose first line is a numbered bold step ("1.  **...")
+            paragraphs = re.split(r'\n\n+', cleaned)
+            response_paras = []
+            for para in paragraphs:
+                stripped = para.strip()
+                if not stripped:
+                    continue
+                if _THINKING_HEADER_RE.match(stripped):
+                    continue
+                # Numbered bold thinking steps: "1.  **Step name:**..."
+                if re.match(r'\d+\.\s+\*\*', stripped):
+                    continue
+                response_paras.append(para)
+            cleaned = '\n\n'.join(response_paras)
 
     result = cleaned.strip()
 

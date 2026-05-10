@@ -585,7 +585,10 @@ class IPEXService:
                         stop=stop if stop else None,
                     )
                     content = response["choices"][0]["message"]["content"]
-                    return self.strip_thinking_tags(content)
+                    logger.info(f"[RAW] first 300 chars: {repr(content[:300])}")
+                    stripped = self.strip_thinking_tags(content)
+                    logger.info(f"[STRIPPED] first 300 chars: {repr(stripped[:300])}")
+                    return stripped
                 except IndexError as e:
                     # Handle transient "index out of bounds" errors in llama-cpp-python
                     last_error = e
