@@ -91,38 +91,39 @@ def strip_thinking_tags(response: str) -> str:
     if _THINKING_HEADER_RE.search(cleaned):
         m = response_header.search(cleaned)
         if m:
+            # Explicit "**Response:**\n" section found — take everything after it
             cleaned = cleaned[m.end():]
         else:
             # No explicit response header.
-            # Model outputs:
-            #   "Thinking Process:\n\n1.  **Step:**...\n2.  **Step:**...\n\n    continuation\n\nResponse"
-            # Split on double-newlines and discard thinking paragraphs:
-            #   - the thinking header paragraph
-            #   - numbered bold steps ("1.  **...")
-            #   - indented continuation paragraphs (leading spaces = part of a thinking step)
-            #   - bullet-point paragraphs within thinking ("-   ..." / "*   ...")
-            paragraphs = re.split(r'\n\n+', cleaned)
-            response_paras = []
-            for para in paragraphs:
-                if not para.strip():
-                    continue
-                # Use first non-empty line *before* stripping to preserve indentation info
-                first_line = next((l for l in para.split('\n') if l.strip()), '')
-                stripped_first = first_line.strip()
-                # Thinking header
-                if _THINKING_HEADER_RE.match(stripped_first):
-                    continue
-                # Numbered bold thinking steps: "1.  **Step name:**..."
-                if re.match(r'\d+\.\s+\*\*', stripped_first):
-                    continue
-                # Indented paragraphs — continuation of a thinking step
-                if first_line != first_line.lstrip():
-                    continue
-                # Bullet-point paragraphs within thinking
-                if re.match(r'[-*]\s+', stripped_first):
-                    continue
-                response_paras.append(para)
-            cleaned = '\n\n'.join(response_paras)
+            # This model embeds the response inside the thinking as a bullet:
+            #   "-   Response: \"Hello!\""  or  "- Final Response: \"Hi\""
+            # Try to extract that bullet's content first.
+            bullet_response = re.search(
+                r'[-*]\s+(?:final\s+)?(?:response|answer|reply)\s*:\s*["“]?(.+?)["”]?\s*(?:\([^)]*\))?\s*$',
+                cleaned,
+                re.IGNORECASE | re.MULTILINE
+            )
+            if bullet_response:
+                cleaned = bullet_response.group(1).strip().strip('"“”')
+            else:
+                # Fall back: discard all thinking paragraphs, keep clean non-indented ones
+                paragraphs = re.split(r'\n\n+', cleaned)
+                response_paras = []
+                for para in paragraphs:
+                    if not para.strip():
+                        continue
+                    first_line = next((l for l in para.split('\n') if l.strip()), '')
+                    stripped_first = first_line.strip()
+                    if _THINKING_HEADER_RE.match(stripped_first):
+                        continue
+                    if re.match(r'\d+\.\s+\*\*', stripped_first):
+                        continue
+                    if first_line != first_line.lstrip():
+                        continue
+                    if re.match(r'[-*]\s+', stripped_first):
+                        continue
+                    response_paras.append(para)
+                cleaned = '\n\n'.join(response_paras)
 
     result = cleaned.strip()
 
