@@ -2023,7 +2023,8 @@ async def _handle_telegram_update(update: dict, db: Session):
                         db.add(Message(conversation_id=tg_conv.id, role="user", content=text))
                         bot_reply = result.get("content", "")
                         APOLOGY = "I apologize, I wasn't able to generate a proper response. Please try again."
-                        if bot_reply and bot_reply != APOLOGY:
+                        # Don't save errors or apologies — they corrupt future conversation context
+                        if bot_reply and bot_reply != APOLOGY and not bot_reply.startswith("Error:") and not bot_reply.startswith("Sorry,"):
                             db.add(Message(conversation_id=tg_conv.id, role="assistant", content=bot_reply))
                         tg_conv.updated_at = datetime.utcnow()
                         db.commit()
