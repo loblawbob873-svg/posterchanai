@@ -231,7 +231,7 @@ class IPEXService:
         # Context and generation settings
         # Only update num_ctx if model not loaded yet (preserve actual loaded value)
         configured_num_ctx = int(get_setting("ollama_num_ctx", "4096"))
-        logger.info(f"[IPEX] _load_settings: configured_num_ctx={configured_num_ctx}, _model is None: {self._model is None}")
+        logger.debug(f"[IPEX] _load_settings: configured_num_ctx={configured_num_ctx}, model_loaded={self._model is not None}")
         
         # Only update num_ctx when model not loaded (avoid triggering reloads)
         if self._model is None:
@@ -364,9 +364,6 @@ class IPEXService:
                     if "mistral" in _model_name_lower:
                         _chat_format = "mistral-instruct"
                     elif "qwen3" in _model_name_lower:
-                        # Use chatml format. The prefill approach (_build_no_think_prompt) is
-                        # combined with a token-ID stopping_criteria to stop on <|im_end|>
-                        # without relying on string matching (broken on Arc SYCL builds).
                         _chat_format = "chatml"
                     else:
                         _chat_format = None
@@ -586,7 +583,6 @@ class IPEXService:
         if self._is_gguf:
             # Use llama.cpp API for GGUF models with retry for transient errors
             max_retries = 2
-            last_error = None
 
             # Build stop sequences using full tokens only.
             # Bare "INST" or "/INST" match substrings ("instructions", etc.) and
@@ -639,7 +635,6 @@ class IPEXService:
                                 break
                         return self.strip_thinking_tags(content)
                     except IndexError as e:
-                        last_error = e
                         if attempt < max_retries:
                             logger.warning(f"Inference IndexError (attempt {attempt + 1}/{max_retries + 1}): {e}, retrying...")
                             continue
@@ -667,13 +662,11 @@ class IPEXService:
                     return stripped
                 except IndexError as e:
                     # Handle transient "index out of bounds" errors in llama-cpp-python
-                    last_error = e
                     if attempt < max_retries:
                         logger.warning(f"Inference IndexError (attempt {attempt + 1}/{max_retries + 1}): {e}, retrying...")
                         continue
                     raise
 
-            raise last_error
         else:
             # Use HuggingFace API
             import torch
@@ -1121,10 +1114,9 @@ class IPEXService:
                                 logger.error(f"[STREAM-{request_id}] Total inference timeout after {self.inference_timeout}s")
                                 yield "\n\n[Generation timed out]"
                                 return
-                            last_token_time = current_time
-
                             content = _get_tok(chunk)
                             if content:
+                                last_token_time = current_time
                                 # Application-level stop: catch EOS strings in case C++
                                 # string-stop is unreliable on Arc SYCL
                                 _stop_found = False
