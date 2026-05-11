@@ -364,8 +364,9 @@ class IPEXService:
                     if "mistral" in _model_name_lower:
                         _chat_format = "mistral-instruct"
                     elif "qwen3" in _model_name_lower:
-                        # Force chatml format to bypass the embedded Jinja2 template which
-                        # always prepends <think> blocks before assistant turns.
+                        # Use chatml format. The prefill approach (_build_no_think_prompt) is
+                        # combined with a token-ID stopping_criteria to stop on <|im_end|>
+                        # without relying on string matching (broken on Arc SYCL builds).
                         _chat_format = "chatml"
                     else:
                         _chat_format = None
@@ -600,40 +601,43 @@ class IPEXService:
             # Handle thinking mode for Qwen3-style models
             is_qwen3_thinker = "qwen3" in os.path.basename(self.model_path).lower()
             if self.disable_thinking and is_qwen3_thinker:
-                # Prefill the assistant turn past an empty think block so the model
-                # generates the answer directly without spending tokens on reasoning.
+                # Prefill the assistant turn past an empty <think></think> block so the model
+                # generates the answer directly.
                 #
-                # Arc's SYCL llama-cpp-python build does not reliably honour stop strings
-                # in create_completion (special tokens like <|im_end|> are never matched).
-                # Work around this by streaming internally and checking stop strings ourselves.
+                # Arc's SYCL build does not stop on string "<|im_end|>" via create_completion's
+                # stop parameter (C++ string matching is broken). Work around this with a
+                # Python-level stopping_criteria that checks the token ID directly — this runs
+                # after each token regardless of GPU backend.
+                from llama_cpp import StoppingCriteriaList
+                _eos_id = self._model.token_eos()
+                def _stop_on_eos(tokens, logits, _eos=_eos_id):
+                    return len(tokens) > 0 and tokens[-1] == _eos
+                _sc = StoppingCriteriaList([_stop_on_eos])
+
                 raw_prompt = self._build_no_think_prompt(messages)
                 _max_tok = kwargs.get("max_tokens", self.num_predict)
-                _stop_strings = [s for s in stop if s]
-                logger.info(f"Generating response (no-think prefill) with max_tokens={_max_tok}")
-                collected = ""
-                try:
-                    for _chunk in self._model.create_completion(
-                        prompt=raw_prompt,
-                        max_tokens=_max_tok,
-                        temperature=kwargs.get("temperature", self.temperature),
-                        top_p=kwargs.get("top_p", self.top_p),
-                        top_k=kwargs.get("top_k", self.top_k),
-                        repeat_penalty=kwargs.get("repeat_penalty", self.repeat_penalty),
-                        stop=None,
-                        stream=True,
-                    ):
-                        token_text = _chunk["choices"][0]["text"]
-                        collected += token_text
-                        if _stop_strings and any(s in collected for s in _stop_strings):
-                            for s in _stop_strings:
-                                idx = collected.find(s)
-                                if idx != -1:
-                                    collected = collected[:idx]
-                            break
-                except IndexError as e:
-                    if not collected:
+                logger.info(f"Generating response (no-think prefill, stopping_criteria EOS={_eos_id}) with max_tokens={_max_tok}")
+                for attempt in range(max_retries + 1):
+                    try:
+                        result = self._model.create_completion(
+                            prompt=raw_prompt,
+                            max_tokens=_max_tok,
+                            temperature=kwargs.get("temperature", self.temperature),
+                            top_p=kwargs.get("top_p", self.top_p),
+                            top_k=kwargs.get("top_k", self.top_k),
+                            repeat_penalty=kwargs.get("repeat_penalty", self.repeat_penalty),
+                            stop=stop if stop else None,
+                            stopping_criteria=_sc,
+                        )
+                        content = result["choices"][0]["text"]
+                        return self.strip_thinking_tags(content)
+                    except IndexError as e:
+                        last_error = e
+                        if attempt < max_retries:
+                            logger.warning(f"Inference IndexError (attempt {attempt + 1}/{max_retries + 1}): {e}, retrying...")
+                            continue
                         raise
-                return self.strip_thinking_tags(collected)
+                raise last_error
 
             messages_to_use = messages
             if self.disable_thinking:
@@ -839,9 +843,9 @@ class IPEXService:
 
         # Handle thinking mode for Qwen3-style models (same as non-streaming)
         is_qwen3_thinker = "qwen3" in os.path.basename(self.model_path).lower()
-        use_no_think_prefill = self.disable_thinking and is_qwen3_thinker
-        if use_no_think_prefill:
-            raw_prompt_for_stream = self._build_no_think_prompt(messages)
+        use_no_think_handler = self.disable_thinking and is_qwen3_thinker
+        if use_no_think_handler:
+            messages_to_use = messages  # handler receives unmodified messages
         elif self.disable_thinking:
             messages_to_use = self._apply_no_think(messages)
         else:
@@ -857,19 +861,30 @@ class IPEXService:
                         try:
                             if self._is_gguf:
                                 # Use llama.cpp streaming for GGUF
-                                if use_no_think_prefill:
-                                    stream_iter = self._model.create_completion(
-                                        prompt=raw_prompt_for_stream,
-                                        max_tokens=kwargs.get("max_tokens", self.num_predict),
+                                if use_no_think_handler:
+                                    # Use the Jinja2 handler with enable_thinking=False so the
+                                    # template injects an empty think block and token-ID-based
+                                    # stopping_criteria are used (works on Arc's SYCL build).
+                                    from llama_cpp import llama_chat_format as _lcf
+                                    _handler = (
+                                        self._model.chat_handler
+                                        or self._model._chat_handlers.get(self._model.chat_format)
+                                        or _lcf.get_chat_completion_handler(self._model.chat_format)
+                                    )
+                                    stream_iter = _handler(
+                                        llama=self._model,
+                                        messages=messages_to_use,
                                         temperature=kwargs.get("temperature", self.temperature),
                                         top_p=kwargs.get("top_p", self.top_p),
                                         top_k=kwargs.get("top_k", self.top_k),
                                         repeat_penalty=kwargs.get("repeat_penalty", self.repeat_penalty),
-                                        stop=None,  # manual stop below
+                                        max_tokens=kwargs.get("max_tokens", self.num_predict),
+                                        stop=stop if stop else [],
                                         stream=True,
+                                        enable_thinking=False,
                                     )
                                     def get_content(chunk):
-                                        return chunk.get("choices", [{}])[0].get("text", "")
+                                        return chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
                                 else:
                                     stream_iter = self._model.create_chat_completion(
                                         messages=messages_to_use,
@@ -883,19 +898,9 @@ class IPEXService:
                                     )
                                     def get_content(chunk):
                                         return chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                                _stream_buf = ""
                                 for chunk in stream_iter:
                                     content = get_content(chunk)
                                     if content:
-                                        if use_no_think_prefill and stop:
-                                            _stream_buf += content
-                                            _hit = next((s for s in stop if s in _stream_buf), None)
-                                            if _hit:
-                                                content = _stream_buf[:_stream_buf.find(_hit)]
-                                                if content:
-                                                    loop.call_soon_threadsafe(queue.put_nowait, f"data: {json.dumps({'id': completion_id, 'object': 'chat.completion.chunk', 'created': created, 'model': model_name, 'choices': [{'index': 0, 'delta': {'content': content}, 'finish_reason': None}]})}\n\n")
-                                                break
-                                            _stream_buf = ""
                                         sse_chunk = {
                                             "id": completion_id,
                                             "object": "chat.completion.chunk",
@@ -1025,10 +1030,9 @@ class IPEXService:
 
             # Handle thinking mode for Qwen3-style models (same as non-streaming)
             _model_lower = os.path.basename(self.model_path).lower()
-            use_no_think_prefill = self.disable_thinking and "qwen3" in _model_lower
-            if use_no_think_prefill:
-                no_think_raw_prompt = self._build_no_think_prompt(messages)
-                messages_to_use = messages
+            use_no_think_handler = self.disable_thinking and "qwen3" in _model_lower
+            if use_no_think_handler:
+                messages_to_use = messages  # handler receives unmodified messages
             elif self.disable_thinking:
                 messages_to_use = self._apply_no_think(messages)
             else:
@@ -1045,21 +1049,32 @@ class IPEXService:
 
                     # Use llama.cpp streaming for GGUF with error recovery
                     last_token_time = time.time()
-                    # For prefill path: pass stop=None and do manual checking below,
-                    # because Arc's SYCL build doesn't match special-token stop strings.
                     _gguf_kwargs = dict(
                         max_tokens=kwargs.get("max_tokens", self.num_predict),
                         temperature=kwargs.get("temperature", self.temperature),
                         top_p=kwargs.get("top_p", self.top_p),
                         top_k=kwargs.get("top_k", self.top_k),
                         repeat_penalty=kwargs.get("repeat_penalty", self.repeat_penalty),
-                        stop=None if use_no_think_prefill else (stop if stop else None),
+                        stop=stop if stop else [],
                         stream=True,
                     )
                     try:
-                        if use_no_think_prefill:
-                            _stream = self._model.create_completion(prompt=no_think_raw_prompt, **_gguf_kwargs)
-                            def _get_tok(c): return c.get("choices", [{}])[0].get("text", "")
+                        if use_no_think_handler:
+                            # Use the Jinja2 handler with enable_thinking=False — token-ID
+                            # stopping_criteria bypass Arc's SYCL string-match bug.
+                            from llama_cpp import llama_chat_format as _lcf
+                            _handler = (
+                                self._model.chat_handler
+                                or self._model._chat_handlers.get(self._model.chat_format)
+                                or _lcf.get_chat_completion_handler(self._model.chat_format)
+                            )
+                            _stream = _handler(
+                                llama=self._model,
+                                messages=messages_to_use,
+                                enable_thinking=False,
+                                **_gguf_kwargs,
+                            )
+                            def _get_tok(c): return c.get("choices", [{}])[0].get("delta", {}).get("content", "")
                         else:
                             _stream = self._model.create_chat_completion(messages=messages_to_use, **_gguf_kwargs)
                             def _get_tok(c): return c.get("choices", [{}])[0].get("delta", {}).get("content", "")
@@ -1079,13 +1094,6 @@ class IPEXService:
 
                             content = _get_tok(chunk)
                             if content:
-                                if use_no_think_prefill and stop:
-                                    for _s in stop:
-                                        idx = content.find(_s)
-                                        if idx != -1:
-                                            if idx > 0:
-                                                yield content[:idx]
-                                            return
                                 yield content
                     except Exception as stream_error:
                         error_msg = str(stream_error)
