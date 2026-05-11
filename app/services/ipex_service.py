@@ -602,12 +602,9 @@ class IPEXService:
             is_qwen3_thinker = "qwen3" in os.path.basename(self.model_path).lower()
             if self.disable_thinking and is_qwen3_thinker:
                 # Prefill the assistant turn past an empty <think></think> block so the model
-                # generates the answer directly.
-                #
-                # Arc's SYCL build does not stop on string "<|im_end|>" via create_completion's
-                # stop parameter (C++ string matching is broken). Work around this with a
-                # Python-level stopping_criteria that checks the token ID directly — this runs
-                # after each token regardless of GPU backend.
+                # generates the answer directly without a reasoning phase.
+                # stopping_criteria provides a Python-level EOS check as belt-and-suspenders
+                # alongside the C++ stop list (which can be unreliable on some backends).
                 from llama_cpp import StoppingCriteriaList
                 _eos_id = self._model.token_eos()
                 def _stop_on_eos(tokens, logits, _eos=_eos_id):
@@ -647,7 +644,6 @@ class IPEXService:
                             logger.warning(f"Inference IndexError (attempt {attempt + 1}/{max_retries + 1}): {e}, retrying...")
                             continue
                         raise
-                raise last_error
 
             messages_to_use = messages
             if self.disable_thinking:
@@ -871,8 +867,8 @@ class IPEXService:
                     with _get_inference_semaphore(self.max_concurrent):
                         try:
                             if self._is_gguf:
-                                # Build token-ID stopping_criteria for Qwen3 (string stop is
-                                # broken on Arc SYCL; token-ID check runs in Python and works).
+                                # stopping_criteria: Python-level EOS check as belt-and-suspenders
+                                # alongside the C++ stop list.
                                 _sc = None
                                 if use_no_think_prefill:
                                     from llama_cpp import StoppingCriteriaList
@@ -1076,8 +1072,8 @@ class IPEXService:
                     else:
                         stop.extend(["[INST]", "[/INST]", "<|im_end|>", "<|im_start|>"])
 
-                    # Build token-ID stopping_criteria for Qwen3 — string stop is broken on
-                    # Arc SYCL; this Python callback fires when EOS token ID is generated.
+                    # stopping_criteria: Python-level EOS check as belt-and-suspenders
+                    # alongside the C++ stop list.
                     _sc = None
                     if use_no_think_prefill:
                         from llama_cpp import StoppingCriteriaList
@@ -1129,14 +1125,14 @@ class IPEXService:
 
                             content = _get_tok(chunk)
                             if content:
-                                # Application-level stop: check for EOS strings
+                                # Application-level stop: catch EOS strings in case C++
+                                # string-stop is unreliable on Arc SYCL
                                 _stop_found = False
                                 for _seq in ("<|im_end|>", "<|im_start|>"):
                                     _si = content.find(_seq)
                                     if _si != -1:
                                         content = content[:_si]
                                         _stop_found = True
-                                        logger.info(f"[Arc-web] app-level stop '{_seq}' at chunk#{_chunk_n}")
                                         break
                                 if content:
                                     yield content
