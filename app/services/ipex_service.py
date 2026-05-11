@@ -602,28 +602,38 @@ class IPEXService:
             if self.disable_thinking and is_qwen3_thinker:
                 # Prefill the assistant turn past an empty think block so the model
                 # generates the answer directly without spending tokens on reasoning.
+                #
+                # Arc's SYCL llama-cpp-python build does not reliably honour stop strings
+                # in create_completion (special tokens like <|im_end|> are never matched).
+                # Work around this by streaming internally and checking stop strings ourselves.
                 raw_prompt = self._build_no_think_prompt(messages)
-                logger.info(f"Generating response (no-think prefill) with max_tokens={kwargs.get('max_tokens', self.num_predict)}")
-                for attempt in range(max_retries + 1):
-                    try:
-                        result = self._model.create_completion(
-                            prompt=raw_prompt,
-                            max_tokens=kwargs.get("max_tokens", self.num_predict),
-                            temperature=kwargs.get("temperature", self.temperature),
-                            top_p=kwargs.get("top_p", self.top_p),
-                            top_k=kwargs.get("top_k", self.top_k),
-                            repeat_penalty=kwargs.get("repeat_penalty", self.repeat_penalty),
-                            stop=stop if stop else None,
-                        )
-                        content = result["choices"][0]["text"]
-                        return self.strip_thinking_tags(content)
-                    except IndexError as e:
-                        last_error = e
-                        if attempt < max_retries:
-                            logger.warning(f"Inference IndexError (attempt {attempt + 1}/{max_retries + 1}): {e}, retrying...")
-                            continue
+                _max_tok = kwargs.get("max_tokens", self.num_predict)
+                _stop_strings = [s for s in stop if s]
+                logger.info(f"Generating response (no-think prefill) with max_tokens={_max_tok}")
+                collected = ""
+                try:
+                    for _chunk in self._model.create_completion(
+                        prompt=raw_prompt,
+                        max_tokens=_max_tok,
+                        temperature=kwargs.get("temperature", self.temperature),
+                        top_p=kwargs.get("top_p", self.top_p),
+                        top_k=kwargs.get("top_k", self.top_k),
+                        repeat_penalty=kwargs.get("repeat_penalty", self.repeat_penalty),
+                        stop=None,
+                        stream=True,
+                    ):
+                        token_text = _chunk["choices"][0]["text"]
+                        collected += token_text
+                        if _stop_strings and any(s in collected for s in _stop_strings):
+                            for s in _stop_strings:
+                                idx = collected.find(s)
+                                if idx != -1:
+                                    collected = collected[:idx]
+                            break
+                except IndexError as e:
+                    if not collected:
                         raise
-                raise last_error
+                return self.strip_thinking_tags(collected)
 
             messages_to_use = messages
             if self.disable_thinking:
@@ -855,7 +865,7 @@ class IPEXService:
                                         top_p=kwargs.get("top_p", self.top_p),
                                         top_k=kwargs.get("top_k", self.top_k),
                                         repeat_penalty=kwargs.get("repeat_penalty", self.repeat_penalty),
-                                        stop=stop if stop else None,
+                                        stop=None,  # manual stop below
                                         stream=True,
                                     )
                                     def get_content(chunk):
@@ -873,9 +883,19 @@ class IPEXService:
                                     )
                                     def get_content(chunk):
                                         return chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                                _stream_buf = ""
                                 for chunk in stream_iter:
                                     content = get_content(chunk)
                                     if content:
+                                        if use_no_think_prefill and stop:
+                                            _stream_buf += content
+                                            _hit = next((s for s in stop if s in _stream_buf), None)
+                                            if _hit:
+                                                content = _stream_buf[:_stream_buf.find(_hit)]
+                                                if content:
+                                                    loop.call_soon_threadsafe(queue.put_nowait, f"data: {json.dumps({'id': completion_id, 'object': 'chat.completion.chunk', 'created': created, 'model': model_name, 'choices': [{'index': 0, 'delta': {'content': content}, 'finish_reason': None}]})}\n\n")
+                                                break
+                                            _stream_buf = ""
                                         sse_chunk = {
                                             "id": completion_id,
                                             "object": "chat.completion.chunk",
@@ -1025,13 +1045,15 @@ class IPEXService:
 
                     # Use llama.cpp streaming for GGUF with error recovery
                     last_token_time = time.time()
+                    # For prefill path: pass stop=None and do manual checking below,
+                    # because Arc's SYCL build doesn't match special-token stop strings.
                     _gguf_kwargs = dict(
                         max_tokens=kwargs.get("max_tokens", self.num_predict),
                         temperature=kwargs.get("temperature", self.temperature),
                         top_p=kwargs.get("top_p", self.top_p),
                         top_k=kwargs.get("top_k", self.top_k),
                         repeat_penalty=kwargs.get("repeat_penalty", self.repeat_penalty),
-                        stop=stop if stop else None,
+                        stop=None if use_no_think_prefill else (stop if stop else None),
                         stream=True,
                     )
                     try:
@@ -1042,16 +1064,28 @@ class IPEXService:
                             _stream = self._model.create_chat_completion(messages=messages_to_use, **_gguf_kwargs)
                             def _get_tok(c): return c.get("choices", [{}])[0].get("delta", {}).get("content", "")
                         for chunk in _stream:
-                            # Check for timeout between tokens
                             current_time = time.time()
+                            # Per-token timeout: abort if no token received for too long
                             if current_time - last_token_time > token_timeout:
                                 logger.error(f"Streaming timeout: no token in {token_timeout}s")
+                                yield "\n\n[Generation timed out]"
+                                return
+                            # Total inference timeout: abort if generation takes too long overall
+                            if current_time - start_time > self.inference_timeout:
+                                logger.error(f"[STREAM-{request_id}] Total inference timeout after {self.inference_timeout}s")
                                 yield "\n\n[Generation timed out]"
                                 return
                             last_token_time = current_time
 
                             content = _get_tok(chunk)
                             if content:
+                                if use_no_think_prefill and stop:
+                                    for _s in stop:
+                                        idx = content.find(_s)
+                                        if idx != -1:
+                                            if idx > 0:
+                                                yield content[:idx]
+                                            return
                                 yield content
                     except Exception as stream_error:
                         error_msg = str(stream_error)
