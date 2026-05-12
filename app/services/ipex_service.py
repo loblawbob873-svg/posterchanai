@@ -457,46 +457,26 @@ class IPEXService:
                     raise
 
     def _apply_no_think(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Suppress thinking for the current model.
+        """Suppress thinking for non-Qwen3 thinking models (DeepSeek-R1, etc.).
 
-        For Qwen3/3.5 GGUF: append /no_think to the last user message so the
-        chat template disables thinking at the tokenizer level (no text visible
-        to the model's reasoning, so it cannot narrate the instruction).
-
-        For other thinking models (DeepSeek-R1, etc.): inject a system-level
-        text instruction as before.
+        Qwen3 models use the no-think prefill path instead and never reach this method.
         """
         model_name = self.model_path.lower()
-        is_qwen3 = "qwen3" in model_name
-        is_other_thinker = "deepseek-r1" in model_name or "reasoning" in model_name
-
-        if not (is_qwen3 or is_other_thinker):
+        if "deepseek-r1" not in model_name and "reasoning" not in model_name:
             return messages
 
-        msgs = [dict(m) for m in messages]  # shallow copy each message
-
-        if is_qwen3:
-            # /no_think is recognized by the Qwen3/3.5 chat template at tokenization
-            # time — the model never "sees" it as content, so it cannot narrate it.
-            for i in range(len(msgs) - 1, -1, -1):
-                if msgs[i].get("role") == "user":
-                    content = msgs[i]["content"]
-                    if isinstance(content, str) and not content.rstrip().endswith("/no_think"):
-                        msgs[i]["content"] = content.rstrip() + "\n/no_think"
-                    break
+        msgs = [dict(m) for m in messages]
+        instruction = (
+            "You must respond directly without thinking tags. "
+            "Do NOT use <think> or show reasoning. "
+            "Give ONLY the final answer immediately."
+        )
+        if msgs and msgs[0].get("role") == "system":
+            msgs[0]["content"] = instruction + "\n\n" + msgs[0]["content"]
         else:
-            # Text instruction for non-Qwen3 thinking models
-            instruction = (
-                "You must respond directly without thinking tags. "
-                "Do NOT use <think> or show reasoning. "
-                "Give ONLY the final answer immediately."
-            )
-            if msgs and msgs[0].get("role") == "system":
-                msgs[0]["content"] = instruction + "\n\n" + msgs[0]["content"]
-            else:
-                msgs.insert(0, {"role": "system", "content": instruction})
+            msgs.insert(0, {"role": "system", "content": instruction})
 
-        logger.info(f"Thinking suppression applied ({'qwen3 /no_think' if is_qwen3 else 'text instruction'})")
+        logger.info("Thinking suppression applied (text instruction)")
         return msgs
 
     def strip_thinking_tags(self, response: str) -> str:
