@@ -731,6 +731,31 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
 
     clean_text, tool_calls = _parse_oai_tool_calls(full_text)
     logger.info(f"[OAI-AGENTIC] len={len(full_text)} head={full_text[:200]!r} tail={full_text[-200:]!r} tool_calls={len(tool_calls)}")
+
+    # If model responded with text-only (no tool call), nudge it once to produce one
+    if not tool_calls and clean_text and len(clean_text) < 600:
+        nudge_messages = messages + [
+            {"role": "assistant", "content": clean_text},
+            {"role": "user", "content": "Now call a tool. Do NOT write any more text. Execute a bash sed -i command or another appropriate tool call immediately."},
+        ]
+        try:
+            nudge_result = None
+            if servers:
+                lb2 = LoadBalancer(servers, timeout=timeout, model=lb_model)
+                r2 = await lb2.chat(messages=nudge_messages, **kwargs)
+                if "error" not in r2 and r2.get("choices"):
+                    nudge_result = r2["choices"][0].get("message", {}).get("content", "") or ""
+            if nudge_result is None:
+                r2 = await service.chat_completion(messages=nudge_messages, model=request.model, **kwargs)
+                nudge_result = r2.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
+            nc, ntc = _parse_oai_tool_calls(nudge_result)
+            logger.info(f"[OAI-NUDGE] nudge result len={len(nudge_result)} tool_calls={len(ntc)}")
+            if ntc:
+                clean_text = nc
+                tool_calls = ntc
+        except Exception as _ne:
+            logger.warning(f"[OAI-NUDGE] failed: {_ne}")
+
     finish_reason = "tool_calls" if tool_calls else "stop"
     msg = {"role": "assistant", "content": clean_text or None}
     if tool_calls:
