@@ -425,6 +425,10 @@ def _tools_system_text(tools: list) -> str:
     return "<tools>\n" + "\n\n".join(entries) + "\n</tools>"
 
 
+# Session-scoped cache of real display echo lines discovered via grep
+_display_echo_cache: list = []
+
+
 def _oai_messages_for_tools(messages: list, tools: list) -> list:
     """Convert OpenAI messages (with tool_calls / tool role) to model text format."""
     result = []
@@ -491,6 +495,11 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                     else:
                         display_lines.append((linenum, line_content))
                 logger.info(f"[GREP-ANN] Display echoes: {len(display_lines)}, redir echoes: {len(redir_lines)}. Raw: {content_str[:500]!r}")
+                # Populate cache so "no output" interception can name the real lines
+                if display_lines:
+                    _display_echo_cache.clear()
+                    _display_echo_cache.extend(lc for _, lc in display_lines[:20])
+                    logger.info(f"[GREP-ANN] Cached {len(_display_echo_cache)} real display echo lines")
                 if prior_failures >= 1:
                     if display_lines:
                         sed_templates = []
@@ -561,6 +570,7 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                     # Try to extract the sed pattern to name it explicitly
                     sed_pat = ""
                     has_caret = False
+                    pat_text = ""
                     _pm = re.search(r"sed\s+-i\s+['\"]?s([/|!])(.*?)\1(.*?)\1", last_bash_cmd)
                     if _pm:
                         pat_text = _pm.group(2)
@@ -571,8 +581,23 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                         "leading whitespace. If the echo line is inside a function or if-block it will have "
                         "leading spaces/tabs and '^' will NEVER match. REMOVE the '^' from your pattern."
                     ) if has_caret else ""
+                    # Check if the failing pattern matches any known real display echo line
+                    hallucination_warning = ""
+                    if pat_text and _display_echo_cache:
+                        stripped_pat = pat_text.lstrip("^").strip()
+                        in_cache = any(stripped_pat in cached_line for cached_line in _display_echo_cache)
+                        if not in_cache:
+                            real_lines_str = "\n".join(f"  {lc}" for lc in _display_echo_cache[:8])
+                            hallucination_warning = (
+                                f"\n\nCRITICAL: The pattern '{stripped_pat}' IS NOT IN THIS FILE. "
+                                "You are trying to edit a line that does not exist.\n"
+                                "The REAL display echo lines in the file are:\n"
+                                f"{real_lines_str}\n"
+                                "You MUST use one of these exact lines as your sed pattern — copy it character for character."
+                            )
+                            logger.warning(f"[ANTHR/OAI] Pattern '{stripped_pat}' not in cache — hallucination detected")
                     content_str = (
-                        f"REPEATED FAILURE: sed found no matches{sed_pat}.{caret_hint}\n\n"
+                        f"REPEATED FAILURE: sed found no matches{sed_pat}.{caret_hint}{hallucination_warning}\n\n"
                         "You have run this sed command before and it did NOT match anything.\n"
                         "STOP. DO NOT repeat this sed command.\n\n"
                         "MANDATORY: Run this command RIGHT NOW to find DISPLAY echo lines (not config-writing ones):\n"
