@@ -453,10 +453,10 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
             content_str = str(content)
             # Intercept "No changes" errors — model needs a new strategy
             if "no changes to apply" in content_str.lower() or "identical" in content_str.lower():
-                content_str += "\n\n[IMPORTANT: The edit failed because newString was missing or identical to oldString. Do NOT repeat the same edit. You MUST use the write tool to write the complete new file content from scratch, OR use bash with sed to make small targeted replacements.]"
+                content_str += "\n\n[IMPORTANT: The edit failed because oldString was not found or was identical to newString. Do NOT repeat the same edit. Use bash with sed -i for targeted replacements instead, e.g. bash(command=\"sed -i 's/original/replacement/g' file\").]"
             # Truncate large tool results so the model has context budget for its response
             elif len(content_str) > 3000:
-                content_str = content_str[:3000] + "\n...[content truncated by proxy]\n\nYou have seen enough of the file. You MUST now call a tool — do NOT respond with text. Call write to write the complete new cyberpunk-themed file, or call bash with a sed command to make a targeted replacement."
+                content_str = content_str[:3000] + "\n...[file continues — truncated for brevity]\n\nIMPORTANT: This file is VERY LARGE (many hundreds of lines). You have only seen the beginning. Do NOT use the write tool — you cannot fit the whole file and will destroy the rest. Instead use bash with sed -i for targeted in-place replacements, for example:\nbash(command=\"sed -i 's/original text/replacement text/g' /path/to/file\")\nMake multiple small bash+sed calls for each change. Never use write on this file."
             result.append({"role": "user", "content": content_str})
         else:
             result.append({"role": role, "content": content})
