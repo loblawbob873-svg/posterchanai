@@ -700,10 +700,27 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                     notes.append("It uses plain 'echo' statements without any colors.")
                 notes.append("IMPORTANT: Do NOT use the write tool — you will destroy the rest of the file.")
                 notes.append("Use bash with sed -i for targeted in-place changes. Make multiple small bash calls.")
+                trunc_templates = []
                 if _display_echo_cache:
-                    echo_preview = "; ".join(f"'{lc}'" for lc in _display_echo_cache[:5])
-                    notes.append(f"Display echo lines visible so far: {echo_preview}. Run grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '#' to see all of them.")
-                content_str = content_str[:3000] + "\n...[file continues — truncated]\n\n" + " ".join(notes)
+                    for _lc in _display_echo_cache[:8]:
+                        if '\\033' in _lc or '\x1b' in _lc:
+                            continue
+                        _sp = (_lc.replace('\\', '\\\\').replace('|', r'\|')
+                               .replace('[', r'\[').replace(']', r'\]')
+                               .replace('$', r'\$').replace('.', r'\.'))
+                        _cy = _make_cyberpunk_text(_lc).replace('|', r'\|')
+                        trunc_templates.append(
+                            f"  {_lc}\n"
+                            f"  → sed -i 's|{_sp}|echo -e \"\\\\033[1;96m{_cy}\\\\033[0m\"|' /opt/gentoo-installer/gentoo.sh && echo 'SED_OK'"
+                        )
+                if trunc_templates:
+                    tpl_block = "\n\n".join(trunc_templates)
+                    notes.append(
+                        f"\n\nACTION REQUIRED — Run these sed commands now to colorize the display echo lines:\n\n{tpl_block}"
+                    )
+                else:
+                    notes.append("Run grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '#' to see display echo lines.")
+                content_str = content_str[:500] + "\n...[file truncated]\n\n" + " ".join(notes)
             # Wrap in XML tool_result format matching this model's expected pattern
             result.append({"role": "user", "content": f"<tool_result>\n<tool>{last_tool_name}</tool>\n<output>\n{content_str}\n</output>\n</tool_result>"})
         else:
