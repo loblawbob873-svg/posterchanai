@@ -485,7 +485,7 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                     if 'echo' not in line_content:
                         continue
                     # Skip lines that redirect output to files — those write config data, not display text
-                    if '>>' in line_content or (re.search(r'>\s*\$', line_content)):
+                    if '>>' in line_content or re.search(r'>\s*[\$/]', line_content) or ('| ' in line_content and 'echo' not in line_content.split('|')[0].strip().split()[-1:]):
                         redir_lines.append((linenum, line_content))
                     else:
                         display_lines.append((linenum, line_content))
@@ -685,7 +685,8 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                     if 'echo' in plain and '>>' not in plain and not plain.lstrip().startswith('#'):
                         stripped = plain.strip()
                         if (stripped and re.search(r'echo\s+\S', stripped)
-                                and not re.search(r'>\s*\$', stripped)):
+                                and not re.search(r'>\s*[\$/]', stripped)
+                                and '>>' not in stripped):
                             _file_display_lines.append(stripped)
                 if _file_display_lines:
                     _display_echo_cache.clear()
@@ -824,13 +825,13 @@ def _redirect_hallucinated_sed(tool_calls: list) -> list:
                         norm_pat = _normalize_sed_pat(raw_pat)
 
                         # Block seds targeting redirect echoes (lines with > or >> to files)
-                        if re.search(r'>+\s*\$', norm_pat) or '>>' in norm_pat:
+                        if re.search(r'>\s*[\$/]', norm_pat) or '>>' in norm_pat or '| ' in norm_pat:
                             # Find the next uncolorized display line and run its sed directly
                             redirect_cmd = None
                             for _rlc in _display_echo_cache[:20]:
                                 if '\\033' in _rlc or '\x1b' in _rlc:
                                     continue
-                                if re.search(r'>\s*\$', _rlc) or '>>' in _rlc:
+                                if re.search(r'>\s*[\$/]', _rlc) or '>>' in _rlc:
                                     continue
                                 _rlc_s = _rlc.strip()  # strip leading tabs so sed pattern matches
                                 if not re.search(r'echo\s+\S', _rlc_s):
