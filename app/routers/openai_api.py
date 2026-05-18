@@ -528,13 +528,14 @@ def _parse_oai_tool_calls(text: str):
             # JSON format: {"name": ..., "arguments": ...}
             try:
                 parsed = json.loads(raw)
-            except Exception:
+            except Exception as _e1:
                 try:
                     parsed = json.loads(_repair_json(raw))
-                except Exception:
+                except Exception as _e2:
                     try:
                         parsed = json.loads(re.sub(r'[\x00-\x1f]', ' ', raw))
-                    except Exception:
+                    except Exception as _e3:
+                        logger.warning(f"[TC-PARSE] all json failed e1={_e1} e2={_e2} e3={_e3} raw_end={raw[-80:]!r}")
                         continue
             name = parsed.get("name", "")
             arguments = parsed.get("arguments", {})
@@ -610,7 +611,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         usage = result.get("usage", {})
 
     clean_text, tool_calls = _parse_oai_tool_calls(full_text)
-    logger.info(f"[OAI-AGENTIC] raw={full_text[:300]!r} tool_calls={len(tool_calls)}")
+    logger.info(f"[OAI-AGENTIC] len={len(full_text)} head={full_text[:200]!r} tail={full_text[-200:]!r} tool_calls={len(tool_calls)}")
     finish_reason = "tool_calls" if tool_calls else "stop"
     msg = {"role": "assistant", "content": clean_text or None}
     if tool_calls:
