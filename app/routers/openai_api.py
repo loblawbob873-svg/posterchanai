@@ -547,17 +547,24 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     if not request.stream:
         return body
 
-    # Emit as an SSE stream for streaming clients
+    # Emit as an SSE stream — spec-compliant tool_call deltas (index-keyed)
     async def _emit():
-        # First chunk: role
-        yield f"data: {json.dumps({'id': resp_id, 'object': 'chat.completion.chunk', 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': ''}, 'finish_reason': None}]})}\n\n"
+        def _chunk(delta, finish=None):
+            return f"data: {json.dumps({'id': resp_id, 'object': 'chat.completion.chunk', 'choices': [{'index': 0, 'delta': delta, 'finish_reason': finish}]})}\n\n"
+
+        yield _chunk({"role": "assistant", "content": ""})
         if clean_text:
             for i in range(0, len(clean_text), 64):
-                yield f"data: {json.dumps({'id': resp_id, 'object': 'chat.completion.chunk', 'choices': [{'index': 0, 'delta': {'content': clean_text[i:i+64]}, 'finish_reason': None}]})}\n\n"
-        if tool_calls:
-            # Emit tool_calls delta
-            yield f"data: {json.dumps({'id': resp_id, 'object': 'chat.completion.chunk', 'choices': [{'index': 0, 'delta': {'tool_calls': tool_calls}, 'finish_reason': None}]})}\n\n"
-        yield f"data: {json.dumps({'id': resp_id, 'object': 'chat.completion.chunk', 'choices': [{'index': 0, 'delta': {}, 'finish_reason': finish_reason}]})}\n\n"
+                yield _chunk({"content": clean_text[i:i+64]})
+        for tc_idx, tc in enumerate(tool_calls):
+            # First chunk for this tool call: id + name
+            yield _chunk({"tool_calls": [{"index": tc_idx, "id": tc["id"], "type": "function",
+                                          "function": {"name": tc["function"]["name"], "arguments": ""}}]})
+            # Stream arguments in chunks
+            args_str = tc["function"]["arguments"]
+            for i in range(0, len(args_str), 64):
+                yield _chunk({"tool_calls": [{"index": tc_idx, "function": {"arguments": args_str[i:i+64]}}]})
+        yield _chunk({}, finish=finish_reason)
         yield "data: [DONE]\n\n"
 
     from fastapi.responses import StreamingResponse as SR

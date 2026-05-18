@@ -147,7 +147,6 @@ def _parse_tool_calls(text: str):
             parsed = json.loads(raw)
         except Exception:
             try:
-                from app.services.text_utils import strip_thinking_tags as _s
                 parsed = json.loads(re.sub(r'[\x00-\x1f]', ' ', raw))
             except Exception:
                 continue
@@ -334,7 +333,9 @@ def _rewrite_tool_calls(tool_calls: list) -> list:
             inp = tc.get("input", {})
             fp = inp.get("file_path") or inp.get("filePath") or inp.get("path") or ""
             if fp and any(fp.startswith(p) for p in system_prefixes):
-                content = inp.get("content", "")
+                content = inp.get("content") or ""
+                if not isinstance(content, str):
+                    content = json.dumps(content)
                 b64 = base64.b64encode(content.encode()).decode()
                 dir_path = "/".join(fp.split("/")[:-1]) or "."
                 cmd = (f"sudo mkdir -p {shlex.quote(dir_path)} && "

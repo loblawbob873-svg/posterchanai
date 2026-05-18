@@ -1,5 +1,5 @@
 #!/bin/bash
-git commit -a -m fix
+git commit -a -m fix || true
 git push
 
 # Wait for any active GPU inference to finish before restarting.
