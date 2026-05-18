@@ -869,21 +869,14 @@ def _redirect_hallucinated_sed(tool_calls: list) -> list:
                             tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                             logger.warning(f"[SED-REDIRECT] '{norm_pat[:60]}' not in cache → grep")
                         else:
-                            # Pattern matched cache — always rebuild from exact cached line to fix any miscount/escaping
-                            exact_match = norm_pat in _normalize_sed_pat(matched_line)
-                            has_proper_ansi = '\\033' in replacement or r'\x1b' in replacement or '\x1b' in replacement
-                            bare_ansi = bool(re.search(r'(?<!\\033)(?<!\x1b)\[(\d+(?:;[\d;]*)*)m', replacement))
-                            norm_matched = _normalize_sed_pat(matched_line)
-                            appending = norm_matched[:20] in replacement if len(norm_matched) > 5 else False
-                            needs_rebuild = not exact_match or (bare_ansi and not has_proper_ansi) or appending
+                            # Always rebuild from exact cached line to guarantee correct escaping
                             color_m = re.search(r'\[(\d+(?:;[\d;]*)*)m', replacement)
                             color = color_m.group(1) if color_m else "1;96"
-                            if needs_rebuild:
-                                new_cmd = _build_correct_sed(matched_line, color)
-                                if new_cmd:
-                                    args_dict["command"] = new_cmd
-                                    tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
-                                    logger.warning(f"[SED-REPAIR] Rebuilt sed for '{matched_line.strip()[:60]}' (exact={exact_match}, bare={bare_ansi}, append={appending})")
+                            new_cmd = _build_correct_sed(matched_line, color)
+                            if new_cmd:
+                                args_dict["command"] = new_cmd
+                                tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                                logger.info(f"[SED-REPAIR] Rebuilt sed for '{matched_line.strip()[:60]}'")
                             elif "&&" not in cmd:
                                 args_dict["command"] = cmd.rstrip() + f" && echo 'SED_OK: {norm_pat[:40]}'"
                                 tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
