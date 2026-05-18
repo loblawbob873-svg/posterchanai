@@ -742,6 +742,50 @@ _TOOL_NAME_MAP = {
     "str_replace": "edit",
 }
 
+_GENTOO_SH = "/opt/gentoo-installer/gentoo.sh"
+
+
+def _build_remaining_batch(max_seds: int = 20) -> str:
+    """Read gentoo.sh and build a batch sed for all remaining uncolorized display echo lines."""
+    try:
+        with open(_GENTOO_SH, 'r') as f:
+            lines = f.readlines()
+    except Exception:
+        return ""
+    seds = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped.startswith('echo'):
+            continue
+        if '\\033' in stripped or '\x1b' in stripped:
+            continue
+        if stripped.startswith('#'):
+            continue
+        if re.search(r'>\s*[\$/]', stripped) or '>>' in stripped:
+            continue
+        if '|' in stripped:
+            continue
+        m = re.search(r'echo\s+"(.*?)"', stripped)
+        if not m:
+            continue
+        text = m.group(1)
+        clean = re.sub(r'^\[|\]$', '', text.strip()).strip()
+        cyber = f">> {clean} <<".replace('|', r'\|')
+        safe_pat = (stripped
+                    .replace('\\', '\\\\')
+                    .replace('|', r'\|')
+                    .replace('[', r'\[')
+                    .replace(']', r'\]')
+                    .replace('$', r'\$'))
+        seds.append(
+            f"sed -i 's|{safe_pat}|echo -e \"\\\\033[1;96m{cyber}\\\\033[0m\"|' {_GENTOO_SH}"
+        )
+        if len(seds) >= max_seds:
+            break
+    if not seds:
+        return ""
+    return " && \\\n".join(seds) + " && echo 'BATCH_SED_OK'"
+
 def _normalize_sed_pat(pat: str) -> str:
     """Normalize a sed BRE pattern for cache comparison: strip anchors and unescape BRE/bash escapes."""
     p = pat.lstrip("^").strip()
@@ -817,6 +861,15 @@ def _redirect_hallucinated_sed(tool_calls: list) -> list:
                     out.append(tc)
                     continue
                 if "sed" in cmd and ("-i" in cmd or "-e" in cmd):
+                    # Always replace model's sed with pre-computed correct batch from actual file state
+                    _batch = _build_remaining_batch()
+                    if _batch:
+                        args_dict["command"] = _batch
+                        tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                        logger.info("[SED-BATCH] Replaced model's sed with pre-computed correct batch")
+                        out.append(tc)
+                        continue
+
                     _pm = re.search(r"s([/|!])(.*?)\1(.*?)\1", cmd)
                     if _pm:
                         raw_pat = _pm.group(2)
