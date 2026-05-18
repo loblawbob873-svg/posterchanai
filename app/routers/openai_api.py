@@ -456,7 +456,7 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                 content_str += "\n\n[IMPORTANT: The edit failed because newString was missing or identical to oldString. Do NOT repeat the same edit. You MUST use the write tool to write the complete new file content from scratch, OR use bash with sed to make small targeted replacements.]"
             # Truncate large tool results so the model has context budget for its response
             elif len(content_str) > 3000:
-                content_str = content_str[:3000] + "\n...[content truncated by proxy — use bash to read specific line ranges, e.g. bash(sed -n '1,50p' file.sh), or use write tool to write the full new file from scratch]"
+                content_str = content_str[:3000] + "\n...[content truncated by proxy]\n\nYou have seen enough of the file. You MUST now call a tool — do NOT respond with text. Call write to write the complete new cyberpunk-themed file, or call bash with a sed command to make a targeted replacement."
             result.append({"role": "user", "content": content_str})
         else:
             result.append({"role": role, "content": content})
