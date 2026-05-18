@@ -488,14 +488,46 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                 )
             # Empty bash result — sed found nothing to replace; tell the model immediately
             elif not content_str.strip() or content_str.strip() in ("(no output)", "(exit 0)"):
-                content_str = (
-                    "(no output — sed found no matches)\n\n"
-                    "[IMPORTANT: The sed pattern did not match. Common causes: (1) echo lines have leading whitespace/indentation — "
-                    "remove any ^ anchor so the pattern matches anywhere in the line, "
-                    "e.g. use sed 's/echo \"Welcome/echo -e \"\\\\033[...m/g' instead of 's/^echo ...'. "
-                    "(2) The string is slightly different — run: bash(command=\"grep -n 'Welcome\\|echo' /opt/gentoo-installer/gentoo.sh | head -20\") "
-                    "to see the exact text, then copy it literally into your sed pattern.]"
+                is_sed_cmd = "sed" in last_bash_cmd and ("-i" in last_bash_cmd or "-e" in last_bash_cmd)
+                # Count previous "no output" failures in this conversation
+                no_output_count = sum(
+                    1 for r in result
+                    if r.get("role") == "user" and "no output" in r.get("content", "").lower()
                 )
+                if is_sed_cmd and no_output_count >= 1:
+                    # Model is repeating a failing sed — escalate with hard stop
+                    # Try to extract the sed pattern to name it explicitly
+                    sed_pat = ""
+                    _pm = re.search(r"sed\s+-i\s+['\"]?s([/|!])(.*?)\1(.*?)\1", last_bash_cmd)
+                    if _pm:
+                        sed_pat = f" (pattern: '{_pm.group(2)}')"
+                    content_str = (
+                        f"REPEATED FAILURE: sed found no matches{sed_pat}.\n\n"
+                        "You have run this sed command before and it did NOT match anything. "
+                        "The search pattern DOES NOT EXIST in the file.\n\n"
+                        "STOP. DO NOT repeat this sed command.\n\n"
+                        "MANDATORY: You must run the following command RIGHT NOW before anything else:\n"
+                        "bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh\")\n\n"
+                        "After you see the grep output, use the EXACT text from the file. "
+                        "Do not type text from memory — copy it character-for-character from grep output."
+                    )
+                    logger.warning(f"[ANTHR/OAI] Repeated empty sed result (count={no_output_count+1}), escalating redirect")
+                elif is_sed_cmd:
+                    content_str = (
+                        "ERROR: sed found no matches — the search pattern is not in the file.\n\n"
+                        "[The sed -i command ran but the search pattern did not match any line. "
+                        "The exact text you are searching for is NOT in the file.\n\n"
+                        "DO NOT repeat the same sed command.\n"
+                        "Run: bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh\") "
+                        "to see the EXACT echo lines in the file. "
+                        "Then use those EXACT strings (copied literally) in a new sed command.]"
+                    )
+                else:
+                    content_str = (
+                        "(no output — command produced no output)\n\n"
+                        "[If this was a sed -i command, the pattern was not found. "
+                        "Run grep to see the actual file contents before trying again.]"
+                    )
             # "0" from grep -c — confirmed pattern absent; stop inspecting, start acting
             elif content_str.strip() == "0":
                 content_str = (
