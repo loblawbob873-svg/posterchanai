@@ -498,8 +498,8 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                     logger.info(f"[GREP-ANN] Cached {len(_display_echo_cache)} non-bare display echo lines")
                 # Always inject sed templates — never leave the model without actionable commands
                 if display_lines:
-                    sed_templates = []
-                    for linenum, line_content in display_lines[:8]:
+                    batch_seds = []
+                    for linenum, line_content in display_lines[:20]:
                         # Skip bare echo (no string to colorize)
                         if not re.search(r'echo\s+\S', line_content):
                             continue
@@ -515,18 +515,17 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                                     .replace(']', r'\]')
                                     .replace('$', r'\$'))
                         cyber = _make_cyberpunk_text(stripped_content).replace('|', r'\|')
-                        sed_templates.append(
-                            f"  Line {linenum}: {stripped_content}\n"
-                            f"  COPY AND RUN THIS EXACT COMMAND:  sed -i 's|{safe_pat}|echo -e \"\\\\033[1;96m{cyber}\\\\033[0m\"|' /opt/gentoo-installer/gentoo.sh && echo 'SED_OK'"
+                        batch_seds.append(
+                            f"sed -i 's|{safe_pat}|echo -e \"\\\\033[1;96m{cyber}\\\\033[0m\"|' /opt/gentoo-installer/gentoo.sh"
                         )
-                    if sed_templates:
-                        tpl_str = "\n\n".join(sed_templates)
+                    if batch_seds:
+                        batch_cmd = " && \\\n".join(batch_seds) + " && echo 'BATCH_SED_OK'"
                         content_str += (
-                            f"\n\n[ACTION REQUIRED — STOP RUNNING GREP. Run these commands NOW. Copy them exactly as written:\n\n"
-                            f"{tpl_str}\n\n"
-                            f"Do NOT run grep again. Do NOT modify the commands. Just copy and run them.]"
+                            f"\n\n[ACTION REQUIRED — STOP RUNNING GREP. Run this ONE command to colorize all {len(batch_seds)} display echo lines at once:\n\n"
+                            f"bash(command=\"{batch_cmd}\")\n\n"
+                            f"Copy and run that command exactly. Do NOT run grep again.]"
                         )
-                        logger.info(f"[GREP-ANN] Injected {len(sed_templates)} display-echo templates (always-on)")
+                        logger.info(f"[GREP-ANN] Injected batch command with {len(batch_seds)} seds (always-on)")
                     else:
                         # All visible echoes write to files — need to look further in the file
                         content_str += (
@@ -699,23 +698,25 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                     notes.append("It uses plain 'echo' statements without any colors.")
                 notes.append("IMPORTANT: Do NOT use the write tool — you will destroy the rest of the file.")
                 notes.append("Use bash with sed -i for targeted in-place changes. Make multiple small bash calls.")
-                trunc_templates = []
+                trunc_batch = []
                 if _display_echo_cache:
-                    for _lc in _display_echo_cache[:8]:
-                        if '\\033' in _lc or '\x1b' in _lc:
+                    for _lc in _display_echo_cache[:20]:
+                        _lcs = _lc.strip()
+                        if '\\033' in _lcs or '\x1b' in _lcs:
                             continue
-                        _sp = (_lc.replace('\\', '\\\\').replace('|', r'\|')
+                        if not re.search(r'echo\s+\S', _lcs):
+                            continue
+                        _sp = (_lcs.replace('\\', '\\\\').replace('|', r'\|')
                                .replace('[', r'\[').replace(']', r'\]')
                                .replace('$', r'\$'))
-                        _cy = _make_cyberpunk_text(_lc).replace('|', r'\|')
-                        trunc_templates.append(
-                            f"  {_lc}\n"
-                            f"  → sed -i 's|{_sp}|echo -e \"\\\\033[1;96m{_cy}\\\\033[0m\"|' /opt/gentoo-installer/gentoo.sh && echo 'SED_OK'"
+                        _cy = _make_cyberpunk_text(_lcs).replace('|', r'\|')
+                        trunc_batch.append(
+                            f"sed -i 's|{_sp}|echo -e \"\\\\033[1;96m{_cy}\\\\033[0m\"|' /opt/gentoo-installer/gentoo.sh"
                         )
-                if trunc_templates:
-                    tpl_block = "\n\n".join(trunc_templates)
+                if trunc_batch:
+                    batch_cmd = " && \\\n".join(trunc_batch) + " && echo 'BATCH_SED_OK'"
                     notes.append(
-                        f"\n\nACTION REQUIRED — Run these sed commands now to colorize the display echo lines:\n\n{tpl_block}"
+                        f"\n\nACTION REQUIRED — Run this ONE command to colorize all {len(trunc_batch)} display echo lines:\n\nbash(command=\"{batch_cmd}\")"
                     )
                 else:
                     notes.append("Run grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '#' to see display echo lines.")
