@@ -750,11 +750,10 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
             {"role": "assistant", "content": clean_text},
             {"role": "user", "content": (
                 "Now call a tool immediately. Do NOT write any more text.\n"
-                "Use bash with a python3 one-liner to make the change. Example for adding cyberpunk colors:\n"
-                "bash(command=\"python3 -c \\\"import sys; lines=open('/opt/gentoo-installer/gentoo.sh').readlines(); "
-                "lines.insert(1, \\\\\\\"CYAN='\\\\\\\\033[0;36m'\\\\\\\\nMAGENTA='\\\\\\\\033[1;35m'\\\\\\\\nNC='\\\\\\\\033[0m'\\\\\\\\n\\\\\\\"); "
-                "open('/opt/gentoo-installer/gentoo.sh','w').writelines(lines)\\\"\")\n"
-                "Call the tool now."
+                "Start simple: use bash to insert ANSI color variable definitions after line 1 of the file. "
+                "Use three separate sed -i commands like: sed -i '1a CYAN=\"\\\\033[0;36m\"' /path/to/file\n"
+                "Then use more sed -i calls to wrap echo statements with ${CYAN}...${NC}.\n"
+                "Call the bash tool now with the first command."
             )},
         ]
         try:
