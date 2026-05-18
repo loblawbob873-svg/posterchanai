@@ -467,6 +467,29 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                     last_bash_cmd = r.get("content", "")
                     break
             _is_inspection = any(kw in last_bash_cmd for kw in ("cat -A", "od -c", "hexdump", "| strings", "| od ", "grep -c", "grep -E '\\\\["))
+            _is_grep_echo = "grep" in last_bash_cmd and "echo" in last_bash_cmd and "sed" not in last_bash_cmd
+            # If grep output follows prior sed failures, extract first echo line and annotate
+            if _is_grep_echo and content_str.strip():
+                prior_failures = sum(
+                    1 for r in result
+                    if r.get("role") == "user" and ("no output" in r.get("content", "").lower()
+                                                    or "sed found no matches" in r.get("content", "").lower())
+                )
+                if prior_failures >= 1:
+                    first_echo_lines = []
+                    for raw_line in content_str.strip().split("\n")[:30]:
+                        if "echo" in raw_line:
+                            first_echo_lines.append(raw_line.strip())
+                        if len(first_echo_lines) >= 5:
+                            break
+                    if first_echo_lines:
+                        sample = "\n".join(first_echo_lines[:3])
+                        content_str += (
+                            f"\n\n[GREP RESULT ABOVE IS THE REAL FILE CONTENT. "
+                            f"Example echo lines from the file:\n{sample}\n"
+                            "Your NEXT sed MUST use the exact text shown above (no ^ anchor, no guessing). "
+                            "Use | as delimiter: sed -i 's|echo \"exact text here\"|echo -e \"\\033[1;96m...\"|g' /opt/gentoo-installer/gentoo.sh]"
+                        )
             # Intercept sed delimiter errors — / in replacement breaks sed 's/.../.../'
             if "unknown option to `s'" in content_str or "unknown option to `s'" in content_str or "unterminated" in content_str.lower():
                 content_str += (
@@ -498,29 +521,39 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                     # Model is repeating a failing sed — escalate with hard stop
                     # Try to extract the sed pattern to name it explicitly
                     sed_pat = ""
+                    has_caret = False
                     _pm = re.search(r"sed\s+-i\s+['\"]?s([/|!])(.*?)\1(.*?)\1", last_bash_cmd)
                     if _pm:
-                        sed_pat = f" (pattern: '{_pm.group(2)}')"
+                        pat_text = _pm.group(2)
+                        sed_pat = f" (pattern: '{pat_text}')"
+                        has_caret = pat_text.startswith("^")
+                    caret_hint = (
+                        "\nCRITICAL: Your pattern starts with '^' — this means the line must start with NO "
+                        "leading whitespace. If the echo line is inside a function or if-block it will have "
+                        "leading spaces/tabs and '^' will NEVER match. REMOVE the '^' from your pattern."
+                    ) if has_caret else ""
                     content_str = (
-                        f"REPEATED FAILURE: sed found no matches{sed_pat}.\n\n"
-                        "You have run this sed command before and it did NOT match anything. "
-                        "The search pattern DOES NOT EXIST in the file.\n\n"
+                        f"REPEATED FAILURE: sed found no matches{sed_pat}.{caret_hint}\n\n"
+                        "You have run this sed command before and it did NOT match anything.\n"
                         "STOP. DO NOT repeat this sed command.\n\n"
-                        "MANDATORY: You must run the following command RIGHT NOW before anything else:\n"
+                        "MANDATORY: Run this command RIGHT NOW:\n"
                         "bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh\")\n\n"
-                        "After you see the grep output, use the EXACT text from the file. "
-                        "Do not type text from memory — copy it character-for-character from grep output."
+                        "After you see the grep output, construct your sed using ONLY text you see in the output. "
+                        "Use '|' as delimiter (not '/') to avoid conflicts: sed -i 's|echo \"exact text from grep\"|echo -e \"\\033[...]m...\"|g' file"
                     )
                     logger.warning(f"[ANTHR/OAI] Repeated empty sed result (count={no_output_count+1}), escalating redirect")
                 elif is_sed_cmd:
+                    has_caret = bool(re.search(r"sed\s+-i\s+['\"]?s[/|!]\^", last_bash_cmd))
+                    caret_hint = (
+                        " NOTE: Your pattern uses '^echo' — the '^' means the line must have NO leading whitespace. "
+                        "If the echo is inside a function or block (indented), '^' will fail. Remove '^' and try again."
+                    ) if has_caret else ""
                     content_str = (
-                        "ERROR: sed found no matches — the search pattern is not in the file.\n\n"
+                        f"ERROR: sed found no matches — the search pattern is not in the file.{caret_hint}\n\n"
                         "[The sed -i command ran but the search pattern did not match any line. "
-                        "The exact text you are searching for is NOT in the file.\n\n"
                         "DO NOT repeat the same sed command.\n"
                         "Run: bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh\") "
-                        "to see the EXACT echo lines in the file. "
-                        "Then use those EXACT strings (copied literally) in a new sed command.]"
+                        "to see the EXACT echo lines. Copy the text literally from grep output into your next sed.]"
                     )
                 else:
                     content_str = (
