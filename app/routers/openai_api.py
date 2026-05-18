@@ -974,7 +974,8 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     temperature = request.temperature if request.temperature is not None else float(settings.get("ollama_temperature", "0.7"))
     top_p = request.top_p if request.top_p is not None else float(settings.get("ollama_top_p", "0.9"))
     server_num_predict = int(settings.get("ollama_num_predict", "2048"))
-    max_tokens = max(request.max_tokens, server_num_predict) if request.max_tokens is not None else server_num_predict
+    # Honor the request's max_tokens if set — never override it upward (prevents runaway agentic generation)
+    max_tokens = request.max_tokens if request.max_tokens is not None else server_num_predict
 
     # Use load balancer if configured - picks server round-robin, uses local inference for "self" URLs
     # Skip if explicitly requested (to prevent loops when called from another posterchanai instance)
@@ -1067,7 +1068,7 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     if request.top_p is not None:
         kwargs["top_p"] = request.top_p
     if request.max_tokens is not None:
-        kwargs["max_tokens"] = max(request.max_tokens, server_num_predict)
+        kwargs["max_tokens"] = request.max_tokens
     if request.stop is not None:
         kwargs["stop"] = request.stop
 
