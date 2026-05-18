@@ -622,12 +622,18 @@ def _fix_sed_tool_calls(tool_calls: list) -> list:
                 args_dict = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
                 cmd = args_dict.get("command", "")
                 if "sed" in cmd and "-i" in cmd:
+                    fixed = cmd
                     # Strip '^' anchor before 'echo' — echo lines are often indented inside functions
-                    fixed = re.sub(r"(s[/|!])\^(echo\b)", r"\1\2", cmd)
+                    fixed = re.sub(r"(s[/|!])\^(echo\b)", r"\1\2", fixed)
+                    # Fix \[ → \\[ in sed pattern for literal backslash-bracket matching.
+                    # In sed BRE, \[ = literal [ (not backslash-bracket).
+                    # If the file contains \[ (PS1-style), the pattern must use \\[.
+                    # ANSI replacements use \033[ (not \[) so this only affects the pattern.
+                    fixed = re.sub(r'(?<!\\)\\([[\]])', r'\\\\' + r'\1', fixed)
                     if fixed != cmd:
                         args_dict["command"] = fixed
                         tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
-                        logger.info(f"[SED-FIX] Stripped '^' anchor from sed: {cmd[:120]!r}")
+                        logger.info(f"[SED-FIX] {cmd[:120]!r} → {fixed[:120]!r}")
             except Exception:
                 pass
         out.append(tc)
