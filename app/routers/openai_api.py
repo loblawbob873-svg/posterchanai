@@ -474,11 +474,6 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
             _is_grep_echo = "grep" in last_bash_cmd and "echo" in last_bash_cmd and "sed" not in last_bash_cmd
             # If grep output follows prior sed failures, generate ready-made sed templates
             if _is_grep_echo and content_str.strip():
-                prior_failures = sum(
-                    1 for r in result
-                    if r.get("role") == "user" and ("no output" in r.get("content", "").lower()
-                                                    or "sed found no matches" in r.get("content", "").lower())
-                )
                 # Separate display echoes (no >> or > redirection) from file-writing echoes
                 display_lines = []
                 redir_lines = []
