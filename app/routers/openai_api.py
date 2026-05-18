@@ -484,6 +484,32 @@ def _normalize_tool(name: str, args: dict) -> tuple:
     return name, args
 
 
+def _repair_json(raw: str) -> str:
+    """Escape literal newlines/tabs inside JSON string values."""
+    result = []
+    in_string = False
+    escape_next = False
+    for c in raw:
+        if escape_next:
+            result.append(c)
+            escape_next = False
+        elif c == '\\' and in_string:
+            result.append(c)
+            escape_next = True
+        elif c == '"':
+            in_string = not in_string
+            result.append(c)
+        elif in_string and c == '\n':
+            result.append('\\n')
+        elif in_string and c == '\r':
+            result.append('\\r')
+        elif in_string and c == '\t':
+            result.append('\\t')
+        else:
+            result.append(c)
+    return ''.join(result)
+
+
 def _parse_oai_tool_calls(text: str):
     """Parse <tool_call> blocks (JSON or XML sub-format); return (clean_text, openai_tool_calls_list)."""
     tool_calls = []
@@ -504,9 +530,12 @@ def _parse_oai_tool_calls(text: str):
                 parsed = json.loads(raw)
             except Exception:
                 try:
-                    parsed = json.loads(re.sub(r'[\x00-\x1f]', ' ', raw))
+                    parsed = json.loads(_repair_json(raw))
                 except Exception:
-                    continue
+                    try:
+                        parsed = json.loads(re.sub(r'[\x00-\x1f]', ' ', raw))
+                    except Exception:
+                        continue
             name = parsed.get("name", "")
             arguments = parsed.get("arguments", {})
         if not name:

@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Setting
-from app.routers.openai_api import verify_api_key, _resolve_model
+from app.routers.openai_api import verify_api_key, _resolve_model, _repair_json
 from app.services.inference_factory import get_inference_service, prepare_vram_for_llm
 from app.services.text_utils import inject_no_think, strip_thinking_tags
 
@@ -157,9 +157,12 @@ def _parse_tool_calls(text: str):
                 parsed = json.loads(raw)
             except Exception:
                 try:
-                    parsed = json.loads(re.sub(r'[\x00-\x1f]', ' ', raw))
+                    parsed = json.loads(_repair_json(raw))
                 except Exception:
-                    continue
+                    try:
+                        parsed = json.loads(re.sub(r'[\x00-\x1f]', ' ', raw))
+                    except Exception:
+                        continue
             name = parsed.get("name", "")
             arguments = parsed.get("arguments", {})
         if not name:
