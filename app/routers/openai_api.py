@@ -495,11 +495,12 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                     else:
                         display_lines.append((linenum, line_content))
                 logger.info(f"[GREP-ANN] Display echoes: {len(display_lines)}, redir echoes: {len(redir_lines)}. Raw: {content_str[:500]!r}")
-                # Populate cache so "no output" interception can name the real lines
-                if display_lines:
+                # Populate cache — skip bare "echo" with no text, cache up to 60 non-bare lines
+                _non_bare = [lc for _, lc in display_lines if re.search(r'echo\s+\S', lc)]
+                if _non_bare:
                     _display_echo_cache.clear()
-                    _display_echo_cache.extend(lc for _, lc in display_lines[:20])
-                    logger.info(f"[GREP-ANN] Cached {len(_display_echo_cache)} real display echo lines")
+                    _display_echo_cache.extend(_non_bare[:60])
+                    logger.info(f"[GREP-ANN] Cached {len(_display_echo_cache)} non-bare display echo lines")
                 if prior_failures >= 1:
                     if display_lines:
                         sed_templates = []
@@ -664,7 +665,7 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                     "\\033[...m ANSI color codes to those specific echo strings. Do not run any more inspection commands.]"
                 )
             # Truncate large tool results so the model has context budget for its response
-            elif len(content_str) > 3000:
+            elif len(content_str) > 3000 and not _is_grep_echo:
                 line_count = content_str.count('\n')
                 has_ansi = ('\\033' in content_str or '\x1b[' in content_str)
                 has_echo = 'echo ' in content_str
