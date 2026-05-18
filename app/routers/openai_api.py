@@ -460,6 +460,30 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
     return result
 
 
+_TOOL_NAME_MAP = {
+    "read_file": "read",
+    "write_file": "write",
+    "create_file": "write",
+    "str_replace_editor": "edit",
+    "str_replace": "edit",
+}
+
+def _normalize_tool(name: str, args: dict) -> tuple:
+    """Map model-native tool names/args to opencode's actual schema."""
+    name = _TOOL_NAME_MAP.get(name, name)
+    # snake_case → camelCase for file path arg
+    if "file_path" in args and "filePath" not in args:
+        args["filePath"] = args.pop("file_path")
+    if "old_string" in args and "oldString" not in args and name == "edit":
+        args["oldString"] = args.pop("old_string")
+    if "new_string" in args and "newString" not in args and name == "edit":
+        args["newString"] = args.pop("new_string")
+    # bash requires description
+    if name in ("bash", "Bash") and "description" not in args:
+        args["description"] = (args.get("command") or "")[:80]
+    return name, args
+
+
 def _parse_oai_tool_calls(text: str):
     """Parse <tool_call> blocks (JSON or XML sub-format); return (clean_text, openai_tool_calls_list)."""
     tool_calls = []
@@ -487,9 +511,8 @@ def _parse_oai_tool_calls(text: str):
             arguments = parsed.get("arguments", {})
         if not name:
             continue
-        # Bash tool requires description — synthesize from command if missing
-        if name in ("bash", "Bash") and isinstance(arguments, dict) and "description" not in arguments:
-            arguments["description"] = (arguments.get("command") or "")[:80]
+        if isinstance(arguments, dict):
+            name, arguments = _normalize_tool(name, arguments)
         tool_calls.append({
             "id": f"call_{uuid.uuid4().hex[:12]}",
             "type": "function",
