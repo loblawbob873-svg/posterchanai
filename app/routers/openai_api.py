@@ -392,6 +392,19 @@ _TC_RE = re.compile(r'<tool_call>\s*(.*?)\s*</tool_call>', re.DOTALL | re.IGNORE
 _THINK_STRIP_RE = re.compile(r'<think(?:ing)?>(.*?)</think(?:ing)?>', re.DOTALL | re.IGNORECASE)
 
 
+def _resolve_model(request_model: str, settings: dict) -> str:
+    """Return the model name to send to the inference backend.
+    If request.model is a .gguf filename that exists next to llm_model_path, use it.
+    Otherwise fall back to the basename of llm_model_path."""
+    if request_model and request_model.endswith(".gguf"):
+        llm_path = settings.get("llm_model_path", "")
+        if llm_path:
+            candidate = os.path.join(os.path.dirname(llm_path), request_model)
+            if os.path.isfile(candidate):
+                return request_model
+    return os.path.basename(settings.get("llm_model_path", "")) or "default"
+
+
 def _tools_system_text(tools: list) -> str:
     if not tools:
         return ""
@@ -506,7 +519,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
 
     if servers:
         try:
-            lb_model = os.path.basename(settings.get("llm_model_path", "")) or "default"
+            lb_model = _resolve_model(request.model, settings)
             timeout = int(settings.get("ollama_timeout", "300000")) / 1000
             lb = LoadBalancer(servers, timeout=timeout, model=lb_model)
             result = await lb.chat(messages=messages, **kwargs)
@@ -730,13 +743,8 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
             # Pass full server list to LoadBalancer - it will handle round-robin internally
             # This ensures proper load balancing across all servers
             timeout = int(settings.get("ollama_timeout", "300000")) / 1000
-            # Use llm_model_path like the IPEX service does (extract filename from full path)
-            llm_path = settings.get("llm_model_path", "")
-            if llm_path:
-                model = os.path.basename(llm_path)
-            else:
-                model = "default"
-            logger.info(f"[OPENAI API] LoadBalancer model={model!r} (from llm_model_path setting)")
+            model = _resolve_model(request.model, settings)
+            logger.info(f"[OPENAI API] LoadBalancer model={model!r}")
             load_balancer = LoadBalancer(servers, timeout=timeout, model=model)
 
             try:

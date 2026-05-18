@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Setting
-from app.routers.openai_api import verify_api_key
+from app.routers.openai_api import verify_api_key, _resolve_model
 from app.services.inference_factory import get_inference_service, prepare_vram_for_llm
 from app.services.text_utils import inject_no_think, strip_thinking_tags
 
@@ -266,7 +266,7 @@ async def messages(
     full_text = None
     if servers:
         try:
-            lb_model = os.path.basename(settings.get("llm_model_path", "")) or "default"
+            lb_model = _resolve_model(body.model, settings)
             timeout = int(settings.get("ollama_timeout", "300000")) / 1000
             lb = LoadBalancer(servers, timeout=timeout, model=lb_model)
             result = await lb.chat(messages=messages_for_model, **kwargs)
