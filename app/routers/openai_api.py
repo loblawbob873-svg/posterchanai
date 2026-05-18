@@ -824,12 +824,35 @@ def _redirect_hallucinated_sed(tool_calls: list) -> list:
 
                         # Block seds targeting redirect echoes (lines with > or >> to files)
                         if re.search(r'>+\s*\$', norm_pat) or '>>' in norm_pat:
-                            args_dict["command"] = (
-                                f"echo 'BLOCKED: The line \"{norm_pat[:80]}\" redirects output to a "
-                                f"config file (> or >> operator). Do NOT colorize it — modifying this "
-                                f"line would break the installer. Skip it and colorize a DISPLAY echo "
-                                f"line instead (one with no > or >> redirection).'"
-                            )
+                            # Build a list of remaining uncolorized display lines to redirect the model
+                            remaining_cmds = []
+                            for _rlc in _display_echo_cache[:12]:
+                                if '\\033' in _rlc or '\x1b' in _rlc:
+                                    continue
+                                if re.search(r'>\s*\$', _rlc) or '>>' in _rlc:
+                                    continue
+                                _rsp = (_rlc.replace('\\', '\\\\').replace('|', r'\|')
+                                        .replace('[', r'\[').replace(']', r'\]')
+                                        .replace('$', r'\$'))
+                                _rcy = _make_cyberpunk_text(_rlc).replace('|', r'\|')
+                                remaining_cmds.append(
+                                    f"sed -i 's|{_rsp}|echo -e \"\\\\033[1;96m{_rcy}\\\\033[0m\"|' "
+                                    f"/opt/gentoo-installer/gentoo.sh && echo 'SED_OK'"
+                                )
+                                if len(remaining_cmds) >= 3:
+                                    break
+                            if remaining_cmds:
+                                cmds_str = "  OR  ".join(remaining_cmds[:2])
+                                block_msg = (
+                                    f"STOP. '{norm_pat[:60]}' writes to a config file — DO NOT EDIT IT. "
+                                    f"Run one of these DISPLAY echo colorization commands instead: {cmds_str}"
+                                )
+                            else:
+                                block_msg = (
+                                    f"STOP. '{norm_pat[:60]}' writes to a config file — DO NOT EDIT IT. "
+                                    "All display echo lines have been colorized. Task complete."
+                                )
+                            args_dict["command"] = f"echo {repr(block_msg)}"
                             tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                             logger.warning(f"[SED-REDIR-BLOCK] Blocked redirect-echo sed: '{norm_pat[:60]}'")
                             out.append(tc)
