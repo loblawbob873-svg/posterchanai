@@ -467,8 +467,15 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                     last_bash_cmd = r.get("content", "")
                     break
             _is_inspection = any(kw in last_bash_cmd for kw in ("cat -A", "od -c", "hexdump", "| strings", "| od ", "grep -c", "grep -E '\\\\["))
+            # Intercept sed delimiter errors — / in replacement breaks sed 's/.../.../'
+            if "unknown option to `s'" in content_str or "unknown option to `s'" in content_str or "unterminated" in content_str.lower():
+                content_str += (
+                    "\n\n[IMPORTANT: The sed command failed because the replacement contains '/' characters which break the s/.../.../ delimiter. "
+                    "Use a different delimiter like '|': sed -i 's|PATTERN|REPLACEMENT|g' — "
+                    "or escape every '/' in the replacement as '\\/'.]"
+                )
             # Intercept "No changes" errors — model needs a new strategy
-            if "no changes to apply" in content_str.lower() or "identical" in content_str.lower():
+            elif "no changes to apply" in content_str.lower() or "identical" in content_str.lower():
                 content_str += "\n\n[IMPORTANT: The edit failed because oldString was not found or was identical to newString. Do NOT repeat the same edit. Use bash with sed -i for targeted replacements instead, e.g. bash(command=\"sed -i 's/original/replacement/g' file\").]"
             # Binary inspection — redirect to echo grep immediately
             elif _is_inspection:
