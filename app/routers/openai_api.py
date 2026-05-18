@@ -501,44 +501,53 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                     _display_echo_cache.clear()
                     _display_echo_cache.extend(_non_bare[:60])
                     logger.info(f"[GREP-ANN] Cached {len(_display_echo_cache)} non-bare display echo lines")
-                if prior_failures >= 1:
-                    if display_lines:
-                        sed_templates = []
-                        for linenum, line_content in display_lines[:6]:
-                            # Skip bare echo (no string to colorize)
-                            if not re.search(r'echo\s+\S', line_content):
-                                continue
-                            safe_pat = line_content.replace('\\', '\\\\').replace('|', r'\|')
-                            sed_templates.append(
-                                f"  Line {linenum}: {line_content}\n"
-                                f"  Sed:  sed -i 's|{safe_pat}|echo -e \"\\\\033[1;96mTEXT\\\\033[0m\"|' /opt/gentoo-installer/gentoo.sh"
-                            )
-                        if sed_templates:
-                            tpl_str = "\n\n".join(sed_templates)
-                            content_str += (
-                                f"\n\n[DISPLAY ECHO LINES (safe to colorize — no file redirection):\n\n"
-                                f"{tpl_str}\n\n"
-                                f"Replace TEXT with your cyberpunk text. Use these EXACT patterns.]"
-                            )
-                            logger.info(f"[GREP-ANN] Injected {len(sed_templates)} display-echo templates")
-                        else:
-                            # All visible echoes write to files — need to look further in the file
-                            content_str += (
-                                "\n\n[WARNING: The echo lines above ALL write to files (>>). "
-                                "They are config-writing statements — do NOT colorize them (would break the installer). "
-                                "The display echoes are further in the file. Run a broader grep:\n"
-                                "bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '#'\")"
-                                "\nThat will show the echo statements that display text to the user.]"
-                            )
-                            logger.info("[GREP-ANN] All grep echoes are redirecting — telling model to run better grep")
-                    else:
-                        content_str += (
-                            "\n\n[WARNING: All visible echo lines write to files with >> redirection. "
-                            "These are config-writing statements — do NOT colorize them. "
-                            "Run: bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '#'\") "
-                            "to find the display echo statements.]"
+                # Always inject sed templates — never leave the model without actionable commands
+                if display_lines:
+                    sed_templates = []
+                    for linenum, line_content in display_lines[:8]:
+                        # Skip bare echo (no string to colorize)
+                        if not re.search(r'echo\s+\S', line_content):
+                            continue
+                        # Strip leading whitespace to avoid tab-matching issues in sed
+                        stripped_content = line_content.strip()
+                        safe_pat = (stripped_content
+                                    .replace('\\', '\\\\')
+                                    .replace('|', r'\|')
+                                    .replace('[', r'\[')
+                                    .replace(']', r'\]')
+                                    .replace('$', r'\$')
+                                    .replace('.', r'\.'))
+                        sed_templates.append(
+                            f"  Line {linenum}: {stripped_content}\n"
+                            f"  Sed:  sed -i 's|{safe_pat}|echo -e \"\\\\033[1;96mTEXT\\\\033[0m\"|' /opt/gentoo-installer/gentoo.sh && echo 'OK'"
                         )
-                        logger.info("[GREP-ANN] All echoes are redirecting, injecting better grep suggestion")
+                    if sed_templates:
+                        tpl_str = "\n\n".join(sed_templates)
+                        content_str += (
+                            f"\n\n[ACTION REQUIRED — STOP RUNNING GREP. You have the data. Now colorize these display echo lines.\n\n"
+                            f"DISPLAY ECHO LINES (safe to colorize — no file redirection):\n\n"
+                            f"{tpl_str}\n\n"
+                            f"Replace TEXT with your cyberpunk text. Use these EXACT sed patterns. Do NOT run grep again.]"
+                        )
+                        logger.info(f"[GREP-ANN] Injected {len(sed_templates)} display-echo templates (always-on)")
+                    else:
+                        # All visible echoes write to files — need to look further in the file
+                        content_str += (
+                            "\n\n[WARNING: The echo lines above ALL write to files (>>). "
+                            "They are config-writing statements — do NOT colorize them (would break the installer). "
+                            "The display echoes are further in the file. Run a broader grep:\n"
+                            "bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '#'\")"
+                            "\nThat will show the echo statements that display text to the user.]"
+                        )
+                        logger.info("[GREP-ANN] All grep echoes are redirecting — telling model to run better grep")
+                else:
+                    content_str += (
+                        "\n\n[WARNING: All visible echo lines write to files with >> redirection. "
+                        "These are config-writing statements — do NOT colorize them. "
+                        "Run: bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '#'\") "
+                        "to find the display echo statements.]"
+                    )
+                    logger.info("[GREP-ANN] All echoes are redirecting, injecting better grep suggestion")
             # Intercept sed delimiter errors — / in replacement breaks sed 's/.../.../'
             if "unknown option to `s'" in content_str or "unknown option to `s'" in content_str or "unterminated" in content_str.lower():
                 content_str += (
