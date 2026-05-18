@@ -701,6 +701,35 @@ _TOOL_NAME_MAP = {
     "str_replace": "edit",
 }
 
+def _redirect_hallucinated_sed(tool_calls: list) -> list:
+    """If model issues a sed with a pattern not in the display echo cache, replace it with the grep command instead."""
+    if not _display_echo_cache:
+        return tool_calls
+    out = []
+    for tc in tool_calls:
+        fn = tc.get("function", {})
+        if fn.get("name") in ("bash", "Bash"):
+            try:
+                raw_args = fn.get("arguments", "{}")
+                args_dict = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
+                cmd = args_dict.get("command", "")
+                if "sed" in cmd and ("-i" in cmd or "-e" in cmd):
+                    _pm = re.search(r"s([/|!])(.*?)\1", cmd)
+                    if _pm:
+                        pat = _pm.group(2).lstrip("^").strip()
+                        if pat and not any(pat in cached for cached in _display_echo_cache):
+                            # Pattern is known to not exist — redirect to grep so the result
+                            # will come back through GREP-ANN with real templates
+                            grep_cmd = "grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '#'"
+                            args_dict["command"] = grep_cmd
+                            tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                            logger.warning(f"[SED-REDIRECT] Hallucinated pattern '{pat}' not in cache — replaced sed with grep")
+            except Exception:
+                pass
+        out.append(tc)
+    return out
+
+
 def _fix_sed_tool_calls(tool_calls: list) -> list:
     """Fix common sed mistakes in bash tool calls before they reach opencode."""
     out = []
@@ -1009,6 +1038,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
 
     clean_text, tool_calls = _parse_oai_tool_calls(full_text)
     tool_calls = _fix_sed_tool_calls(tool_calls)
+    tool_calls = _redirect_hallucinated_sed(tool_calls)
     logger.info(f"[OAI-AGENTIC] len={len(full_text)} head={full_text[:200]!r} tail={full_text[-200:]!r} tool_calls={len(tool_calls)}")
 
     # If model responded with text-only or unparseable tool call (no tool call), nudge it once
