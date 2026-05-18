@@ -487,6 +487,9 @@ def _parse_oai_tool_calls(text: str):
             arguments = parsed.get("arguments", {})
         if not name:
             continue
+        # Bash tool requires description — synthesize from command if missing
+        if name in ("bash", "Bash") and isinstance(arguments, dict) and "description" not in arguments:
+            arguments["description"] = (arguments.get("command") or "")[:80]
         tool_calls.append({
             "id": f"call_{uuid.uuid4().hex[:12]}",
             "type": "function",
@@ -496,6 +499,8 @@ def _parse_oai_tool_calls(text: str):
             },
         })
     clean = _TC_RE.sub("", text).strip()
+    # Strip any hallucinated <tool_result>...</tool_result> blocks
+    clean = re.sub(r'<tool_result>.*?</tool_result>', '', clean, flags=re.DOTALL | re.IGNORECASE).strip()
     clean = _THINK_STRIP_RE.sub("", clean).strip()
     return clean, tool_calls
 
