@@ -715,11 +715,49 @@ _TOOL_NAME_MAP = {
     "str_replace": "edit",
 }
 
+def _normalize_sed_pat(pat: str) -> str:
+    """Normalize a sed BRE pattern for cache comparison: strip ^ anchor, unescape \\[ → [."""
+    p = pat.lstrip("^").strip()
+    p = p.replace(r'\\[', '[').replace(r'\\]', ']')  # \\[ (double-escaped) → [
+    p = p.replace(r'\[', '[').replace(r'\]', ']')    # \[ (BRE literal) → [
+    p = p.replace(r'\$', '$')                         # \$ → $
+    return p
+
+
+def _build_correct_sed(matched_line: str, color: str) -> str:
+    """Given a cached display echo line and a color code, return a correct sed -i command."""
+    # Extract display text from the echo statement
+    text_m = re.search(r'echo\s+(?:-[eE]\s+)?"(.*?)"', matched_line.strip())
+    if not text_m:
+        text_m = re.search(r"echo\s+(?:-[eE]\s+)?'(.*?)'", matched_line.strip())
+    if not text_m:
+        text_m = re.search(r'echo\s+(?:-[eE]\s+)?(\S.*)', matched_line.strip())
+    if not text_m:
+        return ""
+    display_text = text_m.group(1).strip('"\'')
+
+    # Build sed pattern: escape [ and ] for BRE, escape $ for sed
+    raw_stripped = matched_line.strip()
+    # Pattern: escape special BRE chars — \[ for literal [, \$ for literal $
+    esc_pat = (raw_stripped
+               .replace('\\', '\\\\')
+               .replace('[', r'\[').replace(']', r'\]')
+               .replace('$', r'\$')
+               .replace('"', r'\"'))
+    # Replacement: echo -e with \\033 (written as \\\\033 in Python so bash script gets \033)
+    correct_repl = f'echo -e "\\\\033[{color}m{display_text}\\\\033[0m"'
+    cmd = (
+        f"sed -i 's|{esc_pat}|{correct_repl}|' /opt/gentoo-installer/gentoo.sh && "
+        f"echo 'SED_OK: {display_text[:40]}'"
+    )
+    return cmd
+
+
 def _redirect_hallucinated_sed(tool_calls: list) -> list:
     """Intercept outgoing sed tool calls:
-    - If pattern not in cache (hallucinated line): replace with grep to get real lines.
-    - If pattern IS in cache but replacement is broken ANSI (missing \\033): rebuild correctly.
-    Also appends a grep verification so the result has visible output (sed -i is always silent).
+    - Hallucinated pattern (not in cache) → replace with grep to force real line discovery.
+    - Real pattern but broken replacement (wrong ANSI or appending instead of replacing) → rebuild.
+    - Real pattern, looks valid → append && echo so sed -i silence is never misread as failure.
     """
     if not _display_echo_cache:
         return tool_calls
@@ -734,48 +772,42 @@ def _redirect_hallucinated_sed(tool_calls: list) -> list:
                 if "sed" in cmd and ("-i" in cmd or "-e" in cmd):
                     _pm = re.search(r"s([/|!])(.*?)\1(.*?)\1", cmd)
                     if _pm:
-                        pat = _pm.group(2).lstrip("^").strip()
+                        raw_pat = _pm.group(2)
                         replacement = _pm.group(3)
-                        in_cache = bool(pat) and any(pat in cached for cached in _display_echo_cache)
+                        # Normalize pattern for cache comparison
+                        norm_pat = _normalize_sed_pat(raw_pat)
+                        matched_line = next(
+                            (c for c in _display_echo_cache if norm_pat and norm_pat in _normalize_sed_pat(c)),
+                            None
+                        )
+                        in_cache = matched_line is not None
 
                         if not in_cache:
-                            # Hallucinated line — redirect to grep
                             grep_cmd = "grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '#'"
                             args_dict["command"] = grep_cmd
                             tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
-                            logger.warning(f"[SED-REDIRECT] Hallucinated pattern '{pat[:60]}' → grep")
+                            logger.warning(f"[SED-REDIRECT] '{norm_pat[:60]}' not in cache → grep")
                         else:
-                            # Real pattern — check ANSI correctness in replacement
-                            has_proper_ansi = '\\033' in replacement or '\x1b' in replacement
-                            bare_ansi = re.search(r'(?<!\033)\[(\d+(?:;[\d;]*)*)m', replacement)
-                            if bare_ansi and not has_proper_ansi:
-                                # Replacement has bare [NNm codes without \033 — rebuild correctly
-                                matched_line = next((c for c in _display_echo_cache if pat in c), None)
-                                if matched_line:
-                                    color_m = re.search(r'\[(\d+(?:;[\d;]*)*)m', replacement)
-                                    color = color_m.group(1) if color_m else "38;5;207"
-                                    text_m = re.search(r'echo\s+(?:-[eE]\s+)?["\']?(.*?)["\']?\s*$', matched_line.strip())
-                                    if text_m:
-                                        display_text = text_m.group(1).strip('"\'')
-                                        # Escape $ so sed treats it as literal in the pattern
-                                        esc_pat = pat.replace('$', r'\$').replace('"', r'\"')
-                                        correct_repl = f'echo -e "\\\\033[{color}m{display_text}\\\\033[0m"'
-                                        new_cmd = (
-                                            f"sed -i 's|{esc_pat}|{correct_repl}|' /opt/gentoo-installer/gentoo.sh && "
-                                            f"echo 'SED_OK: applied color to: {display_text[:40]}'"
-                                        )
-                                        args_dict["command"] = new_cmd
-                                        tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
-                                        logger.warning(f"[SED-REPAIR] Rebuilt ANSI sed for '{matched_line.strip()[:60]}'")
-                            elif in_cache and ("&&" not in cmd) and "echo" not in cmd.split("sed")[0]:
-                                # Real pattern, valid-looking replacement — append verification echo
-                                # so "no output" is never ambiguous for sed -i
-                                esc_pat = pat.replace('$', r'\$').replace('"', r'\"')
-                                args_dict["command"] = (
-                                    cmd.rstrip() + f" && echo 'SED_OK: {esc_pat[:40]}'"
-                                )
+                            # Real pattern — check replacement quality
+                            has_proper_ansi = '\\033' in replacement or r'\x1b' in replacement or '\x1b' in replacement
+                            bare_ansi = bool(re.search(r'(?<!\\033)(?<!\x1b)\[(\d+(?:;[\d;]*)*)m', replacement))
+                            # Structural check: replacement duplicates original text (appending, not replacing)
+                            norm_matched = _normalize_sed_pat(matched_line)
+                            appending = norm_matched[:20] in replacement if len(norm_matched) > 5 else False
+                            needs_repair = (bare_ansi and not has_proper_ansi) or appending
+                            if needs_repair:
+                                color_m = re.search(r'\[(\d+(?:;[\d;]*)*)m', replacement)
+                                color = color_m.group(1) if color_m else "38;5;207"
+                                new_cmd = _build_correct_sed(matched_line, color)
+                                if new_cmd:
+                                    args_dict["command"] = new_cmd
+                                    tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                                    logger.warning(f"[SED-REPAIR] Rebuilt sed for '{matched_line.strip()[:60]}' (bare_ansi={bare_ansi}, appending={appending})")
+                            elif "&&" not in cmd:
+                                # Valid replacement — just add verification echo
+                                args_dict["command"] = cmd.rstrip() + f" && echo 'SED_OK: {norm_pat[:40]}'"
                                 tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
-                                logger.info(f"[SED-VERIFY] Appended echo to real-pattern sed for '{pat[:40]}'")
+                                logger.info(f"[SED-VERIFY] Appended echo for '{norm_pat[:40]}'")
             except Exception as e:
                 logger.debug(f"[SED-REDIRECT] Error: {e}")
         out.append(tc)
@@ -796,11 +828,6 @@ def _fix_sed_tool_calls(tool_calls: list) -> list:
                     fixed = cmd
                     # Strip '^' anchor before 'echo' — echo lines are often indented inside functions
                     fixed = re.sub(r"(s[/|!])\^(echo\b)", r"\1\2", fixed)
-                    # Fix \[ → \\[ in sed pattern for literal backslash-bracket matching.
-                    # In sed BRE, \[ = literal [ (not backslash-bracket).
-                    # If the file contains \[ (PS1-style), the pattern must use \\[.
-                    # ANSI replacements use \033[ (not \[) so this only affects the pattern.
-                    fixed = re.sub(r'(?<!\\)\\([[\]])', r'\\\\' + r'\1', fixed)
                     if fixed != cmd:
                         args_dict["command"] = fixed
                         tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
