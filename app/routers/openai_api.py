@@ -484,6 +484,32 @@ def _normalize_tool(name: str, args: dict) -> tuple:
     return name, args
 
 
+def _complete_json(raw: str) -> str:
+    """Close any unclosed JSON braces/brackets in a truncated string."""
+    # Strip common model trailing artifacts
+    raw = re.sub(r',?\s*\.\.\.\s*\[truncated\].*$', '', raw, flags=re.DOTALL).rstrip()
+    raw = re.sub(r',\s*$', '', raw)  # trailing comma
+    opens = []
+    in_str = False
+    esc = False
+    for c in raw:
+        if esc:
+            esc = False
+            continue
+        if c == '\\' and in_str:
+            esc = True
+            continue
+        if c == '"':
+            in_str = not in_str
+            continue
+        if not in_str:
+            if c in ('{', '['):
+                opens.append('}' if c == '{' else ']')
+            elif c in ('}', ']') and opens and opens[-1] == c:
+                opens.pop()
+    return raw + ''.join(reversed(opens))
+
+
 def _repair_json(raw: str) -> str:
     """Escape literal newlines/tabs inside JSON string values."""
     result = []
@@ -533,10 +559,13 @@ def _parse_oai_tool_calls(text: str):
                     parsed = json.loads(_repair_json(raw))
                 except Exception as _e2:
                     try:
-                        parsed = json.loads(re.sub(r'[\x00-\x1f]', ' ', raw))
+                        parsed = json.loads(_complete_json(_repair_json(raw)))
                     except Exception as _e3:
-                        logger.warning(f"[TC-PARSE] all json failed e1={_e1} e2={_e2} e3={_e3} raw_end={raw[-80:]!r}")
-                        continue
+                        try:
+                            parsed = json.loads(re.sub(r'[\x00-\x1f]', ' ', raw))
+                        except Exception as _e4:
+                            logger.warning(f"[TC-PARSE] all json failed e1={_e1} e2={_e2} e3={_e3} raw_end={raw[-80:]!r}")
+                            continue
             name = parsed.get("name", "")
             arguments = parsed.get("arguments", {})
         if not name:
