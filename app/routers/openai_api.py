@@ -748,7 +748,14 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     if not tool_calls and clean_text and len(clean_text) < 600:
         nudge_messages = messages + [
             {"role": "assistant", "content": clean_text},
-            {"role": "user", "content": "Now call a tool. Do NOT write any more text. Execute a bash sed -i command or another appropriate tool call immediately."},
+            {"role": "user", "content": (
+                "Now call a tool immediately. Do NOT write any more text.\n"
+                "Use bash with a python3 one-liner to make the change. Example for adding cyberpunk colors:\n"
+                "bash(command=\"python3 -c \\\"import sys; lines=open('/opt/gentoo-installer/gentoo.sh').readlines(); "
+                "lines.insert(1, \\\\\\\"CYAN='\\\\\\\\033[0;36m'\\\\\\\\nMAGENTA='\\\\\\\\033[1;35m'\\\\\\\\nNC='\\\\\\\\033[0m'\\\\\\\\n\\\\\\\"); "
+                "open('/opt/gentoo-installer/gentoo.sh','w').writelines(lines)\\\"\")\n"
+                "Call the tool now."
+            )},
         ]
         try:
             nudge_result = None
