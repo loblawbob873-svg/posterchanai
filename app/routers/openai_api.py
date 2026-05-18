@@ -389,6 +389,7 @@ async def root_list_models(
 # ============== Tool call helpers (opencode / agentic) ==============
 
 _TC_RE = re.compile(r'<tool_call>\s*(.*?)\s*</tool_call>', re.DOTALL | re.IGNORECASE)
+_TC_UNCLOSED_RE = re.compile(r'<tool_call>\s*(.*?)$', re.DOTALL | re.IGNORECASE)
 _THINK_STRIP_RE = re.compile(r'<think(?:ing)?>(.*?)</think(?:ing)?>', re.DOTALL | re.IGNORECASE)
 
 
@@ -449,7 +450,10 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                 parts.append(f'<tool_call>\n{json.dumps({"name": name, "arguments": args})}\n</tool_call>')
             result.append({"role": "assistant", "content": "\n".join(parts)})
         elif role == "tool":
-            result.append({"role": "user", "content": str(content)})
+            content_str = str(content)
+            if "[truncated]" in content_str:
+                content_str += "\n\n[IMPORTANT: The above content was truncated. Do NOT copy the truncated content into oldString. Instead use bash to read specific line ranges (e.g. sed -n '1,50p' file.sh) or use the write tool to write a complete new file from scratch.]"
+            result.append({"role": "user", "content": content_str})
         else:
             result.append({"role": role, "content": content})
 
@@ -581,8 +585,32 @@ def _parse_oai_tool_calls(text: str):
             },
         })
     clean = _TC_RE.sub("", text).strip()
+    # Fallback: try unclosed <tool_call> blocks if nothing matched
+    if not tool_calls:
+        m = _TC_UNCLOSED_RE.search(text)
+        if m:
+            raw = _complete_json(_repair_json(m.group(1).strip()))
+            try:
+                parsed = json.loads(raw)
+                name = parsed.get("name", "")
+                arguments = parsed.get("arguments", {})
+                if name and isinstance(arguments, dict):
+                    name, arguments = _normalize_tool(name, arguments)
+                    tool_calls.append({
+                        "id": f"call_{uuid.uuid4().hex[:12]}",
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "arguments": json.dumps(arguments),
+                        },
+                    })
+                    logger.info(f"[TC-PARSE] recovered unclosed tool_call: {name}")
+            except Exception as _ue:
+                logger.warning(f"[TC-PARSE] unclosed recovery failed: {_ue}")
+
     # Strip any hallucinated <tool_result>...</tool_result> blocks
     clean = re.sub(r'<tool_result>.*?</tool_result>', '', clean, flags=re.DOTALL | re.IGNORECASE).strip()
+    clean = re.sub(r'<tool_call>.*', '', clean, flags=re.DOTALL | re.IGNORECASE).strip()
     clean = _THINK_STRIP_RE.sub("", clean).strip()
     return clean, tool_calls
 
