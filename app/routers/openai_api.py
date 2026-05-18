@@ -456,7 +456,23 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                 content_str += "\n\n[IMPORTANT: The edit failed because oldString was not found or was identical to newString. Do NOT repeat the same edit. Use bash with sed -i for targeted replacements instead, e.g. bash(command=\"sed -i 's/original/replacement/g' file\").]"
             # Truncate large tool results so the model has context budget for its response
             elif len(content_str) > 3000:
-                content_str = content_str[:3000] + "\n...[file continues — truncated for brevity]\n\nIMPORTANT: This file is VERY LARGE (many hundreds of lines). You have only seen the beginning. Do NOT use the write tool — you cannot fit the whole file and will destroy the rest. Instead use bash with sed -i for targeted in-place replacements, for example:\nbash(command=\"sed -i 's/original text/replacement text/g' /path/to/file\")\nMake multiple small bash+sed calls for each change. Never use write on this file."
+                line_count = content_str.count('\n')
+                has_ansi = any(x in content_str for x in ('\\033', '\\e[', '\x1b[', r'\033', r'\e['])
+                has_echo = 'echo ' in content_str
+                file_info = f"The full file is approximately {line_count}+ lines long."
+                if not has_ansi:
+                    file_info += " It has NO existing ANSI color escape codes."
+                if has_echo:
+                    file_info += " It uses plain 'echo' statements (no existing colors)."
+                content_str = content_str[:3000] + (
+                    f"\n...[file continues — truncated]\n\n"
+                    f"{file_info}\n"
+                    f"IMPORTANT: Do NOT use the write tool (you will destroy the rest of the file).\n"
+                    f"Use bash with sed -i for targeted changes, e.g.:\n"
+                    f"  Add color vars: bash(command=\"sed -i '30a CYAN=\\\"\\\\\\\\033[0;36m\\\"' file\")\n"
+                    f"  Color echoes:   bash(command=\"sed -i 's/echo \\\"\\([^\\\"]*\\)\\\"/echo -e \\\"\\${{CYAN}}\\1\\${{NC}}\\\"/g' file\")\n"
+                    f"Make multiple targeted bash+sed calls. Never use write on this file."
+                )
             result.append({"role": "user", "content": content_str})
         else:
             result.append({"role": role, "content": content})
