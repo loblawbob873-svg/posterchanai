@@ -532,6 +532,8 @@ def _repair_json(raw: str) -> str:
     """Escape literal newlines/tabs/unescaped-quotes inside JSON string values."""
     # \xHH is invalid JSON — convert to \u00HH before parsing
     raw = re.sub(r'\\x([0-9a-fA-F]{2})', lambda m: '\\u00' + m.group(1).upper(), raw)
+    # \' is invalid in JSON strings — strip the backslash
+    raw = raw.replace("\\'", "'")
     result = []
     in_string = False
     escape_next = False
