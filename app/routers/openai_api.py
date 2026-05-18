@@ -603,6 +603,29 @@ _TOOL_NAME_MAP = {
     "str_replace": "edit",
 }
 
+def _fix_sed_tool_calls(tool_calls: list) -> list:
+    """Fix common sed mistakes in bash tool calls before they reach opencode."""
+    out = []
+    for tc in tool_calls:
+        fn = tc.get("function", {})
+        if fn.get("name") in ("bash", "Bash"):
+            raw_args = fn.get("arguments", "{}")
+            try:
+                args_dict = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
+                cmd = args_dict.get("command", "")
+                if "sed" in cmd and "-i" in cmd:
+                    # Strip '^' anchor before 'echo' — echo lines are often indented inside functions
+                    fixed = re.sub(r"(s[/|!])\^(echo\b)", r"\1\2", cmd)
+                    if fixed != cmd:
+                        args_dict["command"] = fixed
+                        tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                        logger.info(f"[SED-FIX] Stripped '^' anchor from sed: {cmd[:120]!r}")
+            except Exception:
+                pass
+        out.append(tc)
+    return out
+
+
 def _normalize_tool(name: str, args: dict) -> tuple:
     """Map model-native tool names/args to opencode's actual schema."""
     name = _TOOL_NAME_MAP.get(name, name)
@@ -881,6 +904,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         usage = result.get("usage", {})
 
     clean_text, tool_calls = _parse_oai_tool_calls(full_text)
+    tool_calls = _fix_sed_tool_calls(tool_calls)
     logger.info(f"[OAI-AGENTIC] len={len(full_text)} head={full_text[:200]!r} tail={full_text[-200:]!r} tool_calls={len(tool_calls)}")
 
     # If model responded with text-only or unparseable tool call (no tool call), nudge it once
