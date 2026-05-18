@@ -712,7 +712,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         messages = inject_no_think(messages)
 
     temperature = request.temperature if request.temperature is not None else 0.0
-    max_tokens = max(request.max_tokens or 0, int(settings.get("ollama_num_predict", "2048")))
+    # Cap agentic completions at 2048 tokens — tool calls are short; large limits cause runaway generation
+    max_tokens = min(max(request.max_tokens or 0, int(settings.get("ollama_num_predict", "2048"))), 2048)
     kwargs = {"temperature": temperature, "max_tokens": max_tokens}
     if request.top_p is not None:
         kwargs["top_p"] = request.top_p
