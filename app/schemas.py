@@ -301,9 +301,12 @@ def _normalize_message_content(value: Union[str, List[Any], None]) -> str:
 class ChatMessage(BaseModel):
     role: str
     content: Union[str, List[Any]] = ""
+    tool_calls: Optional[List[Any]] = None
+    tool_call_id: Optional[str] = None
+    name: Optional[str] = None
 
     class Config:
-        extra = "ignore"  # Ignore extra fields like image_path
+        extra = "ignore"
 
     @field_validator("content", mode="before")
     @classmethod
@@ -322,9 +325,11 @@ class ChatCompletionRequest(BaseModel):
     presence_penalty: Optional[float] = None
     frequency_penalty: Optional[float] = None
     user: Optional[str] = None
+    tools: Optional[List[Any]] = None
+    tool_choice: Optional[Any] = None
 
     class Config:
-        extra = "ignore"  # Ignore tools, tool_choice, etc. from OpenClaw/OpenAI clients
+        extra = "ignore"
 
 
 class ChatCompletionChoice(BaseModel):

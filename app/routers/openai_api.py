@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import uuid
 from datetime import datetime
 from typing import Optional, AsyncGenerator
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Request
@@ -385,6 +386,185 @@ async def root_list_models(
     return await _handle_list_models(db)
 
 
+# ============== Tool call helpers (opencode / agentic) ==============
+
+_TC_RE = re.compile(r'<tool_call>\s*(.*?)\s*</tool_call>', re.DOTALL | re.IGNORECASE)
+_THINK_STRIP_RE = re.compile(r'<think(?:ing)?>(.*?)</think(?:ing)?>', re.DOTALL | re.IGNORECASE)
+
+
+def _tools_system_text(tools: list) -> str:
+    if not tools:
+        return ""
+    entries = []
+    for t in tools:
+        name = t.get("name", "")
+        desc = t.get("description", "")
+        schema = t.get("input_schema") or t.get("parameters") or {}
+        props = schema.get("properties", {}) if isinstance(schema, dict) else {}
+        required = schema.get("required", []) if isinstance(schema, dict) else []
+        params = []
+        for pname, pdef in props.items():
+            req = " (required)" if pname in required else ""
+            pdesc = pdef.get("description", "") if isinstance(pdef, dict) else ""
+            params.append(f"  {pname}{req}: {pdesc}")
+        entries.append(f"### {name}\n{desc}" + ("\nParameters:\n" + "\n".join(params) if params else ""))
+    return "<tools>\n" + "\n\n".join(entries) + "\n</tools>"
+
+
+def _oai_messages_for_tools(messages: list, tools: list) -> list:
+    """Convert OpenAI messages (with tool_calls / tool role) to model text format."""
+    result = []
+    tools_text = _tools_system_text(tools)
+    for msg in messages:
+        role = msg.get("role", "")
+        content = msg.get("content") or ""
+        tool_calls = msg.get("tool_calls") or []
+
+        if role == "system":
+            combined = (content + "\n\n" + tools_text).strip() if tools_text else content
+            result.append({"role": "system", "content": combined})
+            tools_text = ""  # only inject once
+        elif role == "assistant" and tool_calls:
+            parts = [content] if content else []
+            for tc in tool_calls:
+                fn = tc.get("function", {})
+                name = fn.get("name", "")
+                try:
+                    args = json.loads(fn.get("arguments", "{}"))
+                except Exception:
+                    args = {}
+                parts.append(f'<tool_call>\n{json.dumps({"name": name, "arguments": args})}\n</tool_call>')
+            result.append({"role": "assistant", "content": "\n".join(parts)})
+        elif role == "tool":
+            result.append({"role": "user", "content": str(content)})
+        else:
+            result.append({"role": role, "content": content})
+
+    # If no system message existed, prepend tools
+    if tools_text and (not result or result[0].get("role") != "system"):
+        result.insert(0, {"role": "system", "content": tools_text})
+
+    return result
+
+
+def _parse_oai_tool_calls(text: str):
+    """Parse <tool_call> blocks; return (clean_text, openai_tool_calls_list)."""
+    tool_calls = []
+    for m in _TC_RE.finditer(text):
+        raw = m.group(1).strip()
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            continue
+        name = parsed.get("name", "")
+        arguments = parsed.get("arguments", {})
+        if not name:
+            continue
+        tool_calls.append({
+            "id": f"call_{uuid.uuid4().hex[:12]}",
+            "type": "function",
+            "function": {
+                "name": name,
+                "arguments": json.dumps(arguments) if isinstance(arguments, dict) else str(arguments),
+            },
+        })
+    clean = _TC_RE.sub("", text).strip()
+    clean = _THINK_STRIP_RE.sub("", clean).strip()
+    return clean, tool_calls
+
+
+async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_load_balancer: bool):
+    """Handle chat completions with tools (opencode agentic mode)."""
+    from app.models import Setting
+    from app.services.load_balancer import LoadBalancer, parse_server_urls, NoHealthyServersError
+
+    settings = {s.key: s.value for s in db.query(Setting).all()}
+    tools = [t.dict() if hasattr(t, "dict") else t for t in (request.tools or [])]
+    messages = _oai_messages_for_tools(
+        [{"role": m.role, "content": m.content,
+          "tool_calls": getattr(m, "tool_calls", None),
+          "tool_call_id": getattr(m, "tool_call_id", None)}
+         for m in request.messages],
+        tools,
+    )
+
+    llm_path = settings.get("llm_model_path", "").lower()
+    if "qwen3" in llm_path:
+        from app.services.text_utils import inject_no_think
+        messages = inject_no_think(messages)
+
+    temperature = request.temperature if request.temperature is not None else 0.0
+    max_tokens = max(request.max_tokens or 0, int(settings.get("ollama_num_predict", "2048")))
+    kwargs = {"temperature": temperature, "max_tokens": max_tokens}
+    if request.top_p is not None:
+        kwargs["top_p"] = request.top_p
+
+    full_text = None
+    usage = {}
+    chat_server_urls = settings.get("chat_server_urls", "")
+    servers = parse_server_urls(chat_server_urls, exclude_self=False) if not skip_load_balancer and chat_server_urls else []
+
+    if servers:
+        try:
+            lb_model = os.path.basename(settings.get("llm_model_path", "")) or "default"
+            timeout = int(settings.get("ollama_timeout", "300000")) / 1000
+            lb = LoadBalancer(servers, timeout=timeout, model=lb_model)
+            result = await lb.chat(messages=messages, **kwargs)
+            if "error" not in result and result.get("choices"):
+                full_text = result["choices"][0].get("message", {}).get("content", "") or ""
+                usage = result.get("usage", {})
+        except Exception as e:
+            logger.warning(f"[OAI-AGENTIC] LB failed: {e}, using local")
+
+    if full_text is None:
+        prepare_vram_for_llm(db)
+        service = get_inference_service(db)
+        result = await service.chat_completion(messages=messages, model=request.model, **kwargs)
+        if "error" in result:
+            raise HTTPException(status_code=500, detail=str(result["error"]))
+        full_text = result.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
+        usage = result.get("usage", {})
+
+    clean_text, tool_calls = _parse_oai_tool_calls(full_text)
+    finish_reason = "tool_calls" if tool_calls else "stop"
+    msg = {"role": "assistant", "content": clean_text or None}
+    if tool_calls:
+        msg["tool_calls"] = tool_calls
+
+    resp_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+    body = {
+        "id": resp_id, "object": "chat.completion",
+        "created": int(__import__("time").time()),
+        "model": request.model,
+        "choices": [{"index": 0, "message": msg, "finish_reason": finish_reason}],
+        "usage": {
+            "prompt_tokens": usage.get("prompt_tokens", 0),
+            "completion_tokens": usage.get("completion_tokens", 0),
+            "total_tokens": usage.get("total_tokens", 0),
+        },
+    }
+
+    if not request.stream:
+        return body
+
+    # Emit as an SSE stream for streaming clients
+    async def _emit():
+        # First chunk: role
+        yield f"data: {json.dumps({'id': resp_id, 'object': 'chat.completion.chunk', 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': ''}, 'finish_reason': None}]})}\n\n"
+        if clean_text:
+            for i in range(0, len(clean_text), 64):
+                yield f"data: {json.dumps({'id': resp_id, 'object': 'chat.completion.chunk', 'choices': [{'index': 0, 'delta': {'content': clean_text[i:i+64]}, 'finish_reason': None}]})}\n\n"
+        if tool_calls:
+            # Emit tool_calls delta
+            yield f"data: {json.dumps({'id': resp_id, 'object': 'chat.completion.chunk', 'choices': [{'index': 0, 'delta': {'tool_calls': tool_calls}, 'finish_reason': None}]})}\n\n"
+        yield f"data: {json.dumps({'id': resp_id, 'object': 'chat.completion.chunk', 'choices': [{'index': 0, 'delta': {}, 'finish_reason': finish_reason}]})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    from fastapi.responses import StreamingResponse as SR
+    return SR(_emit(), media_type="text/event-stream",
+              headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
+
+
 # ============== Shared Handlers ==============
 
 async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, skip_load_balancer: bool = False):
@@ -395,6 +575,10 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
         db: Database session
         skip_load_balancer: If True, skip load balancing (used to prevent loops when called from another instance)
     """
+    # Agentic path: tools present → use dedicated handler
+    if request.tools:
+        return await _agentic_completion(request, db, skip_load_balancer)
+
     from app.models import Setting
     from app.services.load_balancer import LoadBalancer, parse_server_urls
 

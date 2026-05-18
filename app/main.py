@@ -21,7 +21,7 @@ logging.basicConfig(
 from app.database import init_db, get_db
 from app.auth import get_current_user_optional, get_current_user, create_access_token
 from app.models import User, VerificationToken, Setting
-from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, news, rag, mail, torrent, storage, files
+from app.routers import auth, chat, admin, tts, stt, openai_api, anthropic_api, image_api, news, rag, mail, torrent, storage, files
 from app.routers import fourchan, youtube_thumb
 from app.routers.telegram import router as telegram_router
 from app.routers.misskey import router as misskey_router
@@ -151,6 +151,7 @@ app.include_router(stt.router)
 # e.g. OPENAI_API_PREFIX=/posterchanai → base URL for OpenCode: https://host/posterchanai/v1
 _openai_prefix = os.getenv("OPENAI_API_PREFIX", "").strip().rstrip("/")
 app.include_router(openai_api.router, prefix=_openai_prefix)
+app.include_router(anthropic_api.router)
 app.include_router(image_api.router)
 app.include_router(news.router)
 app.include_router(rag.router)
