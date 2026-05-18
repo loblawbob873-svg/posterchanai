@@ -756,12 +756,12 @@ def _build_correct_sed(matched_line: str, color: str) -> str:
 
 def _redirect_hallucinated_sed(tool_calls: list) -> list:
     """Intercept outgoing sed tool calls:
+    - Bash tool call missing 'command' key → inject grep to break SchemaError loops.
     - Hallucinated pattern (not in cache) → replace with grep to force real line discovery.
     - Real pattern but broken replacement (wrong ANSI or appending instead of replacing) → rebuild.
     - Real pattern, looks valid → append && echo so sed -i silence is never misread as failure.
     """
-    if not _display_echo_cache:
-        return tool_calls
+    _GREP_CMD = "grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '#'"
     out = []
     for tc in tool_calls:
         fn = tc.get("function", {})
@@ -770,6 +770,13 @@ def _redirect_hallucinated_sed(tool_calls: list) -> list:
                 raw_args = fn.get("arguments", "{}")
                 args_dict = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
                 cmd = args_dict.get("command", "")
+                # Missing or empty command → inject grep to break SchemaError loops
+                if not cmd.strip():
+                    args_dict["command"] = _GREP_CMD
+                    tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                    logger.warning("[BASH-FIX] bash tool call had no 'command' — injected grep")
+                    out.append(tc)
+                    continue
                 if "sed" in cmd and ("-i" in cmd or "-e" in cmd):
                     _pm = re.search(r"s([/|!])(.*?)\1(.*?)\1", cmd)
                     if _pm:
