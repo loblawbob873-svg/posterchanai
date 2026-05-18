@@ -461,16 +461,30 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
 
 
 def _parse_oai_tool_calls(text: str):
-    """Parse <tool_call> blocks; return (clean_text, openai_tool_calls_list)."""
+    """Parse <tool_call> blocks (JSON or XML sub-format); return (clean_text, openai_tool_calls_list)."""
     tool_calls = []
     for m in _TC_RE.finditer(text):
         raw = m.group(1).strip()
-        try:
-            parsed = json.loads(raw)
-        except Exception:
-            continue
-        name = parsed.get("name", "")
-        arguments = parsed.get("arguments", {})
+        # XML sub-format: <tool>NAME</tool><input>JSON</input>
+        tool_m = re.search(r'<tool>\s*(.*?)\s*</tool>', raw, re.DOTALL | re.IGNORECASE)
+        input_m = re.search(r'<input>\s*(.*?)\s*</input>', raw, re.DOTALL | re.IGNORECASE)
+        if tool_m and input_m:
+            name = tool_m.group(1).strip()
+            try:
+                arguments = json.loads(input_m.group(1).strip())
+            except Exception:
+                arguments = {}
+        else:
+            # JSON format: {"name": ..., "arguments": ...}
+            try:
+                parsed = json.loads(raw)
+            except Exception:
+                try:
+                    parsed = json.loads(re.sub(r'[\x00-\x1f]', ' ', raw))
+                except Exception:
+                    continue
+            name = parsed.get("name", "")
+            arguments = parsed.get("arguments", {})
         if not name:
             continue
         tool_calls.append({

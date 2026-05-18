@@ -139,19 +139,29 @@ def _build_model_messages(request: MessagesRequest) -> list:
 
 
 def _parse_tool_calls(text: str):
-    """Extract tool calls from model text. Returns (clean_text, tool_calls_list)."""
+    """Extract tool calls from model text (JSON or XML sub-format). Returns (clean_text, tool_calls_list)."""
     tool_calls = []
     for m in _TOOL_CALL_RE.finditer(text):
         raw = m.group(1).strip()
-        try:
-            parsed = json.loads(raw)
-        except Exception:
+        # XML sub-format: <tool>NAME</tool><input>JSON</input>
+        tool_m = re.search(r'<tool>\s*(.*?)\s*</tool>', raw, re.DOTALL | re.IGNORECASE)
+        input_m = re.search(r'<input>\s*(.*?)\s*</input>', raw, re.DOTALL | re.IGNORECASE)
+        if tool_m and input_m:
+            name = tool_m.group(1).strip()
             try:
-                parsed = json.loads(re.sub(r'[\x00-\x1f]', ' ', raw))
+                arguments = json.loads(input_m.group(1).strip())
             except Exception:
-                continue
-        name = parsed.get("name", "")
-        arguments = parsed.get("arguments", {})
+                arguments = {}
+        else:
+            try:
+                parsed = json.loads(raw)
+            except Exception:
+                try:
+                    parsed = json.loads(re.sub(r'[\x00-\x1f]', ' ', raw))
+                except Exception:
+                    continue
+            name = parsed.get("name", "")
+            arguments = parsed.get("arguments", {})
         if not name:
             continue
         tool_calls.append({
