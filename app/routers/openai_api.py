@@ -705,33 +705,46 @@ def _parse_oai_tool_calls(text: str):
     if not tool_calls:
         m = _TC_UNCLOSED_RE.search(text)
         if m:
-            raw = _complete_json(_repair_json(m.group(1).strip()))
-            try:
-                parsed = json.loads(raw)
-                name = parsed.get("name", "")
-                arguments = parsed.get("arguments", {})
-                if name and isinstance(arguments, dict):
-                    name, arguments = _normalize_tool(name, arguments)
-                    tool_calls.append({
-                        "id": f"call_{uuid.uuid4().hex[:12]}",
-                        "type": "function",
-                        "function": {
-                            "name": name,
-                            "arguments": json.dumps(arguments),
-                        },
-                    })
-                    logger.info(f"[TC-PARSE] recovered unclosed tool_call: {name}")
-            except Exception as _ue:
-                extracted = _extract_write_from_raw(m.group(1).strip())
-                if extracted:
-                    name = extracted["name"]
-                    arguments = extracted["arguments"]
-                    name, arguments = _normalize_tool(name, arguments)
-                    logger.info(f"[TC-PARSE] write fallback (unclosed): {name} -> {arguments.get('filePath')}")
+            inner = m.group(1).strip()
+            # Try XML sub-format first: <tool>NAME</tool><input>JSON</input>
+            tool_m = re.search(r'<tool>\s*(.*?)\s*</tool>', inner, re.DOTALL | re.IGNORECASE)
+            input_m = re.search(r'<input>\s*(.*?)\s*(?:</input>|$)', inner, re.DOTALL | re.IGNORECASE)
+            if tool_m and input_m:
+                name = tool_m.group(1).strip()
+                try:
+                    arguments = json.loads(input_m.group(1).strip())
+                except Exception:
+                    arguments = {}
+                if name:
+                    name, arguments = _normalize_tool(name, arguments if isinstance(arguments, dict) else {})
                     tool_calls.append({"id": f"call_{uuid.uuid4().hex[:12]}", "type": "function",
                                        "function": {"name": name, "arguments": json.dumps(arguments)}})
-                else:
-                    logger.warning(f"[TC-PARSE] unclosed recovery failed: {_ue}")
+                    logger.info(f"[TC-PARSE] recovered unclosed XML tool_call: {name}")
+            else:
+                raw = _complete_json(_repair_json(inner))
+                try:
+                    parsed = json.loads(raw)
+                    name = parsed.get("name", "")
+                    arguments = parsed.get("arguments", {})
+                    if name and isinstance(arguments, dict):
+                        name, arguments = _normalize_tool(name, arguments)
+                        tool_calls.append({
+                            "id": f"call_{uuid.uuid4().hex[:12]}",
+                            "type": "function",
+                            "function": {"name": name, "arguments": json.dumps(arguments)},
+                        })
+                        logger.info(f"[TC-PARSE] recovered unclosed tool_call: {name}")
+                except Exception as _ue:
+                    extracted = _extract_write_from_raw(inner)
+                    if extracted:
+                        name = extracted["name"]
+                        arguments = extracted["arguments"]
+                        name, arguments = _normalize_tool(name, arguments)
+                        logger.info(f"[TC-PARSE] write fallback (unclosed): {name} -> {arguments.get('filePath')}")
+                        tool_calls.append({"id": f"call_{uuid.uuid4().hex[:12]}", "type": "function",
+                                           "function": {"name": name, "arguments": json.dumps(arguments)}})
+                    else:
+                        logger.warning(f"[TC-PARSE] unclosed recovery failed: {_ue}")
 
     # Strip any hallucinated <tool_result>...</tool_result> blocks
     clean = re.sub(r'<tool_result>.*?</tool_result>', '', clean, flags=re.DOTALL | re.IGNORECASE).strip()
