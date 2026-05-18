@@ -497,7 +497,7 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                             f"{tpl_str}\n\n"
                             f"Use these EXACT patterns. Do not retype them from memory.]"
                         )
-                        logger.info(f"[GREP-ANN] Injected {len(sed_templates)} sed templates after grep output")
+                        logger.info(f"[GREP-ANN] Injected {len(sed_templates)} sed templates. Grep output: {content_str[:600]!r}")
             # Intercept sed delimiter errors — / in replacement breaks sed 's/.../.../'
             if "unknown option to `s'" in content_str or "unknown option to `s'" in content_str or "unterminated" in content_str.lower():
                 content_str += (
