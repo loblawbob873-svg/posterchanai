@@ -505,6 +505,9 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                             continue
                         # Strip leading whitespace to avoid tab-matching issues in sed
                         stripped_content = line_content.strip()
+                        # Skip lines already colorized
+                        if '\\033' in stripped_content or '\x1b' in stripped_content:
+                            continue
                         safe_pat = (stripped_content
                                     .replace('\\', '\\\\')
                                     .replace('|', r'\|')
@@ -512,17 +515,17 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                                     .replace(']', r'\]')
                                     .replace('$', r'\$')
                                     .replace('.', r'\.'))
+                        cyber = _make_cyberpunk_text(stripped_content).replace('|', r'\|')
                         sed_templates.append(
                             f"  Line {linenum}: {stripped_content}\n"
-                            f"  Sed:  sed -i 's|{safe_pat}|echo -e \"\\\\033[1;96mTEXT\\\\033[0m\"|' /opt/gentoo-installer/gentoo.sh && echo 'OK'"
+                            f"  COPY AND RUN THIS EXACT COMMAND:  sed -i 's|{safe_pat}|echo -e \"\\\\033[1;96m{cyber}\\\\033[0m\"|' /opt/gentoo-installer/gentoo.sh && echo 'SED_OK'"
                         )
                     if sed_templates:
                         tpl_str = "\n\n".join(sed_templates)
                         content_str += (
-                            f"\n\n[ACTION REQUIRED — STOP RUNNING GREP. You have the data. Now colorize these display echo lines.\n\n"
-                            f"DISPLAY ECHO LINES (safe to colorize — no file redirection):\n\n"
+                            f"\n\n[ACTION REQUIRED — STOP RUNNING GREP. Run these commands NOW. Copy them exactly as written:\n\n"
                             f"{tpl_str}\n\n"
-                            f"Replace TEXT with your cyberpunk text. Use these EXACT sed patterns. Do NOT run grep again.]"
+                            f"Do NOT run grep again. Do NOT modify the commands. Just copy and run them.]"
                         )
                         logger.info(f"[GREP-ANN] Injected {len(sed_templates)} display-echo templates (always-on)")
                     else:
@@ -728,7 +731,20 @@ def _normalize_sed_pat(pat: str) -> str:
     p = p.replace(r'\[', '[').replace(r'\]', ']')    # \[ (BRE literal) → [
     p = p.replace(r'\$', '$')                         # \$ → $
     p = p.replace('\\"', '"')                         # \" (unnecessary quote escape) → "
+    p = p.replace(r'\.', '.')                         # \. (escaped dot) → .
     return p
+
+
+def _make_cyberpunk_text(echo_line: str) -> str:
+    """Extract display text from echo line and generate a cyberpunk-style replacement."""
+    m = re.search(r'echo\s+(?:-[eE]\s+)?"(.*?)"', echo_line.strip())
+    if not m:
+        m = re.search(r"echo\s+(?:-[eE]\s+)?'(.*?)'", echo_line.strip())
+    if not m:
+        return ">> SYSTEM ONLINE <<"
+    text = m.group(1).strip()
+    clean = re.sub(r'^\[|\]$', '', text).strip()
+    return f">> {clean} <<"
 
 
 def _build_correct_sed(matched_line: str, color: str) -> str:
@@ -1134,6 +1150,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
             logger.warning(f"[OAI-AGENTIC] LB failed: {e}, using local")
 
     if full_text is None:
+        from app.services.inference_factory import prepare_vram_for_llm
         prepare_vram_for_llm(db)
         service = get_inference_service(db)
         result = await service.chat_completion(messages=messages, model=request.model, **kwargs)
@@ -1169,6 +1186,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 r2 = await service.chat_completion(messages=nudge_messages, model=request.model, **kwargs)
                 nudge_result = r2.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
             nc, ntc = _parse_oai_tool_calls(nudge_result)
+            ntc = _fix_sed_tool_calls(ntc)
+            ntc = _redirect_hallucinated_sed(ntc)
             logger.info(f"[OAI-NUDGE] nudge result len={len(nudge_result)} tool_calls={len(ntc)}")
             if ntc:
                 clean_text = nc
