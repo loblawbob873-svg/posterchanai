@@ -824,38 +824,32 @@ def _redirect_hallucinated_sed(tool_calls: list) -> list:
 
                         # Block seds targeting redirect echoes (lines with > or >> to files)
                         if re.search(r'>+\s*\$', norm_pat) or '>>' in norm_pat:
-                            # Build a list of remaining uncolorized display lines to redirect the model
-                            remaining_cmds = []
-                            for _rlc in _display_echo_cache[:12]:
+                            # Find the next uncolorized display line and run its sed directly
+                            redirect_cmd = None
+                            for _rlc in _display_echo_cache[:20]:
                                 if '\\033' in _rlc or '\x1b' in _rlc:
                                     continue
                                 if re.search(r'>\s*\$', _rlc) or '>>' in _rlc:
                                     continue
-                                _rsp = (_rlc.replace('\\', '\\\\').replace('|', r'\|')
+                                _rlc_s = _rlc.strip()  # strip leading tabs so sed pattern matches
+                                if not re.search(r'echo\s+\S', _rlc_s):
+                                    continue
+                                _rsp = (_rlc_s.replace('\\', '\\\\').replace('|', r'\|')
                                         .replace('[', r'\[').replace(']', r'\]')
                                         .replace('$', r'\$'))
-                                _rcy = _make_cyberpunk_text(_rlc).replace('|', r'\|')
-                                remaining_cmds.append(
+                                _rcy = _make_cyberpunk_text(_rlc_s).replace('|', r'\|')
+                                redirect_cmd = (
                                     f"sed -i 's|{_rsp}|echo -e \"\\\\033[1;96m{_rcy}\\\\033[0m\"|' "
-                                    f"/opt/gentoo-installer/gentoo.sh && echo 'SED_OK'"
+                                    f"/opt/gentoo-installer/gentoo.sh && echo 'SED_OK: {_rlc_s[:40]}'"
                                 )
-                                if len(remaining_cmds) >= 3:
-                                    break
-                            if remaining_cmds:
-                                cmds_str = "  OR  ".join(remaining_cmds[:2])
-                                block_msg = (
-                                    f"STOP. '{norm_pat[:60]}' writes to a config file — DO NOT EDIT IT. "
-                                    f"Run one of these DISPLAY echo colorization commands instead: {cmds_str}"
-                                )
+                                break
+                            if redirect_cmd:
+                                args_dict["command"] = redirect_cmd
+                                logger.warning(f"[SED-REDIR-BLOCK] Blocked '{norm_pat[:50]}' → running display-echo sed instead")
                             else:
-                                block_msg = (
-                                    f"STOP. '{norm_pat[:60]}' writes to a config file — DO NOT EDIT IT. "
-                                    "All display echo lines have been colorized. Task complete."
-                                )
-                            import shlex as _shlex
-                            args_dict["command"] = f"echo {_shlex.quote(block_msg)}"
+                                args_dict["command"] = "echo 'All display echo lines colorized. Task complete.'"
+                                logger.warning(f"[SED-REDIR-BLOCK] Blocked redirect-echo sed (no display lines left): '{norm_pat[:60]}'")
                             tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
-                            logger.warning(f"[SED-REDIR-BLOCK] Blocked redirect-echo sed: '{norm_pat[:60]}'")
                             out.append(tc)
                             continue
 
