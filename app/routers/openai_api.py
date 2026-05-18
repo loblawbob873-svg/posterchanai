@@ -454,26 +454,15 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
             # Intercept "No changes" errors — model needs a new strategy
             if "no changes to apply" in content_str.lower() or "identical" in content_str.lower():
                 content_str += "\n\n[IMPORTANT: The edit failed because oldString was not found or was identical to newString. Do NOT repeat the same edit. Use bash with sed -i for targeted replacements instead, e.g. bash(command=\"sed -i 's/original/replacement/g' file\").]"
-            # Empty bash result — sed found nothing to replace; nudge model to inspect first
+            # Empty bash result — sed found nothing to replace; tell the model immediately
             elif not content_str.strip() or content_str.strip() in ("(no output)", "(exit 0)"):
-                # Count how many recent tool results have also been empty to detect looping
-                recent_tool_contents = [r.get("content", "") for r in result if r.get("role") == "user"]
-                empty_streak = 0
-                for rtc in reversed(recent_tool_contents):
-                    if not str(rtc).strip() or str(rtc).strip() in ("(no output)", "(exit 0)"):
-                        empty_streak += 1
-                    else:
-                        break
-                if empty_streak >= 2:
-                    content_str = (
-                        "(no output — sed found no matches)\n\n"
-                        "[IMPORTANT: Your sed patterns are not matching anything in the file. "
-                        "The patterns you are searching for do NOT exist. "
-                        "Stop guessing patterns. Run: bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh | head -40\") "
-                        "to see the actual echo statements in the file, then write sed commands that match those exact strings.]"
-                    )
-                else:
-                    content_str = "(no output — sed found no matches)"
+                content_str = (
+                    "(no output — sed found no matches)\n\n"
+                    "[IMPORTANT: Your sed patterns are not matching anything in the file. "
+                    "The patterns you are searching for do NOT exist in this file. "
+                    "Stop guessing. Run: bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh | head -40\") "
+                    "to see the actual echo statements, then write sed commands that match those exact strings.]"
+                )
             # Truncate large tool results so the model has context budget for its response
             elif len(content_str) > 3000:
                 line_count = content_str.count('\n')
