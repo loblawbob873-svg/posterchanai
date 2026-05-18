@@ -463,6 +463,15 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                     "Stop guessing. Run: bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh | head -40\") "
                     "to see the actual echo statements, then write sed commands that match those exact strings.]"
                 )
+            # "0" from grep -c — confirmed pattern absent; stop inspecting, start acting
+            elif content_str.strip() == "0":
+                content_str = (
+                    "0 (pattern not found)\n\n"
+                    "[The file has no existing ANSI escape codes. Stop inspecting and start editing. "
+                    "Run: bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh | head -40\") "
+                    "to see the actual echo lines, then immediately write sed -i commands to add "
+                    "\\033[...m ANSI color codes to those specific echo strings. Do not run any more inspection commands.]"
+                )
             # Truncate large tool results so the model has context budget for its response
             elif len(content_str) > 3000:
                 line_count = content_str.count('\n')
