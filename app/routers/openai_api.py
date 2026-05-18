@@ -451,8 +451,12 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
             result.append({"role": "assistant", "content": "\n".join(parts)})
         elif role == "tool":
             content_str = str(content)
-            if "[truncated]" in content_str:
-                content_str += "\n\n[IMPORTANT: The above content was truncated. Do NOT copy the truncated content into oldString. Instead use bash to read specific line ranges (e.g. sed -n '1,50p' file.sh) or use the write tool to write a complete new file from scratch.]"
+            # Intercept "No changes" errors — model needs a new strategy
+            if "no changes to apply" in content_str.lower() or "identical" in content_str.lower():
+                content_str += "\n\n[IMPORTANT: The edit failed because newString was missing or identical to oldString. Do NOT repeat the same edit. You MUST use the write tool to write the complete new file content from scratch, OR use bash with sed to make small targeted replacements.]"
+            # Truncate large tool results so the model has context budget for its response
+            elif len(content_str) > 3000:
+                content_str = content_str[:3000] + "\n...[content truncated by proxy — use bash to read specific line ranges, e.g. bash(sed -n '1,50p' file.sh), or use write tool to write the full new file from scratch]"
             result.append({"role": "user", "content": content_str})
         else:
             result.append({"role": role, "content": content})
