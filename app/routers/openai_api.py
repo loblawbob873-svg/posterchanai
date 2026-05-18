@@ -539,6 +539,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         usage = result.get("usage", {})
 
     clean_text, tool_calls = _parse_oai_tool_calls(full_text)
+    logger.info(f"[OAI-AGENTIC] raw={full_text[:300]!r} tool_calls={len(tool_calls)}")
     finish_reason = "tool_calls" if tool_calls else "stop"
     msg = {"role": "assistant", "content": clean_text or None}
     if tool_calls:
