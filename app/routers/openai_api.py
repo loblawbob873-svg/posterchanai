@@ -447,17 +447,26 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                     args = json.loads(fn.get("arguments", "{}"))
                 except Exception:
                     args = {}
-                parts.append(f'<tool_call>\n{json.dumps({"name": name, "arguments": args})}\n</tool_call>')
+                # Use XML format matching this model's training format
+                parts.append(f'<tool_call>\n<tool>{name}</tool>\n<input>\n{json.dumps(args, indent=2)}\n</input>\n</tool_call>')
             result.append({"role": "assistant", "content": "\n".join(parts)})
         elif role == "tool":
             content_str = str(content)
+            # Find the tool name from the preceding assistant message's tool_call
+            last_tool_name = "bash"
+            for r in reversed(result):
+                if r.get("role") == "assistant":
+                    m = re.search(r'<tool>\s*(\w+)\s*</tool>', r.get("content", ""), re.IGNORECASE)
+                    if m:
+                        last_tool_name = m.group(1)
+                    break
             # Find the bash command that produced this result (from last assistant message)
             last_bash_cmd = ""
             for r in reversed(result):
                 if r.get("role") == "assistant":
                     last_bash_cmd = r.get("content", "")
                     break
-            _is_inspection = any(kw in last_bash_cmd for kw in ("cat -A", "od -c", "hexdump", "| strings", "| od "))
+            _is_inspection = any(kw in last_bash_cmd for kw in ("cat -A", "od -c", "hexdump", "| strings", "| od ", "grep -c", "grep -E '\\\\["))
             # Intercept "No changes" errors — model needs a new strategy
             if "no changes to apply" in content_str.lower() or "identical" in content_str.lower():
                 content_str += "\n\n[IMPORTANT: The edit failed because oldString was not found or was identical to newString. Do NOT repeat the same edit. Use bash with sed -i for targeted replacements instead, e.g. bash(command=\"sed -i 's/original/replacement/g' file\").]"
@@ -501,7 +510,8 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                 notes.append("IMPORTANT: Do NOT use the write tool — you will destroy the rest of the file.")
                 notes.append("Use bash with sed -i for targeted in-place changes. Make multiple small bash calls.")
                 content_str = content_str[:3000] + "\n...[file continues — truncated]\n\n" + " ".join(notes)
-            result.append({"role": "user", "content": content_str})
+            # Wrap in XML tool_result format matching this model's expected pattern
+            result.append({"role": "user", "content": f"<tool_result>\n<tool>{last_tool_name}</tool>\n<output>\n{content_str}\n</output>\n</tool_result>"})
         else:
             result.append({"role": role, "content": content})
 
@@ -753,7 +763,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     temperature = request.temperature if request.temperature is not None else 0.0
     # Cap agentic completions at 2048 tokens — tool calls are short; large limits cause runaway generation
     max_tokens = min(max(request.max_tokens or 0, int(settings.get("ollama_num_predict", "2048"))), 2048)
-    kwargs = {"temperature": temperature, "max_tokens": max_tokens}
+    # Stop at </tool_call> so model never hallucinates <tool_result> blocks after its tool call
+    kwargs = {"temperature": temperature, "max_tokens": max_tokens, "stop": ["</tool_call>"]}
     if request.top_p is not None:
         kwargs["top_p"] = request.top_p
 
@@ -786,10 +797,10 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     clean_text, tool_calls = _parse_oai_tool_calls(full_text)
     logger.info(f"[OAI-AGENTIC] len={len(full_text)} head={full_text[:200]!r} tail={full_text[-200:]!r} tool_calls={len(tool_calls)}")
 
-    # If model responded with text-only (no tool call), nudge it once to produce one
-    if not tool_calls and clean_text and len(clean_text) < 600:
+    # If model responded with text-only or unparseable tool call (no tool call), nudge it once
+    if not tool_calls and full_text.strip() and len(full_text) < 1200:
         nudge_messages = messages + [
-            {"role": "assistant", "content": clean_text},
+            {"role": "assistant", "content": clean_text or full_text[:300]},
             {"role": "user", "content": (
                 "Now call a tool immediately. Do NOT write any more text.\n"
                 "First, run: bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh | head -40\") "
