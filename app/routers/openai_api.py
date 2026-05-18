@@ -513,8 +513,7 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                                     .replace('|', r'\|')
                                     .replace('[', r'\[')
                                     .replace(']', r'\]')
-                                    .replace('$', r'\$')
-                                    .replace('.', r'\.'))
+                                    .replace('$', r'\$'))
                         cyber = _make_cyberpunk_text(stripped_content).replace('|', r'\|')
                         sed_templates.append(
                             f"  Line {linenum}: {stripped_content}\n"
@@ -707,7 +706,7 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                             continue
                         _sp = (_lc.replace('\\', '\\\\').replace('|', r'\|')
                                .replace('[', r'\[').replace(']', r'\]')
-                               .replace('$', r'\$').replace('.', r'\.'))
+                               .replace('$', r'\$'))
                         _cy = _make_cyberpunk_text(_lc).replace('|', r'\|')
                         trunc_templates.append(
                             f"  {_lc}\n"
@@ -837,7 +836,11 @@ def _redirect_hallucinated_sed(tool_calls: list) -> list:
                             continue
 
                         matched_line = next(
-                            (c for c in _display_echo_cache if norm_pat and norm_pat in _normalize_sed_pat(c)),
+                            (c for c in _display_echo_cache if norm_pat and (
+                                norm_pat in _normalize_sed_pat(c) or
+                                _normalize_sed_pat(c) in norm_pat or
+                                norm_pat.rstrip('"\'') in _normalize_sed_pat(c)
+                            )),
                             None
                         )
                         in_cache = matched_line is not None
