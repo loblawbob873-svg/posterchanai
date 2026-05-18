@@ -613,8 +613,21 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                         " NOTE: Your pattern uses '^echo' — the '^' means the line must have NO leading whitespace. "
                         "If the echo is inside a function or block (indented), '^' will fail. Remove '^' and try again."
                     ) if has_caret else ""
+                    # Check cache for hallucination on first failure too
+                    hallucination_warning = ""
+                    _pm2 = re.search(r"sed\s+-i\s+['\"]?s([/|!])(.*?)\1(.*?)\1", last_bash_cmd)
+                    if _pm2 and _display_echo_cache:
+                        pat2 = _pm2.group(2).lstrip("^").strip()
+                        if pat2 and not any(pat2 in cached for cached in _display_echo_cache):
+                            real_lines_str = "\n".join(f"  {lc}" for lc in _display_echo_cache[:8])
+                            hallucination_warning = (
+                                f"\n\nCRITICAL: '{pat2}' IS NOT IN THIS FILE — you are targeting a line that does not exist.\n"
+                                f"The REAL display echo lines in this file are:\n{real_lines_str}\n"
+                                "Copy one of these EXACTLY as your sed pattern."
+                            )
+                            logger.warning(f"[ANTHR/OAI] First-fail hallucination: '{pat2}' not in cache")
                     content_str = (
-                        f"ERROR: sed found no matches — the search pattern is not in the file.{caret_hint}\n\n"
+                        f"ERROR: sed found no matches — the search pattern is not in the file.{caret_hint}{hallucination_warning}\n\n"
                         "[The sed -i command ran but the search pattern did not match any line. "
                         "DO NOT repeat the same sed command.\n"
                         "Run: bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '#'\") "
@@ -641,6 +654,22 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                 line_count = content_str.count('\n')
                 has_ansi = ('\\033' in content_str or '\x1b[' in content_str)
                 has_echo = 'echo ' in content_str
+                # Extract display echo lines from full content to pre-populate cache
+                _file_display_lines = []
+                for raw_line in content_str.split("\n"):
+                    # Support both plain lines and grep -n "linenum:content" format
+                    plain = raw_line
+                    m_linenum = re.match(r'\d+:(.*)', raw_line)
+                    if m_linenum:
+                        plain = m_linenum.group(1)
+                    if 'echo' in plain and '>>' not in plain and not plain.lstrip().startswith('#'):
+                        stripped = plain.strip()
+                        if stripped and re.search(r'echo\s+\S', stripped):
+                            _file_display_lines.append(stripped)
+                if _file_display_lines:
+                    _display_echo_cache.clear()
+                    _display_echo_cache.extend(_file_display_lines[:20])
+                    logger.info(f"[TRUNC-ANN] Pre-populated cache with {len(_display_echo_cache)} display echo lines from file read")
                 notes = [f"The full file is approximately {line_count}+ lines long."]
                 if not has_ansi:
                     notes.append("It has NO existing ANSI color escape codes.")
@@ -648,6 +677,9 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                     notes.append("It uses plain 'echo' statements without any colors.")
                 notes.append("IMPORTANT: Do NOT use the write tool — you will destroy the rest of the file.")
                 notes.append("Use bash with sed -i for targeted in-place changes. Make multiple small bash calls.")
+                if _display_echo_cache:
+                    echo_preview = "; ".join(f"'{lc}'" for lc in _display_echo_cache[:5])
+                    notes.append(f"Display echo lines visible so far: {echo_preview}. Run grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '#' to see all of them.")
                 content_str = content_str[:3000] + "\n...[file continues — truncated]\n\n" + " ".join(notes)
             # Wrap in XML tool_result format matching this model's expected pattern
             result.append({"role": "user", "content": f"<tool_result>\n<tool>{last_tool_name}</tool>\n<output>\n{content_str}\n</output>\n</tool_result>"})
