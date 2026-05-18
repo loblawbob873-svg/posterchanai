@@ -468,7 +468,7 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                     break
             _is_inspection = any(kw in last_bash_cmd for kw in ("cat -A", "od -c", "hexdump", "| strings", "| od ", "grep -c", "grep -E '\\\\["))
             _is_grep_echo = "grep" in last_bash_cmd and "echo" in last_bash_cmd and "sed" not in last_bash_cmd
-            # If grep output follows prior sed failures, extract first echo line and annotate
+            # If grep output follows prior sed failures, generate ready-made sed templates
             if _is_grep_echo and content_str.strip():
                 prior_failures = sum(
                     1 for r in result
@@ -476,20 +476,28 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                                                     or "sed found no matches" in r.get("content", "").lower())
                 )
                 if prior_failures >= 1:
-                    first_echo_lines = []
-                    for raw_line in content_str.strip().split("\n")[:30]:
-                        if "echo" in raw_line:
-                            first_echo_lines.append(raw_line.strip())
-                        if len(first_echo_lines) >= 5:
+                    sed_templates = []
+                    for raw_line in content_str.strip().split("\n")[:40]:
+                        # grep -n output: "linenum:content"
+                        m = re.match(r'\d+:(.*echo.*)', raw_line)
+                        if m:
+                            line_content = m.group(1).rstrip()
+                            # Build sed-safe pattern: escape backslashes first, then |
+                            safe_pat = line_content.replace('\\', '\\\\').replace('|', r'\|')
+                            sed_templates.append(
+                                f"  Line: {line_content}\n"
+                                f"  Sed:  sed -i 's|{safe_pat}|echo -e \"\\\\033[1;96mTEXT\\\\033[0m\"|g' /opt/gentoo-installer/gentoo.sh"
+                            )
+                        if len(sed_templates) >= 4:
                             break
-                    if first_echo_lines:
-                        sample = "\n".join(first_echo_lines[:3])
+                    if sed_templates:
+                        tpl_str = "\n\n".join(sed_templates)
                         content_str += (
-                            f"\n\n[GREP RESULT ABOVE IS THE REAL FILE CONTENT. "
-                            f"Example echo lines from the file:\n{sample}\n"
-                            "Your NEXT sed MUST use the exact text shown above (no ^ anchor, no guessing). "
-                            "Use | as delimiter: sed -i 's|echo \"exact text here\"|echo -e \"\\033[1;96m...\"|g' /opt/gentoo-installer/gentoo.sh]"
+                            f"\n\n[GREP RESULT IS THE REAL FILE. Ready-made sed templates — replace TEXT with cyberpunk text:\n\n"
+                            f"{tpl_str}\n\n"
+                            f"Use these EXACT patterns. Do not retype them from memory.]"
                         )
+                        logger.info(f"[GREP-ANN] Injected {len(sed_templates)} sed templates after grep output")
             # Intercept sed delimiter errors — / in replacement breaks sed 's/.../.../'
             if "unknown option to `s'" in content_str or "unknown option to `s'" in content_str or "unterminated" in content_str.lower():
                 content_str += (
