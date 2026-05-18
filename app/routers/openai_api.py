@@ -483,10 +483,11 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
             elif not content_str.strip() or content_str.strip() in ("(no output)", "(exit 0)"):
                 content_str = (
                     "(no output — sed found no matches)\n\n"
-                    "[IMPORTANT: Your sed patterns are not matching anything in the file. "
-                    "The patterns you are searching for do NOT exist in this file. "
-                    "Stop guessing. Run: bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh | head -40\") "
-                    "to see the actual echo statements, then write sed commands that match those exact strings.]"
+                    "[IMPORTANT: The sed pattern did not match. Common causes: (1) echo lines have leading whitespace/indentation — "
+                    "remove any ^ anchor so the pattern matches anywhere in the line, "
+                    "e.g. use sed 's/echo \"Welcome/echo -e \"\\\\033[...m/g' instead of 's/^echo ...'. "
+                    "(2) The string is slightly different — run: bash(command=\"grep -n 'Welcome\\|echo' /opt/gentoo-installer/gentoo.sh | head -20\") "
+                    "to see the exact text, then copy it literally into your sed pattern.]"
                 )
             # "0" from grep -c — confirmed pattern absent; stop inspecting, start acting
             elif content_str.strip() == "0":
