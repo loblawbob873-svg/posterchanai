@@ -852,7 +852,8 @@ def _redirect_hallucinated_sed(tool_calls: list) -> list:
                                     f"STOP. '{norm_pat[:60]}' writes to a config file — DO NOT EDIT IT. "
                                     "All display echo lines have been colorized. Task complete."
                                 )
-                            args_dict["command"] = f"echo {repr(block_msg)}"
+                            import shlex as _shlex
+                            args_dict["command"] = f"echo {_shlex.quote(block_msg)}"
                             tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                             logger.warning(f"[SED-REDIR-BLOCK] Blocked redirect-echo sed: '{norm_pat[:60]}'")
                             out.append(tc)
