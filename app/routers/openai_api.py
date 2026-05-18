@@ -519,11 +519,14 @@ def _complete_json(raw: str) -> str:
 
 
 def _repair_json(raw: str) -> str:
-    """Escape literal newlines/tabs inside JSON string values."""
+    """Escape literal newlines/tabs/unescaped-quotes inside JSON string values."""
     result = []
     in_string = False
     escape_next = False
-    for c in raw:
+    i = 0
+    n = len(raw)
+    while i < n:
+        c = raw[i]
         if escape_next:
             result.append(c)
             escape_next = False
@@ -531,8 +534,21 @@ def _repair_json(raw: str) -> str:
             result.append(c)
             escape_next = True
         elif c == '"':
-            in_string = not in_string
-            result.append(c)
+            if in_string:
+                # Lookahead: is this " legitimately ending the string?
+                j = i + 1
+                while j < n and raw[j] in ' \t\r\n':
+                    j += 1
+                next_c = raw[j] if j < n else ''
+                if next_c in (':', ',', '}', ']', ''):
+                    in_string = False
+                    result.append(c)
+                else:
+                    # Unescaped " inside a string value (e.g. bash echo "text") — escape it
+                    result.append('\\"')
+            else:
+                in_string = True
+                result.append(c)
         elif in_string and c == '\n':
             result.append('\\n')
         elif in_string and c == '\r':
@@ -541,7 +557,31 @@ def _repair_json(raw: str) -> str:
             result.append('\\t')
         else:
             result.append(c)
+        i += 1
     return ''.join(result)
+
+
+def _extract_write_from_raw(raw: str) -> dict | None:
+    """Last-resort extraction for write/create_file calls with mangled JSON content."""
+    if not re.search(r'"name"\s*:\s*"(?:write|create_file|write_file)"', raw, re.IGNORECASE):
+        return None
+    fp_m = re.search(r'"(?:filePath|file_path|path)"\s*:\s*"([^"]*)"', raw)
+    if not fp_m:
+        return None
+    filepath = fp_m.group(1)
+    content_m = re.search(r'"content"\s*:\s*"(.*)', raw, re.DOTALL)
+    if not content_m:
+        return None
+    content_raw = content_m.group(1)
+    # Strip trailing JSON/XML closing artifacts
+    content_raw = re.sub(r'"\s*\}?\s*\}?\s*$', '', content_raw)
+    content_raw = re.sub(r'\n?\s*\.\.\.\s*\[[^\]]*truncated[^\]]*\].*$', '', content_raw, flags=re.DOTALL | re.IGNORECASE)
+    content_raw = re.sub(r'\n?</content>\s*$', '', content_raw)
+    # Unescape JSON sequences
+    content_raw = content_raw.replace('\\n', '\n').replace('\\t', '\t').replace('\\"', '"').replace('\\\\', '\\').replace('\\r', '\r')
+    if not content_raw.strip():
+        return None
+    return {"name": "write", "arguments": {"filePath": filepath, "content": content_raw}}
 
 
 def _parse_oai_tool_calls(text: str):
@@ -572,6 +612,15 @@ def _parse_oai_tool_calls(text: str):
                         try:
                             parsed = json.loads(re.sub(r'[\x00-\x1f]', ' ', raw))
                         except Exception as _e4:
+                            extracted = _extract_write_from_raw(raw)
+                            if extracted:
+                                name = extracted["name"]
+                                arguments = extracted["arguments"]
+                                name, arguments = _normalize_tool(name, arguments)
+                                logger.info(f"[TC-PARSE] write fallback extraction: {name} -> {arguments.get('filePath') or arguments.get('file_path')}")
+                                tool_calls.append({"id": f"call_{uuid.uuid4().hex[:12]}", "type": "function",
+                                                   "function": {"name": name, "arguments": json.dumps(arguments)}})
+                                continue
                             logger.warning(f"[TC-PARSE] all json failed e1={_e1} e2={_e2} e3={_e3} raw_end={raw[-80:]!r}")
                             continue
             name = parsed.get("name", "")
@@ -610,7 +659,16 @@ def _parse_oai_tool_calls(text: str):
                     })
                     logger.info(f"[TC-PARSE] recovered unclosed tool_call: {name}")
             except Exception as _ue:
-                logger.warning(f"[TC-PARSE] unclosed recovery failed: {_ue}")
+                extracted = _extract_write_from_raw(m.group(1).strip())
+                if extracted:
+                    name = extracted["name"]
+                    arguments = extracted["arguments"]
+                    name, arguments = _normalize_tool(name, arguments)
+                    logger.info(f"[TC-PARSE] write fallback (unclosed): {name} -> {arguments.get('filePath')}")
+                    tool_calls.append({"id": f"call_{uuid.uuid4().hex[:12]}", "type": "function",
+                                       "function": {"name": name, "arguments": json.dumps(arguments)}})
+                else:
+                    logger.warning(f"[TC-PARSE] unclosed recovery failed: {_ue}")
 
     # Strip any hallucinated <tool_result>...</tool_result> blocks
     clean = re.sub(r'<tool_result>.*?</tool_result>', '', clean, flags=re.DOTALL | re.IGNORECASE).strip()
