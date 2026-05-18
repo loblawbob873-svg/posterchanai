@@ -626,7 +626,12 @@ def _parse_oai_tool_calls(text: str):
                         try:
                             parsed = json.loads(re.sub(r'[\x00-\x1f]', ' ', raw))
                         except Exception as _e4:
-                            extracted = _extract_write_from_raw(raw)
+                            # raw_decode: parse first valid JSON object, ignore trailing hallucinated text
+                            extracted = None
+                            try:
+                                parsed, _ = json.JSONDecoder().raw_decode(_repair_json(raw).lstrip())
+                            except Exception:
+                                extracted = _extract_write_from_raw(raw)
                             if extracted:
                                 name = extracted["name"]
                                 arguments = extracted["arguments"]
