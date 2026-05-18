@@ -475,29 +475,60 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                     if r.get("role") == "user" and ("no output" in r.get("content", "").lower()
                                                     or "sed found no matches" in r.get("content", "").lower())
                 )
+                # Separate display echoes (no >> or > redirection) from file-writing echoes
+                display_lines = []
+                redir_lines = []
+                for raw_line in content_str.strip().split("\n")[:80]:
+                    m = re.match(r'(\d+):(.*)', raw_line)
+                    if not m:
+                        continue
+                    linenum, line_content = m.group(1), m.group(2).rstrip()
+                    if 'echo' not in line_content:
+                        continue
+                    # Skip lines that redirect output to files — those write config data, not display text
+                    if '>>' in line_content or (re.search(r'>\s*\$', line_content)):
+                        redir_lines.append((linenum, line_content))
+                    else:
+                        display_lines.append((linenum, line_content))
+                logger.info(f"[GREP-ANN] Display echoes: {len(display_lines)}, redir echoes: {len(redir_lines)}. Raw: {content_str[:500]!r}")
                 if prior_failures >= 1:
-                    sed_templates = []
-                    for raw_line in content_str.strip().split("\n")[:40]:
-                        # grep -n output: "linenum:content"
-                        m = re.match(r'\d+:(.*echo.*)', raw_line)
-                        if m:
-                            line_content = m.group(1).rstrip()
-                            # Build sed-safe pattern: escape backslashes first, then |
+                    if display_lines:
+                        sed_templates = []
+                        for linenum, line_content in display_lines[:6]:
+                            # Skip bare echo (no string to colorize)
+                            if not re.search(r'echo\s+\S', line_content):
+                                continue
                             safe_pat = line_content.replace('\\', '\\\\').replace('|', r'\|')
                             sed_templates.append(
-                                f"  Line: {line_content}\n"
-                                f"  Sed:  sed -i 's|{safe_pat}|echo -e \"\\\\033[1;96mTEXT\\\\033[0m\"|g' /opt/gentoo-installer/gentoo.sh"
+                                f"  Line {linenum}: {line_content}\n"
+                                f"  Sed:  sed -i 's|{safe_pat}|echo -e \"\\\\033[1;96mTEXT\\\\033[0m\"|' /opt/gentoo-installer/gentoo.sh"
                             )
-                        if len(sed_templates) >= 4:
-                            break
-                    if sed_templates:
-                        tpl_str = "\n\n".join(sed_templates)
+                        if sed_templates:
+                            tpl_str = "\n\n".join(sed_templates)
+                            content_str += (
+                                f"\n\n[DISPLAY ECHO LINES (safe to colorize — no file redirection):\n\n"
+                                f"{tpl_str}\n\n"
+                                f"Replace TEXT with your cyberpunk text. Use these EXACT patterns.]"
+                            )
+                            logger.info(f"[GREP-ANN] Injected {len(sed_templates)} display-echo templates")
+                        else:
+                            # All visible echoes write to files — need to look further in the file
+                            content_str += (
+                                "\n\n[WARNING: The echo lines above ALL write to files (>>). "
+                                "They are config-writing statements — do NOT colorize them (would break the installer). "
+                                "The display echoes are further in the file. Run a broader grep:\n"
+                                "bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '#'\")"
+                                "\nThat will show the echo statements that display text to the user.]"
+                            )
+                            logger.info("[GREP-ANN] All grep echoes are redirecting — telling model to run better grep")
+                    else:
                         content_str += (
-                            f"\n\n[GREP RESULT IS THE REAL FILE. Ready-made sed templates — replace TEXT with cyberpunk text:\n\n"
-                            f"{tpl_str}\n\n"
-                            f"Use these EXACT patterns. Do not retype them from memory.]"
+                            "\n\n[WARNING: All visible echo lines write to files with >> redirection. "
+                            "These are config-writing statements — do NOT colorize them. "
+                            "Run: bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '#'\") "
+                            "to find the display echo statements.]"
                         )
-                        logger.info(f"[GREP-ANN] Injected {len(sed_templates)} sed templates. Grep output: {content_str[:600]!r}")
+                        logger.info("[GREP-ANN] All echoes are redirecting, injecting better grep suggestion")
             # Intercept sed delimiter errors — / in replacement breaks sed 's/.../.../'
             if "unknown option to `s'" in content_str or "unknown option to `s'" in content_str or "unterminated" in content_str.lower():
                 content_str += (
@@ -544,10 +575,11 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                         f"REPEATED FAILURE: sed found no matches{sed_pat}.{caret_hint}\n\n"
                         "You have run this sed command before and it did NOT match anything.\n"
                         "STOP. DO NOT repeat this sed command.\n\n"
-                        "MANDATORY: Run this command RIGHT NOW:\n"
-                        "bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh\")\n\n"
-                        "After you see the grep output, construct your sed using ONLY text you see in the output. "
-                        "Use '|' as delimiter (not '/') to avoid conflicts: sed -i 's|echo \"exact text from grep\"|echo -e \"\\033[...]m...\"|g' file"
+                        "MANDATORY: Run this command RIGHT NOW to find DISPLAY echo lines (not config-writing ones):\n"
+                        "bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '#'\")\n\n"
+                        "IMPORTANT: Lines with >> write to config files — do NOT colorize those. "
+                        "Only colorize lines that display text to the user (no >> redirection). "
+                        "Use '|' as delimiter: sed -i 's|exact text from grep|echo -e \"\\033[1;96m...\"|' file"
                     )
                     logger.warning(f"[ANTHR/OAI] Repeated empty sed result (count={no_output_count+1}), escalating redirect")
                 elif is_sed_cmd:
@@ -560,8 +592,9 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                         f"ERROR: sed found no matches — the search pattern is not in the file.{caret_hint}\n\n"
                         "[The sed -i command ran but the search pattern did not match any line. "
                         "DO NOT repeat the same sed command.\n"
-                        "Run: bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh\") "
-                        "to see the EXACT echo lines. Copy the text literally from grep output into your next sed.]"
+                        "Run: bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '#'\") "
+                        "to find display echo lines. Lines with >> write to files — do NOT sed those. "
+                        "Copy the text literally from grep output into your next sed.]"
                     )
                 else:
                     content_str = (
@@ -927,9 +960,9 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
             {"role": "assistant", "content": clean_text or full_text[:300]},
             {"role": "user", "content": (
                 "Now call a tool immediately. Do NOT write any more text.\n"
-                "First, run: bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh | head -40\") "
-                "to see the actual echo statements in the file. "
-                "Then use targeted sed -i commands that match the exact strings you find."
+                "Run: bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '#'\") "
+                "to see display echo statements (excluding file-writing ones with >>). "
+                "Then use targeted sed -i commands matching the exact strings from that output."
             )},
         ]
         try:
