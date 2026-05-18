@@ -679,7 +679,8 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                         plain = m_linenum.group(1)
                     if 'echo' in plain and '>>' not in plain and not plain.lstrip().startswith('#'):
                         stripped = plain.strip()
-                        if stripped and re.search(r'echo\s+\S', stripped):
+                        if (stripped and re.search(r'echo\s+\S', stripped)
+                                and not re.search(r'>\s*\$', stripped)):
                             _file_display_lines.append(stripped)
                 if _file_display_lines:
                     _display_echo_cache.clear()
@@ -784,6 +785,20 @@ def _redirect_hallucinated_sed(tool_calls: list) -> list:
                         replacement = _pm.group(3)
                         # Normalize pattern for cache comparison
                         norm_pat = _normalize_sed_pat(raw_pat)
+
+                        # Block seds targeting redirect echoes (lines with > or >> to files)
+                        if re.search(r'>+\s*\$', norm_pat) or '>>' in norm_pat:
+                            args_dict["command"] = (
+                                f"echo 'BLOCKED: The line \"{norm_pat[:80]}\" redirects output to a "
+                                f"config file (> or >> operator). Do NOT colorize it — modifying this "
+                                f"line would break the installer. Skip it and colorize a DISPLAY echo "
+                                f"line instead (one with no > or >> redirection).'"
+                            )
+                            tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                            logger.warning(f"[SED-REDIR-BLOCK] Blocked redirect-echo sed: '{norm_pat[:60]}'")
+                            out.append(tc)
+                            continue
+
                         matched_line = next(
                             (c for c in _display_echo_cache if norm_pat and norm_pat in _normalize_sed_pat(c)),
                             None
