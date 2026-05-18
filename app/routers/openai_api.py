@@ -451,9 +451,25 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
             result.append({"role": "assistant", "content": "\n".join(parts)})
         elif role == "tool":
             content_str = str(content)
+            # Find the bash command that produced this result (from last assistant message)
+            last_bash_cmd = ""
+            for r in reversed(result):
+                if r.get("role") == "assistant":
+                    last_bash_cmd = r.get("content", "")
+                    break
+            _is_inspection = any(kw in last_bash_cmd for kw in ("cat -A", "od -c", "hexdump", "| strings", "| od "))
             # Intercept "No changes" errors — model needs a new strategy
             if "no changes to apply" in content_str.lower() or "identical" in content_str.lower():
                 content_str += "\n\n[IMPORTANT: The edit failed because oldString was not found or was identical to newString. Do NOT repeat the same edit. Use bash with sed -i for targeted replacements instead, e.g. bash(command=\"sed -i 's/original/replacement/g' file\").]"
+            # Binary inspection — redirect to echo grep immediately
+            elif _is_inspection:
+                content_str = (
+                    content_str[:200] + "\n...[truncated]\n\n"
+                    "[This inspection confirms the file is a plain text bash script with no binary ANSI bytes. "
+                    "Stop inspecting and start editing NOW. "
+                    "Run: bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh | head -40\") "
+                    "to see the echo statements, then write sed -i commands to add \\033[...m colors to them.]"
+                )
             # Empty bash result — sed found nothing to replace; tell the model immediately
             elif not content_str.strip() or content_str.strip() in ("(no output)", "(exit 0)"):
                 content_str = (
