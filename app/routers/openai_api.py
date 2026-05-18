@@ -716,11 +716,12 @@ _TOOL_NAME_MAP = {
 }
 
 def _normalize_sed_pat(pat: str) -> str:
-    """Normalize a sed BRE pattern for cache comparison: strip ^ anchor, unescape \\[ → [."""
+    """Normalize a sed BRE pattern for cache comparison: strip anchors and unescape BRE/bash escapes."""
     p = pat.lstrip("^").strip()
     p = p.replace(r'\\[', '[').replace(r'\\]', ']')  # \\[ (double-escaped) → [
     p = p.replace(r'\[', '[').replace(r'\]', ']')    # \[ (BRE literal) → [
     p = p.replace(r'\$', '$')                         # \$ → $
+    p = p.replace('\\"', '"')                         # \" (unnecessary quote escape) → "
     return p
 
 
@@ -742,8 +743,7 @@ def _build_correct_sed(matched_line: str, color: str) -> str:
     esc_pat = (raw_stripped
                .replace('\\', '\\\\')
                .replace('[', r'\[').replace(']', r'\]')
-               .replace('$', r'\$')
-               .replace('"', r'\"'))
+               .replace('$', r'\$'))
     # Replacement: echo -e with \\033 (written as \\\\033 in Python so bash script gets \033)
     correct_repl = f'echo -e "\\\\033[{color}m{display_text}\\\\033[0m"'
     cmd = (
