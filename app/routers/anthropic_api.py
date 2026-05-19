@@ -121,19 +121,128 @@ def _build_model_messages(request: MessagesRequest) -> list:
     if sys_text:
         result.append({"role": "system", "content": sys_text})
 
+    # State for agentic loop interception (same logic as openai_api._oai_messages_for_tools)
+    bash_cmd_count: dict = {}
+    bash_history: list = []
+    fetch_head_reset_done = False
+    colorize_task_done = False
+
     for msg in request.messages:
         role = msg.role
         content = msg.content
 
-        if role == "user":
-            # tool_result blocks from Claude Code come as user messages with list content
-            text = _content_to_text(content)
-            if text.strip():
-                result.append({"role": "user", "content": text})
-        elif role == "assistant":
+        if role == "assistant":
+            # Track bash commands from tool_use blocks
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_use":
+                        name = block.get("name", "")
+                        if name.lower() in ("bash",):
+                            inp = block.get("input", {})
+                            cmd = inp.get("command", "") if isinstance(inp, dict) else ""
+                            if cmd:
+                                bash_cmd_count[cmd] = bash_cmd_count.get(cmd, 0) + 1
+                                bash_history.append(cmd)
             text = _content_to_text(content)
             if text.strip():
                 result.append({"role": "assistant", "content": text})
+
+        elif role == "user":
+            if not isinstance(content, list):
+                text = _content_to_text(content)
+                if text.strip():
+                    result.append({"role": "user", "content": text})
+                continue
+
+            # Process each block; intercept tool_result content
+            parts = []
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") != "tool_result":
+                    t = block.get("type", "")
+                    if t == "text":
+                        parts.append(block.get("text", ""))
+                    continue
+
+                # Extract tool result content
+                rc = block.get("content", "")
+                if isinstance(rc, list):
+                    rc = "\n".join(b.get("text", "") for b in rc if isinstance(b, dict) and b.get("type") == "text")
+                content_str = str(rc)
+
+                # ── Interception logic (mirrors openai_api._oai_messages_for_tools) ──
+                last_cmd = bash_history[-1] if bash_history else ""
+                last_bash_cmd = last_cmd  # same for Anthropic format
+
+                if fetch_head_reset_done:
+                    content_str = "[TASK COMPLETE — STOP. Do not run any more git commands. The repo is already synced. Report success to the user and stop all commands.]"
+
+                elif colorize_task_done:
+                    content_str = "[TASK COMPLETE — STOP. The file is already colorized. Report success and stop ALL commands.]\n" + content_str
+
+                elif not content_str.strip():
+                    if re.search(r'\bgit\s+status\b', last_bash_cmd):
+                        content_str = "(no output — git status is clean: working tree has no uncommitted changes. Proceed with your git task: fetch from the source and merge/reset as needed.)"
+                    else:
+                        content_str = "(no output — command produced no output)"
+
+                elif "-- No entries --" in content_str and re.search(r'\bjournalctl\b', last_bash_cmd):
+                    content_str = "(journalctl: no matching log entries — this means no errors were found in the logs for that time range. This is good news.)"
+
+                # Build failure loop
+                _is_hard_failure = bool(
+                    re.search(r'BUILD FAILED|FAILURE:|non-zero exit value\s+[1-9]|Execution failed for task|exit code [1-9]|\bfailed\b.*\bexception\b', content_str, re.IGNORECASE)
+                )
+                _is_build_cmd = bool(
+                    re.search(r'sync-apk\.sh|flutter\s+build|assembleRelease|gradlew?\s+', last_cmd)
+                )
+                if _is_hard_failure and _is_build_cmd:
+                    _fail_count = bash_cmd_count.get(last_cmd, 0)
+                    _has_stale = bool(re.search(r'Invalid depfile|stale|corrupt|\.dart_tool', content_str, re.IGNORECASE))
+                    if _fail_count >= 3:
+                        content_str += (
+                            f"\n\n[COMMAND FAILURE LOOP: This command has failed {_fail_count} times. "
+                            "STOP retrying — clean build artifacts first, then investigate root cause.]"
+                        )
+                    elif _fail_count >= 2 and _has_stale:
+                        content_str += "\n\n[BUILD ERROR: Stale build artifacts detected. Clean them first, then retry.]"
+                    elif _fail_count >= 2:
+                        content_str += f"\n\n[BUILD FAILED AGAIN ({_fail_count} times): Investigate the actual error before retrying.]"
+
+                # TASK COMPLETE from git fetch+reset
+                if "HEAD is now at" in content_str and last_bash_cmd and (
+                    "reset --hard FETCH_HEAD" in last_bash_cmd or
+                    ("-> FETCH_HEAD" in content_str and "FETCH_HEAD" in last_bash_cmd)
+                ):
+                    fetch_head_reset_done = True
+                    content_str += "\n\n[TASK COMPLETE: Repository successfully updated. STOP — report success and stop all commands.]"
+
+                elif "Already up to date" in content_str and re.search(r'\bgit\b.*(merge|fetch|pull)\b', last_bash_cmd):
+                    fetch_head_reset_done = True
+                    content_str = "[TASK COMPLETE: The repository is already up to date. STOP — report success and stop all commands.]"
+
+                # LOOP DETECTED
+                if last_cmd and bash_cmd_count.get(last_cmd, 0) >= 5:
+                    _loop_count = bash_cmd_count[last_cmd]
+                    if re.search(r'\bgit\s+status\b', last_cmd):
+                        content_str = (
+                            f"[LOOP DETECTED: git status has been run {_loop_count} times — the repo is consistently clean. "
+                            "STOP. Either the task is complete (report success) or fetch first: "
+                            "git fetch <remote-name> && git log HEAD..FETCH_HEAD --oneline. Do NOT run git status again.]"
+                        )
+                    else:
+                        content_str = (
+                            f"[LOOP DETECTED: This exact command has been run {_loop_count} times with the same result. "
+                            "STOP. Do not run this command again. "
+                            "If done, report success. If not, try a fundamentally different approach.]"
+                        )
+
+                parts.append(content_str)
+
+            text = "\n".join(p for p in parts if p)
+            if text.strip():
+                result.append({"role": "user", "content": text})
 
     return result
 

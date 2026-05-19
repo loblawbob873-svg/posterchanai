@@ -845,7 +845,11 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 else:
                     # For non-sed: append loop warning but keep original error message visible
                     _py_writes = bool(re.search(r'\bopen\s*\(.*,\s*["\']w["\']', last_cmd or ""))
-                    if _py_writes:
+                    _is_colorize_ctx = bool(
+                        re.search(r'\.sh\b', last_cmd or "") or
+                        any(re.search(r'\.sh\b', c) for c in bash_history[-5:])
+                    )
+                    if _py_writes and _is_colorize_ctx:
                         content_str += (
                             f"\n\n[ERROR: same python3 command run {repeat_n} times with the same SyntaxError. "
                             "Fix the SyntaxError before anything else can work. "
@@ -855,7 +859,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             "(NOT double-quoted f-strings with backslash-quote). "
                             "After writing, run bash -n as a SEPARATE bash tool call.]"
                         )
-                    else:
+                    elif _is_colorize_ctx and not _py_writes:
                         content_str += (
                             f"\n\n[ERROR: same command run {repeat_n} times, not working. "
                             "Your script only reads — it does not WRITE to the file. "
@@ -864,6 +868,12 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             "Use SINGLE-QUOTED f-strings: f'{indent}echo -e \"\\\\033[{col}m{arg.strip(chr(34))}\\\\033[0m\"\\n' "
                             "(NOT double-quoted f-strings with backslash-quote — those leave the string unterminated). "
                             "Write ALL lines back, run bash -n to check syntax.]"
+                        )
+                    else:
+                        content_str += (
+                            f"\n\n[ERROR: same command has failed {repeat_n} times in a row. "
+                            "This approach is not working. STOP retrying the same command. "
+                            "Investigate the root cause from the error output above, then try a completely different approach.]"
                         )
             # Detect python3 heredoc probe-loop: model running read-only scripts in a loop
             _is_py3_heredoc = last_cmd and bool(
@@ -946,11 +956,11 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "Do NOT run git status again.]"
                     )
                 else:
-                    content_str += (
-                        f"\n\n[LOOP DETECTED: This exact command has been run {_loop_count} times. "
-                        "The result is not changing. STOP running this command. "
-                        "If the task is complete, report success to the user and stop ALL commands. "
-                        "If the task is not complete, try a completely different approach.]"
+                    content_str = (
+                        f"[LOOP DETECTED: This exact command has been run {_loop_count} times with the same result. "
+                        "STOP. Do not run this command again. "
+                        "If the task is complete, report success and stop ALL commands. "
+                        "If not complete, abandon this approach entirely and try a fundamentally different method.]"
                     )
             # Wrap in XML tool_result format matching this model's expected pattern
             result.append({"role": "user", "content": f"<tool_result>\n<tool>{last_tool_name}</tool>\n<output>\n{content_str}\n</output>\n</tool_result>"})
