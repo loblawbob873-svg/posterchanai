@@ -520,8 +520,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # Intercept "No changes" errors — model needs a new strategy
             elif "no changes to apply" in content_str.lower() or "identical" in content_str.lower():
                 content_str += "\n\n[IMPORTANT: The edit failed because oldString was not found or was identical to newString. Do NOT repeat the same edit. Use bash with sed -i for targeted replacements instead, e.g. bash(command=\"sed -i 's/original/replacement/g' file\").]"
-            # Binary inspection — redirect to echo grep immediately
-            elif _is_inspection:
+            # Binary inspection — redirect to echo grep immediately (only when colorize job active)
+            elif _is_inspection and _tf:
                 content_str = (
                     content_str[:200] + "\n...[truncated]\n\n"
                     "[This inspection confirms the file is a plain text bash script with no binary ANSI bytes. "
@@ -551,7 +551,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     1 for r in result
                     if r.get("role") == "user" and "no output" in r.get("content", "").lower()
                 )
-                if is_sed_cmd and no_output_count >= 1:
+                if _tf and is_sed_cmd and no_output_count >= 1:
                     # Model is repeating a failing sed — escalate with hard stop
                     # Try to extract the sed pattern to name it explicitly
                     sed_pat = ""
@@ -593,7 +593,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         f"Use '|' as delimiter: sed -i 's|exact text from grep|echo -e \"\\033[{_color}m...\"|' file"
                     )
                     logger.warning(f"[ANTHR/OAI] Repeated empty sed result (count={no_output_count+1}), escalating redirect")
-                elif is_sed_cmd:
+                elif _tf and is_sed_cmd:
                     has_caret = bool(re.search(r"sed\s+-i\s+['\"]?s[/|!]\^", last_bash_cmd))
                     caret_hint = (
                         " NOTE: Your pattern uses '^echo' — the '^' means the line must have NO leading whitespace. "
@@ -626,8 +626,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "[If this was a sed -i command, the pattern was not found. "
                         "Run grep to see the actual file contents before trying again.]"
                     )
-            # "0" from grep -c — confirmed pattern absent; stop inspecting, start acting
-            elif content_str.strip() == "0":
+            # "0" from grep -c — confirmed pattern absent (only relevant for colorize job)
+            elif content_str.strip() == "0" and _tf:
                 content_str = (
                     "0 (pattern not found)\n\n"
                     "[The file has no existing ANSI escape codes. Stop inspecting and start editing. "
@@ -832,7 +832,7 @@ def _redirect_hallucinated_sed(tool_calls: list, settings: dict = None) -> list:
                         logger.info("[GREP-BATCH] All lines done — returning completion")
                         out.append(tc)
                         continue
-                if _tf and "sed" in cmd and ("-i" in cmd or "-e" in cmd):
+                if _tf and "sed" in cmd and ("-i" in cmd or "-e" in cmd) and _tf in cmd:
                     # Replace model's sed with pre-computed correct batch from actual file state
                     _batch = _build_remaining_batch(_tf, _color, _prefix, _suffix)
                     if _batch:
