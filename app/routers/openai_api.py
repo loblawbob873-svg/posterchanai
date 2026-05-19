@@ -672,16 +672,24 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             "You must include the quote in your pattern, e.g.: "
                             "sed -i 's|echo \"\\[gentoo\\]\"|echo -e \"\\033[1;92m[gentoo]\\033[0m\"|' FILE"
                         )
+                    # Pattern uses 'echo -e' as source — but original lines don't have -e yet
+                    elif re.search(r'echo\s+-e\b', raw_pat):
+                        quoting_hint = (
+                            f" DIAGNOSIS: your source pattern contains 'echo -e' but the original lines "
+                            "in this file likely just have 'echo' (without -e) — you are searching for "
+                            "the colorized form, not the original. Use the ORIGINAL line text as the source pattern."
+                        )
                 if "sed" in last_cmd and "-i" in last_cmd:
+                    # Extract target file from last_cmd for grep suggestion
+                    _file_m = re.search(r'([/\w.~-]+\.sh)\b', last_cmd)
+                    _file_ref = _file_m.group(1) if _file_m else "the target file"
                     content_str = (
                         f"[ERROR: You have run this EXACT sed command {repeat_n} times — it is NOT working.{quoting_hint} "
-                        "STOP. Your sed PATTERN is wrong — it's not matching any lines. "
-                        "Run: grep -n 'echo \"\\[' /opt/gentoo-installer/gentoo.sh | head -20 "
-                        "to see the EXACT text of each echo line. "
-                        "CRITICAL: Your pattern must match the FULL echo string including closing bracket and quotes. "
-                        "Copy the EXACT line text from grep output and use it as your pattern verbatim. "
-                        "If the line has brackets like echo \"[Section]\", escape them in the pattern: echo \"\\[Section\\]\". "
-                        "Partial patterns that omit the closing bracket or trailing quote will NOT match.]"
+                        "STOP. Your sed PATTERN is not matching any lines in the file. "
+                        f"Run grep to see EXACT current text: grep -n 'echo' {_file_ref} | grep -v '>>' | grep -v '>' | head -30 "
+                        "Your SOURCE pattern must match text as it CURRENTLY exists in the file — not the colorized target form. "
+                        "Copy the EXACT line from grep and use it verbatim as your source pattern. "
+                        "For bulk changes to many lines, switch to python3 in one bash call (much faster than individual seds).]"
                     )
                 else:
                     # For non-sed: append loop warning but keep original error message visible
