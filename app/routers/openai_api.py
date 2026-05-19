@@ -439,10 +439,15 @@ def _tools_system_text(tools: list) -> str:
         "BATCH FILE EDITS: When a task requires modifying many lines, use python3 or awk to process all lines in a single script "
         "rather than running sed once per line. Individual sed calls per line are too slow for bulk edits. "
         "LOCAL PATHS: when a task gives you a local path (~/some/path or /path/to/dir) as the SOURCE git repository, "
-        "use that path DIRECTLY as the git fetch source — do NOT substitute it with 'git fetch origin' or any GitHub URL. "
-        "git accepts local filesystem paths: git fetch ~/local/repo is valid syntax. "
+        "use that path DIRECTLY as the git fetch source — do NOT add a remote named 'upstream' pointing to GitHub, "
+        "do NOT substitute it with 'git fetch origin' or any GitHub/remote URL. "
+        "git accepts local filesystem paths directly: git -C ~/repo fetch ~/other/local/repo is valid syntax. "
+        "SYNCING A FORK: when the task asks to sync/update one repo (TARGET) to match another (SOURCE), the correct approach is: "
+        "(1) git -C TARGET fetch SOURCE, then (2) git -C TARGET reset --hard FETCH_HEAD. "
+        "Do NOT use rebase — rebasing 1500+ commits with conflicts is wrong. "
+        "If git fetch or rebase gives a merge conflict, immediately abort (git rebase --abort) and use reset --hard FETCH_HEAD instead. "
         "Only use named remotes (origin, upstream) if the task EXPLICITLY instructs you to run 'git fetch upstream' or similar — "
-        "do not use them as a substitute for an explicit local path source.\n\n"
+        "do not add or use them as a substitute for an explicit local path source.\n\n"
     )
     return preamble + "<tools>\n" + "\n\n".join(entries) + "\n</tools>"
 
@@ -455,6 +460,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
     bash_history = []     # ordered list of bash commands issued so far
     fetch_head_reset_done = False  # True after model successfully runs reset --hard FETCH_HEAD
     colorize_task_done = False     # True after model successfully colorizes a .sh file
+    rebase_conflict_count = 0      # Number of times rebase conflict detected
     for msg in messages:
         role = msg.get("role", "")
         content = msg.get("content") or ""
@@ -573,6 +579,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # Detect incompatible git history conflict — model used wrong (GitHub) upstream
             elif ("could not apply" in content_str or "CONFLICT (add/add)" in content_str) and \
                  "first commit" in content_str:
+                rebase_conflict_count += 1
                 if fetch_head_reset_done:
                     content_str = (
                         "[ERROR: Incompatible history — you already completed this task. "
@@ -581,14 +588,36 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "Do NOT try to pull from GitHub. The task was already done.]"
                     )
                 else:
-                    content_str += (
-                        "\n\n[ERROR: WRONG source — incompatible git history. "
-                        "You fetched from the wrong repo (probably GitHub). These repos share no common history. "
-                        "Run: git rebase --abort\n"
-                        "Then use the LOCAL source repo path directly. Git accepts local paths as fetch sources. "
-                        "EXACT COMMANDS: git -C ~/aria2 fetch ~/aria && git -C ~/aria2 reset --hard FETCH_HEAD\n"
-                        "(~/aria is a local git repository on this machine, NOT a GitHub URL)]"
+                    _target_repo = None
+                    _source_repo = None
+                    for _hc in bash_history:
+                        _tm = re.search(r'git\s+-C\s+([\S]+)\s+(?:rebase|fetch|pull)', _hc)
+                        if _tm:
+                            _target_repo = _tm.group(1)
+                        _sm = re.search(r'git\s+-C\s+\S+\s+fetch\s+([\S]+)', _hc)
+                        if _sm and not _sm.group(1).startswith('-'):
+                            _source_repo = _sm.group(1)
+                    _exact_cmds = (
+                        f"git -C {_target_repo or '~/aria2'} rebase --abort\n"
+                        f"git -C {_target_repo or '~/aria2'} fetch ~/aria\n"
+                        f"git -C {_target_repo or '~/aria2'} reset --hard FETCH_HEAD"
                     )
+                    if rebase_conflict_count >= 2:
+                        content_str = (
+                            f"[ABORT ALL REBASE ATTEMPTS. You have hit incompatible history {rebase_conflict_count} times. "
+                            f"Rebase will NEVER work — these repos have unrelated histories. "
+                            f"Run these EXACT three commands NOW:\n{_exact_cmds}\n"
+                            f"~/aria is a local directory, NOT a remote. git fetch ~/aria works directly. "
+                            f"Do NOT add any remote. Do NOT use 'upstream'. Just run these three commands.]"
+                        )
+                    else:
+                        content_str = (
+                            f"[ERROR: WRONG source — incompatible git history (conflict {rebase_conflict_count}/2). "
+                            f"You fetched from GitHub which has unrelated history. Rebase CANNOT work here. "
+                            f"Run these EXACT commands:\n{_exact_cmds}\n"
+                            f"~/aria is a local directory on this machine — git fetch accepts local paths directly. "
+                            f"Do NOT add remotes. Do NOT use 'upstream'. Run the 3 commands above.]"
+                        )
             # Detect invalid upstream — branch not found after fetch
             elif "invalid upstream" in content_str or "couldn't find remote ref" in content_str:
                 content_str += (
