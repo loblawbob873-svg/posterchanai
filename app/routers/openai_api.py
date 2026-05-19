@@ -454,6 +454,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
     bash_cmd_count = {}   # command string -> how many times it's been called
     bash_history = []     # ordered list of bash commands issued so far
     fetch_head_reset_done = False  # True after model successfully runs reset --hard FETCH_HEAD
+    colorize_task_done = False     # True after model successfully colorizes a .sh file
     for msg in messages:
         role = msg.get("role", "")
         content = msg.get("content") or ""
@@ -486,6 +487,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # If task was already completed, prepend a persistent reminder to every result
             if fetch_head_reset_done:
                 content_str = "[TASK COMPLETE — STOP. Do not run any more git commands. Report success to the user.]\n" + content_str
+            if colorize_task_done:
+                content_str = "[TASK COMPLETE — STOP. The file is already colorized. Do NOT modify it again. Report success and stop ALL commands.]\n" + content_str
             # Find the tool name from the preceding assistant message's tool_call
             last_tool_name = "bash"
             for r in reversed(result):
@@ -779,6 +782,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 _colorized_m = re.search(r'(\d+)\s+lines?\s+colorized', content_str)
                 _n_colorized = int(_colorized_m.group(1)) if _colorized_m else 0
                 if _n_colorized > 0:
+                    colorize_task_done = True
                     content_str += (
                         f"\n\n[TASK COMPLETE: {_n_colorized} display echo lines colorized with ANSI color codes. "
                         f"STOP — the task is finished. Do NOT run any more commands. "
@@ -855,10 +859,11 @@ def _redirect_hallucinated_sed(tool_calls: list, settings: dict = None) -> list:
     return list(tool_calls)
 
 
-def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False) -> list:
+def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_done: bool = False) -> list:
     """Fix common sed mistakes in bash tool calls before they reach opencode.
 
     sed_blocked: if True, sed -i calls are replaced with a blocking error (model must use python3).
+    colorize_done: if True, python3 writes to .sh files are blocked (colorization already complete).
     """
     out = []
     for tc in tool_calls:
@@ -868,6 +873,17 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False) -> list:
             try:
                 args_dict = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
                 cmd = args_dict.get("command", "")
+                # Block python3 writes to .sh files after colorization is already complete
+                _is_py3_write_sh = (
+                    bool(re.search(r'python3?\s+(<<|-\s|-c\b)', cmd)) and
+                    bool(re.search(r'open\s*\(.*\.sh.*,\s*["\']w["\']', cmd))
+                )
+                if colorize_done and _is_py3_write_sh:
+                    args_dict["command"] = "echo '[TASK ALREADY COMPLETE: The .sh file was already colorized. Do NOT modify it again. Report success and stop.]'"
+                    tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                    logger.info("[COLORIZE-DONE] Blocked python3 write to .sh after colorization complete")
+                    out.append(tc)
+                    continue
                 # Block sed -i after repeated loop failures — force model to use python3
                 # Detect python3 script that searches for 'echo -e' in source lines — original lines don't have -e yet
                 _is_py3_cmd = bool(re.search(r'python3?\s+(<<|-\s)', cmd))
@@ -1252,9 +1268,14 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
          "[PROXY: sed -i is blocked" in (m.get("content") or ""))
         for m in messages if m.get("role") == "user"
     )
-    tool_calls = _fix_sed_tool_calls(tool_calls, sed_blocked=_sed_blocked)
+    # Detect if colorization task was already completed — block further .sh writes
+    _colorize_done = any(
+        ("[TASK COMPLETE:" in (m.get("content") or "") and "lines colorized" in (m.get("content") or ""))
+        for m in messages if m.get("role") == "user"
+    )
+    tool_calls = _fix_sed_tool_calls(tool_calls, sed_blocked=_sed_blocked, colorize_done=_colorize_done)
     tool_calls = _redirect_hallucinated_sed(tool_calls, settings=settings)
-    logger.info(f"[OAI-AGENTIC] len={len(full_text)} head={full_text[:200]!r} tail={full_text[-200:]!r} tool_calls={len(tool_calls)} sed_blocked={_sed_blocked}")
+    logger.info(f"[OAI-AGENTIC] len={len(full_text)} head={full_text[:200]!r} tail={full_text[-200:]!r} tool_calls={len(tool_calls)} sed_blocked={_sed_blocked} colorize_done={_colorize_done}")
 
     # If model responded with text-only or unparseable tool call (no tool call), nudge it once
     if not tool_calls and full_text.strip() and len(full_text) < 1200:
