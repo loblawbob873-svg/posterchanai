@@ -477,9 +477,21 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     break
             _is_inspection = any(kw in last_bash_cmd for kw in ("cat -A", "od -c", "hexdump", "| strings", "| od ", "grep -c", "grep -E '\\\\["))
             _is_grep_echo = "grep" in last_bash_cmd and "echo" in last_bash_cmd and "sed" not in last_bash_cmd
-            # If grep output follows prior sed failures, generate ready-made sed templates
-            if _is_grep_echo and content_str.strip():
-                # Separate display echoes (no >> or > redirection) from file-writing echoes
+            # When target file is configured, replace grep results with the pre-computed batch
+            if _is_grep_echo and content_str.strip() and _tf:
+                batch_cmd = _build_remaining_batch(_tf, _color, _prefix, _suffix)
+                if batch_cmd:
+                    content_str = (
+                        f"[{_tf} still has uncolorized display echo lines. "
+                        f"Run this command NOW to colorize them:\n\nbash(command=\"{batch_cmd}\")\n\n"
+                        "Do NOT run grep again. Run that bash command.]"
+                    )
+                    logger.info("[GREP-ANN] Replaced grep result with pre-computed batch command")
+                else:
+                    content_str = f"[All display echo lines in {_tf} are already colorized. Task complete!]"
+                    logger.info("[GREP-ANN] All lines done — telling model task is complete")
+            # Fallback: annotate grep output when no target file is configured
+            elif _is_grep_echo and content_str.strip():
                 display_lines = []
                 redir_lines = []
                 for raw_line in content_str.strip().split("\n")[:80]:
@@ -489,66 +501,15 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     linenum, line_content = m.group(1), m.group(2).rstrip()
                     if 'echo' not in line_content:
                         continue
-                    # Skip lines that redirect output to files — those write config data, not display text
                     if '>>' in line_content or re.search(r'>\s*[\$/]', line_content) or ('| ' in line_content and 'echo' not in line_content.split('|')[0].strip().split()[-1:]):
                         redir_lines.append((linenum, line_content))
                     else:
                         display_lines.append((linenum, line_content))
-                logger.info(f"[GREP-ANN] Display echoes: {len(display_lines)}, redir echoes: {len(redir_lines)}. Raw: {content_str[:500]!r}")
-                # Populate cache — skip bare "echo" with no text, cache up to 60 non-bare lines
+                logger.info(f"[GREP-ANN] Display echoes: {len(display_lines)}, redir echoes: {len(redir_lines)}")
                 _non_bare = [lc for _, lc in display_lines if re.search(r'echo\s+\S', lc)]
                 if _non_bare:
                     _display_echo_cache.clear()
                     _display_echo_cache.extend(_non_bare[:60])
-                    logger.info(f"[GREP-ANN] Cached {len(_display_echo_cache)} non-bare display echo lines")
-                # Always inject sed templates — never leave the model without actionable commands
-                if display_lines:
-                    batch_seds = []
-                    for linenum, line_content in display_lines[:20]:
-                        # Skip bare echo (no string to colorize)
-                        if not re.search(r'echo\s+\S', line_content):
-                            continue
-                        # Strip leading whitespace to avoid tab-matching issues in sed
-                        stripped_content = line_content.strip()
-                        # Skip lines already colorized
-                        if '\\033' in stripped_content or '\x1b' in stripped_content:
-                            continue
-                        safe_pat = (stripped_content
-                                    .replace('\\', '\\\\')
-                                    .replace('|', r'\|')
-                                    .replace('[', r'\[')
-                                    .replace(']', r'\]')
-                                    .replace('$', r'\$'))
-                        display = _make_display_text(stripped_content, _prefix, _suffix).replace('|', r'\|')
-                        batch_seds.append(
-                            f"sed -i 's|{safe_pat}|echo -e \"\\\\033[{_color}m{display}\\\\033[0m\"|' {_tf}"
-                        )
-                    if batch_seds:
-                        batch_cmd = " && \\\n".join(batch_seds) + " && echo 'BATCH_SED_OK'"
-                        content_str += (
-                            f"\n\n[ACTION REQUIRED — STOP RUNNING GREP. Run this ONE command to colorize all {len(batch_seds)} display echo lines at once:\n\n"
-                            f"bash(command=\"{batch_cmd}\")\n\n"
-                            f"Copy and run that command exactly. Do NOT run grep again.]"
-                        )
-                        logger.info(f"[GREP-ANN] Injected batch command with {len(batch_seds)} seds (always-on)")
-                    else:
-                        # All visible echoes write to files — need to look further in the file
-                        content_str += (
-                            "\n\n[WARNING: The echo lines above ALL write to files (>>). "
-                            "They are config-writing statements — do NOT colorize them (would break the installer). "
-                            f"The display echoes are further in the file. Run a broader grep:\n"
-                            f"bash(command=\"grep -n 'echo' {_tf} | grep -v '>>' | grep -v '#'\")"
-                            "\nThat will show the echo statements that display text to the user.]"
-                        )
-                        logger.info("[GREP-ANN] All grep echoes are redirecting — telling model to run better grep")
-                else:
-                    content_str += (
-                        "\n\n[WARNING: All visible echo lines write to files with >> redirection. "
-                        "These are config-writing statements — do NOT colorize them. "
-                        f"Run: bash(command=\"grep -n 'echo' {_tf} | grep -v '>>' | grep -v '#'\") "
-                        "to find the display echo statements.]"
-                    )
-                    logger.info("[GREP-ANN] All echoes are redirecting, injecting better grep suggestion")
             # Intercept sed delimiter errors — / in replacement breaks sed 's/.../.../'
             if "unknown option to `s'" in content_str or "unknown option to `s'" in content_str or "unterminated" in content_str.lower():
                 content_str += (
