@@ -515,7 +515,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 )
             # Intercept Python SyntaxError in heredoc scripts writing .sh files
             elif ('SyntaxError' in content_str or 'SyntaxWarning' in content_str) and \
-                 re.search(r'python3?\s+(<<|-\s)', last_bash_cmd) and \
+                 re.search(r'python3?\s+(<<|-\s|-c\b)', last_bash_cmd) and \
                  re.search(r'\.sh\b', last_bash_cmd):
                 content_str = (
                     "[ERROR: Python SyntaxError in your script. Most likely cause: "
@@ -732,7 +732,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # Detect python3 heredoc probe-loop: model running read-only scripts in a loop
             _is_py3_heredoc = last_cmd and bool(
                 re.search(r'python3?\s+-\s', last_cmd) or
-                re.search(r'python3?\s+<<', last_cmd)
+                re.search(r'python3?\s+<<', last_cmd) or
+                re.search(r'python3?\s+-c\b', last_cmd)
             )
             _is_noop_result = content_str.startswith("(no output")
             # After a python3 write succeeds, inject verification to catch silent bugs early
@@ -743,15 +744,24 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             )
             if _py3_wrote_sh:
                 _sh_ref = _sh_file_in_cmd.group(1)
-                content_str += (
-                    f"\n\n[AUTO-VERIFY: Run: bash -n {_sh_ref} 2>&1 | head -3 && "
-                    f"VALID=$(grep -c 'echo -e.*\\\\033' {_sh_ref} 2>/dev/null || echo 0) && "
-                    f"echo \"Colorized: $VALID\" && "
-                    f"[ \"$VALID\" -ge 20 ] && echo PASS || "
-                    "echo 'FAIL: 0 lines colorized. Bug: your script searched for echo -e in source but originals use just echo. "
-                    "Do NOT re.search(echo -e) — instead apply color to every line where is_display_echo() is True. "
-                    "Write corrected script now.]"
-                )
+                _colorized_m = re.search(r'(\d+)\s+lines?\s+colorized', content_str)
+                _n_colorized = int(_colorized_m.group(1)) if _colorized_m else 0
+                if _n_colorized > 0:
+                    content_str += (
+                        f"\n\n[TASK COMPLETE: {_n_colorized} lines colorized. "
+                        f"STOP — do NOT run any more colorization scripts on this file. "
+                        f"Verify once: bash -n {_sh_ref} && echo syntax_ok]"
+                    )
+                else:
+                    content_str += (
+                        f"\n\n[AUTO-VERIFY: Run: bash -n {_sh_ref} 2>&1 | head -3 && "
+                        f"VALID=$(grep -c 'echo -e.*\\\\033' {_sh_ref} 2>/dev/null || echo 0) && "
+                        f"echo \"Colorized: $VALID\" && "
+                        f"[ \"$VALID\" -ge 20 ] && echo PASS || "
+                        "echo 'FAIL: 0 lines colorized. Bug: your script searched for echo -e in source but originals use just echo. "
+                        "Do NOT re.search(echo -e) — instead apply color to every line where is_display_echo() is True. "
+                        "Write corrected script now.]"
+                    )
             if _is_py3_heredoc and _is_noop_result:
                 _searches_template = bool(re.search(r"""echo\s+["']\[""", last_cmd))
                 if _searches_template:
@@ -828,13 +838,14 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False) -> list:
                     _sh_file_m = re.search(r"open\s*\([rf]?['\"]([^'\"]+\.sh)['\"]", cmd)
                     _sh_file = _sh_file_m.group(1) if _sh_file_m else '/opt/gentoo-installer/gentoo.sh'
                     # Replace the broken script with a corrected one using string concat (no f-strings)
+                    # Note: '\\\\033' not in s skips already-colorized lines (idempotent on re-run)
                     _tmpl = (
                         f"with open('{_sh_file}') as f: lines = f.readlines()\n"
                         "colors = ['1;96', '1;93', '1;92', '1;91']\n"
                         "ci = 0; out = []\n"
                         "for line in lines:\n"
                         "    s = line.rstrip()\n"
-                        "    if s.strip().startswith('echo ') and '>>' not in s and '>' not in s.partition('echo')[2] and ' | ' not in s:\n"
+                        "    if s.strip().startswith('echo ') and '>>' not in s and '>' not in s.partition('echo')[2] and ' | ' not in s and '\\\\033' not in s:\n"
                         "        col = colors[ci % 4]; ci += 1\n"
                         "        arg = s.partition('echo ')[2].strip().strip('\"').strip(\"'\")\n"
                         "        indent = s[:len(s) - len(s.lstrip())]\n"
