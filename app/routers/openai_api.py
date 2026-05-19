@@ -1538,6 +1538,27 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         from app.services.text_utils import inject_no_think
         messages = inject_no_think(messages)
 
+    # Short-circuit: if the TASK COMPLETE (git reset done) echo already ran and its result is in
+    # the conversation, return success directly without calling the model — breaks infinite loop.
+    _git_reset_echo_marker = "[TASK COMPLETE: The repository was successfully reset to the source HEAD"
+    if any(_git_reset_echo_marker in (m.get("content") or "") for m in messages if m.get("role") == "user"):
+        _sc_text = "The repository has been successfully synchronized. The git reset --hard FETCH_HEAD completed — both repositories now have identical HEAD commits."
+        _sc_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+        logger.info("[GIT-RESET-SHORTCIRCUIT] TASK COMPLETE echo detected in history — returning success without LLM call")
+        _sc_body = {"id": _sc_id, "object": "chat.completion", "created": int(__import__("time").time()), "model": request.model, "choices": [{"index": 0, "message": {"role": "assistant", "content": _sc_text}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}}
+        if not request.stream:
+            return _sc_body
+        async def _sc_emit():
+            def _ck(d, fin=None):
+                return f"data: {json.dumps({'id': _sc_id, 'object': 'chat.completion.chunk', 'choices': [{'index': 0, 'delta': d, 'finish_reason': fin}]})}\n\n"
+            yield _ck({"role": "assistant", "content": ""})
+            for _i in range(0, len(_sc_text), 64):
+                yield _ck({"content": _sc_text[_i:_i+64]})
+            yield _ck({}, fin="stop")
+            yield "data: [DONE]\n\n"
+        from fastapi.responses import StreamingResponse as _SR
+        return _SR(_sc_emit(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
+
     temperature = request.temperature if request.temperature is not None else 0.0
     # Cap agentic completions at 2048 tokens — tool calls are short; large limits cause runaway generation
     max_tokens = min(max(request.max_tokens or 0, int(settings.get("ollama_num_predict", "2048"))), 2048)

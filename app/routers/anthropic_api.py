@@ -515,6 +515,39 @@ async def messages(
     if "qwen3" in llm_path:
         messages_for_model = inject_no_think(messages_for_model)
 
+    # Short-circuit: if TASK COMPLETE (git reset done) echo or interception already ran and its
+    # result is in the conversation, return success directly without calling the model.
+    _git_sc_markers = (
+        "[TASK COMPLETE: The repository was successfully reset to the source HEAD",
+        "[TASK COMPLETE — STOP. Do not run any more git commands. The repo is already synced",
+    )
+    if any(
+        any(marker in (m.get("content") or "") for marker in _git_sc_markers)
+        for m in messages_for_model if m.get("role") == "user"
+    ):
+        _sc_text_a = "The repository has been successfully synchronized. The git reset --hard FETCH_HEAD completed — both repositories now have identical HEAD commits."
+        logger.info("[ANTHR-GIT-RESET-SHORTCIRCUIT] TASK COMPLETE detected in history — returning success without LLM call")
+        _sc_body_a = {
+            "id": f"msg_{uuid.uuid4().hex[:24]}", "type": "message", "role": "assistant",
+            "model": body.model,
+            "content": [{"type": "text", "text": _sc_text_a}],
+            "stop_reason": "end_turn", "stop_sequence": None,
+            "usage": {"input_tokens": 0, "output_tokens": 0},
+        }
+        if body.stream:
+            async def _sc_stream_a():
+                import json as _j
+                _sc_id_a = _sc_body_a["id"]
+                yield f"data: {_j.dumps({'type': 'message_start', 'message': {**_sc_body_a, 'content': []}})}\n\n"
+                yield f"data: {_j.dumps({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}})}\n\n"
+                for _i in range(0, len(_sc_text_a), 64):
+                    yield f"data: {_j.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': _sc_text_a[_i:_i+64]}})}\n\n"
+                yield f"data: {_j.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"
+                yield f"data: {_j.dumps({'type': 'message_delta', 'delta': {'stop_reason': 'end_turn', 'stop_sequence': None}, 'usage': {'output_tokens': 0}})}\n\n"
+                yield f"data: {_j.dumps({'type': 'message_stop'})}\n\n"
+            return StreamingResponse(_sc_stream_a(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
+        return JSONResponse(_sc_body_a)
+
     max_tokens = body.max_tokens or 4096
     temperature = body.temperature if body.temperature is not None else 0.0
     top_p = body.top_p
