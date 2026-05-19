@@ -603,9 +603,11 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "to see ALL the bracket-section echo lines with their exact text, then fix your sed pattern.]"
                     )
                 else:
-                    content_str = (
-                        f"[ERROR: You have run this EXACT command {repeat_n} times with the same failure. "
-                        "STOP — repeating it will not fix the error. Use a completely different approach.]"
+                    # For non-sed: append loop warning but keep original error message visible
+                    content_str += (
+                        f"\n\n[ERROR: You have now run this EXACT command {repeat_n} times. "
+                        "STOP repeating it — the error will not go away. "
+                        "You must use a completely different command to accomplish the goal.]"
                     )
             # Wrap in XML tool_result format matching this model's expected pattern
             result.append({"role": "user", "content": f"<tool_result>\n<tool>{last_tool_name}</tool>\n<output>\n{content_str}\n</output>\n</tool_result>"})
