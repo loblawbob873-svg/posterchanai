@@ -892,7 +892,7 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                 # Also catch: regex used to match echo lines for colorization (any pattern with echo + color intent)
                 _re_matches_echo = bool(re.search(r're\.\w+\s*\(\s*[rf]?["\'].*echo', cmd))
                 _has_color_intent = bool(re.search(r'\\\\033|colors\s*=\s*\[', cmd))
-                if _is_py3_cmd and _writes_sh and (_searches_echo_e_as_source or (_re_matches_echo and _has_color_intent)):
+                if _is_py3_cmd and _writes_sh and (_searches_echo_e_as_source or _has_color_intent):
                     # Extract target file from the command; fall back to gentoo.sh
                     _sh_file_m = re.search(r"open\s*\([rf]?['\"]([^'\"]+\.sh)['\"]", cmd)
                     _sh_file = _sh_file_m.group(1) if _sh_file_m else '/opt/gentoo-installer/gentoo.sh'
