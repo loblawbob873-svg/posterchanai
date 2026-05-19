@@ -534,11 +534,15 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             last_cmd = bash_history[-1] if bash_history else ""
             if last_cmd and bash_cmd_count.get(last_cmd, 0) > 1:
                 repeat_n = bash_cmd_count[last_cmd]
-                content_str += (
-                    f"\n\n[IMPORTANT: You have now run this exact command {repeat_n} times with the same result. "
-                    "The command is NOT doing what you expect. If this is a sed command, the pattern is NOT matching "
-                    "the actual text in the file — run grep to find the exact literal text of the target lines, then "
-                    "use that exact text verbatim in your sed command (including quotes, spaces, punctuation).]"
+                # REPLACE output entirely — appending is ignored by the model
+                content_str = (
+                    f"[ERROR: You have run this EXACT command {repeat_n} times already. "
+                    "STOP repeating it — the result will not change. "
+                    "Your sed pattern is NOT matching the actual text in the file (likely a quoting mismatch — "
+                    "the file may have double-quotes around bracket text like echo \"[Section]\"). "
+                    "You MUST run grep first to find the exact literal text: "
+                    "grep -n 'echo' /opt/gentoo-installer/gentoo.sh | head -30 "
+                    "Then use EXACTLY that text (copy-paste verbatim including any quote characters) as your sed pattern.]"
                 )
             # Wrap in XML tool_result format matching this model's expected pattern
             result.append({"role": "user", "content": f"<tool_result>\n<tool>{last_tool_name}</tool>\n<output>\n{content_str}\n</output>\n</tool_result>"})
