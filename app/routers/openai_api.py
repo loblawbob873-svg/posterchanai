@@ -1130,7 +1130,10 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     clean_text, tool_calls = _parse_oai_tool_calls(full_text)
     # Detect if sed loop errors appeared in conversation — block further sed -i if so
     _sed_blocked = any(
-        "[ERROR: You have run this EXACT sed command" in (m.get("content") or "")
+        ("[ERROR: You have run this EXACT sed command" in (m.get("content") or "") or
+         "[ERROR: sed command failed" in (m.get("content") or "") or
+         "SED IS NOW BLOCKED" in (m.get("content") or "") or
+         "[PROXY: sed -i is blocked" in (m.get("content") or ""))
         for m in messages if m.get("role") == "user"
     )
     tool_calls = _fix_sed_tool_calls(tool_calls, sed_blocked=_sed_blocked)
