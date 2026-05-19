@@ -685,29 +685,24 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     _file_m = re.search(r'([/\w.~-]+\.sh)\b', last_cmd)
                     _file_ref = _file_m.group(1) if _file_m else "the target file"
                     content_str = (
-                        f"[ERROR: You have run this EXACT sed command {repeat_n} times — it is NOT working.{quoting_hint} "
-                        "SED IS NOW BLOCKED — write a python3 script NOW, do NOT explore first. "
-                        "Match display echo lines: line.strip().startswith('echo ') and '>>' not in line and '>' not in line.partition('echo')[2] "
-                        "Transform: change echo to echo -e, wrap arg in \\033[COLORm...\\033[0m. "
-                        "Cycle 4 colors: 1;96 cyan, 1;93 yellow, 1;92 green, 1;91 red. "
-                        "CRITICAL: preserve newlines — after rstrip(), add \\n back when writing. "
-                        "CRITICAL: write ALL lines (colorized + non-colorized). "
-                        "DO NOT read/probe first — MODIFY now.]"
+                        f"[ERROR: sed command failed {repeat_n} times.{quoting_hint} "
+                        "SED IS NOW BLOCKED. Write python3 NOW, do NOT explore first. "
+                        "Filter: s.strip().startswith('echo ') and '>>' not in s and '>' not in s.partition('echo')[2] and ' | ' not in s. "
+                        "Use SINGLE-QUOTED f-strings to avoid unterminated string errors: "
+                        "f'{indent}echo -e \"\\\\033[{col}m{arg.strip(chr(34))}\\\\033[0m\"\\n' "
+                        "NOT f\"{indent}echo -e \\\"{col}{arg}...\\\"\" (backslash-quote never closes a double-quoted f-string). "
+                        "Colors: ['1;96','1;93','1;92','1;91'] cycling. Write ALL lines back. Run bash -n to verify syntax.]"
                     )
                 else:
                     # For non-sed: append loop warning but keep original error message visible
                     content_str += (
-                        f"\n\n[ERROR: You have now run this EXACT command {repeat_n} times and it is NOT working. "
-                        "STOP repeating it. Your script is only READING the file — it is not modifying anything. "
-                        "You need to write a python3 script that: "
-                        "(1) reads ALL lines from the file, "
-                        "(2) for each line, checks if it contains 'echo \"' and does NOT have '>>' or '>' after the echo, "
-                        "(3) adds ANSI color codes to those lines (change echo to echo -e, add \\033[COLOR_CODEm...\\033[0m), "
-                        "(4) writes ALL modified content back to the file. "
-                        "Do NOT search for specific template names like 'echo \"[Section]\"' — "
-                        "instead match any line where '\\\"echo \\\"' appears and no redirect follows. "
-                        "Example: if 'echo \"' in line and '>>' not in line and not re.search(r'>\\s*\\S', line.split('echo')[1] if 'echo' in line else ''). "
-                        "Write the COMPLETE python3 script that modifies the file now.]"
+                        f"\n\n[ERROR: same command run {repeat_n} times, not working. "
+                        "Your script only reads — it does not WRITE to the file. "
+                        "Write python3 NOW that modifies the file. "
+                        "Filter: s.strip().startswith('echo ') and '>>' not in s and '>' not in s.partition('echo')[2] and ' | ' not in s. "
+                        "Use SINGLE-QUOTED f-strings: f'{indent}echo -e \"\\\\033[{col}m{arg.strip(chr(34))}\\\\033[0m\"\\n' "
+                        "(NOT double-quoted f-strings with backslash-quote — those leave the string unterminated). "
+                        "Write ALL lines back, run bash -n to check syntax.]"
                     )
             # Detect python3 heredoc probe-loop: model running read-only scripts in a loop
             _is_py3_heredoc = last_cmd and bool(re.search(r'python3?\s+-\s', last_cmd))
@@ -795,18 +790,17 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False) -> list:
                 cmd = args_dict.get("command", "")
                 # Block sed -i after repeated loop failures — force model to use python3
                 if sed_blocked and "sed" in cmd and "-i" in cmd:
-                    args_dict["command"] = (
-                        "echo '[PROXY: sed -i is blocked — repeated sed failures detected. "
-                        "You MUST use python3 to modify this file — write the script NOW, do NOT explore first. "
-                        "Match display echo lines generically: "
-                        "line.strip().startswith(\"echo \") and \">>\" not in line and \">\" not in line.partition(\"echo\")[2] "
-                        "Transform: change echo to echo -e, wrap arg in \\\\033[COLORm...\\\\033[0m. "
-                        "Use 4 colors cycling: 1;96 cyan, 1;93 yellow, 1;92 green, 1;91 red. "
-                        "CRITICAL: preserve line endings — use line.rstrip() for display; add \\\\n back when writing. "
-                        "CRITICAL: write ALL lines back (colorized and non-colorized). "
-                        "DO NOT just read/probe — MODIFY the file now. "
-                        "Template: new_line = indent + echo -e \"\\\\033[COLORm\" + original_arg + \"\\\\033[0m\" + \\\\n]'"
-                    )
+                    args_dict["command"] = "\n".join([
+                        "cat << 'PROXYMSG'",
+                        "[PROXY: sed -i is blocked. Write python3 NOW - do not explore first.]",
+                        "Filter display echo lines: s.strip().startswith('echo ') AND '>>' not in s AND '>' not in s.partition('echo')[2] AND ' | ' not in s",
+                        "CRITICAL: use SINGLE-QUOTED f-strings to avoid unterminated string SyntaxError.",
+                        "  WRONG (do not use): f\"{indent}echo -e \\\"{color}{arg}\\033[0m\\\"\" -- \\\" does NOT close the f-string!",
+                        "  RIGHT (use this):   f'{indent}echo -e \"\\\\033[{col}m{arg.strip(chr(34))}\\\\033[0m\"\\n'",
+                        "Colors list: ['1;96','1;93','1;92','1;91'] cycled with ci % 4.",
+                        "Write ALL lines back to file (both modified and unmodified). Run bash -n on file to check syntax.",
+                        "PROXYMSG",
+                    ])
                     tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                     out.append(tc)
                     logger.info("[SED-BLOCK] Blocked sed after repeated loop failures")
