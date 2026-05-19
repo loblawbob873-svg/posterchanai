@@ -751,6 +751,11 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "Bracket text in this file is double-quoted, e.g.: echo \"[Section]\". "
                         "Run: grep -n 'echo \"\\[' file | head -20 to see the actual quoted text.)"
                     )
+                elif re.search(r'\bgit\s+status\b', last_bash_cmd):
+                    content_str = (
+                        "(no output — git status is clean: working tree has no uncommitted changes. "
+                        "Proceed with your git task: fetch from the source and merge/reset as needed.)"
+                    )
                 else:
                     content_str = "(no output — command produced no output)"
             # Truncate very large tool results — use grep/targeted commands for large files
