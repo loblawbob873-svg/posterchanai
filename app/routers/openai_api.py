@@ -527,6 +527,15 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     "filesystem directories on this machine, NOT GitHub. "
                     "Example: git pull ~/aria master  OR  git fetch ~/aria && git reset --hard FETCH_HEAD]"
                 )
+            # Detect invalid upstream — branch not found after fetch
+            elif "invalid upstream" in content_str or "couldn't find remote ref" in content_str:
+                content_str += (
+                    "\n\n[ERROR: Branch not found. The remote branch name may be different — "
+                    "use: git -C REPO branch -r  to list available remote branches. "
+                    "Or if the source is a local path like ~/aria, use it directly: "
+                    "git fetch ~/aria  then check: git branch -r | grep FETCH  "
+                    "and merge with: git merge FETCH_HEAD  or  git reset --hard FETCH_HEAD]"
+                )
             # Detect mangled \033 — model used \033 instead of \\033 in sed replacement
             elif re.search(r'echo\s+-e\s+.*33\[', content_str) and '\\033' not in content_str and '\033' not in content_str:
                 content_str = (
@@ -561,15 +570,17 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     + f"\n...[output truncated — {line_count} lines total. "
                     "Use grep or targeted bash commands to find specific lines instead.]"
                 )
-            # Detect command loop — same MODIFYING bash command run more than once
-            # Only applies to commands that change files (sed -i, etc.) — NOT read-only commands
+            # Detect command loop — same bash command run more than once AND producing an error
             last_cmd = bash_history[-1] if bash_history else ""
             _is_modifying_cmd = (
                 last_cmd and
                 (("sed" in last_cmd and "-i" in last_cmd) or
                  re.search(r'\bpython3?\s+-c\b', last_cmd))
             )
-            if _is_modifying_cmd and bash_cmd_count.get(last_cmd, 0) > 1:
+            # Also catch any command that errors repeatedly (fatal/error in output)
+            _has_error_output = bool(re.search(r'\bfatal\b|\berror\b', content_str, re.IGNORECASE))
+            _is_repeated_error = last_cmd and _has_error_output and bash_cmd_count.get(last_cmd, 0) > 1
+            if (_is_modifying_cmd or _is_repeated_error) and bash_cmd_count.get(last_cmd, 0) > 1:
                 repeat_n = bash_cmd_count[last_cmd]
                 # Extract sed pattern to give specific diagnosis
                 quoting_hint = ""
