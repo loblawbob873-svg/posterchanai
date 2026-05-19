@@ -443,6 +443,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
     tools_text = _tools_system_text(tools)
     bash_cmd_count = {}   # command string -> how many times it's been called
     bash_history = []     # ordered list of bash commands issued so far
+    fetch_head_reset_done = False  # True after model successfully runs reset --hard FETCH_HEAD
     for msg in messages:
         role = msg.get("role", "")
         content = msg.get("content") or ""
@@ -518,6 +519,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 content_str += "\n\n[IMPORTANT: The edit failed because oldString was not found or was identical to newString. Do NOT repeat the same edit. Use bash with sed -i for targeted replacements instead, e.g. bash(command=\"sed -i 's/original/replacement/g' file\").]"
             # Detect successful reset --hard FETCH_HEAD — task is done, tell model to stop
             elif "HEAD is now at" in content_str and "reset --hard FETCH_HEAD" in last_bash_cmd:
+                fetch_head_reset_done = True
                 content_str += (
                     "\n\n[TASK COMPLETE: Repository successfully updated. "
                     "Verify with: git log --oneline -3 to confirm commits match the source. "
@@ -527,14 +529,22 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # Detect incompatible git history conflict — model used wrong (GitHub) upstream
             elif ("could not apply" in content_str or "CONFLICT (add/add)" in content_str) and \
                  "first commit" in content_str:
-                content_str += (
-                    "\n\n[ERROR: WRONG source — incompatible git history. "
-                    "You fetched from the wrong repo (probably GitHub). These repos share no common history. "
-                    "Run: git rebase --abort\n"
-                    "Then use the LOCAL source repo path directly. Git accepts local paths as fetch sources. "
-                    "EXACT COMMANDS: git -C ~/aria2 fetch ~/aria && git -C ~/aria2 reset --hard FETCH_HEAD\n"
-                    "(~/aria is a local git repository on this machine, NOT a GitHub URL)]"
-                )
+                if fetch_head_reset_done:
+                    content_str = (
+                        "[ERROR: Incompatible history — you already completed this task. "
+                        "Run: git rebase --abort  then STOP. "
+                        "You already updated the repo with 'fetch ~/aria && reset --hard FETCH_HEAD'. "
+                        "Do NOT try to pull from GitHub. The task was already done.]"
+                    )
+                else:
+                    content_str += (
+                        "\n\n[ERROR: WRONG source — incompatible git history. "
+                        "You fetched from the wrong repo (probably GitHub). These repos share no common history. "
+                        "Run: git rebase --abort\n"
+                        "Then use the LOCAL source repo path directly. Git accepts local paths as fetch sources. "
+                        "EXACT COMMANDS: git -C ~/aria2 fetch ~/aria && git -C ~/aria2 reset --hard FETCH_HEAD\n"
+                        "(~/aria is a local git repository on this machine, NOT a GitHub URL)]"
+                    )
             # Detect invalid upstream — branch not found after fetch
             elif "invalid upstream" in content_str or "couldn't find remote ref" in content_str:
                 content_str += (
