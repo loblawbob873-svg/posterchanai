@@ -377,7 +377,26 @@ class StorageService:
         except Exception as e:
             logger.error(f"[STORAGE] Error saving file locally: {e}", exc_info=True)
             raise
-    
+
+    def save_file_bytes(self, username: str, conversation_id: int, data: bytes, original_name: str = "file.bin") -> str:
+        """Save binary file locally. Returns path relative to upload_path."""
+        try:
+            from datetime import datetime
+            conv_path = self.get_conversation_path(username, conversation_id)
+            conv_path.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            ext = Path(original_name).suffix or ".bin"
+            stem = Path(original_name).stem
+            filename = f"{stem}_{timestamp}{ext}"
+            filepath = conv_path / filename
+            with open(filepath, "wb") as f:
+                f.write(data)
+            return str(filepath.relative_to(Path(self.upload_path)))
+        except Exception as e:
+            logger.error(f"[STORAGE] Error saving binary file locally: {e}", exc_info=True)
+            raise
+
+
     def _proxy_save_file(self, storage_server_url: str, username: str, conversation_id: int, content: str, original_name: str) -> str:
         """Proxy file save to storage server"""
         import asyncio

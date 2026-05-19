@@ -692,9 +692,41 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                         document_data = documents[0].get("base64") if documents else None
                     if files and not file_content:
                         file_content = files[0].get("content") if files else None
-                    # PDFs: if multiple provided, merge them then extract text from the merged result
+                    # PDFs: detect merge intent early — if user says "merge" with 2+ PDFs, do it server-side
+                    import base64 as _b64
+                    _is_merge_intent = (
+                        len(pdfs) >= 2 and
+                        bool(re.search(r'\bmerge\b', content.lower() if content else ""))
+                    )
+                    if _is_merge_intent:
+                        _pdf_bytes_list = [_b64.b64decode(p["base64"]) for p in pdfs if p.get("base64")]
+                        _merged = merge_pdfs(_pdf_bytes_list)
+                        if _merged:
+                            _pdf_names = [p.get("filename", f"file{i}.pdf") for i, p in enumerate(pdfs)]
+                            try:
+                                from urllib.parse import quote
+                                _saved_rel = storage_service.save_file_bytes(user.username, conversation_id, _merged, "merged.pdf")
+                                _saved_filename = Path(_saved_rel).name
+                                _dl_url = f"/api/files/{quote(user.username, safe='')}/{conversation_id}/{_saved_filename}"
+                                _reply = f"✅ Merged {len(_pdf_bytes_list)} PDFs: {', '.join(_pdf_names)}\n\n[⬇️ Download merged.pdf]({_dl_url})"
+                            except Exception as _save_err:
+                                logger.error(f"[CHAT] Failed to save merged PDF: {_save_err}")
+                                _reply = f"✅ Merged {len(_pdf_bytes_list)} PDFs but could not save to storage: {_save_err}"
+                            # Save messages and stream reply
+                            _user_msg = Message(conversation_id=conversation_id, role="user", content=content or "Merge PDFs")
+                            db.add(_user_msg)
+                            _ai_msg = Message(conversation_id=conversation_id, role="assistant", content=_reply)
+                            db.add(_ai_msg)
+                            db.commit()
+                            await websocket.send_json({"type": "token", "content": _reply})
+                            await websocket.send_json({"type": "done"})
+                            continue
+                        else:
+                            await websocket.send_json({"type": "token", "content": "❌ PDF merge failed — could not process the uploaded files."})
+                            await websocket.send_json({"type": "done"})
+                            continue
+                    # PDFs: if multiple provided (not merge intent), merge for unified text extraction
                     if pdfs and len(pdfs) > 1:
-                        import base64 as _b64
                         _pdf_bytes_list = [_b64.b64decode(p["base64"]) for p in pdfs if p.get("base64")]
                         _merged = merge_pdfs(_pdf_bytes_list)
                         if _merged:
