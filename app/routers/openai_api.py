@@ -988,6 +988,11 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                 # Intercept git commit — check staged files for unresolved conflict markers first
                 _is_git_commit = bool(re.search(r'\bgit\b.*\bcommit\b', cmd)) and "git commit" in cmd
                 if _is_git_commit:
+                    # Ensure commit has a -m flag — inject generic message if missing to avoid editor launch
+                    _commit_cmd = cmd
+                    if not re.search(r'\bgit\b.*\bcommit\b.*\s-[a-zA-Z]*m\s', _commit_cmd) and ' -m ' not in _commit_cmd and ' --message' not in _commit_cmd:
+                        _commit_cmd = re.sub(r'(\bgit\s+commit\b)', r'\1 -m "Merge upstream changes"', _commit_cmd)
+                        logger.info("[COMMIT-FIX] Injected -m flag into commit without message")
                     # Wrap the commit: run it only if no conflict markers in staged files
                     _safe_cmd = (
                         "CONFLICTS=$(git diff --cached --name-only 2>/dev/null | "
@@ -999,7 +1004,7 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                         "echo '  - Delete <<<<<<< HEAD, =======, >>>>>>> lines and the upstream section'; "
                         "echo '  - git add <file>, then retry commit'; "
                         "git diff --cached | grep -A3 '^<<<<<<' | head -20; "
-                        f"else {cmd}; fi"
+                        f"else {_commit_cmd}; fi"
                     )
                     args_dict["command"] = _safe_cmd
                     tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
