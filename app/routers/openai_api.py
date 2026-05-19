@@ -862,12 +862,25 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # General catch-all: same command run 5+ times — inject a hard stop
             if last_cmd and bash_cmd_count.get(last_cmd, 0) >= 5:
                 _loop_count = bash_cmd_count[last_cmd]
-                content_str += (
-                    f"\n\n[LOOP DETECTED: This exact command has been run {_loop_count} times. "
-                    "The result is not changing. STOP running this command. "
-                    "If the task is complete, report success to the user and stop ALL commands. "
-                    "If the task is not complete, try a completely different approach.]"
-                )
+                _is_empty_bash_loop = 'PROXY: bash tool called with no command' in last_cmd
+                if _is_empty_bash_loop:
+                    content_str += (
+                        f"\n\n[LOOP DETECTED: You have called bash {_loop_count} times with NO command. "
+                        "Your bash tool calls are missing the 'command' argument. "
+                        "STOP. Write the actual shell command you want to run. "
+                        "To run python3 code via bash: "
+                        "bash(command=\"python3 << 'HEREDOC'\\n# your script here\\nHEREDOC\") "
+                        "To run a shell command: bash(command=\"grep -n 'pattern' file\") "
+                        "The 'command' key must contain a non-empty shell command string. "
+                        "Execute your task now with a real command.]"
+                    )
+                else:
+                    content_str += (
+                        f"\n\n[LOOP DETECTED: This exact command has been run {_loop_count} times. "
+                        "The result is not changing. STOP running this command. "
+                        "If the task is complete, report success to the user and stop ALL commands. "
+                        "If the task is not complete, try a completely different approach.]"
+                    )
             # Wrap in XML tool_result format matching this model's expected pattern
             result.append({"role": "user", "content": f"<tool_result>\n<tool>{last_tool_name}</tool>\n<output>\n{content_str}\n</output>\n</tool_result>"})
         else:
