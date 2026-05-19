@@ -1538,10 +1538,18 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         from app.services.text_utils import inject_no_think
         messages = inject_no_think(messages)
 
-    # Short-circuit: if the TASK COMPLETE (git reset done) echo already ran and its result is in
-    # the conversation, return success directly without calling the model — breaks infinite loop.
-    _git_reset_echo_marker = "[TASK COMPLETE: The repository was successfully reset to the source HEAD"
-    if any(_git_reset_echo_marker in (m.get("content") or "") for m in messages if m.get("role") == "user"):
+    # Short-circuit: if git reset --hard FETCH_HEAD already ran and _oai_messages_for_tools has
+    # replaced the following tool results with a TASK COMPLETE marker, return success directly
+    # without calling the model — breaks the infinite loop.
+    _git_done_markers = (
+        "[TASK COMPLETE — STOP. Do not run any more git commands. The repo is already synced",
+        "[TASK COMPLETE: The repository is already up to date with the source",
+        "[TASK COMPLETE: The repository was successfully reset to the source HEAD",
+    )
+    if any(
+        any(mk in (m.get("content") or "") for mk in _git_done_markers)
+        for m in messages if m.get("role") == "user"
+    ):
         _sc_text = "The repository has been successfully synchronized. The git reset --hard FETCH_HEAD completed — both repositories now have identical HEAD commits."
         _sc_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         logger.info("[GIT-RESET-SHORTCIRCUIT] TASK COMPLETE echo detected in history — returning success without LLM call")

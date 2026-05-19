@@ -1997,7 +1997,6 @@ async def _handle_telegram_update(update: dict, db: Session):
                         logger.info(f"Telegram: Detected URLs in message: {urls}")
                         MAX_URL_CONTENT_CHARS = 2000  # Truncation only — no content cleaning
                         try:
-                            import asyncio
                             fetched = await asyncio.wait_for(
                                 search_service.fetch_urls(urls, max_urls=3),
                                 timeout=15
@@ -2156,7 +2155,6 @@ async def _handle_telegram_update(update: dict, db: Session):
                         links = "\n\n**Sources:**\n" + "\n".join(link_lines)
                 await telegram_service.send_message(chat_id, response_content + links)
             elif response_type == "images":
-                import asyncio
                 images = result.get("images", [])
                 if not images:
                     await telegram_service.send_message(chat_id, response_content)
