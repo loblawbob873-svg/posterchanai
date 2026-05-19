@@ -439,15 +439,17 @@ def _tools_system_text(tools: list) -> str:
         "BATCH FILE EDITS: When a task requires modifying many lines, use python3 or awk to process all lines in a single script "
         "rather than running sed once per line. Individual sed calls per line are too slow for bulk edits. "
         "LOCAL PATHS: when a task gives you a local path (~/some/path or /path/to/dir) as the SOURCE git repository, "
-        "use that path DIRECTLY as the git fetch source — do NOT add a remote named 'upstream' pointing to GitHub, "
-        "do NOT substitute it with 'git fetch origin' or any GitHub/remote URL. "
+        "use that path DIRECTLY as the git fetch source. "
+        "CRITICAL: even if 'git remote -v' shows 'origin' pointing to the same project on GitHub, "
+        "do NOT use 'git fetch origin' — the local path and GitHub may have DIFFERENT commits. "
+        "The task specifies the local path for a reason: use exactly that path. "
         "git accepts local filesystem paths directly: git -C ~/repo fetch ~/other/local/repo is valid syntax. "
-        "SYNCING A FORK: when the task asks to sync/update one repo (TARGET) to match another (SOURCE), the correct approach is: "
-        "(1) git -C TARGET fetch SOURCE, then (2) git -C TARGET reset --hard FETCH_HEAD. "
-        "Do NOT use rebase — rebasing 1500+ commits with conflicts is wrong. "
-        "If git fetch or rebase gives a merge conflict, immediately abort (git rebase --abort) and use reset --hard FETCH_HEAD instead. "
-        "Only use named remotes (origin, upstream) if the task EXPLICITLY instructs you to run 'git fetch upstream' or similar — "
-        "do not add or use them as a substitute for an explicit local path source.\n\n"
+        "SYNCING A FORK: when the task asks to sync/update one repo (TARGET) to match another (SOURCE_PATH), do: "
+        "(1) git -C TARGET fetch SOURCE_PATH, then (2) git -C TARGET reset --hard FETCH_HEAD. "
+        "Do NOT use rebase (1500+ commit rebase with conflicts will never work). "
+        "If rebase gives a conflict, run git rebase --abort then switch to reset --hard FETCH_HEAD. "
+        "Only use named remotes (origin, upstream) if the task EXPLICITLY names them — "
+        "never substitute a local path with a remote.\n\n"
     )
     return preamble + "<tools>\n" + "\n\n".join(entries) + "\n</tools>"
 
@@ -573,8 +575,19 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 content_str += (
                     "\n\n[TASK COMPLETE: Repository successfully updated. "
                     "Verify with: git log --oneline -3 to confirm commits match the source. "
-                    "STOP — do NOT change any remote URLs, do NOT run git pull or git fetch with any other source. "
-                    "The task is finished. Report success and stop.]"
+                    "STOP — the task is finished. Report success.]"
+                )
+            # Detect reset --hard origin/ (used GitHub remote instead of local path from task)
+            elif "HEAD is now at" in content_str and re.search(r'reset\s+--hard\s+(?:origin|upstream)/', last_bash_cmd):
+                _tgt_m = re.search(r'git\s+-C\s+([\S]+)', last_bash_cmd)
+                _tgt = _tgt_m.group(1) if _tgt_m else "<TARGET>"
+                content_str += (
+                    f"\n\n[WARNING: You used a GitHub remote (origin/upstream) instead of the local path "
+                    f"specified in the task. The local source path may have DIFFERENT commits than GitHub. "
+                    f"If the task gave you a local path as SOURCE, run:\n"
+                    f"  git -C {_tgt} fetch <LOCAL_SOURCE_PATH_FROM_TASK>\n"
+                    f"  git -C {_tgt} reset --hard FETCH_HEAD\n"
+                    f"Re-read the task to find the exact local path to use.]"
                 )
             # Detect incompatible git history conflict (rebase against unrelated repo)
             elif "could not apply" in content_str or ("CONFLICT" in content_str and "rebase" in last_bash_cmd):
