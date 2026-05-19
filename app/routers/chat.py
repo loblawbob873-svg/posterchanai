@@ -373,6 +373,22 @@ async def serve_file(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
+    from app.services.storage_service import StorageService, _sanitize_path_component, _validate_path_within_base, ascii_safe_header_filename
+    storage = StorageService(db)
+    user_path = storage.get_conversation_path(current_user.username, conversation_id)
+
+    # If the file exists locally, serve it directly (avoids 404 when saved locally but storage server is configured)
+    try:
+        _local_safe = _sanitize_path_component(filename)
+        _local_path = user_path / _local_safe
+        if _local_path.exists() and _local_path.is_file():
+            from mimetypes import guess_type as _gt
+            _ct, _ = _gt(str(_local_path))
+            return FileResponse(str(_local_path), media_type=_ct or "application/octet-stream",
+                                headers={"Content-Disposition": f"attachment; filename={_local_path.name}"})
+    except Exception:
+        pass
+
     # Check if storage server is configured - proxy request if so
     storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
     if storage_server_url and storage_server_url.value:
@@ -387,9 +403,6 @@ async def serve_file(
         )
 
     # On storage server: Use local filesystem
-    from app.services.storage_service import StorageService, _sanitize_path_component, _validate_path_within_base, ascii_safe_header_filename
-    storage = StorageService(db)
-    user_path = storage.get_conversation_path(current_user.username, conversation_id)
     
     # Sanitize filename
     try:
@@ -720,17 +733,17 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                 _ai_msg = Message(conversation_id=conversation_id, role="assistant", content=_reply)
                                 db.add(_ai_msg)
                                 db.commit()
-                                await websocket.send_json({"type": "token", "content": _reply})
-                                await websocket.send_json({"type": "done"})
+                                await websocket.send_json({"type": "stream", "content": _reply})
+                                await websocket.send_json({"type": "stream_end"})
                                 continue
                             else:
-                                await websocket.send_json({"type": "token", "content": "❌ PDF merge failed — could not process the uploaded files."})
-                                await websocket.send_json({"type": "done"})
+                                await websocket.send_json({"type": "stream", "content": "❌ PDF merge failed — could not process the uploaded files."})
+                                await websocket.send_json({"type": "stream_end"})
                                 continue
                         except Exception as _merge_top_err:
                             logger.error(f"[CHAT] PDF merge error: {_merge_top_err}", exc_info=True)
-                            await websocket.send_json({"type": "token", "content": f"❌ PDF merge error: {_merge_top_err}"})
-                            await websocket.send_json({"type": "done"})
+                            await websocket.send_json({"type": "stream", "content": f"❌ PDF merge error: {_merge_top_err}"})
+                            await websocket.send_json({"type": "stream_end"})
                             continue
                     # PDFs: if multiple provided (not merge intent), merge for unified text extraction
                     if pdfs and len(pdfs) > 1:
