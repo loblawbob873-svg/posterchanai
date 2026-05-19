@@ -473,6 +473,9 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             result.append({"role": "assistant", "content": "\n".join(parts)})
         elif role == "tool":
             content_str = str(content)
+            # If task was already completed, prepend a persistent reminder to every result
+            if fetch_head_reset_done:
+                content_str = "[TASK COMPLETE — STOP. Do not run any more git commands. Report success to the user.]\n" + content_str
             # Find the tool name from the preceding assistant message's tool_call
             last_tool_name = "bash"
             for r in reversed(result):
