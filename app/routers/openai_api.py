@@ -907,6 +907,15 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "The 'command' key must contain a non-empty shell command string. "
                         "Execute your task now with a real command.]"
                     )
+                elif re.search(r'\bgit\s+status\b', last_cmd):
+                    content_str = (
+                        f"[LOOP DETECTED: git status has been run {_loop_count} times — the repo is consistently clean. "
+                        "STOP checking status. "
+                        "The working tree is clean, which means either: "
+                        "(a) the task is already complete — report success and stop, OR "
+                        "(b) you need to fetch new commits first: git fetch <source> && git log HEAD..FETCH_HEAD --oneline. "
+                        "Do NOT run git status again.]"
+                    )
                 else:
                     content_str += (
                         f"\n\n[LOOP DETECTED: This exact command has been run {_loop_count} times. "
