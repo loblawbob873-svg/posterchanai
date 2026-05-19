@@ -30,7 +30,16 @@ else
     exit 1
 fi
 
-# Check 2: must have valid echo -e lines with \033 color codes
+# Check 2: no broken patterns (color codes before echo, not inside it)
+BROKEN=$(grep -E '^\s*\\033' gentoo.sh 2>/dev/null | wc -l)
+if [ "$BROKEN" -gt 0 ]; then
+    echo "[TEST] FAIL: $BROKEN lines have ANSI codes BEFORE echo (broken pattern)"
+    grep -nE '^\s*\\033' gentoo.sh | head -5
+    exit 1
+fi
+echo "[TEST] PASS: no broken color patterns"
+
+# Check 3: must have valid echo -e lines with \033 color codes
 VALID=$(grep 'echo -e.*\\033' gentoo.sh 2>/dev/null | wc -l)
 echo "[TEST] Valid colorized echo lines: $VALID"
 if [ "$VALID" -gt 0 ]; then

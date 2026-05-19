@@ -710,6 +710,24 @@ def _fix_sed_tool_calls(tool_calls: list) -> list:
                     fixed = cmd
                     # Strip '^' anchor before 'echo' — echo lines are often indented inside functions
                     fixed = re.sub(r"(s[/|!])\^(echo\b)", r"\1\2", fixed)
+                    # Detect "color before echo" anti-pattern: sed replacement starts with \\033...echo
+                    # This produces broken lines like: \033[1;96m✓\033[0m echo (color before echo)
+                    # The correct pattern is: echo -e "\033[1;96m..." (echo first, color inside string)
+                    _replacement_m = re.search(r's[/|!][^/|!]*/([^/|!]+)[/|!]', cmd)
+                    if _replacement_m:
+                        _repl = _replacement_m.group(1)
+                        if re.search(r'^\\+033|^\\+e\[', _repl):
+                            # Replacement starts with color code — wrong! Inject error into result
+                            args_dict["command"] = (
+                                f"echo '[PROXY ERROR: Your sed replacement puts color codes BEFORE echo — "
+                                f"this produces broken bash syntax. "
+                                f"Correct: replace the full echo line with: echo -e \"\\\\033[1;96mYour text\\\\033[0m\" "
+                                f"Example: sed -i '\"'\"'s/echo \\\"\\[Device Detection\\]\\\"/"
+                                f"echo -e \"\\\\033[1;96m[Device Detection]\\\\033[0m\"/'\"'\"' gentoo.sh "
+                                f"Or for ALL quoted echoes: sed -i '\"'\"'s/echo \\\"/echo -e \"\\\\033[1;96m/g'\"'\"' gentoo.sh]'"
+                            )
+                            tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                            logger.info(f"[SED-BLOCK] Blocked color-before-echo: {cmd[:80]!r}")
                     # Fix \033 → \\033 in sed replacement: GNU sed treats \0 as whole match,
                     # so \033 → (match)33 corrupting the file. Use \\033 to get literal \033.
                     # Only replace single backslash \033 (not already-doubled \\033).
