@@ -963,6 +963,27 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                     bool(re.search(r'python3?\s+(<<|-\s|-c\b)', cmd)) and
                     bool(re.search(r'open\s*\(.*\.sh.*,\s*["\']w["\']', cmd))
                 )
+                # Intercept git commit — check staged files for unresolved conflict markers first
+                _is_git_commit = bool(re.search(r'\bgit\b.*\bcommit\b', cmd)) and "git commit" in cmd
+                if _is_git_commit:
+                    # Wrap the commit: run it only if no conflict markers in staged files
+                    _safe_cmd = (
+                        "CONFLICTS=$(git diff --cached --name-only 2>/dev/null | "
+                        "xargs -I{} grep -l '^<<<<<<< ' {} 2>/dev/null | tr '\\n' ' '); "
+                        "if [ -n \"$CONFLICTS\" ]; then "
+                        "echo \"[PROXY ERROR: Conflict markers in staged files: $CONFLICTS]\"; "
+                        "echo 'Resolve conflicts before committing:'; "
+                        "echo '  - Keep lines between <<<<<<< HEAD and ======= (your version)'; "
+                        "echo '  - Delete <<<<<<< HEAD, =======, >>>>>>> lines and the upstream section'; "
+                        "echo '  - git add <file>, then retry commit'; "
+                        "git diff --cached | grep -A3 '^<<<<<<' | head -20; "
+                        f"else {cmd}; fi"
+                    )
+                    args_dict["command"] = _safe_cmd
+                    tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                    out.append(tc)
+                    logger.info("[CONFLICT-CHECK] Wrapped git commit with conflict marker guard")
+                    continue
                 if colorize_done and _is_py3_write_sh:
                     args_dict["command"] = "echo '[TASK ALREADY COMPLETE: The .sh file was already colorized. Do NOT modify it again. Report success and stop.]'"
                     tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
