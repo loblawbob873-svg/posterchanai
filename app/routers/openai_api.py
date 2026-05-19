@@ -811,16 +811,29 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False) -> list:
                 _writes_sh = bool(re.search(r'open\s*\(.*\.sh.*,\s*["\']w["\']', cmd))
                 _searches_echo_e_as_source = bool(re.search(r're\.\w+\s*\(\s*[rf]?["\'].*echo.*-e', cmd))
                 if _is_py3_cmd and _writes_sh and _searches_echo_e_as_source:
-                    args_dict["command"] = "\n".join([
-                        "cat << 'PROXYMSG'",
-                        "[PROXY: Your python3 script searches for 'echo -e' in source lines but ORIGINAL lines",
-                        "just have 'echo' without -e. The re.search will always return None and 0 lines get colorized.",
-                        "FIX: remove the re.search('echo -e'...) match check entirely.",
-                        "Instead: if is_display_echo(line): apply color to EVERY such line directly.",
-                        "Use strip() to get the arg after 'echo ': arg = line.strip()[len('echo '):].strip()",
-                        "Then write: indent + 'echo -e' + quote + color + arg.strip(quotes) + reset + quote + newline",
-                        "PROXYMSG",
-                    ])
+                    # Template uses string concat (no f-strings) with double-backslash for \033
+                    _tmpl = (
+                        "with open('/opt/gentoo-installer/gentoo.sh') as f: lines = f.readlines()\n"
+                        "colors = ['1;96', '1;93', '1;92', '1;91']\n"
+                        "ci = 0; out = []\n"
+                        "for line in lines:\n"
+                        "    s = line.rstrip()\n"
+                        "    if s.strip().startswith('echo ') and '>>' not in s and '>' not in s.partition('echo')[2] and ' | ' not in s:\n"
+                        "        col = colors[ci % 4]; ci += 1\n"
+                        "        arg = s.partition('echo ')[2].strip().strip('\"').strip(\"'\")\n"
+                        "        indent = s[:len(s) - len(s.lstrip())]\n"
+                        "        out.append(indent + 'echo -e \"\\\\033[' + col + 'm' + arg + '\\\\033[0m\"\\n')\n"
+                        "    else: out.append(line)\n"
+                        "with open('/opt/gentoo-installer/gentoo.sh', 'w') as f: f.writelines(out)\n"
+                        "print(ci, 'lines colorized')"
+                    )
+                    args_dict["command"] = (
+                        "cat << 'PROXYMSG'\n"
+                        "PROXY ERROR: re.search(echo -e) never matches original lines. NO re.search needed.\n"
+                        "Run this EXACT script (copy verbatim into python3 << 'PY'...PY):\n"
+                        + _tmpl + "\n"
+                        "PROXYMSG"
+                    )
                     tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                     out.append(tc)
                     logger.info("[PY3-FIX] Blocked python3 with echo -e in source match")
