@@ -758,6 +758,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     )
                 else:
                     content_str = "(no output — command produced no output)"
+            elif "-- No entries --" in content_str and re.search(r'\bjournalctl\b', last_bash_cmd):
+                content_str = "(journalctl: no matching log entries — this means no errors were found in the logs for that time range. This is good news.)"
             # Truncate very large tool results — use grep/targeted commands for large files
             elif len(content_str) > 8000:
                 line_count = content_str.count('\n')
