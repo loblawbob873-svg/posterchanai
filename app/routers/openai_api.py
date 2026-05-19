@@ -580,11 +580,29 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 )
             # Detect successful git fetch (FETCH_HEAD updated) — guide reset
             elif "-> FETCH_HEAD" in content_str and re.search(r'\bgit\b.*\bfetch\b', last_bash_cmd) and "reset" not in last_bash_cmd:
-                content_str += (
-                    "\n\n[FETCH COMPLETE: FETCH_HEAD is now set to the source HEAD. "
-                    "To sync your repo HEAD to match the source exactly, run now: "
-                    "git reset --hard FETCH_HEAD]"
-                )
+                _fetch_count = sum(1 for c in bash_history if re.search(r'\bgit\b.*\bfetch\b', c))
+                _reset_happened = any(re.search(r'\bgit\b.*reset.*--hard', c) for c in bash_history)
+                if _fetch_count >= 3 and not _reset_happened:
+                    content_str = (
+                        f"[FETCH LOOP: git fetch has been run {_fetch_count} times but git reset --hard FETCH_HEAD has NOT been run. "
+                        "Fetching again will NOT help — FETCH_HEAD is already set. "
+                        "Run this EXACT command NOW: git reset --hard FETCH_HEAD\n"
+                        "WARNING: An empty 'git log HEAD..FETCH_HEAD' does NOT mean the task is complete — "
+                        "your HEAD may be a merge commit that is DIFFERENT from the source HEAD. "
+                        "The task requires an exact HEAD hash match. Only 'git reset --hard FETCH_HEAD' guarantees this.]"
+                    )
+                elif _fetch_count >= 2:
+                    content_str = (
+                        f"[FETCH COMPLETE (run {_fetch_count} times): FETCH_HEAD is set to the source HEAD. "
+                        "You MUST run this now to sync: git reset --hard FETCH_HEAD\n"
+                        "Do NOT fetch again — run the reset command immediately.]"
+                    )
+                else:
+                    content_str += (
+                        "\n\n[FETCH COMPLETE: FETCH_HEAD is now set to the source HEAD. "
+                        "To sync your repo HEAD to match the source exactly, run now: "
+                        "git reset --hard FETCH_HEAD]"
+                    )
             # Detect successful reset --hard FETCH_HEAD — task is done, tell model to stop
             # Also fires when auto-fix replaced an origin reset with a local FETCH_HEAD reset
             # (in that case "-> FETCH_HEAD" appears in the git fetch output AND the cmd has FETCH_HEAD)
@@ -767,6 +785,17 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     content_str = "(no output — command produced no output)"
             elif "-- No entries --" in content_str and re.search(r'\bjournalctl\b', last_bash_cmd):
                 content_str = "(journalctl: no matching log entries — this means no errors were found in the logs for that time range. This is good news.)"
+            # System log loop: dmesg/journalctl run repeatedly — model already has enough data to report
+            _is_syslog_cmd = bool(re.search(r'\bdmesg\b|\bjournalctl\b', last_bash_cmd or ""))
+            if _is_syslog_cmd:
+                _syslog_count = sum(1 for c in bash_history if re.search(r'\bdmesg\b|\bjournalctl\b', c))
+                if _syslog_count >= 3:
+                    content_str += (
+                        f"\n\n[SYSTEM LOG LOOP: You have run {_syslog_count} system log queries. "
+                        "You have collected sufficient log data. STOP querying logs. "
+                        "Analyze what you have found and write your final report now. "
+                        "Do NOT run any more dmesg or journalctl commands.]"
+                    )
             # Command/path lookup helpers — define early so all checks below can use them
             _last_actual_cmd = bash_history[-1] if bash_history else ""
             # File/directory not found: repeated reads on non-existent paths
@@ -959,6 +988,29 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     "You already have enough information. Stop reading and take action now — "
                     "run the command that performs the actual task.]"
                 )
+            # Total git-status loop: catches alternation between variants (git status, git status --short, etc.)
+            _total_git_status = sum(1 for c in bash_history if re.search(r'\bgit\s+status\b', c))
+            if _total_git_status >= 4 and last_cmd and re.search(r'\bgit\s+status\b', last_cmd):
+                _fetch_done = any(re.search(r'\bgit\b.*\bfetch\b', c) for c in bash_history)
+                _reset_done = any(re.search(r'\bgit\b.*reset.*--hard', c) for c in bash_history)
+                if not _fetch_done:
+                    content_str = (
+                        f"[LOOP DETECTED: git status has been run {_total_git_status} times (in various forms). "
+                        "The repo state is clear. STOP checking status. "
+                        "You have not fetched the source yet — fetch it now: "
+                        "git fetch <source-path-or-remote> && git reset --hard FETCH_HEAD]"
+                    )
+                elif not _reset_done:
+                    content_str = (
+                        f"[LOOP DETECTED: git status has been run {_total_git_status} times but no reset has been done. "
+                        "Run: git reset --hard FETCH_HEAD — this syncs HEAD to the fetched source.]"
+                    )
+                else:
+                    content_str = (
+                        f"[LOOP DETECTED: git status has been run {_total_git_status} times. "
+                        "The working tree is clean. Either the task is complete (report success and stop) "
+                        "or there is a deeper issue — do not check status again.]"
+                    )
             # General catch-all: same command run 5+ times — inject a hard stop
             if last_cmd and bash_cmd_count.get(last_cmd, 0) >= 5:
                 _loop_count = bash_cmd_count[last_cmd]
