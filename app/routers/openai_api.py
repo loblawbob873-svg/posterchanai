@@ -709,6 +709,37 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "Example: if 'echo \"' in line and '>>' not in line and not re.search(r'>\\s*\\S', line.split('echo')[1] if 'echo' in line else ''). "
                         "Write the COMPLETE python3 script that modifies the file now.]"
                     )
+            # Detect python3 heredoc probe-loop: model running read-only scripts in a loop
+            _is_py3_heredoc = last_cmd and bool(re.search(r'python3?\s+-\s', last_cmd))
+            _is_noop_result = content_str.startswith("(no output")
+            if _is_py3_heredoc and _is_noop_result:
+                _searches_template = bool(re.search(r"""echo\s+["']\[""", last_cmd))
+                if _searches_template:
+                    # Model is searching for a placeholder/template pattern that doesn't exist
+                    content_str = (
+                        "[ERROR: Your script searched for a literal echo template like "
+                        "'echo \"[Section]\"' but no such line exists in the file. "
+                        "That was an example placeholder, NOT the actual content. "
+                        "FIRST, see what echo lines actually exist: "
+                        "grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '>' | head -40 "
+                        "THEN write a python3 script that matches those actual lines — "
+                        "match generically using: line.strip().startswith('echo ') and '>>' not in line "
+                        "and '>' not in line.partition('echo')[2] — "
+                        "NOT a hardcoded specific string. Write the complete modifying python3 script.]"
+                    )
+                else:
+                    _py3_heredoc_count = sum(
+                        1 for c in bash_history if re.search(r'python3?\s+-\s', c)
+                    )
+                    if _py3_heredoc_count >= 2:
+                        content_str += (
+                            f"\n\n[WARNING: You have now run {_py3_heredoc_count} python3 heredoc probes "
+                            "that produce no output. Your pattern is not matching any lines. "
+                            "Run: grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '>' | head -30 "
+                            "to see actual echo lines, then write a python3 script that modifies them. "
+                            "Match lines generically: line.strip().startswith('echo ') and '>>' not in line "
+                            "and '>' not in line.partition('echo')[2]]"
+                        )
             # Wrap in XML tool_result format matching this model's expected pattern
             result.append({"role": "user", "content": f"<tool_result>\n<tool>{last_tool_name}</tool>\n<output>\n{content_str}\n</output>\n</tool_result>"})
         else:
