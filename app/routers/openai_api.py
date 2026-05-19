@@ -770,7 +770,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # File/directory not found: repeated reads on non-existent paths
             _is_not_found = bool(re.search(r'No such file or directory|cannot access|not found', content_str, re.IGNORECASE))
             _is_read_cmd = bool(re.search(r'^\s*(ls|stat|cat|test\s+-[defr]|file\b)', _last_actual_cmd))
-            if _is_not_found and _is_read_cmd and bash_cmd_count.get(_last_actual_cmd, 0) >= 2:
+            if _is_not_found and _is_read_cmd and bash_cmd_count.get(_last_actual_cmd, 0) >= 1:
                 content_str += (
                     "\n\n[PATH NOT FOUND: This path does not exist — confirmed. "
                     "Do not check this path again. Report the finding and move on.]"
