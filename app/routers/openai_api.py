@@ -974,6 +974,9 @@ def _normalize_tool(name: str, args: dict) -> tuple:
     # bash requires description
     if name in ("bash", "Bash") and "description" not in args:
         args["description"] = (args.get("command") or "")[:80]
+    # bash requires command — inject placeholder to avoid SchemaError and give model a clear signal
+    if name in ("bash", "Bash") and not args.get("command"):
+        args["command"] = "echo '[PROXY: bash tool called with no command. Retry with {\"command\": \"<your shell command here>\"}]'"
     return name, args
 
 
