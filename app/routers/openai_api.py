@@ -430,9 +430,9 @@ def _tools_system_text(tools: list) -> str:
         "There is NO 'replace' tool — use bash to run shell commands (sed, awk, python3) for file modifications. "
         "The bash tool requires a 'command' argument (string). "
         "ANSI COLOR ESCAPING: when inserting ANSI codes with sed -i, use \\\\033 (two backslashes) NOT \\033 in the replacement string — "
-        "e.g.: sed -i 's|echo \"\\[Device Detection\\]\"|echo -e \"\\\\033[1;96m[Device Detection]\\\\033[0m\"|' file. "
+        "e.g.: sed -i 's|echo \"\\[Section\\]\"|echo -e \"\\\\033[COLOR_CODE[Section]\\\\033[0m\"|' file. "
         "The sed PATTERN must match the COMPLETE echo string exactly — include closing brackets and quotes. "
-        "Copy from grep output verbatim: e.g. if grep shows echo \"[Device Detection]\" then pattern is echo \"\\[Device Detection\\]\". "
+        "Copy from grep output verbatim: if grep shows echo \"[Section]\" then pattern is echo \"\\[Section\\]\" (escape brackets). "
         "Single \\033 in sed replacement is misinterpreted as \\0 (whole match) + 33, corrupting the file. "
         "LOCAL PATHS: when a task references ~/some/path or /path/to/dir, always treat it as a LOCAL filesystem directory on this machine — do NOT fetch from GitHub or any remote URL.\n\n"
     )
@@ -516,8 +516,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     "Do NOT use BRE capture groups (\\\\(...\\\\)) or complex regex — they break easily. "
                     "Instead, match the EXACT literal text of the line and use '|' as delimiter. "
                     "Take the exact text from grep output and use it verbatim as the pattern. "
-                    "Example: sed -i 's|echo \"Configuring Repos\"|echo -e \"\\\\033[1;96m>> Configuring Repos <<\\\\033[0m\"|' /opt/gentoo-installer/gentoo.sh "
-                    "— copy each line exactly, one sed -i call per line, chained with &&.]"
+                    "Use the exact literal text from grep output as the pattern, one sed -i call per line, chained with &&.]"
                 )
             # Intercept "No changes" errors — model needs a new strategy
             elif "no changes to apply" in content_str.lower() or "identical" in content_str.lower():
@@ -572,38 +571,18 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             elif re.search(r'BROKEN:.*lines have color codes BEFORE echo', content_str):
                 content_str = (
                     "[ERROR: Colorization is broken — ANSI codes appear BEFORE echo, not inside it. "
-                    "Reset: git -C /opt/gentoo-installer checkout HEAD gentoo.sh\n"
-                    "Correct pattern: echo -e \"\\033[1;96mYour text\\033[0m\"\n"
-                    "Use sed to REPLACE the full echo line: "
-                    "sed -i 's/echo \"\\[Device Detection\\]\"/echo -e \"\\033[1;96m[Device Detection]\\033[0m\"/'"
-                    " /opt/gentoo-installer/gentoo.sh\n"
-                    "Or for ALL display echoes: sed -i 's/echo \"/echo -e \"\\\\033[1;96m/g' gentoo.sh\n"
-                    "(This replaces 'echo \"' with 'echo -e \"\\033[1;96m' on every quoted echo line.)]"
-                )
-            # Detect single-color verify output — prompt requires multiple colors
-            elif re.search(r'Distinct colors: [12]\b', content_str):
-                content_str += (
-                    "\n\n[WARNING: Task requires MULTIPLE different colors — you are using only one. "
-                    "Add more variety using different sed commands for different sections. "
-                    "Use at least 3 distinct color codes:\n"
-                    "  \\033[1;91m = red    (for errors/warnings)\n"
-                    "  \\033[1;92m = green  (for success/progress)\n"
-                    "  \\033[1;93m = yellow (for labels/sections)\n"
-                    "  \\033[1;94m = blue   (for info)\n"
-                    "  \\033[1;95m = magenta (for headers)\n"
-                    "  \\033[1;96m = cyan   (for status)\n"
-                    "Example: sed -i 's|echo \"Creating Snapshots.....\"|echo -e \"\\\\033[1;92mCreating Snapshots.....\\\\033[0m\"|' /opt/gentoo-installer/gentoo.sh]"
+                    "Reset the file to original state with git checkout HEAD, then retry. "
+                    "Correct pattern: echo -e \"\\033[COLOR][Text]\\033[0m\" (color INSIDE the echo string). "
+                    "Use sed to REPLACE the full echo line, not prepend to it.]"
                 )
             # Detect broken color escape codes put outside of echo strings
             elif re.search(r'command not found.*033\[|033\[.*command not found', content_str):
                 content_str = (
                     "[ERROR: Broken colorization — ANSI escape codes were placed OUTSIDE of echo strings, "
                     "causing bash to execute them as commands. "
-                    "Reset: git -C /opt/gentoo-installer checkout HEAD gentoo.sh\n"
-                    "The correct pattern is: echo -e \"\\033[1;96mYour text here\\033[0m\"\n"
-                    "Use sed to REPLACE the original echo line entirely, e.g.: "
-                    "sed -i 's|echo \"\\[Device Detection\\]\"|echo -e \"\\033[1;96m[Device Detection]\\033[0m\"|' file\n"
-                    "Do NOT prepend color codes before echo — put them INSIDE the echo string.]"
+                    "Reset the file to its original state using git checkout HEAD, then retry. "
+                    "The correct pattern is: echo -e \"\\033[COLOR]Your text\\033[0m\" "
+                    "Use sed to REPLACE the original echo line entirely — do NOT prepend color codes before echo.]"
                 )
             # Empty bash result — inform model sed -i is silent on success
             elif not content_str.strip() or content_str.strip() in ("(no output)", "(exit 0)"):
@@ -616,8 +595,6 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         content_str = (
                             "(no output — sed -i is silent on success. Verify: "
                             "grep -c 'echo -e.*\\\\033' /opt/gentoo-installer/gentoo.sh | xargs echo 'Valid colorized echo lines:' ; "
-                            "COLORS=$(grep -oE '\\\\033\\[[0-9;]+m' /opt/gentoo-installer/gentoo.sh | sort -u | wc -l); "
-                            "echo \"Distinct colors: $COLORS (TASK REQUIRES >= 3 different colors — use \\033[1;91m red \\033[1;92m green \\033[1;93m yellow \\033[1;94m blue \\033[1;95m magenta \\033[1;96m cyan)\"; "
                             "BROKEN=$(grep -c '\\\\033.*echo' /opt/gentoo-installer/gentoo.sh); "
                             "[ $BROKEN -gt 0 ] && echo \"BROKEN: $BROKEN lines have color codes BEFORE echo (wrong!) — reset with: git -C /opt/gentoo-installer checkout HEAD gentoo.sh\" ; "
                             "grep -n 'echo -e.*\\\\033' /opt/gentoo-installer/gentoo.sh | head -3)"
@@ -631,8 +608,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     content_str = (
                         "(no output — grep found NO matches. Your pattern does not match any line. "
                         "Bracket text in this file is double-quoted, e.g.: echo \"[Section]\". "
-                        "Run: grep -n 'echo \"\\[' /opt/gentoo-installer/gentoo.sh | head -20 "
-                        "to see the actual quoted text.)"
+                        "Run: grep -n 'echo \"\\[' file | head -20 to see the actual quoted text.)"
                     )
                 else:
                     content_str = "(no output — command produced no output)"
@@ -676,9 +652,9 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "Run: grep -n 'echo \"\\[' /opt/gentoo-installer/gentoo.sh | head -20 "
                         "to see the EXACT text of each echo line. "
                         "CRITICAL: Your pattern must match the FULL echo string including closing bracket and quotes. "
-                        "If grep shows: echo \"[Device Detection]\" "
-                        "then your sed pattern must be: 'echo \"\\[Device Detection\\]\"' (include the \\] closing bracket). "
-                        "Partial patterns like 'echo \"\\[Device' will NOT match.]"
+                        "Copy the EXACT line text from grep output and use it as your pattern verbatim. "
+                        "If the line has brackets like echo \"[Section]\", escape them in the pattern: echo \"\\[Section\\]\". "
+                        "Partial patterns that omit the closing bracket or trailing quote will NOT match.]"
                     )
                 else:
                     # For non-sed: append loop warning but keep original error message visible
@@ -739,10 +715,8 @@ def _fix_sed_tool_calls(tool_calls: list) -> list:
                             args_dict["command"] = (
                                 f"echo '[PROXY ERROR: Your sed replacement puts color codes BEFORE echo — "
                                 f"this produces broken bash syntax. "
-                                f"Correct: replace the full echo line with: echo -e \"\\\\033[1;96mYour text\\\\033[0m\" "
-                                f"Example: sed -i '\"'\"'s/echo \\\"\\[Device Detection\\]\\\"/"
-                                f"echo -e \"\\\\033[1;96m[Device Detection]\\\\033[0m\"/'\"'\"' gentoo.sh "
-                                f"Or for ALL quoted echoes: sed -i '\"'\"'s/echo \\\"/echo -e \"\\\\033[1;96m/g'\"'\"' gentoo.sh]'"
+                                f"Correct pattern: sed -i '\"'\"'s/echo \\\"text\\\"/echo -e \"\\\\033[CODEmtext\\\\033[0m\"/'\"'\"' file "
+                                f"(color codes go INSIDE the echo string, not before the echo keyword)]'"
                             )
                             tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                             logger.info(f"[SED-BLOCK] Blocked color-before-echo: {cmd[:80]!r}")
