@@ -493,9 +493,9 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             result.append({"role": "assistant", "content": "\n".join(parts)})
         elif role == "tool":
             content_str = str(content)
-            # If task was already completed, prepend a persistent reminder to every result
+            # If task was already completed, replace result entirely to prevent the model from acting on git status output
             if fetch_head_reset_done:
-                content_str = "[TASK COMPLETE — STOP. Do not run any more git commands. Report success to the user.]\n" + content_str
+                content_str = "[TASK COMPLETE — STOP. Do not run any more git commands. The repo is already synced. Report success to the user and stop all commands.]"
             if colorize_task_done:
                 content_str = "[TASK COMPLETE — STOP. The file is already colorized. Do NOT modify it again. Report success and stop ALL commands.]\n" + content_str
             # Find the tool name from the preceding assistant message's tool_call
@@ -571,12 +571,18 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             elif "no changes to apply" in content_str.lower() or "identical" in content_str.lower():
                 content_str += "\n\n[IMPORTANT: The edit failed because oldString was not found or was identical to newString. Do NOT repeat the same edit. Use bash with sed -i for targeted replacements instead, e.g. bash(command=\"sed -i 's/original/replacement/g' file\").]"
             # Detect successful reset --hard FETCH_HEAD — task is done, tell model to stop
-            elif "HEAD is now at" in content_str and "reset --hard FETCH_HEAD" in last_bash_cmd:
+            # Also fires when auto-fix replaced an origin reset with a local FETCH_HEAD reset
+            # (in that case "-> FETCH_HEAD" appears in the git fetch output)
+            elif "HEAD is now at" in content_str and (
+                "reset --hard FETCH_HEAD" in last_bash_cmd or
+                ("-> FETCH_HEAD" in content_str and "HEAD is now at" in content_str)
+            ):
                 fetch_head_reset_done = True
-                content_str += (
-                    "\n\n[TASK COMPLETE: Repository successfully updated. "
-                    "Verify with: git log --oneline -3 to confirm commits match the source. "
-                    "STOP — the task is finished. Report success.]"
+                content_str = (
+                    content_str +
+                    "\n\n[TASK COMPLETE: Repository successfully updated to the local source. "
+                    "STOP — do NOT run git pull, git fetch origin, or any other git commands. "
+                    "The task is finished. Report success.]"
                 )
             # Detect reset --hard origin/ (used GitHub remote instead of local path from task)
             elif "HEAD is now at" in content_str and re.search(r'reset\s+--hard\s+(?:origin|upstream)/', last_bash_cmd):
