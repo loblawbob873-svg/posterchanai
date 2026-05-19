@@ -516,6 +516,17 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # Intercept "No changes" errors — model needs a new strategy
             elif "no changes to apply" in content_str.lower() or "identical" in content_str.lower():
                 content_str += "\n\n[IMPORTANT: The edit failed because oldString was not found or was identical to newString. Do NOT repeat the same edit. Use bash with sed -i for targeted replacements instead, e.g. bash(command=\"sed -i 's/original/replacement/g' file\").]"
+            # Detect incompatible git history conflict — model used wrong (GitHub) upstream
+            elif ("could not apply" in content_str or "CONFLICT (add/add)" in content_str) and \
+                 "first commit" in content_str:
+                content_str += (
+                    "\n\n[ERROR: Incompatible repository histories — you used the WRONG upstream. "
+                    "These repos share no common history, meaning you fetched from the wrong source. "
+                    "Run: git rebase --abort (or git merge --abort) to undo this. "
+                    "Then use the LOCAL source path directly — paths like ~/aria refer to local "
+                    "filesystem directories on this machine, NOT GitHub. "
+                    "Example: git pull ~/aria master  OR  git fetch ~/aria && git reset --hard FETCH_HEAD]"
+                )
             # Detect mangled \033 — model used \033 instead of \\033 in sed replacement
             elif re.search(r'echo\s+-e\s+.*33\[', content_str) and '\\033' not in content_str and '\033' not in content_str:
                 content_str = (
