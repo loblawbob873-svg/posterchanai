@@ -692,11 +692,11 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                         document_data = documents[0].get("base64") if documents else None
                     if files and not file_content:
                         file_content = files[0].get("content") if files else None
-                    # PDFs: detect merge intent early — if user says "merge" with 2+ PDFs, do it server-side
+                    # PDFs: detect merge/combine intent early — do it server-side, independent of analysis
                     import base64 as _b64
                     _is_merge_intent = (
                         len(pdfs) >= 2 and
-                        bool(re.search(r'\bmerge\b', content.lower() if content else ""))
+                        bool(re.search(r'\b(merge|combine|join|concatenate|concat)\b', content.lower() if content else ""))
                     )
                     if _is_merge_intent:
                         _pdf_bytes_list = [_b64.b64decode(p["base64"]) for p in pdfs if p.get("base64")]

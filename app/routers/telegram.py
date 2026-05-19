@@ -1402,8 +1402,9 @@ async def _handle_telegram_update(update: dict, db: Session):
                 if doc_parts:
                     doc_text = "\n\n---\n\n".join(doc_parts)
 
-            # If user says "merge" with multiple PDFs, merge them server-side and send back as file
-            _is_merge_intent = bool(re.search(r'\bmerge\b', text_lower)) and len(pdf_attachments) >= 2
+            # If user asks to merge/combine/join multiple PDFs, do it server-side and send back as file
+            # This is completely independent of PDF analysis/summarization
+            _is_merge_intent = bool(re.search(r'\b(merge|combine|join|concatenate|concat)\b', text_lower)) and len(pdf_attachments) >= 2
             if _is_merge_intent:
                 try:
                     _merged_bytes = merge_pdfs([_fdata for _, _fdata in pdf_attachments])

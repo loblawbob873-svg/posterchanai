@@ -577,6 +577,27 @@ async def messages(
                 _git_fetch_count_a += 1
             if re.search(r'\bgit\b.*reset.*--hard.*FETCH_HEAD', _cha):
                 _git_reset_done_a = True
+    # Intercept git merge <remote/branch> --no-commit: replace with fetch+reset for exact HEAD sync
+    if tool_calls:
+        _new_tcs_ma = []
+        for _tc_ma in tool_calls:
+            if _tc_ma.get("name") in ("bash", "Bash"):
+                _cmd_ma = (_tc_ma.get("input") or {}).get("command", "")
+                if re.search(r'\bgit\b.*\bmerge\b.*--no-commit', _cmd_ma):
+                    _mt_ma = re.search(r'git\s+(?:-C\s+\S+\s+)?merge\s+(\S+?/\S+?)(?:\s+--|\s*$)', _cmd_ma)
+                    if _mt_ma:
+                        _ref_ma = _mt_ma.group(1)
+                        _rname_ma, _bname_ma = _ref_ma.rsplit('/', 1)
+                        _fetch_ma = f"{_rname_ma} {_bname_ma}"
+                        _cm_ma = re.search(r'git\s+-C\s+([\S]+)', _cmd_ma)
+                        if _cm_ma:
+                            _new_cmd_ma = f"git -C {_cm_ma.group(1)} fetch {_fetch_ma} && git -C {_cm_ma.group(1)} reset --hard FETCH_HEAD"
+                        else:
+                            _new_cmd_ma = f"git fetch {_fetch_ma} && git reset --hard FETCH_HEAD"
+                        _tc_ma = {**_tc_ma, "input": {**(_tc_ma.get("input") or {}), "command": _new_cmd_ma}}
+                        logger.info(f"[ANTHR-MERGE-NO-COMMIT-FIX] Replaced merge --no-commit with: {_new_cmd_ma}")
+            _new_tcs_ma.append(_tc_ma)
+        tool_calls = _new_tcs_ma
     # Force git reset --hard FETCH_HEAD when model is stuck in fetch loop
     if _git_reset_done_a and tool_calls:
         _new_tcs_a = []

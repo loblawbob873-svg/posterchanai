@@ -1648,6 +1648,36 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                         pass
                 new_tcs.append(tc)
             tool_calls = new_tcs
+    # Intercept git merge <remote/branch> --no-commit: this can't achieve exact HEAD match;
+    # replace with the correct approach: git fetch <remote> <branch> && git reset --hard FETCH_HEAD
+    if tool_calls:
+        _new_tcs_merge = []
+        for _tc_m in tool_calls:
+            _fn_m = _tc_m.get("function", {})
+            if _fn_m.get("name") in ("bash", "Bash"):
+                try:
+                    _adict_m = json.loads(_fn_m.get("arguments", "{}"))
+                    _cmd_m = _adict_m.get("command", "")
+                    if re.search(r'\bgit\b.*\bmerge\b.*--no-commit', _cmd_m):
+                        _merge_target_m = re.search(
+                            r'git\s+(?:-C\s+\S+\s+)?merge\s+(\S+?/\S+?)(?:\s+--|\s*$)', _cmd_m
+                        )
+                        if _merge_target_m:
+                            _full_ref = _merge_target_m.group(1)
+                            _remote_name, _branch_name = _full_ref.rsplit('/', 1)
+                            _fetch_args_m = f"{_remote_name} {_branch_name}"
+                            _c_match_m = re.search(r'git\s+-C\s+([\S]+)', _cmd_m)
+                            if _c_match_m:
+                                _new_cmd_m = f"git -C {_c_match_m.group(1)} fetch {_fetch_args_m} && git -C {_c_match_m.group(1)} reset --hard FETCH_HEAD"
+                            else:
+                                _new_cmd_m = f"git fetch {_fetch_args_m} && git reset --hard FETCH_HEAD"
+                            _adict_m["command"] = _new_cmd_m
+                            _tc_m = {**_tc_m, "function": {**_fn_m, "arguments": json.dumps(_adict_m)}}
+                            logger.info(f"[MERGE-NO-COMMIT-FIX] Replaced merge --no-commit with: {_new_cmd_m}")
+                except Exception:
+                    pass
+            _new_tcs_merge.append(_tc_m)
+        tool_calls = _new_tcs_merge
     # Intercept tool calls when model is stuck in git fetch loop — force git reset --hard FETCH_HEAD
     if _git_reset_done and tool_calls:
         _new_tcs = []
