@@ -438,9 +438,11 @@ def _tools_system_text(tools: list) -> str:
         "ANSI codes in file-writing echoes corrupt config files. Only colorize display echoes (terminal output, no redirect). "
         "BATCH FILE EDITS: When a task requires modifying many lines, use python3 or awk to process all lines in a single script "
         "rather than running sed once per line. Individual sed calls per line are too slow for bulk edits. "
-        "LOCAL PATHS: when a task references a local path (~/some/path or /path/to/dir) as a SOURCE repo, treat it as a LOCAL filesystem git repo — do NOT fetch it from GitHub. "
-        "Git accepts local paths as fetch sources: git fetch ~/local/repo. "
-        "This does NOT restrict using explicitly configured git remotes (e.g. git fetch upstream, git fetch origin) — those use their configured URL as normal.\n\n"
+        "LOCAL PATHS: when a task gives you a local path (~/some/path or /path/to/dir) as the SOURCE git repository, "
+        "use that path DIRECTLY as the git fetch source — do NOT substitute it with 'git fetch origin' or any GitHub URL. "
+        "git accepts local filesystem paths: git fetch ~/local/repo is valid syntax. "
+        "Only use named remotes (origin, upstream) if the task EXPLICITLY instructs you to run 'git fetch upstream' or similar — "
+        "do not use them as a substitute for an explicit local path source.\n\n"
     )
     return preamble + "<tools>\n" + "\n\n".join(entries) + "\n</tools>"
 
