@@ -235,6 +235,24 @@ def _build_model_messages(request: MessagesRequest) -> list:
                             "Do NOT run any more dmesg or journalctl commands.]"
                         )
 
+                # Directory exploration loop: model keeps ls/find/tree browsing without progress
+                _is_listing_cmd = bool(re.search(r'^\s*(ls\b|find\b|tree\b)', last_bash_cmd or ""))
+                if _is_listing_cmd:
+                    _recent_a = bash_history[-8:] if len(bash_history) >= 8 else bash_history
+                    _consec_ls_a = 0
+                    for _rc_a in reversed(_recent_a):
+                        if re.search(r'^\s*(ls\b|find\b|tree\b)', _rc_a):
+                            _consec_ls_a += 1
+                        else:
+                            break
+                    if _consec_ls_a >= 4:
+                        content_str += (
+                            f"\n\n[EXPLORATION LOOP: You have run {_consec_ls_a} consecutive directory listing "
+                            "commands. You have seen enough of the structure. STOP listing directories and "
+                            "take the next concrete action toward completing your task — run the command, "
+                            "edit the file, or fix the error. Do not run any more ls/find/tree commands.]"
+                        )
+
                 # Build failure loop
                 _is_hard_failure = bool(
                     re.search(r'BUILD FAILED|FAILURE:|non-zero exit value\s+[1-9]|Execution failed for task|exit code [1-9]|\bfailed\b.*\bexception\b', content_str, re.IGNORECASE)
