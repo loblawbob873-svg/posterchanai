@@ -608,24 +608,35 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         # Extract target .sh file from sed command
                         _sh_file_m = re.search(r'(/[^\s\'"]+\.sh|[\w./]+\.sh)\b', last_bash_cmd)
                         _sh_file = _sh_file_m.group(1).strip("'\"") if _sh_file_m else '/opt/gentoo-installer/gentoo.sh'
-                        # Count previous individual per-line sed calls to detect slow one-at-a-time pattern
-                        _prev_line_seds = sum(1 for c in bash_history if 'sed' in c and '-i' in c and re.search(r"'\d+s/", c))
-                        _batch_hint = ""
-                        if _prev_line_seds > 3:
-                            _batch_hint = (
-                                " IMPORTANT: You have run multiple individual per-line sed calls. "
-                                "For bulk edits requiring many changes, use python3 to process all target lines "
-                                "in a single script call rather than one sed per line — much faster for bulk edits."
+                        # Detect echo -e in sed source pattern — original lines don't have -e yet
+                        _sed_src_m = re.search(r"sed\s+-i\s+['\"]?s([/|!])(.*?)\1", last_bash_cmd)
+                        _sed_src = _sed_src_m.group(2) if _sed_src_m else ""
+                        if _sed_src and re.search(r'echo\s+-e\b', _sed_src):
+                            content_str = (
+                                f"[PROXY WARNING: Your sed SOURCE pattern contains 'echo -e' but the original "
+                                f"lines in this file have just 'echo' (without -e). Your sed matched 0 lines. "
+                                f"Use the ORIGINAL form as source: s/echo \"[text]\"/echo -e \"\\\\033[COLORm[text]\\\\033[0m\"/ "
+                                f"Verify: VALID=$(grep -c 'echo -e.*\\\\033' {_sh_file}); echo \"Colorized lines: $VALID\"]"
                             )
-                        content_str = (
-                            f"(no output — sed -i is silent on success. Run to check progress: "
-                            f"VALID=$(grep -c 'echo -e.*\\\\033' {_sh_file}); echo \"Colorized echo lines: $VALID\"; "
-                            f"REDIR=$(grep -cE 'echo -e.*\\\\033.*[>|]' {_sh_file} 2>/dev/null || echo 0); "
-                            "[ \"$REDIR\" -gt 0 ] && echo \"REDIRECT ERROR: $REDIR colorized echoes redirect to files — revert these\"; "
-                            f"BROKEN=$(grep -c '\\\\033.*echo' {_sh_file} 2>/dev/null || echo 0); "
-                            f"[ $BROKEN -gt 0 ] && echo \"BROKEN: $BROKEN lines have color codes BEFORE echo — reset: git checkout HEAD {_sh_file}\"; "
-                            f"grep -n 'echo -e.*\\\\033' {_sh_file} | head -3){_batch_hint}"
-                        )
+                        else:
+                            # Count previous individual per-line sed calls to detect slow one-at-a-time pattern
+                            _prev_line_seds = sum(1 for c in bash_history if 'sed' in c and '-i' in c and re.search(r"'\d+s/", c))
+                            _batch_hint = ""
+                            if _prev_line_seds > 3:
+                                _batch_hint = (
+                                    " IMPORTANT: You have run multiple individual per-line sed calls. "
+                                    "For bulk edits requiring many changes, use python3 to process all target lines "
+                                    "in a single script call rather than one sed per line — much faster for bulk edits."
+                                )
+                            content_str = (
+                                f"(no output — sed -i is silent on success. Run to check progress: "
+                                f"VALID=$(grep -c 'echo -e.*\\\\033' {_sh_file}); echo \"Colorized echo lines: $VALID\"; "
+                                f"REDIR=$(grep -cE 'echo -e.*\\\\033.*[>|]' {_sh_file} 2>/dev/null || echo 0); "
+                                "[ \"$REDIR\" -gt 0 ] && echo \"REDIRECT ERROR: $REDIR colorized echoes redirect to files — revert these\"; "
+                                f"BROKEN=$(grep -c '\\\\033.*echo' {_sh_file} 2>/dev/null || echo 0); "
+                                f"[ $BROKEN -gt 0 ] && echo \"BROKEN: $BROKEN lines have color codes BEFORE echo — reset: git checkout HEAD {_sh_file}\"; "
+                                f"grep -n 'echo -e.*\\\\033' {_sh_file} | head -3){_batch_hint}"
+                            )
                     else:
                         content_str = (
                             "(no output — sed -i is silent on success. If the pattern was not found, "
