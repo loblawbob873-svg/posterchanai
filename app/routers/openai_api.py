@@ -573,14 +573,22 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # Intercept "No changes" errors — model needs a new strategy
             elif "no changes to apply" in content_str.lower() or "identical" in content_str.lower():
                 content_str += "\n\n[IMPORTANT: The edit failed because oldString was not found or was identical to newString. Do NOT repeat the same edit. Use bash with sed -i for targeted replacements instead, e.g. bash(command=\"sed -i 's/original/replacement/g' file\").]"
-            # Detect "Already up to date" from git merge/fetch — the sync is already done
-            # Skip for complex merge tasks (conflict resolution, file preservation) — let model proceed
+            # Detect "Already up to date" from git merge/fetch
             elif "Already up to date" in content_str and re.search(r'\bgit\b.*(merge|fetch|pull)\b', last_bash_cmd) and not _is_complex_merge_task:
                 fetch_head_reset_done = True
                 content_str = (
                     "[TASK COMPLETE: The repository is already up to date with the source — "
                     "the merge was already performed in a previous step. "
                     "STOP — do not run any more git commands. Report success.]"
+                )
+            elif "Already up to date" in content_str and re.search(r'\bgit\b.*merge\b', last_bash_cmd) and _is_complex_merge_task:
+                _merge_up_to_date_count = sum(1 for c in bash_history if re.search(r'\bgit\b.*merge\b', c))
+                content_str = (
+                    "[MERGE ALREADY COMPLETE: The branch is already up to date with the upstream — "
+                    "all upstream commits are already present in this branch. "
+                    f"Do NOT run git merge again (already tried {_merge_up_to_date_count} times). "
+                    "Proceed to the next step in your task: check git status for conflicts, "
+                    "resolve any remaining conflicts, or run the build/sync script.]"
                 )
             # Detect successful git fetch (FETCH_HEAD updated) — guide reset
             elif "-> FETCH_HEAD" in content_str and re.search(r'\bgit\b.*\bfetch\b', last_bash_cmd) and "reset" not in last_bash_cmd:
@@ -1630,7 +1638,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     # Hard loop short-circuit: model ignored REPEATED COMMAND BLOCKED injections and kept looping.
     # If the most recent tool result contains BLOCKED, skip the LLM call entirely and return a final answer.
     _last_user_msg = next((m for m in reversed(messages) if m.get("role") == "user"), None)
-    if _last_user_msg and "[REPEATED COMMAND BLOCKED:" in (str(_last_user_msg.get("content") or "")):
+    if not _is_complex_merge and _last_user_msg and "[REPEATED COMMAND BLOCKED:" in (str(_last_user_msg.get("content") or "")):
         _hl_text = ("I've investigated but cannot complete the task: a required resource or file is confirmed missing and I cannot create it in this environment. The operation is blocked on a missing dependency or configuration. Please provide the required resource or configuration and try again.")
         _hl_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         logger.info("[HARD-LOOP-SHORTCIRCUIT] REPEATED COMMAND BLOCKED in last tool result — returning final answer without LLM call")
