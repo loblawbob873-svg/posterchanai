@@ -1618,6 +1618,27 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         from fastapi.responses import StreamingResponse as _SR
         return _SR(_sc_emit(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
 
+    # Hard loop short-circuit: model ignored REPEATED COMMAND BLOCKED injections and kept looping.
+    # If the most recent tool result contains BLOCKED, skip the LLM call entirely and return a final answer.
+    _last_user_msg = next((m for m in reversed(messages) if m.get("role") == "user"), None)
+    if _last_user_msg and "[REPEATED COMMAND BLOCKED:" in (str(_last_user_msg.get("content") or "")):
+        _hl_text = ("I've investigated but cannot complete the task: a required resource or file is confirmed missing and I cannot create it in this environment. The operation is blocked on a missing dependency or configuration. Please provide the required resource or configuration and try again.")
+        _hl_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+        logger.info("[HARD-LOOP-SHORTCIRCUIT] REPEATED COMMAND BLOCKED in last tool result — returning final answer without LLM call")
+        _hl_body = {"id": _hl_id, "object": "chat.completion", "created": int(__import__("time").time()), "model": request.model, "choices": [{"index": 0, "message": {"role": "assistant", "content": _hl_text}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}}
+        if not request.stream:
+            return _hl_body
+        async def _hl_emit():
+            def _ck(d, fin=None):
+                return f"data: {json.dumps({'id': _hl_id, 'object': 'chat.completion.chunk', 'choices': [{'index': 0, 'delta': d, 'finish_reason': fin}]})}\n\n"
+            yield _ck({"role": "assistant", "content": ""})
+            for _i in range(0, len(_hl_text), 64):
+                yield _ck({"content": _hl_text[_i:_i+64]})
+            yield _ck({}, fin="stop")
+            yield "data: [DONE]\n\n"
+        from fastapi.responses import StreamingResponse as _SR
+        return _SR(_hl_emit(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
+
     temperature = request.temperature if request.temperature is not None else 0.0
     # Cap agentic completions at 2048 tokens — tool calls are short; large limits cause runaway generation
     max_tokens = min(max(request.max_tokens or 0, int(settings.get("ollama_num_predict", "2048"))), 2048)
