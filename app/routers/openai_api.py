@@ -652,7 +652,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             _is_modifying_cmd = (
                 last_cmd and
                 (("sed" in last_cmd and "-i" in last_cmd) or
-                 re.search(r'\bpython3?\s+-c\b', last_cmd))
+                 re.search(r'\bpython3?\s+-c\b', last_cmd) or
+                 re.search(r'\bpython3?\s+-\b', last_cmd))
             )
             # Also catch any command that errors repeatedly (fatal/error in output)
             _has_error_output = bool(re.search(r'\bfatal\b|\berror\b', content_str, re.IGNORECASE))
@@ -696,9 +697,17 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 else:
                     # For non-sed: append loop warning but keep original error message visible
                     content_str += (
-                        f"\n\n[ERROR: You have now run this EXACT command {repeat_n} times. "
-                        "STOP repeating it — the error will not go away. "
-                        "You must use a completely different command to accomplish the goal.]"
+                        f"\n\n[ERROR: You have now run this EXACT command {repeat_n} times and it is NOT working. "
+                        "STOP repeating it. Your script is only READING the file — it is not modifying anything. "
+                        "You need to write a python3 script that: "
+                        "(1) reads ALL lines from the file, "
+                        "(2) for each line, checks if it contains 'echo \"' and does NOT have '>>' or '>' after the echo, "
+                        "(3) adds ANSI color codes to those lines (change echo to echo -e, add \\033[COLOR_CODEm...\\033[0m), "
+                        "(4) writes ALL modified content back to the file. "
+                        "Do NOT search for specific template names like 'echo \"[Section]\"' — "
+                        "instead match any line where '\\\"echo \\\"' appears and no redirect follows. "
+                        "Example: if 'echo \"' in line and '>>' not in line and not re.search(r'>\\s*\\S', line.split('echo')[1] if 'echo' in line else ''). "
+                        "Write the COMPLETE python3 script that modifies the file now.]"
                     )
             # Wrap in XML tool_result format matching this model's expected pattern
             result.append({"role": "user", "content": f"<tool_result>\n<tool>{last_tool_name}</tool>\n<output>\n{content_str}\n</output>\n</tool_result>"})
