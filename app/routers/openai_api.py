@@ -1389,7 +1389,41 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         empty_bash_count=_empty_bash_count, messages=messages,
     )
     tool_calls = _redirect_hallucinated_sed(tool_calls, settings=settings)
-    logger.info(f"[OAI-AGENTIC] len={len(full_text)} head={full_text[:200]!r} tail={full_text[-200:]!r} tool_calls={len(tool_calls)} sed_blocked={_sed_blocked} colorize_done={_colorize_done} empty_bash={_empty_bash_count}")
+    # After warning the model once about using GitHub remote, auto-fix subsequent origin resets
+    _origin_warned = any(
+        "WARNING: You used a GitHub remote instead of the local source path" in (m.get("content") or "")
+        for m in messages if m.get("role") == "user"
+    )
+    if _origin_warned and tool_calls:
+        # Extract local source paths from first user message (task spec)
+        _task_local_paths = []
+        for _m in messages:
+            if _m.get("role") == "user":
+                for _lp in re.findall(r'(~/[\w-]+)', _m.get("content") or ""):
+                    _task_local_paths.append(_lp)
+                break
+        if _task_local_paths:
+            new_tcs = []
+            for tc in tool_calls:
+                _fn = tc.get("function", {})
+                if _fn.get("name") in ("bash", "Bash"):
+                    try:
+                        _adict = json.loads(_fn.get("arguments", "{}"))
+                        _cmd = _adict.get("command", "")
+                        _origin_m = re.search(r'git\s+-C\s+([\S]+).*reset\s+--hard\s+(?:origin|upstream)/', _cmd)
+                        if _origin_m:
+                            _tgt = _origin_m.group(1)
+                            _src = next((p for p in _task_local_paths if p != _tgt), None)
+                            if _src:
+                                _new_cmd = f"git -C {_tgt} fetch {_src} && git -C {_tgt} reset --hard FETCH_HEAD"
+                                _adict["command"] = _new_cmd
+                                tc = {**tc, "function": {**_fn, "arguments": json.dumps(_adict)}}
+                                logger.info(f"[ORIGIN-FIX] Replaced origin reset with: {_new_cmd}")
+                    except Exception:
+                        pass
+                new_tcs.append(tc)
+            tool_calls = new_tcs
+    logger.info(f"[OAI-AGENTIC] len={len(full_text)} head={full_text[:200]!r} tail={full_text[-200:]!r} tool_calls={len(tool_calls)} sed_blocked={_sed_blocked} colorize_done={_colorize_done} empty_bash={_empty_bash_count} origin_warned={_origin_warned}")
 
     # If model responded with text-only or unparseable tool call (no tool call), nudge it once
     if not tool_calls and full_text.strip() and len(full_text) < 1200:
