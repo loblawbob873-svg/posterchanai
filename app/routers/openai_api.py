@@ -520,21 +520,22 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             elif ("could not apply" in content_str or "CONFLICT (add/add)" in content_str) and \
                  "first commit" in content_str:
                 content_str += (
-                    "\n\n[ERROR: Incompatible repository histories — you used the WRONG upstream. "
-                    "These repos share no common history, meaning you fetched from the wrong source. "
-                    "Run: git rebase --abort (or git merge --abort) to undo this. "
-                    "Then use the LOCAL source path directly — paths like ~/aria refer to local "
-                    "filesystem directories on this machine, NOT GitHub. "
-                    "Example: git pull ~/aria master  OR  git fetch ~/aria && git reset --hard FETCH_HEAD]"
+                    "\n\n[ERROR: WRONG source — incompatible git history. "
+                    "You fetched from the wrong repo (probably GitHub). These repos share no common history. "
+                    "Run: git rebase --abort\n"
+                    "Then use the LOCAL source repo path directly. Git accepts local paths as fetch sources. "
+                    "EXACT COMMANDS: git -C ~/aria2 fetch ~/aria && git -C ~/aria2 reset --hard FETCH_HEAD\n"
+                    "(~/aria is a local git repository on this machine, NOT a GitHub URL)]"
                 )
             # Detect invalid upstream — branch not found after fetch
             elif "invalid upstream" in content_str or "couldn't find remote ref" in content_str:
                 content_str += (
-                    "\n\n[ERROR: Branch not found. The remote branch name may be different — "
-                    "use: git -C REPO branch -r  to list available remote branches. "
-                    "Or if the source is a local path like ~/aria, use it directly: "
-                    "git fetch ~/aria  then check: git branch -r | grep FETCH  "
-                    "and merge with: git merge FETCH_HEAD  or  git reset --hard FETCH_HEAD]"
+                    "\n\n[ERROR: Branch not found — 'master' does not exist at that remote. "
+                    "DO NOT keep retrying with 'origin/master'. "
+                    "Check what branches exist: git -C ~/aria2 branch -r\n"
+                    "OR use the local source repo path directly (RECOMMENDED): "
+                    "git -C ~/aria2 fetch ~/aria && git -C ~/aria2 reset --hard FETCH_HEAD\n"
+                    "(git fetch accepts local filesystem paths — ~/aria is a local git repo on this machine)]"
                 )
             # Detect mangled \033 — model used \033 instead of \\033 in sed replacement
             elif re.search(r'echo\s+-e\s+.*33\[', content_str) and '\\033' not in content_str and '\033' not in content_str:
