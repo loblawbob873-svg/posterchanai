@@ -1594,6 +1594,10 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         from app.services.text_utils import inject_no_think
         messages = inject_no_think(messages)
 
+    # Detect complex merge tasks — bypass simple-sync shortcuts for conflict resolution workflows
+    _all_msg_text = " ".join((m.get("content") or "") for m in messages if m.get("role") in ("system", "user"))
+    _is_complex_merge = bool(re.search(r'\b(conflict|preserve|resolve|keep\s+\w+\s+version|branding|checkout\s+HEAD)\b', _all_msg_text, re.IGNORECASE))
+
     # Short-circuit: if git reset --hard FETCH_HEAD already ran and _oai_messages_for_tools has
     # replaced the following tool results with a TASK COMPLETE marker, return success directly
     # without calling the model — breaks the infinite loop.
