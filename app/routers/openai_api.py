@@ -799,10 +799,28 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "Analyze what you have found and write your final report now. "
                         "Do NOT run any more dmesg or journalctl commands.]"
                     )
+            # Use the clean command string (bash_history[-1]) for all loop detection — last_bash_cmd
+            # contains the full XML tool_call block, so anchored regexes like ^\s*ls would never match.
+            _last_actual_cmd = bash_history[-1] if bash_history else ""
+            # Repeated identical command: running the same exact command multiple times means the
+            # result never changes and re-running won't help. Suppress after 2nd repetition.
+            if _last_actual_cmd and len(bash_history) >= 2:
+                _identical_count = sum(1 for c in bash_history if c.strip() == _last_actual_cmd.strip())
+                if _identical_count >= 4:
+                    content_str = (
+                        f"[REPEATED COMMAND SUPPRESSED: You have run this exact command {_identical_count} times. "
+                        "Running it again will not change the result. STOP. Take a completely different action: "
+                        "read a config file, edit source code, generate a missing resource, or report the blocker.]"
+                    )
+                elif _identical_count >= 2:
+                    content_str += (
+                        f"\n\n[REPEATED COMMAND: You have already run this exact command {_identical_count} times "
+                        "and the result is the same each time. Do NOT run it again. Take a different action instead.]"
+                    )
             # Directory exploration loop: model keeps running ls/find/tree to browse dirs
-            # without making progress. After 3+ consecutive listing commands, push it forward.
-            # After 5+, replace the result entirely (denying directory info forces a decision).
-            _is_listing_cmd = bool(re.search(r'^\s*(ls\b|find\b|tree\b)', last_bash_cmd or ""))
+            # without making progress. After 2+ consecutive listing commands, push it forward.
+            # After 4+, replace the result entirely (denying directory info forces a decision).
+            _is_listing_cmd = bool(re.search(r'^\s*(ls\b|find\b|tree\b)', _last_actual_cmd))
             if _is_listing_cmd:
                 _recent = bash_history[-10:] if len(bash_history) >= 10 else bash_history
                 _consec_ls = 0
@@ -825,8 +843,6 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "action toward your task: run the command, edit the file, or fix the error. "
                         "Do not run any more ls/find/tree commands.]"
                     )
-            # Command/path lookup helpers — define early so all checks below can use them
-            _last_actual_cmd = bash_history[-1] if bash_history else ""
             # File/directory not found: repeated reads on non-existent paths
             _is_not_found = bool(re.search(r'No such file or directory|cannot access|not found', content_str, re.IGNORECASE))
             _is_read_cmd = bool(re.search(r'^\s*(ls|stat|cat|test\s+-[defr]|file\b)', _last_actual_cmd))

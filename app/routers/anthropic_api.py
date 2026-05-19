@@ -372,20 +372,26 @@ def _build_model_messages(request: MessagesRequest) -> list:
                             "Execute these three commands now. Do NOT run git status or git merge again.]"
                         )
 
-                # LOOP DETECTED
-                if last_cmd and bash_cmd_count.get(last_cmd, 0) >= 5:
-                    _loop_count = bash_cmd_count[last_cmd]
-                    if re.search(r'\bgit\s+status\b', last_cmd):
-                        content_str = (
-                            f"[LOOP DETECTED: git status has been run {_loop_count} times — the repo is consistently clean. "
-                            "STOP. Either the task is complete (report success) or fetch first: "
-                            "git fetch <remote-name> && git log HEAD..FETCH_HEAD --oneline. Do NOT run git status again.]"
-                        )
-                    else:
-                        content_str = (
-                            f"[LOOP DETECTED: This exact command has been run {_loop_count} times with the same result. "
-                            "STOP. Do not run this command again. "
-                            "If done, report success. If not, try a fundamentally different approach.]"
+                # Repeated identical command: result never changes, re-running won't help
+                if last_cmd and len(bash_history) >= 2:
+                    _identical_count_a = bash_cmd_count.get(last_cmd, 0)
+                    if _identical_count_a >= 4:
+                        if re.search(r'\bgit\s+status\b', last_cmd):
+                            content_str = (
+                                f"[REPEATED COMMAND SUPPRESSED: git status has been run {_identical_count_a} times — the repo is consistently clean. "
+                                "STOP. Either the task is complete (report success) or fetch first: "
+                                "git fetch <remote-name> && git log HEAD..FETCH_HEAD --oneline. Do NOT run git status again.]"
+                            )
+                        else:
+                            content_str = (
+                                f"[REPEATED COMMAND SUPPRESSED: You have run this exact command {_identical_count_a} times. "
+                                "Running it again will not change the result. STOP. Take a completely different action: "
+                                "read a config file, edit source code, generate a missing resource, or report the blocker.]"
+                            )
+                    elif _identical_count_a >= 2:
+                        content_str += (
+                            f"\n\n[REPEATED COMMAND: You have already run this exact command {_identical_count_a} times "
+                            "and the result is the same each time. Do NOT run it again. Take a different action instead.]"
                         )
 
                 parts.append(content_str)
