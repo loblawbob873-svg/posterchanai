@@ -686,13 +686,13 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     _file_ref = _file_m.group(1) if _file_m else "the target file"
                     content_str = (
                         f"[ERROR: You have run this EXACT sed command {repeat_n} times — it is NOT working.{quoting_hint} "
-                        "SED IS NOW BLOCKED — further sed -i commands will be replaced with this error. "
-                        "You MUST use python3 to modify this file — write the script NOW, do NOT explore first. "
-                        "Match display echo lines generically: "
-                        "line.strip().startswith('echo ') and '>>' not in line and '>' not in line.partition('echo')[2] "
-                        "Transform: change echo to echo -e, wrap content in \\033[COLOR_CODEm...\\033[0m. "
-                        "Use multiple colors (1;96 cyan, 1;93 yellow, 1;92 green, 1;91 red for variety). "
-                        "Write ALL modified lines back to the file. DO NOT probe/read first — MODIFY now.]"
+                        "SED IS NOW BLOCKED — write a python3 script NOW, do NOT explore first. "
+                        "Match display echo lines: line.strip().startswith('echo ') and '>>' not in line and '>' not in line.partition('echo')[2] "
+                        "Transform: change echo to echo -e, wrap arg in \\033[COLORm...\\033[0m. "
+                        "Cycle 4 colors: 1;96 cyan, 1;93 yellow, 1;92 green, 1;91 red. "
+                        "CRITICAL: preserve newlines — after rstrip(), add \\n back when writing. "
+                        "CRITICAL: write ALL lines (colorized + non-colorized). "
+                        "DO NOT read/probe first — MODIFY now.]"
                     )
                 else:
                     # For non-sed: append loop warning but keep original error message visible
@@ -712,6 +712,21 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # Detect python3 heredoc probe-loop: model running read-only scripts in a loop
             _is_py3_heredoc = last_cmd and bool(re.search(r'python3?\s+-\s', last_cmd))
             _is_noop_result = content_str.startswith("(no output")
+            # After a python3 write succeeds, inject verification to catch silent bugs early
+            _sh_file_in_cmd = re.search(r'([/\w.~-]+\.sh)\b', last_cmd or "") if last_cmd else None
+            _py3_wrote_sh = (
+                _is_py3_heredoc and not _is_noop_result and _sh_file_in_cmd and
+                bool(re.search(r'\bopen\s*\(.*,\s*["\']w["\']', last_cmd or ""))
+            )
+            if _py3_wrote_sh:
+                _sh_ref = _sh_file_in_cmd.group(1)
+                content_str += (
+                    f"\n\nAUTO-VERIFY NOW (run this BEFORE any other command): "
+                    f"bash -n {_sh_ref} 2>&1 | head -3; "
+                    f"VALID=$(grep -c 'echo -e.*\\\\033' {_sh_ref} 2>/dev/null || echo 0); "
+                    f"echo \"Colorized lines: $VALID\"; "
+                    f"[ \"$VALID\" -lt 20 ] && echo 'NEED MORE: only '$VALID' lines — must reach 20'"
+                )
             if _is_py3_heredoc and _is_noop_result:
                 _searches_template = bool(re.search(r"""echo\s+["']\[""", last_cmd))
                 if _searches_template:
@@ -783,11 +798,14 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False) -> list:
                     args_dict["command"] = (
                         "echo '[PROXY: sed -i is blocked — repeated sed failures detected. "
                         "You MUST use python3 to modify this file — write the script NOW, do NOT explore first. "
-                        "Match display echo lines generically like this: "
+                        "Match display echo lines generically: "
                         "line.strip().startswith(\"echo \") and \">>\" not in line and \">\" not in line.partition(\"echo\")[2] "
-                        "Transform: change echo to echo -e and wrap content in \\\\033[COLOR_CODEm...\\\\033[0m. "
-                        "Use multiple colors (e.g. 1;96 cyan, 1;93 yellow, 1;92 green, 1;91 red). "
-                        "Write ALL modified lines back to the file. DO NOT just read/probe — MODIFY the file now.]'"
+                        "Transform: change echo to echo -e, wrap arg in \\\\033[COLORm...\\\\033[0m. "
+                        "Use 4 colors cycling: 1;96 cyan, 1;93 yellow, 1;92 green, 1;91 red. "
+                        "CRITICAL: preserve line endings — use line.rstrip() for display; add \\\\n back when writing. "
+                        "CRITICAL: write ALL lines back (colorized and non-colorized). "
+                        "DO NOT just read/probe — MODIFY the file now. "
+                        "Template: new_line = indent + echo -e \"\\\\033[COLORm\" + original_arg + \"\\\\033[0m\" + \\\\n]'"
                     )
                     tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                     out.append(tc)
