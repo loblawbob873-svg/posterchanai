@@ -809,18 +809,31 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     "\n\n[PATH NOT FOUND: This path does not exist — confirmed. "
                     "Do not check this path again. Report the finding and move on.]"
                 )
-            # git merge --no-commit loop: model staged changes but never committed
+            # git merge --no-commit: abort+reset is correct for exact HEAD match tasks
             _no_commit_merges = [c for c in bash_history if re.search(r'\bgit\b.*\bmerge\b.*--no-commit', c)]
             _has_committed = any(re.search(r'\bgit\b.*\bcommit\b', c) for c in bash_history)
-            if len(_no_commit_merges) >= 2 and not _has_committed:
+            _merge_auto = bool(re.search(r'Automatic merge|Merge made|stopped before committing', content_str, re.IGNORECASE))
+            if len(_no_commit_merges) >= 1 and not _has_committed:
                 _nc_count = len(_no_commit_merges)
-                content_str += (
-                    f"\n\n[MERGE NOT COMMITTED: 'git merge --no-commit' was run {_nc_count} times but no commit was issued. "
-                    "The merge is staged. You must choose:\n"
-                    "(a) Commit it now: git commit -m 'Merge upstream changes'\n"
-                    "(b) Abort and reset to source HEAD: git merge --abort && git fetch <remote> && git reset --hard FETCH_HEAD\n"
-                    "Checking status again will not help. Execute option (a) or (b) now.]"
-                )
+                if _nc_count == 1 and _merge_auto:
+                    content_str = (
+                        "[WRONG APPROACH: 'git merge --no-commit' creates a NEW merge commit that will NOT match the source HEAD hash. "
+                        "The correct approach for exact HEAD sync is:\n"
+                        "  (1) git merge --abort\n"
+                        "  (2) git fetch <source-path-or-remote>\n"
+                        "  (3) git reset --hard FETCH_HEAD\n"
+                        "Run git merge --abort NOW, then use fetch+reset instead of merge.]"
+                    )
+                elif _nc_count >= 2:
+                    content_str = (
+                        f"[ACTION REQUIRED: 'git merge --no-commit' has been run {_nc_count} times. "
+                        "This approach will NOT achieve exact HEAD match — merge creates a new commit.\n"
+                        "YOUR ONLY VALID NEXT COMMANDS ARE:\n"
+                        "  git merge --abort\n"
+                        "  git fetch <source-path-or-remote>\n"
+                        "  git reset --hard FETCH_HEAD\n"
+                        "Execute these three commands now. Do NOT run git status or git merge again.]"
+                    )
             # Repeated command failure loop: when the same command fails multiple times, guide investigation
             _is_hard_failure = bool(
                 re.search(r'BUILD FAILED|FAILURE:|non-zero exit value\s+[1-9]|Execution failed for task|exit code [1-9]|\bfailed\b.*\bexception\b', content_str, re.IGNORECASE)

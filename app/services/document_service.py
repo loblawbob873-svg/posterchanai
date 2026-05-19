@@ -123,17 +123,33 @@ def extract_image_text(image_base64: str, max_chars: int = 50000) -> Optional[st
 
 
 def extract_pdf_text(pdf_base64: str, max_chars: int = 50000) -> Optional[str]:
-    """Extract text from a base64-encoded PDF"""
+    """Extract text from a base64-encoded PDF. Falls back to OCR for image-based pages."""
     try:
         import fitz  # PyMuPDF
         pdf_bytes = base64.b64decode(pdf_base64)
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
 
         text_parts = []
+        ocr_pages = []  # pages with no machine-readable text
         for page_num, page in enumerate(doc, 1):
             text = page.get_text()
             if text.strip():
                 text_parts.append(f"--- Page {page_num} ---\n{text}")
+            else:
+                ocr_pages.append((page_num, page))
+
+        # OCR fallback for image-based pages (scanned PDFs)
+        if ocr_pages and not text_parts:
+            for page_num, page in ocr_pages[:10]:  # limit to first 10 pages
+                try:
+                    pix = page.get_pixmap(dpi=150)
+                    img_bytes = pix.tobytes("jpeg")
+                    img_b64 = base64.b64encode(img_bytes).decode("utf-8")
+                    ocr_result = extract_image_text(img_b64)
+                    if ocr_result and ocr_result.strip():
+                        text_parts.append(f"--- Page {page_num} (OCR) ---\n{ocr_result}")
+                except Exception as ocr_err:
+                    logger.warning(f"PDF page {page_num} OCR failed: {ocr_err}")
 
         doc.close()
         full_text = "\n\n".join(text_parts)
