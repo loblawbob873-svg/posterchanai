@@ -580,6 +580,20 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     "Or for ALL display echoes: sed -i 's/echo \"/echo -e \"\\\\033[1;96m/g' gentoo.sh\n"
                     "(This replaces 'echo \"' with 'echo -e \"\\033[1;96m' on every quoted echo line.)]"
                 )
+            # Detect single-color verify output — prompt requires multiple colors
+            elif re.search(r'Distinct colors: [12]\b', content_str):
+                content_str += (
+                    "\n\n[WARNING: Task requires MULTIPLE different colors — you are using only one. "
+                    "Add more variety using different sed commands for different sections. "
+                    "Use at least 3 distinct color codes:\n"
+                    "  \\033[1;91m = red    (for errors/warnings)\n"
+                    "  \\033[1;92m = green  (for success/progress)\n"
+                    "  \\033[1;93m = yellow (for labels/sections)\n"
+                    "  \\033[1;94m = blue   (for info)\n"
+                    "  \\033[1;95m = magenta (for headers)\n"
+                    "  \\033[1;96m = cyan   (for status)\n"
+                    "Example: sed -i 's|echo \"Creating Snapshots.....\"|echo -e \"\\\\033[1;92mCreating Snapshots.....\\\\033[0m\"|' /opt/gentoo-installer/gentoo.sh]"
+                )
             # Detect broken color escape codes put outside of echo strings
             elif re.search(r'command not found.*033\[|033\[.*command not found', content_str):
                 content_str = (
@@ -602,6 +616,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         content_str = (
                             "(no output — sed -i is silent on success. Verify: "
                             "grep -c 'echo -e.*\\\\033' /opt/gentoo-installer/gentoo.sh | xargs echo 'Valid colorized echo lines:' ; "
+                            "COLORS=$(grep -oE '\\\\033\\[[0-9;]+m' /opt/gentoo-installer/gentoo.sh | sort -u | wc -l); "
+                            "echo \"Distinct colors: $COLORS (TASK REQUIRES >= 3 different colors — use \\033[1;91m red \\033[1;92m green \\033[1;93m yellow \\033[1;94m blue \\033[1;95m magenta \\033[1;96m cyan)\"; "
                             "BROKEN=$(grep -c '\\\\033.*echo' /opt/gentoo-installer/gentoo.sh); "
                             "[ $BROKEN -gt 0 ] && echo \"BROKEN: $BROKEN lines have color codes BEFORE echo (wrong!) — reset with: git -C /opt/gentoo-installer checkout HEAD gentoo.sh\" ; "
                             "grep -n 'echo -e.*\\\\033' /opt/gentoo-installer/gentoo.sh | head -3)"

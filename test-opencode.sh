@@ -50,3 +50,15 @@ else
     grep -n '\\033' gentoo.sh | head -5
     exit 1
 fi
+
+# Check 4: must use at least 3 distinct color codes
+COLORS=$(grep -oE '\\033\[[0-9;]+m' gentoo.sh 2>/dev/null | sort -u | wc -l)
+echo "[TEST] Distinct color codes: $COLORS"
+if [ "$COLORS" -ge 3 ]; then
+    echo "[TEST] PASS: $COLORS distinct color codes found"
+    grep -oE '\\033\[[0-9;]+m' gentoo.sh | sort -u | head -6
+else
+    echo "[TEST] FAIL: only $COLORS distinct color code(s) — prompt requires multiple different colors"
+    grep -oE '\\033\[[0-9;]+m' gentoo.sh | sort -u
+    exit 1
+fi
