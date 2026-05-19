@@ -515,10 +515,18 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # Empty bash result — inform model sed -i is silent on success
             elif not content_str.strip() or content_str.strip() in ("(no output)", "(exit 0)"):
                 is_sed_cmd = "sed" in last_bash_cmd and ("-i" in last_bash_cmd or "-e" in last_bash_cmd)
+                is_grep_cmd = "grep" in last_bash_cmd and "sed" not in last_bash_cmd
                 if is_sed_cmd:
                     content_str = (
                         "(no output — sed -i is silent on success. If the pattern was not found, "
                         "run grep to verify the file contents and check your pattern.)"
+                    )
+                elif is_grep_cmd and re.search(r'\\?\[', last_bash_cmd):
+                    content_str = (
+                        "(no output — grep found NO matches. Your pattern does not match any line. "
+                        "Bracket text in this file is double-quoted, e.g.: echo \"[Section]\". "
+                        "Run: grep -n 'echo \"\\[' /opt/gentoo-installer/gentoo.sh | head -20 "
+                        "to see the actual quoted text.)"
                     )
                 else:
                     content_str = "(no output — command produced no output)"
@@ -534,15 +542,24 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             last_cmd = bash_history[-1] if bash_history else ""
             if last_cmd and bash_cmd_count.get(last_cmd, 0) > 1:
                 repeat_n = bash_cmd_count[last_cmd]
-                # REPLACE output entirely — appending is ignored by the model
+                # Extract sed pattern to give specific diagnosis
+                quoting_hint = ""
+                sed_pat_m = re.search(r"sed\s+-i\s+[\"']s([/|])(.*?)\1", last_cmd)
+                if sed_pat_m:
+                    raw_pat = sed_pat_m.group(2)
+                    # Pattern has echo \[...\] without double-quotes — classic quoting mismatch
+                    if re.search(r'echo\s+\\?\[', raw_pat) and '"' not in raw_pat:
+                        quoting_hint = (
+                            f" DIAGNOSIS: your sed pattern '{raw_pat}' is missing double-quotes. "
+                            "The file has double-quoted brackets like: echo \"[Section]\". "
+                            "You must include the quote in your pattern, e.g.: "
+                            "sed -i 's|echo \"\\[gentoo\\]\"|echo -e \"\\033[1;92m[gentoo]\\033[0m\"|' FILE"
+                        )
                 content_str = (
-                    f"[ERROR: You have run this EXACT command {repeat_n} times already. "
-                    "STOP repeating it — the result will not change. "
-                    "Your sed pattern is NOT matching the actual text in the file (likely a quoting mismatch — "
-                    "the file may have double-quotes around bracket text like echo \"[Section]\"). "
-                    "You MUST run grep first to find the exact literal text: "
-                    "grep -n 'echo' /opt/gentoo-installer/gentoo.sh | head -30 "
-                    "Then use EXACTLY that text (copy-paste verbatim including any quote characters) as your sed pattern.]"
+                    f"[ERROR: You have run this EXACT command {repeat_n} times — it is NOT working.{quoting_hint} "
+                    "STOP and use a completely different approach: "
+                    "run grep -n 'echo \"\\[' /opt/gentoo-installer/gentoo.sh | head -20 "
+                    "to see ALL the bracket-section echo lines with their exact text, then fix your sed pattern.]"
                 )
             # Wrap in XML tool_result format matching this model's expected pattern
             result.append({"role": "user", "content": f"<tool_result>\n<tool>{last_tool_name}</tool>\n<output>\n{content_str}\n</output>\n</tool_result>"})
