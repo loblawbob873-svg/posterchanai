@@ -653,7 +653,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 last_cmd and
                 (("sed" in last_cmd and "-i" in last_cmd) or
                  re.search(r'\bpython3?\s+-c\b', last_cmd) or
-                 re.search(r'\bpython3?\s+-\b', last_cmd))
+                 re.search(r'python3?\s+-\s', last_cmd))
             )
             # Also catch any command that errors repeatedly (fatal/error in output)
             _has_error_output = bool(re.search(r'\bfatal\b|\berror\b', content_str, re.IGNORECASE))
