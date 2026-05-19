@@ -7,6 +7,8 @@ MODEL="poster/Qwen3.5-9B-Claude-Code-Q4_K_M.gguf"
 echo "[TEST] Resetting ~/aria2 to v1.4.9..."
 git -C ~/aria2 rebase --abort 2>/dev/null || true
 git -C ~/aria2 reset --hard v1.4.9
+# Reset origin URL in case a previous run corrupted it
+git -C ~/aria2 remote set-url origin https://github.com/poppingmoon/aria.git
 # Remove any extra remotes added by previous test runs (keep only 'origin')
 git -C ~/aria2 remote | grep -v '^origin$' | while read r; do git -C ~/aria2 remote remove "$r"; done
 # Remove any extra branches added by previous test runs (keep only current)
