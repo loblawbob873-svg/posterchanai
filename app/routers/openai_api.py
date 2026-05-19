@@ -1760,8 +1760,15 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         tool_calls = _new_tcs
     logger.info(f"[OAI-AGENTIC] len={len(full_text)} head={full_text[:200]!r} tail={full_text[-200:]!r} tool_calls={len(tool_calls)} sed_blocked={_sed_blocked} colorize_done={_colorize_done} empty_bash={_empty_bash_count} origin_warned={_origin_warned} git_fetches={_git_fetch_count} git_reset_done={_git_reset_done}")
 
-    # If model responded with text-only or unparseable tool call (no tool call), nudge it once
-    if not tool_calls and full_text.strip() and len(full_text) < 1200:
+    # If model responded with text-only or unparseable tool call (no tool call), nudge it once.
+    # But suppress the nudge when the response looks like task completion — the model is done and
+    # nudging it just creates an infinite loop of verification commands.
+    _looks_like_done = bool(re.search(
+        r'\b(done|complete[d]?|successfully|created|merged|finished|ready|success)\b'
+        r'|task\s+is\s+(done|complete)|all\s+done|here\s+is\s+the|here\s+are\s+the',
+        full_text, re.IGNORECASE
+    )) if full_text else False
+    if not tool_calls and full_text.strip() and len(full_text) < 1200 and not _looks_like_done:
         nudge_messages = messages + [
             {"role": "assistant", "content": clean_text or full_text[:300]},
             {"role": "user", "content": "Now call a tool immediately. Do NOT write any more text."},
