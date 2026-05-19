@@ -434,6 +434,10 @@ def _tools_system_text(tools: list) -> str:
         "The sed PATTERN must match the COMPLETE echo string exactly — include closing brackets and quotes. "
         "Copy from grep output verbatim: if grep shows echo \"[Section]\" then pattern is echo \"\\[Section\\]\" (escape brackets). "
         "Single \\033 in sed replacement is misinterpreted as \\0 (whole match) + 33, corrupting the file. "
+        "REDIRECT ECHOES: Do NOT add color codes to echo lines that redirect output to files (lines with >> or > after the string). "
+        "ANSI codes in file-writing echoes corrupt config files. Only colorize display echoes (terminal output, no redirect). "
+        "BATCH FILE EDITS: When a task requires modifying many lines, use python3 or awk to process all lines in a single script "
+        "rather than running sed once per line. Individual sed calls per line are too slow for bulk edits. "
         "LOCAL PATHS: when a task references ~/some/path or /path/to/dir, always treat it as a LOCAL filesystem directory on this machine — do NOT fetch from GitHub or any remote URL.\n\n"
     )
     return preamble + "<tools>\n" + "\n\n".join(entries) + "\n</tools>"
@@ -575,6 +579,15 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     "Correct pattern: echo -e \"\\033[COLOR][Text]\\033[0m\" (color INSIDE the echo string). "
                     "Use sed to REPLACE the full echo line, not prepend to it.]"
                 )
+            # Detect colorized echoes that redirect to files (corrupts config files)
+            elif "REDIRECT ERROR:" in content_str and "colorized echoes redirect to files" in content_str:
+                content_str += (
+                    "\n\n[ERROR: You have colorized echo lines that redirect output to files (>> or > after the echo). "
+                    "ANSI color codes in file-writing echoes corrupt configuration files. "
+                    "Find them: grep -nE 'echo -e.*\\\\033.*[>|]' <file> | head "
+                    "Revert those specific lines to their original non-colorized form (remove -e and \\033 codes). "
+                    "Only colorize display echoes that print to the terminal — no >> or > after the echo string.]"
+                )
             # Detect broken color escape codes put outside of echo strings
             elif re.search(r'command not found.*033\[|033\[.*command not found', content_str):
                 content_str = (
@@ -592,12 +605,26 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 _target_is_sh = bool(re.search(r'\.sh\b', last_bash_cmd))
                 if is_sed_cmd:
                     if _target_is_sh:
+                        # Extract target .sh file from sed command
+                        _sh_file_m = re.search(r'(/[^\s\'"]+\.sh|[\w./]+\.sh)\b', last_bash_cmd)
+                        _sh_file = _sh_file_m.group(1).strip("'\"") if _sh_file_m else '/opt/gentoo-installer/gentoo.sh'
+                        # Count previous individual per-line sed calls to detect slow one-at-a-time pattern
+                        _prev_line_seds = sum(1 for c in bash_history if 'sed' in c and '-i' in c and re.search(r"'\d+s/", c))
+                        _batch_hint = ""
+                        if _prev_line_seds > 3:
+                            _batch_hint = (
+                                " IMPORTANT: You have run multiple individual per-line sed calls. "
+                                "For bulk edits requiring many changes, use python3 to process all target lines "
+                                "in a single script call rather than one sed per line — much faster for bulk edits."
+                            )
                         content_str = (
-                            "(no output — sed -i is silent on success. Verify: "
-                            "grep -c 'echo -e.*\\\\033' /opt/gentoo-installer/gentoo.sh | xargs echo 'Valid colorized echo lines:' ; "
-                            "BROKEN=$(grep -c '\\\\033.*echo' /opt/gentoo-installer/gentoo.sh); "
-                            "[ $BROKEN -gt 0 ] && echo \"BROKEN: $BROKEN lines have color codes BEFORE echo (wrong!) — reset with: git -C /opt/gentoo-installer checkout HEAD gentoo.sh\" ; "
-                            "grep -n 'echo -e.*\\\\033' /opt/gentoo-installer/gentoo.sh | head -3)"
+                            f"(no output — sed -i is silent on success. Run to check progress: "
+                            f"VALID=$(grep -c 'echo -e.*\\\\033' {_sh_file}); echo \"Colorized echo lines: $VALID\"; "
+                            f"REDIR=$(grep -cE 'echo -e.*\\\\033.*[>|]' {_sh_file} 2>/dev/null || echo 0); "
+                            "[ \"$REDIR\" -gt 0 ] && echo \"REDIRECT ERROR: $REDIR colorized echoes redirect to files — revert these\"; "
+                            f"BROKEN=$(grep -c '\\\\033.*echo' {_sh_file} 2>/dev/null || echo 0); "
+                            f"[ $BROKEN -gt 0 ] && echo \"BROKEN: $BROKEN lines have color codes BEFORE echo — reset: git checkout HEAD {_sh_file}\"; "
+                            f"grep -n 'echo -e.*\\\\033' {_sh_file} | head -3){_batch_hint}"
                         )
                     else:
                         content_str = (
