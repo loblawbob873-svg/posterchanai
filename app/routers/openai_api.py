@@ -566,15 +566,36 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     "Then use DOUBLE backslash in your sed replacement: \\\\033 not \\033. "
                     "Example: sed -i 's|echo \"\\[Section\\]\"|echo -e \"\\\\033[1;96mSection\\\\033[0m\"|' file]"
                 )
+            # Detect broken color escape codes put outside of echo strings
+            elif re.search(r'command not found.*033\[|033\[.*command not found', content_str):
+                content_str = (
+                    "[ERROR: Broken colorization — ANSI escape codes were placed OUTSIDE of echo strings, "
+                    "causing bash to execute them as commands. "
+                    "Reset: git -C /opt/gentoo-installer checkout HEAD gentoo.sh\n"
+                    "The correct pattern is: echo -e \"\\033[1;96mYour text here\\033[0m\"\n"
+                    "Use sed to REPLACE the original echo line entirely, e.g.: "
+                    "sed -i 's|echo \"\\[Device Detection\\]\"|echo -e \"\\033[1;96m[Device Detection]\\033[0m\"|' file\n"
+                    "Do NOT prepend color codes before echo — put them INSIDE the echo string.]"
+                )
             # Empty bash result — inform model sed -i is silent on success
             elif not content_str.strip() or content_str.strip() in ("(no output)", "(exit 0)"):
                 is_sed_cmd = "sed" in last_bash_cmd and ("-i" in last_bash_cmd or "-e" in last_bash_cmd)
                 is_grep_cmd = "grep" in last_bash_cmd and "sed" not in last_bash_cmd
+                # Check if sed was on a shell script — suggest bash -n verification
+                _target_is_sh = bool(re.search(r'\.sh\b', last_bash_cmd))
                 if is_sed_cmd:
-                    content_str = (
-                        "(no output — sed -i is silent on success. If the pattern was not found, "
-                        "run grep to verify the file contents and check your pattern.)"
-                    )
+                    if _target_is_sh:
+                        content_str = (
+                            "(no output — sed -i is silent on success. "
+                            "Verify syntax and colorization: "
+                            "bash -n /opt/gentoo-installer/gentoo.sh && echo 'syntax OK' && "
+                            "grep -n 'echo -e.*\\\\033' /opt/gentoo-installer/gentoo.sh | head -5)"
+                        )
+                    else:
+                        content_str = (
+                            "(no output — sed -i is silent on success. If the pattern was not found, "
+                            "run grep to verify the file contents and check your pattern.)"
+                        )
                 elif is_grep_cmd and re.search(r'\\?\[', last_bash_cmd):
                     content_str = (
                         "(no output — grep found NO matches. Your pattern does not match any line. "
