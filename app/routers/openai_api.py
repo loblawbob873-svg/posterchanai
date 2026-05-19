@@ -463,6 +463,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
     fetch_head_reset_done = False  # True after model successfully runs reset --hard FETCH_HEAD
     colorize_task_done = False     # True after model successfully colorizes a .sh file
     rebase_conflict_count = 0      # Number of rebase conflicts seen (helps escalate guidance)
+    silent_sed_sh_count = 0        # Number of sed -i on .sh files that produced no output
     for msg in messages:
         role = msg.get("role", "")
         content = msg.get("content") or ""
@@ -682,7 +683,9 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     if _target_is_sh:
                         # Extract target .sh file from sed command
                         _sh_file_m = re.search(r'(/[^\s\'"]+\.sh|[\w./]+\.sh)\b', last_bash_cmd)
-                        _sh_file = _sh_file_m.group(1).strip("'\"") if _sh_file_m else '/opt/gentoo-installer/gentoo.sh'
+                        _sh_file = _sh_file_m.group(1).strip("'\"") if _sh_file_m else "the target file"
+                        # Track silent sed-i failures on .sh files — escalate to blocked after threshold
+                        silent_sed_sh_count += 1
                         # Detect echo -e in sed source pattern — original lines don't have -e yet
                         _sed_src_m = re.search(r"sed\s+-i\s+['\"]?s([/|!])(.*?)\1", last_bash_cmd)
                         _sed_src = _sed_src_m.group(2) if _sed_src_m else ""
@@ -694,24 +697,35 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 f"Verify: VALID=$(grep -c 'echo -e.*\\\\033' {_sh_file}); echo \"Colorized lines: $VALID\"]"
                             )
                         else:
-                            # Count previous individual per-line sed calls to detect slow one-at-a-time pattern
-                            _prev_line_seds = sum(1 for c in bash_history if 'sed' in c and '-i' in c and re.search(r"'\d+s/", c))
-                            _batch_hint = ""
-                            if _prev_line_seds > 3:
-                                _batch_hint = (
-                                    " IMPORTANT: You have run multiple individual per-line sed calls. "
-                                    "For bulk edits requiring many changes, use python3 to process all target lines "
-                                    "in a single script call rather than one sed per line — much faster for bulk edits."
+                            if silent_sed_sh_count >= 3:
+                                # Multiple silent-fail sed calls on a .sh file — escalate to blocked
+                                content_str = (
+                                    f"[ERROR: sed has silently matched 0 lines {silent_sed_sh_count} times on {_sh_file}. "
+                                    "SED IS NOW BLOCKED. Your sed patterns are not matching anything. "
+                                    "Switch to python3 — write a heredoc script that reads all lines and rewrites them. "
+                                    "Filter: s.strip().startswith('echo ') and '>>' not in s and '>' not in s.partition('echo')[2] and ' | ' not in s. "
+                                    "Use SINGLE-QUOTED f-strings: f'{indent}echo -e \"\\\\033[{col}m{text}\\\\033[0m\"\\n' "
+                                    "Colors cycling: ['1;96','1;93','1;92','1;91']. Write ALL lines back.]"
                                 )
-                            content_str = (
-                                f"(no output — sed -i is silent on success. Run to check progress: "
-                                f"VALID=$(grep -c 'echo -e.*\\\\033' {_sh_file}); echo \"Colorized echo lines: $VALID\"; "
-                                f"REDIR=$(grep -cE 'echo -e.*\\\\033.*[>|]' {_sh_file} 2>/dev/null || echo 0); "
-                                "[ \"$REDIR\" -gt 0 ] && echo \"REDIRECT ERROR: $REDIR colorized echoes redirect to files — revert these\"; "
-                                f"BROKEN=$(grep -c '\\\\033.*echo' {_sh_file} 2>/dev/null || echo 0); "
-                                f"[ $BROKEN -gt 0 ] && echo \"BROKEN: $BROKEN lines have color codes BEFORE echo — reset: git checkout HEAD {_sh_file}\"; "
-                                f"grep -n 'echo -e.*\\\\033' {_sh_file} | head -3){_batch_hint}"
-                            )
+                            else:
+                                # Count previous individual per-line sed calls to detect slow one-at-a-time pattern
+                                _prev_line_seds = sum(1 for c in bash_history if 'sed' in c and '-i' in c and re.search(r"'\d+s/", c))
+                                _batch_hint = ""
+                                if _prev_line_seds > 3:
+                                    _batch_hint = (
+                                        " IMPORTANT: You have run multiple individual per-line sed calls. "
+                                        "For bulk edits requiring many changes, use python3 to process all target lines "
+                                        "in a single script call rather than one sed per line — much faster for bulk edits."
+                                    )
+                                content_str = (
+                                    f"(no output — sed -i is silent on success. Run to check progress: "
+                                    f"VALID=$(grep -c 'echo -e.*\\\\033' {_sh_file}); echo \"Colorized echo lines: $VALID\"; "
+                                    f"REDIR=$(grep -cE 'echo -e.*\\\\033.*[>|]' {_sh_file} 2>/dev/null || echo 0); "
+                                    "[ \"$REDIR\" -gt 0 ] && echo \"REDIRECT ERROR: $REDIR colorized echoes redirect to files — revert these\"; "
+                                    f"BROKEN=$(grep -c '\\\\033.*echo' {_sh_file} 2>/dev/null || echo 0); "
+                                    f"[ $BROKEN -gt 0 ] && echo \"BROKEN: $BROKEN lines have color codes BEFORE echo — reset: git checkout HEAD {_sh_file}\"; "
+                                    f"grep -n 'echo -e.*\\\\033' {_sh_file} | head -3){_batch_hint}"
+                                )
                     else:
                         content_str = (
                             "(no output — sed -i is silent on success. If the pattern was not found, "
