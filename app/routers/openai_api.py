@@ -410,6 +410,7 @@ def _tools_system_text(tools: list) -> str:
     if not tools:
         return ""
     entries = []
+    tool_names = []
     for t in tools:
         name = t.get("name", "")
         desc = t.get("description", "")
@@ -422,7 +423,14 @@ def _tools_system_text(tools: list) -> str:
             pdesc = pdef.get("description", "") if isinstance(pdef, dict) else ""
             params.append(f"  {pname}{req}: {pdesc}")
         entries.append(f"### {name}\n{desc}" + ("\nParameters:\n" + "\n".join(params) if params else ""))
-    return "<tools>\n" + "\n\n".join(entries) + "\n</tools>"
+        tool_names.append(name)
+    names_str = ", ".join(tool_names)
+    preamble = (
+        f"IMPORTANT: Only the following tools exist: {names_str}. "
+        "There is NO 'replace' tool — use bash to run shell commands (sed, awk, python3) for file modifications. "
+        "The bash tool requires a 'command' argument (string).\n\n"
+    )
+    return preamble + "<tools>\n" + "\n\n".join(entries) + "\n</tools>"
 
 
 def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) -> list:
