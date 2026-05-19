@@ -430,7 +430,9 @@ def _tools_system_text(tools: list) -> str:
         "There is NO 'replace' tool — use bash to run shell commands (sed, awk, python3) for file modifications. "
         "The bash tool requires a 'command' argument (string). "
         "ANSI COLOR ESCAPING: when inserting ANSI codes with sed -i, use \\\\033 (two backslashes) NOT \\033 in the replacement string — "
-        "e.g.: sed -i 's|echo \"\\[Section\\]\"|echo -e \"\\\\033[1;96mSection\\\\033[0m\"|' file. "
+        "e.g.: sed -i 's|echo \"\\[Device Detection\\]\"|echo -e \"\\\\033[1;96m[Device Detection]\\\\033[0m\"|' file. "
+        "The sed PATTERN must match the COMPLETE echo string exactly — include closing brackets and quotes. "
+        "Copy from grep output verbatim: e.g. if grep shows echo \"[Device Detection]\" then pattern is echo \"\\[Device Detection\\]\". "
         "Single \\033 in sed replacement is misinterpreted as \\0 (whole match) + 33, corrupting the file. "
         "LOCAL PATHS: when a task references ~/some/path or /path/to/dir, always treat it as a LOCAL filesystem directory on this machine — do NOT fetch from GitHub or any remote URL.\n\n"
     )
@@ -641,9 +643,13 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 if "sed" in last_cmd and "-i" in last_cmd:
                     content_str = (
                         f"[ERROR: You have run this EXACT sed command {repeat_n} times — it is NOT working.{quoting_hint} "
-                        "STOP and use a completely different approach: "
-                        "run grep -n 'echo \"\\[' /opt/gentoo-installer/gentoo.sh | head -20 "
-                        "to see ALL the bracket-section echo lines with their exact text, then fix your sed pattern.]"
+                        "STOP. Your sed PATTERN is wrong — it's not matching any lines. "
+                        "Run: grep -n 'echo \"\\[' /opt/gentoo-installer/gentoo.sh | head -20 "
+                        "to see the EXACT text of each echo line. "
+                        "CRITICAL: Your pattern must match the FULL echo string including closing bracket and quotes. "
+                        "If grep shows: echo \"[Device Detection]\" "
+                        "then your sed pattern must be: 'echo \"\\[Device Detection\\]\"' (include the \\] closing bracket). "
+                        "Partial patterns like 'echo \"\\[Device' will NOT match.]"
                     )
                 else:
                     # For non-sed: append loop warning but keep original error message visible
