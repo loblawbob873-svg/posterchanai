@@ -800,22 +800,30 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "Do NOT run any more dmesg or journalctl commands.]"
                     )
             # Directory exploration loop: model keeps running ls/find/tree to browse dirs
-            # without making progress. After 4+ consecutive listing commands, push it forward.
+            # without making progress. After 3+ consecutive listing commands, push it forward.
+            # After 5+, replace the result entirely (denying directory info forces a decision).
             _is_listing_cmd = bool(re.search(r'^\s*(ls\b|find\b|tree\b)', last_bash_cmd or ""))
             if _is_listing_cmd:
-                _recent = bash_history[-8:] if len(bash_history) >= 8 else bash_history
+                _recent = bash_history[-10:] if len(bash_history) >= 10 else bash_history
                 _consec_ls = 0
                 for _rc in reversed(_recent):
                     if re.search(r'^\s*(ls\b|find\b|tree\b)', _rc):
                         _consec_ls += 1
                     else:
                         break
-                if _consec_ls >= 4:
+                if _consec_ls >= 5:
+                    content_str = (
+                        f"[EXPLORATION LOOP — RESULT SUPPRESSED: You have run {_consec_ls} consecutive "
+                        "directory listing commands and ignored previous warnings. Directory contents are "
+                        "no longer shown. STOP. Take the next concrete action: run the script, fix the "
+                        "error, or report what is missing. Do NOT run ls/find/tree again.]"
+                    )
+                elif _consec_ls >= 3:
                     content_str += (
                         f"\n\n[EXPLORATION LOOP: You have run {_consec_ls} consecutive directory listing "
-                        "commands. You have seen enough of the structure. STOP listing directories and "
-                        "take the next concrete action toward completing your task — run the command, "
-                        "edit the file, or fix the error. Do not run any more ls/find/tree commands.]"
+                        "commands. STOP listing — you have enough information. Take the next concrete "
+                        "action toward your task: run the command, edit the file, or fix the error. "
+                        "Do not run any more ls/find/tree commands.]"
                     )
             # Command/path lookup helpers — define early so all checks below can use them
             _last_actual_cmd = bash_history[-1] if bash_history else ""
