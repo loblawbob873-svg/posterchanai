@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Setting
-from app.routers.openai_api import verify_api_key, _resolve_model, _repair_json
+from app.routers.openai_api import verify_api_key, _resolve_model, _repair_json, _redirect_hallucinated_sed
 from app.services.inference_factory import get_inference_service, prepare_vram_for_llm
 from app.services.text_utils import inject_no_think, strip_thinking_tags
 
@@ -247,6 +247,24 @@ async def _stream_response(text: str, tool_calls: list, input_tokens: int = 0, o
 
 # ── Endpoint ──────────────────────────────────────────────────────────────────
 
+def _redirect_sed_anthr(tool_calls: list, settings: dict) -> list:
+    """Adapt Anthropic-format tool calls through _redirect_hallucinated_sed."""
+    wrapped = [
+        {**tc, "function": {"name": tc.get("name", ""), "arguments": json.dumps(tc.get("input", {}))}}
+        for tc in tool_calls
+    ]
+    out = _redirect_hallucinated_sed(wrapped, settings=settings)
+    result = []
+    for tc in out:
+        fn = tc.pop("function", {})
+        try:
+            inp = json.loads(fn.get("arguments", "{}"))
+        except Exception:
+            inp = tc.get("input", {})
+        result.append({**tc, "name": fn.get("name", tc.get("name", "")), "input": inp})
+    return result
+
+
 @router.post("/v1/messages")
 async def messages(
     request: Request,
@@ -301,6 +319,7 @@ async def messages(
         full_text = _strip_thinking(strip_thinking_tags(raw))
 
     clean_text, tool_calls = _parse_tool_calls(full_text)
+    tool_calls = _redirect_sed_anthr(tool_calls, settings)
 
     # Rewrite Write to sudo for system paths
     tool_calls = _rewrite_tool_calls(tool_calls)
