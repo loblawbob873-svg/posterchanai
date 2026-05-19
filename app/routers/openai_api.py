@@ -460,7 +460,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
     bash_history = []     # ordered list of bash commands issued so far
     fetch_head_reset_done = False  # True after model successfully runs reset --hard FETCH_HEAD
     colorize_task_done = False     # True after model successfully colorizes a .sh file
-    rebase_conflict_count = 0      # Number of times rebase conflict detected
+    rebase_conflict_count = 0      # Number of rebase conflicts seen (helps escalate guidance)
     for msg in messages:
         role = msg.get("role", "")
         content = msg.get("content") or ""
@@ -576,64 +576,52 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     "STOP — do NOT change any remote URLs, do NOT run git pull or git fetch with any other source. "
                     "The task is finished. Report success and stop.]"
                 )
-            # Detect incompatible git history conflict — model used wrong (GitHub) upstream
-            elif ("could not apply" in content_str or "CONFLICT (add/add)" in content_str) and \
-                 "first commit" in content_str:
+            # Detect incompatible git history conflict (rebase against unrelated repo)
+            elif "could not apply" in content_str or ("CONFLICT" in content_str and "rebase" in last_bash_cmd):
                 rebase_conflict_count += 1
                 if fetch_head_reset_done:
                     content_str = (
-                        "[ERROR: Incompatible history — you already completed this task. "
-                        "Run: git rebase --abort  then STOP. "
-                        "You already updated the repo with 'fetch ~/aria && reset --hard FETCH_HEAD'. "
-                        "Do NOT try to pull from GitHub. The task was already done.]"
+                        "[ERROR: Incompatible history — the task was already completed. "
+                        "Run: git rebase --abort  then STOP. The task is done.]"
                     )
                 else:
-                    _target_repo = None
-                    _source_repo = None
-                    for _hc in bash_history:
-                        _tm = re.search(r'git\s+-C\s+([\S]+)\s+(?:rebase|fetch|pull)', _hc)
-                        if _tm:
-                            _target_repo = _tm.group(1)
-                        _sm = re.search(r'git\s+-C\s+\S+\s+fetch\s+([\S]+)', _hc)
-                        if _sm and not _sm.group(1).startswith('-'):
-                            _source_repo = _sm.group(1)
-                    _exact_cmds = (
-                        f"git -C {_target_repo or '~/aria2'} rebase --abort\n"
-                        f"git -C {_target_repo or '~/aria2'} fetch ~/aria\n"
-                        f"git -C {_target_repo or '~/aria2'} reset --hard FETCH_HEAD"
-                    )
+                    _target_m = re.search(r'git\s+-C\s+([\S]+)\s+(?:rebase|fetch|pull)', last_bash_cmd)
+                    _target_repo = _target_m.group(1) if _target_m else "<TARGET>"
                     if rebase_conflict_count >= 2:
                         content_str = (
-                            f"[ABORT ALL REBASE ATTEMPTS. You have hit incompatible history {rebase_conflict_count} times. "
-                            f"Rebase will NEVER work — these repos have unrelated histories. "
-                            f"Run these EXACT three commands NOW:\n{_exact_cmds}\n"
-                            f"~/aria is a local directory, NOT a remote. git fetch ~/aria works directly. "
-                            f"Do NOT add any remote. Do NOT use 'upstream'. Just run these three commands.]"
+                            f"[ABORT ALL REBASE ATTEMPTS ({rebase_conflict_count} failures). "
+                            f"Rebase will NOT work — these repos have incompatible histories. "
+                            f"Run: git -C {_target_repo} rebase --abort\n"
+                            f"Then look at your original task for the SOURCE path and run:\n"
+                            f"  git -C {_target_repo} fetch <SOURCE_PATH>\n"
+                            f"  git -C {_target_repo} reset --hard FETCH_HEAD\n"
+                            f"git fetch accepts local filesystem paths directly — no remote needed.]"
                         )
                     else:
                         content_str = (
-                            f"[ERROR: WRONG source — incompatible git history (conflict {rebase_conflict_count}/2). "
-                            f"You fetched from GitHub which has unrelated history. Rebase CANNOT work here. "
-                            f"Run these EXACT commands:\n{_exact_cmds}\n"
-                            f"~/aria is a local directory on this machine — git fetch accepts local paths directly. "
-                            f"Do NOT add remotes. Do NOT use 'upstream'. Run the 3 commands above.]"
+                            f"[ERROR: Incompatible git history — rebase failed with conflict. "
+                            f"Run: git -C {_target_repo} rebase --abort\n"
+                            f"Then use the SOURCE path from the task directly:\n"
+                            f"  git -C {_target_repo} fetch <SOURCE_PATH>\n"
+                            f"  git -C {_target_repo} reset --hard FETCH_HEAD\n"
+                            f"git fetch accepts local filesystem paths — no remote or GitHub URL needed.]"
                         )
             # Detect invalid upstream — branch not found after fetch
             elif "invalid upstream" in content_str or "couldn't find remote ref" in content_str:
                 content_str += (
-                    "\n\n[ERROR: Branch not found — 'master' does not exist at that remote. "
-                    "DO NOT keep retrying with 'origin/master'. "
-                    "Check what branches exist: git -C ~/aria2 branch -r\n"
-                    "OR use the local source repo path directly (RECOMMENDED): "
-                    "git -C ~/aria2 fetch ~/aria && git -C ~/aria2 reset --hard FETCH_HEAD\n"
-                    "(git fetch accepts local filesystem paths — ~/aria is a local git repo on this machine)]"
+                    "\n\n[ERROR: Branch not found at that remote. "
+                    "Check what branches exist: git branch -r\n"
+                    "OR fetch directly from the local source path specified in the task — "
+                    "git fetch accepts local filesystem paths directly.]"
                 )
             # Detect mangled \033 — model used \033 instead of \\033 in sed replacement
             elif re.search(r'echo\s+-e\s+.*33\[', content_str) and '\\033' not in content_str and '\033' not in content_str:
+                _sh_file_m3 = re.search(r'(/[^\s\'"]+\.sh|[\w./~-]+\.sh)\b', last_bash_cmd)
+                _sh_ref3 = _sh_file_m3.group(1) if _sh_file_m3 else "the target file"
                 content_str = (
-                    "[ERROR: The sed command corrupted the file — GNU sed interpreted \\033 as \\0 (whole match) + 33, "
-                    "producing garbled output. Reset the file: git -C /opt/gentoo-installer checkout HEAD gentoo.sh "
-                    "Then use DOUBLE backslash in your sed replacement: \\\\033 not \\033. "
+                    f"[ERROR: The sed command corrupted {_sh_ref3} — GNU sed interpreted \\033 as \\0 (whole match) + 33, "
+                    "producing garbled output. Reset the file with git checkout HEAD, "
+                    "then use DOUBLE backslash in your sed replacement: \\\\033 not \\033. "
                     "Example: sed -i 's|echo \"\\[Section\\]\"|echo -e \"\\\\033[1;96mSection\\\\033[0m\"|' file]"
                 )
             # Detect broken color escape codes: \033 before echo keyword (color outside string)
@@ -828,121 +816,36 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "Write corrected script now.]"
                     )
             if _is_py3_heredoc and _is_noop_result:
-                _searches_template = bool(re.search(r"""echo\s+["']\[""", last_cmd))
-                if _searches_template:
-                    # Model is searching for a placeholder/template pattern that doesn't exist
-                    content_str = (
-                        "[ERROR: Your script searched for a literal echo template like "
-                        "'echo \"[Section]\"' but no such line exists in the file. "
-                        "That was an example placeholder, NOT the actual content. "
-                        "FIRST, see what echo lines actually exist: "
-                        "grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '>' | head -40 "
-                        "THEN write a python3 script that matches those actual lines — "
-                        "match generically using: line.strip().startswith('echo ') and '>>' not in line "
-                        "and '>' not in line.partition('echo')[2] — "
-                        "NOT a hardcoded specific string. Write the complete modifying python3 script.]"
+                _py3_heredoc_count = sum(
+                    1 for c in bash_history if re.search(r'python3?\s+(<<|-\s)', c)
+                )
+                if _py3_heredoc_count >= 2:
+                    content_str += (
+                        f"\n\n[WARNING: You have run {_py3_heredoc_count} python3 scripts that produced no output. "
+                        "Your pattern is not matching any lines. Check what the file actually contains with grep, "
+                        "then rewrite the script to match the actual line format.]"
                     )
-                else:
-                    _py3_heredoc_count = sum(
-                        1 for c in bash_history if re.search(r'python3?\s+-\s', c)
-                    )
-                    if _py3_heredoc_count >= 2:
-                        content_str += (
-                            f"\n\n[WARNING: You have now run {_py3_heredoc_count} python3 heredoc probes "
-                            "that produce no output. Your pattern is not matching any lines. "
-                            "Run: grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '>' | head -30 "
-                            "to see actual echo lines, then write a python3 script that modifies them. "
-                            "Match lines generically: line.strip().startswith('echo ') and '>>' not in line "
-                            "and '>' not in line.partition('echo')[2]]"
-                        )
-            # Exploration cap: if N+ commands run and no write has happened AND model is exploring
-            # a .sh file (colorization context), force a write. Do NOT fire for git tasks.
+            # Exploration cap: too many reads without any write — time to act
             _total_cmds = len(bash_history)
             _any_write = any(
                 re.search(r'python3?\s+<<|sed\s+-i|open\s*\(.*,\s*["\']w["\']', c)
                 for c in bash_history
             )
-            # Only fire if at least one command actually referenced a .sh file (colorization context)
-            _sh_exp_m = None
-            for _hc in bash_history:
-                _m = re.search(r'([/\w.~-]+\.sh)\b', _hc)
-                if _m:
-                    _sh_exp_m = _m
-                    break
-            if _total_cmds >= 7 and not _any_write and not colorize_task_done and _sh_exp_m:
-                # Find most recent .sh reference for accuracy
-                for _hc in reversed(bash_history):
-                    _m2 = re.search(r'([/\w.~-]+\.sh)\b', _hc)
-                    if _m2:
-                        _sh_exp_m = _m2
-                        break
-                _sh_exp = _sh_exp_m.group(1)
+            if _total_cmds >= 7 and not _any_write and not colorize_task_done and not fetch_head_reset_done:
                 content_str += (
                     f"\n\n[EXPLORATION CAP: You have run {_total_cmds} commands without modifying any file. "
-                    f"You already know enough. Write the colorization script NOW:\n"
-                    f"python3 << 'PYEOF'\n"
-                    f"with open('{_sh_exp}') as f: lines = f.readlines()\n"
-                    f"colors = ['1;96', '1;93', '1;92', '1;91']\n"
-                    f"ci = 0; out = []\n"
-                    f"for line in lines:\n"
-                    f"    s = line.rstrip()\n"
-                    f"    if s.strip().startswith('echo ') and '>>' not in s and '>' not in s.partition('echo')[2] and ' | ' not in s and '\\\\033' not in s:\n"
-                    f"        col = colors[ci % 4]; ci += 1\n"
-                    f"        arg = s.partition('echo ')[2].strip().strip('\"').strip(\"'\")\n"
-                    f"        indent = s[:len(s) - len(s.lstrip())]\n"
-                    f"        out.append(indent + 'echo -e \"\\\\033[' + col + 'm' + arg + '\\\\033[0m\"\\n')\n"
-                    f"    else: out.append(line)\n"
-                    f"with open('{_sh_exp}', 'w') as f: f.writelines(out)\n"
-                    f"print(ci, 'lines colorized')\n"
-                    f"PYEOF\n"
-                    f"Run this script NOW as your next bash command. Stop reading, start writing.]"
+                    "You already have enough information. Stop reading and take action now — "
+                    "run the command that performs the actual task.]"
                 )
             # General catch-all: same command run 5+ times — inject a hard stop
             if last_cmd and bash_cmd_count.get(last_cmd, 0) >= 5:
                 _loop_count = bash_cmd_count[last_cmd]
-                _is_readonly_sh_grep = (
-                    re.search(r'\bgrep\b|\bcat\b|\bhead\b|\btail\b|\bwc\b', last_cmd) and
-                    re.search(r'\.sh\b', last_cmd) and
-                    not re.search(r'python3?\s+<<|sed\s+-i|open\s*\(', last_cmd)
+                content_str += (
+                    f"\n\n[LOOP DETECTED: This exact command has been run {_loop_count} times. "
+                    "The result is not changing. STOP running this command. "
+                    "If the task is complete, report success to the user and stop ALL commands. "
+                    "If the task is not complete, try a completely different approach.]"
                 )
-                _is_empty_bash = 'PROXY: bash tool called with no command' in last_cmd
-                # For both "stuck grepping a .sh file" and "stuck calling bash with no command":
-                # find the most recently referenced .sh file and tell model to colorize it now
-                if _is_readonly_sh_grep or _is_empty_bash:
-                    # Find .sh file from current cmd or history
-                    _sh_loop_ref = '/opt/gentoo-installer/gentoo.sh'
-                    for _hcmd in reversed(bash_history):
-                        _hm = re.search(r'([/\w.~-]+\.sh)\b', _hcmd)
-                        if _hm:
-                            _sh_loop_ref = _hm.group(1)
-                            break
-                    content_str += (
-                        f"\n\n[LOOP DETECTED: This command has been run {_loop_count} times with no progress. "
-                        f"STOP. Write the python3 colorization script RIGHT NOW using bash:\n"
-                        f"python3 << 'PYEOF'\n"
-                        f"with open('{_sh_loop_ref}') as f: lines = f.readlines()\n"
-                        f"colors = ['1;96', '1;93', '1;92', '1;91']\n"
-                        f"ci = 0; out = []\n"
-                        f"for line in lines:\n"
-                        f"    s = line.rstrip()\n"
-                        f"    if s.strip().startswith('echo ') and '>>' not in s and '>' not in s.partition('echo')[2] and ' | ' not in s and '\\\\033' not in s:\n"
-                        f"        col = colors[ci % 4]; ci += 1\n"
-                        f"        arg = s.partition('echo ')[2].strip().strip('\"').strip(\"'\")\n"
-                        f"        indent = s[:len(s) - len(s.lstrip())]\n"
-                        f"        out.append(indent + 'echo -e \"\\\\033[' + col + 'm' + arg + '\\\\033[0m\"\\n')\n"
-                        f"    else: out.append(line)\n"
-                        f"with open('{_sh_loop_ref}', 'w') as f: f.writelines(out)\n"
-                        f"print(ci, 'lines colorized')\n"
-                        f"PYEOF\n"
-                        f"Run this script now as the bash command. Do not call bash with an empty command.]"
-                    )
-                else:
-                    content_str += (
-                        f"\n\n[LOOP DETECTED: This exact command has been run {_loop_count} times. "
-                        "The result is not changing. STOP running this command. "
-                        "If the task is complete, report success to the user and stop ALL commands. "
-                        "If the task is not complete, try a completely different approach.]"
-                    )
             # Wrap in XML tool_result format matching this model's expected pattern
             result.append({"role": "user", "content": f"<tool_result>\n<tool>{last_tool_name}</tool>\n<output>\n{content_str}\n</output>\n</tool_result>"})
         else:
@@ -968,12 +871,11 @@ def _redirect_hallucinated_sed(tool_calls: list, settings: dict = None) -> list:
     return list(tool_calls)
 
 
-def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_done: bool = False, stuck_sh_ref: str = None) -> list:
+def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_done: bool = False) -> list:
     """Fix common sed mistakes in bash tool calls before they reach opencode.
 
     sed_blocked: if True, sed -i calls are replaced with a blocking error (model must use python3).
     colorize_done: if True, python3 writes to .sh files are blocked (colorization already complete).
-    stuck_sh_ref: if set, model is stuck in empty-bash loop — inject colorization script for this .sh file.
     """
     out = []
     for tc in tool_calls:
@@ -983,29 +885,6 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
             try:
                 args_dict = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
                 cmd = args_dict.get("command", "")
-                # Inject colorization script when model is stuck in empty-bash loop
-                if stuck_sh_ref and (not cmd or 'PROXY: bash tool called with no command' in cmd):
-                    _tmpl_stuck = (
-                        f"with open('{stuck_sh_ref}') as f: lines = f.readlines()\n"
-                        "colors = ['1;96', '1;93', '1;92', '1;91']\n"
-                        "ci = 0; out = []\n"
-                        "for line in lines:\n"
-                        "    s = line.rstrip()\n"
-                        "    if s.strip().startswith('echo ') and '>>' not in s and '>' not in s.partition('echo')[2] and ' | ' not in s and '\\\\033' not in s:\n"
-                        "        col = colors[ci % 4]; ci += 1\n"
-                        "        arg = s.partition('echo ')[2].strip().strip('\"').strip(\"'\")\n"
-                        "        indent = s[:len(s) - len(s.lstrip())]\n"
-                        "        out.append(indent + 'echo -e \"\\\\033[' + col + 'm' + arg + '\\\\033[0m\"\\n')\n"
-                        "    else: out.append(line)\n"
-                        f"with open('{stuck_sh_ref}', 'w') as f: f.writelines(out)\n"
-                        "print(ci, 'lines colorized')"
-                    )
-                    args_dict["command"] = "python3 << 'PROXYSCRIPT'\n" + _tmpl_stuck + "\nPROXYSCRIPT"
-                    args_dict["description"] = f"Colorize display echoes in {stuck_sh_ref}"
-                    tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
-                    logger.info(f"[STUCK-INJECT] Injected colorization script for {stuck_sh_ref}")
-                    out.append(tc)
-                    continue
                 # Block python3 writes to .sh files after colorization is already complete
                 _is_py3_write_sh = (
                     bool(re.search(r'python3?\s+(<<|-\s|-c\b)', cmd)) and
@@ -1026,9 +905,12 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                 _re_matches_echo = bool(re.search(r're\.\w+\s*\(\s*[rf]?["\'].*echo', cmd))
                 _has_color_intent = bool(re.search(r'\\\\033|colors\s*=\s*\[', cmd))
                 if _is_py3_cmd and _writes_sh and (_searches_echo_e_as_source or _has_color_intent):
-                    # Extract target file from the command; fall back to gentoo.sh
+                    # Extract target file from the command; skip if not found
                     _sh_file_m = re.search(r"open\s*\([rf]?['\"]([^'\"]+\.sh)['\"]", cmd)
-                    _sh_file = _sh_file_m.group(1) if _sh_file_m else '/opt/gentoo-installer/gentoo.sh'
+                    if not _sh_file_m:
+                        out.append(tc)
+                        continue
+                    _sh_file = _sh_file_m.group(1)
                     # Replace the broken script with a corrected one using string concat (no f-strings)
                     # Note: '\\\\033' not in s skips already-colorized lines (idempotent on re-run)
                     _tmpl = (
@@ -1406,23 +1288,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         ("[TASK COMPLETE:" in (m.get("content") or "") and "lines colorized" in (m.get("content") or ""))
         for m in messages if m.get("role") == "user"
     )
-    # Detect if model is stuck in empty-bash loop — find .sh file from conversation to inject
-    _empty_bash_count = sum(
-        1 for m in messages if m.get("role") == "user"
-        and "PROXY: bash tool called with no command" in (m.get("content") or "")
-    )
-    _stuck_sh_ref = None
-    if _empty_bash_count >= 3 and not _colorize_done:
-        # Find most recent .sh file mentioned anywhere in the conversation
-        for m in reversed(messages):
-            _sh_m = re.search(r'([/\w.~-]+\.sh)\b', m.get("content") or "")
-            if _sh_m:
-                _stuck_sh_ref = _sh_m.group(1)
-                break
-        if not _stuck_sh_ref:
-            _stuck_sh_ref = '/opt/gentoo-installer/gentoo.sh'
-        logger.info(f"[EMPTY-BASH-LOOP] count={_empty_bash_count} stuck_sh_ref={_stuck_sh_ref}")
-    tool_calls = _fix_sed_tool_calls(tool_calls, sed_blocked=_sed_blocked, colorize_done=_colorize_done, stuck_sh_ref=_stuck_sh_ref)
+    tool_calls = _fix_sed_tool_calls(tool_calls, sed_blocked=_sed_blocked, colorize_done=_colorize_done)
     tool_calls = _redirect_hallucinated_sed(tool_calls, settings=settings)
     logger.info(f"[OAI-AGENTIC] len={len(full_text)} head={full_text[:200]!r} tail={full_text[-200:]!r} tool_calls={len(tool_calls)} sed_blocked={_sed_blocked} colorize_done={_colorize_done}")
 
