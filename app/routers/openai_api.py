@@ -834,12 +834,20 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     re.search(r'\.sh\b', last_cmd) and
                     not re.search(r'python3?\s+<<|sed\s+-i|open\s*\(', last_cmd)
                 )
-                if _is_readonly_sh_grep:
-                    _sh_loop_m = re.search(r'([/\w.~-]+\.sh)\b', last_cmd)
-                    _sh_loop_ref = _sh_loop_m.group(1) if _sh_loop_m else '/opt/gentoo-installer/gentoo.sh'
+                _is_empty_bash = 'PROXY: bash tool called with no command' in last_cmd
+                # For both "stuck grepping a .sh file" and "stuck calling bash with no command":
+                # find the most recently referenced .sh file and tell model to colorize it now
+                if _is_readonly_sh_grep or _is_empty_bash:
+                    # Find .sh file from current cmd or history
+                    _sh_loop_ref = '/opt/gentoo-installer/gentoo.sh'
+                    for _hcmd in reversed(bash_history):
+                        _hm = re.search(r'([/\w.~-]+\.sh)\b', _hcmd)
+                        if _hm:
+                            _sh_loop_ref = _hm.group(1)
+                            break
                     content_str += (
-                        f"\n\n[LOOP DETECTED: This read-only command has been run {_loop_count} times — you already have enough information. "
-                        f"STOP exploring. Write the python3 colorization script RIGHT NOW:\n"
+                        f"\n\n[LOOP DETECTED: This command has been run {_loop_count} times with no progress. "
+                        f"STOP. Write the python3 colorization script RIGHT NOW using bash:\n"
                         f"python3 << 'PYEOF'\n"
                         f"with open('{_sh_loop_ref}') as f: lines = f.readlines()\n"
                         f"colors = ['1;96', '1;93', '1;92', '1;91']\n"
@@ -855,7 +863,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         f"with open('{_sh_loop_ref}', 'w') as f: f.writelines(out)\n"
                         f"print(ci, 'lines colorized')\n"
                         f"PYEOF\n"
-                        f"Run exactly this script now. Do not grep again first.]"
+                        f"Run this script now as the bash command. Do not call bash with an empty command.]"
                     )
                 else:
                     content_str += (
@@ -889,11 +897,12 @@ def _redirect_hallucinated_sed(tool_calls: list, settings: dict = None) -> list:
     return list(tool_calls)
 
 
-def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_done: bool = False) -> list:
+def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_done: bool = False, stuck_sh_ref: str = None) -> list:
     """Fix common sed mistakes in bash tool calls before they reach opencode.
 
     sed_blocked: if True, sed -i calls are replaced with a blocking error (model must use python3).
     colorize_done: if True, python3 writes to .sh files are blocked (colorization already complete).
+    stuck_sh_ref: if set, model is stuck in empty-bash loop — inject colorization script for this .sh file.
     """
     out = []
     for tc in tool_calls:
@@ -903,6 +912,29 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
             try:
                 args_dict = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
                 cmd = args_dict.get("command", "")
+                # Inject colorization script when model is stuck in empty-bash loop
+                if stuck_sh_ref and (not cmd or 'PROXY: bash tool called with no command' in cmd):
+                    _tmpl_stuck = (
+                        f"with open('{stuck_sh_ref}') as f: lines = f.readlines()\n"
+                        "colors = ['1;96', '1;93', '1;92', '1;91']\n"
+                        "ci = 0; out = []\n"
+                        "for line in lines:\n"
+                        "    s = line.rstrip()\n"
+                        "    if s.strip().startswith('echo ') and '>>' not in s and '>' not in s.partition('echo')[2] and ' | ' not in s and '\\\\033' not in s:\n"
+                        "        col = colors[ci % 4]; ci += 1\n"
+                        "        arg = s.partition('echo ')[2].strip().strip('\"').strip(\"'\")\n"
+                        "        indent = s[:len(s) - len(s.lstrip())]\n"
+                        "        out.append(indent + 'echo -e \"\\\\033[' + col + 'm' + arg + '\\\\033[0m\"\\n')\n"
+                        "    else: out.append(line)\n"
+                        f"with open('{stuck_sh_ref}', 'w') as f: f.writelines(out)\n"
+                        "print(ci, 'lines colorized')"
+                    )
+                    args_dict["command"] = "python3 << 'PROXYSCRIPT'\n" + _tmpl_stuck + "\nPROXYSCRIPT"
+                    args_dict["description"] = f"Colorize display echoes in {stuck_sh_ref}"
+                    tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                    logger.info(f"[STUCK-INJECT] Injected colorization script for {stuck_sh_ref}")
+                    out.append(tc)
+                    continue
                 # Block python3 writes to .sh files after colorization is already complete
                 _is_py3_write_sh = (
                     bool(re.search(r'python3?\s+(<<|-\s|-c\b)', cmd)) and
@@ -1303,7 +1335,23 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         ("[TASK COMPLETE:" in (m.get("content") or "") and "lines colorized" in (m.get("content") or ""))
         for m in messages if m.get("role") == "user"
     )
-    tool_calls = _fix_sed_tool_calls(tool_calls, sed_blocked=_sed_blocked, colorize_done=_colorize_done)
+    # Detect if model is stuck in empty-bash loop — find .sh file from conversation to inject
+    _empty_bash_count = sum(
+        1 for m in messages if m.get("role") == "user"
+        and "PROXY: bash tool called with no command" in (m.get("content") or "")
+    )
+    _stuck_sh_ref = None
+    if _empty_bash_count >= 3 and not _colorize_done:
+        # Find most recent .sh file mentioned anywhere in the conversation
+        for m in reversed(messages):
+            _sh_m = re.search(r'([/\w.~-]+\.sh)\b', m.get("content") or "")
+            if _sh_m:
+                _stuck_sh_ref = _sh_m.group(1)
+                break
+        if not _stuck_sh_ref:
+            _stuck_sh_ref = '/opt/gentoo-installer/gentoo.sh'
+        logger.info(f"[EMPTY-BASH-LOOP] count={_empty_bash_count} stuck_sh_ref={_stuck_sh_ref}")
+    tool_calls = _fix_sed_tool_calls(tool_calls, sed_blocked=_sed_blocked, colorize_done=_colorize_done, stuck_sh_ref=_stuck_sh_ref)
     tool_calls = _redirect_hallucinated_sed(tool_calls, settings=settings)
     logger.info(f"[OAI-AGENTIC] len={len(full_text)} head={full_text[:200]!r} tail={full_text[-200:]!r} tool_calls={len(tool_calls)} sed_blocked={_sed_blocked} colorize_done={_colorize_done}")
 
