@@ -806,6 +806,25 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False) -> list:
                 args_dict = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
                 cmd = args_dict.get("command", "")
                 # Block sed -i after repeated loop failures — force model to use python3
+                # Detect python3 script that searches for 'echo -e' in source lines — original lines don't have -e yet
+                _is_py3_cmd = bool(re.search(r'python3?\s+(<<|-\s)', cmd))
+                _writes_sh = bool(re.search(r'open\s*\(.*\.sh.*,\s*["\']w["\']', cmd))
+                _searches_echo_e_as_source = bool(re.search(r're\.\w+\s*\(\s*[rf]?["\'].*echo.*-e', cmd))
+                if _is_py3_cmd and _writes_sh and _searches_echo_e_as_source:
+                    args_dict["command"] = "\n".join([
+                        "cat << 'PROXYMSG'",
+                        "[PROXY: Your python3 script searches for 'echo -e' in source lines but ORIGINAL lines",
+                        "just have 'echo' without -e. The re.search will always return None and 0 lines get colorized.",
+                        "FIX: remove the re.search('echo -e'...) match check entirely.",
+                        "Instead: if is_display_echo(line): apply color to EVERY such line directly.",
+                        "Use strip() to get the arg after 'echo ': arg = line.strip()[len('echo '):].strip()",
+                        "Then write: indent + 'echo -e' + quote + color + arg.strip(quotes) + reset + quote + newline",
+                        "PROXYMSG",
+                    ])
+                    tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                    out.append(tc)
+                    logger.info("[PY3-FIX] Blocked python3 with echo -e in source match")
+                    continue
                 if sed_blocked and "sed" in cmd and "-i" in cmd:
                     args_dict["command"] = "\n".join([
                         "cat << 'PROXYMSG'",
