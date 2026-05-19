@@ -1763,7 +1763,11 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
             tool_calls = new_tcs
     # Intercept git merge <remote/branch> --no-commit: this can't achieve exact HEAD match;
     # replace with the correct approach: git fetch <remote> <branch> && git reset --hard FETCH_HEAD
-    if tool_calls:
+    # Skip if the task explicitly involves conflict resolution or file preservation — those need
+    # a real merge, not a hard reset.
+    _sys_content = " ".join(m.get("content") or "" for m in messages if m.get("role") in ("system", "user"))
+    _is_complex_merge = bool(re.search(r'\b(conflict|preserve|resolve|keep\s+\w+\s+version|branding|checkout\s+HEAD)\b', _sys_content, re.IGNORECASE))
+    if tool_calls and not _is_complex_merge:
         _new_tcs_merge = []
         for _tc_m in tool_calls:
             _fn_m = _tc_m.get("function", {})
