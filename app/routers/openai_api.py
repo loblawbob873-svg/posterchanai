@@ -534,7 +534,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                  re.search(r'python3?\s+(<<|-\s|-c\b)', last_bash_cmd) and \
                  re.search(r'\.sh\b', last_bash_cmd):
                 _sh_file_m2 = re.search(r'([/\w.~-]+\.sh)\b', last_bash_cmd)
-                _sh_ref2 = _sh_file_m2.group(1) if _sh_file_m2 else '/opt/gentoo-installer/gentoo.sh'
+                _sh_ref2 = _sh_file_m2.group(1) if _sh_file_m2 else "the target file"
                 if re.search(r'bash\s+-n\b', content_str):
                     # Model wrote 'bash -n ...' as a Python statement — Python cannot call shell commands directly
                     content_str = (
