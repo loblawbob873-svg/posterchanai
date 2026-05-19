@@ -516,6 +516,13 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # Intercept "No changes" errors — model needs a new strategy
             elif "no changes to apply" in content_str.lower() or "identical" in content_str.lower():
                 content_str += "\n\n[IMPORTANT: The edit failed because oldString was not found or was identical to newString. Do NOT repeat the same edit. Use bash with sed -i for targeted replacements instead, e.g. bash(command=\"sed -i 's/original/replacement/g' file\").]"
+            # Detect successful reset --hard FETCH_HEAD — task likely done, tell model to verify and stop
+            elif "HEAD is now at" in content_str and "reset --hard FETCH_HEAD" in last_bash_cmd:
+                content_str += (
+                    "\n\n[SUCCESS: Repository updated to FETCH_HEAD. "
+                    "Verify with: git log --oneline -3  — if the latest commits match the source, the task is COMPLETE. "
+                    "Do NOT add more remotes, do NOT pull from other sources. Just verify and finish.]"
+                )
             # Detect incompatible git history conflict — model used wrong (GitHub) upstream
             elif ("could not apply" in content_str or "CONFLICT (add/add)" in content_str) and \
                  "first commit" in content_str:
