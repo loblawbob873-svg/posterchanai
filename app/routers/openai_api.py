@@ -535,13 +535,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     )
                 else:
                     content_str = (
-                        "[ERROR: Python SyntaxError in your script. Most likely cause: "
-                        "backslash-quote inside a double-quoted f-string terminates it prematurely — "
-                        "f\"{x}echo -e \\\"{arg}\\033[0m\\\"\" is UNTERMINATED (\\\" does NOT close a double-quoted f-string). "
-                        "FIX: Use string concatenation for the ANSI line — no f-string needed: "
-                        "out.append(indent + 'echo -e \"\\\\033[' + col + 'm' + arg + '\\\\033[0m\"\\n') "
-                        "where indent, col, arg are plain strings computed separately. "
-                        "Write ALL lines back, run bash -n on the file after writing.]"
+                        "[ERROR: Python SyntaxError — likely an unescaped quote inside a string or regex that ended it early. "
+                        "Common cause: r\"pattern['\"]\", where the '\"' inside ['\"] terminates the outer double-quoted string. "
+                        "SOLUTION: Avoid regex entirely for matching echo lines — use this simple filter: "
+                        "  s.strip().startswith('echo ') and '>>' not in s and '>' not in s.partition('echo ')[2] and ' | ' not in s "
+                        "No regex needed, no quote mixing issues. "
+                        "Extract the argument: arg = s.partition('echo ')[2].strip().strip('\"').strip(\"'\") "
+                        "Also: add print(ci, 'lines colorized') at the end. "
+                        "Write ALL lines back, run bash -n in a SEPARATE bash call afterward.]"
                     )
             # Intercept sed syntax errors — unify into one clear fix instruction
             elif _sed_error:
@@ -862,7 +863,10 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False) -> list:
                 _is_py3_cmd = bool(re.search(r'python3?\s+(<<|-\s)', cmd))
                 _writes_sh = bool(re.search(r'open\s*\(.*\.sh.*,\s*["\']w["\']', cmd))
                 _searches_echo_e_as_source = bool(re.search(r're\.\w+\s*\(\s*[rf]?["\'].*echo.*-e', cmd))
-                if _is_py3_cmd and _writes_sh and _searches_echo_e_as_source:
+                # Also catch: regex used to match echo lines for colorization (any pattern with echo + color intent)
+                _re_matches_echo = bool(re.search(r're\.\w+\s*\(\s*[rf]?["\'].*echo', cmd))
+                _has_color_intent = bool(re.search(r'\\\\033|colors\s*=\s*\[', cmd))
+                if _is_py3_cmd and _writes_sh and (_searches_echo_e_as_source or (_re_matches_echo and _has_color_intent)):
                     # Extract target file from the command; fall back to gentoo.sh
                     _sh_file_m = re.search(r"open\s*\([rf]?['\"]([^'\"]+\.sh)['\"]", cmd)
                     _sh_file = _sh_file_m.group(1) if _sh_file_m else '/opt/gentoo-installer/gentoo.sh'
