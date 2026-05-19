@@ -437,6 +437,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
     """Convert OpenAI messages (with tool_calls / tool role) to model text format."""
     result = []
     tools_text = _tools_system_text(tools)
+    bash_cmd_count = {}   # command string -> how many times it's been called
+    bash_history = []     # ordered list of bash commands issued so far
     for msg in messages:
         role = msg.get("role", "")
         content = msg.get("content") or ""
@@ -455,6 +457,12 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     args = json.loads(fn.get("arguments", "{}"))
                 except Exception:
                     args = {}
+                # Track bash commands for loop detection
+                if name in ("bash", "Bash"):
+                    cmd = args.get("command", "")
+                    if cmd:
+                        bash_cmd_count[cmd] = bash_cmd_count.get(cmd, 0) + 1
+                        bash_history.append(cmd)
                 # Use XML format matching this model's training format
                 parts.append(f'<tool_call>\n<tool>{name}</tool>\n<input>\n{json.dumps(args, indent=2)}\n</input>\n</tool_call>')
             result.append({"role": "assistant", "content": "\n".join(parts)})
@@ -521,6 +529,16 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     content_str[:6000]
                     + f"\n...[output truncated — {line_count} lines total. "
                     "Use grep or targeted bash commands to find specific lines instead.]"
+                )
+            # Detect command loop — same bash command run more than once
+            last_cmd = bash_history[-1] if bash_history else ""
+            if last_cmd and bash_cmd_count.get(last_cmd, 0) > 1:
+                repeat_n = bash_cmd_count[last_cmd]
+                content_str += (
+                    f"\n\n[IMPORTANT: You have now run this exact command {repeat_n} times with the same result. "
+                    "The command is NOT doing what you expect. If this is a sed command, the pattern is NOT matching "
+                    "the actual text in the file — run grep to find the exact literal text of the target lines, then "
+                    "use that exact text verbatim in your sed command (including quotes, spaces, punctuation).]"
                 )
             # Wrap in XML tool_result format matching this model's expected pattern
             result.append({"role": "user", "content": f"<tool_result>\n<tool>{last_tool_name}</tool>\n<output>\n{content_str}\n</output>\n</tool_result>"})
