@@ -5,7 +5,13 @@ from typing import Optional
 import logging
 import json
 import re
+import asyncio
+import time
 from datetime import datetime, timedelta
+
+# Accumulate Telegram media group messages (multiple docs sent at once)
+# dict[media_group_id] -> {"attachments": list, "text": str, "created_at": float}
+_MEDIA_GROUP_CACHE: dict = {}
 
 from app.database import get_db, SessionLocal
 from app.models import User, Setting, Conversation, Message
@@ -1375,7 +1381,30 @@ async def _handle_telegram_update(update: dict, db: Session):
                                     content_type = "image/gif"
                                 attachments.append((file_name, downloaded_data, content_type))
                                 logger.info(f"Downloaded document: {file_name}, size: {len(downloaded_data)}")
-            
+
+            # Handle Telegram media groups: multiple docs sent together arrive as separate webhooks
+            # with the same media_group_id. Accumulate them before processing.
+            media_group_id = message.get("media_group_id")
+            if media_group_id and attachments:
+                if media_group_id not in _MEDIA_GROUP_CACHE:
+                    _MEDIA_GROUP_CACHE[media_group_id] = {
+                        "attachments": [], "text": "", "created_at": time.time()
+                    }
+                _mg = _MEDIA_GROUP_CACHE[media_group_id]
+                if text.strip():
+                    _mg["text"] = text  # use caption from whichever message has it
+                _mg["attachments"].extend(attachments)
+                # Wait briefly for remaining messages in this group to arrive
+                await asyncio.sleep(2.0)
+                # Only first handler to pop processes; others return early
+                _mg_data = _MEDIA_GROUP_CACHE.pop(media_group_id, None)
+                if _mg_data is None:
+                    return {"ok": True}
+                attachments = _mg_data["attachments"]
+                text = _mg_data["text"] or text
+                text_lower = text.lower().strip()
+                logger.info(f"[MEDIA-GROUP] {media_group_id}: assembled {len(attachments)} attachments, text={text!r}")
+
             # Extract text from PDF/Office document attachments (concatenate all, not just last)
             doc_text = None
             pdf_attachments = []  # collect raw PDF bytes for potential merge

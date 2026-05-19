@@ -32,6 +32,11 @@ echo "Installing dependencies..."
 pip install -r requirements.txt
 
 echo ""
+echo "Note: For PDF OCR support (scanned PDFs), install the tesseract-ocr system package:"
+echo "  Debian/Ubuntu: sudo apt install tesseract-ocr"
+echo "  Arch:          sudo pacman -S tesseract"
+echo "  Gentoo:        sudo emerge app-text/tesseract"
+echo ""
 echo "Setup complete!"
 echo ""
 echo "To run the application:"
