@@ -1376,26 +1376,49 @@ async def _handle_telegram_update(update: dict, db: Session):
                                 attachments.append((file_name, downloaded_data, content_type))
                                 logger.info(f"Downloaded document: {file_name}, size: {len(downloaded_data)}")
             
-            # Extract text from PDF/Office document attachments
+            # Extract text from PDF/Office document attachments (concatenate all, not just last)
             doc_text = None
+            pdf_attachments = []  # collect raw PDF bytes for potential merge
             if attachments:
                 import base64 as _b64
-                from app.services.document_service import extract_pdf_text, extract_document_text
+                from app.services.document_service import extract_pdf_text, extract_document_text, merge_pdfs
+                doc_parts = []
                 for _fname, _fdata, _ctype in attachments:
                     try:
                         _fdata_b64 = _b64.b64encode(_fdata).decode('utf-8')
                         if _ctype == "application/pdf" or _fname.lower().endswith('.pdf'):
+                            pdf_attachments.append((_fname, _fdata))
                             _extracted = extract_pdf_text(_fdata_b64)
                             if _extracted:
-                                doc_text = f"[PDF: {_fname}]\n\n{_extracted}"
+                                doc_parts.append(f"[PDF: {_fname}]\n\n{_extracted}")
                                 logger.info(f"Extracted {len(_extracted)} chars from PDF: {_fname}")
                         elif _ctype not in ("image/jpeg", "image/png", "image/gif", "image/webp"):
                             _extracted = extract_document_text(_fdata_b64)
                             if _extracted:
-                                doc_text = f"[Document: {_fname}]\n\n{_extracted}"
+                                doc_parts.append(f"[Document: {_fname}]\n\n{_extracted}")
                                 logger.info(f"Extracted {len(_extracted)} chars from document: {_fname}")
                     except Exception as _doc_err:
                         logger.error(f"Document extraction error for {_fname}: {_doc_err}")
+                if doc_parts:
+                    doc_text = "\n\n---\n\n".join(doc_parts)
+
+            # If user says "merge" with multiple PDFs, merge them server-side and send back as file
+            _is_merge_intent = bool(re.search(r'\bmerge\b', text_lower)) and len(pdf_attachments) >= 2
+            if _is_merge_intent:
+                try:
+                    _merged_bytes = merge_pdfs([_fdata for _, _fdata in pdf_attachments])
+                    if _merged_bytes:
+                        _names = "+".join(fn.replace('.pdf', '') for fn, _ in pdf_attachments[:3])
+                        _out_name = f"merged_{_names}.pdf"
+                        await telegram_service.send_document_bytes(chat_id, _merged_bytes, _out_name, f"✅ Merged {len(pdf_attachments)} PDFs into {_out_name}")
+                        return {"ok": True}
+                    else:
+                        await telegram_service.send_message(chat_id, "❌ PDF merge failed — could not process the files.")
+                        return {"ok": True}
+                except Exception as _merge_err:
+                    logger.error(f"PDF merge error: {_merge_err}")
+                    await telegram_service.send_message(chat_id, f"❌ PDF merge failed: {_merge_err}")
+                    return {"ok": True}
 
             # If we have images, always run OCR for later use
             if has_images and attachments:

@@ -273,20 +273,27 @@ def _build_model_messages(request: MessagesRequest) -> list:
                     _reset_happened = any(re.search(r'\bgit\b.*reset.*--hard', c) for c in bash_history)
                     if _fetch_count >= 3 and not _reset_happened:
                         content_str = (
-                            f"[FETCH LOOP: git fetch has been run {_fetch_count} times but git reset --hard FETCH_HEAD has NOT been run. "
-                            "Run this EXACT command NOW: git reset --hard FETCH_HEAD\n"
-                            "An empty 'git log HEAD..FETCH_HEAD' does NOT mean the task is complete — "
-                            "your HEAD may differ from the source HEAD. Only reset guarantees an exact match.]"
+                            f"[ACTION REQUIRED: git fetch has run {_fetch_count} times. FETCH_HEAD is set.\n"
+                            "YOUR ONLY VALID NEXT COMMAND IS:\n"
+                            "  git reset --hard FETCH_HEAD\n"
+                            "CRITICAL: An empty 'git log HEAD..FETCH_HEAD' does NOT mean the task is done — "
+                            "your HEAD is a merge commit that DIFFERS from the source HEAD.\n"
+                            "Do NOT run git status. Do NOT run git fetch. Do NOT run git log.\n"
+                            "Execute git reset --hard FETCH_HEAD immediately — nothing else.]"
                         )
                     elif _fetch_count >= 2:
                         content_str = (
-                            f"[FETCH COMPLETE (run {_fetch_count} times): FETCH_HEAD is set. "
-                            "Run NOW: git reset --hard FETCH_HEAD — do NOT fetch again.]"
+                            f"[ACTION REQUIRED: git fetch has run {_fetch_count} times. FETCH_HEAD is set.\n"
+                            "YOUR ONLY VALID NEXT COMMAND IS:\n"
+                            "  git reset --hard FETCH_HEAD\n"
+                            "Do NOT run git status. Do NOT run git fetch again. Do NOT run git log.\n"
+                            "Execute git reset --hard FETCH_HEAD immediately — nothing else.]"
                         )
                     else:
                         content_str += (
                             "\n\n[FETCH COMPLETE: FETCH_HEAD is now set to the source HEAD. "
-                            "Run now: git reset --hard FETCH_HEAD]"
+                            "Run now: git reset --hard FETCH_HEAD\n"
+                            "(An empty git log does NOT mean the task is done — your HEAD may be a merge commit that differs from source.)]"
                         )
 
                 # Total git-status loop: catches alternation between variants
@@ -301,8 +308,12 @@ def _build_model_messages(request: MessagesRequest) -> list:
                         )
                     elif not _reset_done:
                         content_str = (
-                            f"[LOOP DETECTED: git status run {_total_git_status} times, no reset done. "
-                            "Run: git reset --hard FETCH_HEAD]"
+                            f"[ACTION REQUIRED: git status has been run {_total_git_status} times. "
+                            "git fetch was already completed. FETCH_HEAD is set.\n"
+                            "YOUR ONLY VALID NEXT COMMAND IS:\n"
+                            "  git reset --hard FETCH_HEAD\n"
+                            "Do NOT run git status. Do NOT run git fetch. Do NOT run git log.\n"
+                            "Execute git reset --hard FETCH_HEAD immediately — nothing else.]"
                         )
                     else:
                         content_str = (

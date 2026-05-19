@@ -158,6 +158,29 @@ class TelegramService:
             logger.error(f"Failed to send Telegram document: {e}")
             return {"ok": False, "error": str(e)}
     
+    async def send_document_bytes(self, chat_id: str, file_bytes, filename: str, caption: str = None) -> dict:
+        """Send a document from raw bytes to a Telegram chat (multipart upload)."""
+        if not self.bot_token:
+            return {"ok": False, "error": "Bot token not configured"}
+        url = f"{self.api_base}{self.bot_token}/sendDocument"
+        data = {"chat_id": chat_id}
+        if caption:
+            data["caption"] = caption
+        if hasattr(file_bytes, 'read'):
+            file_content = file_bytes.read()
+        else:
+            file_content = bytes(file_bytes)
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(url, data=data, files={"document": (filename, file_content, "application/pdf")})
+                result = response.json()
+                if not result.get("ok"):
+                    logger.error(f"Telegram sendDocument error: {result}")
+                return result
+        except Exception as e:
+            logger.error(f"Failed to send Telegram document bytes: {e}")
+            return {"ok": False, "error": str(e)}
+
     async def set_webhook(self, webhook_url: str) -> dict:
         """Set the webhook for the bot."""
         if not self.bot_token:
