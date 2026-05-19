@@ -611,6 +611,11 @@ def _fix_sed_tool_calls(tool_calls: list) -> list:
                     fixed = cmd
                     # Strip '^' anchor before 'echo' — echo lines are often indented inside functions
                     fixed = re.sub(r"(s[/|!])\^(echo\b)", r"\1\2", fixed)
+                    # Fix \033 → \\033 in sed replacement: GNU sed treats \0 as whole match,
+                    # so \033 → (match)33 corrupting the file. Use \\033 to get literal \033.
+                    # Only replace single backslash \033 (not already-doubled \\033).
+                    if '\\033' in fixed:
+                        fixed = re.sub(r'(?<!\\)\\033', r'\\\\033', fixed)
                     if fixed != cmd:
                         args_dict["command"] = fixed
                         tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
