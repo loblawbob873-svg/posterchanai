@@ -760,6 +760,18 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     content_str = "(no output — command produced no output)"
             elif "-- No entries --" in content_str and re.search(r'\bjournalctl\b', last_bash_cmd):
                 content_str = "(journalctl: no matching log entries — this means no errors were found in the logs for that time range. This is good news.)"
+            # git merge --no-commit loop: model staged changes but never committed
+            _no_commit_merges = [c for c in bash_history if re.search(r'\bgit\b.*\bmerge\b.*--no-commit', c)]
+            _has_committed = any(re.search(r'\bgit\b.*\bcommit\b', c) for c in bash_history)
+            if len(_no_commit_merges) >= 2 and not _has_committed:
+                _nc_count = len(_no_commit_merges)
+                content_str += (
+                    f"\n\n[MERGE NOT COMMITTED: 'git merge --no-commit' was run {_nc_count} times but no commit was issued. "
+                    "The merge is staged. You must choose:\n"
+                    "(a) Commit it now: git commit -m 'Merge upstream changes'\n"
+                    "(b) Abort and reset to source HEAD: git merge --abort && git fetch <remote> && git reset --hard FETCH_HEAD\n"
+                    "Checking status again will not help. Execute option (a) or (b) now.]"
+                )
             # Repeated command failure loop: when the same command fails multiple times, guide investigation
             _last_actual_cmd = bash_history[-1] if bash_history else ""
             _is_hard_failure = bool(
@@ -1117,6 +1129,21 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                     out.append(tc)
                     logger.info("[PY3-FIX] Corrected python3 with echo -e in source match — running fixed script")
                     continue
+                # Fix git fetch remote/branch → git fetch remote branch (invalid slash syntax)
+                # 'git fetch foo/bar' treats 'foo/bar' as a remote name, not remote=foo branch=bar
+                _git_fetch_slash = re.search(
+                    r'\bgit\s+fetch\s+([A-Za-z][A-Za-z0-9_-]+)/([A-Za-z0-9][A-Za-z0-9_/-]*)', cmd
+                )
+                if _git_fetch_slash and '://' not in _git_fetch_slash.group(0):
+                    _rem = _git_fetch_slash.group(1)
+                    _brn = _git_fetch_slash.group(2)
+                    _fixed_cmd = cmd.replace(f'git fetch {_rem}/{_brn}', f'git fetch {_rem} {_brn}', 1)
+                    if _fixed_cmd != cmd:
+                        args_dict["command"] = _fixed_cmd
+                        tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                        logger.info(f"[GIT-FETCH-FIX] Corrected: 'git fetch {_rem}/{_brn}' → 'git fetch {_rem} {_brn}'")
+                        cmd = _fixed_cmd
+
                 if sed_blocked and "sed" in cmd and "-i" in cmd:
                     args_dict["command"] = "\n".join([
                         "cat << 'PROXYMSG'",
