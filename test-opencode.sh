@@ -13,7 +13,7 @@ echo "[TEST] gentoo.sh reset."
 echo "[TEST] Current colorization state:"
 grep -c '\\033' gentoo.sh 2>/dev/null | xargs echo "  Colorized lines:" || echo "  Colorized lines: 0"
 
-PROMPT='Add vibrant cyberpunk ANSI colors to the display echo statements in /opt/gentoo-installer/gentoo.sh. You MUST use at least 3 DIFFERENT color codes across different sections — not just one color for everything. Mix colors like \033[1;91m (red), \033[1;92m (green), \033[1;93m (yellow), \033[1;94m (blue), \033[1;95m (magenta), \033[1;96m (cyan).'
+PROMPT='Add vibrant cyberpunk ANSI colors to ALL the display echo statements in /opt/gentoo-installer/gentoo.sh. There are approximately 90 display echo lines — colorize as many as possible. Use at least 3 DIFFERENT color codes across different sections (e.g. red, green, yellow, blue, magenta, cyan). Do not stop after a few lines — colorize the whole file thoroughly.'
 
 echo "[TEST] Starting opencode..."
 timeout 120 "$OPENCODE" run --model "$MODEL" "$PROMPT" || true
@@ -39,14 +39,14 @@ if [ "$BROKEN" -gt 0 ]; then
 fi
 echo "[TEST] PASS: no broken color patterns"
 
-# Check 3: must have valid echo -e lines with \033 color codes
+# Check 3: must have valid echo -e lines with \033 color codes (at least 20)
 VALID=$(grep 'echo -e.*\\033' gentoo.sh 2>/dev/null | wc -l)
 echo "[TEST] Valid colorized echo lines: $VALID"
-if [ "$VALID" -gt 0 ]; then
+if [ "$VALID" -ge 20 ]; then
     echo "[TEST] PASS: $VALID valid echo -e color lines found"
     grep -n 'echo -e.*\\033' gentoo.sh | head -5
 else
-    echo "[TEST] FAIL: no valid 'echo -e' color lines found (file may have broken escapes)"
+    echo "[TEST] FAIL: only $VALID colorized lines — need at least 20 (there are ~90 display echo lines in this file)"
     grep -n '\\033' gentoo.sh | head -5
     exit 1
 fi
