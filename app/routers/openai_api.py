@@ -431,7 +431,8 @@ def _tools_system_text(tools: list) -> str:
         "The bash tool requires a 'command' argument (string). "
         "ANSI COLOR ESCAPING: when inserting ANSI codes with sed -i, use \\\\033 (two backslashes) NOT \\033 in the replacement string — "
         "e.g.: sed -i 's|echo \"\\[Section\\]\"|echo -e \"\\\\033[1;96mSection\\\\033[0m\"|' file. "
-        "Single \\033 in sed replacement is misinterpreted as \\0 (whole match) + 33, corrupting the file.\n\n"
+        "Single \\033 in sed replacement is misinterpreted as \\0 (whole match) + 33, corrupting the file. "
+        "LOCAL PATHS: when a task references ~/some/path or /path/to/dir, always treat it as a LOCAL filesystem directory on this machine — do NOT fetch from GitHub or any remote URL.\n\n"
     )
     return preamble + "<tools>\n" + "\n\n".join(entries) + "\n</tools>"
 
