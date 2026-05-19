@@ -245,14 +245,14 @@ def _build_model_messages(request: MessagesRequest) -> list:
                             _consec_ls_a += 1
                         else:
                             break
-                    if _consec_ls_a >= 5:
+                    if _consec_ls_a >= 4:
                         content_str = (
                             f"[EXPLORATION LOOP — RESULT SUPPRESSED: You have run {_consec_ls_a} consecutive "
                             "directory listing commands and ignored previous warnings. Directory contents are "
                             "no longer shown. STOP. Take the next concrete action: run the script, fix the "
                             "error, or report what is missing. Do NOT run ls/find/tree again.]"
                         )
-                    elif _consec_ls_a >= 3:
+                    elif _consec_ls_a >= 2:
                         content_str += (
                             f"\n\n[EXPLORATION LOOP: You have run {_consec_ls_a} consecutive directory listing "
                             "commands. STOP listing — you have enough information. Take the next concrete "
