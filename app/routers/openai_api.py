@@ -438,7 +438,9 @@ def _tools_system_text(tools: list) -> str:
         "ANSI codes in file-writing echoes corrupt config files. Only colorize display echoes (terminal output, no redirect). "
         "BATCH FILE EDITS: When a task requires modifying many lines, use python3 or awk to process all lines in a single script "
         "rather than running sed once per line. Individual sed calls per line are too slow for bulk edits. "
-        "LOCAL PATHS: when a task references ~/some/path or /path/to/dir, always treat it as a LOCAL filesystem directory on this machine — do NOT fetch from GitHub or any remote URL.\n\n"
+        "LOCAL PATHS: when a task references a local path (~/some/path or /path/to/dir) as a SOURCE repo, treat it as a LOCAL filesystem git repo — do NOT fetch it from GitHub. "
+        "Git accepts local paths as fetch sources: git fetch ~/local/repo. "
+        "This does NOT restrict using explicitly configured git remotes (e.g. git fetch upstream, git fetch origin) — those use their configured URL as normal.\n\n"
     )
     return preamble + "<tools>\n" + "\n\n".join(entries) + "\n</tools>"
 
@@ -517,15 +519,30 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             elif ('SyntaxError' in content_str or 'SyntaxWarning' in content_str) and \
                  re.search(r'python3?\s+(<<|-\s|-c\b)', last_bash_cmd) and \
                  re.search(r'\.sh\b', last_bash_cmd):
-                content_str = (
-                    "[ERROR: Python SyntaxError in your script. Most likely cause: "
-                    "backslash-quote inside a double-quoted f-string terminates it prematurely — "
-                    "f\"{x}echo -e \\\"{arg}\\033[0m\\\"\" is UNTERMINATED (\\\" does NOT close a double-quoted f-string). "
-                    "FIX: Use string concatenation for the ANSI line — no f-string needed: "
-                    "out.append(indent + 'echo -e \"\\\\033[' + col + 'm' + arg + '\\\\033[0m\"\\n') "
-                    "where indent, col, arg are plain strings computed separately. "
-                    "Write ALL lines back, run bash -n on the file after writing.]"
-                )
+                _sh_file_m2 = re.search(r'([/\w.~-]+\.sh)\b', last_bash_cmd)
+                _sh_ref2 = _sh_file_m2.group(1) if _sh_file_m2 else '/opt/gentoo-installer/gentoo.sh'
+                if re.search(r'bash\s+-n\b', content_str):
+                    # Model wrote 'bash -n ...' as a Python statement — Python cannot call shell commands directly
+                    content_str = (
+                        f"[ERROR: Python SyntaxError — 'bash -n' is not valid Python syntax. "
+                        f"Python has no 'bash' function; you cannot call shell commands directly inside a Python script. "
+                        f"Remove the 'bash -n ...' line (and any '&& print(...)' attached to it) from the Python script entirely. "
+                        f"Instead: add 'print(ci, \"lines colorized\")' at the END of the Python script (before the closing heredoc). "
+                        f"After the python3 call succeeds, verify in a SEPARATE bash call: "
+                        f"bash(command='bash -n {_sh_ref2} 2>&1 | head -3 && "
+                        f"VALID=$(grep -c \"echo -e.*\\\\033\" {_sh_ref2}); echo Colorized: $VALID'). "
+                        f"Rewrite the python3 heredoc script now — same logic, just without any bash commands inside it.]"
+                    )
+                else:
+                    content_str = (
+                        "[ERROR: Python SyntaxError in your script. Most likely cause: "
+                        "backslash-quote inside a double-quoted f-string terminates it prematurely — "
+                        "f\"{x}echo -e \\\"{arg}\\033[0m\\\"\" is UNTERMINATED (\\\" does NOT close a double-quoted f-string). "
+                        "FIX: Use string concatenation for the ANSI line — no f-string needed: "
+                        "out.append(indent + 'echo -e \"\\\\033[' + col + 'm' + arg + '\\\\033[0m\"\\n') "
+                        "where indent, col, arg are plain strings computed separately. "
+                        "Write ALL lines back, run bash -n on the file after writing.]"
+                    )
             # Intercept sed syntax errors — unify into one clear fix instruction
             elif _sed_error:
                 content_str += (
@@ -720,15 +737,27 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     )
                 else:
                     # For non-sed: append loop warning but keep original error message visible
-                    content_str += (
-                        f"\n\n[ERROR: same command run {repeat_n} times, not working. "
-                        "Your script only reads — it does not WRITE to the file. "
-                        "Write python3 NOW that modifies the file. "
-                        "Filter: s.strip().startswith('echo ') and '>>' not in s and '>' not in s.partition('echo')[2] and ' | ' not in s. "
-                        "Use SINGLE-QUOTED f-strings: f'{indent}echo -e \"\\\\033[{col}m{arg.strip(chr(34))}\\\\033[0m\"\\n' "
-                        "(NOT double-quoted f-strings with backslash-quote — those leave the string unterminated). "
-                        "Write ALL lines back, run bash -n to check syntax.]"
-                    )
+                    _py_writes = bool(re.search(r'\bopen\s*\(.*,\s*["\']w["\']', last_cmd or ""))
+                    if _py_writes:
+                        content_str += (
+                            f"\n\n[ERROR: same python3 command run {repeat_n} times with the same SyntaxError. "
+                            "Fix the SyntaxError before anything else can work. "
+                            "Python cannot run shell commands (like 'bash -n') directly inside a Python script — remove any such lines. "
+                            "Use SINGLE-QUOTED f-strings to avoid unterminated string SyntaxError: "
+                            "f'{indent}echo -e \"\\\\033[{col}m{arg.strip(chr(34))}\\\\033[0m\"\\n' "
+                            "(NOT double-quoted f-strings with backslash-quote). "
+                            "After writing, run bash -n as a SEPARATE bash tool call.]"
+                        )
+                    else:
+                        content_str += (
+                            f"\n\n[ERROR: same command run {repeat_n} times, not working. "
+                            "Your script only reads — it does not WRITE to the file. "
+                            "Write python3 NOW that modifies the file. "
+                            "Filter: s.strip().startswith('echo ') and '>>' not in s and '>' not in s.partition('echo')[2] and ' | ' not in s. "
+                            "Use SINGLE-QUOTED f-strings: f'{indent}echo -e \"\\\\033[{col}m{arg.strip(chr(34))}\\\\033[0m\"\\n' "
+                            "(NOT double-quoted f-strings with backslash-quote — those leave the string unterminated). "
+                            "Write ALL lines back, run bash -n to check syntax.]"
+                        )
             # Detect python3 heredoc probe-loop: model running read-only scripts in a loop
             _is_py3_heredoc = last_cmd and bool(
                 re.search(r'python3?\s+-\s', last_cmd) or
