@@ -425,17 +425,8 @@ def _tools_system_text(tools: list) -> str:
     return "<tools>\n" + "\n\n".join(entries) + "\n</tools>"
 
 
-# Session-scoped cache of real display echo lines discovered via grep
-_display_echo_cache: list = []
-
-
 def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) -> list:
     """Convert OpenAI messages (with tool_calls / tool role) to model text format."""
-    _s = settings or {}
-    _tf = _s.get("colorize_target_file", "")
-    _color = _s.get("colorize_color", "1;96")
-    _prefix = _s.get("colorize_prefix", ">> ")
-    _suffix = _s.get("colorize_suffix", " <<")
     result = []
     tools_text = _tools_system_text(tools)
     for msg in messages:
@@ -475,43 +466,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 if r.get("role") == "assistant":
                     last_bash_cmd = r.get("content", "")
                     break
-            _is_inspection = any(kw in last_bash_cmd for kw in ("cat -A", "od -c", "hexdump", "| strings", "| od ", "grep -c", "grep -E '\\\\["))
-            _is_grep_echo = "grep" in last_bash_cmd and "echo" in last_bash_cmd and "sed" not in last_bash_cmd
-            # When target file is configured, replace grep results with the pre-computed batch
-            if _is_grep_echo and content_str.strip() and _tf and _tf in last_bash_cmd:
-                batch_cmd = _build_remaining_batch(_tf, _color, _prefix, _suffix)
-                if batch_cmd:
-                    content_str = (
-                        f"[{_tf} still has uncolorized display echo lines. "
-                        f"Run this command NOW to colorize them:\n\nbash(command=\"{batch_cmd}\")\n\n"
-                        "Do NOT run grep again. Run that bash command.]"
-                    )
-                    logger.info("[GREP-ANN] Replaced grep result with pre-computed batch command")
-                else:
-                    content_str = f"[All display echo lines in {_tf} are already colorized. Task complete!]"
-                    logger.info("[GREP-ANN] All lines done — telling model task is complete")
-            # Fallback: annotate grep output when no target file is configured
-            elif _is_grep_echo and content_str.strip():
-                display_lines = []
-                redir_lines = []
-                for raw_line in content_str.strip().split("\n")[:80]:
-                    m = re.match(r'(\d+):(.*)', raw_line)
-                    if not m:
-                        continue
-                    linenum, line_content = m.group(1), m.group(2).rstrip()
-                    if 'echo' not in line_content:
-                        continue
-                    if '>>' in line_content or re.search(r'>\s*[\$/]', line_content) or ('| ' in line_content and 'echo' not in line_content.split('|')[0].strip().split()[-1:]):
-                        redir_lines.append((linenum, line_content))
-                    else:
-                        display_lines.append((linenum, line_content))
-                logger.info(f"[GREP-ANN] Display echoes: {len(display_lines)}, redir echoes: {len(redir_lines)}")
-                _non_bare = [lc for _, lc in display_lines if re.search(r'echo\s+\S', lc)]
-                if _non_bare:
-                    _display_echo_cache.clear()
-                    _display_echo_cache.extend(_non_bare[:60])
             # Intercept sed delimiter errors — / in replacement breaks sed 's/.../.../'
-            if "unknown option to `s'" in content_str or "unknown option to `s'" in content_str or "unterminated" in content_str.lower():
+            if "unknown option to `s'" in content_str or "unterminated" in content_str.lower():
                 content_str += (
                     "\n\n[IMPORTANT: The sed command failed because the replacement contains '/' characters which break the s/.../.../ delimiter. "
                     "Use a different delimiter like '|': sed -i 's|PATTERN|REPLACEMENT|g' — "
@@ -520,174 +476,20 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # Intercept "No changes" errors — model needs a new strategy
             elif "no changes to apply" in content_str.lower() or "identical" in content_str.lower():
                 content_str += "\n\n[IMPORTANT: The edit failed because oldString was not found or was identical to newString. Do NOT repeat the same edit. Use bash with sed -i for targeted replacements instead, e.g. bash(command=\"sed -i 's/original/replacement/g' file\").]"
-            # Binary inspection — redirect to echo grep immediately (only when colorize job active)
-            elif _is_inspection and _tf:
-                content_str = (
-                    content_str[:200] + "\n...[truncated]\n\n"
-                    "[This inspection confirms the file is a plain text bash script with no binary ANSI bytes. "
-                    "Stop inspecting and start editing NOW. "
-                    f"Run: bash(command=\"grep -n 'echo' {_tf} | head -40\") "
-                    "to see the echo statements, then write sed -i commands to add \\033[...m colors to them.]"
-                )
-            # Empty bash result — sed found nothing to replace; tell the model immediately
+            # Empty bash result — inform model sed -i is silent on success
             elif not content_str.strip() or content_str.strip() in ("(no output)", "(exit 0)"):
                 is_sed_cmd = "sed" in last_bash_cmd and ("-i" in last_bash_cmd or "-e" in last_bash_cmd)
-                # If the sed pattern is in our cache, it's a real line — sed -i silently succeeds,
-                # so "no output" is ambiguous. Treat it as success to avoid false retry loops.
-                if is_sed_cmd and _display_echo_cache:
-                    _sed_pat_m = re.search(r"s([/|!])(.*?)\1", last_bash_cmd)
-                    if _sed_pat_m:
-                        _sed_pat_stripped = _sed_pat_m.group(2).lstrip("^").replace(r'\$', '$').strip()
-                        if any(_sed_pat_stripped in cached for cached in _display_echo_cache):
-                            content_str = (
-                                "sed ran successfully (no output is normal for sed -i). "
-                                "The line was colorized. Continue to the next echo line."
-                            )
-                            logger.info(f"[SED-SUCCESS] Real-pattern sed assumed success for '{_sed_pat_stripped[:60]}'")
-                            result.append({"role": "user", "content": f"<tool_result>\n<tool>{last_tool_name}</tool>\n<output>\n{content_str}\n</output>\n</tool_result>"})
-                            continue
-                # Count previous "no output" failures in this conversation
-                no_output_count = sum(
-                    1 for r in result
-                    if r.get("role") == "user" and "no output" in r.get("content", "").lower()
-                )
-                if _tf and is_sed_cmd and no_output_count >= 1:
-                    # Model is repeating a failing sed — escalate with hard stop
-                    # Try to extract the sed pattern to name it explicitly
-                    sed_pat = ""
-                    has_caret = False
-                    pat_text = ""
-                    _pm = re.search(r"sed\s+-i\s+['\"]?s([/|!])(.*?)\1(.*?)\1", last_bash_cmd)
-                    if _pm:
-                        pat_text = _pm.group(2)
-                        sed_pat = f" (pattern: '{pat_text}')"
-                        has_caret = pat_text.startswith("^")
-                    caret_hint = (
-                        "\nCRITICAL: Your pattern starts with '^' — this means the line must start with NO "
-                        "leading whitespace. If the echo line is inside a function or if-block it will have "
-                        "leading spaces/tabs and '^' will NEVER match. REMOVE the '^' from your pattern."
-                    ) if has_caret else ""
-                    # Check if the failing pattern matches any known real display echo line
-                    hallucination_warning = ""
-                    if pat_text and _display_echo_cache:
-                        stripped_pat = pat_text.lstrip("^").strip()
-                        in_cache = any(stripped_pat in cached_line for cached_line in _display_echo_cache)
-                        if not in_cache:
-                            real_lines_str = "\n".join(f"  {lc}" for lc in _display_echo_cache[:8])
-                            hallucination_warning = (
-                                f"\n\nCRITICAL: The pattern '{stripped_pat}' IS NOT IN THIS FILE. "
-                                "You are trying to edit a line that does not exist.\n"
-                                "The REAL display echo lines in the file are:\n"
-                                f"{real_lines_str}\n"
-                                "You MUST use one of these exact lines as your sed pattern — copy it character for character."
-                            )
-                            logger.warning(f"[ANTHR/OAI] Pattern '{stripped_pat}' not in cache — hallucination detected")
+                if is_sed_cmd:
                     content_str = (
-                        f"REPEATED FAILURE: sed found no matches{sed_pat}.{caret_hint}{hallucination_warning}\n\n"
-                        "You have run this sed command before and it did NOT match anything.\n"
-                        "STOP. DO NOT repeat this sed command.\n\n"
-                        "MANDATORY: Run this command RIGHT NOW to find DISPLAY echo lines (not config-writing ones):\n"
-                        f"bash(command=\"grep -n 'echo' {_tf} | grep -v '>>' | grep -v '#'\")\n\n"
-                        "IMPORTANT: Lines with >> write to config files — do NOT colorize those. "
-                        "Only colorize lines that display text to the user (no >> redirection). "
-                        f"Use '|' as delimiter: sed -i 's|exact text from grep|echo -e \"\\033[{_color}m...\"|' file"
-                    )
-                    logger.warning(f"[ANTHR/OAI] Repeated empty sed result (count={no_output_count+1}), escalating redirect")
-                elif _tf and is_sed_cmd:
-                    has_caret = bool(re.search(r"sed\s+-i\s+['\"]?s[/|!]\^", last_bash_cmd))
-                    caret_hint = (
-                        " NOTE: Your pattern uses '^echo' — the '^' means the line must have NO leading whitespace. "
-                        "If the echo is inside a function or block (indented), '^' will fail. Remove '^' and try again."
-                    ) if has_caret else ""
-                    # Check cache for hallucination on first failure too
-                    hallucination_warning = ""
-                    _pm2 = re.search(r"sed\s+-i\s+['\"]?s([/|!])(.*?)\1(.*?)\1", last_bash_cmd)
-                    if _pm2 and _display_echo_cache:
-                        pat2 = _pm2.group(2).lstrip("^").strip()
-                        if pat2 and not any(pat2 in cached for cached in _display_echo_cache):
-                            real_lines_str = "\n".join(f"  {lc}" for lc in _display_echo_cache[:8])
-                            hallucination_warning = (
-                                f"\n\nCRITICAL: '{pat2}' IS NOT IN THIS FILE — you are targeting a line that does not exist.\n"
-                                f"The REAL display echo lines in this file are:\n{real_lines_str}\n"
-                                "Copy one of these EXACTLY as your sed pattern."
-                            )
-                            logger.warning(f"[ANTHR/OAI] First-fail hallucination: '{pat2}' not in cache")
-                    content_str = (
-                        f"ERROR: sed found no matches — the search pattern is not in the file.{caret_hint}{hallucination_warning}\n\n"
-                        "[The sed -i command ran but the search pattern did not match any line. "
-                        "DO NOT repeat the same sed command.\n"
-                        f"Run: bash(command=\"grep -n 'echo' {_tf} | grep -v '>>' | grep -v '#'\") "
-                        "to find display echo lines. Lines with >> write to files — do NOT sed those. "
-                        "Copy the text literally from grep output into your next sed.]"
+                        "(no output — sed -i is silent on success. If the pattern was not found, "
+                        "run grep to verify the file contents and check your pattern.)"
                     )
                 else:
-                    content_str = (
-                        "(no output — command produced no output)\n\n"
-                        "[If this was a sed -i command, the pattern was not found. "
-                        "Run grep to see the actual file contents before trying again.]"
-                    )
-            # "0" from grep -c — confirmed pattern absent (only relevant for colorize job)
-            elif content_str.strip() == "0" and _tf:
-                content_str = (
-                    "0 (pattern not found)\n\n"
-                    "[The file has no existing ANSI escape codes. Stop inspecting and start editing. "
-                    f"Run: bash(command=\"grep -n 'echo' {_tf} | head -40\") "
-                    "to see the actual echo lines, then immediately write sed -i commands to add "
-                    "\\033[...m ANSI color codes to those specific echo strings. Do not run any more inspection commands.]"
-                )
+                    content_str = "(no output — command produced no output)"
             # Truncate large tool results so the model has context budget for its response
-            elif len(content_str) > 3000 and not _is_grep_echo:
+            elif len(content_str) > 3000:
                 line_count = content_str.count('\n')
-                has_ansi = ('\\033' in content_str or '\x1b[' in content_str)
-                has_echo = 'echo ' in content_str
-                # Extract display echo lines from full content to pre-populate cache
-                _file_display_lines = []
-                for raw_line in content_str.split("\n"):
-                    # Support both plain lines and grep -n "linenum:content" format
-                    plain = raw_line
-                    m_linenum = re.match(r'\d+:(.*)', raw_line)
-                    if m_linenum:
-                        plain = m_linenum.group(1)
-                    if 'echo' in plain and '>>' not in plain and not plain.lstrip().startswith('#'):
-                        stripped = plain.strip()
-                        if (stripped and re.search(r'echo\s+\S', stripped)
-                                and not re.search(r'>\s*[\$/]', stripped)
-                                and '>>' not in stripped):
-                            _file_display_lines.append(stripped)
-                if _file_display_lines:
-                    _display_echo_cache.clear()
-                    _display_echo_cache.extend(_file_display_lines[:20])
-                    logger.info(f"[TRUNC-ANN] Pre-populated cache with {len(_display_echo_cache)} display echo lines from file read")
-                notes = [f"The full file is approximately {line_count}+ lines long."]
-                if not has_ansi:
-                    notes.append("It has NO existing ANSI color escape codes.")
-                if has_echo:
-                    notes.append("It uses plain 'echo' statements without any colors.")
-                notes.append("IMPORTANT: Do NOT use the write tool — you will destroy the rest of the file.")
-                notes.append("Use bash with sed -i for targeted in-place changes. Make multiple small bash calls.")
-                trunc_batch = []
-                if _display_echo_cache:
-                    for _lc in _display_echo_cache[:20]:
-                        _lcs = _lc.strip()
-                        if '\\033' in _lcs or '\x1b' in _lcs:
-                            continue
-                        if not re.search(r'echo\s+\S', _lcs):
-                            continue
-                        _sp = (_lcs.replace('\\', '\\\\').replace('|', r'\|')
-                               .replace('[', r'\[').replace(']', r'\]')
-                               .replace('$', r'\$'))
-                        _cy = _make_display_text(_lcs, _prefix, _suffix).replace('|', r'\|')
-                        trunc_batch.append(
-                            f"sed -i 's|{_sp}|echo -e \"\\\\033[{_color}m{_cy}\\\\033[0m\"|' {_tf}"
-                        )
-                if trunc_batch:
-                    batch_cmd = " && \\\n".join(trunc_batch) + " && echo 'BATCH_SED_OK'"
-                    notes.append(
-                        f"\n\nACTION REQUIRED — Run this ONE command to colorize all {len(trunc_batch)} display echo lines:\n\nbash(command=\"{batch_cmd}\")"
-                    )
-                else:
-                    notes.append(f"Run grep -n 'echo' {_tf} | grep -v '>>' | grep -v '#' to see display echo lines.")
-                content_str = content_str[:500] + "\n...[file truncated]\n\n" + " ".join(notes)
+                content_str = content_str[:2000] + f"\n...[output truncated — {line_count} lines total]\n"
             # Wrap in XML tool_result format matching this model's expected pattern
             result.append({"role": "user", "content": f"<tool_result>\n<tool>{last_tool_name}</tool>\n<output>\n{content_str}\n</output>\n</tool_result>"})
         else:
@@ -708,209 +510,9 @@ _TOOL_NAME_MAP = {
     "str_replace": "edit",
 }
 
-def _make_display_text(echo_line: str, prefix: str, suffix: str) -> str:
-    """Extract display text from an echo line and wrap it with prefix/suffix."""
-    m = re.search(r'echo\s+(?:-[eE]\s+)?"(.*?)"', echo_line.strip())
-    if not m:
-        m = re.search(r"echo\s+(?:-[eE]\s+)?'(.*?)'", echo_line.strip())
-    if not m:
-        return f"{prefix}TEXT{suffix}"
-    text = m.group(1).strip()
-    clean = re.sub(r'^\[(.+)\]$', r'\1', text).strip()
-    return f"{prefix}{clean}{suffix}"
-
-
-def _build_remaining_batch(target_file: str, color: str, prefix: str, suffix: str, max_seds: int = 20) -> str:
-    """Read target_file and build a batch sed for all remaining uncolorized display echo lines."""
-    if not target_file:
-        return ""
-    try:
-        with open(target_file, 'r') as f:
-            lines = f.readlines()
-    except Exception:
-        return ""
-    seds = []
-    for line in lines:
-        stripped = line.strip()
-        if not stripped.startswith('echo'):
-            continue
-        if '\\033' in stripped or '\x1b' in stripped:
-            continue
-        if stripped.startswith('#'):
-            continue
-        if re.search(r'>\s*[\$/]', stripped) or '>>' in stripped:
-            continue
-        if '|' in stripped:
-            continue
-        m = re.search(r'echo\s+"(.*?)"', stripped)
-        if not m:
-            continue
-        display = _make_display_text(stripped, prefix, suffix).replace('|', r'\|')
-        safe_pat = (stripped
-                    .replace('\\', '\\\\')
-                    .replace('|', r'\|')
-                    .replace('[', r'\[')
-                    .replace(']', r'\]')
-                    .replace('$', r'\$'))
-        seds.append(
-            f"sed -i 's|{safe_pat}|echo -e \"\\\\033[{color}m{display}\\\\033[0m\"|' {target_file}"
-        )
-        if len(seds) >= max_seds:
-            break
-    if not seds:
-        return ""
-    return " && \\\n".join(seds) + " && echo 'BATCH_SED_OK'"
-
-def _normalize_sed_pat(pat: str) -> str:
-    """Normalize a sed BRE pattern for cache comparison: strip anchors and unescape BRE/bash escapes."""
-    p = pat.lstrip("^").strip()
-    p = p.replace(r'\\[', '[').replace(r'\\]', ']')  # \\[ (double-escaped) → [
-    p = p.replace(r'\[', '[').replace(r'\]', ']')    # \[ (BRE literal) → [
-    p = p.replace(r'\$', '$')                         # \$ → $
-    p = p.replace('\\"', '"')                         # \" (unnecessary quote escape) → "
-    p = p.replace(r'\.', '.')                         # \. (escaped dot) → .
-    return p
-
-
-
-
-def _build_correct_sed(matched_line: str, color: str, target_file: str, prefix: str, suffix: str) -> str:
-    """Given a cached display echo line, return a correct sed -i command."""
-    if not target_file:
-        return ""
-    display_text = _make_display_text(matched_line, prefix, suffix)
-    raw_stripped = matched_line.strip()
-    esc_pat = (raw_stripped
-               .replace('\\', '\\\\')
-               .replace('[', r'\[').replace(']', r'\]')
-               .replace('$', r'\$'))
-    correct_repl = f'echo -e "\\\\033[{color}m{display_text}\\\\033[0m"'
-    return (
-        f"sed -i 's|{esc_pat}|{correct_repl}|' {target_file} && "
-        f"echo 'SED_OK: {display_text[:40]}'"
-    )
-
-
 def _redirect_hallucinated_sed(tool_calls: list, settings: dict = None) -> list:
-    """Intercept sed tool calls when colorize_target_file is configured.
-    When active: replaces model's sed with a pre-computed correct batch built from file state.
-    When not configured: passes all tool calls through unchanged.
-    """
-    _s = settings or {}
-    _tf = _s.get("colorize_target_file", "")
-    _color = _s.get("colorize_color", "1;96")
-    _prefix = _s.get("colorize_prefix", ">> ")
-    _suffix = _s.get("colorize_suffix", " <<")
-    _grep_cmd = f"grep -n 'echo' {_tf} | grep -v '>>' | grep -v '#'" if _tf else ""
-    out = []
-    for tc in tool_calls:
-        fn = tc.get("function", {})
-        if fn.get("name") in ("bash", "Bash"):
-            try:
-                raw_args = fn.get("arguments", "{}")
-                args_dict = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
-                cmd = args_dict.get("command", "")
-                # Missing or empty command → inject grep (only when colorize job is active)
-                if not cmd.strip() and _tf:
-                    args_dict["command"] = _grep_cmd
-                    tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
-                    logger.warning("[BASH-FIX] bash tool call had no 'command' — injected grep")
-                    out.append(tc)
-                    continue
-                if _tf and "grep" in cmd and _tf in cmd and "echo" in cmd and "sed" not in cmd:
-                    # Model is running grep on the target file — replace with the next batch directly
-                    _batch = _build_remaining_batch(_tf, _color, _prefix, _suffix)
-                    if _batch:
-                        args_dict["command"] = _batch
-                        tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
-                        logger.info("[GREP-BATCH] Replaced grep with pre-computed correct batch")
-                        out.append(tc)
-                        continue
-                    else:
-                        args_dict["command"] = "echo 'All display echo lines colorized. Task complete.'"
-                        tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
-                        logger.info("[GREP-BATCH] All lines done — returning completion")
-                        out.append(tc)
-                        continue
-                if _tf and "sed" in cmd and ("-i" in cmd or "-e" in cmd) and _tf in cmd:
-                    # Replace model's sed with pre-computed correct batch from actual file state
-                    _batch = _build_remaining_batch(_tf, _color, _prefix, _suffix)
-                    if _batch:
-                        args_dict["command"] = _batch
-                        tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
-                        logger.info("[SED-BATCH] Replaced model's sed with pre-computed correct batch")
-                        out.append(tc)
-                        continue
-                    else:
-                        # All lines are done — stop the model
-                        args_dict["command"] = "echo 'All display echo lines colorized. Task complete.'"
-                        tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
-                        logger.info("[SED-BATCH] All lines colorized — returning completion")
-                        out.append(tc)
-                        continue
-
-                    _pm = re.search(r"s([/|!])(.*?)\1(.*?)\1", cmd)
-                    if _pm:
-                        raw_pat = _pm.group(2)
-                        replacement = _pm.group(3)
-                        norm_pat = _normalize_sed_pat(raw_pat)
-
-                        # Block seds targeting redirect echoes
-                        if re.search(r'>\s*[\$/]', norm_pat) or '>>' in norm_pat or '| ' in norm_pat:
-                            redirect_cmd = None
-                            for _rlc in _display_echo_cache[:20]:
-                                if '\\033' in _rlc or '\x1b' in _rlc:
-                                    continue
-                                if re.search(r'>\s*[\$/]', _rlc) or '>>' in _rlc:
-                                    continue
-                                _rlc_s = _rlc.strip()
-                                if not re.search(r'echo\s+\S', _rlc_s):
-                                    continue
-                                _rsp = (_rlc_s.replace('\\', '\\\\').replace('|', r'\|')
-                                        .replace('[', r'\[').replace(']', r'\]')
-                                        .replace('$', r'\$'))
-                                _rcy = _make_display_text(_rlc_s, _prefix, _suffix).replace('|', r'\|')
-                                redirect_cmd = (
-                                    f"sed -i 's|{_rsp}|echo -e \"\\\\033[{_color}m{_rcy}\\\\033[0m\"|' "
-                                    f"{_tf} && echo 'SED_OK: {_rlc_s[:40]}'"
-                                )
-                                break
-                            if redirect_cmd:
-                                args_dict["command"] = redirect_cmd
-                                logger.warning(f"[SED-REDIR-BLOCK] Blocked '{norm_pat[:50]}' → display-echo sed")
-                            else:
-                                args_dict["command"] = "echo 'All display echo lines colorized. Task complete.'"
-                                logger.warning(f"[SED-REDIR-BLOCK] No display lines left: '{norm_pat[:60]}'")
-                            tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
-                            out.append(tc)
-                            continue
-
-                        matched_line = next(
-                            (c for c in _display_echo_cache if norm_pat and (
-                                norm_pat in _normalize_sed_pat(c) or
-                                _normalize_sed_pat(c) in norm_pat or
-                                norm_pat.rstrip('"\'') in _normalize_sed_pat(c)
-                            )),
-                            None
-                        )
-                        if not matched_line:
-                            args_dict["command"] = _grep_cmd
-                            tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
-                            logger.warning(f"[SED-REDIRECT] '{norm_pat[:60]}' not in cache → grep")
-                        else:
-                            new_cmd = _build_correct_sed(matched_line, _color, _tf, _prefix, _suffix)
-                            if new_cmd:
-                                args_dict["command"] = new_cmd
-                                tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
-                                logger.info(f"[SED-REPAIR] Rebuilt sed for '{matched_line.strip()[:60]}'")
-                            elif "&&" not in cmd:
-                                args_dict["command"] = cmd.rstrip() + f" && echo 'SED_OK: {norm_pat[:40]}'"
-                                tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
-                                logger.info(f"[SED-VERIFY] Appended echo for '{norm_pat[:40]}'")
-            except Exception as e:
-                logger.debug(f"[SED-REDIRECT] Error: {e}")
-        out.append(tc)
-    return out
+    """Pass tool calls through unchanged. Kept for API compatibility with anthropic_api.py."""
+    return list(tool_calls)
 
 
 def _fix_sed_tool_calls(tool_calls: list) -> list:
@@ -1222,16 +824,10 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     logger.info(f"[OAI-AGENTIC] len={len(full_text)} head={full_text[:200]!r} tail={full_text[-200:]!r} tool_calls={len(tool_calls)}")
 
     # If model responded with text-only or unparseable tool call (no tool call), nudge it once
-    _nudge_tf = settings.get("colorize_target_file", "")
-    _nudge_extra = (
-        f"\nRun: bash(command=\"grep -n 'echo' {_nudge_tf} | grep -v '>>' | grep -v '#'\") "
-        "to see display echo statements (excluding file-writing ones with >>). "
-        "Then use targeted sed -i commands matching the exact strings from that output."
-    ) if _nudge_tf else ""
     if not tool_calls and full_text.strip() and len(full_text) < 1200:
         nudge_messages = messages + [
             {"role": "assistant", "content": clean_text or full_text[:300]},
-            {"role": "user", "content": "Now call a tool immediately. Do NOT write any more text." + _nudge_extra},
+            {"role": "user", "content": "Now call a tool immediately. Do NOT write any more text."},
         ]
         try:
             nudge_result = None
