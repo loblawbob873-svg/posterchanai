@@ -726,6 +726,11 @@ def _fix_sed_tool_calls(tool_calls: list) -> list:
                         # Only replace single backslash \033 (not already-doubled \\033).
                         if '\\033' in fixed:
                             fixed = re.sub(r'(?<!\\)\\033', r'\\\\033', fixed)
+                        # Fix echo → echo -e when replacement contains ANSI codes (\033 or \\033).
+                        # echo without -e won't interpret \033 as ESC — colors won't display.
+                        if re.search(r'\\\\*033', fixed) and re.search(r'echo "(?!-e )', fixed):
+                            fixed = re.sub(r'echo "(?!-e )', 'echo -e "', fixed)
+                            logger.info(f"[SED-FIX] Added missing -e to echo: {fixed[:80]!r}")
                         if fixed != cmd:
                             args_dict["command"] = fixed
                             tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}

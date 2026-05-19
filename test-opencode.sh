@@ -13,7 +13,7 @@ echo "[TEST] gentoo.sh reset."
 echo "[TEST] Current colorization state:"
 grep -c '\\033' gentoo.sh 2>/dev/null | xargs echo "  Colorized lines:" || echo "  Colorized lines: 0"
 
-PROMPT='Add vibrant cyberpunk ANSI colors to ALL the display echo statements in /opt/gentoo-installer/gentoo.sh. There are approximately 90 display echo lines — colorize as many as possible, including section headers like [Configuring Repos], status messages like "Creating Snapshots", progress lines, etc. Use at least 3 DIFFERENT color codes. Be thorough — do not stop after just a few lines.'
+PROMPT='Add vibrant cyberpunk ANSI colors to the display echo statements in /opt/gentoo-installer/gentoo.sh. IMPORTANT: Only colorize echoes that print to the terminal — those that do NOT have >> or > file redirections after them. There are approximately 50 display echo lines (section headers, status messages, progress lines) — colorize as many as possible. Use at least 3 DIFFERENT color codes. Be thorough — do not stop after just a few lines.'
 
 echo "[TEST] Starting opencode..."
 timeout 300 "$OPENCODE" run --model "$MODEL" "$PROMPT" || true
@@ -50,6 +50,15 @@ else
     grep -n '\\033' gentoo.sh | head -5
     exit 1
 fi
+
+# Check 3b: no colorized echoes that redirect to files (would break config files)
+REDIRECT_COLORED=$(grep -E 'echo -e.*\\033.*[>|]' gentoo.sh 2>/dev/null | wc -l)
+if [ "$REDIRECT_COLORED" -gt 0 ]; then
+    echo "[TEST] FAIL: $REDIRECT_COLORED colorized echoes redirect to files (breaks config files)"
+    grep -nE 'echo -e.*\\033.*[>|]' gentoo.sh | head -5
+    exit 1
+fi
+echo "[TEST] PASS: no colorized file-writing echoes"
 
 # Check 4: must use at least 3 distinct color codes
 COLORS=$(grep -oE '\\033\[[0-9;]+m' gentoo.sh 2>/dev/null | sort -u | wc -l)
