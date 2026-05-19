@@ -767,6 +767,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     content_str = "(no output — command produced no output)"
             elif "-- No entries --" in content_str and re.search(r'\bjournalctl\b', last_bash_cmd):
                 content_str = "(journalctl: no matching log entries — this means no errors were found in the logs for that time range. This is good news.)"
+            # Command/path lookup helpers — define early so all checks below can use them
+            _last_actual_cmd = bash_history[-1] if bash_history else ""
             # File/directory not found: repeated reads on non-existent paths
             _is_not_found = bool(re.search(r'No such file or directory|cannot access|not found', content_str, re.IGNORECASE))
             _is_read_cmd = bool(re.search(r'^\s*(ls|stat|cat|test\s+-[defr]|file\b)', _last_actual_cmd))
@@ -788,7 +790,6 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     "Checking status again will not help. Execute option (a) or (b) now.]"
                 )
             # Repeated command failure loop: when the same command fails multiple times, guide investigation
-            _last_actual_cmd = bash_history[-1] if bash_history else ""
             _is_hard_failure = bool(
                 re.search(r'BUILD FAILED|FAILURE:|non-zero exit value\s+[1-9]|Execution failed for task|exit code [1-9]|\bfailed\b.*\bexception\b', content_str, re.IGNORECASE)
             )
