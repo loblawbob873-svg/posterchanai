@@ -466,13 +466,25 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 if r.get("role") == "assistant":
                     last_bash_cmd = r.get("content", "")
                     break
+            # Intercept unavailable tool errors — tell model to use bash/edit/write instead
+            if "tried to call unavailable tool" in content_str:
+                content_str += (
+                    "\n\n[IMPORTANT: That tool is not available. Use bash, edit, write, read, grep, or glob instead. "
+                    "To run shell commands use bash with a 'command' argument, e.g. bash to run python3, sed, grep, etc.]"
+                )
+            # Intercept bash schema errors — model forgot the 'command' key
+            elif 'missing key' in content_str.lower() and 'command' in content_str.lower():
+                content_str += (
+                    "\n\n[IMPORTANT: The bash tool requires a 'command' argument with the shell command as a string. "
+                    "Retry with the correct format.]"
+                )
             # Intercept sed syntax errors — unify into one clear fix instruction
             _sed_error = (
                 "unknown option to `s'" in content_str
                 or "unterminated" in content_str.lower()
                 or "unmatched" in content_str.lower()
             )
-            if _sed_error:
+            elif _sed_error:
                 content_str += (
                     "\n\n[IMPORTANT: The sed command failed with a syntax error. "
                     "Do NOT use BRE capture groups (\\\\(...\\\\)) or complex regex — they break easily. "
