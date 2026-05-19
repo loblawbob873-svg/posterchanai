@@ -578,6 +578,13 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     "the merge was already performed in a previous step. "
                     "STOP — do not run any more git commands. Report success.]"
                 )
+            # Detect successful git fetch (FETCH_HEAD updated) — guide reset
+            elif "-> FETCH_HEAD" in content_str and re.search(r'\bgit\b.*\bfetch\b', last_bash_cmd) and "reset" not in last_bash_cmd:
+                content_str += (
+                    "\n\n[FETCH COMPLETE: FETCH_HEAD is now set to the source HEAD. "
+                    "To sync your repo HEAD to match the source exactly, run now: "
+                    "git reset --hard FETCH_HEAD]"
+                )
             # Detect successful reset --hard FETCH_HEAD — task is done, tell model to stop
             # Also fires when auto-fix replaced an origin reset with a local FETCH_HEAD reset
             # (in that case "-> FETCH_HEAD" appears in the git fetch output AND the cmd has FETCH_HEAD)
@@ -760,6 +767,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     content_str = "(no output — command produced no output)"
             elif "-- No entries --" in content_str and re.search(r'\bjournalctl\b', last_bash_cmd):
                 content_str = "(journalctl: no matching log entries — this means no errors were found in the logs for that time range. This is good news.)"
+            # File/directory not found: repeated reads on non-existent paths
+            _is_not_found = bool(re.search(r'No such file or directory|cannot access|not found', content_str, re.IGNORECASE))
+            _is_read_cmd = bool(re.search(r'^\s*(ls|stat|cat|test\s+-[defr]|file\b)', _last_actual_cmd))
+            if _is_not_found and _is_read_cmd and bash_cmd_count.get(_last_actual_cmd, 0) >= 2:
+                content_str += (
+                    "\n\n[PATH NOT FOUND: This path does not exist — confirmed. "
+                    "Do not check this path again. Report the finding and move on.]"
+                )
             # git merge --no-commit loop: model staged changes but never committed
             _no_commit_merges = [c for c in bash_history if re.search(r'\bgit\b.*\bmerge\b.*--no-commit', c)]
             _has_committed = any(re.search(r'\bgit\b.*\bcommit\b', c) for c in bash_history)
