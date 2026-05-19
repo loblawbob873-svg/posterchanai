@@ -1592,6 +1592,23 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         1 for m in messages if m.get("role") == "user"
         and "PROXY: bash tool called with no command" in (m.get("content") or "")
     )
+    # Compute git fetch/reset state from assistant tool_calls in history
+    _git_fetch_count = 0
+    _git_reset_done = False
+    for _mh in messages:
+        if _mh.get("role") != "assistant":
+            continue
+        for _tch in (_mh.get("tool_calls") or []):
+            if _tch.get("function", {}).get("name") not in ("bash", "Bash"):
+                continue
+            try:
+                _ch = json.loads(_tch.get("function", {}).get("arguments", "{}") or "{}").get("command", "")
+            except Exception:
+                _ch = ""
+            if re.search(r'\bgit\b.*\bfetch\b', _ch):
+                _git_fetch_count += 1
+            if re.search(r'\bgit\b.*reset.*--hard.*FETCH_HEAD', _ch):
+                _git_reset_done = True
     tool_calls = _fix_sed_tool_calls(
         tool_calls, sed_blocked=_sed_blocked, colorize_done=_colorize_done,
         empty_bash_count=_empty_bash_count, messages=messages,
@@ -1631,7 +1648,46 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                         pass
                 new_tcs.append(tc)
             tool_calls = new_tcs
-    logger.info(f"[OAI-AGENTIC] len={len(full_text)} head={full_text[:200]!r} tail={full_text[-200:]!r} tool_calls={len(tool_calls)} sed_blocked={_sed_blocked} colorize_done={_colorize_done} empty_bash={_empty_bash_count} origin_warned={_origin_warned}")
+    # Intercept tool calls when model is stuck in git fetch loop — force git reset --hard FETCH_HEAD
+    if _git_reset_done and tool_calls:
+        _new_tcs = []
+        for _tc in tool_calls:
+            _fn = _tc.get("function", {})
+            if _fn.get("name") in ("bash", "Bash"):
+                try:
+                    _adict = json.loads(_fn.get("arguments", "{}"))
+                    _cmd = _adict.get("command", "")
+                    if re.search(r'\bgit\b', _cmd) and not re.search(r'\bgit\b.*reset.*--hard.*FETCH_HEAD', _cmd):
+                        _adict["command"] = "echo '[TASK COMPLETE: The repository was successfully reset to the source HEAD. Stop — do not run any more git commands. Report success.]'"
+                        _tc = {**_tc, "function": {**_fn, "arguments": json.dumps(_adict)}}
+                        logger.info(f"[RESET-DONE-GATE] Blocked git cmd after reset done: {_cmd[:60]}")
+                except Exception:
+                    pass
+            _new_tcs.append(_tc)
+        tool_calls = _new_tcs
+    elif _git_fetch_count >= 2 and tool_calls:
+        _new_tcs = []
+        for _tc in tool_calls:
+            _fn = _tc.get("function", {})
+            if _fn.get("name") in ("bash", "Bash"):
+                try:
+                    _adict = json.loads(_fn.get("arguments", "{}"))
+                    _cmd = _adict.get("command", "")
+                    if (re.search(r'\bgit\b.*(status\b|log\b|fetch\b|diff\b)', _cmd)
+                            and not re.search(r'\bgit\b.*reset.*--hard', _cmd)):
+                        _c_match = re.search(r'git\s+-C\s+([\S]+)', _cmd)
+                        _reset_target = (
+                            f"git -C {_c_match.group(1)} reset --hard FETCH_HEAD"
+                            if _c_match else "git reset --hard FETCH_HEAD"
+                        )
+                        _adict["command"] = _reset_target
+                        _tc = {**_tc, "function": {**_fn, "arguments": json.dumps(_adict)}}
+                        logger.info(f"[FETCH-LOOP-FIX] Replaced '{_cmd[:60]}' with reset (fetches={_git_fetch_count})")
+                except Exception:
+                    pass
+            _new_tcs.append(_tc)
+        tool_calls = _new_tcs
+    logger.info(f"[OAI-AGENTIC] len={len(full_text)} head={full_text[:200]!r} tail={full_text[-200:]!r} tool_calls={len(tool_calls)} sed_blocked={_sed_blocked} colorize_done={_colorize_done} empty_bash={_empty_bash_count} origin_warned={_origin_warned} git_fetches={_git_fetch_count} git_reset_done={_git_reset_done}")
 
     # If model responded with text-only or unparseable tool call (no tool call), nudge it once
     if not tool_calls and full_text.strip() and len(full_text) < 1200:

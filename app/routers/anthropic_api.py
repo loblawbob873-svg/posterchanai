@@ -321,6 +321,32 @@ def _build_model_messages(request: MessagesRequest) -> list:
                             "Working tree is clean. If the task is complete, report success and STOP.]"
                         )
 
+                # git merge --no-commit: abort+reset is correct for exact HEAD match tasks
+                _no_commit_merges = [c for c in bash_history if re.search(r'\bgit\b.*\bmerge\b.*--no-commit', c)]
+                _has_committed = any(re.search(r'\bgit\b.*\bcommit\b', c) for c in bash_history)
+                _merge_auto = bool(re.search(r'Automatic merge|Merge made|stopped before committing', content_str, re.IGNORECASE))
+                if len(_no_commit_merges) >= 1 and not _has_committed:
+                    _nc_count = len(_no_commit_merges)
+                    if _nc_count == 1 and _merge_auto:
+                        content_str = (
+                            "[WRONG APPROACH: 'git merge --no-commit' creates a NEW merge commit that will NOT match the source HEAD hash. "
+                            "The correct approach for exact HEAD sync is:\n"
+                            "  (1) git merge --abort\n"
+                            "  (2) git fetch <source-path-or-remote>\n"
+                            "  (3) git reset --hard FETCH_HEAD\n"
+                            "Run git merge --abort NOW, then use fetch+reset instead of merge.]"
+                        )
+                    elif _nc_count >= 2:
+                        content_str = (
+                            f"[ACTION REQUIRED: 'git merge --no-commit' has been run {_nc_count} times. "
+                            "This approach will NOT achieve exact HEAD match — merge creates a new commit.\n"
+                            "YOUR ONLY VALID NEXT COMMANDS ARE:\n"
+                            "  git merge --abort\n"
+                            "  git fetch <source-path-or-remote>\n"
+                            "  git reset --hard FETCH_HEAD\n"
+                            "Execute these three commands now. Do NOT run git status or git merge again.]"
+                        )
+
                 # LOOP DETECTED
                 if last_cmd and bash_cmd_count.get(last_cmd, 0) >= 5:
                     _loop_count = bash_cmd_count[last_cmd]
@@ -531,6 +557,53 @@ async def messages(
 
     # Rewrite Write to sudo for system paths
     tool_calls = _rewrite_tool_calls(tool_calls)
+
+    # Compute git fetch/reset state from Anthropic-format message history
+    _git_fetch_count_a = 0
+    _git_reset_done_a = False
+    for _mha in body.messages:
+        if _mha.get("role") != "assistant":
+            continue
+        _content_a = _mha.get("content") or []
+        if isinstance(_content_a, str):
+            continue
+        for _blk in _content_a:
+            if not isinstance(_blk, dict) or _blk.get("type") != "tool_use":
+                continue
+            if _blk.get("name") not in ("bash", "Bash"):
+                continue
+            _cha = (_blk.get("input") or {}).get("command", "")
+            if re.search(r'\bgit\b.*\bfetch\b', _cha):
+                _git_fetch_count_a += 1
+            if re.search(r'\bgit\b.*reset.*--hard.*FETCH_HEAD', _cha):
+                _git_reset_done_a = True
+    # Force git reset --hard FETCH_HEAD when model is stuck in fetch loop
+    if _git_reset_done_a and tool_calls:
+        _new_tcs_a = []
+        for _tc_a in tool_calls:
+            if _tc_a.get("name") in ("bash", "Bash"):
+                _cmd_a = (_tc_a.get("input") or {}).get("command", "")
+                if re.search(r'\bgit\b', _cmd_a) and not re.search(r'\bgit\b.*reset.*--hard.*FETCH_HEAD', _cmd_a):
+                    _tc_a = {**_tc_a, "input": {**(_tc_a.get("input") or {}), "command": "echo '[TASK COMPLETE: The repository was successfully reset to the source HEAD. Stop — do not run any more git commands. Report success.]'"}}
+                    logger.info(f"[ANTHR-RESET-DONE-GATE] Blocked git cmd after reset done: {_cmd_a[:60]}")
+            _new_tcs_a.append(_tc_a)
+        tool_calls = _new_tcs_a
+    elif _git_fetch_count_a >= 2 and tool_calls:
+        _new_tcs_a = []
+        for _tc_a in tool_calls:
+            if _tc_a.get("name") in ("bash", "Bash"):
+                _cmd_a = (_tc_a.get("input") or {}).get("command", "")
+                if (re.search(r'\bgit\b.*(status\b|log\b|fetch\b|diff\b)', _cmd_a)
+                        and not re.search(r'\bgit\b.*reset.*--hard', _cmd_a)):
+                    _c_match_a = re.search(r'git\s+-C\s+([\S]+)', _cmd_a)
+                    _reset_target_a = (
+                        f"git -C {_c_match_a.group(1)} reset --hard FETCH_HEAD"
+                        if _c_match_a else "git reset --hard FETCH_HEAD"
+                    )
+                    _tc_a = {**_tc_a, "input": {**(_tc_a.get("input") or {}), "command": _reset_target_a}}
+                    logger.info(f"[ANTHR-FETCH-LOOP-FIX] Replaced '{_cmd_a[:60]}' with reset (fetches={_git_fetch_count_a})")
+            _new_tcs_a.append(_tc_a)
+        tool_calls = _new_tcs_a
 
     usage = result.get("usage", {}) if isinstance(result, dict) else {}
     input_tokens = usage.get("prompt_tokens", 0)
