@@ -31,7 +31,7 @@ else
 fi
 
 # Check 2: must have valid echo -e lines with \033 color codes
-VALID=$(grep -c 'echo -e.*\\033' gentoo.sh 2>/dev/null || echo 0)
+VALID=$(grep 'echo -e.*\\033' gentoo.sh 2>/dev/null | wc -l)
 echo "[TEST] Valid colorized echo lines: $VALID"
 if [ "$VALID" -gt 0 ]; then
     echo "[TEST] PASS: $VALID valid echo -e color lines found"

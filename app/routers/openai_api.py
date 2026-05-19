@@ -568,6 +568,18 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     "Then use DOUBLE backslash in your sed replacement: \\\\033 not \\033. "
                     "Example: sed -i 's|echo \"\\[Section\\]\"|echo -e \"\\\\033[1;96mSection\\\\033[0m\"|' file]"
                 )
+            # Detect broken color escape codes: \033 before echo keyword (color outside string)
+            elif re.search(r'BROKEN:.*lines have color codes BEFORE echo', content_str):
+                content_str = (
+                    "[ERROR: Colorization is broken — ANSI codes appear BEFORE echo, not inside it. "
+                    "Reset: git -C /opt/gentoo-installer checkout HEAD gentoo.sh\n"
+                    "Correct pattern: echo -e \"\\033[1;96mYour text\\033[0m\"\n"
+                    "Use sed to REPLACE the full echo line: "
+                    "sed -i 's/echo \"\\[Device Detection\\]\"/echo -e \"\\033[1;96m[Device Detection]\\033[0m\"/'"
+                    " /opt/gentoo-installer/gentoo.sh\n"
+                    "Or for ALL display echoes: sed -i 's/echo \"/echo -e \"\\\\033[1;96m/g' gentoo.sh\n"
+                    "(This replaces 'echo \"' with 'echo -e \"\\033[1;96m' on every quoted echo line.)]"
+                )
             # Detect broken color escape codes put outside of echo strings
             elif re.search(r'command not found.*033\[|033\[.*command not found', content_str):
                 content_str = (
@@ -588,10 +600,11 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 if is_sed_cmd:
                     if _target_is_sh:
                         content_str = (
-                            "(no output — sed -i is silent on success. "
-                            "Verify syntax and colorization: "
-                            "bash -n /opt/gentoo-installer/gentoo.sh && echo 'syntax OK' && "
-                            "grep -n 'echo -e.*\\\\033' /opt/gentoo-installer/gentoo.sh | head -5)"
+                            "(no output — sed -i is silent on success. Verify: "
+                            "grep -c 'echo -e.*\\\\033' /opt/gentoo-installer/gentoo.sh | xargs echo 'Valid colorized echo lines:' ; "
+                            "BROKEN=$(grep -c '\\\\033.*echo' /opt/gentoo-installer/gentoo.sh); "
+                            "[ $BROKEN -gt 0 ] && echo \"BROKEN: $BROKEN lines have color codes BEFORE echo (wrong!) — reset with: git -C /opt/gentoo-installer checkout HEAD gentoo.sh\" ; "
+                            "grep -n 'echo -e.*\\\\033' /opt/gentoo-installer/gentoo.sh | head -3)"
                         )
                     else:
                         content_str = (
