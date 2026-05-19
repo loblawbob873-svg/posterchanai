@@ -506,10 +506,15 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     )
                 else:
                     content_str = "(no output — command produced no output)"
-            # Truncate large tool results so the model has context budget for its response
+            # Truncate large tool results to preserve context budget on low-VRAM inference
             elif len(content_str) > 3000:
                 line_count = content_str.count('\n')
-                content_str = content_str[:2000] + f"\n...[output truncated — {line_count} lines total]\n"
+                content_str = (
+                    content_str[:2000]
+                    + f"\n...[output truncated — {line_count} lines total. "
+                    "This output is too large to show in full. "
+                    "Use grep or targeted bash commands to search for specific patterns instead of reading the whole file.]"
+                )
             # Wrap in XML tool_result format matching this model's expected pattern
             result.append({"role": "user", "content": f"<tool_result>\n<tool>{last_tool_name}</tool>\n<output>\n{content_str}\n</output>\n</tool_result>"})
         else:
