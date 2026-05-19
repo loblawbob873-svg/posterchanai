@@ -466,20 +466,20 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 if r.get("role") == "assistant":
                     last_bash_cmd = r.get("content", "")
                     break
-            # Intercept sed delimiter errors — / in replacement breaks sed 's/.../.../'
-            if "unknown option to `s'" in content_str or "unterminated" in content_str.lower():
+            # Intercept sed syntax errors — unify into one clear fix instruction
+            _sed_error = (
+                "unknown option to `s'" in content_str
+                or "unterminated" in content_str.lower()
+                or "unmatched" in content_str.lower()
+            )
+            if _sed_error:
                 content_str += (
-                    "\n\n[IMPORTANT: The sed command failed because the replacement contains '/' characters which break the s/.../.../ delimiter. "
-                    "Use a different delimiter like '|': sed -i 's|PATTERN|REPLACEMENT|g' — "
-                    "or escape every '/' in the replacement as '\\/'.]"
-                )
-            elif "unmatched" in content_str.lower() or "unmatched (" in content_str.lower():
-                content_str += (
-                    "\n\n[IMPORTANT: The sed command failed due to a broken regex (unmatched parenthesis). "
-                    "Do NOT use BRE capture groups (\\\\(...\\\\)) — they are fragile and error-prone. "
+                    "\n\n[IMPORTANT: The sed command failed with a syntax error. "
+                    "Do NOT use BRE capture groups (\\\\(...\\\\)) or complex regex — they break easily. "
                     "Instead, match the EXACT literal text of the line and use '|' as delimiter. "
-                    "Example: sed -i 's|echo \"Configuring Repos\"|echo -e \"\\\\033[1;96m>> Configuring Repos <<\\\\033[0m\"|' file "
-                    "— copy the exact line text from grep output, no regex groups needed.]"
+                    "Take the exact text from grep output and use it verbatim as the pattern. "
+                    "Example: sed -i 's|echo \"Configuring Repos\"|echo -e \"\\\\033[1;96m>> Configuring Repos <<\\\\033[0m\"|' /opt/gentoo-installer/gentoo.sh "
+                    "— copy each line exactly, one sed -i call per line, chained with &&.]"
                 )
             # Intercept "No changes" errors — model needs a new strategy
             elif "no changes to apply" in content_str.lower() or "identical" in content_str.lower():
