@@ -920,12 +920,30 @@ def _redirect_hallucinated_sed(tool_calls: list, settings: dict = None) -> list:
     return list(tool_calls)
 
 
-def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_done: bool = False) -> list:
+def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_done: bool = False,
+                        empty_bash_count: int = 0, messages: list = None) -> list:
     """Fix common sed mistakes in bash tool calls before they reach opencode.
 
     sed_blocked: if True, sed -i calls are replaced with a blocking error (model must use python3).
     colorize_done: if True, python3 writes to .sh files are blocked (colorization already complete).
+    empty_bash_count: how many times model called bash with no command in this conversation.
+    messages: full conversation messages for context lookup.
     """
+    # When model is stuck in a persistent empty-bash loop and has been exploring a .sh file,
+    # auto-inject PROXYSCRIPT to break the loop. Threshold: 8 empty bashes.
+    _auto_proxyscript_file = None
+    if empty_bash_count >= 8 and not colorize_done and messages:
+        for _m in messages:
+            if _m.get("role") != "user":
+                continue
+            _mc = _m.get("content") or ""
+            # Look for a .sh file that was listed in grep/cat/sed output (not config paths)
+            for _sh_m in re.finditer(r'([/\w.~-]+\.sh)\b', _mc):
+                _sh_candidate = _sh_m.group(1)
+                if not any(x in _sh_candidate for x in ('.config', '.local', 'opencode', 'test-')):
+                    _auto_proxyscript_file = _sh_candidate
+        logger.info(f"[EMPTY-LOOP] empty_bash_count={empty_bash_count}, auto_proxyscript_file={_auto_proxyscript_file}")
+
     out = []
     for tc in tool_calls:
         fn = tc.get("function", {})
@@ -944,6 +962,30 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                     tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                     logger.info("[COLORIZE-DONE] Blocked python3 write to .sh after colorization complete")
                     out.append(tc)
+                    continue
+                # Auto-inject PROXYSCRIPT when model is stuck in persistent empty-bash loop
+                _is_empty_bash = "PROXY: bash tool called with no command" in cmd
+                if _is_empty_bash and _auto_proxyscript_file:
+                    _sh_file = _auto_proxyscript_file
+                    _tmpl = (
+                        f"with open('{_sh_file}') as f: lines = f.readlines()\n"
+                        "colors = ['1;96', '1;93', '1;92', '1;91']\n"
+                        "ci = 0; out = []\n"
+                        "for line in lines:\n"
+                        "    s = line.rstrip()\n"
+                        "    if s.strip().startswith('echo ') and '>>' not in s and '>' not in s.partition('echo')[2] and ' | ' not in s and '\\\\033' not in s:\n"
+                        "        col = colors[ci % 4]; ci += 1\n"
+                        "        arg = s.partition('echo ')[2].strip().strip('\"').strip(\"'\")\n"
+                        "        indent = s[:len(s) - len(s.lstrip())]\n"
+                        "        out.append(indent + 'echo -e \"\\\\033[' + col + 'm' + arg + '\\\\033[0m\"\\n')\n"
+                        "    else: out.append(line)\n"
+                        f"with open('{_sh_file}', 'w') as f: f.writelines(out)\n"
+                        "print(ci, 'lines colorized')"
+                    )
+                    args_dict["command"] = "python3 << 'PROXYSCRIPT'\n" + _tmpl + "\nPROXYSCRIPT"
+                    tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                    out.append(tc)
+                    logger.info(f"[EMPTY-LOOP-FIX] Auto-injected PROXYSCRIPT on {_sh_file} after {empty_bash_count} empty bashes")
                     continue
                 # Block sed -i after repeated loop failures — force model to use python3
                 # Detect python3 script that searches for 'echo -e' in source lines — original lines don't have -e yet
@@ -1337,9 +1379,17 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         ("[TASK COMPLETE:" in (m.get("content") or "") and "lines colorized" in (m.get("content") or ""))
         for m in messages if m.get("role") == "user"
     )
-    tool_calls = _fix_sed_tool_calls(tool_calls, sed_blocked=_sed_blocked, colorize_done=_colorize_done)
+    # Count how many times model called bash with no command — detect persistent empty-bash loop
+    _empty_bash_count = sum(
+        1 for m in messages if m.get("role") == "user"
+        and "PROXY: bash tool called with no command" in (m.get("content") or "")
+    )
+    tool_calls = _fix_sed_tool_calls(
+        tool_calls, sed_blocked=_sed_blocked, colorize_done=_colorize_done,
+        empty_bash_count=_empty_bash_count, messages=messages,
+    )
     tool_calls = _redirect_hallucinated_sed(tool_calls, settings=settings)
-    logger.info(f"[OAI-AGENTIC] len={len(full_text)} head={full_text[:200]!r} tail={full_text[-200:]!r} tool_calls={len(tool_calls)} sed_blocked={_sed_blocked} colorize_done={_colorize_done}")
+    logger.info(f"[OAI-AGENTIC] len={len(full_text)} head={full_text[:200]!r} tail={full_text[-200:]!r} tool_calls={len(tool_calls)} sed_blocked={_sed_blocked} colorize_done={_colorize_done} empty_bash={_empty_bash_count}")
 
     # If model responded with text-only or unparseable tool call (no tool call), nudge it once
     if not tool_calls and full_text.strip() and len(full_text) < 1200:
