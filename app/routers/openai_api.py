@@ -731,13 +731,13 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             if _py3_wrote_sh:
                 _sh_ref = _sh_file_in_cmd.group(1)
                 content_str += (
-                    f"\n\nAUTO-VERIFY NOW (run this BEFORE anything else): "
-                    f"bash -n {_sh_ref} 2>&1 | head -3; "
-                    f"VALID=$(grep -c 'echo -e.*\\\\033' {_sh_ref} 2>/dev/null || echo 0); "
-                    f"echo \"Colorized lines: $VALID\"; "
-                    f"[ \"$VALID\" -lt 20 ] && echo 'PROBLEM: only '$VALID' colorized — "
-                    "if 0, your script matched echo -e (already-colorized) not echo (original form). "
-                    "Fix: remove the -e from your match pattern or match s.strip().startswith(\"echo \") directly.'"
+                    f"\n\n[AUTO-VERIFY: Run: bash -n {_sh_ref} 2>&1 | head -3 && "
+                    f"VALID=$(grep -c 'echo -e.*\\\\033' {_sh_ref} 2>/dev/null || echo 0) && "
+                    f"echo \"Colorized: $VALID\" && "
+                    f"[ \"$VALID\" -ge 20 ] && echo PASS || "
+                    "echo 'FAIL: 0 lines colorized. Bug: your script searched for echo -e in source but originals use just echo. "
+                    "Do NOT re.search(echo -e) — instead apply color to every line where is_display_echo() is True. "
+                    "Write corrected script now.]"
                 )
             if _is_py3_heredoc and _is_noop_result:
                 _searches_template = bool(re.search(r"""echo\s+["']\[""", last_cmd))
