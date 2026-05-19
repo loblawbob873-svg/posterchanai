@@ -572,10 +572,10 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 content_str += "\n\n[IMPORTANT: The edit failed because oldString was not found or was identical to newString. Do NOT repeat the same edit. Use bash with sed -i for targeted replacements instead, e.g. bash(command=\"sed -i 's/original/replacement/g' file\").]"
             # Detect successful reset --hard FETCH_HEAD — task is done, tell model to stop
             # Also fires when auto-fix replaced an origin reset with a local FETCH_HEAD reset
-            # (in that case "-> FETCH_HEAD" appears in the git fetch output)
+            # (in that case "-> FETCH_HEAD" appears in the git fetch output AND the cmd has FETCH_HEAD)
             elif "HEAD is now at" in content_str and (
                 "reset --hard FETCH_HEAD" in last_bash_cmd or
-                ("-> FETCH_HEAD" in content_str and "HEAD is now at" in content_str)
+                ("-> FETCH_HEAD" in content_str and "FETCH_HEAD" in last_bash_cmd)
             ):
                 fetch_head_reset_done = True
                 content_str = (
