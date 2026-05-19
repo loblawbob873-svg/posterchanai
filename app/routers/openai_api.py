@@ -664,7 +664,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 last_cmd and
                 (("sed" in last_cmd and "-i" in last_cmd) or
                  re.search(r'\bpython3?\s+-c\b', last_cmd) or
-                 re.search(r'python3?\s+-\s', last_cmd))
+                 re.search(r'python3?\s+-\s', last_cmd) or
+                 re.search(r'python3?\s+<<', last_cmd))
             )
             # Also catch any command that errors repeatedly (fatal/error in output)
             _has_error_output = bool(re.search(r'\bfatal\b|\berror\b', content_str, re.IGNORECASE))
@@ -716,7 +717,10 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "Write ALL lines back, run bash -n to check syntax.]"
                     )
             # Detect python3 heredoc probe-loop: model running read-only scripts in a loop
-            _is_py3_heredoc = last_cmd and bool(re.search(r'python3?\s+-\s', last_cmd))
+            _is_py3_heredoc = last_cmd and bool(
+                re.search(r'python3?\s+-\s', last_cmd) or
+                re.search(r'python3?\s+<<', last_cmd)
+            )
             _is_noop_result = content_str.startswith("(no output")
             # After a python3 write succeeds, inject verification to catch silent bugs early
             _sh_file_in_cmd = re.search(r'([/\w.~-]+\.sh)\b', last_cmd or "") if last_cmd else None
@@ -727,11 +731,13 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             if _py3_wrote_sh:
                 _sh_ref = _sh_file_in_cmd.group(1)
                 content_str += (
-                    f"\n\nAUTO-VERIFY NOW (run this BEFORE any other command): "
+                    f"\n\nAUTO-VERIFY NOW (run this BEFORE anything else): "
                     f"bash -n {_sh_ref} 2>&1 | head -3; "
                     f"VALID=$(grep -c 'echo -e.*\\\\033' {_sh_ref} 2>/dev/null || echo 0); "
                     f"echo \"Colorized lines: $VALID\"; "
-                    f"[ \"$VALID\" -lt 20 ] && echo 'NEED MORE: only '$VALID' lines — must reach 20'"
+                    f"[ \"$VALID\" -lt 20 ] && echo 'PROBLEM: only '$VALID' colorized — "
+                    "if 0, your script matched echo -e (already-colorized) not echo (original form). "
+                    "Fix: remove the -e from your match pattern or match s.strip().startswith(\"echo \") directly.'"
                 )
             if _is_py3_heredoc and _is_noop_result:
                 _searches_template = bool(re.search(r"""echo\s+["']\[""", last_cmd))
