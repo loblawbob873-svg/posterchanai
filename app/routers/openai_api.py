@@ -478,7 +478,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             _is_inspection = any(kw in last_bash_cmd for kw in ("cat -A", "od -c", "hexdump", "| strings", "| od ", "grep -c", "grep -E '\\\\["))
             _is_grep_echo = "grep" in last_bash_cmd and "echo" in last_bash_cmd and "sed" not in last_bash_cmd
             # When target file is configured, replace grep results with the pre-computed batch
-            if _is_grep_echo and content_str.strip() and _tf:
+            if _is_grep_echo and content_str.strip() and _tf and _tf in last_bash_cmd:
                 batch_cmd = _build_remaining_batch(_tf, _color, _prefix, _suffix)
                 if batch_cmd:
                     content_str = (
