@@ -570,6 +570,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # Intercept "No changes" errors — model needs a new strategy
             elif "no changes to apply" in content_str.lower() or "identical" in content_str.lower():
                 content_str += "\n\n[IMPORTANT: The edit failed because oldString was not found or was identical to newString. Do NOT repeat the same edit. Use bash with sed -i for targeted replacements instead, e.g. bash(command=\"sed -i 's/original/replacement/g' file\").]"
+            # Detect "Already up to date" from git merge/fetch — the sync is already done
+            elif "Already up to date" in content_str and re.search(r'\bgit\b.*(merge|fetch|pull)\b', last_bash_cmd):
+                fetch_head_reset_done = True
+                content_str = (
+                    "[TASK COMPLETE: The repository is already up to date with the source — "
+                    "the merge was already performed in a previous step. "
+                    "STOP — do not run any more git commands. Report success.]"
+                )
             # Detect successful reset --hard FETCH_HEAD — task is done, tell model to stop
             # Also fires when auto-fix replaced an origin reset with a local FETCH_HEAD reset
             # (in that case "-> FETCH_HEAD" appears in the git fetch output AND the cmd has FETCH_HEAD)
