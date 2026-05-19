@@ -464,6 +464,9 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
     colorize_task_done = False     # True after model successfully colorizes a .sh file
     rebase_conflict_count = 0      # Number of rebase conflicts seen (helps escalate guidance)
     silent_sed_sh_count = 0        # Number of sed -i on .sh files that produced no output
+    # Detect complex merge tasks (conflict resolution, file preservation) — skip simple-sync shortcuts
+    _all_text = " ".join((m.get("content") or "") for m in messages if m.get("role") in ("system", "user"))
+    _is_complex_merge_task = bool(re.search(r'\b(conflict|preserve|resolve|keep\s+\w+\s+version|branding|checkout\s+HEAD)\b', _all_text, re.IGNORECASE))
     for msg in messages:
         role = msg.get("role", "")
         content = msg.get("content") or ""
@@ -571,7 +574,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             elif "no changes to apply" in content_str.lower() or "identical" in content_str.lower():
                 content_str += "\n\n[IMPORTANT: The edit failed because oldString was not found or was identical to newString. Do NOT repeat the same edit. Use bash with sed -i for targeted replacements instead, e.g. bash(command=\"sed -i 's/original/replacement/g' file\").]"
             # Detect "Already up to date" from git merge/fetch — the sync is already done
-            elif "Already up to date" in content_str and re.search(r'\bgit\b.*(merge|fetch|pull)\b', last_bash_cmd):
+            # Skip for complex merge tasks (conflict resolution, file preservation) — let model proceed
+            elif "Already up to date" in content_str and re.search(r'\bgit\b.*(merge|fetch|pull)\b', last_bash_cmd) and not _is_complex_merge_task:
                 fetch_head_reset_done = True
                 content_str = (
                     "[TASK COMPLETE: The repository is already up to date with the source — "
@@ -860,11 +864,12 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "action toward your task: run the command, edit the file, or fix the error. "
                         "Do not run any more ls/find/tree commands.]"
                     )
-            # git merge --no-commit: abort+reset is correct for exact HEAD match tasks
+            # git merge --no-commit: abort+reset is correct for exact HEAD match tasks only.
+            # Skip for complex merge tasks that need real conflict resolution.
             _no_commit_merges = [c for c in bash_history if re.search(r'\bgit\b.*\bmerge\b.*--no-commit', c)]
             _has_committed = any(re.search(r'\bgit\b.*\bcommit\b', c) for c in bash_history)
             _merge_auto = bool(re.search(r'Automatic merge|Merge made|stopped before committing', content_str, re.IGNORECASE))
-            if len(_no_commit_merges) >= 1 and not _has_committed:
+            if len(_no_commit_merges) >= 1 and not _has_committed and not _is_complex_merge_task:
                 _nc_count = len(_no_commit_merges)
                 if _nc_count == 1 and _merge_auto:
                     content_str = (
@@ -1597,7 +1602,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         "[TASK COMPLETE: The repository is already up to date with the source",
         "[TASK COMPLETE: The repository was successfully reset to the source HEAD",
     )
-    if any(
+    if not _is_complex_merge and any(
         any(mk in (m.get("content") or "") for mk in _git_done_markers)
         for m in messages if m.get("role") == "user"
     ):
