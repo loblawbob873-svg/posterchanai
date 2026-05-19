@@ -802,26 +802,43 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # Use the clean command string (bash_history[-1]) for all loop detection — last_bash_cmd
             # contains the full XML tool_call block, so anchored regexes like ^\s*ls would never match.
             _last_actual_cmd = bash_history[-1] if bash_history else ""
-            # Repeated identical command: running the same exact command multiple times means the
-            # result never changes and re-running won't help. Suppress after 2nd repetition.
+            _orig_content_str = content_str  # snapshot before any suppression
+            _loop_suppressed = False
+            # Repeated identical command: takes priority over exploration-loop check.
+            # Warn on 1st repeat, suppress entirely on 2nd repeat.
             if _last_actual_cmd and len(bash_history) >= 2:
                 _identical_count = sum(1 for c in bash_history if c.strip() == _last_actual_cmd.strip())
-                if _identical_count >= 4:
-                    content_str = (
-                        f"[REPEATED COMMAND SUPPRESSED: You have run this exact command {_identical_count} times. "
-                        "Running it again will not change the result. STOP. Take a completely different action: "
-                        "read a config file, edit source code, generate a missing resource, or report the blocker.]"
-                    )
+                _orig_not_found = bool(re.search(r'No such file or directory|cannot access|not found', _orig_content_str, re.IGNORECASE))
+                if _identical_count >= 3:
+                    _loop_suppressed = True
+                    if _orig_not_found:
+                        content_str = (
+                            f"[REPEATED COMMAND BLOCKED: This command was run {_identical_count} times. "
+                            "CONFIRMED: the path does not exist and will not appear by checking again. "
+                            "STOP. You must either CREATE the missing file/resource, or change your "
+                            "approach to not require it. Do NOT run any read/list command on this path again.]"
+                        )
+                    else:
+                        content_str = (
+                            f"[REPEATED COMMAND BLOCKED: This exact command was run {_identical_count} times "
+                            "and produces the same result every time. Running it again changes nothing. "
+                            "STOP. Take a fundamentally different action toward your task.]"
+                        )
                 elif _identical_count >= 2:
-                    content_str += (
-                        f"\n\n[REPEATED COMMAND: You have already run this exact command {_identical_count} times "
-                        "and the result is the same each time. Do NOT run it again. Take a different action instead.]"
-                    )
-            # Directory exploration loop: model keeps running ls/find/tree to browse dirs
-            # without making progress. After 2+ consecutive listing commands, push it forward.
-            # After 4+, replace the result entirely (denying directory info forces a decision).
+                    if _orig_not_found:
+                        content_str += (
+                            f"\n\n[REPEATED COMMAND ({_identical_count}×): This path does not exist — confirmed. "
+                            "Do NOT check it again. CREATE the missing resource or change your approach.]"
+                        )
+                    else:
+                        content_str += (
+                            f"\n\n[REPEATED COMMAND ({_identical_count}×): Same result every time. "
+                            "Do NOT run this again. Take a different action.]"
+                        )
+            # Directory exploration loop: model keeps running ls/find/tree without progress.
+            # Only fires if not already suppressed by the repeated-command check above.
             _is_listing_cmd = bool(re.search(r'^\s*(ls\b|find\b|tree\b)', _last_actual_cmd))
-            if _is_listing_cmd:
+            if _is_listing_cmd and not _loop_suppressed:
                 _recent = bash_history[-10:] if len(bash_history) >= 10 else bash_history
                 _consec_ls = 0
                 for _rc in reversed(_recent):
@@ -843,14 +860,6 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "action toward your task: run the command, edit the file, or fix the error. "
                         "Do not run any more ls/find/tree commands.]"
                     )
-            # File/directory not found: repeated reads on non-existent paths
-            _is_not_found = bool(re.search(r'No such file or directory|cannot access|not found', content_str, re.IGNORECASE))
-            _is_read_cmd = bool(re.search(r'^\s*(ls|stat|cat|test\s+-[defr]|file\b)', _last_actual_cmd))
-            if _is_not_found and _is_read_cmd and bash_cmd_count.get(_last_actual_cmd, 0) >= 1:
-                content_str += (
-                    "\n\n[PATH NOT FOUND: This path does not exist — confirmed. "
-                    "Do not check this path again. Report the finding and move on.]"
-                )
             # git merge --no-commit: abort+reset is correct for exact HEAD match tasks
             _no_commit_merges = [c for c in bash_history if re.search(r'\bgit\b.*\bmerge\b.*--no-commit', c)]
             _has_committed = any(re.search(r'\bgit\b.*\bcommit\b', c) for c in bash_history)

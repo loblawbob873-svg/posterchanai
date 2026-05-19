@@ -235,8 +235,8 @@ def _build_model_messages(request: MessagesRequest) -> list:
                             "Do NOT run any more dmesg or journalctl commands.]"
                         )
 
-                # Directory exploration loop: model keeps ls/find/tree browsing without progress
-                _is_listing_cmd = bool(re.search(r'^\s*(ls\b|find\b|tree\b)', last_bash_cmd or ""))
+                # Directory exploration loop: only fires if not already suppressed by repeated-command check
+                _is_listing_cmd = bool(re.search(r'^\s*(ls\b|find\b|tree\b)', last_bash_cmd or "")) and not _loop_suppressed_a
                 if _is_listing_cmd:
                     _recent_a = bash_history[-8:] if len(bash_history) >= 8 else bash_history
                     _consec_ls_a = 0
@@ -372,27 +372,44 @@ def _build_model_messages(request: MessagesRequest) -> list:
                             "Execute these three commands now. Do NOT run git status or git merge again.]"
                         )
 
-                # Repeated identical command: result never changes, re-running won't help
+                # Repeated identical command: takes priority over exploration-loop check.
+                _orig_content_str_a = content_str
+                _loop_suppressed_a = False
                 if last_cmd and len(bash_history) >= 2:
                     _identical_count_a = bash_cmd_count.get(last_cmd, 0)
-                    if _identical_count_a >= 4:
+                    _orig_not_found_a = bool(re.search(r'No such file or directory|cannot access|not found', _orig_content_str_a, re.IGNORECASE))
+                    if _identical_count_a >= 3:
+                        _loop_suppressed_a = True
                         if re.search(r'\bgit\s+status\b', last_cmd):
                             content_str = (
-                                f"[REPEATED COMMAND SUPPRESSED: git status has been run {_identical_count_a} times — the repo is consistently clean. "
+                                f"[REPEATED COMMAND BLOCKED: git status has been run {_identical_count_a} times — the repo is consistently clean. "
                                 "STOP. Either the task is complete (report success) or fetch first: "
                                 "git fetch <remote-name> && git log HEAD..FETCH_HEAD --oneline. Do NOT run git status again.]"
                             )
+                        elif _orig_not_found_a:
+                            content_str = (
+                                f"[REPEATED COMMAND BLOCKED: This command was run {_identical_count_a} times. "
+                                "CONFIRMED: the path does not exist and will not appear by checking again. "
+                                "STOP. You must either CREATE the missing file/resource, or change your "
+                                "approach to not require it. Do NOT run any read/list command on this path again.]"
+                            )
                         else:
                             content_str = (
-                                f"[REPEATED COMMAND SUPPRESSED: You have run this exact command {_identical_count_a} times. "
-                                "Running it again will not change the result. STOP. Take a completely different action: "
-                                "read a config file, edit source code, generate a missing resource, or report the blocker.]"
+                                f"[REPEATED COMMAND BLOCKED: This exact command was run {_identical_count_a} times "
+                                "and produces the same result every time. Running it again changes nothing. "
+                                "STOP. Take a fundamentally different action toward your task.]"
                             )
                     elif _identical_count_a >= 2:
-                        content_str += (
-                            f"\n\n[REPEATED COMMAND: You have already run this exact command {_identical_count_a} times "
-                            "and the result is the same each time. Do NOT run it again. Take a different action instead.]"
-                        )
+                        if _orig_not_found_a:
+                            content_str += (
+                                f"\n\n[REPEATED COMMAND ({_identical_count_a}×): This path does not exist — confirmed. "
+                                "Do NOT check it again. CREATE the missing resource or change your approach.]"
+                            )
+                        else:
+                            content_str += (
+                                f"\n\n[REPEATED COMMAND ({_identical_count_a}×): Same result every time. "
+                                "Do NOT run this again. Take a different action.]"
+                            )
 
                 parts.append(content_str)
 
