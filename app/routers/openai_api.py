@@ -780,9 +780,9 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 _n_colorized = int(_colorized_m.group(1)) if _colorized_m else 0
                 if _n_colorized > 0:
                     content_str += (
-                        f"\n\n[TASK COMPLETE: {_n_colorized} lines colorized. "
-                        f"STOP — do NOT run any more colorization scripts on this file. "
-                        f"Verify once: bash -n {_sh_ref} && echo syntax_ok]"
+                        f"\n\n[TASK COMPLETE: {_n_colorized} display echo lines colorized with ANSI color codes. "
+                        f"STOP — the task is finished. Do NOT run any more commands. "
+                        f"Report to the user: '{_n_colorized} echo lines in {_sh_ref} have been colorized.']"
                     )
                 else:
                     content_str += (
@@ -822,6 +822,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             "Match lines generically: line.strip().startswith('echo ') and '>>' not in line "
                             "and '>' not in line.partition('echo')[2]]"
                         )
+            # General catch-all: same command run 5+ times — inject a hard stop
+            if last_cmd and bash_cmd_count.get(last_cmd, 0) >= 5:
+                content_str += (
+                    f"\n\n[LOOP DETECTED: This exact command has been run {bash_cmd_count[last_cmd]} times. "
+                    "The result is not changing. STOP running this command. "
+                    "If the task is complete, report success to the user and stop ALL commands. "
+                    "If the task is not complete, try a completely different approach.]"
+                )
             # Wrap in XML tool_result format matching this model's expected pattern
             result.append({"role": "user", "content": f"<tool_result>\n<tool>{last_tool_name}</tool>\n<output>\n{content_str}\n</output>\n</tool_result>"})
         else:
