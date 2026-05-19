@@ -817,6 +817,21 @@ def _redirect_hallucinated_sed(tool_calls: list, settings: dict = None) -> list:
                     logger.warning("[BASH-FIX] bash tool call had no 'command' — injected grep")
                     out.append(tc)
                     continue
+                if _tf and "grep" in cmd and _tf in cmd and "echo" in cmd and "sed" not in cmd:
+                    # Model is running grep on the target file — replace with the next batch directly
+                    _batch = _build_remaining_batch(_tf, _color, _prefix, _suffix)
+                    if _batch:
+                        args_dict["command"] = _batch
+                        tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                        logger.info("[GREP-BATCH] Replaced grep with pre-computed correct batch")
+                        out.append(tc)
+                        continue
+                    else:
+                        args_dict["command"] = "echo 'All display echo lines colorized. Task complete.'"
+                        tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                        logger.info("[GREP-BATCH] All lines done — returning completion")
+                        out.append(tc)
+                        continue
                 if _tf and "sed" in cmd and ("-i" in cmd or "-e" in cmd):
                     # Replace model's sed with pre-computed correct batch from actual file state
                     _batch = _build_remaining_batch(_tf, _color, _prefix, _suffix)
