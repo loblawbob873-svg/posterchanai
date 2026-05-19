@@ -549,9 +549,15 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     + f"\n...[output truncated — {line_count} lines total. "
                     "Use grep or targeted bash commands to find specific lines instead.]"
                 )
-            # Detect command loop — same bash command run more than once
+            # Detect command loop — same MODIFYING bash command run more than once
+            # Only applies to commands that change files (sed -i, etc.) — NOT read-only commands
             last_cmd = bash_history[-1] if bash_history else ""
-            if last_cmd and bash_cmd_count.get(last_cmd, 0) > 1:
+            _is_modifying_cmd = (
+                last_cmd and
+                (("sed" in last_cmd and "-i" in last_cmd) or
+                 re.search(r'\bpython3?\s+-c\b', last_cmd))
+            )
+            if _is_modifying_cmd and bash_cmd_count.get(last_cmd, 0) > 1:
                 repeat_n = bash_cmd_count[last_cmd]
                 # Extract sed pattern to give specific diagnosis
                 quoting_hint = ""
