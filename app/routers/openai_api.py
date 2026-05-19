@@ -1592,12 +1592,24 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         1 for m in messages if m.get("role") == "user"
         and "PROXY: bash tool called with no command" in (m.get("content") or "")
     )
-    # Compute git fetch/reset state from assistant tool_calls in history
+    # Compute git fetch/reset state from converted messages (assistant content has XML tool calls)
     _git_fetch_count = 0
     _git_reset_done = False
     for _mh in messages:
         if _mh.get("role") != "assistant":
             continue
+        _content_mh = _mh.get("content") or ""
+        # Parse XML <input>...</input> blocks from converted assistant messages
+        for _xml_m in re.finditer(r'<input>\s*(.*?)\s*</input>', _content_mh, re.DOTALL):
+            try:
+                _ch = json.loads(_xml_m.group(1)).get("command", "")
+            except Exception:
+                _ch = _xml_m.group(1)
+            if re.search(r'\bgit\b.*\bfetch\b', _ch):
+                _git_fetch_count += 1
+            if re.search(r'\bgit\b.*reset.*--hard.*FETCH_HEAD', _ch):
+                _git_reset_done = True
+        # Also check standard tool_calls format (in case messages aren't yet converted)
         for _tch in (_mh.get("tool_calls") or []):
             if _tch.get("function", {}).get("name") not in ("bash", "Bash"):
                 continue
