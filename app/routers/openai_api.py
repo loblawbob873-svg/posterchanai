@@ -581,12 +581,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             elif "HEAD is now at" in content_str and re.search(r'reset\s+--hard\s+(?:origin|upstream)/', last_bash_cmd):
                 _tgt_m = re.search(r'git\s+-C\s+([\S]+)', last_bash_cmd)
                 _tgt = _tgt_m.group(1) if _tgt_m else "<TARGET>"
-                # Find local paths from the conversation (~/something) that differ from target
+                # Find local paths from the user's TASK message only (first user message)
                 _local_paths = []
                 for _m in messages:
-                    for _lp in re.findall(r'(~/[\w.-]+)', _m.get("content") or ""):
-                        if _lp != _tgt and _lp not in _local_paths:
-                            _local_paths.append(_lp)
+                    if _m.get("role") == "user":
+                        for _lp in re.findall(r'(~/[\w-]+)', _m.get("content") or ""):
+                            if _lp != _tgt and _lp not in _local_paths:
+                                _local_paths.append(_lp)
+                        break  # only first user message
                 _source_hint = _local_paths[0] if _local_paths else "<LOCAL_SOURCE_FROM_TASK>"
                 content_str += (
                     f"\n\n[WARNING: You used a GitHub remote instead of the local source path. "
