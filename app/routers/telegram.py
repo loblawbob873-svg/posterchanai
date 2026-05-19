@@ -1376,6 +1376,27 @@ async def _handle_telegram_update(update: dict, db: Session):
                                 attachments.append((file_name, downloaded_data, content_type))
                                 logger.info(f"Downloaded document: {file_name}, size: {len(downloaded_data)}")
             
+            # Extract text from PDF/Office document attachments
+            doc_text = None
+            if attachments:
+                import base64 as _b64
+                from app.services.document_service import extract_pdf_text, extract_document_text
+                for _fname, _fdata, _ctype in attachments:
+                    try:
+                        _fdata_b64 = _b64.b64encode(_fdata).decode('utf-8')
+                        if _ctype == "application/pdf" or _fname.lower().endswith('.pdf'):
+                            _extracted = extract_pdf_text(_fdata_b64)
+                            if _extracted:
+                                doc_text = f"[PDF: {_fname}]\n\n{_extracted}"
+                                logger.info(f"Extracted {len(_extracted)} chars from PDF: {_fname}")
+                        elif _ctype not in ("image/jpeg", "image/png", "image/gif", "image/webp"):
+                            _extracted = extract_document_text(_fdata_b64)
+                            if _extracted:
+                                doc_text = f"[Document: {_fname}]\n\n{_extracted}"
+                                logger.info(f"Extracted {len(_extracted)} chars from document: {_fname}")
+                    except Exception as _doc_err:
+                        logger.error(f"Document extraction error for {_fname}: {_doc_err}")
+
             # If we have images, always run OCR for later use
             if has_images and attachments:
                 for filename, file_data, content_type in attachments:
@@ -1852,12 +1873,16 @@ async def _handle_telegram_update(update: dict, db: Session):
                             else:
                                 messages.append({"role": "user", "content": text})
                     else:
+                        # Build user message, prepending any extracted document text
+                        _user_msg_text = text
+                        if doc_text:
+                            _user_msg_text = doc_text + "\n\n" + text if text.strip() else doc_text
                         # If last_role is user, merge with last message instead of creating duplicate
                         if last_role == "user":
-                            messages[-1]["content"] += "\n\n" + text
+                            messages[-1]["content"] += "\n\n" + _user_msg_text
                         else:
-                            messages.append({"role": "user", "content": text})
-                    
+                            messages.append({"role": "user", "content": _user_msg_text})
+
                     # If the user replied to a message, inject that context so the model
                     # knows what content/URL to reference (e.g. "make a post with this URL").
                     if reply_text:

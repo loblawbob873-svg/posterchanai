@@ -21,7 +21,7 @@ from app.auth import get_current_user, get_user_from_websocket
 from app.services.chat_service import ChatService
 from app.services.command_service import CommandService
 from app.services.storage_service import StorageService
-from app.services.document_service import extract_pdf_text, extract_document_text, extract_image_text
+from app.services.document_service import extract_pdf_text, extract_document_text, extract_image_text, merge_pdfs
 from app.services.email_service import EmailService
 from app.services.search_service import SearchService, is_safe_url
 from app.services.proxy_image_cache import get as proxy_cache_get
@@ -238,6 +238,34 @@ async def proxy_image_post(
     except Exception as e:
         logger.debug(f"Proxy image failed: {e}")
         raise HTTPException(status_code=502, detail="Failed to fetch image")
+
+
+@router.post("/merge-pdfs")
+async def merge_pdfs_endpoint(
+    request: Request,
+    current_user: User = Depends(get_current_user)
+):
+    """Merge multiple base64-encoded PDFs into one and return the merged PDF."""
+    import base64 as _b64
+    data = await request.json()
+    pdfs = data.get("pdfs", [])  # list of {base64, filename}
+    if len(pdfs) < 2:
+        raise HTTPException(status_code=400, detail="At least 2 PDFs required for merging")
+    try:
+        pdf_bytes_list = [_b64.b64decode(p["base64"]) for p in pdfs if p.get("base64")]
+        merged = merge_pdfs(pdf_bytes_list)
+        if not merged:
+            raise HTTPException(status_code=500, detail="PDF merge failed")
+        return Response(
+            content=merged,
+            media_type="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=merged.pdf"}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"PDF merge endpoint error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/save-mail-attachment")
@@ -660,12 +688,22 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                     # If arrays are provided, use them; otherwise fall back to single values for backward compat
                     if images and not image_data:
                         image_data = images[0].get("base64") if images else None
-                    if pdfs and not pdf_data:
-                        pdf_data = pdfs[0].get("base64") if pdfs else None
                     if documents and not document_data:
                         document_data = documents[0].get("base64") if documents else None
                     if files and not file_content:
                         file_content = files[0].get("content") if files else None
+                    # PDFs: if multiple provided, merge them then extract text from the merged result
+                    if pdfs and len(pdfs) > 1:
+                        import base64 as _b64
+                        _pdf_bytes_list = [_b64.b64decode(p["base64"]) for p in pdfs if p.get("base64")]
+                        _merged = merge_pdfs(_pdf_bytes_list)
+                        if _merged:
+                            pdf_data = _b64.b64encode(_merged).decode("utf-8")
+                            logger.info(f"[CHAT] Merged {len(_pdf_bytes_list)} PDFs into {len(_merged)} bytes")
+                        else:
+                            pdf_data = pdfs[0].get("base64") if pdfs else None
+                    elif pdfs and not pdf_data:
+                        pdf_data = pdfs[0].get("base64") if pdfs else None
 
                     # If image_path provided but no image_data, load from disk
                     if image_path and not image_data:

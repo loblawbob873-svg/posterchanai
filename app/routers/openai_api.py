@@ -789,7 +789,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             _is_syslog_cmd = bool(re.search(r'\bdmesg\b|\bjournalctl\b', last_bash_cmd or ""))
             if _is_syslog_cmd:
                 _syslog_count = sum(1 for c in bash_history if re.search(r'\bdmesg\b|\bjournalctl\b', c))
-                if _syslog_count >= 3:
+                if _syslog_count >= 2:
                     content_str += (
                         f"\n\n[SYSTEM LOG LOOP: You have run {_syslog_count} system log queries. "
                         "You have collected sufficient log data. STOP querying logs. "

@@ -83,6 +83,50 @@ def _tools_prompt(tools: list) -> str:
     return "<tools>\n" + "\n\n".join(entries) + "\n</tools>"
 
 
+def _extract_block_text(block: dict) -> str:
+    """Extract text from a single Anthropic content block, including document/PDF blocks."""
+    t = block.get("type", "")
+    if t == "text":
+        return block.get("text", "")
+    if t == "tool_use":
+        name = block.get("name", "")
+        inp = block.get("input", {})
+        return f'<tool_call>\n{json.dumps({"name": name, "arguments": inp})}\n</tool_call>'
+    if t == "tool_result":
+        result_content = block.get("content", "")
+        if isinstance(result_content, list):
+            result_content = "\n".join(
+                b.get("text", "") for b in result_content if isinstance(b, dict) and b.get("type") == "text"
+            )
+        return str(result_content)
+    if t == "document":
+        source = block.get("source", {})
+        media_type = source.get("media_type", "")
+        if media_type == "application/pdf" and source.get("type") == "base64":
+            try:
+                from app.services.document_service import extract_pdf_text
+                extracted = extract_pdf_text(source.get("data", ""))
+                if extracted:
+                    return f"[PDF Document]\n\n{extracted}"
+            except Exception as e:
+                logger.error(f"PDF extraction in content block failed: {e}")
+        # URL-based document
+        if source.get("type") == "url":
+            return f"[Document URL: {source.get('url', '')}]"
+    if t == "image":
+        source = block.get("source", {})
+        media_type = source.get("media_type", "")
+        if source.get("type") == "base64" and media_type.startswith("image/"):
+            try:
+                from app.services.document_service import extract_image_text
+                extracted = extract_image_text(source.get("data", ""))
+                if extracted:
+                    return f"[Image OCR text:\n{extracted}]"
+            except Exception:
+                pass
+    return ""
+
+
 def _content_to_text(content) -> str:
     """Flatten Anthropic content (str or list of blocks) to plain text."""
     if isinstance(content, str):
@@ -93,20 +137,9 @@ def _content_to_text(content) -> str:
     for block in content:
         if not isinstance(block, dict):
             continue
-        t = block.get("type", "")
-        if t == "text":
-            parts.append(block.get("text", ""))
-        elif t == "tool_use":
-            name = block.get("name", "")
-            inp = block.get("input", {})
-            parts.append(f'<tool_call>\n{json.dumps({"name": name, "arguments": inp})}\n</tool_call>')
-        elif t == "tool_result":
-            result_content = block.get("content", "")
-            if isinstance(result_content, list):
-                result_content = "\n".join(
-                    b.get("text", "") for b in result_content if isinstance(b, dict) and b.get("type") == "text"
-                )
-            parts.append(str(result_content))
+        text = _extract_block_text(block)
+        if text:
+            parts.append(text)
     return "\n".join(parts)
 
 
@@ -194,7 +227,7 @@ def _build_model_messages(request: MessagesRequest) -> list:
                 _is_syslog_cmd = bool(re.search(r'\bdmesg\b|\bjournalctl\b', last_bash_cmd or ""))
                 if _is_syslog_cmd:
                     _syslog_count = sum(1 for c in bash_history if re.search(r'\bdmesg\b|\bjournalctl\b', c))
-                    if _syslog_count >= 3:
+                    if _syslog_count >= 2:
                         content_str += (
                             f"\n\n[SYSTEM LOG LOOP: You have run {_syslog_count} system log queries. "
                             "You have collected sufficient log data. STOP querying logs. "

@@ -271,6 +271,23 @@ def extract_pptx_text(pptx_base64: str, max_chars: int = 50000) -> Optional[str]
         return None
 
 
+def merge_pdfs(pdf_bytes_list: list) -> Optional[bytes]:
+    """Merge a list of PDF byte strings into a single PDF. Returns merged PDF bytes or None on error."""
+    try:
+        import fitz
+        merged = fitz.open()
+        for pdf_bytes in pdf_bytes_list:
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            merged.insert_pdf(doc)
+            doc.close()
+        out = merged.tobytes(garbage=4, deflate=True)
+        merged.close()
+        return out
+    except Exception as e:
+        logger.error(f"PDF merge error: {e}")
+        return None
+
+
 def extract_document_text(document_base64: str, max_chars: int = 50000) -> Optional[str]:
     """Try to extract text from an Office document (auto-detect type)"""
     # Try each format - the wrong format will fail quickly
