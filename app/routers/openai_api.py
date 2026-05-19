@@ -428,7 +428,10 @@ def _tools_system_text(tools: list) -> str:
     preamble = (
         f"IMPORTANT: Only the following tools exist: {names_str}. "
         "There is NO 'replace' tool — use bash to run shell commands (sed, awk, python3) for file modifications. "
-        "The bash tool requires a 'command' argument (string).\n\n"
+        "The bash tool requires a 'command' argument (string). "
+        "ANSI COLOR ESCAPING: when inserting ANSI codes with sed -i, use \\\\033 (two backslashes) NOT \\033 in the replacement string — "
+        "e.g.: sed -i 's|echo \"\\[Section\\]\"|echo -e \"\\\\033[1;96mSection\\\\033[0m\"|' file. "
+        "Single \\033 in sed replacement is misinterpreted as \\0 (whole match) + 33, corrupting the file.\n\n"
     )
     return preamble + "<tools>\n" + "\n\n".join(entries) + "\n</tools>"
 
@@ -512,6 +515,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # Intercept "No changes" errors — model needs a new strategy
             elif "no changes to apply" in content_str.lower() or "identical" in content_str.lower():
                 content_str += "\n\n[IMPORTANT: The edit failed because oldString was not found or was identical to newString. Do NOT repeat the same edit. Use bash with sed -i for targeted replacements instead, e.g. bash(command=\"sed -i 's/original/replacement/g' file\").]"
+            # Detect mangled \033 — model used \033 instead of \\033 in sed replacement
+            elif re.search(r'echo\s+-e\s+.*33\[', content_str) and '\\033' not in content_str and '\033' not in content_str:
+                content_str = (
+                    "[ERROR: The sed command corrupted the file — GNU sed interpreted \\033 as \\0 (whole match) + 33, "
+                    "producing garbled output. Reset the file: git -C /opt/gentoo-installer checkout HEAD gentoo.sh "
+                    "Then use DOUBLE backslash in your sed replacement: \\\\033 not \\033. "
+                    "Example: sed -i 's|echo \"\\[Section\\]\"|echo -e \"\\\\033[1;96mSection\\\\033[0m\"|' file]"
+                )
             # Empty bash result — inform model sed -i is silent on success
             elif not content_str.strip() or content_str.strip() in ("(no output)", "(exit 0)"):
                 is_sed_cmd = "sed" in last_bash_cmd and ("-i" in last_bash_cmd or "-e" in last_bash_cmd)
