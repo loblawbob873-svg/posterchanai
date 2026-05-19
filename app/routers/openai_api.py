@@ -826,19 +826,28 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             "Match lines generically: line.strip().startswith('echo ') and '>>' not in line "
                             "and '>' not in line.partition('echo')[2]]"
                         )
-            # Exploration cap: if N+ commands run and no write has happened, force a write
+            # Exploration cap: if N+ commands run and no write has happened AND model is exploring
+            # a .sh file (colorization context), force a write. Do NOT fire for git tasks.
             _total_cmds = len(bash_history)
             _any_write = any(
                 re.search(r'python3?\s+<<|sed\s+-i|open\s*\(.*,\s*["\']w["\']', c)
                 for c in bash_history
             )
-            if _total_cmds >= 7 and not _any_write and not colorize_task_done:
-                _sh_exp_m = None
+            # Only fire if at least one command actually referenced a .sh file (colorization context)
+            _sh_exp_m = None
+            for _hc in bash_history:
+                _m = re.search(r'([/\w.~-]+\.sh)\b', _hc)
+                if _m:
+                    _sh_exp_m = _m
+                    break
+            if _total_cmds >= 7 and not _any_write and not colorize_task_done and _sh_exp_m:
+                # Find most recent .sh reference for accuracy
                 for _hc in reversed(bash_history):
-                    _sh_exp_m = re.search(r'([/\w.~-]+\.sh)\b', _hc)
-                    if _sh_exp_m:
+                    _m2 = re.search(r'([/\w.~-]+\.sh)\b', _hc)
+                    if _m2:
+                        _sh_exp_m = _m2
                         break
-                _sh_exp = _sh_exp_m.group(1) if _sh_exp_m else '/opt/gentoo-installer/gentoo.sh'
+                _sh_exp = _sh_exp_m.group(1)
                 content_str += (
                     f"\n\n[EXPLORATION CAP: You have run {_total_cmds} commands without modifying any file. "
                     f"You already know enough. Write the colorization script NOW:\n"
