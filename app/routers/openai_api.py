@@ -429,8 +429,13 @@ def _tools_system_text(tools: list) -> str:
 _display_echo_cache: list = []
 
 
-def _oai_messages_for_tools(messages: list, tools: list) -> list:
+def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) -> list:
     """Convert OpenAI messages (with tool_calls / tool role) to model text format."""
+    _s = settings or {}
+    _tf = _s.get("colorize_target_file", "")
+    _color = _s.get("colorize_color", "1;96")
+    _prefix = _s.get("colorize_prefix", ">> ")
+    _suffix = _s.get("colorize_suffix", " <<")
     result = []
     tools_text = _tools_system_text(tools)
     for msg in messages:
@@ -514,9 +519,9 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                                     .replace('[', r'\[')
                                     .replace(']', r'\]')
                                     .replace('$', r'\$'))
-                        cyber = _make_cyberpunk_text(stripped_content).replace('|', r'\|')
+                        display = _make_display_text(stripped_content, _prefix, _suffix).replace('|', r'\|')
                         batch_seds.append(
-                            f"sed -i 's|{safe_pat}|echo -e \"\\\\033[1;96m{cyber}\\\\033[0m\"|' /opt/gentoo-installer/gentoo.sh"
+                            f"sed -i 's|{safe_pat}|echo -e \"\\\\033[{_color}m{display}\\\\033[0m\"|' {_tf}"
                         )
                     if batch_seds:
                         batch_cmd = " && \\\n".join(batch_seds) + " && echo 'BATCH_SED_OK'"
@@ -531,8 +536,8 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                         content_str += (
                             "\n\n[WARNING: The echo lines above ALL write to files (>>). "
                             "They are config-writing statements — do NOT colorize them (would break the installer). "
-                            "The display echoes are further in the file. Run a broader grep:\n"
-                            "bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '#'\")"
+                            f"The display echoes are further in the file. Run a broader grep:\n"
+                            f"bash(command=\"grep -n 'echo' {_tf} | grep -v '>>' | grep -v '#'\")"
                             "\nThat will show the echo statements that display text to the user.]"
                         )
                         logger.info("[GREP-ANN] All grep echoes are redirecting — telling model to run better grep")
@@ -540,7 +545,7 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                     content_str += (
                         "\n\n[WARNING: All visible echo lines write to files with >> redirection. "
                         "These are config-writing statements — do NOT colorize them. "
-                        "Run: bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '#'\") "
+                        f"Run: bash(command=\"grep -n 'echo' {_tf} | grep -v '>>' | grep -v '#'\") "
                         "to find the display echo statements.]"
                     )
                     logger.info("[GREP-ANN] All echoes are redirecting, injecting better grep suggestion")
@@ -560,7 +565,7 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                     content_str[:200] + "\n...[truncated]\n\n"
                     "[This inspection confirms the file is a plain text bash script with no binary ANSI bytes. "
                     "Stop inspecting and start editing NOW. "
-                    "Run: bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh | head -40\") "
+                    f"Run: bash(command=\"grep -n 'echo' {_tf} | head -40\") "
                     "to see the echo statements, then write sed -i commands to add \\033[...m colors to them.]"
                 )
             # Empty bash result — sed found nothing to replace; tell the model immediately
@@ -621,10 +626,10 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                         "You have run this sed command before and it did NOT match anything.\n"
                         "STOP. DO NOT repeat this sed command.\n\n"
                         "MANDATORY: Run this command RIGHT NOW to find DISPLAY echo lines (not config-writing ones):\n"
-                        "bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '#'\")\n\n"
+                        f"bash(command=\"grep -n 'echo' {_tf} | grep -v '>>' | grep -v '#'\")\n\n"
                         "IMPORTANT: Lines with >> write to config files — do NOT colorize those. "
                         "Only colorize lines that display text to the user (no >> redirection). "
-                        "Use '|' as delimiter: sed -i 's|exact text from grep|echo -e \"\\033[1;96m...\"|' file"
+                        f"Use '|' as delimiter: sed -i 's|exact text from grep|echo -e \"\\033[{_color}m...\"|' file"
                     )
                     logger.warning(f"[ANTHR/OAI] Repeated empty sed result (count={no_output_count+1}), escalating redirect")
                 elif is_sed_cmd:
@@ -650,7 +655,7 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                         f"ERROR: sed found no matches — the search pattern is not in the file.{caret_hint}{hallucination_warning}\n\n"
                         "[The sed -i command ran but the search pattern did not match any line. "
                         "DO NOT repeat the same sed command.\n"
-                        "Run: bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '#'\") "
+                        f"Run: bash(command=\"grep -n 'echo' {_tf} | grep -v '>>' | grep -v '#'\") "
                         "to find display echo lines. Lines with >> write to files — do NOT sed those. "
                         "Copy the text literally from grep output into your next sed.]"
                     )
@@ -665,7 +670,7 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                 content_str = (
                     "0 (pattern not found)\n\n"
                     "[The file has no existing ANSI escape codes. Stop inspecting and start editing. "
-                    "Run: bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh | head -40\") "
+                    f"Run: bash(command=\"grep -n 'echo' {_tf} | head -40\") "
                     "to see the actual echo lines, then immediately write sed -i commands to add "
                     "\\033[...m ANSI color codes to those specific echo strings. Do not run any more inspection commands.]"
                 )
@@ -710,9 +715,9 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                         _sp = (_lcs.replace('\\', '\\\\').replace('|', r'\|')
                                .replace('[', r'\[').replace(']', r'\]')
                                .replace('$', r'\$'))
-                        _cy = _make_cyberpunk_text(_lcs).replace('|', r'\|')
+                        _cy = _make_display_text(_lcs, _prefix, _suffix).replace('|', r'\|')
                         trunc_batch.append(
-                            f"sed -i 's|{_sp}|echo -e \"\\\\033[1;96m{_cy}\\\\033[0m\"|' /opt/gentoo-installer/gentoo.sh"
+                            f"sed -i 's|{_sp}|echo -e \"\\\\033[{_color}m{_cy}\\\\033[0m\"|' {_tf}"
                         )
                 if trunc_batch:
                     batch_cmd = " && \\\n".join(trunc_batch) + " && echo 'BATCH_SED_OK'"
@@ -720,7 +725,7 @@ def _oai_messages_for_tools(messages: list, tools: list) -> list:
                         f"\n\nACTION REQUIRED — Run this ONE command to colorize all {len(trunc_batch)} display echo lines:\n\nbash(command=\"{batch_cmd}\")"
                     )
                 else:
-                    notes.append("Run grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '#' to see display echo lines.")
+                    notes.append(f"Run grep -n 'echo' {_tf} | grep -v '>>' | grep -v '#' to see display echo lines.")
                 content_str = content_str[:500] + "\n...[file truncated]\n\n" + " ".join(notes)
             # Wrap in XML tool_result format matching this model's expected pattern
             result.append({"role": "user", "content": f"<tool_result>\n<tool>{last_tool_name}</tool>\n<output>\n{content_str}\n</output>\n</tool_result>"})
@@ -742,13 +747,24 @@ _TOOL_NAME_MAP = {
     "str_replace": "edit",
 }
 
-_GENTOO_SH = "/opt/gentoo-installer/gentoo.sh"
+def _make_display_text(echo_line: str, prefix: str, suffix: str) -> str:
+    """Extract display text from an echo line and wrap it with prefix/suffix."""
+    m = re.search(r'echo\s+(?:-[eE]\s+)?"(.*?)"', echo_line.strip())
+    if not m:
+        m = re.search(r"echo\s+(?:-[eE]\s+)?'(.*?)'", echo_line.strip())
+    if not m:
+        return f"{prefix}TEXT{suffix}"
+    text = m.group(1).strip()
+    clean = re.sub(r'^\[|\]$', '', text).strip()
+    return f"{prefix}{clean}{suffix}"
 
 
-def _build_remaining_batch(max_seds: int = 20) -> str:
-    """Read gentoo.sh and build a batch sed for all remaining uncolorized display echo lines."""
+def _build_remaining_batch(target_file: str, color: str, prefix: str, suffix: str, max_seds: int = 20) -> str:
+    """Read target_file and build a batch sed for all remaining uncolorized display echo lines."""
+    if not target_file:
+        return ""
     try:
-        with open(_GENTOO_SH, 'r') as f:
+        with open(target_file, 'r') as f:
             lines = f.readlines()
     except Exception:
         return ""
@@ -768,9 +784,7 @@ def _build_remaining_batch(max_seds: int = 20) -> str:
         m = re.search(r'echo\s+"(.*?)"', stripped)
         if not m:
             continue
-        text = m.group(1)
-        clean = re.sub(r'^\[|\]$', '', text.strip()).strip()
-        cyber = f">> {clean} <<".replace('|', r'\|')
+        display = _make_display_text(stripped, prefix, suffix).replace('|', r'\|')
         safe_pat = (stripped
                     .replace('\\', '\\\\')
                     .replace('|', r'\|')
@@ -778,7 +792,7 @@ def _build_remaining_batch(max_seds: int = 20) -> str:
                     .replace(']', r'\]')
                     .replace('$', r'\$'))
         seds.append(
-            f"sed -i 's|{safe_pat}|echo -e \"\\\\033[1;96m{cyber}\\\\033[0m\"|' {_GENTOO_SH}"
+            f"sed -i 's|{safe_pat}|echo -e \"\\\\033[{color}m{display}\\\\033[0m\"|' {target_file}"
         )
         if len(seds) >= max_seds:
             break
@@ -797,54 +811,36 @@ def _normalize_sed_pat(pat: str) -> str:
     return p
 
 
-def _make_cyberpunk_text(echo_line: str) -> str:
-    """Extract display text from echo line and generate a cyberpunk-style replacement."""
-    m = re.search(r'echo\s+(?:-[eE]\s+)?"(.*?)"', echo_line.strip())
-    if not m:
-        m = re.search(r"echo\s+(?:-[eE]\s+)?'(.*?)'", echo_line.strip())
-    if not m:
-        return ">> SYSTEM ONLINE <<"
-    text = m.group(1).strip()
-    clean = re.sub(r'^\[|\]$', '', text).strip()
-    return f">> {clean} <<"
 
 
-def _build_correct_sed(matched_line: str, color: str) -> str:
-    """Given a cached display echo line and a color code, return a correct sed -i command."""
-    # Extract display text from the echo statement
-    text_m = re.search(r'echo\s+(?:-[eE]\s+)?"(.*?)"', matched_line.strip())
-    if not text_m:
-        text_m = re.search(r"echo\s+(?:-[eE]\s+)?'(.*?)'", matched_line.strip())
-    if not text_m:
-        text_m = re.search(r'echo\s+(?:-[eE]\s+)?(\S.*)', matched_line.strip())
-    if not text_m:
+def _build_correct_sed(matched_line: str, color: str, target_file: str, prefix: str, suffix: str) -> str:
+    """Given a cached display echo line, return a correct sed -i command."""
+    if not target_file:
         return ""
-    display_text = text_m.group(1).strip('"\'')
-
-    # Build sed pattern: escape [ and ] for BRE, escape $ for sed
+    display_text = _make_display_text(matched_line, prefix, suffix)
     raw_stripped = matched_line.strip()
-    # Pattern: escape special BRE chars — \[ for literal [, \$ for literal $
     esc_pat = (raw_stripped
                .replace('\\', '\\\\')
                .replace('[', r'\[').replace(']', r'\]')
                .replace('$', r'\$'))
-    # Replacement: echo -e with \\033 (written as \\\\033 in Python so bash script gets \033)
     correct_repl = f'echo -e "\\\\033[{color}m{display_text}\\\\033[0m"'
-    cmd = (
-        f"sed -i 's|{esc_pat}|{correct_repl}|' /opt/gentoo-installer/gentoo.sh && "
+    return (
+        f"sed -i 's|{esc_pat}|{correct_repl}|' {target_file} && "
         f"echo 'SED_OK: {display_text[:40]}'"
     )
-    return cmd
 
 
-def _redirect_hallucinated_sed(tool_calls: list) -> list:
-    """Intercept outgoing sed tool calls:
-    - Bash tool call missing 'command' key → inject grep to break SchemaError loops.
-    - Hallucinated pattern (not in cache) → replace with grep to force real line discovery.
-    - Real pattern but broken replacement (wrong ANSI or appending instead of replacing) → rebuild.
-    - Real pattern, looks valid → append && echo so sed -i silence is never misread as failure.
+def _redirect_hallucinated_sed(tool_calls: list, settings: dict = None) -> list:
+    """Intercept sed tool calls when colorize_target_file is configured.
+    When active: replaces model's sed with a pre-computed correct batch built from file state.
+    When not configured: passes all tool calls through unchanged.
     """
-    _GREP_CMD = "grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '#'"
+    _s = settings or {}
+    _tf = _s.get("colorize_target_file", "")
+    _color = _s.get("colorize_color", "1;96")
+    _prefix = _s.get("colorize_prefix", ">> ")
+    _suffix = _s.get("colorize_suffix", " <<")
+    _grep_cmd = f"grep -n 'echo' {_tf} | grep -v '>>' | grep -v '#'" if _tf else ""
     out = []
     for tc in tool_calls:
         fn = tc.get("function", {})
@@ -853,16 +849,16 @@ def _redirect_hallucinated_sed(tool_calls: list) -> list:
                 raw_args = fn.get("arguments", "{}")
                 args_dict = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
                 cmd = args_dict.get("command", "")
-                # Missing or empty command → inject grep to break SchemaError loops
-                if not cmd.strip():
-                    args_dict["command"] = _GREP_CMD
+                # Missing or empty command → inject grep (only when colorize job is active)
+                if not cmd.strip() and _tf:
+                    args_dict["command"] = _grep_cmd
                     tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                     logger.warning("[BASH-FIX] bash tool call had no 'command' — injected grep")
                     out.append(tc)
                     continue
-                if "sed" in cmd and ("-i" in cmd or "-e" in cmd):
-                    # Always replace model's sed with pre-computed correct batch from actual file state
-                    _batch = _build_remaining_batch()
+                if _tf and "sed" in cmd and ("-i" in cmd or "-e" in cmd):
+                    # Replace model's sed with pre-computed correct batch from actual file state
+                    _batch = _build_remaining_batch(_tf, _color, _prefix, _suffix)
                     if _batch:
                         args_dict["command"] = _batch
                         tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
@@ -874,36 +870,34 @@ def _redirect_hallucinated_sed(tool_calls: list) -> list:
                     if _pm:
                         raw_pat = _pm.group(2)
                         replacement = _pm.group(3)
-                        # Normalize pattern for cache comparison
                         norm_pat = _normalize_sed_pat(raw_pat)
 
-                        # Block seds targeting redirect echoes (lines with > or >> to files)
+                        # Block seds targeting redirect echoes
                         if re.search(r'>\s*[\$/]', norm_pat) or '>>' in norm_pat or '| ' in norm_pat:
-                            # Find the next uncolorized display line and run its sed directly
                             redirect_cmd = None
                             for _rlc in _display_echo_cache[:20]:
                                 if '\\033' in _rlc or '\x1b' in _rlc:
                                     continue
                                 if re.search(r'>\s*[\$/]', _rlc) or '>>' in _rlc:
                                     continue
-                                _rlc_s = _rlc.strip()  # strip leading tabs so sed pattern matches
+                                _rlc_s = _rlc.strip()
                                 if not re.search(r'echo\s+\S', _rlc_s):
                                     continue
                                 _rsp = (_rlc_s.replace('\\', '\\\\').replace('|', r'\|')
                                         .replace('[', r'\[').replace(']', r'\]')
                                         .replace('$', r'\$'))
-                                _rcy = _make_cyberpunk_text(_rlc_s).replace('|', r'\|')
+                                _rcy = _make_display_text(_rlc_s, _prefix, _suffix).replace('|', r'\|')
                                 redirect_cmd = (
-                                    f"sed -i 's|{_rsp}|echo -e \"\\\\033[1;96m{_rcy}\\\\033[0m\"|' "
-                                    f"/opt/gentoo-installer/gentoo.sh && echo 'SED_OK: {_rlc_s[:40]}'"
+                                    f"sed -i 's|{_rsp}|echo -e \"\\\\033[{_color}m{_rcy}\\\\033[0m\"|' "
+                                    f"{_tf} && echo 'SED_OK: {_rlc_s[:40]}'"
                                 )
                                 break
                             if redirect_cmd:
                                 args_dict["command"] = redirect_cmd
-                                logger.warning(f"[SED-REDIR-BLOCK] Blocked '{norm_pat[:50]}' → running display-echo sed instead")
+                                logger.warning(f"[SED-REDIR-BLOCK] Blocked '{norm_pat[:50]}' → display-echo sed")
                             else:
                                 args_dict["command"] = "echo 'All display echo lines colorized. Task complete.'"
-                                logger.warning(f"[SED-REDIR-BLOCK] Blocked redirect-echo sed (no display lines left): '{norm_pat[:60]}'")
+                                logger.warning(f"[SED-REDIR-BLOCK] No display lines left: '{norm_pat[:60]}'")
                             tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                             out.append(tc)
                             continue
@@ -916,18 +910,12 @@ def _redirect_hallucinated_sed(tool_calls: list) -> list:
                             )),
                             None
                         )
-                        in_cache = matched_line is not None
-
-                        if not in_cache:
-                            grep_cmd = "grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '#'"
-                            args_dict["command"] = grep_cmd
+                        if not matched_line:
+                            args_dict["command"] = _grep_cmd
                             tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                             logger.warning(f"[SED-REDIRECT] '{norm_pat[:60]}' not in cache → grep")
                         else:
-                            # Always rebuild from exact cached line to guarantee correct escaping
-                            color_m = re.search(r'\[(\d+(?:;[\d;]*)*)m', replacement)
-                            color = color_m.group(1) if color_m else "1;96"
-                            new_cmd = _build_correct_sed(matched_line, color)
+                            new_cmd = _build_correct_sed(matched_line, _color, _tf, _prefix, _suffix)
                             if new_cmd:
                                 args_dict["command"] = new_cmd
                                 tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
@@ -1202,6 +1190,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
           "tool_call_id": getattr(m, "tool_call_id", None)}
          for m in request.messages],
         tools,
+        settings=settings,
     )
 
     llm_path = settings.get("llm_model_path", "").lower()
@@ -1246,19 +1235,20 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
 
     clean_text, tool_calls = _parse_oai_tool_calls(full_text)
     tool_calls = _fix_sed_tool_calls(tool_calls)
-    tool_calls = _redirect_hallucinated_sed(tool_calls)
+    tool_calls = _redirect_hallucinated_sed(tool_calls, settings=settings)
     logger.info(f"[OAI-AGENTIC] len={len(full_text)} head={full_text[:200]!r} tail={full_text[-200:]!r} tool_calls={len(tool_calls)}")
 
     # If model responded with text-only or unparseable tool call (no tool call), nudge it once
+    _nudge_tf = settings.get("colorize_target_file", "")
+    _nudge_extra = (
+        f"\nRun: bash(command=\"grep -n 'echo' {_nudge_tf} | grep -v '>>' | grep -v '#'\") "
+        "to see display echo statements (excluding file-writing ones with >>). "
+        "Then use targeted sed -i commands matching the exact strings from that output."
+    ) if _nudge_tf else ""
     if not tool_calls and full_text.strip() and len(full_text) < 1200:
         nudge_messages = messages + [
             {"role": "assistant", "content": clean_text or full_text[:300]},
-            {"role": "user", "content": (
-                "Now call a tool immediately. Do NOT write any more text.\n"
-                "Run: bash(command=\"grep -n 'echo' /opt/gentoo-installer/gentoo.sh | grep -v '>>' | grep -v '#'\") "
-                "to see display echo statements (excluding file-writing ones with >>). "
-                "Then use targeted sed -i commands matching the exact strings from that output."
-            )},
+            {"role": "user", "content": "Now call a tool immediately. Do NOT write any more text." + _nudge_extra},
         ]
         try:
             nudge_result = None
@@ -1272,7 +1262,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 nudge_result = r2.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
             nc, ntc = _parse_oai_tool_calls(nudge_result)
             ntc = _fix_sed_tool_calls(ntc)
-            ntc = _redirect_hallucinated_sed(ntc)
+            ntc = _redirect_hallucinated_sed(ntc, settings=settings)
             logger.info(f"[OAI-NUDGE] nudge result len={len(nudge_result)} tool_calls={len(ntc)}")
             if ntc:
                 clean_text = nc
