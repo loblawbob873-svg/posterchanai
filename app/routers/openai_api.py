@@ -513,6 +513,19 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     "\n\n[IMPORTANT: The bash tool requires a 'command' argument with the shell command as a string. "
                     "Retry with the correct format.]"
                 )
+            # Intercept Python SyntaxError in heredoc scripts writing .sh files
+            elif ('SyntaxError' in content_str or 'SyntaxWarning' in content_str) and \
+                 re.search(r'python3?\s+(<<|-\s)', last_bash_cmd) and \
+                 re.search(r'\.sh\b', last_bash_cmd):
+                content_str = (
+                    "[ERROR: Python SyntaxError in your script. Most likely cause: "
+                    "backslash-quote inside a double-quoted f-string terminates it prematurely — "
+                    "f\"{x}echo -e \\\"{arg}\\033[0m\\\"\" is UNTERMINATED (\\\" does NOT close a double-quoted f-string). "
+                    "FIX: Use string concatenation for the ANSI line — no f-string needed: "
+                    "out.append(indent + 'echo -e \"\\\\033[' + col + 'm' + arg + '\\\\033[0m\"\\n') "
+                    "where indent, col, arg are plain strings computed separately. "
+                    "Write ALL lines back, run bash -n on the file after writing.]"
+                )
             # Intercept sed syntax errors — unify into one clear fix instruction
             elif _sed_error:
                 content_str += (
@@ -811,9 +824,12 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False) -> list:
                 _writes_sh = bool(re.search(r'open\s*\(.*\.sh.*,\s*["\']w["\']', cmd))
                 _searches_echo_e_as_source = bool(re.search(r're\.\w+\s*\(\s*[rf]?["\'].*echo.*-e', cmd))
                 if _is_py3_cmd and _writes_sh and _searches_echo_e_as_source:
-                    # Template uses string concat (no f-strings) with double-backslash for \033
+                    # Extract target file from the command; fall back to gentoo.sh
+                    _sh_file_m = re.search(r"open\s*\([rf]?['\"]([^'\"]+\.sh)['\"]", cmd)
+                    _sh_file = _sh_file_m.group(1) if _sh_file_m else '/opt/gentoo-installer/gentoo.sh'
+                    # Replace the broken script with a corrected one using string concat (no f-strings)
                     _tmpl = (
-                        "with open('/opt/gentoo-installer/gentoo.sh') as f: lines = f.readlines()\n"
+                        f"with open('{_sh_file}') as f: lines = f.readlines()\n"
                         "colors = ['1;96', '1;93', '1;92', '1;91']\n"
                         "ci = 0; out = []\n"
                         "for line in lines:\n"
@@ -824,19 +840,13 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False) -> list:
                         "        indent = s[:len(s) - len(s.lstrip())]\n"
                         "        out.append(indent + 'echo -e \"\\\\033[' + col + 'm' + arg + '\\\\033[0m\"\\n')\n"
                         "    else: out.append(line)\n"
-                        "with open('/opt/gentoo-installer/gentoo.sh', 'w') as f: f.writelines(out)\n"
+                        f"with open('{_sh_file}', 'w') as f: f.writelines(out)\n"
                         "print(ci, 'lines colorized')"
                     )
-                    args_dict["command"] = (
-                        "cat << 'PROXYMSG'\n"
-                        "PROXY ERROR: re.search(echo -e) never matches original lines. NO re.search needed.\n"
-                        "Run this EXACT script (copy verbatim into python3 << 'PY'...PY):\n"
-                        + _tmpl + "\n"
-                        "PROXYMSG"
-                    )
+                    args_dict["command"] = "python3 << 'PROXYSCRIPT'\n" + _tmpl + "\nPROXYSCRIPT"
                     tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                     out.append(tc)
-                    logger.info("[PY3-FIX] Blocked python3 with echo -e in source match")
+                    logger.info("[PY3-FIX] Corrected python3 with echo -e in source match — running fixed script")
                     continue
                 if sed_blocked and "sed" in cmd and "-i" in cmd:
                     args_dict["command"] = "\n".join([
