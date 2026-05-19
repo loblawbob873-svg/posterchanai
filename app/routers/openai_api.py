@@ -466,6 +466,11 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 if r.get("role") == "assistant":
                     last_bash_cmd = r.get("content", "")
                     break
+            _sed_error = (
+                "unknown option to `s'" in content_str
+                or "unterminated" in content_str.lower()
+                or "unmatched" in content_str.lower()
+            )
             # Intercept unavailable tool errors — tell model to use bash/edit/write instead
             if "tried to call unavailable tool" in content_str:
                 content_str += (
@@ -479,11 +484,6 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     "Retry with the correct format.]"
                 )
             # Intercept sed syntax errors — unify into one clear fix instruction
-            _sed_error = (
-                "unknown option to `s'" in content_str
-                or "unterminated" in content_str.lower()
-                or "unmatched" in content_str.lower()
-            )
             elif _sed_error:
                 content_str += (
                     "\n\n[IMPORTANT: The sed command failed with a syntax error. "
