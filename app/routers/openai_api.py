@@ -828,12 +828,42 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         )
             # General catch-all: same command run 5+ times — inject a hard stop
             if last_cmd and bash_cmd_count.get(last_cmd, 0) >= 5:
-                content_str += (
-                    f"\n\n[LOOP DETECTED: This exact command has been run {bash_cmd_count[last_cmd]} times. "
-                    "The result is not changing. STOP running this command. "
-                    "If the task is complete, report success to the user and stop ALL commands. "
-                    "If the task is not complete, try a completely different approach.]"
+                _loop_count = bash_cmd_count[last_cmd]
+                _is_readonly_sh_grep = (
+                    re.search(r'\bgrep\b|\bcat\b|\bhead\b|\btail\b|\bwc\b', last_cmd) and
+                    re.search(r'\.sh\b', last_cmd) and
+                    not re.search(r'python3?\s+<<|sed\s+-i|open\s*\(', last_cmd)
                 )
+                if _is_readonly_sh_grep:
+                    _sh_loop_m = re.search(r'([/\w.~-]+\.sh)\b', last_cmd)
+                    _sh_loop_ref = _sh_loop_m.group(1) if _sh_loop_m else '/opt/gentoo-installer/gentoo.sh'
+                    content_str += (
+                        f"\n\n[LOOP DETECTED: This read-only command has been run {_loop_count} times — you already have enough information. "
+                        f"STOP exploring. Write the python3 colorization script RIGHT NOW:\n"
+                        f"python3 << 'PYEOF'\n"
+                        f"with open('{_sh_loop_ref}') as f: lines = f.readlines()\n"
+                        f"colors = ['1;96', '1;93', '1;92', '1;91']\n"
+                        f"ci = 0; out = []\n"
+                        f"for line in lines:\n"
+                        f"    s = line.rstrip()\n"
+                        f"    if s.strip().startswith('echo ') and '>>' not in s and '>' not in s.partition('echo')[2] and ' | ' not in s and '\\\\033' not in s:\n"
+                        f"        col = colors[ci % 4]; ci += 1\n"
+                        f"        arg = s.partition('echo ')[2].strip().strip('\"').strip(\"'\")\n"
+                        f"        indent = s[:len(s) - len(s.lstrip())]\n"
+                        f"        out.append(indent + 'echo -e \"\\\\033[' + col + 'm' + arg + '\\\\033[0m\"\\n')\n"
+                        f"    else: out.append(line)\n"
+                        f"with open('{_sh_loop_ref}', 'w') as f: f.writelines(out)\n"
+                        f"print(ci, 'lines colorized')\n"
+                        f"PYEOF\n"
+                        f"Run exactly this script now. Do not grep again first.]"
+                    )
+                else:
+                    content_str += (
+                        f"\n\n[LOOP DETECTED: This exact command has been run {_loop_count} times. "
+                        "The result is not changing. STOP running this command. "
+                        "If the task is complete, report success to the user and stop ALL commands. "
+                        "If the task is not complete, try a completely different approach.]"
+                    )
             # Wrap in XML tool_result format matching this model's expected pattern
             result.append({"role": "user", "content": f"<tool_result>\n<tool>{last_tool_name}</tool>\n<output>\n{content_str}\n</output>\n</tool_result>"})
         else:
