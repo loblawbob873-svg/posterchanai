@@ -865,6 +865,13 @@ def _redirect_hallucinated_sed(tool_calls: list, settings: dict = None) -> list:
                         logger.info("[SED-BATCH] Replaced model's sed with pre-computed correct batch")
                         out.append(tc)
                         continue
+                    else:
+                        # All lines are done — stop the model
+                        args_dict["command"] = "echo 'All display echo lines colorized. Task complete.'"
+                        tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                        logger.info("[SED-BATCH] All lines colorized — returning completion")
+                        out.append(tc)
+                        continue
 
                     _pm = re.search(r"s([/|!])(.*?)\1(.*?)\1", cmd)
                     if _pm:
