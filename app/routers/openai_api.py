@@ -760,6 +760,33 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     content_str = "(no output — command produced no output)"
             elif "-- No entries --" in content_str and re.search(r'\bjournalctl\b', last_bash_cmd):
                 content_str = "(journalctl: no matching log entries — this means no errors were found in the logs for that time range. This is good news.)"
+            # Repeated command failure loop: when the same command fails multiple times, guide investigation
+            _last_actual_cmd = bash_history[-1] if bash_history else ""
+            _is_hard_failure = bool(
+                re.search(r'BUILD FAILED|FAILURE:|non-zero exit value\s+[1-9]|Execution failed for task|exit code [1-9]|\bfailed\b.*\bexception\b', content_str, re.IGNORECASE)
+            )
+            if _is_hard_failure and _last_actual_cmd:
+                _fail_count = bash_cmd_count.get(_last_actual_cmd, 0)
+                _has_stale_cache = bool(re.search(r'Invalid depfile|stale|corrupt|cache.*invalid|\.dart_tool', content_str, re.IGNORECASE))
+                if _fail_count >= 3:
+                    content_str += (
+                        f"\n\n[COMMAND FAILURE LOOP: This command has failed {_fail_count} times in a row. "
+                        "STOP retrying the same command — it will not succeed without fixing the underlying issue. "
+                        "If build artifacts may be stale (e.g. after a merge or dependency change), clean them first. "
+                        "Otherwise investigate the root cause: read error output carefully and fix the issue before retrying.]"
+                    )
+                elif _fail_count >= 2 and _has_stale_cache:
+                    content_str += (
+                        "\n\n[BUILD ERROR: Output indicates stale or invalid build artifacts. "
+                        "Clean the build cache first (e.g. remove generated/cached files), then retry. "
+                        "Do NOT retry the build command without cleaning first.]"
+                    )
+                elif _fail_count >= 2:
+                    content_str += (
+                        f"\n\n[COMMAND FAILED AGAIN ({_fail_count} times): "
+                        "Investigate the root cause before retrying — run the failing tool/compiler directly with verbose output "
+                        "to get the actual error message. Do NOT retry the same command without understanding why it failed.]"
+                    )
             # Truncate very large tool results — use grep/targeted commands for large files
             elif len(content_str) > 8000:
                 line_count = content_str.count('\n')
