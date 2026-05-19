@@ -13,10 +13,10 @@ echo "[TEST] gentoo.sh reset."
 echo "[TEST] Current colorization state:"
 grep -c '\\033' gentoo.sh 2>/dev/null | xargs echo "  Colorized lines:" || echo "  Colorized lines: 0"
 
-PROMPT='Add vibrant cyberpunk ANSI colors to ALL the display echo statements in /opt/gentoo-installer/gentoo.sh. There are approximately 90 display echo lines — colorize as many as possible. Use at least 3 DIFFERENT color codes across different sections (e.g. red, green, yellow, blue, magenta, cyan). Do not stop after a few lines — colorize the whole file thoroughly.'
+PROMPT='Add vibrant cyberpunk ANSI colors to ALL the display echo statements in /opt/gentoo-installer/gentoo.sh. There are approximately 90 display echo lines — colorize as many as possible, including section headers like [Configuring Repos], status messages like "Creating Snapshots", progress lines, etc. Use at least 3 DIFFERENT color codes. Be thorough — do not stop after just a few lines.'
 
 echo "[TEST] Starting opencode..."
-timeout 120 "$OPENCODE" run --model "$MODEL" "$PROMPT" || true
+timeout 300 "$OPENCODE" run --model "$MODEL" "$PROMPT" || true
 
 echo ""
 echo "[TEST] Done. Checking gentoo.sh..."
