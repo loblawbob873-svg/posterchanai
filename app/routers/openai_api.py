@@ -595,12 +595,18 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             "You must include the quote in your pattern, e.g.: "
                             "sed -i 's|echo \"\\[gentoo\\]\"|echo -e \"\\033[1;92m[gentoo]\\033[0m\"|' FILE"
                         )
-                content_str = (
-                    f"[ERROR: You have run this EXACT command {repeat_n} times — it is NOT working.{quoting_hint} "
-                    "STOP and use a completely different approach: "
-                    "run grep -n 'echo \"\\[' /opt/gentoo-installer/gentoo.sh | head -20 "
-                    "to see ALL the bracket-section echo lines with their exact text, then fix your sed pattern.]"
-                )
+                if "sed" in last_cmd and "-i" in last_cmd:
+                    content_str = (
+                        f"[ERROR: You have run this EXACT sed command {repeat_n} times — it is NOT working.{quoting_hint} "
+                        "STOP and use a completely different approach: "
+                        "run grep -n 'echo \"\\[' /opt/gentoo-installer/gentoo.sh | head -20 "
+                        "to see ALL the bracket-section echo lines with their exact text, then fix your sed pattern.]"
+                    )
+                else:
+                    content_str = (
+                        f"[ERROR: You have run this EXACT command {repeat_n} times with the same failure. "
+                        "STOP — repeating it will not fix the error. Use a completely different approach.]"
+                    )
             # Wrap in XML tool_result format matching this model's expected pattern
             result.append({"role": "user", "content": f"<tool_result>\n<tool>{last_tool_name}</tool>\n<output>\n{content_str}\n</output>\n</tool_result>"})
         else:
