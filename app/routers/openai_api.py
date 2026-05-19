@@ -685,11 +685,13 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     _file_ref = _file_m.group(1) if _file_m else "the target file"
                     content_str = (
                         f"[ERROR: You have run this EXACT sed command {repeat_n} times — it is NOT working.{quoting_hint} "
-                        "STOP. Your sed PATTERN is not matching any lines in the file. "
-                        f"Run grep to see EXACT current text: grep -n 'echo' {_file_ref} | grep -v '>>' | grep -v '>' | head -30 "
-                        "Your SOURCE pattern must match text as it CURRENTLY exists in the file — not the colorized target form. "
-                        "Copy the EXACT line from grep and use it verbatim as your source pattern. "
-                        "For bulk changes to many lines, switch to python3 in one bash call (much faster than individual seds).]"
+                        "SED IS NOW BLOCKED — further sed -i commands will be replaced with this error. "
+                        "You MUST use python3 to modify this file. "
+                        f"If you still need to see the file: grep -n 'echo' {_file_ref} | grep -v '>>' | grep -v '>' | head -30 "
+                        "Your sed PATTERN is not matching any lines because it does not match the text currently in the file. "
+                        "Solution: write a python3 script that reads the file, modifies each target line "
+                        "using string operations (e.g. line.startswith('echo ') and '>>' not in line), "
+                        "and writes the modified content back. This is faster and avoids sed pattern issues.]"
                     )
                 else:
                     # For non-sed: append loop warning but keep original error message visible
@@ -723,8 +725,11 @@ def _redirect_hallucinated_sed(tool_calls: list, settings: dict = None) -> list:
     return list(tool_calls)
 
 
-def _fix_sed_tool_calls(tool_calls: list) -> list:
-    """Fix common sed mistakes in bash tool calls before they reach opencode."""
+def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False) -> list:
+    """Fix common sed mistakes in bash tool calls before they reach opencode.
+
+    sed_blocked: if True, sed -i calls are replaced with a blocking error (model must use python3).
+    """
     out = []
     for tc in tool_calls:
         fn = tc.get("function", {})
@@ -733,6 +738,18 @@ def _fix_sed_tool_calls(tool_calls: list) -> list:
             try:
                 args_dict = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
                 cmd = args_dict.get("command", "")
+                # Block sed -i after repeated loop failures — force model to use python3
+                if sed_blocked and "sed" in cmd and "-i" in cmd:
+                    args_dict["command"] = (
+                        "echo '[PROXY: sed -i is blocked — repeated sed failures were detected earlier. "
+                        "You MUST use python3 to modify this file. "
+                        "Write a python3 script that reads the file, modifies lines with string operations, "
+                        "and writes it back. Do NOT use sed -i again.]'"
+                    )
+                    tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                    out.append(tc)
+                    logger.info("[SED-BLOCK] Blocked sed after repeated loop failures")
+                    continue
                 if "sed" in cmd and "-i" in cmd:
                     fixed = cmd
                     # Strip '^' anchor before 'echo' — echo lines are often indented inside functions
@@ -1056,9 +1073,14 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         usage = result.get("usage", {})
 
     clean_text, tool_calls = _parse_oai_tool_calls(full_text)
-    tool_calls = _fix_sed_tool_calls(tool_calls)
+    # Detect if sed loop errors appeared in conversation — block further sed -i if so
+    _sed_blocked = any(
+        "[ERROR: You have run this EXACT sed command" in (m.get("content") or "")
+        for m in messages if m.get("role") == "user"
+    )
+    tool_calls = _fix_sed_tool_calls(tool_calls, sed_blocked=_sed_blocked)
     tool_calls = _redirect_hallucinated_sed(tool_calls, settings=settings)
-    logger.info(f"[OAI-AGENTIC] len={len(full_text)} head={full_text[:200]!r} tail={full_text[-200:]!r} tool_calls={len(tool_calls)}")
+    logger.info(f"[OAI-AGENTIC] len={len(full_text)} head={full_text[:200]!r} tail={full_text[-200:]!r} tool_calls={len(tool_calls)} sed_blocked={_sed_blocked}")
 
     # If model responded with text-only or unparseable tool call (no tool call), nudge it once
     if not tool_calls and full_text.strip() and len(full_text) < 1200:
@@ -1077,7 +1099,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 r2 = await service.chat_completion(messages=nudge_messages, model=request.model, **kwargs)
                 nudge_result = r2.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
             nc, ntc = _parse_oai_tool_calls(nudge_result)
-            ntc = _fix_sed_tool_calls(ntc)
+            ntc = _fix_sed_tool_calls(ntc, sed_blocked=_sed_blocked)
             ntc = _redirect_hallucinated_sed(ntc, settings=settings)
             logger.info(f"[OAI-NUDGE] nudge result len={len(nudge_result)} tool_calls={len(ntc)}")
             if ntc:
