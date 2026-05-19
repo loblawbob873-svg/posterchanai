@@ -716,7 +716,7 @@ def _make_display_text(echo_line: str, prefix: str, suffix: str) -> str:
     if not m:
         return f"{prefix}TEXT{suffix}"
     text = m.group(1).strip()
-    clean = re.sub(r'^\[|\]$', '', text).strip()
+    clean = re.sub(r'^\[(.+)\]$', r'\1', text).strip()
     return f"{prefix}{clean}{suffix}"
 
 
