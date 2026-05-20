@@ -1611,7 +1611,9 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                         out.append(tc)
                         continue
 
-                if "sed" in cmd and "-i" in cmd and re.search(r'\.(keystore|jks|p12|apk|aar|aab|so|class|jar|zip|tar)\b', cmd):
+                # Only block sed -i if the TARGET FILE (last token) has a binary extension — not if the replacement text mentions one
+                _sed_target_file = cmd.rstrip().split()[-1] if cmd.strip() else ''
+                if "sed" in cmd and "-i" in cmd and re.search(r'\.(keystore|jks|p12|apk|aar|aab|so|class|jar|zip|tar)\b', _sed_target_file):
                     args_dict["command"] = "\n".join([
                         "cat << 'PROXYMSG'",
                         "[BLOCKED: sed -i cannot be used on binary files (.keystore, .jks, .p12, etc). "
