@@ -860,6 +860,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 _early_is_build = bool(re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', _last_actual_cmd))
                 _is_git_show_cmd = bool(re.search(r'^\s*git\s+show\s+\S+:\S+', _last_actual_cmd))
                 _is_signing_config = bool(re.search(r'key\.properties|signing\.properties', _last_actual_cmd, re.IGNORECASE))
+                # Immediately inject for git show with invalid hash (not just bad path)
+                _invalid_hash = bool(re.search(r'invalid object name', _orig_content_str, re.IGNORECASE))
+                if _is_git_show_cmd and _invalid_hash:
+                    content_str += (
+                        "\n\n[git show FAILED: the commit hash is invalid — that commit does not exist. "
+                        "Get the correct hash first: git log --all --oneline --name-only -- '*.keystore' '*.jks' '*.p12' | head -40 "
+                        "Use the exact hash and path that appear together in the output. Do NOT guess hashes.]"
+                    )
                 if _identical_count >= 3 and not _early_is_build:
                     _loop_suppressed = True
                     if _orig_not_found and _is_git_show_cmd:
@@ -1346,6 +1354,13 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "The working tree is clean. Either the task is complete (report success and stop) "
                         "or there is a deeper issue — do not check status again.]"
                     )
+            # Immediately catch model echoing the proxy's own empty-bash error (any count)
+            if last_cmd and 'PROXY: bash tool called with no command' in last_cmd:
+                content_str += (
+                    "\n\n[ERROR: You ran an echo of a proxy error message, not a real shell command. "
+                    "Stop echoing proxy messages. Run actual commands for your task: "
+                    "read source files with cat/grep, list dirs with ls/find, or edit files with sed -i or python3.]"
+                )
             # General catch-all: same command run 5+ times — inject a hard stop
             if last_cmd and bash_cmd_count.get(last_cmd, 0) >= 5:
                 _loop_count = bash_cmd_count[last_cmd]
