@@ -1099,7 +1099,34 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 _has_keystore_error = bool(re.search(r'keystore|signing|upload.*key|key.*store', content_str, re.IGNORECASE))
                 _has_keyprops_error = bool(re.search(r'key\.properties|signing\.properties|keyAlias|keyPassword|storeFile|storePassword', content_str, re.IGNORECASE))
                 _keystore_was_restored = any(re.search(r'git show .+:.+\.(keystore|jks|p12)', c) for c in bash_history)
-                if _fail_count == 1 and _is_build_script and _is_complex_merge_task and _has_merge_in_history and _has_keystore_error:
+                # Null signing property: Gradle says a property is missing/null (System.getenv() returned null)
+                # This is different from a missing keystore FILE — the file may exist but credentials aren't set
+                _has_null_signing_property = bool(re.search(
+                    r'missing required property\s*"?(storePassword|keyPassword|keyAlias|storeFile)"?',
+                    content_str, re.IGNORECASE
+                ))
+                if _has_null_signing_property and _fail_count == 1 and _is_build_script:
+                    content_str += (
+                        "\n\n[BUILD ERROR: The signing config has a null property — a required value (storePassword, keyPassword, etc.) "
+                        "evaluated to null at build time. This happens when build.gradle.kts uses System.getenv() and the env var is not set. "
+                        "Fix: check android/app/build.gradle.kts for System.getenv() calls in the signingConfigs block. "
+                        "Then search git history for the commit that set the credentials: "
+                        "git log --all --oneline -- 'android/app/build.gradle.kts' | head -10 "
+                        "git show <hash>:android/app/build.gradle.kts | grep -A10 'signingConfigs' "
+                        "Copy the hardcoded credentials from that commit into the current build.gradle.kts release signing config. "
+                        "Do NOT look for key.properties — the credentials are in build.gradle.kts itself.]"
+                    )
+                elif _has_null_signing_property and _fail_count >= 2 and _is_build_script:
+                    content_str += (
+                        f"\n\n[BUILD ERROR: Still failing with null signing property after {_fail_count} attempts. "
+                        "The build.gradle.kts signingConfigs block must be updated to use hardcoded values. "
+                        "Open android/app/build.gradle.kts and replace any System.getenv(...) calls in the release signingConfig with the actual credential strings. "
+                        "Look in git log for the commit that previously hardcoded them: "
+                        "git log --all --oneline -- 'android/app/build.gradle.kts' | head -10 "
+                        "Then: git show <hash>:android/app/build.gradle.kts | grep -A10 'create.*release' "
+                        "Edit the file directly with sed or python3 heredoc, then retry the build.]"
+                    )
+                elif _fail_count == 1 and _is_build_script and _is_complex_merge_task and _has_merge_in_history and _has_keystore_error:
                     content_str += (
                         "\n\n[BUILD ERROR: The build failed because a signing keystore file is missing. "
                         "This file was deleted by a git merge (it is not in the source branch). "
@@ -1117,7 +1144,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "Do NOT read dmesg, journalctl, or system logs — build errors are in the output above, not in kernel logs. "
                         "Fix the code or configuration error shown, then retry the build command.]"
                     )
-                elif _fail_count >= 3 and _is_build_script and (_has_keystore_error or _has_keyprops_error or _keystore_was_restored):
+                elif _fail_count >= 3 and _is_build_script and not _has_null_signing_property and (_has_keystore_error or _has_keyprops_error or _keystore_was_restored):
                     content_str += (
                         f"\n\n[BUILD BLOCKED — '{_last_actual_cmd}' has failed {_fail_count} times on signing. "
                         "Do NOT run the build again yet. Diagnose in order: "
@@ -1137,7 +1164,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "then: git show <hash>:<path-from-output> > <path-from-output> "
                         "Only run the build after completing step (1) above.]"
                     )
-                elif _fail_count >= 2 and _is_build_script and (_has_keyprops_error or (_keystore_was_restored and not _has_keystore_error)):
+                elif _fail_count >= 2 and _is_build_script and not _has_null_signing_property and (_has_keyprops_error or (_keystore_was_restored and not _has_keystore_error)):
                     content_str += (
                         f"\n\n[BUILD ERROR: '{_last_actual_cmd}' failed again after keystore restore. "
                         "The signing configuration file may be missing — it holds the keystore path, password, key alias, and key password. "
@@ -1147,7 +1174,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "Restore: git show <hash>:<path> > <path> "
                         "Do NOT run the build again without this file.]"
                     )
-                elif _fail_count >= 2 and _is_build_script and _has_keystore_error:
+                elif _fail_count >= 2 and _is_build_script and _has_keystore_error and not _has_null_signing_property:
                     content_str += (
                         f"\n\n[BUILD LOOP — '{_last_actual_cmd}' has failed {_fail_count} times due to a missing signing keystore. "
                         "STOP running the build. This is a binary file — you cannot create it with sed or a heredoc. "
@@ -2684,6 +2711,25 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     server_num_predict = int(settings.get("ollama_num_predict", "2048"))
     # Honor the request's max_tokens if set — never override it upward (prevents runaway agentic generation)
     max_tokens = request.max_tokens if request.max_tokens is not None else server_num_predict
+
+    # Proactive context truncation: trim old tool results if total message size would exceed context window.
+    # Estimate ~3 chars per token; reserve space for the response (max_tokens).
+    # Use the larger of the configured context or 32256 (Qwen 9B native window) as the limit.
+    _ctx_limit = max(int(settings.get("ollama_num_ctx", "32256")), 32256)
+    _max_msg_chars = (_ctx_limit - min(max_tokens, 4096)) * 3
+    _total_msg_chars = sum(len(json.dumps(m)) for m in messages)
+    if _total_msg_chars > _max_msg_chars:
+        _trunc_messages = [dict(m) for m in messages]
+        _keep_tail = 6  # always preserve the last N messages intact
+        for _ti in range(len(_trunc_messages) - _keep_tail):
+            _m = _trunc_messages[_ti]
+            _mc = _m.get("content", "")
+            if _m.get("role") in ("tool", "user") and isinstance(_mc, str) and len(_mc) > 600:
+                _trunc_messages[_ti] = dict(_m, content=_mc[:500] + "\n...[truncated]")
+                if sum(len(json.dumps(m)) for m in _trunc_messages) <= _max_msg_chars:
+                    break
+        messages = _trunc_messages
+        logger.info(f"[CTX-TRUNC] Truncated messages from {_total_msg_chars} to {sum(len(json.dumps(m)) for m in messages)} chars")
 
     # Use load balancer if configured - picks server round-robin, uses local inference for "self" URLs
     # Skip if explicitly requested (to prevent loops when called from another posterchanai instance)
