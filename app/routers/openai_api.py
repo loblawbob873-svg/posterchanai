@@ -918,7 +918,10 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 )
                 _cm_reset_ran = any(re.search(r'\bgit\b.*reset.*--hard', c) for c in bash_history)
                 if _cm_merge_count >= 2 and not _cm_build_ran:
-                    if _cm_reset_ran or _cm_merge_count >= 4:
+                    # Count git commands run AFTER the last merge — if any, model ignored the reminder
+                    _last_merge_idx = max(i for i, c in enumerate(bash_history) if re.search(r'\bgit\b.*merge\b', c))
+                    _post_merge_git = sum(1 for c in bash_history[_last_merge_idx + 1:] if re.search(r'^\s*git\b', c.strip()))
+                    if _cm_reset_ran or _cm_merge_count >= 4 or _post_merge_git >= 1:
                         content_str = (
                             "[BUILD STEP NOW: Git work is complete "
                             f"({_cm_merge_count} merge attempts). "

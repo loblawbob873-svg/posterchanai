@@ -420,7 +420,9 @@ def _build_model_messages(request: MessagesRequest) -> list:
                     )
                     _cm_reset_ran_a = any(re.search(r'\bgit\b.*reset.*--hard', c) for c in bash_history)
                     if _cm_merge_count_a >= 2 and not _cm_build_ran_a:
-                        if _cm_reset_ran_a or _cm_merge_count_a >= 4:
+                        _last_merge_idx_a = max(i for i, c in enumerate(bash_history) if re.search(r'\bgit\b.*merge\b', c))
+                        _post_merge_git_a = sum(1 for c in bash_history[_last_merge_idx_a + 1:] if re.search(r'^\s*git\b', c.strip()))
+                        if _cm_reset_ran_a or _cm_merge_count_a >= 4 or _post_merge_git_a >= 1:
                             content_str = (
                                 "[BUILD STEP NOW: Git work is complete "
                                 f"({_cm_merge_count_a} merge attempts). "
