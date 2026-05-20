@@ -991,7 +991,7 @@ async def messages(
     _bb_um_count_a = 0
     for _bb_um_a in (m for m in reversed(messages_for_model) if m.get("role") == "user"):
         _bb_um_count_a += 1
-        if _bb_um_count_a > 6:
+        if _bb_um_count_a > 12:
             break
         _bb_um_text_a = str(_bb_um_a.get("content") or "")
         _bb_m_a = re.search(r"\[BUILD BLOCKED — '([^']+)'", _bb_um_text_a)

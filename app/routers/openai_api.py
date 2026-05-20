@@ -1614,7 +1614,7 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                     _bb_um_count = 0
                     for _bb_um in (m for m in reversed(messages) if m.get("role") == "user"):
                         _bb_um_count += 1
-                        if _bb_um_count > 6:
+                        if _bb_um_count > 12:
                             break
                         _bb_um_text = str(_bb_um.get("content") or "")
                         _bb_m = re.search(r"\[BUILD BLOCKED — '([^']+)'", _bb_um_text)
