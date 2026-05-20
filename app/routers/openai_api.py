@@ -1025,12 +1025,12 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 if _fail_count == 1 and _is_build_script and _is_complex_merge_task and _has_merge_in_history and _has_keystore_error:
                     content_str += (
                         "\n\n[BUILD ERROR: The build failed because a signing keystore file is missing. "
-                        "This file was deleted by a git merge (it doesn't exist in the source branch). "
-                        "The merge may have already been committed, so the file is no longer in HEAD. "
-                        "Restore it from git history: "
-                        "git log --all --oneline -- android/app/upload.keystore 2>/dev/null || git log --all --oneline --diff-filter=D -- '*.keystore' "
-                        "Then: git show <hash>:<path> > <path> "
-                        "Or try: git show ORIG_HEAD:android/app/upload.keystore > android/app/upload.keystore "
+                        "This file was deleted by a git merge (it is not in the source branch). "
+                        "The merge may already be committed, so the file is no longer in HEAD. "
+                        "Find the missing file path in the error above, then restore it from git history: "
+                        "git log --all --oneline -- <path/to/keystore.file> "
+                        "git show <hash>:<path/to/keystore.file> > <path/to/keystore.file> "
+                        "Or try: git show ORIG_HEAD:<path/to/keystore.file> > <path/to/keystore.file> "
                         "Then retry the build.]"
                     )
                 elif _fail_count == 1 and _is_build_script:
@@ -1041,13 +1041,12 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     )
                 elif _fail_count >= 2 and _is_build_script and _has_keystore_error:
                     content_str += (
-                        f"\n\n[BUILD LOOP — '{_last_actual_cmd}' has failed {_fail_count} times due to missing keystore. "
-                        "STOP running the build. The keystore is a binary file — you cannot create it with sed. "
-                        "It must be restored from git history. Run: "
-                        "git log --all --oneline -- android/app/upload.keystore "
-                        "Find the most recent commit hash that had the file and restore it: "
-                        "git show <hash>:android/app/upload.keystore > android/app/upload.keystore "
-                        "If ORIG_HEAD exists: git show ORIG_HEAD:android/app/upload.keystore > android/app/upload.keystore "
+                        f"\n\n[BUILD LOOP — '{_last_actual_cmd}' has failed {_fail_count} times due to a missing signing keystore. "
+                        "STOP running the build. This is a binary file — you cannot create it with sed or a heredoc. "
+                        "Find the file path in the error above, then restore it from git history: "
+                        "git log --all --oneline -- <path/to/keystore.file> "
+                        "git show <hash>:<path/to/keystore.file> > <path/to/keystore.file> "
+                        "Or: git show ORIG_HEAD:<path/to/keystore.file> > <path/to/keystore.file> "
                         "Do NOT run the build again until the keystore file exists on disk.]"
                     )
                 elif _fail_count >= 2 and _is_build_script:
