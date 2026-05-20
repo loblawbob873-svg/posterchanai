@@ -1743,7 +1743,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         not (_lum_has_any_loop_block and _prev_had_block_sc)
     )
     logger.info(f"[LOOP-SC-CHECK] complex_merge={_is_complex_merge} git_exempt={_complex_merge_git_exempt} last_cmd={_last_tool_cmd_sc[:40]!r} has_block={_lum_has_any_loop_block} preview={_lum_content[-200:]!r}")
-    if not _complex_merge_git_exempt and _last_user_msg and _lum_has_any_loop_block:
+    if not _complex_merge_git_exempt and _last_user_msg and _lum_has_any_loop_block and _prev_had_block_sc:
         _hl_text = ("I've investigated but cannot complete the task: a required resource or file is confirmed missing and I cannot create it in this environment. The operation is blocked on a missing dependency or configuration. Please provide the required resource or configuration and try again.")
         _hl_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         logger.info("[HARD-LOOP-SHORTCIRCUIT] REPEATED COMMAND BLOCKED in last tool result — returning final answer without LLM call")
