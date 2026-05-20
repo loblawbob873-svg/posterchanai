@@ -460,6 +460,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
     tools_text = _tools_system_text(tools)
     bash_cmd_count = {}   # command string -> how many times it's been called
     bash_history = []     # ordered list of bash commands issued so far
+    non_bash_write_done = False  # True if model used write_file/str_replace/edit tool (non-bash)
     fetch_head_reset_done = False  # True after model successfully runs reset --hard FETCH_HEAD
     colorize_task_done = False     # True after model successfully colorizes a .sh file
     rebase_conflict_count = 0      # Number of rebase conflicts seen (helps escalate guidance)
@@ -495,6 +496,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     if cmd:
                         bash_cmd_count[cmd] = bash_cmd_count.get(cmd, 0) + 1
                         bash_history.append(cmd)
+                elif re.search(r'write|edit|str_replace|create|patch|replace', name, re.IGNORECASE):
+                    non_bash_write_done = True
                 # Use XML format matching this model's training format
                 parts.append(f'<tool_call>\n<tool>{name}</tool>\n<input>\n{json.dumps(args, indent=2)}\n</input>\n</tool_call>')
             result.append({"role": "assistant", "content": "\n".join(parts)})
@@ -1347,7 +1350,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     )
             # Warn when a service was restarted without any code edits in this session
             if last_cmd and re.search(r'^\s*(?:sudo\s+)?systemctl\s+(restart|reload)\s+', last_cmd):
-                _any_write_pre = any(
+                _any_write_pre = non_bash_write_done or any(
                     re.search(r'python3?\s+<<|sed\s+-i|open\s*\(.*,\s*["\']w["\']|\bgit\s+checkout\b.*--\s+\S', c)
                     for c in bash_history[:-1]  # exclude the restart itself
                 )
@@ -1360,7 +1363,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
 
             # Exploration cap: too many reads without any write — time to act
             _total_cmds = len(bash_history)
-            _any_write = any(
+            _any_write = non_bash_write_done or any(
                 re.search(r'python3?\s+<<|sed\s+-i|open\s*\(.*,\s*["\']w["\']|\bgit\s+checkout\b.*--\s+\S|git\s+show\s+\S+:\S+\s*>', c)
                 for c in bash_history
             )
@@ -2223,7 +2226,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 for c in _recent_cmds_hl
             ):
                 _hl_is_exploration = True
-        _hl_any_write = any(
+        _hl_any_write = non_bash_write_done or any(
             re.search(r'python3?\s*<<|sed\s+-i', str(m.get("content") or ""))
             for m in messages if m.get("role") == "assistant"
         )
@@ -2505,11 +2508,14 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     # If model responded with text-only or unparseable tool call (no tool call), nudge it once.
     # But suppress the nudge when the response looks like task completion — the model is done and
     # nudging it just creates an infinite loop of verification commands.
-    _looks_like_done = bool(re.search(
-        r'\b(done|complete[d]?|successfully|created|merged|finished|ready|success)\b'
-        r'|task\s+is\s+(done|complete)|all\s+done|here\s+is\s+the|here\s+are\s+the',
+    _looks_like_done = (bool(re.search(
+        r'\b(done|complete[d]?|successfully|created|merged|finished|success)\b'
+        r'|task\s+is\s+(done|complete)|all\s+done',
         full_text, re.IGNORECASE
-    )) if full_text else False
+    )) and not bool(re.search(
+        r"\bI'?ll\b|I\s+will\b|I\s+am\s+going\s+to|I\s+plan\s+to|I\s+need\s+to|Let\s+me\b|First[,\s]|Now\s+I\s+will",
+        full_text, re.IGNORECASE
+    ))) if full_text else False
     if not tool_calls and full_text.strip() and len(full_text) < 1200 and not _looks_like_done:
         nudge_messages = messages + [
             {"role": "assistant", "content": clean_text or full_text[:300]},
