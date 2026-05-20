@@ -790,7 +790,12 @@ async def messages(
         (m for m in reversed(messages_for_model) if m.get("role") == "user"), None
     )
     _lum_anthr = str(_last_anthr_user.get("content") or "") if _last_anthr_user else ""
-    if "[EXPLORATION LOOP — RESULT SUPPRESSED:" in _lum_anthr and tool_calls:
+    _lum_anthr_has_loop_block = (
+        "[REPEATED COMMAND BLOCKED:" in _lum_anthr or
+        "[LOOP DETECTED:" in _lum_anthr or
+        "[EXPLORATION LOOP — RESULT SUPPRESSED:" in _lum_anthr
+    )
+    if _lum_anthr_has_loop_block and tool_calls:
         _new_tcs_exp_a = []
         for _tc_exp_a in tool_calls:
             if _tc_exp_a.get("name") in ("bash", "Bash"):
