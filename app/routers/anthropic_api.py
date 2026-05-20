@@ -249,6 +249,7 @@ def _build_model_messages(request: MessagesRequest) -> list:
                         )
 
                 # Directory exploration loop: only fires if not already suppressed by repeated-command check
+                _loop_suppressed_a = False
                 _is_listing_cmd = bool(re.search(r'^\s*(ls\b|find\b|tree\b)', last_bash_cmd or "")) and not _loop_suppressed_a
                 if _is_listing_cmd:
                     _recent_a = bash_history[-8:] if len(bash_history) >= 8 else bash_history

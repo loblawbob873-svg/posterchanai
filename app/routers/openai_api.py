@@ -1002,7 +1002,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 (("sed" in last_cmd and "-i" in last_cmd) or
                  re.search(r'\bpython3?\s+-c\b', last_cmd) or
                  re.search(r'python3?\s+-\s', last_cmd) or
-                 re.search(r'python3?\s+<<', last_cmd))
+                 re.search(r'python3?\s+<<', last_cmd) or
+                 re.search(r'\bgit\s+checkout\b.*--\s+\S', last_cmd))
             )
             # Also catch any command that errors repeatedly (fatal/error in output)
             _has_error_output = bool(re.search(r'\bfatal\b|\berror\b', content_str, re.IGNORECASE))
@@ -1122,7 +1123,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # Exploration cap: too many reads without any write — time to act
             _total_cmds = len(bash_history)
             _any_write = any(
-                re.search(r'python3?\s+<<|sed\s+-i|open\s*\(.*,\s*["\']w["\']', c)
+                re.search(r'python3?\s+<<|sed\s+-i|open\s*\(.*,\s*["\']w["\']|\bgit\s+checkout\b.*--\s+\S', c)
                 for c in bash_history
             )
             if _total_cmds >= 7 and not _any_write and not colorize_task_done and not fetch_head_reset_done:
