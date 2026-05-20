@@ -159,6 +159,19 @@ def _build_model_messages(request: MessagesRequest) -> list:
     bash_history: list = []
     fetch_head_reset_done = False
     colorize_task_done = False
+    # Detect complex merge tasks (conflict resolution, file preservation) — skip simple-sync shortcuts
+    _all_text_a = " ".join(
+        (str(m.content) if not isinstance(m.content, list) else " ".join(
+            b.get("text", "") if isinstance(b, dict) else ""
+            for b in m.content
+        ))
+        for m in request.messages if m.role in ("system", "user")
+    )
+    if hasattr(request, "system") and request.system:
+        _all_text_a += " " + (request.system if isinstance(request.system, str) else " ".join(
+            b.get("text", "") if isinstance(b, dict) else "" for b in (request.system or [])
+        ))
+    _is_complex_merge_task = bool(re.search(r'\b(conflict|preserve|resolve|keep\s+\w+\s+version|branding|checkout\s+HEAD)\b', _all_text_a, re.IGNORECASE))
 
     for msg in request.messages:
         role = msg.role
@@ -280,17 +293,35 @@ def _build_model_messages(request: MessagesRequest) -> list:
                     elif _fail_count >= 2:
                         content_str += f"\n\n[BUILD FAILED AGAIN ({_fail_count} times): Investigate the actual error before retrying.]"
 
-                # TASK COMPLETE from git fetch+reset
-                if "HEAD is now at" in content_str and last_bash_cmd and (
+                # TASK COMPLETE from git fetch+reset (skip for complex merge — more steps remain)
+                if "HEAD is now at" in content_str and not _is_complex_merge_task and last_bash_cmd and (
                     "reset --hard FETCH_HEAD" in last_bash_cmd or
                     ("-> FETCH_HEAD" in content_str and "FETCH_HEAD" in last_bash_cmd)
                 ):
                     fetch_head_reset_done = True
                     content_str += "\n\n[TASK COMPLETE: Repository successfully updated. STOP — report success and stop all commands.]"
 
-                elif "Already up to date" in content_str and re.search(r'\bgit\b.*(merge|fetch|pull)\b', last_bash_cmd):
+                elif "Already up to date" in content_str and re.search(r'\bgit\b.*(merge|fetch|pull)\b', last_bash_cmd) and not _is_complex_merge_task:
                     fetch_head_reset_done = True
                     content_str = "[TASK COMPLETE: The repository is already up to date. STOP — report success and stop all commands.]"
+
+                elif "Already up to date" in content_str and re.search(r'\bgit\b.*merge\b', last_bash_cmd) and _is_complex_merge_task:
+                    _merge_up_to_date_count_a = sum(1 for c in bash_history if re.search(r'\bgit\b.*merge\b', c))
+                    if _merge_up_to_date_count_a >= 2:
+                        content_str = (
+                            f"[MERGE DONE — STOP GIT: You have confirmed {_merge_up_to_date_count_a} times that the branch is already fully merged. "
+                            "There are NO conflicts, NO uncommitted changes, NO pending merges. "
+                            "STOP ALL GIT OPERATIONS NOW. "
+                            "Execute the FINAL step of your task immediately — run the build, test, or script that was specified. "
+                            "Do NOT run git status, git diff, git log, or git merge again.]"
+                        )
+                    else:
+                        content_str = (
+                            "[MERGE ALREADY COMPLETE: The branch is already fully merged with upstream — "
+                            "all commits present, no conflicts, working tree clean. "
+                            "Do NOT run any more git commands. "
+                            "Execute the NEXT step in your task immediately — if it includes running a build or script, do that now.]"
+                        )
 
                 # Fetch loop: fetch run multiple times without reset
                 elif "-> FETCH_HEAD" in content_str and re.search(r'\bgit\b.*\bfetch\b', last_bash_cmd) and "reset" not in last_bash_cmd:
@@ -346,11 +377,12 @@ def _build_model_messages(request: MessagesRequest) -> list:
                             "Working tree is clean. If the task is complete, report success and STOP.]"
                         )
 
-                # git merge --no-commit: abort+reset is correct for exact HEAD match tasks
+                # git merge --no-commit: abort+reset is correct for exact HEAD match tasks.
+                # Skip for complex merge tasks that need real conflict resolution.
                 _no_commit_merges = [c for c in bash_history if re.search(r'\bgit\b.*\bmerge\b.*--no-commit', c)]
                 _has_committed = any(re.search(r'\bgit\b.*\bcommit\b', c) for c in bash_history)
                 _merge_auto = bool(re.search(r'Automatic merge|Merge made|stopped before committing', content_str, re.IGNORECASE))
-                if len(_no_commit_merges) >= 1 and not _has_committed:
+                if len(_no_commit_merges) >= 1 and not _has_committed and not _is_complex_merge_task:
                     _nc_count = len(_no_commit_merges)
                     if _nc_count == 1 and _merge_auto:
                         content_str = (
@@ -371,6 +403,33 @@ def _build_model_messages(request: MessagesRequest) -> list:
                             "  git reset --hard FETCH_HEAD\n"
                             "Execute these three commands now. Do NOT run git status or git merge again.]"
                         )
+                # Complex merge: after multiple merge attempts without running a build/script, mandate the next step.
+                if _is_complex_merge_task and not _loop_suppressed_a:
+                    _cm_merge_count_a = sum(1 for c in bash_history if re.search(r'\bgit\b.*merge\b', c))
+                    _cm_build_ran_a = any(
+                        re.search(r'\.sh\b|flutter\b|gradle\b|npm\b|make\b|dart\b', c)
+                        for c in bash_history if not re.search(r'^\s*git\b', c.strip())
+                    )
+                    _cm_reset_ran_a = any(re.search(r'\bgit\b.*reset.*--hard', c) for c in bash_history)
+                    if _cm_merge_count_a >= 2 and not _cm_build_ran_a:
+                        if _cm_reset_ran_a or _cm_merge_count_a >= 4:
+                            content_str = (
+                                "[BUILD STEP NOW: Git work is complete "
+                                f"({_cm_merge_count_a} merge attempts). "
+                                "STOP ALL GIT COMMANDS. "
+                                "Your ONLY next action is to run the build script or final command "
+                                "from your task instructions. "
+                                "Do NOT run git status, git diff, git log, or any git command. "
+                                "Execute the build/script NOW — look at your task for the exact command.]"
+                            )
+                            _loop_suppressed_a = True
+                        else:
+                            content_str += (
+                                f"\n\n[REMINDER: Git merge attempted {_cm_merge_count_a} times — "
+                                "merge is confirmed complete. "
+                                "Run the build/script from your task instructions now. "
+                                "Do NOT run more git commands.]"
+                            )
 
                 # Repeated identical command: takes priority over exploration-loop check.
                 _orig_content_str_a = content_str
@@ -563,13 +622,26 @@ async def messages(
     if "qwen3" in llm_path:
         messages_for_model = inject_no_think(messages_for_model)
 
+    # Precompute task content text for complex merge detection (used in multiple shortcircuits below)
+    _all_body_text = " ".join(
+        (str(m.content) if not isinstance(m.content, list) else " ".join(
+            b.get("text", "") if isinstance(b, dict) else "" for b in m.content
+        ))
+        for m in body.messages if m.role in ("system", "user")
+    )
+    if body.system:
+        _all_body_text += " " + (body.system if isinstance(body.system, str) else " ".join(
+            b.get("text", "") if isinstance(b, dict) else "" for b in (body.system or [])
+        ))
     # Short-circuit: if TASK COMPLETE (git reset done) echo or interception already ran and its
     # result is in the conversation, return success directly without calling the model.
+    # Skip for complex merge tasks — they have additional steps (build/script) after git.
     _git_sc_markers = (
         "[TASK COMPLETE: The repository was successfully reset to the source HEAD",
         "[TASK COMPLETE — STOP. Do not run any more git commands. The repo is already synced",
     )
-    if any(
+    _sc_complex_merge = bool(re.search(r'\b(conflict|preserve|resolve|keep\s+\w+\s+version|branding|checkout\s+HEAD)\b', _all_body_text, re.IGNORECASE))
+    if not _sc_complex_merge and any(
         any(marker in (m.get("content") or "") for marker in _git_sc_markers)
         for m in messages_for_model if m.get("role") == "user"
     ):
@@ -639,6 +711,9 @@ async def messages(
     # Rewrite Write to sudo for system paths
     tool_calls = _rewrite_tool_calls(tool_calls)
 
+    # _all_body_text computed above (before shortcircuit); derive complex merge flag for tool intercepts
+    _is_complex_merge_body = _sc_complex_merge
+
     # Compute git fetch/reset state from Anthropic-format message history
     _git_fetch_count_a = 0
     _git_reset_done_a = False
@@ -658,8 +733,9 @@ async def messages(
                 _git_fetch_count_a += 1
             if re.search(r'\bgit\b.*reset.*--hard.*FETCH_HEAD', _cha):
                 _git_reset_done_a = True
-    # Intercept git merge <remote/branch> --no-commit: replace with fetch+reset for exact HEAD sync
-    if tool_calls:
+    # Intercept git merge <remote/branch> --no-commit: replace with fetch+reset for exact HEAD sync.
+    # Skip for complex merge tasks that need real conflict resolution.
+    if tool_calls and not _is_complex_merge_body:
         _new_tcs_ma = []
         for _tc_ma in tool_calls:
             if _tc_ma.get("name") in ("bash", "Bash"):
@@ -679,8 +755,9 @@ async def messages(
                         logger.info(f"[ANTHR-MERGE-NO-COMMIT-FIX] Replaced merge --no-commit with: {_new_cmd_ma}")
             _new_tcs_ma.append(_tc_ma)
         tool_calls = _new_tcs_ma
-    # Force git reset --hard FETCH_HEAD when model is stuck in fetch loop
-    if _git_reset_done_a and tool_calls:
+    # Force git reset --hard FETCH_HEAD when model is stuck in fetch loop.
+    # Skip for complex merge tasks — reset --hard would destroy preserved files.
+    if _git_reset_done_a and not _is_complex_merge_body and tool_calls:
         _new_tcs_a = []
         for _tc_a in tool_calls:
             if _tc_a.get("name") in ("bash", "Bash"):

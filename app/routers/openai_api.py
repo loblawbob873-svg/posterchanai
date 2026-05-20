@@ -583,13 +583,22 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 )
             elif "Already up to date" in content_str and re.search(r'\bgit\b.*merge\b', last_bash_cmd) and _is_complex_merge_task:
                 _merge_up_to_date_count = sum(1 for c in bash_history if re.search(r'\bgit\b.*merge\b', c))
-                content_str = (
-                    "[MERGE ALREADY COMPLETE: The branch is already up to date with the upstream — "
-                    "all upstream commits are already present in this branch. "
-                    f"Do NOT run git merge again (already tried {_merge_up_to_date_count} times). "
-                    "Proceed to the next step in your task: check git status for conflicts, "
-                    "resolve any remaining conflicts, or run the build/sync script.]"
-                )
+                if _merge_up_to_date_count >= 2:
+                    content_str = (
+                        f"[MERGE DONE — STOP GIT: You have confirmed {_merge_up_to_date_count} times that the branch is already fully merged. "
+                        "There are NO conflicts, NO uncommitted changes, NO pending merges. "
+                        "Running git commands again will not change this. "
+                        "STOP ALL GIT OPERATIONS NOW. "
+                        "Execute the FINAL step of your task immediately — run the build, test, or script that was specified. "
+                        "Do NOT run git status, git diff, git log, or git merge again.]"
+                    )
+                else:
+                    content_str = (
+                        "[MERGE ALREADY COMPLETE: The branch is already fully merged with upstream — "
+                        "all commits present, no conflicts, working tree clean. Steps 1-4 are DONE. "
+                        "Do NOT run any more git commands. "
+                        "Execute the NEXT step in your task immediately — if it includes running a build or script, do that now.]"
+                    )
             # Detect successful git fetch (FETCH_HEAD updated) — guide reset
             elif "-> FETCH_HEAD" in content_str and re.search(r'\bgit\b.*\bfetch\b', last_bash_cmd) and "reset" not in last_bash_cmd:
                 _fetch_count = sum(1 for c in bash_history if re.search(r'\bgit\b.*\bfetch\b', c))
@@ -621,7 +630,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # Detect successful reset --hard FETCH_HEAD — task is done, tell model to stop
             # Also fires when auto-fix replaced an origin reset with a local FETCH_HEAD reset
             # (in that case "-> FETCH_HEAD" appears in the git fetch output AND the cmd has FETCH_HEAD)
-            elif "HEAD is now at" in content_str and (
+            elif "HEAD is now at" in content_str and not _is_complex_merge_task and (
                 "reset --hard FETCH_HEAD" in last_bash_cmd or
                 ("-> FETCH_HEAD" in content_str and "FETCH_HEAD" in last_bash_cmd)
             ):
@@ -898,6 +907,35 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "  git reset --hard FETCH_HEAD\n"
                         "Execute these three commands now. Do NOT run git status or git merge again.]"
                     )
+            # Complex merge: after multiple merge attempts without running a build/script, mandate the next step.
+            # Fires when: complex merge task + 2+ merge attempts + no build/script run yet.
+            # Escalates to hard-replace when reset --hard was run OR 4+ merges (model is stuck).
+            if _is_complex_merge_task and not _loop_suppressed:
+                _cm_merge_count = sum(1 for c in bash_history if re.search(r'\bgit\b.*merge\b', c))
+                _cm_build_ran = any(
+                    re.search(r'\.sh\b|flutter\b|gradle\b|npm\b|make\b|dart\b', c)
+                    for c in bash_history if not re.search(r'^\s*git\b', c.strip())
+                )
+                _cm_reset_ran = any(re.search(r'\bgit\b.*reset.*--hard', c) for c in bash_history)
+                if _cm_merge_count >= 2 and not _cm_build_ran:
+                    if _cm_reset_ran or _cm_merge_count >= 4:
+                        content_str = (
+                            "[BUILD STEP NOW: Git work is complete "
+                            f"({_cm_merge_count} merge attempts). "
+                            "STOP ALL GIT COMMANDS. "
+                            "Your ONLY next action is to run the build script or final command "
+                            "from your task instructions. "
+                            "Do NOT run git status, git diff, git log, or any git command. "
+                            "Execute the build/script NOW — look at your task for the exact command.]"
+                        )
+                        _loop_suppressed = True
+                    else:
+                        content_str += (
+                            f"\n\n[REMINDER: Git merge attempted {_cm_merge_count} times — "
+                            "merge is confirmed complete. "
+                            "Run the build/script from your task instructions now. "
+                            "Do NOT run more git commands.]"
+                        )
             # Repeated command failure loop: when the same command fails multiple times, guide investigation
             _is_hard_failure = bool(
                 re.search(r'BUILD FAILED|FAILURE:|non-zero exit value\s+[1-9]|Execution failed for task|exit code [1-9]|\bfailed\b.*\bexception\b', content_str, re.IGNORECASE)
@@ -1813,7 +1851,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
             _new_tcs_merge.append(_tc_m)
         tool_calls = _new_tcs_merge
     # Intercept tool calls when model is stuck in git fetch loop — force git reset --hard FETCH_HEAD
-    if _git_reset_done and tool_calls:
+    # Skip for complex merge tasks: they need real merge/conflict-resolution, not a forced reset gate.
+    if _git_reset_done and not _is_complex_merge and tool_calls:
         _new_tcs = []
         for _tc in tool_calls:
             _fn = _tc.get("function", {})
