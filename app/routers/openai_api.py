@@ -1300,7 +1300,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # Exploration cap: too many reads without any write — time to act
             _total_cmds = len(bash_history)
             _any_write = any(
-                re.search(r'python3?\s+<<|sed\s+-i|open\s*\(.*,\s*["\']w["\']|\bgit\s+checkout\b.*--\s+\S', c)
+                re.search(r'python3?\s+<<|sed\s+-i|open\s*\(.*,\s*["\']w["\']|\bgit\s+checkout\b.*--\s+\S|git\s+show\s+\S+:\S+\s*>', c)
                 for c in bash_history
             )
             _last_build_cmd_hist = next((c for c in reversed(bash_history) if re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', c)), None)
