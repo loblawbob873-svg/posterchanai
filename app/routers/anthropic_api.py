@@ -433,6 +433,23 @@ def _build_model_messages(request: MessagesRequest) -> list:
                         f"then retry: git merge {_missing_remote_a}/main --no-commit --allow-unrelated-histories]"
                     )
 
+                # Unmerged files: previous merge left repo in conflicted state — abort and retry.
+                if re.search(r'unmerged files|Merging is not possible because', content_str, re.IGNORECASE) and re.search(r'\bgit\b.*merge\b', last_bash_cmd or ""):
+                    content_str = (
+                        "[MERGE STATE ERROR: The repository has unresolved conflicts or staged changes from a previous merge attempt. "
+                        "You cannot start a new merge until this is cleared. "
+                        "Run: git merge --abort "
+                        "This cancels the current merge state so you can retry cleanly. "
+                        "Then redo the merge from the beginning with the correct source remote.]"
+                    )
+                    _loop_suppressed_a = True
+                # Wrong merge source in complex merge task: merging from 'origin' (own repo) instead of upstream.
+                if _is_complex_merge_task and not _loop_suppressed_a and re.search(r'\bgit\b.*merge\b.*\borigin\b', last_bash_cmd or ""):
+                    content_str += (
+                        "\n\n[WRONG MERGE SOURCE: You merged from 'origin', which is your own repository remote — not the upstream source. "
+                        "The task requires merging from the upstream source remote (e.g., local-aria/main). "
+                        "Run: git merge --abort to cancel this merge, then add the correct remote and merge from it instead.]"
+                    )
                 # git merge --no-commit: abort+reset is correct for exact HEAD match tasks.
                 # Skip for complex merge tasks that need real conflict resolution.
                 _no_commit_merges = [c for c in bash_history if re.search(r'\bgit\b.*\bmerge\b.*--no-commit', c)]

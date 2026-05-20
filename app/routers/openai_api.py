@@ -913,6 +913,23 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "action toward your task: run the command, edit the file, or fix the error. "
                         "Do not run any more ls/find/tree commands.]"
                     )
+            # Unmerged files: a previous merge left the repo in a conflicted state — guide to abort and retry.
+            if re.search(r'unmerged files|Merging is not possible because', content_str, re.IGNORECASE) and re.search(r'\bgit\b.*merge\b', _last_actual_cmd or ""):
+                content_str = (
+                    "[MERGE STATE ERROR: The repository has unresolved conflicts or staged changes from a previous merge attempt. "
+                    "You cannot start a new merge until this is cleared. "
+                    "Run: git merge --abort "
+                    "This cancels the current merge state so you can retry cleanly. "
+                    "Then redo the merge from the beginning with the correct source remote.]"
+                )
+                _loop_suppressed = True
+            # Wrong merge source in complex merge task: merging from 'origin' (own repo) instead of upstream source.
+            if _is_complex_merge_task and not _loop_suppressed and re.search(r'\bgit\b.*merge\b.*\borigin\b', _last_actual_cmd or ""):
+                content_str += (
+                    "\n\n[WRONG MERGE SOURCE: You merged from 'origin', which is your own repository remote — this is not the upstream source. "
+                    "The task requires merging from the upstream source remote (e.g., local-aria/main). "
+                    "Run: git merge --abort to cancel this merge, then add the correct remote and merge from it instead.]"
+                )
             # git merge --no-commit: abort+reset is correct for exact HEAD match tasks only.
             # Skip for complex merge tasks that need real conflict resolution.
             _no_commit_merges = [c for c in bash_history if re.search(r'\bgit\b.*\bmerge\b.*--no-commit', c)]
@@ -943,7 +960,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # Fires when: complex merge task + 2+ merge attempts + no build/script run yet.
             # Escalates to hard-replace when reset --hard was run OR 4+ merges (model is stuck).
             if _is_complex_merge_task and not _loop_suppressed:
-                _cm_merge_count = sum(1 for c in bash_history if re.search(r'\bgit\b.*merge\b', c))
+                # Only count merges from non-origin sources — merging from origin (own repo) is the wrong source
+                _cm_merge_count = sum(1 for c in bash_history if re.search(r'\bgit\b.*merge\b', c) and not re.search(r'\bmerge\b.*\borigin\b', c))
                 _cm_build_ran = any(
                     re.search(r'\.sh\b|flutter\b|gradle\b|npm\b|make\b|dart\b', c)
                     for c in bash_history if not re.search(r'^\s*git\b', c.strip())
