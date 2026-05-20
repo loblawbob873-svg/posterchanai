@@ -1369,7 +1369,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             )
             _last_build_cmd_hist = next((c for c in reversed(bash_history) if re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', c)), None)
             _build_has_failed = _last_build_cmd_hist and bash_cmd_count.get(_last_build_cmd_hist, 0) >= 1
-            if _total_cmds >= 7 and not _any_write and not colorize_task_done and not fetch_head_reset_done:
+            _cap_threshold = 7 if (_syslog_is_task or _build_has_failed) else 12
+            if _total_cmds >= _cap_threshold and not _any_write and not colorize_task_done and not fetch_head_reset_done:
                 if _syslog_is_task:
                     content_str += (
                         f"\n\n[EXPLORATION CAP: You have run {_total_cmds} commands. "
@@ -1388,8 +1389,9 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 else:
                     content_str += (
                         f"\n\n[EXPLORATION CAP: You have run {_total_cmds} commands without modifying any file. "
-                        "You already have enough information. Stop reading and take action now — "
-                        "run the command that performs the actual task.]"
+                        "You have seen enough of the file structure. Pick the specific file(s) to edit now. "
+                        "Use sed -i or a python3 heredoc to make the change, then restart the service if needed. "
+                        "Do NOT run ls, find, or cat again — edit a file.]"
                     )
             # Total git-status loop: catches alternation between variants (git status, git status --short, etc.)
             _total_git_status = sum(1 for c in bash_history if re.search(r'\bgit\s+status\b', c))
@@ -2191,7 +2193,9 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     _lum_has_any_loop_block = (
         "[REPEATED COMMAND BLOCKED:" in _lum_content or
         "[LOOP DETECTED:" in _lum_content or
-        "[EXPLORATION BLOCKED:" in _lum_content
+        "[EXPLORATION BLOCKED:" in _lum_content or
+        "[EXPLORATION CAP:" in _lum_content or
+        "[ENV-PROBE:" in _lum_content
     )
     # Extract the command from the last assistant tool call to check if it's git
     _last_assist_msg = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
@@ -2207,7 +2211,9 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     _prev_had_block_sc = (
         "[REPEATED COMMAND BLOCKED:" in _prev_user_content_sc or
         "[LOOP DETECTED:" in _prev_user_content_sc or
-        "[EXPLORATION BLOCKED:" in _prev_user_content_sc
+        "[EXPLORATION BLOCKED:" in _prev_user_content_sc or
+        "[EXPLORATION CAP:" in _prev_user_content_sc or
+        "[ENV-PROBE:" in _prev_user_content_sc
     )
     _complex_merge_git_exempt = (
         _is_complex_merge and
@@ -2473,7 +2479,9 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         "[REPEATED COMMAND BLOCKED:" in _lum_content or
         "[LOOP DETECTED:" in _lum_content or
         "[EXPLORATION LOOP — RESULT SUPPRESSED:" in _lum_content or
-        "[EXPLORATION BLOCKED:" in _lum_content
+        "[EXPLORATION BLOCKED:" in _lum_content or
+        "[EXPLORATION CAP:" in _lum_content or
+        "[ENV-PROBE:" in _lum_content
     )
     if _lum_content and _lum_has_loop_block and tool_calls:
         _new_tcs_exp = []
