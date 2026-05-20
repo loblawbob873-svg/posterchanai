@@ -160,11 +160,6 @@ async def summarize_youtube(url: str, chat_service) -> Tuple[bool, str]:
 # Retry with Android player client when YouTube returns 403 Forbidden (bot detection)
 _YOUTUBE_403_EXTRACTOR_ARGS = {'youtube': {'player_client': ['android']}}
 
-# JS runtime for yt-dlp: use node if available (required for full YouTube extraction in nightly builds)
-import shutil as _shutil
-_NODE_PATH = _shutil.which('node')
-_YDL_BASE_OPTS: dict = {'js_runtimes': [f'node:{_NODE_PATH}']} if _NODE_PATH else {}
-
 
 def _is_403_error(err_text: str) -> bool:
     """Return True if the error looks like YouTube 403 Forbidden."""
@@ -246,7 +241,7 @@ def download_as_video(
                 format_selector = "best"
 
         ydl_opts = {
-            **_YDL_BASE_OPTS,
+
             'format': format_selector,
             'merge_output_format': 'mp4',
             'outtmpl': output_template,
@@ -430,7 +425,7 @@ def download_as_mp3(
         output_template = os.path.join(output_dir, '%(title)s.%(ext)s')
 
         ydl_opts = {
-            **_YDL_BASE_OPTS,
+
             'format': 'bestaudio/best',
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
@@ -843,7 +838,7 @@ async def fetch_video_info(url: str) -> Dict[str, Any]:
         import yt_dlp
         
         ydl_opts = {
-            **_YDL_BASE_OPTS,
+
             'quiet': True,
             'no_warnings': True,
             'skip_download': True,
