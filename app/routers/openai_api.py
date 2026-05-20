@@ -858,9 +858,19 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 _orig_not_found = bool(re.search(r'No such file or directory|cannot access|not found', _orig_content_str, re.IGNORECASE))
                 _is_log_read_cmd = bool(re.search(r'\bdmesg\b|\bjournalctl\b|/var/log/|/proc/|syslog', _last_actual_cmd))
                 _early_is_build = bool(re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', _last_actual_cmd))
+                _is_git_show_cmd = bool(re.search(r'^\s*git\s+show\s+\S+:\S+', _last_actual_cmd))
                 if _identical_count >= 3 and not _early_is_build:
                     _loop_suppressed = True
-                    if _orig_not_found:
+                    if _orig_not_found and _is_git_show_cmd:
+                        content_str = (
+                            f"[REPEATED COMMAND BLOCKED: 'git show <hash>:<path>' failed {_identical_count} times — "
+                            "the path does not exist in that commit. Do NOT repeat this command. "
+                            "The commit hash or path from the git log output may be wrong. "
+                            "Re-run the search to find the correct commit and path: "
+                            "git log --all --oneline --name-only -- '*.keystore' '*.jks' '*.p12' | head -40 "
+                            "Use the hash and path that appear together on consecutive lines in the output.]"
+                        )
+                    elif _orig_not_found:
                         content_str = (
                             f"[REPEATED COMMAND BLOCKED: This command was run {_identical_count} times. "
                             "CONFIRMED: the path does not exist and will not appear by checking again. "
@@ -881,7 +891,13 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             "STOP. Take a fundamentally different action toward your task.]"
                         )
                 elif _identical_count >= 2 and not _early_is_build:
-                    if _orig_not_found:
+                    if _orig_not_found and _is_git_show_cmd:
+                        content_str += (
+                            f"\n\n[REPEATED COMMAND ({_identical_count}×): 'git show <hash>:<path>' failed again — "
+                            "path not found in this commit. Try other commits: "
+                            "git log --all --oneline --name-only -- '*.keystore' '*.jks' '*.p12' | head -40]"
+                        )
+                    elif _orig_not_found:
                         content_str += (
                             f"\n\n[REPEATED COMMAND ({_identical_count}×): This path does not exist — confirmed. "
                             "Do NOT check it again. CREATE the missing resource or change your approach.]"

@@ -566,6 +566,7 @@ def _build_model_messages(request: MessagesRequest) -> list:
                     _orig_not_found_a = bool(re.search(r'No such file or directory|cannot access|not found', _orig_content_str_a, re.IGNORECASE))
                     _is_log_read_cmd_a = bool(re.search(r'\bdmesg\b|\bjournalctl\b|/var/log/|/proc/|syslog', last_cmd or ""))
                     _early_is_build_a = bool(re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', last_cmd))
+                    _is_git_show_cmd_a = bool(re.search(r'^\s*git\s+show\s+\S+:\S+', last_cmd or ""))
                     if _identical_count_a >= 3 and not _early_is_build_a:
                         _loop_suppressed_a = True
                         if re.search(r'\bgit\s+status\b', last_cmd):
@@ -573,6 +574,15 @@ def _build_model_messages(request: MessagesRequest) -> list:
                                 f"[REPEATED COMMAND BLOCKED: git status has been run {_identical_count_a} times — the repo is consistently clean. "
                                 "STOP. Either the task is complete (report success) or fetch first: "
                                 "git fetch <remote-name> && git log HEAD..FETCH_HEAD --oneline. Do NOT run git status again.]"
+                            )
+                        elif _orig_not_found_a and _is_git_show_cmd_a:
+                            content_str = (
+                                f"[REPEATED COMMAND BLOCKED: 'git show <hash>:<path>' failed {_identical_count_a} times — "
+                                "the path does not exist in that commit. Do NOT repeat this command. "
+                                "The commit hash or path from the git log output may be wrong. "
+                                "Re-run the search to find the correct commit and path: "
+                                "git log --all --oneline --name-only -- '*.keystore' '*.jks' '*.p12' | head -40 "
+                                "Use the hash and path that appear together on consecutive lines in the output.]"
                             )
                         elif _orig_not_found_a:
                             content_str = (
@@ -595,7 +605,13 @@ def _build_model_messages(request: MessagesRequest) -> list:
                                 "STOP. Take a fundamentally different action toward your task.]"
                             )
                     elif _identical_count_a >= 2 and not _early_is_build_a:
-                        if _orig_not_found_a:
+                        if _orig_not_found_a and _is_git_show_cmd_a:
+                            content_str += (
+                                f"\n\n[REPEATED COMMAND ({_identical_count_a}×): 'git show <hash>:<path>' failed again — "
+                                "path not found in this commit. Try other commits: "
+                                "git log --all --oneline --name-only -- '*.keystore' '*.jks' '*.p12' | head -40]"
+                            )
+                        elif _orig_not_found_a:
                             content_str += (
                                 f"\n\n[REPEATED COMMAND ({_identical_count_a}×): This path does not exist — confirmed. "
                                 "Do NOT check it again. CREATE the missing resource or change your approach.]"
