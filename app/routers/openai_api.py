@@ -2161,7 +2161,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         bool(re.search(r'^\s*git\b', _last_tool_cmd_sc)) and
         not (_lum_has_any_loop_block and _prev_had_block_sc)
     )
-    logger.info(f"[LOOP-SC-CHECK] complex_merge={_is_complex_merge} git_exempt={_complex_merge_git_exempt} last_cmd={_last_tool_cmd_sc[:40]!r} has_block={_lum_has_any_loop_block} preview={_lum_content[-200:]!r}")
+    logger.info(f"[LOOP-SC-CHECK] complex_merge={_is_complex_merge} git_exempt={_complex_merge_git_exempt} last_cmd={_last_tool_cmd_sc[:40]!r} has_block={_lum_has_any_loop_block} prev_block={_prev_had_block_sc} n_user={len(_all_user_msgs_sc)} prev_preview={_prev_user_content_sc[-120:]!r}")
     if not _complex_merge_git_exempt and _last_user_msg and _lum_has_any_loop_block and _prev_had_block_sc:
         _hl_was_restart = bool(re.search(r'systemctl\s+(restart|reload)', _last_tool_cmd_sc))
         _hl_is_exploration = bool(re.search(r'\b(grep|cat|head|tail|ls|find|wc|diff|sed -n)\b', _last_tool_cmd_sc) and not re.search(r'sed\s+-i|>\s*\S|python3\s+<<|write|edit', _last_tool_cmd_sc))
