@@ -1892,6 +1892,30 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     pass
             _new_tcs.append(_tc)
         tool_calls = _new_tcs
+    # Exploration gate: when exploration was just suppressed (4+ consecutive ls/find/tree),
+    # intercept any further ls/find/tree tool calls and replace with a blocking echo.
+    # Mirrors RESET-DONE-GATE: we act on the tool CALL, not just the result.
+    if _lum_content and "[EXPLORATION LOOP — RESULT SUPPRESSED:" in _lum_content and tool_calls:
+        _new_tcs_exp = []
+        for _tc_exp in tool_calls:
+            _fn_exp = _tc_exp.get("function", {})
+            if _fn_exp.get("name") in ("bash", "Bash"):
+                try:
+                    _adict_exp = json.loads(_fn_exp.get("arguments", "{}"))
+                    _cmd_exp = _adict_exp.get("command", "")
+                    if re.search(r'^\s*(ls\b|find\b|tree\b)', _cmd_exp):
+                        _adict_exp["command"] = (
+                            "echo '[EXPLORATION BLOCKED: Directory listing is suppressed — "
+                            "you have already listed directories multiple times. "
+                            "Take a CONCRETE action now: create the missing file, "
+                            "read a specific file with cat/grep, or fix the error directly.]'"
+                        )
+                        _tc_exp = {**_tc_exp, "function": {**_fn_exp, "arguments": json.dumps(_adict_exp)}}
+                        logger.info(f"[EXPLORATION-GATE] Blocked ls/find/tree after suppression: {_cmd_exp[:60]}")
+                except Exception:
+                    pass
+            _new_tcs_exp.append(_tc_exp)
+        tool_calls = _new_tcs_exp
     logger.info(f"[OAI-AGENTIC] len={len(full_text)} head={full_text[:200]!r} tail={full_text[-200:]!r} tool_calls={len(tool_calls)} sed_blocked={_sed_blocked} colorize_done={_colorize_done} empty_bash={_empty_bash_count} origin_warned={_origin_warned} git_fetches={_git_fetch_count} git_reset_done={_git_reset_done}")
 
     # If model responded with text-only or unparseable tool call (no tool call), nudge it once.

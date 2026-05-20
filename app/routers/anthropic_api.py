@@ -784,6 +784,28 @@ async def messages(
             _new_tcs_a.append(_tc_a)
         tool_calls = _new_tcs_a
 
+    # Exploration gate: when exploration was just suppressed (4+ consecutive ls/find/tree),
+    # intercept further ls/find/tree tool calls and replace with a blocking echo.
+    _last_anthr_user = next(
+        (m for m in reversed(messages_for_model) if m.get("role") == "user"), None
+    )
+    _lum_anthr = str(_last_anthr_user.get("content") or "") if _last_anthr_user else ""
+    if "[EXPLORATION LOOP — RESULT SUPPRESSED:" in _lum_anthr and tool_calls:
+        _new_tcs_exp_a = []
+        for _tc_exp_a in tool_calls:
+            if _tc_exp_a.get("name") in ("bash", "Bash"):
+                _cmd_exp_a = (_tc_exp_a.get("input") or {}).get("command", "")
+                if re.search(r'^\s*(ls\b|find\b|tree\b)', _cmd_exp_a):
+                    _tc_exp_a = {**_tc_exp_a, "input": {**(_tc_exp_a.get("input") or {}), "command": (
+                        "echo '[EXPLORATION BLOCKED: Directory listing is suppressed — "
+                        "you have already listed directories multiple times. "
+                        "Take a CONCRETE action now: create the missing file, "
+                        "read a specific file with cat/grep, or fix the error directly.]'"
+                    )}}
+                    logger.info(f"[ANTHR-EXPLORATION-GATE] Blocked ls/find/tree: {_cmd_exp_a[:60]}")
+            _new_tcs_exp_a.append(_tc_exp_a)
+        tool_calls = _new_tcs_exp_a
+
     usage = result.get("usage", {}) if isinstance(result, dict) else {}
     input_tokens = usage.get("prompt_tokens", 0)
     output_tokens = usage.get("completion_tokens", 0)
