@@ -330,7 +330,10 @@ def _build_model_messages(request: MessagesRequest) -> list:
                             "(1) Find the file path in the error above, then: ls -la <that/path> — confirm it exists and is > 1000 bytes. "
                             "(2) If missing or zero bytes, restore from git: git log --all --oneline --name-only -- '*.keystore' '*.jks' '*.p12' | head -10 "
                             "then: git show <hash>:<path-from-output> > <path-from-output> "
-                            "(3) If file exists but build still fails: the error may be a wrong password or key alias, not a missing file — read the exact error line above. "
+                            "(3) If the keystore file exists but signing still fails: check for a missing signing config file — "
+                            "cat android/key.properties 2>/dev/null || cat android/signing.properties 2>/dev/null — "
+                            "this file contains the keystore path, password, key alias, and key password. "
+                            "If it is missing, that is the root cause. "
                             "Only run the build AFTER completing the step above that applies.]"
                         )
                     elif _fail_count >= 2 and _is_build_cmd and _has_keystore_error_a:

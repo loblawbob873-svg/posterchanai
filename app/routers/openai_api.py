@@ -1047,7 +1047,10 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "(1) Find the file path in the error above, then: ls -la <that/path> — confirm it exists and is > 1000 bytes. "
                         "(2) If missing or zero bytes, restore from git: git log --all --oneline --name-only -- '*.keystore' '*.jks' '*.p12' | head -10 "
                         "then: git show <hash>:<path-from-output> > <path-from-output> "
-                        "(3) If file exists but build still fails: the error may be a wrong password or key alias, not a missing file — read the exact error line above. "
+                        "(3) If the keystore file exists but signing still fails: check for a missing signing config file — "
+                        "cat android/key.properties 2>/dev/null || cat android/signing.properties 2>/dev/null — "
+                        "this file contains the keystore path, password, key alias, and key password. "
+                        "If it is missing, that is the root cause. "
                         "Only run the build AFTER completing the step above that applies.]"
                     )
                 elif _fail_count >= 2 and _is_build_script and _has_keystore_error:
@@ -1479,6 +1482,18 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                         logger.info(f"[GIT-FETCH-FIX] Corrected: 'git fetch {_rem}/{_brn}' → 'git fetch {_rem} {_brn}'")
                         cmd = _fixed_cmd
 
+                if "sed" in cmd and "-i" in cmd and re.search(r'\.(keystore|jks|p12|apk|aar|aab|so|class|jar|zip|tar)\b', cmd):
+                    args_dict["command"] = "\n".join([
+                        "cat << 'PROXYMSG'",
+                        "[BLOCKED: sed -i cannot be used on binary files (.keystore, .jks, .p12, etc). "
+                        "Binary files cannot be edited with text tools — this would corrupt the file. "
+                        "If the signing file is missing, restore it from git history. "
+                        "If the signing config is wrong, edit the properties file (key.properties, signing.properties) not the keystore itself.]",
+                        "PROXYMSG",
+                    ])
+                    tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                    out.append(tc)
+                    continue
                 if sed_blocked and "sed" in cmd and "-i" in cmd:
                     args_dict["command"] = "\n".join([
                         "cat << 'PROXYMSG'",
