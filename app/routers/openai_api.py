@@ -1673,7 +1673,11 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                 if _is_env_probe_cmd and _is_if_elif_fix_task:
                     args_dict["command"] = _redirect_cmd
                     tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
-                    logger.info("[ENV-PROBE-REDIRECT] Replaced opencode env probe with source file read")
+                    logger.info("[ENV-PROBE-REDIRECT] Replaced opencode env probe with PROXY_FIX")
+                elif _is_env_probe_cmd:
+                    args_dict["command"] = "echo '[ENV-PROBE: Do not run venv/opencode binaries. Read and edit source files directly with bash commands (cat, grep, sed -i, python3 heredoc, etc.) then restart the service.]'"
+                    tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                    logger.info("[ENV-PROBE-REDIRECT] Replaced env probe with generic redirect for non-fix task")
                 elif (_is_restart_cmd or _is_git_detour_cmd) and messages:
                     # Check all roles — tool results may be in "tool" or "user" role depending on opencode version
                     _restart_already_warned = any(
