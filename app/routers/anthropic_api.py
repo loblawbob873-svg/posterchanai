@@ -237,17 +237,21 @@ def _build_model_messages(request: MessagesRequest) -> list:
                     content_str = "(journalctl: no matching log entries — this means no errors were found in the logs for that time range. This is good news.)"
 
                 # System log loop: dmesg/journalctl run repeatedly — model has enough data to report
+                # If the task itself is about log analysis, allow more queries before intervening.
+                _syslog_is_task_a = bool(re.search(r'\b(dmesg|journalctl|syslog|system\s+log|kernel\s+log|check.*log|summarize.*log|log.*error|error.*log)\b', _all_text_a, re.IGNORECASE))
                 _is_syslog_cmd = bool(re.search(r'\bdmesg\b|\bjournalctl\b', last_bash_cmd or ""))
                 if _is_syslog_cmd:
                     _syslog_count = sum(1 for c in bash_history if re.search(r'\bdmesg\b|\bjournalctl\b', c))
-                    if _syslog_count >= 3:
+                    _syslog_warn_at_a = 6 if _syslog_is_task_a else 2
+                    _syslog_block_at_a = 9 if _syslog_is_task_a else 3
+                    if _syslog_count >= _syslog_block_at_a:
                         content_str = (
                             f"[REPEATED COMMAND BLOCKED: You have run {_syslog_count} system log queries. "
                             "Log reading is now blocked — you have all the data you need. "
                             "STOP. Write your final report now based on what you already collected. "
                             "Do NOT run any more dmesg, journalctl, or log commands.]"
                         )
-                    elif _syslog_count >= 2:
+                    elif _syslog_count >= _syslog_warn_at_a:
                         content_str += (
                             f"\n\n[SYSTEM LOG LOOP: You have run {_syslog_count} system log queries. "
                             "You have collected sufficient log data. STOP querying logs. "
@@ -294,12 +298,18 @@ def _build_model_messages(request: MessagesRequest) -> list:
                     re.search(r'BUILD FAILED|FAILURE:|non-zero exit value\s+[1-9]|Execution failed for task|exit code [1-9]|\bfailed\b.*\bexception\b', content_str, re.IGNORECASE)
                 )
                 _is_build_cmd = bool(
-                    re.search(r'sync-apk\.sh|flutter\s+build|assembleRelease|gradlew?\s+', last_cmd)
+                    re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', last_cmd)
                 )
                 if _is_hard_failure and _is_build_cmd:
                     _fail_count = bash_cmd_count.get(last_cmd, 0)
                     _has_stale = bool(re.search(r'Invalid depfile|stale|corrupt|\.dart_tool', content_str, re.IGNORECASE))
-                    if _fail_count >= 3:
+                    if _fail_count == 1:
+                        content_str += (
+                            "\n\n[BUILD ERROR: The script/build failed. Read the error output above carefully and fix the root cause. "
+                            "Do NOT read dmesg, journalctl, or system logs — build errors are in the output above, not in kernel logs. "
+                            "Fix the code or configuration error shown, then retry the build command.]"
+                        )
+                    elif _fail_count >= 3:
                         content_str += (
                             f"\n\n[COMMAND FAILURE LOOP: This command has failed {_fail_count} times. "
                             "STOP retrying — clean build artifacts first, then investigate root cause.]"

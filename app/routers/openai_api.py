@@ -823,17 +823,21 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             elif "-- No entries --" in content_str and re.search(r'\bjournalctl\b', last_bash_cmd):
                 content_str = "(journalctl: no matching log entries — this means no errors were found in the logs for that time range. This is good news.)"
             # System log loop: dmesg/journalctl run repeatedly — model already has enough data to report
+            # If the task itself is about log analysis, allow more queries before intervening.
+            _syslog_is_task = bool(re.search(r'\b(dmesg|journalctl|syslog|system\s+log|kernel\s+log|check.*log|summarize.*log|log.*error|error.*log)\b', _all_text, re.IGNORECASE))
             _is_syslog_cmd = bool(re.search(r'\bdmesg\b|\bjournalctl\b', last_bash_cmd or ""))
             if _is_syslog_cmd:
                 _syslog_count = sum(1 for c in bash_history if re.search(r'\bdmesg\b|\bjournalctl\b', c))
-                if _syslog_count >= 3:
+                _syslog_warn_at = 6 if _syslog_is_task else 2
+                _syslog_block_at = 9 if _syslog_is_task else 3
+                if _syslog_count >= _syslog_block_at:
                     content_str = (
                         f"[REPEATED COMMAND BLOCKED: You have run {_syslog_count} system log queries. "
                         "Log reading is now blocked — you have all the data you need. "
                         "STOP. Write your final report now based on what you already collected. "
                         "Do NOT run any more dmesg, journalctl, or log commands.]"
                     )
-                elif _syslog_count >= 2:
+                elif _syslog_count >= _syslog_warn_at:
                     content_str += (
                         f"\n\n[SYSTEM LOG LOOP: You have run {_syslog_count} system log queries. "
                         "You have collected sufficient log data. STOP querying logs. "
@@ -975,7 +979,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             if _is_hard_failure and _last_actual_cmd:
                 _fail_count = bash_cmd_count.get(_last_actual_cmd, 0)
                 _has_stale_cache = bool(re.search(r'Invalid depfile|stale|corrupt|cache.*invalid|\.dart_tool', content_str, re.IGNORECASE))
-                if _fail_count >= 3:
+                _is_build_script = bool(re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', _last_actual_cmd))
+                if _fail_count == 1 and _is_build_script:
+                    content_str += (
+                        "\n\n[BUILD ERROR: The script/build failed. Read the error output above carefully and fix the root cause. "
+                        "Do NOT read dmesg, journalctl, or system logs — build errors are in the output above, not in kernel logs. "
+                        "Fix the code or configuration error shown, then retry the build command.]"
+                    )
+                elif _fail_count >= 3:
                     content_str += (
                         f"\n\n[COMMAND FAILURE LOOP: This command has failed {_fail_count} times in a row. "
                         "STOP retrying the same command — it will not succeed without fixing the underlying issue. "
