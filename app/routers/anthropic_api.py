@@ -581,6 +581,18 @@ def _build_model_messages(request: MessagesRequest) -> list:
                     _early_is_build_a = bool(re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', last_cmd))
                     _is_git_show_cmd_a = bool(re.search(r'^\s*git\s+show\s+\S+:\S+', last_cmd or ""))
                     _is_signing_config_a = bool(re.search(r'key\.properties|signing\.properties', last_cmd or "", re.IGNORECASE))
+                    # Immediately inject when signing config file exists on disk but not in git commit
+                    _exists_on_disk_not_in_git_a = bool(re.search(r'exists on disk, but not in', _orig_content_str_a, re.IGNORECASE))
+                    if _exists_on_disk_not_in_git_a and _is_signing_config_a:
+                        content_str += (
+                            "\n\n[SIGNING CONFIG NOT IN GIT: The file exists on disk but was never committed to git. "
+                            "Run: cat android/key.properties "
+                            "If it prints nothing (empty file): the signing credentials are missing — "
+                            "storePassword, keyPassword, keyAlias, and storeFile cannot be recovered from git. "
+                            "STOP. Report to user: 'android/key.properties exists but is empty. "
+                            "The signing credentials must be provided to complete the build.' "
+                            "Do NOT try to recreate or guess the credentials.]"
+                        )
                     if _identical_count_a >= 3 and not _early_is_build_a:
                         _loop_suppressed_a = True
                         if re.search(r'\bgit\s+status\b', last_cmd):

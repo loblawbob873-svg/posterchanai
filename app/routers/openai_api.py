@@ -870,6 +870,18 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "Get the correct hash first: git log --all --oneline --name-only -- '*.keystore' '*.jks' '*.p12' | head -40 "
                         "Use the exact hash and path that appear together in the output. Do NOT guess hashes.]"
                     )
+                # Immediately inject when signing config file exists on disk but not in git commit
+                _exists_on_disk_not_in_git = bool(re.search(r'exists on disk, but not in', _orig_content_str, re.IGNORECASE))
+                if _exists_on_disk_not_in_git and _is_signing_config:
+                    content_str += (
+                        "\n\n[SIGNING CONFIG NOT IN GIT: The file exists on disk but was never committed to git. "
+                        "Run: cat android/key.properties "
+                        "If it prints nothing (empty file): the signing credentials are missing — "
+                        "storePassword, keyPassword, keyAlias, and storeFile cannot be recovered from git. "
+                        "STOP. Report to user: 'android/key.properties exists but is empty. "
+                        "The signing credentials must be provided to complete the build.' "
+                        "Do NOT try to recreate or guess the credentials.]"
+                    )
                 if _identical_count >= 3 and not _early_is_build:
                     _loop_suppressed = True
                     if _orig_not_found and _is_git_show_cmd:
