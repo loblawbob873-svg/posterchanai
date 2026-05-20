@@ -389,11 +389,13 @@ def _build_model_messages(request: MessagesRequest) -> list:
                 if "not something we can merge" in content_str and re.search(r'\bgit\b.*merge\b', last_bash_cmd):
                     _missing_remote_m_a = re.search(r'\bgit\s+merge\s+([\w.\-]+)/', last_bash_cmd)
                     _missing_remote_a = _missing_remote_m_a.group(1) if _missing_remote_m_a else "the remote"
+                    _task_text_srch_a = " ".join((m.get("content") or "") for m in messages if m.get("role") in ("system", "user"))
+                    _src_path_m_a = re.search(r'(?:fork of|from|mirror|source)[^/\n]{0,40}((?:/home/\S+|/opt/\S+|~/\S+))', _task_text_srch_a, re.IGNORECASE)
+                    _src_path_a = _src_path_m_a.group(1).rstrip('.,)') if _src_path_m_a else "<path-from-task-description>"
                     content_str += (
-                        f"\n\n[MERGE FAILED: Remote '{_missing_remote_a}' is not configured in this repository "
-                        f"(check: git remote -v). "
-                        f"Look at your task description for the source repository path, then add it: "
-                        f"git remote add {_missing_remote_a} <path-from-task-description> && git fetch {_missing_remote_a}]"
+                        f"\n\n[MERGE FAILED: Remote '{_missing_remote_a}' is not configured. "
+                        f"Add it now: git remote add {_missing_remote_a} {_src_path_a} && git fetch {_missing_remote_a} "
+                        f"then retry: git merge {_missing_remote_a}/main --no-commit --allow-unrelated-histories]"
                     )
 
                 # git merge --no-commit: abort+reset is correct for exact HEAD match tasks.

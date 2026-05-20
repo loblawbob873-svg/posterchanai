@@ -704,11 +704,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             elif "not something we can merge" in content_str and re.search(r'\bgit\b.*merge\b', last_bash_cmd):
                 _missing_remote_m = re.search(r'\bgit\s+merge\s+([\w.\-]+)/', last_bash_cmd)
                 _missing_remote = _missing_remote_m.group(1) if _missing_remote_m else "the remote"
+                # Try to find a local filesystem path in the task description to use as the source
+                _task_text_srch = " ".join((m.get("content") or "") for m in messages if m.get("role") in ("system", "user"))
+                _src_path_m = re.search(r'(?:fork of|from|mirror|source)[^/\n]{0,40}((?:/home/\S+|/opt/\S+|~/\S+))', _task_text_srch, re.IGNORECASE)
+                _src_path = _src_path_m.group(1).rstrip('.,)') if _src_path_m else "<path-from-task-description>"
                 content_str += (
-                    f"\n\n[MERGE FAILED: Remote '{_missing_remote}' is not configured in this repository "
-                    f"(check: git remote -v). "
-                    f"Look at your task description for the source repository path, then add it: "
-                    f"git remote add {_missing_remote} <path-from-task-description> && git fetch {_missing_remote}]"
+                    f"\n\n[MERGE FAILED: Remote '{_missing_remote}' is not configured. "
+                    f"Add it now: git remote add {_missing_remote} {_src_path} && git fetch {_missing_remote} "
+                    f"then retry: git merge {_missing_remote}/main --no-commit --allow-unrelated-histories]"
                 )
             # Detect mangled \033 — model used \033 instead of \\033 in sed replacement
             elif re.search(r'echo\s+-e\s+.*33\[', content_str) and '\\033' not in content_str and '\033' not in content_str:
