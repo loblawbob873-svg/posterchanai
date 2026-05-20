@@ -927,6 +927,21 @@ async def messages(
     clean_text, tool_calls = _parse_tool_calls(full_text)
     tool_calls = _redirect_sed_anthr(tool_calls, settings)
 
+    # Auto-prepend mkdir -p for git show redirects to ensure destination directory exists
+    _new_tcs_gs = []
+    for _tc_gs in tool_calls:
+        _tc_cmd_gs = (_tc_gs.get("input") or {}).get("command", "")
+        _gs_redir_ma = re.match(r'\s*(git\s+show\s+\S+:\S+)\s*>\s*([^\s;|&]+)', _tc_cmd_gs)
+        if _gs_redir_ma and 'mkdir' not in _tc_cmd_gs:
+            _gs_dest_a = _gs_redir_ma.group(2).strip('\'"')
+            _gs_dir_a = '/'.join(_gs_dest_a.split('/')[:-1]) if '/' in _gs_dest_a else ''
+            if _gs_dir_a:
+                _gs_new_cmd_a = f'mkdir -p "{_gs_dir_a}" && {_tc_cmd_gs.strip()}'
+                _new_tcs_gs.append({**_tc_gs, "input": {**(_tc_gs.get("input") or {}), "command": _gs_new_cmd_a}})
+                continue
+        _new_tcs_gs.append(_tc_gs)
+    tool_calls = _new_tcs_gs
+
     # Block attempts to write text content into binary keystore/signing files
     _new_tcs_ks = []
     for _tc_ks in tool_calls:

@@ -1534,6 +1534,18 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                         logger.info(f"[GIT-FETCH-FIX] Corrected: 'git fetch {_rem}/{_brn}' → 'git fetch {_rem} {_brn}'")
                         cmd = _fixed_cmd
 
+                # Auto-prepend mkdir -p for git show redirects to ensure destination directory exists
+                _gs_redir_m = re.match(r'\s*(git\s+show\s+\S+:\S+)\s*>\s*([^\s;|&]+)', cmd)
+                if _gs_redir_m and 'mkdir' not in cmd:
+                    _gs_dest = _gs_redir_m.group(2).strip('\'"')
+                    _gs_dir = '/'.join(_gs_dest.split('/')[:-1]) if '/' in _gs_dest else ''
+                    if _gs_dir:
+                        _gs_new_cmd = f'mkdir -p "{_gs_dir}" && {cmd.strip()}'
+                        args_dict["command"] = _gs_new_cmd
+                        tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                        cmd = _gs_new_cmd
+                        logger.info(f"[GIT-SHOW-MKDIR] Auto-prepended mkdir -p for: {_gs_dir}")
+
                 # Block attempts to write text content into binary keystore/signing files
                 if re.search(r'open\s*\([^\)]*\.(keystore|jks|p12)[^\)]*,\s*[\'"]w[\'"]', cmd):
                     args_dict["command"] = "\n".join([
