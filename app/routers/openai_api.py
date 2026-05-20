@@ -855,7 +855,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # Warn on 1st repeat, suppress entirely on 2nd repeat.
             if _last_actual_cmd and len(bash_history) >= 2:
                 _identical_count = sum(1 for c in bash_history if c.strip() == _last_actual_cmd.strip())
-                _orig_not_found = bool(re.search(r'No such file or directory|cannot access|not found', _orig_content_str, re.IGNORECASE))
+                _orig_not_found = bool(re.search(r'No such file or directory|cannot access|not found|exists on disk, but not in', _orig_content_str, re.IGNORECASE))
                 _is_log_read_cmd = bool(re.search(r'\bdmesg\b|\bjournalctl\b|/var/log/|/proc/|syslog', _last_actual_cmd))
                 _early_is_build = bool(re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', _last_actual_cmd))
                 _is_git_show_cmd = bool(re.search(r'^\s*git\s+show\s+\S+:\S+', _last_actual_cmd))

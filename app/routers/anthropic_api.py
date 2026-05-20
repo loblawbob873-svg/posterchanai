@@ -576,7 +576,7 @@ def _build_model_messages(request: MessagesRequest) -> list:
                 _loop_suppressed_a = False
                 if last_cmd and len(bash_history) >= 2:
                     _identical_count_a = bash_cmd_count.get(last_cmd, 0)
-                    _orig_not_found_a = bool(re.search(r'No such file or directory|cannot access|not found', _orig_content_str_a, re.IGNORECASE))
+                    _orig_not_found_a = bool(re.search(r'No such file or directory|cannot access|not found|exists on disk, but not in', _orig_content_str_a, re.IGNORECASE))
                     _is_log_read_cmd_a = bool(re.search(r'\bdmesg\b|\bjournalctl\b|/var/log/|/proc/|syslog', last_cmd or ""))
                     _early_is_build_a = bool(re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', last_cmd))
                     _is_git_show_cmd_a = bool(re.search(r'^\s*git\s+show\s+\S+:\S+', last_cmd or ""))
