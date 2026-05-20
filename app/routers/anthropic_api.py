@@ -385,6 +385,17 @@ def _build_model_messages(request: MessagesRequest) -> list:
                             "Working tree is clean. If the task is complete, report success and STOP.]"
                         )
 
+                # Missing remote — 'git merge <remote>/<branch>' fails because remote isn't set up
+                if "not something we can merge" in content_str and re.search(r'\bgit\b.*merge\b', last_bash_cmd):
+                    _missing_remote_m_a = re.search(r'\bgit\s+merge\s+([\w.\-]+)/', last_bash_cmd)
+                    _missing_remote_a = _missing_remote_m_a.group(1) if _missing_remote_m_a else "the remote"
+                    content_str += (
+                        f"\n\n[MERGE FAILED: Remote '{_missing_remote_a}' is not configured in this repository "
+                        f"(check: git remote -v). "
+                        f"Look at your task description for the source repository path, then add it: "
+                        f"git remote add {_missing_remote_a} <path-from-task-description> && git fetch {_missing_remote_a}]"
+                    )
+
                 # git merge --no-commit: abort+reset is correct for exact HEAD match tasks.
                 # Skip for complex merge tasks that need real conflict resolution.
                 _no_commit_merges = [c for c in bash_history if re.search(r'\bgit\b.*\bmerge\b.*--no-commit', c)]
