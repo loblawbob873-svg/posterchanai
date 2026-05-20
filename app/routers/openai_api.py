@@ -1530,15 +1530,15 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                         logger.info("[COMMIT-FIX] Injected -m flag into commit without message")
                     # Wrap the commit: run it only if no conflict markers in staged files
                     _safe_cmd = (
-                        "CONFLICTS=$(git diff --cached --name-only 2>/dev/null | "
+                        "CONFLICTS=$(git diff --name-only --diff-filter=U 2>/dev/null | tr '\\n' ' '); "
+                        "STAGED_CONFLICTS=$(git diff --cached --name-only 2>/dev/null | "
                         "xargs -I{} grep -l '^<<<<<<< ' {} 2>/dev/null | tr '\\n' ' '); "
-                        "if [ -n \"$CONFLICTS\" ]; then "
-                        "echo \"[PROXY ERROR: Conflict markers in staged files: $CONFLICTS]\"; "
-                        "echo 'Resolve conflicts before committing:'; "
-                        "echo '  - Keep lines between <<<<<<< HEAD and ======= (your version)'; "
-                        "echo '  - Delete <<<<<<< HEAD, =======, >>>>>>> lines and the upstream section'; "
-                        "echo '  - git add <file>, then retry commit'; "
-                        "git diff --cached | grep -A3 '^<<<<<<' | head -20; "
+                        "ALL_CONFLICTS=\"$CONFLICTS$STAGED_CONFLICTS\"; "
+                        "if [ -n \"$ALL_CONFLICTS\" ]; then "
+                        "echo \"[MERGE CONFLICT: Unresolved files: $ALL_CONFLICTS]\"; "
+                        "echo 'Run this to auto-resolve (keeps your HEAD/Aikey version):'; "
+                        "echo \"python3 -c \\\"import re, os; [open(f,'w').write(re.sub(r'<<<<<<< HEAD\\\\n(.*?)=======.*?>>>>>>> [^\\\\n]+\\\\n', r'\\\\\\\\1', open(f).read(), flags=re.DOTALL)) or print('resolved', f) for f in '$ALL_CONFLICTS'.split() if os.path.exists(f)]\\\"\"; "
+                        "echo 'Then: git add . && git commit'; "
                         f"else {_commit_cmd}; fi"
                     )
                     args_dict["command"] = _safe_cmd
