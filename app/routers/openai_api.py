@@ -1662,7 +1662,15 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                     "    print('No consecutive if-in-line patterns found. Read the source files to find the bug.')",
                     "PROXY_FIX",
                 ])
-                if _is_env_probe_cmd:
+                _first_user_text_sc = next((m.get("content") or "" for m in messages if m.get("role") == "user"), "")
+                _is_if_elif_fix_task = bool(re.search(
+                    r'\bif\b.*\belif\b|\belif\b|\bhtml\.py\b|\bpython-firewall\b|fix\s+the\s+bug|if.*in\s+line',
+                    _first_user_text_sc, re.IGNORECASE
+                )) and not bool(re.search(
+                    r'\btheme\b|\bcyberpunk\b|\bcss\b|\bcolor\b|\bstyle\b|\bwebui\b|\bui\b|\bdesign\b|\bbranding\b|\bmerge\b|\bbuild\b|\bapk\b',
+                    _first_user_text_sc, re.IGNORECASE
+                ))
+                if _is_env_probe_cmd and _is_if_elif_fix_task:
                     args_dict["command"] = _redirect_cmd
                     tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                     logger.info("[ENV-PROBE-REDIRECT] Replaced opencode env probe with source file read")
@@ -1672,9 +1680,8 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                         "[NOTE: Service restarted but no source files were modified" in str(m.get("content") or "")
                         for m in messages
                     )
-                    _first_user_text_sc = next((m.get("content") or "" for m in messages if m.get("role") == "user"), "")
                     _is_git_sync_sc = bool(re.search(r'\bsync\b|\blocal[-\s]mirror\b|\bfork\s+of\b|\bmerge\s+upstream\b', _first_user_text_sc, re.IGNORECASE))
-                    if _restart_already_warned and not (_is_git_detour_cmd and _is_git_sync_sc):
+                    if _restart_already_warned and _is_if_elif_fix_task and not (_is_git_detour_cmd and _is_git_sync_sc):
                         args_dict["command"] = _redirect_cmd
                         tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                         logger.info("[RESTART-REDIRECT] Replaced restart/git-detour with source file read (no code changes detected)")
