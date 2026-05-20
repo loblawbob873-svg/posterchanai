@@ -1700,8 +1700,16 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         _m = re.search(r'"command"\s*:\s*"((?:[^"\\]|\\.){1,400})"', str(_last_assist_msg.get("content") or ""))
         if _m:
             _last_tool_cmd_sc = _m.group(1).replace('\\"', '"').replace('\\n', '\n').replace('\\t', '\t')
-    # Complex merge: all git commands exempt from shortcircuit (merges require multiple git ops)
-    _complex_merge_git_exempt = _is_complex_merge and bool(re.search(r'^\s*git\b', _last_tool_cmd_sc))
+    # Complex merge: git commands are exempt UNLESS the previous tool result also had a block marker
+    # (meaning the model saw BLOCKED and still ran the same git command — time to stop)
+    _all_user_msgs_sc = [m for m in messages if m.get("role") == "user"]
+    _prev_user_content_sc = str(_all_user_msgs_sc[-2].get("content") or "") if len(_all_user_msgs_sc) >= 2 else ""
+    _prev_had_block_sc = "[REPEATED COMMAND BLOCKED:" in _prev_user_content_sc or "[LOOP DETECTED:" in _prev_user_content_sc
+    _complex_merge_git_exempt = (
+        _is_complex_merge and
+        bool(re.search(r'^\s*git\b', _last_tool_cmd_sc)) and
+        not (_lum_has_any_loop_block and _prev_had_block_sc)
+    )
     logger.info(f"[LOOP-SC-CHECK] complex_merge={_is_complex_merge} git_exempt={_complex_merge_git_exempt} last_cmd={_last_tool_cmd_sc[:40]!r} has_block={_lum_has_any_loop_block} preview={_lum_content[-200:]!r}")
     if not _complex_merge_git_exempt and _last_user_msg and _lum_has_any_loop_block:
         _hl_text = ("I've investigated but cannot complete the task: a required resource or file is confirmed missing and I cannot create it in this environment. The operation is blocked on a missing dependency or configuration. Please provide the required resource or configuration and try again.")
