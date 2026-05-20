@@ -273,18 +273,12 @@ def _build_model_messages(request: MessagesRequest) -> list:
                             "Do not run any more ls/find/tree commands.]"
                         )
 
-                # Build tool not installed: terminal, never retryable
-                _build_tool_not_found_a = bool(
-                    re.search(r'(flutter|gradle|gradlew|dart|npm|yarn|make)\b.*command not found|command not found.*(flutter|gradle|gradlew|dart|npm|yarn|make)\b', content_str, re.IGNORECASE)
-                    or re.search(r'No such file or directory.*\b(flutter|gradlew?|dart|npm|yarn)\b|\b(flutter|gradlew?|dart|npm|yarn)\b.*No such file or directory', content_str, re.IGNORECASE)
-                )
-                if _build_tool_not_found_a and not _loop_suppressed_a:
+                # Command not found: required program not installed — terminal, never retryable
+                if not _loop_suppressed_a and re.search(r'\bcommand not found\b', content_str, re.IGNORECASE):
                     content_str = (
-                        "[BUILD TOOL NOT INSTALLED: The required build tool is not available on this machine. "
-                        "STOP — do not retry the build command, it will not succeed without installing the tool. "
-                        "The git/merge work is complete. Report what was accomplished and note that the build step "
-                        "requires the missing tool to be installed on this machine. "
-                        "Do NOT run any more build commands or ls commands. Report now.]"
+                        "[COMMAND NOT FOUND: A required program is not installed on this machine. "
+                        "STOP — retrying will not help. Report what was accomplished and note that the missing "
+                        "program must be installed before this step can run.]"
                     )
                     _loop_suppressed_a = True
                 # Build failure loop

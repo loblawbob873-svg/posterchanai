@@ -936,18 +936,12 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             "Run the build/script from your task instructions now. "
                             "Do NOT run more git commands.]"
                         )
-            # Build tool not installed: flutter/gradle/npm/dart command not found — terminal, never retryable
-            _build_tool_not_found = bool(
-                re.search(r'(flutter|gradle|gradlew|dart|npm|yarn|make)\b.*command not found|command not found.*(flutter|gradle|gradlew|dart|npm|yarn|make)\b', content_str, re.IGNORECASE)
-                or re.search(r'No such file or directory.*\b(flutter|gradlew?|dart|npm|yarn)\b|\b(flutter|gradlew?|dart|npm|yarn)\b.*No such file or directory', content_str, re.IGNORECASE)
-            )
-            if _build_tool_not_found and not _loop_suppressed:
+            # Command not found: the required program isn't installed — terminal, never retryable by the model
+            if not _loop_suppressed and re.search(r'\bcommand not found\b', content_str, re.IGNORECASE):
                 content_str = (
-                    "[BUILD TOOL NOT INSTALLED: The required build tool is not available on this machine. "
-                    "STOP — do not retry the build command, it will not succeed without installing the tool. "
-                    "The git/merge work is complete. Report what was accomplished and note that the build step "
-                    "requires the missing tool to be installed on this machine. "
-                    "Do NOT run any more build commands or ls commands. Report now.]"
+                    "[COMMAND NOT FOUND: A required program is not installed on this machine. "
+                    "STOP — retrying will not help. Report what was accomplished and note that the missing "
+                    "program must be installed before this step can run.]"
                 )
                 _loop_suppressed = True
             # Repeated command failure loop: when the same command fails multiple times, guide investigation
