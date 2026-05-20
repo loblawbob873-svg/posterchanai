@@ -240,7 +240,14 @@ def _build_model_messages(request: MessagesRequest) -> list:
                 _is_syslog_cmd = bool(re.search(r'\bdmesg\b|\bjournalctl\b', last_bash_cmd or ""))
                 if _is_syslog_cmd:
                     _syslog_count = sum(1 for c in bash_history if re.search(r'\bdmesg\b|\bjournalctl\b', c))
-                    if _syslog_count >= 2:
+                    if _syslog_count >= 3:
+                        content_str = (
+                            f"[REPEATED COMMAND BLOCKED: You have run {_syslog_count} system log queries. "
+                            "Log reading is now blocked — you have all the data you need. "
+                            "STOP. Write your final report now based on what you already collected. "
+                            "Do NOT run any more dmesg, journalctl, or log commands.]"
+                        )
+                    elif _syslog_count >= 2:
                         content_str += (
                             f"\n\n[SYSTEM LOG LOOP: You have run {_syslog_count} system log queries. "
                             "You have collected sufficient log data. STOP querying logs. "
