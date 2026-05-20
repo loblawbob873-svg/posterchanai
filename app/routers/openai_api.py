@@ -1039,6 +1039,16 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "Do NOT read dmesg, journalctl, or system logs — build errors are in the output above, not in kernel logs. "
                         "Fix the code or configuration error shown, then retry the build command.]"
                     )
+                elif _fail_count >= 3 and _is_build_script and _has_keystore_error:
+                    content_str += (
+                        f"\n\n[BUILD BLOCKED — '{_last_actual_cmd}' has failed {_fail_count} times on signing/keystore. "
+                        "Do NOT run the build again yet. Diagnose first: "
+                        "(1) Find the file path in the error above, then: ls -la <that/path> — confirm it exists and is > 1000 bytes. "
+                        "(2) If missing or zero bytes, restore from git: git log --all --oneline --name-only -- '*.keystore' '*.jks' '*.p12' | head -10 "
+                        "then: git show <hash>:<path-from-output> > <path-from-output> "
+                        "(3) If file exists but build still fails: the error may be a wrong password or key alias, not a missing file — read the exact error line above. "
+                        "Only run the build AFTER completing the step above that applies.]"
+                    )
                 elif _fail_count >= 2 and _is_build_script and _has_keystore_error:
                     content_str += (
                         f"\n\n[BUILD LOOP — '{_last_actual_cmd}' has failed {_fail_count} times due to a missing signing keystore. "
