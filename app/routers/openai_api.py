@@ -1319,7 +1319,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "then rewrite the script to match the actual line format.]"
                     )
             # Warn when a service was restarted without any code edits in this session
-            if last_cmd and re.search(r'systemctl\s+(restart|reload)\s+', last_cmd):
+            if last_cmd and re.search(r'^\s*(?:sudo\s+)?systemctl\s+(restart|reload)\s+', last_cmd):
                 _any_write_pre = any(
                     re.search(r'python3?\s+<<|sed\s+-i|open\s*\(.*,\s*["\']w["\']|\bgit\s+checkout\b.*--\s+\S', c)
                     for c in bash_history[:-1]  # exclude the restart itself
@@ -1595,7 +1595,7 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                     logger.info("[PROXY-RERUN-BLOCKED] Blocked model from re-running proxy redirect message")
                 # Redirect env probes (opencode doctor/version, venv binaries) immediately — always irrelevant.
                 # Redirect restart/git-detour only after NOTE was sent (proxy warned about no code changes).
-                _is_restart_cmd = bool(re.search(r'systemctl\s+(restart|reload)\s+', cmd))
+                _is_restart_cmd = bool(re.search(r'^\s*(?:sudo\s+)?systemctl\s+(restart|reload)\s+', cmd))
                 _is_env_probe_cmd = bool(re.search(r'(?:venv|\.venv)/bin/\w+|opencode\s+(?:doctor|run\b)', cmd))
                 _is_git_detour_cmd = bool(re.search(r'\bgit\b.*(fetch|rebase|reset)\b', cmd))
                 _redirect_cmd = "\n".join([
