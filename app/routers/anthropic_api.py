@@ -434,7 +434,7 @@ def _build_model_messages(request: MessagesRequest) -> list:
                     )
 
                 # Unmerged files: previous merge left repo in conflicted state — abort and retry.
-                if re.search(r'unmerged files|Merging is not possible because', content_str, re.IGNORECASE) and re.search(r'\bgit\b.*merge\b', last_bash_cmd or ""):
+                if re.search(r'unmerged files|Merging is not possible because|MERGE_HEAD exists|not concluded your merge', content_str, re.IGNORECASE) and re.search(r'\bgit\b.*merge\b', last_bash_cmd or ""):
                     content_str = (
                         "[MERGE STATE ERROR: The repository has unresolved conflicts or staged changes from a previous merge attempt. "
                         "You cannot start a new merge until this is cleared. "

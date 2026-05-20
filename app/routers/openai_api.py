@@ -914,7 +914,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "Do not run any more ls/find/tree commands.]"
                     )
             # Unmerged files: a previous merge left the repo in a conflicted state — guide to abort and retry.
-            if re.search(r'unmerged files|Merging is not possible because', content_str, re.IGNORECASE) and re.search(r'\bgit\b.*merge\b', _last_actual_cmd or ""):
+            if re.search(r'unmerged files|Merging is not possible because|MERGE_HEAD exists|not concluded your merge', content_str, re.IGNORECASE) and re.search(r'\bgit\b.*merge\b', _last_actual_cmd or ""):
                 content_str = (
                     "[MERGE STATE ERROR: The repository has unresolved conflicts or staged changes from a previous merge attempt. "
                     "You cannot start a new merge until this is cleared. "
