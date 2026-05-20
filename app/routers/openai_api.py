@@ -1758,7 +1758,9 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     _lum_content = str(_last_user_msg.get("content") or "") if _last_user_msg else ""
     _lum_has_any_loop_block = (
         "[REPEATED COMMAND BLOCKED:" in _lum_content or
-        "[LOOP DETECTED:" in _lum_content
+        "[LOOP DETECTED:" in _lum_content or
+        "[EXPLORATION BLOCKED:" in _lum_content or
+        "[EXPLORATION LOOP — RESULT SUPPRESSED:" in _lum_content
     )
     # Extract the command from the last assistant tool call to check if it's git
     _last_assist_msg = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
@@ -1771,7 +1773,12 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     # (meaning the model saw BLOCKED and still ran the same git command — time to stop)
     _all_user_msgs_sc = [m for m in messages if m.get("role") == "user"]
     _prev_user_content_sc = str(_all_user_msgs_sc[-2].get("content") or "") if len(_all_user_msgs_sc) >= 2 else ""
-    _prev_had_block_sc = "[REPEATED COMMAND BLOCKED:" in _prev_user_content_sc or "[LOOP DETECTED:" in _prev_user_content_sc
+    _prev_had_block_sc = (
+        "[REPEATED COMMAND BLOCKED:" in _prev_user_content_sc or
+        "[LOOP DETECTED:" in _prev_user_content_sc or
+        "[EXPLORATION BLOCKED:" in _prev_user_content_sc or
+        "[EXPLORATION LOOP — RESULT SUPPRESSED:" in _prev_user_content_sc
+    )
     _complex_merge_git_exempt = (
         _is_complex_merge and
         bool(re.search(r'^\s*git\b', _last_tool_cmd_sc)) and
@@ -1998,7 +2005,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     _lum_has_loop_block = (
         "[REPEATED COMMAND BLOCKED:" in _lum_content or
         "[LOOP DETECTED:" in _lum_content or
-        "[EXPLORATION LOOP — RESULT SUPPRESSED:" in _lum_content
+        "[EXPLORATION LOOP — RESULT SUPPRESSED:" in _lum_content or
+        "[EXPLORATION BLOCKED:" in _lum_content
     )
     if _lum_content and _lum_has_loop_block and tool_calls:
         _new_tcs_exp = []

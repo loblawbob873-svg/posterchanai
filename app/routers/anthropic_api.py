@@ -729,10 +729,20 @@ async def messages(
     # Complex merge exception applies only to git commands; build/script loops always shortcircuit.
     _anthr_last_user = next((m for m in reversed(messages_for_model) if m.get("role") == "user"), None)
     _anthr_lum = str(_anthr_last_user.get("content") or "") if _anthr_last_user else ""
-    _anthr_has_block = "[REPEATED COMMAND BLOCKED:" in _anthr_lum or "[LOOP DETECTED:" in _anthr_lum
+    _anthr_has_block = (
+        "[REPEATED COMMAND BLOCKED:" in _anthr_lum or
+        "[LOOP DETECTED:" in _anthr_lum or
+        "[EXPLORATION BLOCKED:" in _anthr_lum or
+        "[EXPLORATION LOOP — RESULT SUPPRESSED:" in _anthr_lum
+    )
     _anthr_all_user_msgs = [m for m in messages_for_model if m.get("role") == "user"]
     _anthr_prev_user_content = str(_anthr_all_user_msgs[-2].get("content") or "") if len(_anthr_all_user_msgs) >= 2 else ""
-    _anthr_prev_had_block = "[REPEATED COMMAND BLOCKED:" in _anthr_prev_user_content or "[LOOP DETECTED:" in _anthr_prev_user_content
+    _anthr_prev_had_block = (
+        "[REPEATED COMMAND BLOCKED:" in _anthr_prev_user_content or
+        "[LOOP DETECTED:" in _anthr_prev_user_content or
+        "[EXPLORATION BLOCKED:" in _anthr_prev_user_content or
+        "[EXPLORATION LOOP — RESULT SUPPRESSED:" in _anthr_prev_user_content
+    )
     if _anthr_has_block and _anthr_prev_had_block:
         # Determine the last tool call command from the last assistant message
         _anthr_last_assist = next((m for m in reversed(messages_for_model) if m.get("role") == "assistant"), None)
@@ -893,7 +903,8 @@ async def messages(
     _lum_anthr_has_loop_block = (
         "[REPEATED COMMAND BLOCKED:" in _lum_anthr or
         "[LOOP DETECTED:" in _lum_anthr or
-        "[EXPLORATION LOOP — RESULT SUPPRESSED:" in _lum_anthr
+        "[EXPLORATION LOOP — RESULT SUPPRESSED:" in _lum_anthr or
+        "[EXPLORATION BLOCKED:" in _lum_anthr
     )
     if _lum_anthr_has_loop_block and tool_calls:
         _new_tcs_exp_a = []
