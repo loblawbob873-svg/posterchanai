@@ -998,6 +998,16 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     "program must be installed before this step can run.]"
                 )
                 _loop_suppressed = True
+            # Command timeout: build script was killed by the default 120s timeout — tell model to add a longer timeout.
+            if (re.search(r'timeout.*ms|expected to take longer|retry with a larger timeout', content_str, re.IGNORECASE)
+                    and re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', _last_actual_cmd or "")):
+                content_str += (
+                    "\n\n[BUILD TIMEOUT: The build script was killed by the default timeout. "
+                    "The build takes longer than the default limit. "
+                    'Re-run with a longer timeout: add "timeout": 600000 to the bash tool arguments '
+                    "(or use the timeout parameter if your tool supports it). "
+                    "Do NOT skip the build — run it again with a 600000ms (10 minute) timeout.]"
+                )
             # Repeated command failure loop: when the same command fails multiple times, guide investigation
             _is_hard_failure = bool(
                 re.search(r'BUILD FAILED|FAILURE:|non-zero exit value\s+[1-9]|Execution failed for task|exit code [1-9]|\bfailed\b.*\bexception\b', content_str, re.IGNORECASE)
@@ -2055,6 +2065,24 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     pass
             _new_tcs_exp.append(_tc_exp)
         tool_calls = _new_tcs_exp
+    # Build script timeout: inject a 10-minute timeout for build/script commands that lack one.
+    # Prevents the default 120s timeout from killing long flutter/gradle/sh builds.
+    _new_tcs_timeout = []
+    for _tc_to in tool_calls:
+        _fn_to = _tc_to.get("function", {})
+        if _fn_to.get("name") in ("bash", "Bash"):
+            try:
+                _adict_to = json.loads(_fn_to.get("arguments", "{}"))
+                _cmd_to = _adict_to.get("command", "")
+                if (re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', _cmd_to)
+                        and "timeout" not in _adict_to):
+                    _adict_to["timeout"] = 600000
+                    _tc_to = {**_tc_to, "function": {**_fn_to, "arguments": json.dumps(_adict_to)}}
+                    logger.info(f"[BUILD-TIMEOUT] Injected 600s timeout for: {_cmd_to[:60]}")
+            except Exception:
+                pass
+        _new_tcs_timeout.append(_tc_to)
+    tool_calls = _new_tcs_timeout
     logger.info(f"[OAI-AGENTIC] len={len(full_text)} head={full_text[:200]!r} tail={full_text[-200:]!r} tool_calls={len(tool_calls)} sed_blocked={_sed_blocked} colorize_done={_colorize_done} empty_bash={_empty_bash_count} origin_warned={_origin_warned} git_fetches={_git_fetch_count} git_reset_done={_git_reset_done}")
 
     # If model responded with text-only or unparseable tool call (no tool call), nudge it once.
