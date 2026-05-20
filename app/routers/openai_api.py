@@ -857,7 +857,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 _identical_count = sum(1 for c in bash_history if c.strip() == _last_actual_cmd.strip())
                 _orig_not_found = bool(re.search(r'No such file or directory|cannot access|not found', _orig_content_str, re.IGNORECASE))
                 _is_log_read_cmd = bool(re.search(r'\bdmesg\b|\bjournalctl\b|/var/log/|/proc/|syslog', _last_actual_cmd))
-                if _identical_count >= 3:
+                _early_is_build = bool(re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', _last_actual_cmd))
+                if _identical_count >= 3 and not _early_is_build:
                     _loop_suppressed = True
                     if _orig_not_found:
                         content_str = (
@@ -879,7 +880,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             "and produces the same result every time. Running it again changes nothing. "
                             "STOP. Take a fundamentally different action toward your task.]"
                         )
-                elif _identical_count >= 2:
+                elif _identical_count >= 2 and not _early_is_build:
                     if _orig_not_found:
                         content_str += (
                             f"\n\n[REPEATED COMMAND ({_identical_count}×): This path does not exist — confirmed. "
@@ -1022,6 +1023,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 _is_build_script = bool(re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', _last_actual_cmd))
                 _has_merge_in_history = any(re.search(r'\bgit\s+merge\b', c) for c in bash_history)
                 _has_keystore_error = bool(re.search(r'keystore|signing|upload.*key|key.*store', content_str, re.IGNORECASE))
+                _has_keyprops_error = bool(re.search(r'key\.properties|signing\.properties|keyAlias|keyPassword|storeFile|storePassword', content_str, re.IGNORECASE))
+                _keystore_was_restored = any(re.search(r'git show .+:.+\.(keystore|jks|p12)', c) for c in bash_history)
                 if _fail_count == 1 and _is_build_script and _is_complex_merge_task and _has_merge_in_history and _has_keystore_error:
                     content_str += (
                         "\n\n[BUILD ERROR: The build failed because a signing keystore file is missing. "
@@ -1040,18 +1043,32 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "Do NOT read dmesg, journalctl, or system logs — build errors are in the output above, not in kernel logs. "
                         "Fix the code or configuration error shown, then retry the build command.]"
                     )
-                elif _fail_count >= 3 and _is_build_script and _has_keystore_error:
+                elif _fail_count >= 3 and _is_build_script and (_has_keystore_error or _has_keyprops_error or _keystore_was_restored):
                     content_str += (
-                        f"\n\n[BUILD BLOCKED — '{_last_actual_cmd}' has failed {_fail_count} times on signing/keystore. "
-                        "Do NOT run the build again yet. Diagnose first: "
-                        "(1) Find the file path in the error above, then: ls -la <that/path> — confirm it exists and is > 1000 bytes. "
-                        "(2) If missing or zero bytes, restore from git: git log --all --oneline --name-only -- '*.keystore' '*.jks' '*.p12' | head -10 "
+                        f"\n\n[BUILD BLOCKED — '{_last_actual_cmd}' has failed {_fail_count} times on signing. "
+                        "Do NOT run the build again yet. Diagnose in order: "
+                        "(1) Check the signing config file: "
+                        "cat android/key.properties 2>/dev/null || cat android/signing.properties 2>/dev/null "
+                        "If missing, find it in git history (it may have been deleted by the merge): "
+                        "git log --all --oneline --name-only -- '*.properties' | grep -i 'key\\|sign' | head -10 "
+                        "then restore it: git show <hash>:<path> > <path> "
+                        "(2) If the signing config exists, check that the keystore file it references also exists: "
+                        "grep -i 'storeFile\\|keyStore' <config-path> | head -1 "
+                        "then: ls -la <path from that line> "
+                        "(3) If the keystore is missing, restore it from git: "
+                        "git log --all --oneline --name-only -- '*.keystore' '*.jks' '*.p12' | head -10 "
                         "then: git show <hash>:<path-from-output> > <path-from-output> "
-                        "(3) If the keystore file exists but signing still fails: check for a missing signing config file — "
-                        "cat android/key.properties 2>/dev/null || cat android/signing.properties 2>/dev/null — "
-                        "this file contains the keystore path, password, key alias, and key password. "
-                        "If it is missing, that is the root cause. "
-                        "Only run the build AFTER completing the step above that applies.]"
+                        "Only run the build after fixing the issue above.]"
+                    )
+                elif _fail_count >= 2 and _is_build_script and (_has_keyprops_error or (_keystore_was_restored and not _has_keystore_error)):
+                    content_str += (
+                        f"\n\n[BUILD ERROR: '{_last_actual_cmd}' failed again after keystore restore. "
+                        "The signing configuration file may be missing — it holds the keystore path, password, key alias, and key password. "
+                        "Check: cat android/key.properties 2>/dev/null || cat android/signing.properties 2>/dev/null "
+                        "If missing, it may have been deleted by the git merge. Find it in git history: "
+                        "git log --all --oneline --name-only -- '*.properties' | grep -i 'key\\|sign' | head -10 "
+                        "Restore: git show <hash>:<path> > <path> "
+                        "Do NOT run the build again without this file.]"
                     )
                 elif _fail_count >= 2 and _is_build_script and _has_keystore_error:
                     content_str += (

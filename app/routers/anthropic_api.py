@@ -305,6 +305,8 @@ def _build_model_messages(request: MessagesRequest) -> list:
                     _has_stale = bool(re.search(r'Invalid depfile|stale|corrupt|\.dart_tool', content_str, re.IGNORECASE))
                     _has_merge_in_history_a = any(re.search(r'\bgit\s+merge\b', c) for c in bash_history)
                     _has_keystore_error_a = bool(re.search(r'keystore|signing|upload.*key|key.*store', content_str, re.IGNORECASE))
+                    _has_keyprops_error_a = bool(re.search(r'key\.properties|signing\.properties|keyAlias|keyPassword|storeFile|storePassword', content_str, re.IGNORECASE))
+                    _keystore_was_restored_a = any(re.search(r'git show .+:.+\.(keystore|jks|p12)', c) for c in bash_history)
                     if _fail_count == 1 and _is_complex_merge_task and _has_merge_in_history_a and _has_keystore_error_a:
                         content_str += (
                             "\n\n[BUILD ERROR: The build failed because a signing keystore file is missing. "
@@ -323,18 +325,32 @@ def _build_model_messages(request: MessagesRequest) -> list:
                             "Do NOT read dmesg, journalctl, or system logs — build errors are in the output above, not in kernel logs. "
                             "Fix the code or configuration error shown, then retry the build command.]"
                         )
-                    elif _fail_count >= 3 and _is_build_cmd and _has_keystore_error_a:
+                    elif _fail_count >= 3 and _is_build_cmd and (_has_keystore_error_a or _has_keyprops_error_a or _keystore_was_restored_a):
                         content_str += (
-                            f"\n\n[BUILD BLOCKED — '{last_cmd}' has failed {_fail_count} times on signing/keystore. "
-                            "Do NOT run the build again yet. Diagnose first: "
-                            "(1) Find the file path in the error above, then: ls -la <that/path> — confirm it exists and is > 1000 bytes. "
-                            "(2) If missing or zero bytes, restore from git: git log --all --oneline --name-only -- '*.keystore' '*.jks' '*.p12' | head -10 "
+                            f"\n\n[BUILD BLOCKED — '{last_cmd}' has failed {_fail_count} times on signing. "
+                            "Do NOT run the build again yet. Diagnose in order: "
+                            "(1) Check the signing config file: "
+                            "cat android/key.properties 2>/dev/null || cat android/signing.properties 2>/dev/null "
+                            "If missing, find it in git history (it may have been deleted by the merge): "
+                            "git log --all --oneline --name-only -- '*.properties' | grep -i 'key\\|sign' | head -10 "
+                            "then restore it: git show <hash>:<path> > <path> "
+                            "(2) If the signing config exists, check that the keystore file it references also exists: "
+                            "grep -i 'storeFile\\|keyStore' <config-path> | head -1 "
+                            "then: ls -la <path from that line> "
+                            "(3) If the keystore is missing, restore it from git: "
+                            "git log --all --oneline --name-only -- '*.keystore' '*.jks' '*.p12' | head -10 "
                             "then: git show <hash>:<path-from-output> > <path-from-output> "
-                            "(3) If the keystore file exists but signing still fails: check for a missing signing config file — "
-                            "cat android/key.properties 2>/dev/null || cat android/signing.properties 2>/dev/null — "
-                            "this file contains the keystore path, password, key alias, and key password. "
-                            "If it is missing, that is the root cause. "
-                            "Only run the build AFTER completing the step above that applies.]"
+                            "Only run the build after fixing the issue above.]"
+                        )
+                    elif _fail_count >= 2 and _is_build_cmd and (_has_keyprops_error_a or (_keystore_was_restored_a and not _has_keystore_error_a)):
+                        content_str += (
+                            f"\n\n[BUILD ERROR: '{last_cmd}' failed again after keystore restore. "
+                            "The signing configuration file may be missing — it holds the keystore path, password, key alias, and key password. "
+                            "Check: cat android/key.properties 2>/dev/null || cat android/signing.properties 2>/dev/null "
+                            "If missing, it may have been deleted by the git merge. Find it in git history: "
+                            "git log --all --oneline --name-only -- '*.properties' | grep -i 'key\\|sign' | head -10 "
+                            "Restore: git show <hash>:<path> > <path> "
+                            "Do NOT run the build again without this file.]"
                         )
                     elif _fail_count >= 2 and _is_build_cmd and _has_keystore_error_a:
                         content_str += (
@@ -546,7 +562,8 @@ def _build_model_messages(request: MessagesRequest) -> list:
                     _identical_count_a = bash_cmd_count.get(last_cmd, 0)
                     _orig_not_found_a = bool(re.search(r'No such file or directory|cannot access|not found', _orig_content_str_a, re.IGNORECASE))
                     _is_log_read_cmd_a = bool(re.search(r'\bdmesg\b|\bjournalctl\b|/var/log/|/proc/|syslog', last_cmd or ""))
-                    if _identical_count_a >= 3:
+                    _early_is_build_a = bool(re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', last_cmd))
+                    if _identical_count_a >= 3 and not _early_is_build_a:
                         _loop_suppressed_a = True
                         if re.search(r'\bgit\s+status\b', last_cmd):
                             content_str = (
@@ -574,7 +591,7 @@ def _build_model_messages(request: MessagesRequest) -> list:
                                 "and produces the same result every time. Running it again changes nothing. "
                                 "STOP. Take a fundamentally different action toward your task.]"
                             )
-                    elif _identical_count_a >= 2:
+                    elif _identical_count_a >= 2 and not _early_is_build_a:
                         if _orig_not_found_a:
                             content_str += (
                                 f"\n\n[REPEATED COMMAND ({_identical_count_a}×): This path does not exist — confirmed. "
