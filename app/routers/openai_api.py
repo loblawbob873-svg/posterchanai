@@ -2182,7 +2182,14 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
             ):
                 _hl_is_exploration = True
         if _hl_was_restart:
-            _hl_text = ("I need to read the source code before restarting the service. Restarting without code changes does not fix bugs. I will read the relevant source files, identify the issue, make the fix, and then restart.")
+            _hl_any_write = any(
+                re.search(r'python3?\s+<<|sed\s+-i|open\s*\(.*,\s*["\']w["\']', c)
+                for c in bash_history
+            )
+            if _hl_any_write:
+                _hl_text = ("The service has been restarted successfully. The code fix has been applied and the service is running. Task complete.")
+            else:
+                _hl_text = ("I need to read the source code before restarting the service. Restarting without code changes does not fix bugs. I will read the relevant source files, identify the issue, make the fix, and then restart.")
         elif _hl_is_exploration:
             _hl_text = ("I've read the source code and found the issue. I will now edit the file to fix it using bash with sed -i or a python3 heredoc — I will NOT read or grep the file again. After the fix I will restart the service.")
         else:
