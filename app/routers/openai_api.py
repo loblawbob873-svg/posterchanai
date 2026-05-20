@@ -859,6 +859,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 _is_log_read_cmd = bool(re.search(r'\bdmesg\b|\bjournalctl\b|/var/log/|/proc/|syslog', _last_actual_cmd))
                 _early_is_build = bool(re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', _last_actual_cmd))
                 _is_git_show_cmd = bool(re.search(r'^\s*git\s+show\s+\S+:\S+', _last_actual_cmd))
+                # Also catches: git -C <dir> show <hash>:<path>
+                _is_reading_git_history = bool(re.search(r'\bgit\s+(?:-C\s+\S+\s+)?show\s+\S+[~^]?:', _last_actual_cmd))
                 _is_signing_config = bool(re.search(r'key\.properties|signing\.properties', _last_actual_cmd, re.IGNORECASE))
                 # Immediately inject for git show with invalid hash (not just bad path)
                 _invalid_hash = bool(re.search(r'invalid object name', _orig_content_str, re.IGNORECASE))
@@ -900,6 +902,15 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             "You have collected enough log data. STOP. Do NOT run any more log or system commands. "
                             "Write your final summary report NOW as a plain text response — "
                             "no more bash tool calls. Use only the information you have already gathered.]"
+                        )
+                    elif _is_reading_git_history and not _orig_not_found:
+                        _gh_path_m = re.search(r'\bgit\s+(?:-C\s+\S+\s+)?show\s+\S+[~^]?:(\S+?)(?:\s|\||$)', _last_actual_cmd)
+                        _gh_current_path = _gh_path_m.group(1) if _gh_path_m else '<file>'
+                        content_str = (
+                            f"[REPEATED COMMAND BLOCKED: Reading git history for '{_gh_current_path}' {_identical_count} times does not help. "
+                            "STOP reading historical versions. Read the CURRENT file instead: "
+                            f"cat <working-dir>/{_gh_current_path} "
+                            "Then make your fix with sed -i or python3 and restart the service.]"
                         )
                     else:
                         content_str = (
