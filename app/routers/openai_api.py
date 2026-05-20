@@ -854,6 +854,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             if _last_actual_cmd and len(bash_history) >= 2:
                 _identical_count = sum(1 for c in bash_history if c.strip() == _last_actual_cmd.strip())
                 _orig_not_found = bool(re.search(r'No such file or directory|cannot access|not found', _orig_content_str, re.IGNORECASE))
+                _is_log_read_cmd = bool(re.search(r'\bdmesg\b|\bjournalctl\b|/var/log/|/proc/|syslog', _last_actual_cmd))
                 if _identical_count >= 3:
                     _loop_suppressed = True
                     if _orig_not_found:
@@ -862,6 +863,13 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             "CONFIRMED: the path does not exist and will not appear by checking again. "
                             "STOP. You must either CREATE the missing file/resource, or change your "
                             "approach to not require it. Do NOT run any read/list command on this path again.]"
+                        )
+                    elif _syslog_is_task and _is_log_read_cmd:
+                        content_str = (
+                            f"[REPEATED COMMAND BLOCKED: This log command was run {_identical_count} times with the same result. "
+                            "You have collected enough log data. STOP. Do NOT run any more log or system commands. "
+                            "Write your final summary report NOW as a plain text response — "
+                            "no more bash tool calls. Use only the information you have already gathered.]"
                         )
                     else:
                         content_str = (
@@ -985,6 +993,15 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "\n\n[BUILD ERROR: The script/build failed. Read the error output above carefully and fix the root cause. "
                         "Do NOT read dmesg, journalctl, or system logs — build errors are in the output above, not in kernel logs. "
                         "Fix the code or configuration error shown, then retry the build command.]"
+                    )
+                elif _fail_count >= 2 and _is_build_script:
+                    content_str += (
+                        f"\n\n[BUILD LOOP — '{_last_actual_cmd}' has failed {_fail_count} times. "
+                        "No source files were edited between runs. Running it again will produce the same failure. "
+                        "STOP. Read the specific error message in the output above (not system or kernel logs). "
+                        "Edit the failing source file using: sed -i 's/old/new/' path/to/file "
+                        "or a heredoc (python3 << 'EOF'). "
+                        "Run the build script ONLY after you have edited at least one file.]"
                     )
                 elif _fail_count >= 3:
                     content_str += (
@@ -1144,12 +1161,30 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 re.search(r'python3?\s+<<|sed\s+-i|open\s*\(.*,\s*["\']w["\']|\bgit\s+checkout\b.*--\s+\S', c)
                 for c in bash_history
             )
+            _last_build_cmd_hist = next((c for c in reversed(bash_history) if re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', c)), None)
+            _build_has_failed = _last_build_cmd_hist and bash_cmd_count.get(_last_build_cmd_hist, 0) >= 1
             if _total_cmds >= 7 and not _any_write and not colorize_task_done and not fetch_head_reset_done:
-                content_str += (
-                    f"\n\n[EXPLORATION CAP: You have run {_total_cmds} commands without modifying any file. "
-                    "You already have enough information. Stop reading and take action now — "
-                    "run the command that performs the actual task.]"
-                )
+                if _syslog_is_task:
+                    content_str += (
+                        f"\n\n[EXPLORATION CAP: You have run {_total_cmds} commands. "
+                        "You have collected enough log data. STOP running commands. "
+                        "Write your final summary report now as a plain text response — "
+                        "no more bash tool calls. Use only what you have already gathered.]"
+                    )
+                elif _build_has_failed:
+                    content_str += (
+                        f"\n\n[EXPLORATION CAP: You have run {_total_cmds} commands without modifying any file. "
+                        f"The build script has failed. STOP reading logs — system and kernel logs do NOT contain build errors. "
+                        "The build error is in the script output you already have. "
+                        "Use sed -i or a heredoc to edit the failing source file, then retry the build. "
+                        "Do NOT run the build script again without first editing a file.]"
+                    )
+                else:
+                    content_str += (
+                        f"\n\n[EXPLORATION CAP: You have run {_total_cmds} commands without modifying any file. "
+                        "You already have enough information. Stop reading and take action now — "
+                        "run the command that performs the actual task.]"
+                    )
             # Total git-status loop: catches alternation between variants (git status, git status --short, etc.)
             _total_git_status = sum(1 for c in bash_history if re.search(r'\bgit\s+status\b', c))
             if _total_git_status >= 4 and last_cmd and re.search(r'\bgit\s+status\b', last_cmd):

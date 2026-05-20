@@ -309,6 +309,13 @@ def _build_model_messages(request: MessagesRequest) -> list:
                             "Do NOT read dmesg, journalctl, or system logs — build errors are in the output above, not in kernel logs. "
                             "Fix the code or configuration error shown, then retry the build command.]"
                         )
+                    elif _fail_count >= 2 and _is_build_cmd:
+                        content_str += (
+                            f"\n\n[BUILD LOOP — '{last_cmd}' has failed {_fail_count} times. "
+                            "No source files were edited between runs. Running it again will produce the same failure. "
+                            "STOP. Read the specific error message in the output above (not system or kernel logs). "
+                            "Edit the failing source file to fix the error, then retry the build script.]"
+                        )
                     elif _fail_count >= 3:
                         content_str += (
                             f"\n\n[COMMAND FAILURE LOOP: This command has failed {_fail_count} times. "
@@ -479,6 +486,7 @@ def _build_model_messages(request: MessagesRequest) -> list:
                 if last_cmd and len(bash_history) >= 2:
                     _identical_count_a = bash_cmd_count.get(last_cmd, 0)
                     _orig_not_found_a = bool(re.search(r'No such file or directory|cannot access|not found', _orig_content_str_a, re.IGNORECASE))
+                    _is_log_read_cmd_a = bool(re.search(r'\bdmesg\b|\bjournalctl\b|/var/log/|/proc/|syslog', last_cmd or ""))
                     if _identical_count_a >= 3:
                         _loop_suppressed_a = True
                         if re.search(r'\bgit\s+status\b', last_cmd):
@@ -493,6 +501,13 @@ def _build_model_messages(request: MessagesRequest) -> list:
                                 "CONFIRMED: the path does not exist and will not appear by checking again. "
                                 "STOP. You must either CREATE the missing file/resource, or change your "
                                 "approach to not require it. Do NOT run any read/list command on this path again.]"
+                            )
+                        elif _syslog_is_task_a and _is_log_read_cmd_a:
+                            content_str = (
+                                f"[REPEATED COMMAND BLOCKED: This log command was run {_identical_count_a} times with the same result. "
+                                "You have collected enough log data. STOP. Do NOT run any more log or system commands. "
+                                "Write your final summary report NOW as a plain text response — "
+                                "no more bash tool calls. Use only the information you have already gathered.]"
                             )
                         else:
                             content_str = (
