@@ -1026,11 +1026,11 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     content_str += (
                         "\n\n[BUILD ERROR: The build failed because a signing keystore file is missing. "
                         "This file was deleted by a git merge (it is not in the source branch). "
-                        "The merge may already be committed, so the file is no longer in HEAD. "
-                        "Find the missing file path in the error above, then restore it from git history: "
-                        "git log --all --oneline -- <path/to/keystore.file> "
-                        "git show <hash>:<path/to/keystore.file> > <path/to/keystore.file> "
-                        "Or try: git show ORIG_HEAD:<path/to/keystore.file> > <path/to/keystore.file> "
+                        "The merge may already be committed so the file is no longer in HEAD. "
+                        "DO NOT GUESS the filename. Search git history with a wildcard to find the exact path and commit: "
+                        "git log --all --oneline --name-only -- '*.keystore' '*.jks' '*.p12' | head -20 "
+                        "Then restore using the hash and path shown in that output: "
+                        "git show <hash>:<path-from-output> > <path-from-output> "
                         "Then retry the build.]"
                     )
                 elif _fail_count == 1 and _is_build_script:
@@ -1043,10 +1043,10 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     content_str += (
                         f"\n\n[BUILD LOOP — '{_last_actual_cmd}' has failed {_fail_count} times due to a missing signing keystore. "
                         "STOP running the build. This is a binary file — you cannot create it with sed or a heredoc. "
-                        "Find the file path in the error above, then restore it from git history: "
-                        "git log --all --oneline -- <path/to/keystore.file> "
-                        "git show <hash>:<path/to/keystore.file> > <path/to/keystore.file> "
-                        "Or: git show ORIG_HEAD:<path/to/keystore.file> > <path/to/keystore.file> "
+                        "DO NOT GUESS the filename. Search git history with a wildcard to find the exact path and commit: "
+                        "git log --all --oneline --name-only -- '*.keystore' '*.jks' '*.p12' | head -20 "
+                        "Then restore using the hash and path shown in that output: "
+                        "git show <hash>:<path-from-output> > <path-from-output> "
                         "Do NOT run the build again until the keystore file exists on disk.]"
                     )
                 elif _fail_count >= 2 and _is_build_script:
