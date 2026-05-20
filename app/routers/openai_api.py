@@ -1688,9 +1688,11 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     # If the most recent tool result contains BLOCKED, skip the LLM call entirely and return a final answer.
     _last_user_msg = next((m for m in reversed(messages) if m.get("role") == "user"), None)
     _lum_content = str(_last_user_msg.get("content") or "") if _last_user_msg else ""
+    _lum_has_build_step_now = "[BUILD STEP NOW:" in _lum_content
     _lum_has_any_loop_block = (
         "[REPEATED COMMAND BLOCKED:" in _lum_content or
-        "[LOOP DETECTED:" in _lum_content
+        "[LOOP DETECTED:" in _lum_content or
+        _lum_has_build_step_now
     )
     # Extract the command from the last assistant tool call to check if it's git
     _last_assist_msg = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
@@ -1702,8 +1704,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 _last_tool_cmd_sc = json.loads(f'"{_m.group(0).split(":",1)[1].strip().strip(",")}"')
             except Exception:
                 _last_tool_cmd_sc = _m.group(0)
-    # Complex merge exception only applies to git commands; non-git loops always shortcircuit
-    _complex_merge_git_exempt = _is_complex_merge and bool(re.search(r'^\s*git\b', _last_tool_cmd_sc))
+    # Complex merge: git commands are exempt from shortcircuit UNLESS BUILD STEP NOW already shown
+    _complex_merge_git_exempt = _is_complex_merge and bool(re.search(r'^\s*git\b', _last_tool_cmd_sc)) and not _lum_has_build_step_now
     logger.info(f"[LOOP-SC-CHECK] complex_merge={_is_complex_merge} git_exempt={_complex_merge_git_exempt} last_cmd={_last_tool_cmd_sc[:40]!r} has_block={_lum_has_any_loop_block} preview={_lum_content[-200:]!r}")
     if not _complex_merge_git_exempt and _last_user_msg and _lum_has_any_loop_block:
         _hl_text = ("I've investigated but cannot complete the task: a required resource or file is confirmed missing and I cannot create it in this environment. The operation is blocked on a missing dependency or configuration. Please provide the required resource or configuration and try again.")
