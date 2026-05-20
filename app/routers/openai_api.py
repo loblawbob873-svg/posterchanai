@@ -917,7 +917,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     for c in bash_history if not re.search(r'^\s*git\b', c.strip())
                 )
                 _cm_reset_ran = any(re.search(r'\bgit\b.*reset.*--hard', c) for c in bash_history)
-                if _cm_merge_count >= 2 and not _cm_build_ran:
+                _cm_repo_clean = bool(re.search(r'nothing to commit|working tree clean|up to date', content_str, re.IGNORECASE))
+                if _cm_merge_count >= 2 and not _cm_build_ran and not _cm_repo_clean:
                     # Count git commands run AFTER the last merge — if any, model ignored the reminder
                     _last_merge_idx = max(i for i, c in enumerate(bash_history) if re.search(r'\bgit\b.*merge\b', c))
                     _post_merge_git = sum(1 for c in bash_history[_last_merge_idx + 1:] if re.search(r'^\s*git\b', c.strip()))

@@ -419,7 +419,8 @@ def _build_model_messages(request: MessagesRequest) -> list:
                         for c in bash_history if not re.search(r'^\s*git\b', c.strip())
                     )
                     _cm_reset_ran_a = any(re.search(r'\bgit\b.*reset.*--hard', c) for c in bash_history)
-                    if _cm_merge_count_a >= 2 and not _cm_build_ran_a:
+                    _cm_repo_clean_a = bool(re.search(r'nothing to commit|working tree clean|up to date', content_str, re.IGNORECASE))
+                    if _cm_merge_count_a >= 2 and not _cm_build_ran_a and not _cm_repo_clean_a:
                         _last_merge_idx_a = max(i for i, c in enumerate(bash_history) if re.search(r'\bgit\b.*merge\b', c))
                         _post_merge_git_a = sum(1 for c in bash_history[_last_merge_idx_a + 1:] if re.search(r'^\s*git\b', c.strip()))
                         if _cm_reset_ran_a or _cm_merge_count_a >= 4 or _post_merge_git_a >= 1:
