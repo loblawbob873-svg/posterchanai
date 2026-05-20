@@ -1676,7 +1676,9 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     # Hard loop short-circuit: model ignored REPEATED COMMAND BLOCKED injections and kept looping.
     # If the most recent tool result contains BLOCKED, skip the LLM call entirely and return a final answer.
     _last_user_msg = next((m for m in reversed(messages) if m.get("role") == "user"), None)
-    if not _is_complex_merge and _last_user_msg and "[REPEATED COMMAND BLOCKED:" in (str(_last_user_msg.get("content") or "")):
+    _lum_content = str(_last_user_msg.get("content") or "") if _last_user_msg else ""
+    logger.info(f"[LOOP-SC-CHECK] complex_merge={_is_complex_merge} last_user_msg={'yes' if _last_user_msg else 'no'} has_blocked={'[REPEATED COMMAND BLOCKED:' in _lum_content} preview={_lum_content[-200:]!r}")
+    if not _is_complex_merge and _last_user_msg and "[REPEATED COMMAND BLOCKED:" in _lum_content:
         _hl_text = ("I've investigated but cannot complete the task: a required resource or file is confirmed missing and I cannot create it in this environment. The operation is blocked on a missing dependency or configuration. Please provide the required resource or configuration and try again.")
         _hl_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         logger.info("[HARD-LOOP-SHORTCIRCUIT] REPEATED COMMAND BLOCKED in last tool result — returning final answer without LLM call")
