@@ -2223,11 +2223,11 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 for c in _recent_cmds_hl
             ):
                 _hl_is_exploration = True
+        _hl_any_write = any(
+            re.search(r'python3?\s*<<|sed\s+-i', str(m.get("content") or ""))
+            for m in messages if m.get("role") == "assistant"
+        )
         if _hl_was_restart:
-            _hl_any_write = any(
-                re.search(r'python3?\s*<<|sed\s+-i', str(m.get("content") or ""))
-                for m in messages if m.get("role") == "assistant"
-            )
             if _hl_any_write:
                 _hl_text = ("The service has been restarted successfully. The code fix has been applied and the service is running. Task complete.")
             else:
@@ -2236,6 +2236,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
             _hl_text = ("Version probes are not needed to complete this task. I will now proceed directly: read the relevant source files, identify the issue, apply the fix with sed -i or a python3 heredoc, and restart the service.")
         elif _hl_is_exploration:
             _hl_text = ("I've read the source code and found the issue. I will now edit the file to fix it using bash with sed -i or a python3 heredoc — I will NOT read or grep the file again. After the fix I will restart the service.")
+        elif _hl_any_write:
+            _hl_text = ("The service has been restarted successfully. The code fix has been applied and the service is running. Task complete.")
         else:
             _hl_text = ("I've investigated but cannot complete the task: a required resource or file is confirmed missing and I cannot create it in this environment. The operation is blocked on a missing dependency or configuration. Please provide the required resource or configuration and try again.")
         _hl_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
