@@ -303,7 +303,17 @@ def _build_model_messages(request: MessagesRequest) -> list:
                 if _is_hard_failure and _is_build_cmd:
                     _fail_count = bash_cmd_count.get(last_cmd, 0)
                     _has_stale = bool(re.search(r'Invalid depfile|stale|corrupt|\.dart_tool', content_str, re.IGNORECASE))
-                    if _fail_count == 1:
+                    _has_merge_in_history_a = any(re.search(r'\bgit\s+merge\b', c) for c in bash_history)
+                    _has_keystore_error_a = bool(re.search(r'keystore|signing|upload.*key|key.*store', content_str, re.IGNORECASE))
+                    if _fail_count == 1 and _is_complex_merge_task and _has_merge_in_history_a and _has_keystore_error_a:
+                        content_str += (
+                            "\n\n[BUILD ERROR: The build failed because a signing keystore file is missing. "
+                            "This file likely existed in HEAD before the merge but was deleted by the git merge (it doesn't exist in the source branch). "
+                            "Restore all files the merge deleted from HEAD: "
+                            "git diff --cached --name-only --diff-filter=D | xargs git checkout HEAD -- "
+                            "Then retry the build.]"
+                        )
+                    elif _fail_count == 1:
                         content_str += (
                             "\n\n[BUILD ERROR: The script/build failed. Read the error output above carefully and fix the root cause. "
                             "Do NOT read dmesg, journalctl, or system logs — build errors are in the output above, not in kernel logs. "
