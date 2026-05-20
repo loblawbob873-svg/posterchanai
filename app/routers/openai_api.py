@@ -1759,8 +1759,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     _lum_has_any_loop_block = (
         "[REPEATED COMMAND BLOCKED:" in _lum_content or
         "[LOOP DETECTED:" in _lum_content or
-        "[EXPLORATION BLOCKED:" in _lum_content or
-        "[EXPLORATION LOOP — RESULT SUPPRESSED:" in _lum_content
+        "[EXPLORATION BLOCKED:" in _lum_content
     )
     # Extract the command from the last assistant tool call to check if it's git
     _last_assist_msg = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
@@ -1776,8 +1775,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     _prev_had_block_sc = (
         "[REPEATED COMMAND BLOCKED:" in _prev_user_content_sc or
         "[LOOP DETECTED:" in _prev_user_content_sc or
-        "[EXPLORATION BLOCKED:" in _prev_user_content_sc or
-        "[EXPLORATION LOOP — RESULT SUPPRESSED:" in _prev_user_content_sc
+        "[EXPLORATION BLOCKED:" in _prev_user_content_sc
     )
     _complex_merge_git_exempt = (
         _is_complex_merge and
