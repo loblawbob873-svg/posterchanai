@@ -567,6 +567,7 @@ def _build_model_messages(request: MessagesRequest) -> list:
                     _is_log_read_cmd_a = bool(re.search(r'\bdmesg\b|\bjournalctl\b|/var/log/|/proc/|syslog', last_cmd or ""))
                     _early_is_build_a = bool(re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', last_cmd))
                     _is_git_show_cmd_a = bool(re.search(r'^\s*git\s+show\s+\S+:\S+', last_cmd or ""))
+                    _is_signing_config_a = bool(re.search(r'key\.properties|signing\.properties', last_cmd or "", re.IGNORECASE))
                     if _identical_count_a >= 3 and not _early_is_build_a:
                         _loop_suppressed_a = True
                         if re.search(r'\bgit\s+status\b', last_cmd):
@@ -583,6 +584,14 @@ def _build_model_messages(request: MessagesRequest) -> list:
                                 "Re-run the search to find the correct commit and path: "
                                 "git log --all --oneline --name-only -- '*.keystore' '*.jks' '*.p12' | head -40 "
                                 "Use the hash and path that appear together on consecutive lines in the output.]"
+                            )
+                        elif _orig_not_found_a and _is_signing_config_a:
+                            content_str = (
+                                f"[REPEATED COMMAND BLOCKED: This signing config file was checked {_identical_count_a} times — "
+                                "confirmed missing. Do NOT check it again and do NOT create it with fake credentials. "
+                                "Search git history: git log --all --oneline --name-only -- '*.properties' | grep -i 'key\\|sign' | head -10 "
+                                "If found: git show <hash>:<path> > <path> "
+                                "If NOT in history (empty output): STOP — report that the signing config is missing and must be provided by the user.]"
                             )
                         elif _orig_not_found_a:
                             content_str = (
@@ -610,6 +619,13 @@ def _build_model_messages(request: MessagesRequest) -> list:
                                 f"\n\n[REPEATED COMMAND ({_identical_count_a}×): 'git show <hash>:<path>' failed again — "
                                 "path not found in this commit. Try other commits: "
                                 "git log --all --oneline --name-only -- '*.keystore' '*.jks' '*.p12' | head -40]"
+                            )
+                        elif _orig_not_found_a and _is_signing_config_a:
+                            content_str += (
+                                f"\n\n[REPEATED COMMAND ({_identical_count_a}×): Signing config file is confirmed missing. "
+                                "Do NOT check again and do NOT create it with fake credentials. "
+                                "Search git history: git log --all --oneline --name-only -- '*.properties' | grep -i 'key\\|sign' | head -10 "
+                                "If NOT in history: STOP — report missing to user.]"
                             )
                         elif _orig_not_found_a:
                             content_str += (
@@ -911,10 +927,38 @@ async def messages(
     clean_text, tool_calls = _parse_tool_calls(full_text)
     tool_calls = _redirect_sed_anthr(tool_calls, settings)
 
-    # Intercept build re-runs when BUILD BLOCKED is still the most recent feedback
-    _last_um_bb_a = next((m for m in reversed(messages_for_model) if m.get("role") == "user"), None)
-    _last_um_bb_text_a = str(_last_um_bb_a.get("content") or "") if _last_um_bb_a else ""
-    _bb_match_a = re.search(r"\[BUILD BLOCKED — '([^']+)'", _last_um_bb_text_a)
+    # Block attempts to write text content into binary keystore/signing files
+    _new_tcs_ks = []
+    for _tc_ks in tool_calls:
+        _tc_cmd_ks = (_tc_ks.get("input") or {}).get("command", "")
+        if re.search(r'open\s*\([^\)]*\.(keystore|jks|p12)[^\)]*,\s*[\'"]w[\'"]', _tc_cmd_ks):
+            _blocked_ks = "\n".join([
+                "cat << 'PROXYMSG'",
+                "[BLOCKED: Do NOT create or overwrite a keystore file by writing text or dummy content. "
+                "Keystores are binary cryptographic files and cannot be fabricated — a fake keystore will not sign the APK. "
+                "Restore the real keystore from git history: "
+                "git log --all --oneline --name-only -- '*.keystore' '*.jks' '*.p12' | head -20 "
+                "then: git show <hash>:<path> > <path> "
+                "If no keystore exists in git history, report to the user — it cannot be created artificially.]",
+                "PROXYMSG",
+            ])
+            _new_tcs_ks.append({**_tc_ks, "input": {**(_tc_ks.get("input") or {}), "command": _blocked_ks}})
+        else:
+            _new_tcs_ks.append(_tc_ks)
+    tool_calls = _new_tcs_ks
+
+    # Intercept build re-runs when BUILD BLOCKED was issued in a recent turn
+    _bb_match_a = None
+    _bb_um_count_a = 0
+    for _bb_um_a in (m for m in reversed(messages_for_model) if m.get("role") == "user"):
+        _bb_um_count_a += 1
+        if _bb_um_count_a > 6:
+            break
+        _bb_um_text_a = str(_bb_um_a.get("content") or "")
+        _bb_m_a = re.search(r"\[BUILD BLOCKED — '([^']+)'", _bb_um_text_a)
+        if _bb_m_a:
+            _bb_match_a = _bb_m_a
+            break
     if _bb_match_a:
         _bb_cmd_a = _bb_match_a.group(1)
         _new_tcs_bb = []
