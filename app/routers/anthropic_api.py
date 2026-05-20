@@ -668,6 +668,45 @@ async def messages(
             return StreamingResponse(_sc_stream_a(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
         return JSONResponse(_sc_body_a)
 
+    # Hard loop short-circuit: model ignored REPEATED COMMAND BLOCKED and kept looping.
+    # Complex merge exception applies only to git commands; build/script loops always shortcircuit.
+    _anthr_last_user = next((m for m in reversed(messages_for_model) if m.get("role") == "user"), None)
+    _anthr_lum = str(_anthr_last_user.get("content") or "") if _anthr_last_user else ""
+    _anthr_has_block = "[REPEATED COMMAND BLOCKED:" in _anthr_lum or "[LOOP DETECTED:" in _anthr_lum
+    if _anthr_has_block:
+        # Determine the last tool call command from the last assistant message
+        _anthr_last_assist = next((m for m in reversed(messages_for_model) if m.get("role") == "assistant"), None)
+        _anthr_last_cmd = ""
+        if _anthr_last_assist:
+            for _tc_blk in (_anthr_last_assist.get("content") or []):
+                if isinstance(_tc_blk, dict) and _tc_blk.get("type") == "tool_use":
+                    _anthr_last_cmd = (_tc_blk.get("input") or {}).get("command", "")
+                    break
+        _anthr_git_exempt = _sc_complex_merge and bool(re.search(r'^\s*git\b', _anthr_last_cmd))
+        if not _anthr_git_exempt:
+            _anthr_hl_text = "I've investigated but cannot complete the task: a required resource or file is confirmed missing and I cannot create it in this environment. The operation is blocked on a missing dependency or configuration. Please provide the required resource or configuration and try again."
+            logger.info(f"[ANTHR-HARD-LOOP-SC] Blocking after repeated loop cmd={_anthr_last_cmd[:60]!r}")
+            _anthr_hl_body = {
+                "id": f"msg_{uuid.uuid4().hex[:24]}", "type": "message", "role": "assistant",
+                "model": body.model,
+                "content": [{"type": "text", "text": _anthr_hl_text}],
+                "stop_reason": "end_turn", "stop_sequence": None,
+                "usage": {"input_tokens": 0, "output_tokens": 0},
+            }
+            if body.stream:
+                async def _anthr_hl_stream():
+                    import json as _j
+                    _hl_id_a = _anthr_hl_body["id"]
+                    yield f"data: {_j.dumps({'type': 'message_start', 'message': {**_anthr_hl_body, 'content': []}})}\n\n"
+                    yield f"data: {_j.dumps({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}})}\n\n"
+                    for _i in range(0, len(_anthr_hl_text), 64):
+                        yield f"data: {_j.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': _anthr_hl_text[_i:_i+64]}})}\n\n"
+                    yield f"data: {_j.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"
+                    yield f"data: {_j.dumps({'type': 'message_delta', 'delta': {'stop_reason': 'end_turn', 'stop_sequence': None}, 'usage': {'output_tokens': 0}})}\n\n"
+                    yield f"data: {_j.dumps({'type': 'message_stop'})}\n\n"
+                return StreamingResponse(_anthr_hl_stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
+            return JSONResponse(_anthr_hl_body)
+
     max_tokens = body.max_tokens or 4096
     temperature = body.temperature if body.temperature is not None else 0.0
     top_p = body.top_p

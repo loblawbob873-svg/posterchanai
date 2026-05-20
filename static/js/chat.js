@@ -1073,7 +1073,12 @@ class ChatHandler {
         this.saveToHistory(displayContent);
 
         if (mode) {
-            content = `${mode} ${content}`;
+            // Don't prepend mode if user explicitly typed a known command
+            const contentLower = content.toLowerCase();
+            const startsWithCmd = (this.commands || []).some(cmd => contentLower === cmd || contentLower.startsWith(cmd + ' '));
+            if (!startsWithCmd) {
+                content = `${mode} ${content}`;
+            }
         }
 
         // Build display message
