@@ -581,6 +581,7 @@ def _build_model_messages(request: MessagesRequest) -> list:
                     _early_is_build_a = bool(re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', last_cmd))
                     _is_git_show_cmd_a = bool(re.search(r'^\s*git\s+show\s+\S+:\S+', last_cmd or ""))
                     _is_signing_config_a = bool(re.search(r'key\.properties|signing\.properties', last_cmd or "", re.IGNORECASE))
+                    _is_version_probe_a = bool(re.search(r'--version\b|-V\b|(?:venv|\.venv)/bin/', last_cmd or ""))
                     # Immediately inject when signing config file exists on disk but not in git commit
                     _exists_on_disk_not_in_git_a = bool(re.search(r'exists on disk, but not in', _orig_content_str_a, re.IGNORECASE))
                     if _exists_on_disk_not_in_git_a and _is_signing_config_a:
@@ -617,6 +618,13 @@ def _build_model_messages(request: MessagesRequest) -> list:
                                 "Search git history: git log --all --oneline --name-only -- '*.properties' | grep -i 'key\\|sign' | head -10 "
                                 "If found: git show <hash>:<path> > <path> "
                                 "If NOT in history (empty output): STOP — report that the signing config is missing and must be provided by the user.]"
+                            )
+                        elif _orig_not_found_a and _is_version_probe_a:
+                            content_str = (
+                                f"[TOOL NOT FOUND: That binary does not exist — running it {_identical_count_a} times does not make it appear. "
+                                "Version probes are optional environment checks; you do NOT need this tool to complete your task. "
+                                "STOP checking for it. Proceed directly: use bash to read the project files, "
+                                "identify the issue, make your fix, then restart the service.]"
                             )
                         elif _orig_not_found_a:
                             content_str = (
