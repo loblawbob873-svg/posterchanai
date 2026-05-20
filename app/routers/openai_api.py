@@ -1697,12 +1697,9 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     _last_assist_msg = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
     _last_tool_cmd_sc = ""
     if _last_assist_msg:
-        _m = re.search(r'"command"\s*:\s*"([^"\\]|\\.){1,200}"', str(_last_assist_msg.get("content") or ""))
+        _m = re.search(r'"command"\s*:\s*"((?:[^"\\]|\\.){1,400})"', str(_last_assist_msg.get("content") or ""))
         if _m:
-            try:
-                _last_tool_cmd_sc = json.loads(f'"{_m.group(0).split(":",1)[1].strip().strip(",")}"')
-            except Exception:
-                _last_tool_cmd_sc = _m.group(0)
+            _last_tool_cmd_sc = _m.group(1).replace('\\"', '"').replace('\\n', '\n').replace('\\t', '\t')
     # Complex merge: all git commands exempt from shortcircuit (merges require multiple git ops)
     _complex_merge_git_exempt = _is_complex_merge and bool(re.search(r'^\s*git\b', _last_tool_cmd_sc))
     logger.info(f"[LOOP-SC-CHECK] complex_merge={_is_complex_merge} git_exempt={_complex_merge_git_exempt} last_cmd={_last_tool_cmd_sc[:40]!r} has_block={_lum_has_any_loop_block} preview={_lum_content[-200:]!r}")
