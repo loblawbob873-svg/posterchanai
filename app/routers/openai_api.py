@@ -2191,9 +2191,10 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     logger.info(f"[LOOP-SC-CHECK] complex_merge={_is_complex_merge} git_exempt={_complex_merge_git_exempt} last_cmd={_last_tool_cmd_sc[:40]!r} has_block={_lum_has_any_loop_block} prev_block={_prev_had_block_sc} n_user={len(_all_user_msgs_sc)} prev_preview={_prev_user_content_sc[-120:]!r}")
     if not _complex_merge_git_exempt and _last_user_msg and _lum_has_any_loop_block and _prev_had_block_sc:
         _hl_was_restart = bool(re.search(r'systemctl\s+(restart|reload)', _last_tool_cmd_sc))
+        _hl_is_version_probe = bool(re.search(r'--version\b|-V\b|(?:venv|\.venv)/bin/|opencode\s+doctor|doctor$', _last_tool_cmd_sc))
         _hl_is_exploration = bool(re.search(r'\b(grep|cat|head|tail|ls|find|wc|diff|sed -n)\b', _last_tool_cmd_sc) and not re.search(r'sed\s+-i|>\s*\S|python3\s+<<|write|edit', _last_tool_cmd_sc))
         # If last command doesn't classify, check recent assistant messages for the real loop pattern
-        if not _hl_was_restart and not _hl_is_exploration:
+        if not _hl_was_restart and not _hl_is_version_probe and not _hl_is_exploration:
             _recent_cmds_hl = []
             for _hl_m in messages[-10:]:
                 if _hl_m.get("role") == "assistant":
@@ -2202,6 +2203,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                         _recent_cmds_hl.append(_hl_mc.group(1))
             if any(re.search(r'systemctl\s+(restart|reload)', c) for c in _recent_cmds_hl):
                 _hl_was_restart = True
+            elif any(re.search(r'--version\b|-V\b|(?:venv|\.venv)/bin/|opencode\s+doctor|doctor$', c) for c in _recent_cmds_hl):
+                _hl_is_version_probe = True
             elif any(
                 re.search(r'\b(grep|cat|head|tail|ls|find|wc|diff|sed -n)\b', c) and
                 not re.search(r'sed\s+-i|>\s*\S|python3\s+<<|write|edit', c)
@@ -2217,6 +2220,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 _hl_text = ("The service has been restarted successfully. The code fix has been applied and the service is running. Task complete.")
             else:
                 _hl_text = ("I need to read the source code before restarting the service. Restarting without code changes does not fix bugs. I will read the relevant source files, identify the issue, make the fix, and then restart.")
+        elif _hl_is_version_probe:
+            _hl_text = ("Version probes are not needed to complete this task. I will now proceed directly: read the relevant source files, identify the issue, apply the fix with sed -i or a python3 heredoc, and restart the service.")
         elif _hl_is_exploration:
             _hl_text = ("I've read the source code and found the issue. I will now edit the file to fix it using bash with sed -i or a python3 heredoc — I will NOT read or grep the file again. After the fix I will restart the service.")
         else:
