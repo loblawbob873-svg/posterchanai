@@ -329,18 +329,21 @@ def _build_model_messages(request: MessagesRequest) -> list:
                         content_str += (
                             f"\n\n[BUILD BLOCKED — '{last_cmd}' has failed {_fail_count} times on signing. "
                             "Do NOT run the build again yet. Diagnose in order: "
-                            "(1) Check the signing config file: "
+                            "(1) Check the signing config file FIRST: "
                             "cat android/key.properties 2>/dev/null || cat android/signing.properties 2>/dev/null "
-                            "If missing, find it in git history (it may have been deleted by the merge): "
+                            "If missing, search git history: "
                             "git log --all --oneline --name-only -- '*.properties' | grep -i 'key\\|sign' | head -10 "
-                            "then restore it: git show <hash>:<path> > <path> "
-                            "(2) If the signing config exists, check that the keystore file it references also exists: "
+                            "If found in git: git show <hash>:<path> > <path> "
+                            "If NOT in git history (empty output): STOP — the signing config file was never committed. "
+                            "It contains private credentials and must be provided by the user. "
+                            "Report: 'signing config file is missing and cannot be restored from git — user must provide it.' "
+                            "(2) Only if signing config exists: check keystore file path inside it: "
                             "grep -i 'storeFile\\|keyStore' <config-path> | head -1 "
                             "then: ls -la <path from that line> "
-                            "(3) If the keystore is missing, restore it from git: "
+                            "(3) If keystore is also missing, restore it: "
                             "git log --all --oneline --name-only -- '*.keystore' '*.jks' '*.p12' | head -10 "
                             "then: git show <hash>:<path-from-output> > <path-from-output> "
-                            "Only run the build after fixing the issue above.]"
+                            "Only run the build after completing step (1) above.]"
                         )
                     elif _fail_count >= 2 and _is_build_cmd and (_has_keyprops_error_a or (_keystore_was_restored_a and not _has_keystore_error_a)):
                         content_str += (
@@ -891,6 +894,33 @@ async def messages(
 
     clean_text, tool_calls = _parse_tool_calls(full_text)
     tool_calls = _redirect_sed_anthr(tool_calls, settings)
+
+    # Intercept build re-runs when BUILD BLOCKED is still the most recent feedback
+    _last_um_bb_a = next((m for m in reversed(messages_for_model) if m.get("role") == "user"), None)
+    _last_um_bb_text_a = str(_last_um_bb_a.get("content") or "") if _last_um_bb_a else ""
+    _bb_match_a = re.search(r"\[BUILD BLOCKED — '([^']+)'", _last_um_bb_text_a)
+    if _bb_match_a:
+        _bb_cmd_a = _bb_match_a.group(1)
+        _new_tcs_bb = []
+        for _tc_bb in tool_calls:
+            _tc_cmd_bb = (_tc_bb.get("input") or {}).get("command", "")
+            if re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', _tc_cmd_bb) and (
+                _tc_cmd_bb.strip() == _bb_cmd_a.strip() or _bb_cmd_a.strip() in _tc_cmd_bb
+            ):
+                _blocked_msg = "\n".join([
+                    "cat << 'PROXYMSG'",
+                    f"[BUILD BLOCKED: '{_bb_cmd_a}' is still blocked — you have NOT yet completed the required diagnostic steps. "
+                    "STOP. Do Step 1 NOW (required before any build attempt): "
+                    "cat android/key.properties 2>/dev/null || cat android/signing.properties 2>/dev/null "
+                    "If the file is missing: git log --all --oneline --name-only -- '*.properties' | grep -i 'key\\|sign' | head -10 "
+                    "If empty (not in git history): STOP — report that the signing config file is missing and must be provided by the user. "
+                    "Do NOT run the build until Step 1 is done and the signing config file exists.]",
+                    "PROXYMSG",
+                ])
+                _new_tcs_bb.append({**_tc_bb, "input": {**(_tc_bb.get("input") or {}), "command": _blocked_msg}})
+            else:
+                _new_tcs_bb.append(_tc_bb)
+        tool_calls = _new_tcs_bb
 
     # Rewrite Write to sudo for system paths
     tool_calls = _rewrite_tool_calls(tool_calls)

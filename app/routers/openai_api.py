@@ -1047,18 +1047,21 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     content_str += (
                         f"\n\n[BUILD BLOCKED — '{_last_actual_cmd}' has failed {_fail_count} times on signing. "
                         "Do NOT run the build again yet. Diagnose in order: "
-                        "(1) Check the signing config file: "
+                        "(1) Check the signing config file FIRST: "
                         "cat android/key.properties 2>/dev/null || cat android/signing.properties 2>/dev/null "
-                        "If missing, find it in git history (it may have been deleted by the merge): "
+                        "If missing, search git history: "
                         "git log --all --oneline --name-only -- '*.properties' | grep -i 'key\\|sign' | head -10 "
-                        "then restore it: git show <hash>:<path> > <path> "
-                        "(2) If the signing config exists, check that the keystore file it references also exists: "
+                        "If found in git: git show <hash>:<path> > <path> "
+                        "If NOT in git history (empty output): STOP — the signing config file was never committed. "
+                        "It contains private credentials and must be provided by the user. "
+                        "Report: 'signing config file is missing and cannot be restored from git — user must provide it.' "
+                        "(2) Only if signing config exists: check keystore file path inside it: "
                         "grep -i 'storeFile\\|keyStore' <config-path> | head -1 "
                         "then: ls -la <path from that line> "
-                        "(3) If the keystore is missing, restore it from git: "
+                        "(3) If keystore is also missing, restore it: "
                         "git log --all --oneline --name-only -- '*.keystore' '*.jks' '*.p12' | head -10 "
                         "then: git show <hash>:<path-from-output> > <path-from-output> "
-                        "Only run the build after fixing the issue above.]"
+                        "Only run the build after completing step (1) above.]"
                     )
                 elif _fail_count >= 2 and _is_build_script and (_has_keyprops_error or (_keystore_was_restored and not _has_keystore_error)):
                     content_str += (
@@ -1498,6 +1501,27 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                         tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                         logger.info(f"[GIT-FETCH-FIX] Corrected: 'git fetch {_rem}/{_brn}' → 'git fetch {_rem} {_brn}'")
                         cmd = _fixed_cmd
+
+                # Intercept build re-runs when BUILD BLOCKED is still the most recent feedback
+                if messages and re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', cmd):
+                    _last_um_bb = next((m for m in reversed(messages) if m.get("role") == "user"), None)
+                    _last_um_bb_text = str(_last_um_bb.get("content") or "") if _last_um_bb else ""
+                    _bb_match = re.search(r"\[BUILD BLOCKED — '([^']+)'", _last_um_bb_text)
+                    if _bb_match and (_bb_match.group(1).strip() == cmd.strip() or _bb_match.group(1).strip() in cmd):
+                        _bb_cmd = _bb_match.group(1)
+                        args_dict["command"] = "\n".join([
+                            "cat << 'PROXYMSG'",
+                            f"[BUILD BLOCKED: '{_bb_cmd}' is still blocked — you have NOT yet completed the required diagnostic steps. "
+                            "STOP. Do Step 1 NOW (required before any build attempt): "
+                            "cat android/key.properties 2>/dev/null || cat android/signing.properties 2>/dev/null "
+                            "If the file is missing: git log --all --oneline --name-only -- '*.properties' | grep -i 'key\\|sign' | head -10 "
+                            "If empty (not in git history): STOP — report that the signing config file is missing and must be provided by the user. "
+                            "Do NOT run the build until Step 1 is done and the signing config file exists.]",
+                            "PROXYMSG",
+                        ])
+                        tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                        out.append(tc)
+                        continue
 
                 if "sed" in cmd and "-i" in cmd and re.search(r'\.(keystore|jks|p12|apk|aar|aab|so|class|jar|zip|tar)\b', cmd):
                     args_dict["command"] = "\n".join([
