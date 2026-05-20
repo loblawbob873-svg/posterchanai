@@ -588,7 +588,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         f"[MERGE DONE — STOP GIT: You have confirmed {_merge_up_to_date_count} times that the branch is already fully merged. "
                         "BEFORE running the build, restore any files the merge deleted from HEAD "
                         "(e.g. keystore, scripts): "
-                        "git diff --cached --name-only --diff-filter=D | xargs -r git checkout HEAD -- "
+                        "git ls-files --deleted | xargs -r git checkout HEAD -- "
                         "Then execute the FINAL step — run the build/script. "
                         "Do NOT run git status, git diff, git log, or git merge again.]"
                     )
@@ -598,7 +598,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "all commits present, no conflicts, working tree clean. Steps 1-4 are DONE. "
                         "BEFORE running the build, restore any files the merge deleted from HEAD "
                         "(e.g. keystore, scripts not in the source branch): "
-                        "git diff --cached --name-only --diff-filter=D | xargs -r git checkout HEAD -- "
+                        "git ls-files --deleted | xargs -r git checkout HEAD -- "
                         "Then execute the build/script from your task instructions.]"
                     )
             # Detect successful git fetch (FETCH_HEAD updated) — guide reset
@@ -991,7 +991,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             "merge is confirmed complete. "
                             "BEFORE building, restore any files the merge deleted from HEAD "
                             "(keystore, scripts not in source branch): "
-                            "git diff --cached --name-only --diff-filter=D | xargs -r git checkout HEAD -- "
+                            "git ls-files --deleted | xargs -r git checkout HEAD -- "
                             "Then run the build/script from your task instructions.]"
                         )
             # Command not found: the required program isn't installed — terminal, never retryable by the model
@@ -1026,8 +1026,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     content_str += (
                         "\n\n[BUILD ERROR: The build failed because a signing keystore file is missing. "
                         "This file likely existed in HEAD before the merge but was deleted by the git merge (it doesn't exist in the source branch). "
-                        "Restore all files the merge deleted from HEAD: "
-                        "git diff --cached --name-only --diff-filter=D | xargs git checkout HEAD -- "
+                        "Restore all files tracked by git that are missing from the working tree: "
+                        "git ls-files --deleted | xargs -r git checkout HEAD -- "
                         "Then retry the build.]"
                     )
                 elif _fail_count == 1 and _is_build_script:
