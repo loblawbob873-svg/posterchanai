@@ -2183,8 +2183,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 _hl_is_exploration = True
         if _hl_was_restart:
             _hl_any_write = any(
-                re.search(r'python3?\s+<<|sed\s+-i|open\s*\(.*,\s*["\']w["\']', c)
-                for c in bash_history
+                re.search(r'python3?\s*<<|sed\s+-i', str(m.get("content") or ""))
+                for m in messages if m.get("role") == "assistant"
             )
             if _hl_any_write:
                 _hl_text = ("The service has been restarted successfully. The code fix has been applied and the service is running. Task complete.")
