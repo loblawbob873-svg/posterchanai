@@ -1276,6 +1276,19 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "Your pattern is not matching any lines. Check what the file actually contains with grep, "
                         "then rewrite the script to match the actual line format.]"
                     )
+            # Warn when a service was restarted without any code edits in this session
+            if last_cmd and re.search(r'systemctl\s+(restart|reload)\s+', last_cmd):
+                _any_write_pre = any(
+                    re.search(r'python3?\s+<<|sed\s+-i|open\s*\(.*,\s*["\']w["\']|\bgit\s+checkout\b.*--\s+\S', c)
+                    for c in bash_history[:-1]  # exclude the restart itself
+                )
+                if not _any_write_pre:
+                    content_str += (
+                        "\n\n[NOTE: Service restarted but no source files were modified in this session. "
+                        "A restart without code changes does not fix any bugs. "
+                        "Read the source code to find the bug, edit the file, then restart again.]"
+                    )
+
             # Exploration cap: too many reads without any write — time to act
             _total_cmds = len(bash_history)
             _any_write = any(
@@ -1519,6 +1532,13 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                     out.append(tc)
                     logger.info("[PY3-FIX] Corrected python3 with echo -e in source match — running fixed script")
                     continue
+                # Auto-add sudo for systemctl commands (avoid "Access denied")
+                if re.match(r'\s*systemctl\s+(restart|start|stop|reload|enable|disable)\b', cmd) and 'sudo' not in cmd:
+                    args_dict["command"] = 'sudo ' + cmd.lstrip()
+                    tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                    cmd = args_dict["command"]
+                    logger.info(f"[SYSTEMCTL-SUDO] Added sudo to systemctl command")
+
                 # Fix git fetch remote/branch → git fetch remote branch (invalid slash syntax)
                 # 'git fetch foo/bar' treats 'foo/bar' as a remote name, not remote=foo branch=bar
                 _git_fetch_slash = re.search(

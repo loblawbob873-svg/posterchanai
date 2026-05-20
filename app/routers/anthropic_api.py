@@ -382,6 +382,19 @@ def _build_model_messages(request: MessagesRequest) -> list:
                     elif _fail_count >= 2:
                         content_str += f"\n\n[BUILD FAILED AGAIN ({_fail_count} times): Investigate the actual error before retrying.]"
 
+                # Warn when service restarted without any code edits in session
+                if last_bash_cmd and re.search(r'systemctl\s+(restart|reload)\s+', last_bash_cmd):
+                    _any_write_pre_a = any(
+                        re.search(r'python3?\s+<<|sed\s+-i|open\s*\(.*,\s*["\']w["\']|\bgit\s+checkout\b.*--\s+\S', c)
+                        for c in bash_history[:-1]
+                    )
+                    if not _any_write_pre_a:
+                        content_str += (
+                            "\n\n[NOTE: Service restarted but no source files were modified in this session. "
+                            "A restart without code changes does not fix any bugs. "
+                            "Read the source code to find the bug, edit the file, then restart again.]"
+                        )
+
                 # TASK COMPLETE from git fetch+reset (skip for complex merge — more steps remain)
                 if "HEAD is now at" in content_str and not _is_complex_merge_task and last_bash_cmd and (
                     "reset --hard FETCH_HEAD" in last_bash_cmd or
@@ -926,6 +939,17 @@ async def messages(
 
     clean_text, tool_calls = _parse_tool_calls(full_text)
     tool_calls = _redirect_sed_anthr(tool_calls, settings)
+
+    # Auto-add sudo for systemctl commands (avoid "Access denied")
+    _new_tcs_sc = []
+    for _tc_sc in tool_calls:
+        _tc_cmd_sc = (_tc_sc.get("input") or {}).get("command", "")
+        if re.match(r'\s*systemctl\s+(restart|start|stop|reload|enable|disable)\b', _tc_cmd_sc) and 'sudo' not in _tc_cmd_sc:
+            _tc_cmd_sc_new = 'sudo ' + _tc_cmd_sc.lstrip()
+            _new_tcs_sc.append({**_tc_sc, "input": {**(_tc_sc.get("input") or {}), "command": _tc_cmd_sc_new}})
+        else:
+            _new_tcs_sc.append(_tc_sc)
+    tool_calls = _new_tcs_sc
 
     # Auto-prepend mkdir -p for git show redirects to ensure destination directory exists
     _new_tcs_gs = []
