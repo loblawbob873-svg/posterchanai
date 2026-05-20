@@ -586,18 +586,20 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 if _merge_up_to_date_count >= 2:
                     content_str = (
                         f"[MERGE DONE — STOP GIT: You have confirmed {_merge_up_to_date_count} times that the branch is already fully merged. "
-                        "There are NO conflicts, NO uncommitted changes, NO pending merges. "
-                        "Running git commands again will not change this. "
-                        "STOP ALL GIT OPERATIONS NOW. "
-                        "Execute the FINAL step of your task immediately — run the build, test, or script that was specified. "
+                        "BEFORE running the build, restore any files the merge deleted from HEAD "
+                        "(e.g. keystore, scripts): "
+                        "git diff --cached --name-only --diff-filter=D | xargs -r git checkout HEAD -- "
+                        "Then execute the FINAL step — run the build/script. "
                         "Do NOT run git status, git diff, git log, or git merge again.]"
                     )
                 else:
                     content_str = (
                         "[MERGE ALREADY COMPLETE: The branch is already fully merged with upstream — "
                         "all commits present, no conflicts, working tree clean. Steps 1-4 are DONE. "
-                        "Do NOT run any more git commands. "
-                        "Execute the NEXT step in your task immediately — if it includes running a build or script, do that now.]"
+                        "BEFORE running the build, restore any files the merge deleted from HEAD "
+                        "(e.g. keystore, scripts not in the source branch): "
+                        "git diff --cached --name-only --diff-filter=D | xargs -r git checkout HEAD -- "
+                        "Then execute the build/script from your task instructions.]"
                     )
             # Detect successful git fetch (FETCH_HEAD updated) — guide reset
             elif "-> FETCH_HEAD" in content_str and re.search(r'\bgit\b.*\bfetch\b', last_bash_cmd) and "reset" not in last_bash_cmd:
@@ -987,8 +989,10 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         content_str += (
                             f"\n\n[REMINDER: Git merge attempted {_cm_merge_count} times — "
                             "merge is confirmed complete. "
-                            "Run the build/script from your task instructions now. "
-                            "Do NOT run more git commands.]"
+                            "BEFORE building, restore any files the merge deleted from HEAD "
+                            "(keystore, scripts not in source branch): "
+                            "git diff --cached --name-only --diff-filter=D | xargs -r git checkout HEAD -- "
+                            "Then run the build/script from your task instructions.]"
                         )
             # Command not found: the required program isn't installed — terminal, never retryable by the model
             if not _loop_suppressed and re.search(r'\bcommand not found\b', content_str, re.IGNORECASE):
