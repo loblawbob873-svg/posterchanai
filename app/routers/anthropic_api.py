@@ -683,8 +683,7 @@ async def messages(
     # Complex merge exception applies only to git commands; build/script loops always shortcircuit.
     _anthr_last_user = next((m for m in reversed(messages_for_model) if m.get("role") == "user"), None)
     _anthr_lum = str(_anthr_last_user.get("content") or "") if _anthr_last_user else ""
-    _anthr_has_build_step_now = "[BUILD STEP NOW:" in _anthr_lum
-    _anthr_has_block = "[REPEATED COMMAND BLOCKED:" in _anthr_lum or "[LOOP DETECTED:" in _anthr_lum or _anthr_has_build_step_now
+    _anthr_has_block = "[REPEATED COMMAND BLOCKED:" in _anthr_lum or "[LOOP DETECTED:" in _anthr_lum
     if _anthr_has_block:
         # Determine the last tool call command from the last assistant message
         _anthr_last_assist = next((m for m in reversed(messages_for_model) if m.get("role") == "assistant"), None)
@@ -694,8 +693,8 @@ async def messages(
                 if isinstance(_tc_blk, dict) and _tc_blk.get("type") == "tool_use":
                     _anthr_last_cmd = (_tc_blk.get("input") or {}).get("command", "")
                     break
-        # Git commands are exempt UNLESS BUILD STEP NOW was already shown
-        _anthr_git_exempt = _sc_complex_merge and bool(re.search(r'^\s*git\b', _anthr_last_cmd)) and not _anthr_has_build_step_now
+        # Complex merge: all git commands exempt (merges require multiple git ops)
+        _anthr_git_exempt = _sc_complex_merge and bool(re.search(r'^\s*git\b', _anthr_last_cmd))
         if not _anthr_git_exempt:
             _anthr_hl_text = "I've investigated but cannot complete the task: a required resource or file is confirmed missing and I cannot create it in this environment. The operation is blocked on a missing dependency or configuration. Please provide the required resource or configuration and try again."
             logger.info(f"[ANTHR-HARD-LOOP-SC] Blocking after repeated loop cmd={_anthr_last_cmd[:60]!r}")
@@ -819,7 +818,7 @@ async def messages(
                     logger.info(f"[ANTHR-RESET-DONE-GATE] Blocked git cmd after reset done: {_cmd_a[:60]}")
             _new_tcs_a.append(_tc_a)
         tool_calls = _new_tcs_a
-    elif _git_fetch_count_a >= 2 and tool_calls:
+    elif _git_fetch_count_a >= 2 and not _is_complex_merge_body and tool_calls:
         _new_tcs_a = []
         for _tc_a in tool_calls:
             if _tc_a.get("name") in ("bash", "Bash"):
