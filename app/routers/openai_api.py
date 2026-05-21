@@ -612,6 +612,26 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "Also: add print(ci, 'lines colorized') at the end. "
                         "Write ALL lines back, run bash -n in a SEPARATE bash call afterward.]"
                     )
+            # Intercept py_compile SyntaxError on a .py file written by Write tool — token-limit truncation
+            elif (
+                'SyntaxError' in content_str and
+                re.search(r'unterminated|was never closed', content_str) and
+                re.search(r'py_compile|py compile', last_bash_cmd or "") and
+                re.search(r'\.py\b', last_bash_cmd or "")
+            ):
+                _pyc_m = re.search(r'py_compile\s+([^\s&|]+\.py)', last_bash_cmd or "")
+                _pyc_fname = _pyc_m.group(1).rsplit('/', 1)[-1] if _pyc_m else "the .py file"
+                content_str = (
+                    f"[TOKEN LIMIT: {_pyc_fname} was truncated mid-file — the Write call hit the token budget "
+                    f"before the triple-quoted string was closed. "
+                    f"DO NOT write the same large file again — it will be truncated the same way. "
+                    f"Rewrite {_pyc_fname} with a SHORTER design: "
+                    f"keep the total file under 150 lines, "
+                    f"use Python string concatenation instead of one giant triple-quoted block, "
+                    f"inline only essential CSS (no multi-hundred-line stylesheets). "
+                    f"A compact but complete cyberpunk design is required. Write it now.]"
+                )
+                logger.info(f"[TOKEN-LIMIT-TRUNC] py_compile SyntaxError after Write truncation — injecting short-design hint for {_pyc_fname}")
             # Intercept sed syntax errors — unify into one clear fix instruction
             elif _sed_error:
                 content_str += (
