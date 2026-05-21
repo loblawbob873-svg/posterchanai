@@ -2453,22 +2453,6 @@ def _parse_oai_tool_calls(text: str):
                     else:
                         logger.warning(f"[TC-PARSE] unclosed recovery failed: {_ue}")
 
-    # Auto-close unclosed Python triple-quoted strings in Write calls for .py files
-    for _tc_py in tool_calls:
-        _fn_py = _tc_py.get("function", {})
-        if _fn_py.get("name", "").lower() in ("write", "write_file"):
-            try:
-                _args_py = json.loads(_fn_py.get("arguments", "{}"))
-                _fp_py = _args_py.get("filePath") or _args_py.get("file_path") or _args_py.get("path", "")
-                _ct_py = _args_py.get("content", "")
-                if _fp_py.endswith(".py") and _ct_py:
-                    _fixed_py = _close_py_triple_quotes(_ct_py)
-                    if _fixed_py != _ct_py:
-                        _args_py["content"] = _fixed_py
-                        _tc_py["function"] = {**_fn_py, "arguments": json.dumps(_args_py)}
-            except Exception:
-                pass
-
     # Strip any hallucinated <tool_result>...</tool_result> blocks
     clean = re.sub(r'<tool_result>.*?</tool_result>', '', clean, flags=re.DOTALL | re.IGNORECASE).strip()
     clean = re.sub(r'<tool_call>.*', '', clean, flags=re.DOTALL | re.IGNORECASE).strip()
