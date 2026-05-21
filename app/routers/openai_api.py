@@ -461,6 +461,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
     tools_text = _tools_system_text(tools)
     bash_cmd_count = {}   # command string -> how many times it's been called
     bash_history = []     # ordered list of bash commands issued so far
+    write_block_count = {}  # file path -> how many times WRITE-BLOCKED has fired for it this call
     non_bash_write_done = False  # True if model used write_file/str_replace/edit tool (non-bash)
     fetch_head_reset_done = False  # True after model successfully runs reset --hard FETCH_HEAD
     colorize_task_done = False     # True after model successfully colorizes a .sh file
@@ -545,12 +546,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 _has_triple = bool(re.search(r'\\\"\\\"\\\"', _raw_ast) or "'''" in _raw_ast)
                                 logger.info(f"[WRITE-PY] tool={last_tool_name} file={_py_file} has_triple={_has_triple} raw_len={len(_raw_ast)}")
                                 if _has_triple:
-                                    # Count prior blocks for this file in this conversation to escalate
-                                    _prior_blocks = sum(
-                                        1 for _tr in result
-                                        if _tr.get("role") == "user" and "WRITE-BLOCKED" in str(_tr.get("content", ""))
-                                        and _py_file in str(_tr.get("content", ""))
-                                    )
+                                    write_block_count[_py_file] = write_block_count.get(_py_file, 0) + 1
+                                    _prior_blocks = write_block_count[_py_file] - 1
                                     if _prior_blocks == 0:
                                         content_str = (
                                             f"[WRITE-BLOCKED: {_py_file} was NOT saved — it contains triple-quoted strings (\"\"\" or ''') which always get truncated. "
