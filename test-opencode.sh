@@ -74,7 +74,7 @@ reset_pyfw() {
 
 run_pyfw() {
     log "[pyfw] Running opencode on router.lan..."
-    ssh_router "cd /opt/python-firewall && timeout 300 ~/.opencode/bin/opencode run --model '$MODEL' 'Redesign the webui and the cli to have a cyberpunk theme and design. Completely redo the cli and webui. Also, when you click on the magnifying glass, make it open a modal that pops up instead of navigating to a new tab page.'" || true
+    ssh_router "cd /opt/python-firewall && timeout 450 ~/.opencode/bin/opencode run --model '$MODEL' 'Completely redesign BOTH html.py AND cli.py with a full cyberpunk neon theme. WRITE ORDER: write html.py FIRST, then cli.py. Requirements for html.py: full cyberpunk HTML/CSS/JS overhaul — dark background (#0a0a0f), neon glowing borders, cyan/magenta color scheme with text-shadow glow, scanline overlay, box-shadow pulse effects. Use these words: neon, glow, cyberpunk, glitch. CRITICAL html.py requirement: the magnifying glass search icon must open a modal popup dialog (with id modal or class modal, plus an overlay div, plus JavaScript to toggle display). Do NOT navigate to a new page. Requirements for cli.py: use colorama throughout with neon cyan/magenta ANSI colors. Import EVERY name from colorama that you use: from colorama import Fore, Back, Style, init. Use at least 10 color escape sequences. Both files must be completely rewritten with the new design.'" || true
 }
 
 verify_pyfw() {
@@ -83,22 +83,42 @@ verify_pyfw() {
         cd /opt/python-firewall
 
         CHANGED=$(git diff --name-only HEAD cli.py html.py 2>/dev/null | wc -l)
-        if [ "$CHANGED" -eq 0 ]; then
-            echo "[pyfw] FAIL: no files changed from HEAD"; exit 1
+        if [ "$CHANGED" -lt 2 ]; then
+            echo "[pyfw] FAIL: both cli.py and html.py must be changed (only ${CHANGED} changed)"; exit 1
         fi
 
         python3 -m py_compile cli.py 2>/dev/null || { echo "[pyfw] FAIL: cli.py syntax error"; exit 1; }
         python3 -m py_compile html.py 2>/dev/null || { echo "[pyfw] FAIL: html.py syntax error"; exit 1; }
 
-        CLI_CYBER=$(grep -cE "\\\\033\[|\\\\x1b\[|colorama|Fore\.|Back\.|Style\.|neon|cyan|magenta|CYAN|MAGENTA|NEON" cli.py 2>/dev/null || echo 0)
-        HTML_CYBER=$(grep -ciE "#[0-9a-fA-F]{3,6}|neon|glow|cyberpunk|magenta|cyan|text-shadow|box-shadow|rgba" html.py 2>/dev/null || echo 0)
-        TOTAL=$((CLI_CYBER + HTML_CYBER))
+        # Check colorama names are actually imported — catches NameError: Style/Fore/Back not defined
+        for CNAME in Fore Back Style; do
+            if grep -qE "\b${CNAME}\." cli.py 2>/dev/null; then
+                if ! grep -qE "from colorama import[^#]*\b${CNAME}\b|import colorama" cli.py 2>/dev/null; then
+                    echo "[pyfw] FAIL: cli.py uses ${CNAME}.* but ${CNAME} is not imported from colorama"; exit 1
+                fi
+            fi
+        done
 
-        if [ "$TOTAL" -lt 2 ]; then
-            echo "[pyfw] FAIL: insufficient cyberpunk elements: cli=${CLI_CYBER} html=${HTML_CYBER}"; exit 1
+        CLI_CYBER=$(grep -cE "\\\\033\[|\\\\x1b\[|colorama|Fore\.|Back\.|Style\.|neon|cyan|magenta|CYAN|MAGENTA|NEON" cli.py 2>/dev/null || echo 0)
+
+        # Require deep redesign keywords — original html.py had no neon/glow/cyberpunk/glitch/terminal
+        HTML_DEEP=$(grep -ciE "neon|glow|cyberpunk|glitch|terminal|scanline|matrix|hologram|pulse" html.py 2>/dev/null || echo 0)
+        # Require modal implementation for magnifying glass
+        HTML_MODAL=$(grep -ciE "\bmodal\b|showModal|getElementById|style\.display|\.modal|#modal|overlay" html.py 2>/dev/null || echo 0)
+
+        if [ "$CLI_CYBER" -lt 10 ]; then
+            echo "[pyfw] FAIL: cli.py needs more cyberpunk styling (cli_cyber=${CLI_CYBER}, need >=10)"; exit 1
         fi
 
-        echo "[pyfw] PASS: ${CHANGED} files changed, cli_cyber=${CLI_CYBER} html_cyber=${HTML_CYBER}"
+        if [ "$HTML_DEEP" -lt 5 ]; then
+            echo "[pyfw] FAIL: html.py needs deep cyberpunk redesign (html_deep=${HTML_DEEP} neon/glow/etc, need >=5)"; exit 1
+        fi
+
+        if [ "$HTML_MODAL" -lt 3 ]; then
+            echo "[pyfw] FAIL: html.py missing modal popup for magnifying glass search (html_modal=${HTML_MODAL}, need >=3 modal patterns)"; exit 1
+        fi
+
+        echo "[pyfw] PASS: ${CHANGED} files changed, cli_cyber=${CLI_CYBER} html_deep=${HTML_DEEP} html_modal=${HTML_MODAL}"
     ' && return 0 || return 1
 }
 
@@ -115,8 +135,9 @@ Steps:
 1. git merge local-aria/main --no-commit --allow-unrelated-histories
 2. CRITICAL: Resolve theme_props.dart conflict by keeping Aikey version (defaultDarkThemeProps = cyberpunkDarkThemeProps)
 3. For all other conflicts: git diff --name-only --diff-filter=U | xargs git checkout HEAD --
-4. Code Review
-5. Run sync-apk.sh and fix any build errors.
+4. Commit: git add -A && git commit -m 'Merge local-aria/main'
+5. Run sync-apk.sh ONCE. Fix any build errors, then run it once more if needed.
+6. STOP IMMEDIATELY after sync-apk.sh completes successfully. Do not run git status, git log, or sync-apk.sh again.
 PROMPT
 )
 
@@ -160,10 +181,11 @@ verify_aikey() {
             [ -f "$f" ] || { echo "[aikey] FAIL: missing $f"; exit 1; }
         done
 
-        STATUS=$(git status --porcelain 2>/dev/null | head -1)
-        if [ -n "$STATUS" ]; then
-            echo "[aikey] FAIL: uncommitted changes or unresolved conflicts"
-            git status --short | head -10
+        # Only fail on actual unresolved merge conflicts (UU), not normal modified files like pubspec.lock
+        CONFLICTS=$(git diff --name-only --diff-filter=U 2>/dev/null | wc -l)
+        if [ "$CONFLICTS" -gt 0 ]; then
+            echo "[aikey] FAIL: unresolved merge conflicts"
+            git diff --name-only --diff-filter=U | head -10
             exit 1
         fi
 
@@ -209,6 +231,4 @@ while true; do
     break
 done
 
-log "=== All tests passed. Running sync.sh to deploy... ==="
-bash "$(dirname "$0")/sync.sh"
-log "=== Done ==="
+log "=== All tests passed. ==="

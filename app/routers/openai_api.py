@@ -1391,6 +1391,24 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             "This approach is not working. STOP retrying the same command. "
                             "Investigate the root cause from the error output above, then try a completely different approach.]"
                         )
+            # Detect repeated successful command — build/deploy scripts run multiple times with same success output
+            _is_build_or_deploy_cmd = bool(re.search(
+                r'\./\S+\.sh\b|flutter\s+build|flutter\s+pub|gradle|make\s+|npm\s+run\s+build|cargo\s+build|pip\s+install\s',
+                last_cmd or ""
+            ))
+            _is_repeated_success = (
+                last_cmd and not _has_error_output and
+                bash_cmd_count.get(last_cmd, 0) > 1 and
+                _is_build_or_deploy_cmd
+            )
+            if _is_repeated_success:
+                repeat_n = bash_cmd_count[last_cmd]
+                content_str += (
+                    f"\n\n[REPEATED COMMAND ({repeat_n}×): This build/deploy command already ran successfully earlier and produced the same result. "
+                    "Running it again accomplished nothing new. "
+                    "STOP — do not repeat build or deploy commands. "
+                    "The task is complete. Report the result and stop.]"
+                )
             # Detect python3 heredoc probe-loop: model running read-only scripts in a loop
             _is_py3_heredoc = last_cmd and bool(
                 re.search(r'python3?\s+-\s', last_cmd) or
@@ -1465,7 +1483,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 or (re.search(r'python3?\s+<<', c) and re.search(r'open\s*\(.*["\']w["\']|with\s+open|\.write\s*\(', c))
                 for c in bash_history
             )
-            _last_build_cmd_hist = next((c for c in reversed(bash_history) if re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', c) and not re.search(r'^\s*(cat|head|tail|sed\s+-n\b|grep\b|awk\b|wc\b|diff\b)\s', c)), None)
+            # Detect build/compile commands (not git commands which may contain .dart/.sh paths as arguments)
+            _last_build_cmd_hist = next((c for c in reversed(bash_history) if re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|\bdart\s', c) and not re.search(r'^\s*(cat|head|tail|sed\s+-n\b|grep\b|awk\b|wc\b|diff\b|git\b)\s', c)), None)
             _build_has_failed = _last_build_cmd_hist and bash_cmd_count.get(_last_build_cmd_hist, 0) >= 1
             _has_git_cmds = any(re.search(r'\bgit\b', c) for c in bash_history)
             # Lower cap for non-git file-editing tasks — push model to edit sooner
@@ -1666,18 +1685,18 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                     if not re.search(r'\bgit\b.*\bcommit\b.*\s-[a-zA-Z]*m\s', _commit_cmd) and ' -m ' not in _commit_cmd and ' --message' not in _commit_cmd:
                         _commit_cmd = re.sub(r'(\bgit\s+commit\b)', r'\1 -m "Merge upstream changes"', _commit_cmd)
                         logger.info("[COMMIT-FIX] Injected -m flag into commit without message")
-                    # Wrap the commit: run it only if no conflict markers in staged files
+                    # Wrap the commit: auto-resolve any remaining conflicts by taking HEAD version, then commit
                     _safe_cmd = (
                         "CONFLICTS=$(git diff --name-only --diff-filter=U 2>/dev/null | tr '\\n' ' '); "
                         "STAGED_CONFLICTS=$(git diff --cached --name-only 2>/dev/null | "
-                        "xargs -I{} grep -l '^<<<<<<< ' {} 2>/dev/null | tr '\\n' ' '); "
-                        "ALL_CONFLICTS=\"$CONFLICTS$STAGED_CONFLICTS\"; "
+                        "xargs -I{} sh -c 'grep -l \"^<<<<<<< \" \"$1\" 2>/dev/null' _ {} | tr '\\n' ' '); "
+                        "ALL_CONFLICTS=$(echo \"$CONFLICTS $STAGED_CONFLICTS\" | tr ' ' '\\n' | sort -u | grep -v '^$' | tr '\\n' ' '); "
                         "if [ -n \"$ALL_CONFLICTS\" ]; then "
-                        "echo \"[MERGE CONFLICT: Unresolved files: $ALL_CONFLICTS]\"; "
-                        "echo 'Run this to auto-resolve (keeps your HEAD version):'; "
-                        "echo \"python3 -c \\\"import re, os; [open(f,'w').write(re.sub(r'<<<<<<< HEAD\\\\n(.*?)=======.*?>>>>>>> [^\\\\n]+\\\\n', r'\\\\\\\\1', open(f).read(), flags=re.DOTALL)) or print('resolved', f) for f in '$ALL_CONFLICTS'.split() if os.path.exists(f)]\\\"\"; "
-                        "echo 'Then: git add . && git commit'; "
-                        f"else {_commit_cmd}; fi"
+                        "echo \"[AUTO-RESOLVING conflicts by taking HEAD version: $ALL_CONFLICTS]\"; "
+                        "git checkout HEAD -- $ALL_CONFLICTS 2>/dev/null && "
+                        "echo 'Resolved. Staging and committing...' && "
+                        f"git add -A && {_commit_cmd}; "
+                        f"else git add -A && {_commit_cmd}; fi"
                     )
                     args_dict["command"] = _safe_cmd
                     tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
@@ -2676,6 +2695,71 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
          re.search(r'open\s*\(.*["\']w["\']|with\s+open.*["\']w["\']|\.write\s*\(', str(m.get("content") or "")))
         for m in messages if m.get("role") == "assistant"
     )
+    # Count actual Write/Edit calls made so far in this session
+    # Count Write/Edit tool calls in all formats: list-of-blocks, tool_calls array, JSON content, XML content
+    _write_call_count = 0
+    for _wm in messages:
+        if _wm.get("role") != "assistant":
+            continue
+        _wc = _wm.get("content") or ""
+        # List-of-blocks format (OpenAI native)
+        if isinstance(_wc, list):
+            for _blk in _wc:
+                if isinstance(_blk, dict) and _blk.get("type") == "tool_use" and _blk.get("name", "").lower() in ("write", "edit", "str_replace", "write_file", "edit_file"):
+                    _write_call_count += 1
+        # String format — XML opencode style: <tool>Write</tool> or JSON: "name": "Write"
+        _wc_str = str(_wc)
+        _write_call_count += len(re.findall(
+            r'<tool>(?:Write|Edit|write_file|edit_file|str_replace)\b|'
+            r'"name"\s*:\s*"(?:write|edit|str_replace|Write|Edit|StrReplace|write_file)',
+            _wc_str, re.IGNORECASE
+        ))
+        # tool_calls array format
+        for _tc in (_wm.get("tool_calls") or []):
+            if _tc.get("function", {}).get("name", "").lower() in ("write", "edit", "str_replace", "write_file", "edit_file"):
+                _write_call_count += 1
+    # Detect same-file repeated write loop — model rewrites the same file fixing errors, ignoring other files
+    _written_files: dict = {}
+    for _wm2 in messages:
+        if _wm2.get("role") != "assistant":
+            continue
+        _wc2_str = str(_wm2.get("content") or "")
+        # Extract filePath / path from Write tool calls in XML or JSON format
+        for _fp_m in re.finditer(
+            r'(?:"filePath"|"path"|"file_path")\s*:\s*"([^"]+\.(?:py|js|html?|sh|dart|ts|css|yaml|json))"',
+            _wc2_str, re.IGNORECASE
+        ):
+            _fp = _fp_m.group(1)
+            _written_files[_fp] = _written_files.get(_fp, 0) + 1
+    _repeat_written = {fp: n for fp, n in _written_files.items() if n >= 2}
+    _distinct_files_written = len(_written_files)
+    if _repeat_written and _distinct_files_written < 2 and tool_calls:
+        _new_tcs_rep = []
+        for _tc_rep in tool_calls:
+            _fn_rep = _tc_rep.get("function", {})
+            if _fn_rep.get("name", "").lower() == "bash":
+                try:
+                    _adict_rep = json.loads(_fn_rep.get("arguments", "{}"))
+                    _cmd_rep = _adict_rep.get("command", "")
+                    _is_verify_or_explore = bool(re.search(
+                        r'py_compile|python3\s+-m\s+py|bash\s+-n|--check|--syntax|^cat\b|^grep\b|^ls\b|^find\b|^wc\b|^head\b',
+                        _cmd_rep
+                    ))
+                    if _is_verify_or_explore:
+                        _rep_files_str = ", ".join(_repeat_written.keys())
+                        _adict_rep["command"] = (
+                            f"echo '[STOP REWRITING THE SAME FILE: You have written {_rep_files_str} "
+                            f"{list(_repeat_written.values())[0]} times but it still has errors. "
+                            "Stop trying to fix it now. Write the OTHER files that need to change FIRST. "
+                            "Come back to fix this file AFTER all other files are written. "
+                            "Use the Write tool to write the next required file NOW.]'"
+                        )
+                        _tc_rep = {**_tc_rep, "function": {**_fn_rep, "arguments": json.dumps(_adict_rep)}}
+                        logger.info(f"[SAME-FILE-LOOP-BLOCK] Blocked verify after {_repeat_written} repeated writes")
+                except Exception:
+                    pass
+            _new_tcs_rep.append(_tc_rep)
+        tool_calls = _new_tcs_rep
     if _exploration_capped and not _actual_writes_done and tool_calls:
         _new_tcs_cap = []
         for _tc_cap in tool_calls:
@@ -2683,19 +2767,96 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
             if _fn_cap.get("name", "").lower() == "bash":
                 try:
                     _adict_cap = json.loads(_fn_cap.get("arguments", "{}"))
-                    _adict_cap["command"] = (
-                        "echo '[BASH BLOCKED: Exploration cap reached. Stop running bash commands. "
-                        "You have already read the files you need. "
-                        "Use the Write tool to write completely new redesigned file content — "
-                        "write the FULL file from scratch with all requested changes applied. "
-                        "Do NOT make small incremental edits. Write complete new file content now.]'"
-                    )
-                    _tc_cap = {**_tc_cap, "function": {**_fn_cap, "arguments": json.dumps(_adict_cap)}}
-                    logger.info("[EXPLORATION-CAP-BLOCK] Blocked bash call after exploration cap — no writes yet")
+                    _cap_cmd = _adict_cap.get("command", "")
+                    # Don't block bash calls that ARE write operations (python3 heredoc writing a file, sed -i, etc.)
+                    _cap_cmd_is_write = bool(re.search(
+                        r'open\s*\(.*["\']w["\']|with\s+open.*["\']w["\']|\.write\s*\(|sed\s+-i|>\s*\S',
+                        _cap_cmd
+                    ))
+                    if not _cap_cmd_is_write:
+                        _adict_cap["command"] = (
+                            "echo '[BASH BLOCKED: Exploration cap reached. Stop running bash commands. "
+                            "You have already read the files you need. "
+                            "THIS SINGLE RESPONSE must include Write tool calls for EVERY file that needs to change. "
+                            "Include multiple Write calls back-to-back in this same response — no Bash between them. "
+                            "Write the COMPLETE redesigned content for each file, one after another. "
+                            "Do NOT write one file and then run bash to verify — write ALL files first in this response, "
+                            "then check syntax in a single bash call at the very end.]'"
+                        )
+                        _tc_cap = {**_tc_cap, "function": {**_fn_cap, "arguments": json.dumps(_adict_cap)}}
+                        logger.info("[EXPLORATION-CAP-BLOCK] Blocked bash call after exploration cap — no writes yet")
+                    else:
+                        logger.info("[EXPLORATION-CAP-ALLOW] Allowed write-bash call through cap (heredoc/sed -i)")
                 except Exception:
                     pass
             _new_tcs_cap.append(_tc_cap)
         tool_calls = _new_tcs_cap
+    # After 1 Write/Edit tool call: block verification bash until a 2nd Write/Edit call happens
+    # Only fires when the model used the Write/Edit TOOL (not bash heredoc) for exactly 1 file so far
+    elif _exploration_capped and _actual_writes_done and _write_call_count == 1 and tool_calls:
+        _new_tcs_post = []
+        for _tc_post in tool_calls:
+            _fn_post = _tc_post.get("function", {})
+            if _fn_post.get("name", "").lower() == "bash":
+                try:
+                    _adict_post = json.loads(_fn_post.get("arguments", "{}"))
+                    _cmd_post = _adict_post.get("command", "")
+                    # Only block if it looks like a verification/exploration command, not a build/run
+                    _is_verify_cmd = bool(re.search(
+                        r'py_compile|python3\s+-m\s+py|bash\s+-n\s+|--check|--syntax|--dry-run|'\
+                        r'^cat\b|^head\b|^tail\b|^grep\b|^ls\b|^find\b|^wc\b',
+                        _cmd_post
+                    ))
+                    if _is_verify_cmd:
+                        _adict_post["command"] = (
+                            f"echo '[WRITE MORE FILES FIRST: You have written {_write_call_count} file(s) so far "
+                            "but verification bash is blocked until all files are written. "
+                            "Write the remaining files NOW using Write tool calls in this same response. "
+                            "Complete all file writes, THEN run a single verification bash at the end.]'"
+                        )
+                        _tc_post = {**_tc_post, "function": {**_fn_post, "arguments": json.dumps(_adict_post)}}
+                        logger.info(f"[POST-WRITE-CAP-BLOCK] Blocked verify bash after {_write_call_count} write(s)")
+                except Exception:
+                    pass
+            _new_tcs_post.append(_tc_post)
+        tool_calls = _new_tcs_post
+    # Hard-block repeated build/deploy scripts that already succeeded — prevent sync-apk.sh / make / flutter loops
+    _prev_user_results = [m for m in messages if m.get("role") == "user"]
+    _successful_build_cmds: set = set()
+    for _um in _prev_user_results:
+        _uc = str(_um.get("content") or "")
+        # Detect successful build/deploy output in prior tool results
+        if re.search(r'Done!.*APK|BUILD SUCCESSFUL|Successfully built|npm.*compiled|make.*finished|Finished in', _uc, re.IGNORECASE):
+            # Extract the bash command that produced this output from the preceding assistant message
+            _um_idx = messages.index(_um)
+            if _um_idx > 0:
+                _prev_ast = messages[_um_idx - 1]
+                _cmd_m = re.search(r'"command"\s*:\s*"((?:[^"\\]|\\.){1,200})"', str(_prev_ast.get("content") or ""))
+                if _cmd_m:
+                    _scmd = _cmd_m.group(1).replace('\\"', '"').strip()
+                    if re.search(r'\./\S+\.sh\b|flutter\s+build|gradle|make\s+|npm\s+run\s+build|cargo\s+build', _scmd):
+                        _successful_build_cmds.add(_scmd)
+    if _successful_build_cmds and tool_calls:
+        _new_tcs_build = []
+        for _tc_b in tool_calls:
+            _fn_b = _tc_b.get("function", {})
+            if _fn_b.get("name", "").lower() == "bash":
+                try:
+                    _adict_b = json.loads(_fn_b.get("arguments", "{}"))
+                    _cmd_b = _adict_b.get("command", "").strip()
+                    if any(_scmd in _cmd_b or _cmd_b in _scmd for _scmd in _successful_build_cmds):
+                        _adict_b["command"] = (
+                            f"echo '[REPEATED COMMAND BLOCKED: This build/deploy command already succeeded earlier. "
+                            "Running it again will not change the result. "
+                            "STOP — the build is complete. Do not run any more build or deploy commands. "
+                            "Report the result and stop immediately.]'"
+                        )
+                        _tc_b = {**_tc_b, "function": {**_fn_b, "arguments": json.dumps(_adict_b)}}
+                        logger.info(f"[BUILD-REPEAT-BLOCK] Blocked repeated build cmd: {_cmd_b[:80]}")
+                except Exception:
+                    pass
+            _new_tcs_build.append(_tc_b)
+        tool_calls = _new_tcs_build
     # After warning the model once about using GitHub remote, auto-fix subsequent origin resets
     _origin_warned = any(
         "WARNING: You used a GitHub remote instead of the local source path" in (m.get("content") or "")
