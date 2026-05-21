@@ -581,7 +581,13 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                         )
                                     logger.info(f"[WRITE-BLOCKED] attempt={_prior_blocks+1} for {_py_file}")
                                 else:
-                                    content_str += f"\n\n[PROXY REMINDER: After editing Python files, always verify syntax before continuing: bash(command='python3 -m py_compile {_py_file} && echo OK')]"
+                                    content_str = (
+                                        f"[MANDATORY SYNTAX CHECK: {_py_file} was saved. "
+                                        f"STOP — do NOT write any other file yet. "
+                                        f"You MUST run this bash command RIGHT NOW before proceeding: "
+                                        f"bash(command='python3 -m py_compile {_py_file} && echo SYNTAX_OK'). "
+                                        f"If it fails, fix the syntax error before writing anything else.]"
+                                    )
                         break
             # If Write tool failed with missing filePath, inject recovery hint
             if last_tool_name.lower() in ("edit", "write", "str_replace_based_edit_tool", "str_replace"):
