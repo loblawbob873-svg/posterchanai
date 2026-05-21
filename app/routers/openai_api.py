@@ -2320,7 +2320,23 @@ def _parse_oai_tool_calls(text: str):
                         try:
                             arguments = json.loads(_complete_json(_repair_json(_raw_args2)))
                         except Exception:
+                            # Last resort: regex-extract filePath and content directly from truncated JSON
                             arguments = {}
+                            _fp2 = re.search(r'"(?:filePath|file_path|path)"\s*:\s*"([^"]*)"', _raw_args2)
+                            _ct2 = re.search(r'"content"\s*:\s*"(.*)', _raw_args2, re.DOTALL)
+                            if _fp2:
+                                arguments["filePath"] = _fp2.group(1)
+                            if _ct2:
+                                _ct2_raw = _ct2.group(1)
+                                # Strip trailing artifacts: ... [truncated], closing braces, XML tags
+                                _ct2_raw = re.sub(r'\s*\.\.\.\s*\[truncated\].*$', '', _ct2_raw, flags=re.DOTALL)
+                                _ct2_raw = re.sub(r'"\s*\}?\s*$', '', _ct2_raw)
+                                _ct2_raw = re.sub(r'\n?\s*</(?:input|content)>\s*$', '', _ct2_raw)
+                                _ct2_raw = _ct2_raw.replace('\\n', '\n').replace('\\t', '\t').replace('\\"', '"').replace('\\\\', '\\').replace('\\r', '\r')
+                                if _ct2_raw.strip():
+                                    arguments["content"] = _ct2_raw
+                            if arguments:
+                                logger.info(f"[TC-PARSE] XML regex-extracted write: filePath={arguments.get('filePath')} content_len={len(arguments.get('content',''))}")
                 if name:
                     name, arguments = _normalize_tool(name, arguments if isinstance(arguments, dict) else {})
                     tool_calls.append({"id": f"call_{uuid.uuid4().hex[:12]}", "type": "function",
