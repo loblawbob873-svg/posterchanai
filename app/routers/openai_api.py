@@ -639,12 +639,20 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             _recent_pycompile = any("py_compile" in c for c in bash_history[-4:])
                             if not _recent_pycompile:
                                 _is_html_py = re.search(r'\bhtml\.py\b', _py_file or "")
+                                _is_cli_py = re.search(r'\bcli\.py\b', _py_file or "")
                                 if _is_html_py:
                                     content_str += (
                                         f"\n\n[MANDATORY: Verify html.py RIGHT NOW before writing any other file. "
                                         f"Run: bash(command='python3 -m py_compile {_py_file} && echo SYNTAX_OK && grep -q \"def buildWeb\" {_py_file} && echo BUILDWEB_OK || echo BUILDWEB_MISSING') "
                                         f"If BUILDWEB_MISSING appears: the main function is not named buildWeb — rename it immediately. "
                                         f"Do NOT write cli.py until SYNTAX_OK and BUILDWEB_OK both appear.]"
+                                    )
+                                elif _is_cli_py:
+                                    content_str += (
+                                        f"\n\n[MANDATORY: Verify cli.py RIGHT NOW. "
+                                        f"Run: bash(command='python3 -m py_compile {_py_file} && echo SYNTAX_OK && grep -q \"from colorama import\" {_py_file} && echo COLORAMA_OK || echo COLORAMA_MISSING') "
+                                        f"If COLORAMA_MISSING: cli.py MUST use 'from colorama import Fore, Back, Style, init' — NOT a custom Style class. "
+                                        f"Do NOT proceed until SYNTAX_OK and COLORAMA_OK both appear.]"
                                     )
                                 else:
                                     content_str += f"\n\n[PROXY REMINDER: After editing Python files, always verify syntax before continuing: bash(command='python3 -m py_compile {_py_file} && echo OK')]"
@@ -799,6 +807,22 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     + f"\nWrite the above to {_bw_path} NOW. Do NOT write cli.py until buildWeb is defined.]"
                 )
                 logger.info("[BUILDWEB-MISSING] html.py passed py_compile but no buildWeb — injecting template")
+            # Intercept COLORAMA_MISSING — cli.py passed py_compile but doesn't import from colorama
+            elif (
+                'COLORAMA_MISSING' in content_str and
+                re.search(r'py_compile.*cli\.py|cli\.py.*py_compile', last_bash_cmd or "")
+            ):
+                _cm_m = re.search(r'py_compile\s+([^\s&|]+cli\.py)', last_bash_cmd or "")
+                _cm_path = _cm_m.group(1) if _cm_m else "cli.py"
+                content_str = (
+                    f"[CRITICAL: cli.py does NOT import from colorama. "
+                    f"The verification requires 'from colorama import Fore, Back, Style, init'. "
+                    f"A custom 'class Style:' with ANSI codes will FAIL verification. "
+                    f"STOP. Write the EXACT content below to {_cm_path} VERBATIM:\n\n"
+                    + _PYFW_CLI_TEMPLATE
+                    + f"\nWrite the above to {_cm_path} NOW.]"
+                )
+                logger.info("[COLORAMA-MISSING] cli.py passed py_compile but no colorama import — injecting template")
             # Intercept sed syntax errors — unify into one clear fix instruction
             elif _sed_error:
                 content_str += (
