@@ -690,7 +690,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "Also: add print(ci, 'lines colorized') at the end. "
                         "Write ALL lines back, run bash -n in a SEPARATE bash call afterward.]"
                     )
-            # Intercept py_compile SyntaxError on a .py file written by Write tool — token-limit truncation
+            # Intercept py_compile SyntaxError on a .py file written by Write tool
             elif (
                 'SyntaxError' in content_str and
                 re.search(r'unterminated|was never closed|unexpected EOF|unmatched', content_str) and
@@ -700,17 +700,33 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 _pyc_m = re.search(r'py_compile\s+([^\s&|]+\.py)', last_bash_cmd or "")
                 _pyc_fullpath = _pyc_m.group(1) if _pyc_m else None
                 _pyc_fname = _pyc_fullpath.rsplit('/', 1)[-1] if _pyc_fullpath else "the .py file"
-                content_str = (
-                    f"[TOKEN LIMIT: {_pyc_fname} was truncated mid-file — triple-quoted strings always get cut off. "
-                    f"STOP. Rewrite {_pyc_fname} in under 40 lines. "
-                    f"Use ONLY single-line strings joined with + (no triple quotes, no f-strings spanning multiple lines). "
-                    f"Pattern to follow:\n"
-                    f"  h = ('<tag>line1</tag>'\n"
-                    f"       '<tag>line2</tag>'\n"
-                    f"       '<tag>line3</tag>')\n"
-                    f"Write the complete short file to '{_pyc_fullpath or _pyc_fname}' NOW.]"
-                )
-                logger.info(f"[TOKEN-LIMIT-TRUNC] py_compile SyntaxError after Write truncation — injecting short-design hint for {_pyc_fname}")
+                # Distinguish: bracket mismatch (real code bug) vs file truncation (token limit)
+                _is_bracket_mismatch = bool(re.search(r'was never closed|unmatched', content_str)) and \
+                    not re.search(r'unterminated|unexpected EOF', content_str)
+                if _is_bracket_mismatch:
+                    # Extract the error line for context
+                    _err_line_m = re.search(r'line (\d+)', content_str)
+                    _err_line = f" (line {_err_line_m.group(1)})" if _err_line_m else ""
+                    content_str = (
+                        f"[SYNTAX ERROR: {_pyc_fname} has a bracket/parenthesis mismatch{_err_line} — NOT a truncation issue. "
+                        f"The file was saved but Python cannot parse it. "
+                        f"Find the unclosed '(' or ']' or '{{' at the indicated line and add the missing closing bracket. "
+                        f"Common cause: an implicit line continuation inside a string — every opening '(' in the code must have a matching ')' on the same logical line or before end of function. "
+                        f"Fix the specific line now and rewrite {_pyc_fname}.]"
+                    )
+                    logger.info(f"[SYNTAX-BRACKET-ERR] bracket mismatch in {_pyc_fname} — injecting fix hint")
+                else:
+                    content_str = (
+                        f"[TOKEN LIMIT: {_pyc_fname} was truncated mid-file — triple-quoted strings always get cut off. "
+                        f"STOP. Rewrite {_pyc_fname} in under 40 lines. "
+                        f"Use ONLY single-line strings joined with + (no triple quotes, no f-strings spanning multiple lines). "
+                        f"Pattern to follow:\n"
+                        f"  h = ('<tag>line1</tag>'\n"
+                        f"       '<tag>line2</tag>'\n"
+                        f"       '<tag>line3</tag>')\n"
+                        f"Write the complete short file to '{_pyc_fullpath or _pyc_fname}' NOW.]"
+                    )
+                    logger.info(f"[TOKEN-LIMIT-TRUNC] py_compile SyntaxError after Write truncation — injecting short-design hint for {_pyc_fname}")
                 if _pyc_fullpath:
                     _token_limit_trunc_files.add(_pyc_fullpath)
             # Intercept sed syntax errors — unify into one clear fix instruction
