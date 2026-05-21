@@ -475,6 +475,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
     _write_attempted_paths = set() # .py files where Write was called WITH filePath (regardless of blocking outcome)
     _pending_write_path = None     # filePath from most recent Write/Edit tool call (to track success)
     non_bash_write_done = False  # True if model used write_file/str_replace/edit tool (non-bash)
+    _auto_recovered_in_request = False  # True once any auto-recover fires in this request (prevents cascade)
     fetch_head_reset_done = False  # True after model successfully runs reset --hard FETCH_HEAD
     colorize_task_done = False     # True after model successfully colorizes a .sh file
     rebase_conflict_count = 0      # Number of rebase conflicts seen (helps escalate guidance)
@@ -689,19 +690,9 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
 
                     # WRITE-AUTO-RECOVER: extract content from failing Write call, infer target file, write it ourselves.
                     # This handles deterministic models that always omit filePath for certain files.
-                    # Limit: only one auto-recover per model turn to prevent cascading corruption.
-                    # Check if any tool result from this model turn already has an AUTO-RECOVERED message.
-                    _already_auto_recovered_this_turn = False
-                    _last_asst_idx = None
-                    for _ri, _rm in enumerate(result):
-                        if _rm.get("role") == "assistant":
-                            _last_asst_idx = _ri
-                    if _last_asst_idx is not None:
-                        for _rm in result[_last_asst_idx + 1:]:
-                            _rmc = _rm.get("content", "") if isinstance(_rm.get("content"), str) else ""
-                            if "[AUTO-RECOVERED:" in _rmc or "[AUTO-RECOVER LIMIT:" in _rmc:
-                                _already_auto_recovered_this_turn = True
-                                break
+                    # Limit: only one auto-recover per request to prevent cascading corruption.
+                    # _auto_recovered_in_request is a per-request flag set True on first auto-recover.
+                    _already_auto_recovered_this_turn = _auto_recovered_in_request
 
                     # Extract content: pick the LAST write without filePath (most likely the
                     # new file to write, not a retry of an already-written file).
@@ -891,6 +882,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 )
                             _write_failed_count = 0
                             _auto_recovered = True
+                            _auto_recovered_in_request = True  # prevent cascade in this request
 
                     if not _auto_recovered:
                         # Fallback: guide model to fix the Write call
