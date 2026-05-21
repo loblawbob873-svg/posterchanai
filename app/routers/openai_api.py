@@ -648,10 +648,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 _pyc_fullpath = _pyc_m.group(1) if _pyc_m else None
                 _pyc_fname = _pyc_fullpath.rsplit('/', 1)[-1] if _pyc_fullpath else "the .py file"
                 content_str = (
-                    f"[TOKEN LIMIT: {_pyc_fname} was truncated mid-file (syntax error at truncation point). "
-                    f"DO NOT use triple-quoted strings — they always get cut off at the token limit. "
-                    f"Rewrite {_pyc_fname} in under 50 lines using string concatenation (single-quoted lines joined with +). "
-                    f"Write the complete file now using Write(filePath='{_pyc_fullpath or _pyc_fname}', content='...').]"
+                    f"[TOKEN LIMIT: {_pyc_fname} was truncated mid-file — triple-quoted strings always get cut off. "
+                    f"STOP. Rewrite {_pyc_fname} in under 40 lines. "
+                    f"Use ONLY single-line strings joined with + (no triple quotes, no f-strings spanning multiple lines). "
+                    f"Pattern to follow:\n"
+                    f"  h = ('<tag>line1</tag>'\n"
+                    f"       '<tag>line2</tag>'\n"
+                    f"       '<tag>line3</tag>')\n"
+                    f"Write the complete short file to '{_pyc_fullpath or _pyc_fname}' NOW.]"
                 )
                 logger.info(f"[TOKEN-LIMIT-TRUNC] py_compile SyntaxError after Write truncation — injecting short-design hint for {_pyc_fname}")
             # Intercept sed syntax errors — unify into one clear fix instruction
