@@ -626,12 +626,18 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                             f"SYNTAX_OK (py_compile passed). Write any other files you still need to change.]"
                                         )
                                     else:
+                                        _ws_fname = _py_file.rsplit('/', 1)[-1]
                                         content_str = (
                                             f"[WRITE-SAVED: {_py_file} was written to disk. "
                                             f"SYNTAX ERROR detected:\n{_ws_pyc_detail}\n"
-                                            f"Fix this error in {_py_file}. Do NOT use triple-quoted strings or f-strings with unescaped braces. "
-                                            f"CSS/HTML curly braces {{}} in regular strings are fine, but in f-strings they must be {{{{}}}}. "
-                                            f"Rewrite {_py_file.rsplit('/', 1)[-1]} now.]"
+                                            f"ROOT CAUSE: triple-quoted strings (\"\"\" or \"\"\"\\ or ''') get truncated — the closing \"\"\" never arrives. "
+                                            f"SOLUTION: build the string with concatenation, NOT triple quotes. Example:\n"
+                                            f"  h = '<html><head>'\n"
+                                            f"  h += '<style>body{{color:#0ff}}</style>'\n"
+                                            f"  h += '</head><body>' + content + '</body></html>'\n"
+                                            f"  return h\n"
+                                            f"No return \"\"\", no html = \"\"\", no triple quotes anywhere. "
+                                            f"Rewrite {_ws_fname} using += concatenation now.]"
                                         )
                                 elif _prior_blocks == 0:
                                     content_str = (
