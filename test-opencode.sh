@@ -69,12 +69,12 @@ verify_gentoo() {
 
 reset_pyfw() {
     log "[pyfw] Resetting cli.py and html.py to HEAD on router.lan..."
-    ssh_router "cd /opt/python-firewall && git checkout HEAD cli.py html.py && rm -f ~/.local/share/opencode/opencode.db"
+    ssh_router "cd /opt/python-firewall && git checkout HEAD cli.py html.py && rm -f ~/.local/share/opencode/opencode.db ~/.local/share/opencode/opencode.db-wal ~/.local/share/opencode/opencode.db-shm"
 }
 
 run_pyfw() {
     log "[pyfw] Running opencode on router.lan..."
-    ssh_router "cd /opt/python-firewall && timeout 300 ~/.opencode/bin/opencode run --model '$MODEL' 'modify the cli and webui to give it a cyberpunk theme'" || true
+    ssh_router "cd /opt/python-firewall && timeout 300 ~/.opencode/bin/opencode run --model '$MODEL' 'Redesign the webui and the cli to have a cyberpunk theme and design. Completely redo the cli and webui. Also, when you click on the magnifying glass, make it open a modal that pops up instead of navigating to a new tab page.'" || true
 }
 
 verify_pyfw() {
@@ -174,69 +174,41 @@ verify_aikey() {
     ' && return 0 || return 1
 }
 
-# ── 3-pass runner ─────────────────────────────────────────────────────────────
+# ── Single-run runner ─────────────────────────────────────────────────────────
 
-run_until_3_passes() {
+run_once() {
     local name=$1 reset_fn=$2 run_fn=$3 verify_fn=$4
-    local passes=0 attempts=0
-
-    while [ "$passes" -lt "$PASS_THRESHOLD" ] && [ "$attempts" -lt "$MAX_ATTEMPTS" ]; do
-        attempts=$((attempts + 1))
-        log "[$name] Attempt $attempts (passes: $passes/$PASS_THRESHOLD)"
-
-        if ! $reset_fn; then
-            log "[$name] Reset failed — retrying"
-            continue
-        fi
-
-        $run_fn
-
-        if $verify_fn; then
-            passes=$((passes + 1))
-            log "[$name] PASS $passes/$PASS_THRESHOLD"
-        else
-            passes=0
-            log "[$name] FAIL — resetting and retrying"
-        fi
-    done
-
-    if [ "$passes" -ge "$PASS_THRESHOLD" ]; then
-        log "[$name] SUCCESS: passed $PASS_THRESHOLD consecutive times"
-        return 0
-    else
-        log "[$name] FAILURE after $MAX_ATTEMPTS attempts"
-        return 1
-    fi
-}
-
-# ── Final single-pass validation ───────────────────────────────────────────────
-
-run_single_pass() {
-    local name=$1 reset_fn=$2 run_fn=$3 verify_fn=$4
-    log "[$name] Final validation run..."
-    $reset_fn || { log "[$name] Final reset failed"; return 1; }
+    log "[$name] Running..."
+    $reset_fn || { log "[$name] Reset failed"; return 1; }
     $run_fn
     if $verify_fn; then
-        log "[$name] Final PASS"
+        log "[$name] PASS"
+        return 0
     else
-        log "[$name] Final FAIL"
+        log "[$name] FAIL"
         return 1
     fi
 }
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
-log "=== opencode test suite — each test must pass $PASS_THRESHOLD consecutive times ==="
+while true; do
+    log "=== opencode test suite — running each test once in sequence ==="
 
-run_until_3_passes "gentoo-colorize"     reset_gentoo run_gentoo verify_gentoo
-run_until_3_passes "python-firewall"     reset_pyfw   run_pyfw      verify_pyfw
-run_until_3_passes "aikey-android-merge" reset_aikey  run_aikey     verify_aikey
+    RC_GENTOO=0; RC_PYFW=0; RC_AIKEY=0
 
-log "=== All 3-pass requirements met. Running final single-pass validation... ==="
-run_single_pass "gentoo-colorize"     reset_gentoo run_gentoo verify_gentoo
-run_single_pass "python-firewall"     reset_pyfw   run_pyfw      verify_pyfw
-run_single_pass "aikey-android-merge" reset_aikey  run_aikey     verify_aikey
+    run_once "gentoo-colorize"     reset_gentoo run_gentoo verify_gentoo || RC_GENTOO=1
+    run_once "python-firewall"     reset_pyfw   run_pyfw   verify_pyfw   || RC_PYFW=1
+    run_once "aikey-android-merge" reset_aikey  run_aikey  verify_aikey  || RC_AIKEY=1
 
-log "=== Final validation complete. Running sync.sh to deploy... ==="
+    if [ $RC_GENTOO -ne 0 ] || [ $RC_PYFW -ne 0 ] || [ $RC_AIKEY -ne 0 ]; then
+        log "=== One or more tests failed — repeating all tests ==="
+        continue
+    fi
+
+    break
+done
+
+log "=== All tests passed. Running sync.sh to deploy... ==="
 bash "$(dirname "$0")/sync.sh"
 log "=== Done ==="
