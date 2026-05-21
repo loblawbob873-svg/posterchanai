@@ -643,21 +643,47 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
 
                     # WRITE-AUTO-RECOVER: extract content from failing Write call, infer target file, write it ourselves.
                     # This handles deterministic models that always omit filePath for certain files.
+                    # Limit: only one auto-recover per model turn to prevent cascading corruption.
+                    # Check if any tool result from this model turn already has an AUTO-RECOVERED message.
+                    _already_auto_recovered_this_turn = False
+                    _last_asst_idx = None
+                    for _ri, _rm in enumerate(result):
+                        if _rm.get("role") == "assistant":
+                            _last_asst_idx = _ri
+                    if _last_asst_idx is not None:
+                        for _rm in result[_last_asst_idx + 1:]:
+                            _rmc = _rm.get("content", "") if isinstance(_rm.get("content"), str) else ""
+                            if "[AUTO-RECOVERED:" in _rmc or "[AUTO-RECOVER LIMIT:" in _rmc:
+                                _already_auto_recovered_this_turn = True
+                                break
+
+                    # Extract content: pick the LAST write without filePath (most likely the
+                    # new file to write, not a retry of an already-written file).
                     _auto_content = None
-                    for _r in reversed(result):
-                        if _r.get("role") == "assistant":
-                            for _call_m in re.finditer(
-                                r'<tool>\s*[Ww]rite\s*</tool>\s*<input>\s*(.*?)\s*</input>',
-                                _r.get("content", ""), re.DOTALL
-                            ):
-                                try:
-                                    _call_json = json.loads(_call_m.group(1))
-                                    if "content" in _call_json and "filePath" not in _call_json and "path" not in _call_json:
-                                        _auto_content = _call_json["content"]
-                                        break
-                                except Exception:
-                                    pass
-                            break
+                    if not _already_auto_recovered_this_turn:
+                        for _r in reversed(result):
+                            if _r.get("role") == "assistant":
+                                for _call_m in re.finditer(
+                                    r'<tool>\s*[Ww]rite\s*</tool>\s*<input>\s*(.*?)\s*</input>',
+                                    _r.get("content", ""), re.DOTALL
+                                ):
+                                    try:
+                                        _call_json = json.loads(_call_m.group(1))
+                                        if "content" in _call_json and "filePath" not in _call_json and "path" not in _call_json:
+                                            _auto_content = _call_json["content"]
+                                            # No break — last match wins (skip html.py retries, get cli.py content)
+                                    except Exception:
+                                        pass
+                                break
+
+                    if _already_auto_recovered_this_turn:
+                        content_str = (
+                            "[AUTO-RECOVER LIMIT: one file was already auto-recovered this turn. "
+                            "Include filePath in all Write calls so files are routed correctly. "
+                            "Example: {\"filePath\": \"/full/path/to/file.py\", \"content\": \"...\"}]"
+                        )
+                        _write_failed_count = 0
+                        _auto_recovered = True
 
                     # Find target: most recently Read .py file NOT in _write_attempted_paths
                     # (files with Write+filePath are already tracked; the missing-filePath write targets a different file)
