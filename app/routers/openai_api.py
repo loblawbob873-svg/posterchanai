@@ -687,6 +687,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         # Try SSH write to client host (proxy may be on a different machine than the model client)
                         import subprocess as _sp
                         _client_h = _request_client_host.get()
+                        logger.info(f"[WRITE-AUTO-RECOVER] target={_auto_target} client_h={_client_h!r} content_len={len(_auto_content)}")
                         _wrote_ok = False
                         if _client_h:
                             try:
