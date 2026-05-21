@@ -464,6 +464,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
     write_block_count = {}  # file path -> how many times WRITE-BLOCKED has fired for it this call
     _token_limit_trunc_files = set()  # files where TOKEN-LIMIT-TRUNC fired — always re-verify syntax after rewrite
     _syntax_err_count = {}  # file path -> how many times SYNTAX-BRACKET-ERR or TOKEN-LIMIT-TRUNC has fired
+    _write_failed_count = 0  # how many consecutive Write-tool schema failures have occurred
     non_bash_write_done = False  # True if model used write_file/str_replace/edit tool (non-bash)
     fetch_head_reset_done = False  # True after model successfully runs reset --hard FETCH_HEAD
     colorize_task_done = False     # True after model successfully colorizes a .sh file
@@ -621,15 +622,26 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 _schema_path = _m.group(1)
                                 break
                     _target = f"'{_schema_path}'" if _schema_path else "'/full/path/to/file.py'"
-                    # Replace entirely — appending gets ignored by deterministic models
-                    content_str = (
-                        f"[WRITE-FAILED: The Write tool requires BOTH 'filePath' AND 'content' as named parameters. "
-                        f"Your call was missing 'filePath'. "
-                        f"CORRECT FORMAT: Write(filePath={_target}, content='...full file content...'). "
-                        f"Do NOT omit filePath. Do NOT use positional arguments. "
-                        f"Write the file now using the exact format above.]"
-                    )
-                    logger.info("[WRITE-SCHEMA-ERR] Write failed with missing filePath — injecting recovery hint")
+                    _write_failed_count += 1
+                    if _write_failed_count <= 3:
+                        # Replace entirely — appending gets ignored by deterministic models
+                        content_str = (
+                            f"[WRITE-FAILED (attempt {_write_failed_count}): The Write tool requires BOTH 'filePath' AND 'content'. "
+                            f"Your call was missing 'filePath'. "
+                            f"CORRECT FORMAT: Write(filePath={_target}, content='...full file content...'). "
+                            f"Do NOT omit filePath. Write the file now.]"
+                        )
+                    else:
+                        # After many failures, direct the model to use bash instead
+                        content_str = (
+                            f"[WRITE-FAILED (attempt {_write_failed_count}): The Write tool keeps failing because filePath is missing. "
+                            f"SWITCH TO BASH: write the file using bash instead:\n"
+                            f"  bash(command=\"cat > {_schema_path or '/path/to/file.py'} << 'HEREDOC'\\n...file content...\\nHEREDOC\")\n"
+                            f"Or use the Write tool with the COMPLETE required format:\n"
+                            f"  Write(filePath={_target}, content='def main(): ...')\n"
+                            f"One of these MUST work. Do it now.]"
+                        )
+                    logger.info(f"[WRITE-SCHEMA-ERR] attempt={_write_failed_count} Write failed with missing filePath")
             # After reading a Python source file, remind the model to edit it directly
             if last_tool_name.lower() in ("read", "read_file", "view") and not non_bash_write_done:
                 # Detect doubled-path "File not found" error (model prepended CWD to filename)
