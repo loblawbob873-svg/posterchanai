@@ -548,7 +548,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                     # Count prior blocks for this file in this conversation to escalate
                                     _prior_blocks = sum(
                                         1 for _tr in result
-                                        if _tr.get("role") == "tool" and "WRITE-BLOCKED" in str(_tr.get("content", ""))
+                                        if _tr.get("role") == "user" and "WRITE-BLOCKED" in str(_tr.get("content", ""))
                                         and _py_file in str(_tr.get("content", ""))
                                     )
                                     if _prior_blocks == 0:
