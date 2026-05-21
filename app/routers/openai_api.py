@@ -724,11 +724,30 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         f"Do NOT write cli.py until html.py defines def buildWeb and passes py_compile.]"
                     )
                 else:
-                    content_str = (
-                        f"[TOKEN LIMIT: {_pyc_fname} was truncated mid-file. "
-                        f"DO NOT use triple-quoted strings — they always get cut off. "
-                        f"Rewrite {_pyc_fname} under 80 lines using string concatenation. Write it now.]"
-                    )
+                    _is_cli_py = "cli" in _pyc_fname
+                    if _is_cli_py:
+                        content_str = (
+                            f"[TOKEN LIMIT: cli.py was truncated (syntax error). "
+                            f"Write a SHORT cli.py — under 50 lines total. "
+                            f"RULES: No emoji characters (they cause encoding errors). No triple-quoted strings. "
+                            f"Use only simple print() calls with colorama. Example:\n"
+                            f"from colorama import Fore, Back, Style, init\n"
+                            f"import subprocess\n"
+                            f"init()\n"
+                            f"def main():\n"
+                            f"    print(Fore.CYAN + Style.BRIGHT + '=== CYBERPUNK FIREWALL ===' + Style.RESET_ALL)\n"
+                            f"    print(Fore.MAGENTA + 'Status: ACTIVE' + Style.RESET_ALL)\n"
+                            f"    r = subprocess.run(['python3','firewall.py','status'],capture_output=True,text=True)\n"
+                            f"    print(Fore.CYAN + r.stdout + Style.RESET_ALL)\n"
+                            f"if __name__ == '__main__': main()\n"
+                            f"Write cli.py now with at least 10 Fore./Back./Style. uses.]"
+                        )
+                    else:
+                        content_str = (
+                            f"[TOKEN LIMIT: {_pyc_fname} was truncated mid-file. "
+                            f"DO NOT use triple-quoted strings — they always get cut off. "
+                            f"Rewrite {_pyc_fname} under 50 lines using string concatenation. Write it now.]"
+                        )
                 logger.info(f"[TOKEN-LIMIT-TRUNC] py_compile SyntaxError after Write truncation — injecting short-design hint for {_pyc_fname}")
             # Intercept BUILDWEB_MISSING — html.py passed py_compile but doesn't define buildWeb
             elif (
