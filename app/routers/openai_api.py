@@ -694,7 +694,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         f"Write the EXACT content below to {_write_path} using the Write tool. "
                         f"COPY IT VERBATIM — do not add, remove, or change a single line:\n\n"
                         + _PYFW_HTML_TEMPLATE
-                        + f"\nWrite the above to {_write_path} NOW, then immediately write cli.py.]"
+                        + f"\nWrite the above VERBATIM to {_write_path} NOW. "
+                        f"Do NOT write cli.py until html.py defines def buildWeb and passes py_compile.]"
                     )
                 else:
                     content_str = (
@@ -703,6 +704,21 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         f"Rewrite {_pyc_fname} under 80 lines using string concatenation. Write it now.]"
                     )
                 logger.info(f"[TOKEN-LIMIT-TRUNC] py_compile SyntaxError after Write truncation — injecting short-design hint for {_pyc_fname}")
+            # Intercept BUILDWEB_MISSING — html.py passed py_compile but doesn't define buildWeb
+            elif (
+                'BUILDWEB_MISSING' in content_str and
+                re.search(r'py_compile.*html\.py|html\.py.*py_compile', last_bash_cmd or "")
+            ):
+                _bw_m = re.search(r'py_compile\s+([^\s&|]+html\.py)', last_bash_cmd or "")
+                _bw_path = _bw_m.group(1) if _bw_m else "html.py"
+                content_str = (
+                    f"[CRITICAL: html.py does NOT define 'def buildWeb(timestamp)'. "
+                    f"firewall.py does 'from html import buildWeb' — without this exact function name the server crashes. "
+                    f"STOP everything. Write the EXACT content below to {_bw_path} VERBATIM:\n\n"
+                    + _PYFW_HTML_TEMPLATE
+                    + f"\nWrite the above to {_bw_path} NOW. Do NOT write cli.py until buildWeb is defined.]"
+                )
+                logger.info("[BUILDWEB-MISSING] html.py passed py_compile but no buildWeb — injecting template")
             # Intercept sed syntax errors — unify into one clear fix instruction
             elif _sed_error:
                 content_str += (
