@@ -683,26 +683,32 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 if _os.path.isabs(_ap) and _os.path.basename(_ap) != _base:
                                     _auto_target = _os.path.join(_os.path.dirname(_ap), _base)
                                     break
-                        # Fallback: scan all conversation text for .py paths in same dirs as attempted writes,
-                        # including bare filenames (e.g. "cli.py" in task description → /opt/python-firewall/cli.py)
+                        # Fallback A: absolute .py paths in same dir mentioned anywhere in conversation
                         if not _auto_target and _write_attempted_paths:
                             _auto_dirs = {_os.path.dirname(_p) for _p in _write_attempted_paths if _os.path.isabs(_p)}
-                            _mentioned_pys = []
+                            _abs_pys = []
                             for _r in result:
-                                _rc = _r.get("content", "")
-                                # Absolute paths
-                                for _mp in re.finditer(r'(/[\w./-]+\.py)\b', _rc):
+                                for _mp in re.finditer(r'(/[\w./-]+\.py)\b', _r.get("content", "")):
                                     _p = _mp.group(1)
-                                    if _os.path.dirname(_p) in _auto_dirs and _p not in _mentioned_pys:
-                                        _mentioned_pys.append(_p)
-                                # Bare filenames → construct absolute path from known dir
-                                for _bm in re.finditer(r'\b([\w-]+\.py)\b', _rc):
+                                    if _os.path.dirname(_p) in _auto_dirs and _p not in _abs_pys:
+                                        _abs_pys.append(_p)
+                            for _mp in reversed(_abs_pys):
+                                if not _is_attempted(_mp):
+                                    _auto_target = _mp
+                                    break
+                        # Fallback B: bare filenames (earliest mention wins — task description is first,
+                        # so "cli.py" from task beats "tier_one.py" from later directory listings)
+                        if not _auto_target and _write_attempted_paths:
+                            _auto_dirs = {_os.path.dirname(_p) for _p in _write_attempted_paths if _os.path.isabs(_p)}
+                            _bare_pys = []
+                            for _r in result:
+                                for _bm in re.finditer(r'\b([\w-]+\.py)\b', _r.get("content", "")):
                                     _f = _bm.group(1)
                                     for _d in _auto_dirs:
                                         _p = _os.path.join(_d, _f)
-                                        if _p not in _mentioned_pys:
-                                            _mentioned_pys.append(_p)
-                            for _mp in reversed(_mentioned_pys):
+                                        if _p not in _bare_pys:
+                                            _bare_pys.append(_p)
+                            for _mp in _bare_pys:  # first occurrence wins
                                 if not _is_attempted(_mp):
                                     _auto_target = _mp
                                     break
