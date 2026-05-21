@@ -578,7 +578,15 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 # so the escalation counter accumulates correctly across all rounds.
                                 write_block_count[_py_file] = write_block_count.get(_py_file, 0) + 1
                                 _prior_blocks = write_block_count[_py_file] - 1
-                                if _prior_blocks == 0:
+                                if _orig_write_ok:
+                                    # File WAS actually saved — tell the model to verify and move on
+                                    content_str = (
+                                        f"[WRITE-SAVED: {_py_file} was written to disk (Wrote file successfully). "
+                                        f"NOTE: it used triple-quoted strings — for future files use single-line strings joined with + to avoid truncation. "
+                                        f"MANDATORY SYNTAX CHECK: run python3 -m py_compile {_py_file} && echo SYNTAX_OK now. "
+                                        f"Then write any other files you still need to change.]"
+                                    )
+                                elif _prior_blocks == 0:
                                     content_str = (
                                         f"[WRITE-BLOCKED: {_py_file} was NOT saved — it contains triple-quoted strings (\"\"\" or ''') which always get truncated. "
                                         f"Rewrite {_py_file} using ONLY regular (non-f) single-line strings joined with +. "
@@ -605,7 +613,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                         f"Build the entire HTML as: h = '<html>' + '<body>' + content_var + '</body>' + '</html>' "
                                         f"then return h. Under 30 lines. No triple quotes anywhere. Write now.]"
                                     )
-                                logger.info(f"[WRITE-BLOCKED] attempt={_prior_blocks+1} for {_py_file}")
+                                logger.info(f"[WRITE-BLOCKED] attempt={_prior_blocks+1} orig_ok={_orig_write_ok} for {_py_file}")
                             elif write_block_count.get(_py_file, 0) > 0 and len(_raw_ast) > 4000:
                                 # File was already WRITE-BLOCKED for triple quotes, but replacement is still too large
                                 content_str = (
