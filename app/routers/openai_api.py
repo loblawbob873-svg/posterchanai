@@ -587,6 +587,16 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                         f"then return h. Under 30 lines. No triple quotes anywhere. Write now.]"
                                     )
                                 logger.info(f"[WRITE-BLOCKED] attempt={_prior_blocks+1} for {_py_file}")
+                            elif write_block_count.get(_py_file, 0) > 0 and len(_raw_ast) > 4000:
+                                # File was already WRITE-BLOCKED for triple quotes, but replacement is still too large
+                                content_str = (
+                                    f"[SIZE-BLOCKED: {_py_file} was saved but is still too large (~{len(_raw_ast) // 50}+ lines / {len(_raw_ast)} chars). "
+                                    f"This file was previously blocked for triple-quoted strings, and the replacement must be under 35 lines. "
+                                    f"Your current version is {len(_raw_ast) // 50}× too long. "
+                                    f"Rewrite {_py_file} with ONLY the essential structure — one main function, under 35 lines total. "
+                                    f"No decorative extras. Use plain regular strings, no f-strings.]"
+                                )
+                                logger.info(f"[SIZE-BLOCKED] {_py_file} too large after WRITE-BLOCKED (raw_len={len(_raw_ast)})")
                             elif not _recent_pycompile or _py_file in _token_limit_trunc_files:
                                 # Force MANDATORY SYNTAX CHECK if py_compile not recently run,
                                 # OR if this file previously triggered TOKEN-LIMIT-TRUNC (failed py_compile)
