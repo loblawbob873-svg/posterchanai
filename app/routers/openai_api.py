@@ -390,6 +390,7 @@ async def root_list_models(
 
 # Complete verbatim html.py template injected when TOKEN LIMIT fires for python-firewall html.py
 _PYFW_HTML_TEMPLATE = """#!/usr/bin/env python3
+# CRITICAL: function MUST be named buildWeb — firewall.py does: from html import buildWeb
 from commands import get_cpu_usage, get_block_count
 from db import addHTML, clearHTML, getHTML
 from config import REDIRECT
