@@ -621,6 +621,11 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             ):
                 _pyc_m = re.search(r'py_compile\s+([^\s&|]+\.py)', last_bash_cmd or "")
                 _pyc_fname = _pyc_m.group(1).rsplit('/', 1)[-1] if _pyc_m else "the .py file"
+                _buildweb_hint = (
+                    " CRITICAL: if this is html.py, the main function MUST be named buildWeb "
+                    "(firewall.py imports it as: from html import buildWeb)."
+                    if "html" in _pyc_fname else ""
+                )
                 content_str = (
                     f"[TOKEN LIMIT: {_pyc_fname} was truncated mid-file — the Write call hit the token budget "
                     f"before the triple-quoted string was closed. "
@@ -628,7 +633,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     f"Rewrite {_pyc_fname} with a SHORTER design: "
                     f"keep the total file under 150 lines, "
                     f"use Python string concatenation instead of one giant triple-quoted block, "
-                    f"inline only essential CSS (no multi-hundred-line stylesheets). "
+                    f"inline only essential CSS (no multi-hundred-line stylesheets).{_buildweb_hint} "
                     f"A compact but complete cyberpunk design is required. Write it now.]"
                 )
                 logger.info(f"[TOKEN-LIMIT-TRUNC] py_compile SyntaxError after Write truncation — injecting short-design hint for {_pyc_fname}")
