@@ -680,8 +680,15 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                     any(_os.path.basename(s) == _b for s in _write_attempted_paths) or
                                     _p in _write_success_paths or
                                     any(_os.path.basename(s) == _b for s in _write_success_paths))
+                        def _is_attempted_read(_p):
+                            # For Read-based target selection: only exclude files where Write was
+                            # called WITH filePath — allow re-targeting auto-recovered files so a
+                            # subsequent write (e.g. syntax fix) lands on the same file again.
+                            _b = _os.path.basename(_p)
+                            return (_p in _write_attempted_paths or
+                                    any(_os.path.basename(s) == _b for s in _write_attempted_paths))
                         for _rp in reversed(_all_read_pys):
-                            if not _is_attempted(_rp):
+                            if not _is_attempted_read(_rp):
                                 _auto_target = _rp
                                 break
                         # Resolve relative path using a known absolute path from _write_attempted_paths
@@ -755,11 +762,61 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 logger.warning(f"[WRITE-AUTO-RECOVER] Local write failed for {_auto_target}: {_e}")
                         if _wrote_ok:
                             _write_success_paths.add(_auto_target)
-                            content_str = (
-                                f"Wrote file successfully.\n"
-                                f"[AUTO-RECOVERED: filePath was missing in Write call — wrote {len(_auto_content)} chars to {_auto_target}. "
-                                f"MANDATORY SYNTAX CHECK: run python3 -m py_compile {_auto_target} && echo SYNTAX_OK before writing any other file.]"
-                            )
+                            # Run py_compile immediately on the written .py file and include result
+                            _pyc_ok = True
+                            _pyc_detail = ''
+                            if _auto_target.endswith('.py'):
+                                try:
+                                    _pyc_cmd = f"python3 -m py_compile '{_auto_target}' 2>&1 && echo PYCOMPILE_OK"
+                                    if _client_h and _wrote_ok:
+                                        _pyc_r = _sp.run(
+                                            ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
+                                             _client_h, _pyc_cmd],
+                                            capture_output=True, timeout=10
+                                        )
+                                        _pyc_out = _pyc_r.stdout.decode('utf-8', errors='replace').strip()
+                                    else:
+                                        import ast as _ast
+                                        try:
+                                            _ast.parse(_auto_content)
+                                            _pyc_out = 'PYCOMPILE_OK'
+                                        except SyntaxError as _se:
+                                            _pyc_out = str(_se)
+                                    _pyc_ok = 'PYCOMPILE_OK' in _pyc_out
+                                    if not _pyc_ok:
+                                        _pyc_err_lines = [l for l in _pyc_out.splitlines() if l.strip()]
+                                        _ln_m = re.search(r'line (\d+)', _pyc_out)
+                                        _fail_line_content = ''
+                                        if _ln_m:
+                                            _ln = int(_ln_m.group(1))
+                                            try:
+                                                _lc_lines = _auto_content.splitlines()
+                                                if 1 <= _ln <= len(_lc_lines):
+                                                    _fail_line_content = _lc_lines[_ln - 1]
+                                            except Exception:
+                                                pass
+                                        _pyc_detail = '\n'.join(_pyc_err_lines)
+                                        if _fail_line_content:
+                                            _pyc_detail += f'\nFailing line {_ln_m.group(1)}: {_fail_line_content}'
+                                        logger.info(f"[WRITE-AUTO-RECOVER] py_compile FAIL for {_auto_target}: {_pyc_detail[:200]}")
+                                    else:
+                                        logger.info(f"[WRITE-AUTO-RECOVER] py_compile OK for {_auto_target}")
+                                except Exception as _pyc_e:
+                                    logger.warning(f"[WRITE-AUTO-RECOVER] py_compile check error: {_pyc_e}")
+                            if _pyc_ok:
+                                content_str = (
+                                    f"Wrote file successfully.\n"
+                                    f"[AUTO-RECOVERED: filePath was missing — wrote {len(_auto_content)} chars to {_auto_target}. "
+                                    f"SYNTAX_OK (py_compile passed). Write any other files you still need to change.]"
+                                )
+                            else:
+                                content_str = (
+                                    f"Wrote file successfully.\n"
+                                    f"[AUTO-RECOVERED: filePath was missing — wrote {len(_auto_content)} chars to {_auto_target}. "
+                                    f"SYNTAX ERROR detected:\n{_pyc_detail}\n"
+                                    f"Fix this error in {_auto_target} — rewrite ONLY that file with the fix. "
+                                    f"Do NOT rewrite other files until {_os.path.basename(_auto_target)} has no syntax errors.]"
+                                )
                             _write_failed_count = 0
                             _auto_recovered = True
 
