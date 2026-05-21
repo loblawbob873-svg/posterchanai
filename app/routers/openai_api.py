@@ -545,17 +545,37 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 _has_triple = bool(re.search(r'\\\"\\\"\\\"', _raw_ast) or "'''" in _raw_ast)
                                 logger.info(f"[WRITE-PY] tool={last_tool_name} file={_py_file} has_triple={_has_triple} raw_len={len(_raw_ast)}")
                                 if _has_triple:
-                                    content_str = (
-                                        f"[WRITE-BLOCKED: {_py_file} contains triple-quoted strings (\"\"\" or '''). "
-                                        f"The file was NOT saved — triple-quoted strings always get cut off at the token limit and cause SyntaxErrors. "
-                                        f"You MUST rewrite {_py_file} using ONLY single-line strings joined with +. "
-                                        f"No triple quotes. No multi-line f-strings. Use this pattern:\n"
-                                        f"  h = ('<tag>line1</tag>'\n"
-                                        f"       '<tag>line2</tag>'\n"
-                                        f"       '<tag>line3</tag>')\n"
-                                        f"Keep the file under 35 lines total. Write it again now — do not run py_compile until you have rewritten without triple quotes.]"
+                                    # Count prior blocks for this file in this conversation to escalate
+                                    _prior_blocks = sum(
+                                        1 for _tr in result
+                                        if _tr.get("role") == "tool" and "WRITE-BLOCKED" in str(_tr.get("content", ""))
+                                        and _py_file in str(_tr.get("content", ""))
                                     )
-                                    logger.info(f"[WRITE-BLOCKED] Replaced Write result for {_py_file} — triple quotes detected")
+                                    if _prior_blocks == 0:
+                                        content_str = (
+                                            f"[WRITE-BLOCKED: {_py_file} was NOT saved — it contains triple-quoted strings (\"\"\" or ''') which always get truncated. "
+                                            f"Rewrite {_py_file} using ONLY single-line strings joined with +. No triple quotes, no multi-line f-strings. Pattern:\n"
+                                            f"  h = ('<tag>line1</tag>'\n"
+                                            f"       '<tag>line2</tag>')\n"
+                                            f"Under 35 lines. Write it again now.]"
+                                        )
+                                    elif _prior_blocks == 1:
+                                        content_str = (
+                                            f"[WRITE-BLOCKED (attempt 2): Still triple-quoted strings in {_py_file}. "
+                                            f"DIFFERENT approach required: use a list and join.\n"
+                                            f"  parts = ['<line1>', '<line2>', '<line3>']\n"
+                                            f"  h = ''.join(parts)\n"
+                                            f"  return h\n"
+                                            f"No return f\"\"\"..., no triple quotes at all. Write the file now with this structure.]"
+                                        )
+                                    else:
+                                        content_str = (
+                                            f"[WRITE-BLOCKED (attempt {_prior_blocks + 1}): You keep using triple-quoted strings. STOP. "
+                                            f"Write {_py_file} as a single string built from concatenation on ONE line per HTML element. "
+                                            f"Build the entire HTML as: h = '<html>' + '<body>' + content_var + '</body>' + '</html>' "
+                                            f"then return h. Under 30 lines. No triple quotes anywhere. Write now.]"
+                                        )
+                                    logger.info(f"[WRITE-BLOCKED] attempt={_prior_blocks+1} for {_py_file}")
                                 else:
                                     content_str += f"\n\n[PROXY REMINDER: After editing Python files, always verify syntax before continuing: bash(command='python3 -m py_compile {_py_file} && echo OK')]"
                         break
