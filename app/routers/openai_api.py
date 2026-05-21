@@ -615,7 +615,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # Intercept py_compile SyntaxError on a .py file written by Write tool — token-limit truncation
             elif (
                 'SyntaxError' in content_str and
-                re.search(r'unterminated|was never closed', content_str) and
+                re.search(r'unterminated|was never closed|unexpected EOF', content_str) and
                 re.search(r'py_compile|py compile', last_bash_cmd or "") and
                 re.search(r'\.py\b', last_bash_cmd or "")
             ):
