@@ -1929,7 +1929,10 @@ async def _handle_telegram_update(update: dict, db: Session):
                         # Build user message, prepending any extracted document text
                         _user_msg_text = text
                         if doc_text:
-                            _user_msg_text = doc_text + "\n\n" + text if text.strip() else doc_text
+                            if text.strip():
+                                _user_msg_text = f"Here is a document the user shared:\n\n{doc_text}\n\nUser's message: {text}"
+                            else:
+                                _user_msg_text = f"The user uploaded a document. Please summarize and explain its contents:\n\n{doc_text}"
                         # If last_role is user, merge with last message instead of creating duplicate
                         if last_role == "user":
                             messages[-1]["content"] += "\n\n" + _user_msg_text
