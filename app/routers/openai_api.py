@@ -465,6 +465,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
     colorize_task_done = False     # True after model successfully colorizes a .sh file
     rebase_conflict_count = 0      # Number of rebase conflicts seen (helps escalate guidance)
     silent_sed_sh_count = 0        # Number of sed -i on .sh files that produced no output
+    _exploration_cap_injected = 0  # How many times [EXPLORATION CAP:] was injected — 2nd+ use different tag
     # Detect complex merge tasks (conflict resolution, file preservation) — skip simple-sync shortcuts
     # Only scan the FIRST user message — proxy-injected tool results may contain "checkout HEAD" etc.
     # and would falsely trigger these flags on unrelated tasks.
@@ -1490,7 +1491,15 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # Lower cap for non-git file-editing tasks — push model to edit sooner
             _cap_threshold = 5 if (_syslog_is_task or _build_has_failed) else (7 if _has_git_cmds else 8)
             if _total_cmds >= _cap_threshold and not _any_write and not colorize_task_done and not fetch_head_reset_done:
-                if _syslog_is_task:
+                if _exploration_cap_injected >= 1:
+                    # Second cap injection: use a non-LOOP-SC-triggering tag so two consecutive caps
+                    # don't fire the hard-loop short-circuit (which needs two matching block tags)
+                    content_str += (
+                        f"\n\n[WRITE NOW: Cap already fired ({_total_cmds} commands, no writes). "
+                        "STOP ALL bash commands immediately. Use Write or Edit tool right now to modify the file(s). "
+                        "No more reading, grepping, or exploring — just write the changes.]"
+                    )
+                elif _syslog_is_task:
                     content_str += (
                         f"\n\n[EXPLORATION CAP: You have run {_total_cmds} commands. "
                         "You have collected enough log data. STOP running commands. "
@@ -1512,6 +1521,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "You have read the files already. Use the Edit tool now to make changes directly. "
                         "Do NOT run python3, ls, find, or cat — use Edit/Write to modify source files now.]"
                     )
+                _exploration_cap_injected += 1
             # Detect HTTP fetch loops — fetching external URLs is wrong for local file editing tasks
             _http_fetches = sum(1 for c in bash_history if re.search(r'requests\.get|urllib\.request|curl\s+http|wget\s+http', c))
             if _http_fetches >= 2 and re.search(r'requests\.get|urllib\.request|curl\s+http|wget\s+http', last_bash_cmd):
@@ -2126,7 +2136,7 @@ def _normalize_tool(name: str, args: dict) -> tuple:
 
 
 def _complete_json(raw: str) -> str:
-    """Close any unclosed JSON braces/brackets in a truncated string."""
+    """Close any unclosed JSON braces/brackets/strings in a truncated string."""
     # Strip common model trailing artifacts
     raw = re.sub(r',?\s*\.\.\.\s*\[truncated\].*$', '', raw, flags=re.DOTALL).rstrip()
     raw = re.sub(r',\s*$', '', raw)  # trailing comma
@@ -2148,6 +2158,9 @@ def _complete_json(raw: str) -> str:
                 opens.append('}' if c == '{' else ']')
             elif c in ('}', ']') and opens and opens[-1] == c:
                 opens.pop()
+    # Close unclosed string first, then unclosed braces/brackets
+    if in_str:
+        raw = raw + '"'
     return raw + ''.join(reversed(opens))
 
 
