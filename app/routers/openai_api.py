@@ -562,8 +562,11 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 if _prior_blocks == 0:
                                     content_str = (
                                         f"[WRITE-BLOCKED: {_py_file} was NOT saved — it contains triple-quoted strings (\"\"\" or ''') which always get truncated. "
-                                        f"Rewrite {_py_file} using ONLY single-line strings joined with +. No triple quotes, no multi-line f-strings. Pattern:\n"
+                                        f"Rewrite {_py_file} using ONLY regular (non-f) single-line strings joined with +. "
+                                        f"Do NOT use f-strings for content — CSS {{}} inside regular strings is fine as-is, but {{}} in f-strings must be escaped as {{{{}}}}. "
+                                        f"Avoid f-strings entirely to prevent brace escaping errors. Pattern:\n"
                                         f"  h = ('<tag>line1</tag>'\n"
+                                        f"       '<style>body{{color:#fff}}</style>'\n"
                                         f"       '<tag>line2</tag>')\n"
                                         f"Under 35 lines. Write it again now.]"
                                     )
@@ -710,9 +713,10 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     content_str = (
                         f"[SYNTAX ERROR: {_pyc_fname} has a bracket/parenthesis mismatch{_err_line} — NOT a truncation issue. "
                         f"The file was saved but Python cannot parse it. "
-                        f"Find the unclosed '(' or ']' or '{{' at the indicated line and add the missing closing bracket. "
-                        f"Common cause: an implicit line continuation inside a string — every opening '(' in the code must have a matching ')' on the same logical line or before end of function. "
-                        f"Fix the specific line now and rewrite {_pyc_fname}.]"
+                        f"Two most common causes: "
+                        f"(1) CSS/HTML {{}} in an f-string — f-strings interpret {{}} as interpolation; use regular strings or escape as {{{{}}}}. "
+                        f"(2) An implicit line-continuation tuple like h = ('line1' 'line2') where the closing ) is missing. "
+                        f"Read {_pyc_fname}, find line {_err_line.strip() or 'N'}, fix the specific mismatch, then rewrite the file.]"
                     )
                     logger.info(f"[SYNTAX-BRACKET-ERR] bracket mismatch in {_pyc_fname} — injecting fix hint")
                 else:
