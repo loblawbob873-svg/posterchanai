@@ -388,6 +388,61 @@ async def root_list_models(
 
 # ============== Tool call helpers (opencode / agentic) ==============
 
+# Complete verbatim html.py template injected when TOKEN LIMIT fires for python-firewall html.py
+_PYFW_HTML_TEMPLATE = """#!/usr/bin/env python3
+from commands import get_cpu_usage, get_block_count
+from db import addHTML, clearHTML, getHTML
+from config import REDIRECT
+
+_S = (
+    'body{background:#0a0a0f;color:#0ff;font-family:monospace}'
+    '.neon{text-shadow:0 0 8px #0ff;border:1px solid #0ff}'
+    '.cyberpunk{box-shadow:0 0 15px #0ff}'
+    '.glitch{color:#f0f}'
+    '.glow{box-shadow:0 0 10px #f0f}'
+    '.scanline{position:fixed;top:0;left:0;width:100%;height:100%;'
+    'pointer-events:none;background:repeating-linear-gradient('
+    'transparent,transparent 2px,rgba(0,255,255,.03) 2px,rgba(0,255,255,.03) 4px)}'
+    '#modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:100}'
+    '.overlay{background:rgba(0,0,0,.8);position:fixed;top:0;left:0;width:100%;height:100%}'
+    '.mbox{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);'
+    'background:#0a0a0f;border:1px solid #0ff;padding:20px;z-index:101}'
+)
+
+_J = (
+    'function openModal(){document.getElementById("modal").style.display="block"}'
+    'function closeModal(){document.getElementById("modal").style.display="none"}'
+)
+
+def buildWeb(timestamp):
+    cpu = get_cpu_usage()
+    blocked = get_block_count().strip()
+    h = ('<!DOCTYPE html><html><head><meta charset="utf-8">'
+         '<title>Cyberpunk Firewall</title>'
+         '<style>' + _S + '</style>'
+         '<script>' + _J + '</script>'
+         '</head><body class="cyberpunk neon">'
+         '<div class="scanline"></div>'
+         '<h1 class="neon glitch">&#9888; Cyberpunk Firewall Terminal</h1>'
+         '<button class="neon glow" onclick="openModal()">&#128269;</button>'
+         '<div id="modal">'
+         '<div class="overlay" onclick="closeModal()"></div>'
+         '<div class="mbox neon">'
+         '<h3 class="cyberpunk glitch">Search</h3>'
+         '<input id="search" type="text" placeholder="IP/domain..." '
+         'style="background:#000;color:#0ff;border:1px solid #0ff;width:200px">'
+         '<button onclick="closeModal()" class="neon">&#10005;</button>'
+         '</div></div>'
+         '<div class="neon cyberpunk" style="padding:10px">'
+         + f'<p>CPU: {cpu} | Blocked IPs: {blocked}</p>'
+         + '<p class="glow">Matrix pulse neon glow scanline terminal</p>'
+         '</div>'
+         '</body></html>')
+    addHTML(h)
+    clearHTML()
+    return h
+"""
+
 _TC_RE = re.compile(r'<tool_call>\s*(.*?)\s*</tool_call>', re.DOTALL | re.IGNORECASE)
 _TC_UNCLOSED_RE = re.compile(r'<tool_call>\s*(.*?)$', re.DOTALL | re.IGNORECASE)
 _THINK_STRIP_RE = re.compile(r'<think(?:ing)?>(.*?)</think(?:ing)?>', re.DOTALL | re.IGNORECASE)
@@ -541,10 +596,13 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             if not _recent_pycompile:
                                 _is_html_py = re.search(r'\bhtml\.py\b', _py_file or "")
                                 if _is_html_py:
+                                    _pyfw_dir = _py_file.rsplit('/', 1)[0] if '/' in _py_file else '.'
                                     content_str += (
-                                        f"\n\n[MANDATORY: Verify html.py syntax RIGHT NOW before writing any other file. "
-                                        f"Run: bash(command='python3 -m py_compile {_py_file} && echo OK') "
-                                        f"Do NOT write cli.py until this passes.]"
+                                        f"\n\n[MANDATORY: Verify html.py RIGHT NOW before writing any other file. "
+                                        f"Run both checks: "
+                                        f"bash(command='python3 -m py_compile {_py_file} && echo SYNTAX_OK && cd {_pyfw_dir} && python3 -c \"import sys; sys.path.insert(0,\\\".\\\"); from html import buildWeb; print(\\\"BUILDWEB_OK\\\")\"') "
+                                        f"If SYNTAX_OK but BUILDWEB_OK is missing: the function is not named buildWeb — rename it to buildWeb. "
+                                        f"Do NOT write cli.py until both SYNTAX_OK and BUILDWEB_OK appear.]"
                                     )
                                 else:
                                     content_str += f"\n\n[PROXY REMINDER: After editing Python files, always verify syntax before continuing: bash(command='python3 -m py_compile {_py_file} && echo OK')]"
@@ -628,30 +686,17 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 re.search(r'\.py\b', last_bash_cmd or "")
             ):
                 _pyc_m = re.search(r'py_compile\s+([^\s&|]+\.py)', last_bash_cmd or "")
-                _pyc_fname = _pyc_m.group(1).rsplit('/', 1)[-1] if _pyc_m else "the .py file"
+                _pyc_fullpath = _pyc_m.group(1) if _pyc_m else None
+                _pyc_fname = _pyc_fullpath.rsplit('/', 1)[-1] if _pyc_fullpath else "the .py file"
                 if "html" in _pyc_fname:
+                    _write_path = _pyc_fullpath or "html.py"
                     content_str = (
-                        "[TOKEN LIMIT — STOP: html.py triple-quoted string was truncated and never closed. "
-                        "STRICT RULE: Do NOT use triple-quoted strings (f\"\"\", ''', or \"\"\"). They will ALWAYS be truncated. "
-                        "INSTEAD build HTML with + concatenation. Use this pattern exactly:\n"
-                        "  def buildWeb(timestamp):\n"
-                        "      cpu = get_cpu_usage()\n"
-                        "      blocked = get_block_count().strip()\n"
-                        "      h = ('<!DOCTYPE html><html><head>'\n"
-                        "           '<style>body{background:#0a0a0f;color:#0ff}'\n"
-                        "           '.neon{text-shadow:0 0 5px #f0f;border:1px solid #0ff}'\n"
-                        "           '.cyberpunk{box-shadow:0 0 10px #0ff}.glitch{color:#f0f}'\n"
-                        "           '#modal{display:none}.overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.7)}'\n"
-                        "           '</style></head><body class=\"cyberpunk\">'\n"
-                        "           '<div class=\"neon glitch\">Firewall</div>'\n"
-                        "           '<button onclick=\"document.getElementById(\\\"modal\\\").style.display=\\\"block\\\"\">&#128269;</button>'\n"
-                        "           '<div id=\"modal\"><div class=\"overlay\" onclick=\"this.parentElement.style.display=\\\"none\\\"\"></div>'\n"
-                        "           '<div>Search</div></div>'\n"
-                        "           f'<p>CPU:{cpu} Blocked:{blocked}</p>'\n"
-                        "           '</body></html>')\n"
-                        "      addHTML(h); clearHTML()\n"
-                        "      return h\n"
-                        "Function MUST be named buildWeb. File must be under 80 lines. Write it now.]"
+                        f"[TOKEN LIMIT — html.py was truncated (syntax error). "
+                        f"STOP. Do NOT write a new design. "
+                        f"Write the EXACT content below to {_write_path} using the Write tool. "
+                        f"COPY IT VERBATIM — do not add, remove, or change a single line:\n\n"
+                        + _PYFW_HTML_TEMPLATE
+                        + f"\nWrite the above to {_write_path} NOW, then immediately write cli.py.]"
                     )
                 else:
                     content_str = (
