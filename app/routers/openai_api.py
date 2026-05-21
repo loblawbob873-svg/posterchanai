@@ -540,7 +540,20 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             _py_file = _py_m.group(1)
                             _recent_pycompile = any("py_compile" in c for c in bash_history[-4:])
                             if not _recent_pycompile:
-                                content_str += f"\n\n[PROXY REMINDER: After editing Python files, always verify syntax before continuing: bash(command='python3 -m py_compile {_py_file} && echo OK')]"
+                                # Warn immediately if written content has triple-quoted strings (will be truncated)
+                                _raw_ast = _r.get("content", "")
+                                _has_triple = bool(re.search(r'\\\"\\\"\\\"', _raw_ast) or "'''" in _raw_ast)
+                                if _has_triple:
+                                    content_str += (
+                                        f"\n\n[WRITE-TRUNCATION-RISK: {_py_file} contains triple-quoted strings (\"\"\" or '''). "
+                                        f"These always get truncated at the output token limit and will cause SyntaxErrors. "
+                                        f"DO NOT run py_compile — rewrite {_py_file} now using only single-line strings joined with +:\n"
+                                        f"  h = ('<tag>line1</tag>'\n"
+                                        f"       '<tag>line2</tag>')\n"
+                                        f"Keep under 40 lines and write the file again before continuing.]"
+                                    )
+                                else:
+                                    content_str += f"\n\n[PROXY REMINDER: After editing Python files, always verify syntax before continuing: bash(command='python3 -m py_compile {_py_file} && echo OK')]"
                         break
             # If Write tool failed with missing filePath, inject recovery hint
             if last_tool_name.lower() in ("edit", "write", "str_replace_based_edit_tool", "str_replace"):
