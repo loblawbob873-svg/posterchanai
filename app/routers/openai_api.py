@@ -620,10 +620,28 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                     except Exception as _ws_e:
                                         logger.warning(f"[WRITE-SAVED] py_compile check error: {_ws_e}")
                                     if _ws_pyc_ok:
+                                        # List unwritten sibling .py files so the model knows what to do next
+                                        _ws_dir = _py_file.rsplit('/', 1)[0] if '/' in _py_file else '.'
+                                        _ws_unwritten = []
+                                        if _ws_client_h:
+                                            try:
+                                                _ls_r = _sp2.run(
+                                                    ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
+                                                     _ws_client_h, f"ls '{_ws_dir}'/*.py 2>/dev/null"],
+                                                    capture_output=True, timeout=5
+                                                )
+                                                if _ls_r.returncode == 0:
+                                                    for _ls_f in _ls_r.stdout.decode('utf-8', errors='replace').splitlines():
+                                                        _ls_f = _ls_f.strip()
+                                                        if _ls_f and _ls_f != _py_file and _ls_f not in _write_success_paths:
+                                                            _ws_unwritten.append(_ls_f)
+                                            except Exception:
+                                                pass
+                                        _ws_next = (f" YOU HAVE NOT WRITTEN YET: {', '.join(_ws_unwritten)}. Write those files now. DO NOT re-read or rewrite {_py_file}." if _ws_unwritten else " Write any other files you still need to change. DO NOT re-read or rewrite this file.")
                                         content_str = (
                                             f"[WRITE-SAVED: {_py_file} was written to disk. "
                                             f"NOTE: used triple-quoted strings — future files should use single-line strings joined with + to avoid truncation. "
-                                            f"SYNTAX_OK (py_compile passed). Write any other files you still need to change.]"
+                                            f"SYNTAX_OK (py_compile passed).{_ws_next}]"
                                         )
                                     else:
                                         _ws_fname = _py_file.rsplit('/', 1)[-1]
@@ -687,9 +705,27 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                             except Exception as _af_e:
                                                 logger.warning(f"[WRITE-SAVED-AUTOFIX] failed: {_af_e}")
                                         if _af_ok:
+                                            # List unwritten sibling .py files
+                                            _ws_dir2 = _py_file.rsplit('/', 1)[0] if '/' in _py_file else '.'
+                                            _ws_unwritten2 = []
+                                            if _ws_client_h:
+                                                try:
+                                                    _ls_r2 = _sp2.run(
+                                                        ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
+                                                         _ws_client_h, f"ls '{_ws_dir2}'/*.py 2>/dev/null"],
+                                                        capture_output=True, timeout=5
+                                                    )
+                                                    if _ls_r2.returncode == 0:
+                                                        for _ls_f2 in _ls_r2.stdout.decode('utf-8', errors='replace').splitlines():
+                                                            _ls_f2 = _ls_f2.strip()
+                                                            if _ls_f2 and _ls_f2 != _py_file and _ls_f2 not in _write_success_paths:
+                                                                _ws_unwritten2.append(_ls_f2)
+                                                except Exception:
+                                                    pass
+                                            _ws_next2 = (f" YOU HAVE NOT WRITTEN YET: {', '.join(_ws_unwritten2)}. Write those files now. DO NOT re-read or rewrite {_py_file}." if _ws_unwritten2 else " Write any other files you still need to change. DO NOT re-read or rewrite this file.")
                                             content_str = (
                                                 f"[WRITE-SAVED-AUTOFIX: {_py_file} — triple-quoted string auto-terminated. "
-                                                f"SYNTAX_OK. Write any other files you still need to change.]"
+                                                f"SYNTAX_OK.{_ws_next2}]"
                                             )
                                         else:
                                             content_str = (
