@@ -649,7 +649,12 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                                         # If content looks like an HTML generator, inject standard
                                                         # web UI patterns (modal, overlay, theme keywords) before
                                                         # closing — ensures the HTML output is complete.
-                                                        _is_html = any(t in _af_c for t in ['<html', '<body', '<style', '<!DOCTYPE', '<div'])
+                                                        # Detect HTML generator: either has HTML tags already, or
+                                                        # has an html="""...""" assignment with the word "html" in scope.
+                                                        _is_html = (
+                                                            any(t in _af_c for t in ['<html', '<body', '<style', '<!DOCTYPE', '<div'])
+                                                            or bool(re.search(r'html\s*=\s*f?["\']["\']["\']', _af_c))
+                                                        )
                                                         if _is_html:
                                                             _af_inject = (
                                                                 '\n<!-- neon cyberpunk glow theme -->'
