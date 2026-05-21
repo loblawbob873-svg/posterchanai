@@ -665,25 +665,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                                     elif _af_c.count("'''") % 2 == 1:
                                                         _af_close = "'''"
                                                     if _af_close:
-                                                        # Always inject combined HTML+ANSI patterns before closing.
-                                                        # HTML patterns satisfy web-UI checks; ANSI constants satisfy
-                                                        # CLI color checks. Both are valid inside a triple-quoted string.
-                                                        _af_inject = (
-                                                            '\n<!-- neon cyberpunk glow theme -->'
-                                                            '\n<!-- terminal matrix scanline pulse glitch hologram overlay -->'
-                                                            '\n<div id="modal" class="modal overlay" style="display:none">'
-                                                            '\n<button onclick="getElementById(\'modal\').style.display=\'none\'">X</button></div>'
-                                                            '\n<script>function showModal(){getElementById(\'modal\').style.display=\'flex\'}</script>'
-                                                            '\n_NEON_CYAN = \'\\033[36m\'     # neon cyan terminal'
-                                                            '\n_NEON_MAGENTA = \'\\033[35m\'  # neon magenta terminal'
-                                                            '\n_CYBER_BRIGHT = \'\\033[1m\'   # Style bright'
-                                                            '\n_CYBER_RESET = \'\\033[0m\'    # Style.RESET_ALL colorama'
-                                                            '\n_CYBER_BOLD = \'\\033[1;36m\'  # colorama CYAN NEON'
-                                                            '\n_CYBER_BACK = \'\\033[40m\'    # Back.BLACK'
-                                                            '\n# Fore.CYAN Fore.MAGENTA neon CYAN MAGENTA NEON'
-                                                            '\n' + _af_close + '\n'
-                                                        )
-                                                        _af_fixed = _af_c.rstrip('\n') + _af_inject
+                                                        _af_fixed = _af_c.rstrip('\n') + '\n' + _af_close + '\n'
                                                         _af_wr = _sp2.run(
                                                             ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
                                                              _ws_client_h, f"cat > '{_py_file}'"],
@@ -996,23 +978,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                             elif _ar_af_c.count("'''") % 2 == 1:
                                                 _ar_af_close = "'''"
                                             if _ar_af_close:
-                                                # Combined HTML+ANSI injection — satisfies both web-UI and CLI color checks
-                                                _ar_inject = (
-                                                    '\n<!-- neon cyberpunk glow theme -->'
-                                                    '\n<!-- terminal matrix scanline pulse glitch hologram overlay -->'
-                                                    '\n<div id="modal" class="modal overlay" style="display:none">'
-                                                    '\n<button onclick="getElementById(\'modal\').style.display=\'none\'">X</button></div>'
-                                                    '\n<script>function showModal(){getElementById(\'modal\').style.display=\'flex\'}</script>'
-                                                    '\n_NEON_CYAN = \'\\033[36m\'     # neon cyan terminal'
-                                                    '\n_NEON_MAGENTA = \'\\033[35m\'  # neon magenta terminal'
-                                                    '\n_CYBER_BRIGHT = \'\\033[1m\'   # Style bright'
-                                                    '\n_CYBER_RESET = \'\\033[0m\'    # Style.RESET_ALL colorama'
-                                                    '\n_CYBER_BOLD = \'\\033[1;36m\'  # colorama CYAN NEON'
-                                                    '\n_CYBER_BACK = \'\\033[40m\'    # Back.BLACK'
-                                                    '\n# Fore.CYAN Fore.MAGENTA neon CYAN MAGENTA NEON'
-                                                    '\n' + _ar_af_close + '\n'
-                                                )
-                                                _ar_af_fixed = _ar_af_c.rstrip('\n') + _ar_inject
+                                                _ar_af_fixed = _ar_af_c.rstrip('\n') + '\n' + _ar_af_close + '\n'
                                                 _ar_wr = _sp.run(
                                                     ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
                                                      _client_h, f"cat > '{_auto_target}'"],
@@ -1081,6 +1047,40 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         logger.info(f"[WRITE-SCHEMA-ERR] attempt={_write_failed_count} Write failed with missing filePath")
             # After reading a Python source file, remind the model to edit it directly
             if last_tool_name.lower() in ("read", "read_file", "view") and not non_bash_write_done:
+                # If model re-reads a file it already successfully wrote, block and redirect to unwritten siblings
+                if _write_success_paths:
+                    for _r in reversed(result):
+                        if _r.get("role") == "assistant":
+                            _rd_m = re.search(r'"(?:path|file_path|filePath)"\s*:\s*"([^"]+\.py)"', _r.get("content", ""))
+                            if _rd_m:
+                                _rd_path = _rd_m.group(1)
+                                if _rd_path in _write_success_paths:
+                                    _rd_client_h = _request_client_host.get()
+                                    _rd_dir = _rd_path.rsplit('/', 1)[0] if '/' in _rd_path else '.'
+                                    _rd_unwritten = []
+                                    if _rd_client_h:
+                                        try:
+                                            import subprocess as _sp_rd
+                                            _ls_rd = _sp_rd.run(
+                                                ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
+                                                 _rd_client_h, f"ls '{_rd_dir}'/*.py 2>/dev/null"],
+                                                capture_output=True, timeout=5
+                                            )
+                                            if _ls_rd.returncode == 0:
+                                                for _f in _ls_rd.stdout.decode('utf-8', errors='replace').splitlines():
+                                                    _f = _f.strip()
+                                                    if _f and _f not in _write_success_paths:
+                                                        _rd_unwritten.append(_f)
+                                        except Exception:
+                                            pass
+                                    _rd_next = (f"YOU HAVE NOT WRITTEN YET: {', '.join(_rd_unwritten)}. Write those files now." if _rd_unwritten else "Write any remaining files now.")
+                                    content_str = (
+                                        f"[READ-BLOCKED: {_rd_path} was already successfully written. "
+                                        f"Do NOT re-read or rewrite it. {_rd_next} "
+                                        f"DO NOT re-read {_rd_path}.]"
+                                    )
+                                    logger.info(f"[READ-BLOCKED] model tried to re-read already-written {_rd_path}")
+                            break
                 # Detect doubled-path "File not found" error (model prepended CWD to filename)
                 _fnf_m = re.search(r'[Ff]ile not found[:\s]+(/[^\s]+)', content_str)
                 if _fnf_m:
