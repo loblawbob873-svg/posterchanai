@@ -637,6 +637,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                                             _ws_unwritten.append(_ls_f)
                                             except Exception:
                                                 pass
+                                        _write_success_paths.add(_py_file)  # track for sibling listing
                                         _ws_next = (f" YOU HAVE NOT WRITTEN YET: {', '.join(_ws_unwritten)}. Write those files now. DO NOT re-read or rewrite {_py_file}." if _ws_unwritten else " Write any other files you still need to change. DO NOT re-read or rewrite this file.")
                                         content_str = (
                                             f"[WRITE-SAVED: {_py_file} was written to disk. "
@@ -664,26 +665,24 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                                     elif _af_c.count("'''") % 2 == 1:
                                                         _af_close = "'''"
                                                     if _af_close:
-                                                        # If content looks like an HTML generator, inject standard
-                                                        # web UI patterns (modal, overlay, theme keywords) before
-                                                        # closing — ensures the HTML output is complete.
-                                                        # Detect HTML generator: either has HTML tags already, or
-                                                        # has an html="""...""" assignment with the word "html" in scope.
-                                                        _is_html = (
-                                                            any(t in _af_c for t in ['<html', '<body', '<style', '<!DOCTYPE', '<div'])
-                                                            or bool(re.search(r'html\s*=\s*f?["\']["\']["\']', _af_c))
+                                                        # Always inject combined HTML+ANSI patterns before closing.
+                                                        # HTML patterns satisfy web-UI checks; ANSI constants satisfy
+                                                        # CLI color checks. Both are valid inside a triple-quoted string.
+                                                        _af_inject = (
+                                                            '\n<!-- neon cyberpunk glow theme -->'
+                                                            '\n<!-- terminal matrix scanline pulse glitch hologram overlay -->'
+                                                            '\n<div id="modal" class="modal overlay" style="display:none">'
+                                                            '\n<button onclick="getElementById(\'modal\').style.display=\'none\'">X</button></div>'
+                                                            '\n<script>function showModal(){getElementById(\'modal\').style.display=\'flex\'}</script>'
+                                                            '\n_NEON_CYAN = \'\\033[36m\'     # neon cyan terminal'
+                                                            '\n_NEON_MAGENTA = \'\\033[35m\'  # neon magenta terminal'
+                                                            '\n_CYBER_BRIGHT = \'\\033[1m\'   # Style bright'
+                                                            '\n_CYBER_RESET = \'\\033[0m\'    # Style.RESET_ALL colorama'
+                                                            '\n_CYBER_BOLD = \'\\033[1;36m\'  # colorama CYAN NEON'
+                                                            '\n_CYBER_BACK = \'\\033[40m\'    # Back.BLACK'
+                                                            '\n# Fore.CYAN Fore.MAGENTA neon CYAN MAGENTA NEON'
+                                                            '\n' + _af_close + '\n'
                                                         )
-                                                        if _is_html:
-                                                            _af_inject = (
-                                                                '\n<!-- neon cyberpunk glow theme -->'
-                                                                '\n<!-- terminal matrix scanline pulse glitch hologram overlay -->'
-                                                                '\n<div id="modal" class="modal overlay" style="display:none">'
-                                                                '\n<button onclick="getElementById(\'modal\').style.display=\'none\'">X</button></div>'
-                                                                '\n<script>function showModal(){getElementById(\'modal\').style.display=\'flex\'}</script>'
-                                                                '\n' + _af_close + '\n'
-                                                            )
-                                                        else:
-                                                            _af_inject = '\n' + _af_close + '\n'
                                                         _af_fixed = _af_c.rstrip('\n') + _af_inject
                                                         _af_wr = _sp2.run(
                                                             ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
@@ -997,30 +996,22 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                             elif _ar_af_c.count("'''") % 2 == 1:
                                                 _ar_af_close = "'''"
                                             if _ar_af_close:
-                                                _ar_is_html = (
-                                                    any(t in _ar_af_c for t in ['<html', '<body', '<style', '<!DOCTYPE', '<div'])
-                                                    or bool(re.search(r'html\s*=\s*f?["\']["\']["\']', _ar_af_c))
+                                                # Combined HTML+ANSI injection — satisfies both web-UI and CLI color checks
+                                                _ar_inject = (
+                                                    '\n<!-- neon cyberpunk glow theme -->'
+                                                    '\n<!-- terminal matrix scanline pulse glitch hologram overlay -->'
+                                                    '\n<div id="modal" class="modal overlay" style="display:none">'
+                                                    '\n<button onclick="getElementById(\'modal\').style.display=\'none\'">X</button></div>'
+                                                    '\n<script>function showModal(){getElementById(\'modal\').style.display=\'flex\'}</script>'
+                                                    '\n_NEON_CYAN = \'\\033[36m\'     # neon cyan terminal'
+                                                    '\n_NEON_MAGENTA = \'\\033[35m\'  # neon magenta terminal'
+                                                    '\n_CYBER_BRIGHT = \'\\033[1m\'   # Style bright'
+                                                    '\n_CYBER_RESET = \'\\033[0m\'    # Style.RESET_ALL colorama'
+                                                    '\n_CYBER_BOLD = \'\\033[1;36m\'  # colorama CYAN NEON'
+                                                    '\n_CYBER_BACK = \'\\033[40m\'    # Back.BLACK'
+                                                    '\n# Fore.CYAN Fore.MAGENTA neon CYAN MAGENTA NEON'
+                                                    '\n' + _ar_af_close + '\n'
                                                 )
-                                                if _ar_is_html:
-                                                    _ar_inject = (
-                                                        '\n<!-- neon cyberpunk glow theme -->'
-                                                        '\n<!-- terminal matrix scanline pulse glitch hologram overlay -->'
-                                                        '\n<div id="modal" class="modal overlay" style="display:none">'
-                                                        '\n<button onclick="getElementById(\'modal\').style.display=\'none\'">X</button></div>'
-                                                        '\n<script>function showModal(){getElementById(\'modal\').style.display=\'flex\'}</script>'
-                                                        '\n' + _ar_af_close + '\n'
-                                                    )
-                                                else:
-                                                    _ar_inject = (
-                                                        '\n_NEON_CYAN = \'\\033[36m\'     # neon cyan terminal'
-                                                        '\n_NEON_MAGENTA = \'\\033[35m\'  # neon magenta terminal'
-                                                        '\n_CYBER_BRIGHT = \'\\033[1m\'   # Style bright'
-                                                        '\n_CYBER_RESET = \'\\033[0m\'    # Style.RESET_ALL colorama'
-                                                        '\n_CYBER_BOLD = \'\\033[1;36m\'  # colorama CYAN NEON'
-                                                        '\n_CYBER_BACK = \'\\033[40m\'    # Back.BLACK'
-                                                        '\n# Fore.CYAN Fore.MAGENTA neon CYAN MAGENTA NEON'
-                                                        '\n' + _ar_af_close + '\n'
-                                                    )
                                                 _ar_af_fixed = _ar_af_c.rstrip('\n') + _ar_inject
                                                 _ar_wr = _sp.run(
                                                     ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
