@@ -638,15 +638,15 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     _auto_content = None
                     for _r in reversed(result):
                         if _r.get("role") == "assistant":
-                            _call_m = re.search(
+                            for _call_m in re.finditer(
                                 r'<tool>\s*[Ww]rite\s*</tool>\s*<input>\s*(.*?)\s*</input>',
                                 _r.get("content", ""), re.DOTALL
-                            )
-                            if _call_m:
+                            ):
                                 try:
                                     _call_json = json.loads(_call_m.group(1))
                                     if "content" in _call_json and "filePath" not in _call_json and "path" not in _call_json:
                                         _auto_content = _call_json["content"]
+                                        break
                                 except Exception:
                                     pass
                             break

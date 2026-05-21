@@ -101,11 +101,10 @@ class LibtorrentService:
             # Announce to all trackers (HTTP only will work through proxy)
             'announce_to_all_trackers': True,
             'announce_to_all_tiers': True,
-            # Conservative settings for Tor
-            'connections_limit': 100,
-            'active_downloads': 4,
-            'active_seeds': 2,
-            'active_limit': 8,
+            'connections_limit': 200,
+            'active_downloads': -1,
+            'active_seeds': -1,
+            'active_limit': -1,
             # Disable IPv6 - SOCKS4/HTTP proxy doesn't support it
             'enable_ip_notifier': False,
         }
