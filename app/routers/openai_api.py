@@ -545,14 +545,17 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 _has_triple = bool(re.search(r'\\\"\\\"\\\"', _raw_ast) or "'''" in _raw_ast)
                                 logger.info(f"[WRITE-PY] tool={last_tool_name} file={_py_file} has_triple={_has_triple} raw_len={len(_raw_ast)}")
                                 if _has_triple:
-                                    content_str += (
-                                        f"\n\n[WRITE-TRUNCATION-RISK: {_py_file} contains triple-quoted strings (\"\"\" or '''). "
-                                        f"These always get truncated at the output token limit and will cause SyntaxErrors. "
-                                        f"DO NOT run py_compile — rewrite {_py_file} now using only single-line strings joined with +:\n"
+                                    content_str = (
+                                        f"[WRITE-BLOCKED: {_py_file} contains triple-quoted strings (\"\"\" or '''). "
+                                        f"The file was NOT saved — triple-quoted strings always get cut off at the token limit and cause SyntaxErrors. "
+                                        f"You MUST rewrite {_py_file} using ONLY single-line strings joined with +. "
+                                        f"No triple quotes. No multi-line f-strings. Use this pattern:\n"
                                         f"  h = ('<tag>line1</tag>'\n"
-                                        f"       '<tag>line2</tag>')\n"
-                                        f"Keep under 40 lines and write the file again before continuing.]"
+                                        f"       '<tag>line2</tag>'\n"
+                                        f"       '<tag>line3</tag>')\n"
+                                        f"Keep the file under 35 lines total. Write it again now — do not run py_compile until you have rewritten without triple quotes.]"
                                     )
+                                    logger.info(f"[WRITE-BLOCKED] Replaced Write result for {_py_file} — triple quotes detected")
                                 else:
                                     content_str += f"\n\n[PROXY REMINDER: After editing Python files, always verify syntax before continuing: bash(command='python3 -m py_compile {_py_file} && echo OK')]"
                         break
