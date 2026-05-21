@@ -74,7 +74,7 @@ reset_pyfw() {
 
 run_pyfw() {
     log "[pyfw] Running opencode on router.lan..."
-    ssh_router "cd /opt/python-firewall && timeout 900 ~/.opencode/bin/opencode run --model '$MODEL' 'Completely redesign BOTH html.py AND cli.py with a full cyberpunk neon theme. WRITE ORDER: write html.py FIRST, then cli.py. Requirements for html.py: full cyberpunk HTML/CSS/JS overhaul — dark background (#0a0a0f), neon glowing borders, cyan/magenta color scheme with text-shadow glow, scanline overlay, box-shadow pulse effects. Use these words: neon, glow, cyberpunk, glitch. CRITICAL html.py requirement: the magnifying glass search icon must open a modal popup dialog (with id modal or class modal, plus an overlay div, plus JavaScript to toggle display). Do NOT navigate to a new page. Requirements for cli.py: use colorama throughout with neon cyan/magenta ANSI colors. Import EVERY name from colorama that you use: from colorama import Fore, Back, Style, init. Use at least 10 color escape sequences. Both files must be completely rewritten with the new design. IMPORTANT: Write the COMPLETE file content in each Write call — do NOT add ... [truncated] or cut off mid-file.'" || true
+    ssh_router "cd /opt/python-firewall && timeout 900 ~/.opencode/bin/opencode run --model '$MODEL' 'Completely redesign BOTH html.py AND cli.py with a full cyberpunk neon theme. WRITE ORDER: write html.py FIRST, then cli.py. Requirements for html.py: full cyberpunk HTML/CSS/JS overhaul — dark background (#0a0a0f), neon glowing borders, cyan/magenta color scheme with text-shadow glow, scanline overlay, box-shadow pulse effects. Use these words: neon, glow, cyberpunk, glitch. CRITICAL html.py requirement: the magnifying glass search icon must open a modal popup dialog (with id modal or class modal, plus an overlay div, plus JavaScript to toggle display). Do NOT navigate to a new page. CRITICAL: the main function in html.py MUST be named buildWeb (firewall.py imports it as: from html import buildWeb). Requirements for cli.py: use colorama throughout with neon cyan/magenta ANSI colors. Import EVERY name from colorama that you use: from colorama import Fore, Back, Style, init. Use at least 10 color escape sequences. Both files must be completely rewritten with the new design. IMPORTANT: Write the COMPLETE file content in each Write call — do NOT add ... [truncated] or cut off mid-file.'" || true
 }
 
 verify_pyfw() {
@@ -89,6 +89,10 @@ verify_pyfw() {
 
         python3 -m py_compile cli.py 2>/dev/null || { echo "[pyfw] FAIL: cli.py syntax error"; exit 1; }
         python3 -m py_compile html.py 2>/dev/null || { echo "[pyfw] FAIL: html.py syntax error"; exit 1; }
+
+        # Ensure html.py still exports buildWeb (firewall.py does: from html import buildWeb)
+        python3 -c "import sys; sys.path.insert(0, '.'); from html import buildWeb" 2>/dev/null \
+            || { echo "[pyfw] FAIL: html.py must define or alias buildWeb (firewall.py imports it)"; exit 1; }
 
         # Check colorama names are actually imported — catches NameError: Style/Fore/Back not defined
         for CNAME in Fore Back Style; do
