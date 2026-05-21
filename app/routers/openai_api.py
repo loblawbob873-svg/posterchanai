@@ -579,13 +579,59 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 write_block_count[_py_file] = write_block_count.get(_py_file, 0) + 1
                                 _prior_blocks = write_block_count[_py_file] - 1
                                 if _orig_write_ok:
-                                    # File WAS actually saved — tell the model to verify and move on
-                                    content_str = (
-                                        f"[WRITE-SAVED: {_py_file} was written to disk (Wrote file successfully). "
-                                        f"NOTE: it used triple-quoted strings — for future files use single-line strings joined with + to avoid truncation. "
-                                        f"MANDATORY SYNTAX CHECK: run python3 -m py_compile {_py_file} && echo SYNTAX_OK now. "
-                                        f"Then write any other files you still need to change.]"
-                                    )
+                                    # File WAS actually saved — run py_compile proactively and report result
+                                    import subprocess as _sp2
+                                    _ws_client_h = _request_client_host.get()
+                                    _ws_pyc_ok = True
+                                    _ws_pyc_detail = ''
+                                    try:
+                                        _ws_pyc_cmd = f"python3 -m py_compile '{_py_file}' 2>&1 && echo PYCOMPILE_OK"
+                                        if _ws_client_h:
+                                            _ws_r = _sp2.run(
+                                                ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
+                                                 _ws_client_h, _ws_pyc_cmd],
+                                                capture_output=True, timeout=10
+                                            )
+                                            _ws_out = _ws_r.stdout.decode('utf-8', errors='replace').strip()
+                                        else:
+                                            _ws_out = 'PYCOMPILE_OK'
+                                        _ws_pyc_ok = 'PYCOMPILE_OK' in _ws_out
+                                        if not _ws_pyc_ok:
+                                            _ws_err_lines = [l for l in _ws_out.splitlines() if l.strip()]
+                                            _ws_ln_m = re.search(r'line (\d+)', _ws_out)
+                                            _ws_fail_line = ''
+                                            if _ws_ln_m:
+                                                try:
+                                                    _ws_lc_r = _sp2.run(
+                                                        ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
+                                                         _ws_client_h, f"sed -n '{_ws_ln_m.group(1)}p' '{_py_file}'"],
+                                                        capture_output=True, timeout=10
+                                                    )
+                                                    _ws_fail_line = _ws_lc_r.stdout.decode('utf-8', errors='replace').rstrip()
+                                                except Exception:
+                                                    pass
+                                            _ws_pyc_detail = '\n'.join(_ws_err_lines)
+                                            if _ws_fail_line:
+                                                _ws_pyc_detail += f'\nFailing line {_ws_ln_m.group(1)}: {_ws_fail_line}'
+                                            logger.info(f"[WRITE-SAVED] py_compile FAIL for {_py_file}: {_ws_pyc_detail[:200]}")
+                                        else:
+                                            logger.info(f"[WRITE-SAVED] py_compile OK for {_py_file}")
+                                    except Exception as _ws_e:
+                                        logger.warning(f"[WRITE-SAVED] py_compile check error: {_ws_e}")
+                                    if _ws_pyc_ok:
+                                        content_str = (
+                                            f"[WRITE-SAVED: {_py_file} was written to disk. "
+                                            f"NOTE: used triple-quoted strings — future files should use single-line strings joined with + to avoid truncation. "
+                                            f"SYNTAX_OK (py_compile passed). Write any other files you still need to change.]"
+                                        )
+                                    else:
+                                        content_str = (
+                                            f"[WRITE-SAVED: {_py_file} was written to disk. "
+                                            f"SYNTAX ERROR detected:\n{_ws_pyc_detail}\n"
+                                            f"Fix this error in {_py_file}. Do NOT use triple-quoted strings or f-strings with unescaped braces. "
+                                            f"CSS/HTML curly braces {{}} in regular strings are fine, but in f-strings they must be {{{{}}}}. "
+                                            f"Rewrite {_py_file.rsplit('/', 1)[-1]} now.]"
+                                        )
                                 elif _prior_blocks == 0:
                                     content_str = (
                                         f"[WRITE-BLOCKED: {_py_file} was NOT saved — it contains triple-quoted strings (\"\"\" or ''') which always get truncated. "
