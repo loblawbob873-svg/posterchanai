@@ -462,6 +462,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
     bash_cmd_count = {}   # command string -> how many times it's been called
     bash_history = []     # ordered list of bash commands issued so far
     write_block_count = {}  # file path -> how many times WRITE-BLOCKED has fired for it this call
+    _token_limit_trunc_files = set()  # files where TOKEN-LIMIT-TRUNC fired — always re-verify syntax after rewrite
     non_bash_write_done = False  # True if model used write_file/str_replace/edit tool (non-bash)
     fetch_head_reset_done = False  # True after model successfully runs reset --hard FETCH_HEAD
     colorize_task_done = False     # True after model successfully colorizes a .sh file
@@ -583,8 +584,9 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                         f"then return h. Under 30 lines. No triple quotes anywhere. Write now.]"
                                     )
                                 logger.info(f"[WRITE-BLOCKED] attempt={_prior_blocks+1} for {_py_file}")
-                            elif not _recent_pycompile:
-                                # Only inject MANDATORY SYNTAX CHECK if py_compile wasn't recently run
+                            elif not _recent_pycompile or _py_file in _token_limit_trunc_files:
+                                # Force MANDATORY SYNTAX CHECK if py_compile not recently run,
+                                # OR if this file previously triggered TOKEN-LIMIT-TRUNC (failed py_compile)
                                 content_str = (
                                     f"[MANDATORY SYNTAX CHECK: {_py_file} was saved. "
                                     f"STOP — do NOT write any other file yet. "
@@ -709,6 +711,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     f"Write the complete short file to '{_pyc_fullpath or _pyc_fname}' NOW.]"
                 )
                 logger.info(f"[TOKEN-LIMIT-TRUNC] py_compile SyntaxError after Write truncation — injecting short-design hint for {_pyc_fname}")
+                if _pyc_fullpath:
+                    _token_limit_trunc_files.add(_pyc_fullpath)
             # Intercept sed syntax errors — unify into one clear fix instruction
             elif _sed_error:
                 content_str += (
