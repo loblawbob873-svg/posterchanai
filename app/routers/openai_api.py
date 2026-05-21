@@ -655,6 +655,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     # (files with Write+filePath are already tracked; the missing-filePath write targets a different file)
                     _auto_target = None
                     if _auto_content:
+                        import os as _os
                         _all_read_pys = []
                         for _r in result:
                             if _r.get("role") == "assistant":
@@ -665,14 +666,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                     _rp = _rm.group(1)
                                     if _rp not in _all_read_pys:
                                         _all_read_pys.append(_rp)
-                        import os as _os
+                        def _is_attempted(_p):
+                            _b = _os.path.basename(_p)
+                            return (_p in _write_attempted_paths or
+                                    any(_os.path.basename(s) == _b for s in _write_attempted_paths) or
+                                    _p in _write_success_paths or
+                                    any(_os.path.basename(s) == _b for s in _write_success_paths))
                         for _rp in reversed(_all_read_pys):
-                            _rp_base = _os.path.basename(_rp)
-                            _in_attempted = (_rp in _write_attempted_paths or
-                                             any(_os.path.basename(s) == _rp_base for s in _write_attempted_paths))
-                            _in_recovered = (_rp in _write_success_paths or
-                                             any(_os.path.basename(s) == _rp_base for s in _write_success_paths))
-                            if not _in_attempted and not _in_recovered:
+                            if not _is_attempted(_rp):
                                 _auto_target = _rp
                                 break
                         # Resolve relative path using a known absolute path from _write_attempted_paths
@@ -681,6 +682,19 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             for _ap in _write_attempted_paths:
                                 if _os.path.isabs(_ap) and _os.path.basename(_ap) != _base:
                                     _auto_target = _os.path.join(_os.path.dirname(_ap), _base)
+                                    break
+                        # Fallback: scan all conversation text for .py paths in same dirs as attempted writes
+                        if not _auto_target and _write_attempted_paths:
+                            _auto_dirs = {_os.path.dirname(_p) for _p in _write_attempted_paths if _os.path.isabs(_p)}
+                            _mentioned_pys = []
+                            for _r in result:
+                                for _mp in re.finditer(r'(/[\w./-]+\.py)\b', _r.get("content", "")):
+                                    _p = _mp.group(1)
+                                    if _os.path.dirname(_p) in _auto_dirs and _p not in _mentioned_pys:
+                                        _mentioned_pys.append(_p)
+                            for _mp in reversed(_mentioned_pys):
+                                if not _is_attempted(_mp):
+                                    _auto_target = _mp
                                     break
 
                     if _auto_content and _auto_target:
