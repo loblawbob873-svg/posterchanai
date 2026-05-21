@@ -540,56 +540,58 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         if _py_m:
                             _py_file = _py_m.group(1)
                             _recent_pycompile = any("py_compile" in c for c in bash_history[-4:])
-                            if not _recent_pycompile:
-                                # Warn immediately if written content has triple-quoted strings (will be truncated)
-                                _raw_ast = _r.get("content", "")
-                                # Block triple-quoted content strings — but not bare module/function docstrings.
-                                # For """ (double): only fire in content-generating contexts (return/assignment),
-                                #   since docstrings also use """ and we don't want to block those.
-                                # For ''' (single): fire on any occurrence — this model uses """ for docstrings,
-                                #   so ''' in the output is always data/content, never a docstring.
-                                _has_triple = bool(
-                                    re.search(r'return\s+f?\\\"\\\"\\\"', _raw_ast) or
-                                    re.search(r'=\s*f?\\\"\\\"\\\"', _raw_ast) or
-                                    "'''" in _raw_ast
-                                )
-                                logger.info(f"[WRITE-PY] tool={last_tool_name} file={_py_file} has_triple={_has_triple} raw_len={len(_raw_ast)}")
-                                if _has_triple:
-                                    write_block_count[_py_file] = write_block_count.get(_py_file, 0) + 1
-                                    _prior_blocks = write_block_count[_py_file] - 1
-                                    if _prior_blocks == 0:
-                                        content_str = (
-                                            f"[WRITE-BLOCKED: {_py_file} was NOT saved — it contains triple-quoted strings (\"\"\" or ''') which always get truncated. "
-                                            f"Rewrite {_py_file} using ONLY single-line strings joined with +. No triple quotes, no multi-line f-strings. Pattern:\n"
-                                            f"  h = ('<tag>line1</tag>'\n"
-                                            f"       '<tag>line2</tag>')\n"
-                                            f"Under 35 lines. Write it again now.]"
-                                        )
-                                    elif _prior_blocks == 1:
-                                        content_str = (
-                                            f"[WRITE-BLOCKED (attempt 2): Still triple-quoted strings in {_py_file}. "
-                                            f"DIFFERENT approach required: use a list and join.\n"
-                                            f"  parts = ['<line1>', '<line2>', '<line3>']\n"
-                                            f"  h = ''.join(parts)\n"
-                                            f"  return h\n"
-                                            f"No return f\"\"\"..., no triple quotes at all. Write the file now with this structure.]"
-                                        )
-                                    else:
-                                        content_str = (
-                                            f"[WRITE-BLOCKED (attempt {_prior_blocks + 1}): You keep using triple-quoted strings. STOP. "
-                                            f"Write {_py_file} as a single string built from concatenation on ONE line per HTML element. "
-                                            f"Build the entire HTML as: h = '<html>' + '<body>' + content_var + '</body>' + '</html>' "
-                                            f"then return h. Under 30 lines. No triple quotes anywhere. Write now.]"
-                                        )
-                                    logger.info(f"[WRITE-BLOCKED] attempt={_prior_blocks+1} for {_py_file}")
+                            # Warn immediately if written content has triple-quoted strings (will be truncated)
+                            _raw_ast = _r.get("content", "")
+                            # Block triple-quoted content strings — but not bare module/function docstrings.
+                            # For """ (double): only fire in content-generating contexts (return/assignment),
+                            #   since docstrings also use """ and we don't want to block those.
+                            # For ''' (single): fire on any occurrence — this model uses """ for docstrings,
+                            #   so ''' in the output is always data/content, never a docstring.
+                            _has_triple = bool(
+                                re.search(r'return\s+f?\\\"\\\"\\\"', _raw_ast) or
+                                re.search(r'=\s*f?\\\"\\\"\\\"', _raw_ast) or
+                                "'''" in _raw_ast
+                            )
+                            logger.info(f"[WRITE-PY] tool={last_tool_name} file={_py_file} has_triple={_has_triple} raw_len={len(_raw_ast)}")
+                            if _has_triple:
+                                # WRITE-BLOCKED always fires for triple quotes — regardless of recent py_compile,
+                                # so the escalation counter accumulates correctly across all rounds.
+                                write_block_count[_py_file] = write_block_count.get(_py_file, 0) + 1
+                                _prior_blocks = write_block_count[_py_file] - 1
+                                if _prior_blocks == 0:
+                                    content_str = (
+                                        f"[WRITE-BLOCKED: {_py_file} was NOT saved — it contains triple-quoted strings (\"\"\" or ''') which always get truncated. "
+                                        f"Rewrite {_py_file} using ONLY single-line strings joined with +. No triple quotes, no multi-line f-strings. Pattern:\n"
+                                        f"  h = ('<tag>line1</tag>'\n"
+                                        f"       '<tag>line2</tag>')\n"
+                                        f"Under 35 lines. Write it again now.]"
+                                    )
+                                elif _prior_blocks == 1:
+                                    content_str = (
+                                        f"[WRITE-BLOCKED (attempt 2): Still triple-quoted strings in {_py_file}. "
+                                        f"DIFFERENT approach required: use a list and join.\n"
+                                        f"  parts = ['<line1>', '<line2>', '<line3>']\n"
+                                        f"  h = ''.join(parts)\n"
+                                        f"  return h\n"
+                                        f"No return f\"\"\"..., no triple quotes at all. Write the file now with this structure.]"
+                                    )
                                 else:
                                     content_str = (
-                                        f"[MANDATORY SYNTAX CHECK: {_py_file} was saved. "
-                                        f"STOP — do NOT write any other file yet. "
-                                        f"You MUST run this bash command RIGHT NOW before proceeding: "
-                                        f"bash(command='python3 -m py_compile {_py_file} && echo SYNTAX_OK'). "
-                                        f"If it fails, fix the syntax error before writing anything else.]"
+                                        f"[WRITE-BLOCKED (attempt {_prior_blocks + 1}): You keep using triple-quoted strings. STOP. "
+                                        f"Write {_py_file} as a single string built from concatenation on ONE line per HTML element. "
+                                        f"Build the entire HTML as: h = '<html>' + '<body>' + content_var + '</body>' + '</html>' "
+                                        f"then return h. Under 30 lines. No triple quotes anywhere. Write now.]"
                                     )
+                                logger.info(f"[WRITE-BLOCKED] attempt={_prior_blocks+1} for {_py_file}")
+                            elif not _recent_pycompile:
+                                # Only inject MANDATORY SYNTAX CHECK if py_compile wasn't recently run
+                                content_str = (
+                                    f"[MANDATORY SYNTAX CHECK: {_py_file} was saved. "
+                                    f"STOP — do NOT write any other file yet. "
+                                    f"You MUST run this bash command RIGHT NOW before proceeding: "
+                                    f"bash(command='python3 -m py_compile {_py_file} && echo SYNTAX_OK'). "
+                                    f"If it fails, fix the syntax error before writing anything else.]"
+                                )
                         break
             # If Write tool failed with missing filePath, inject recovery hint
             if last_tool_name.lower() in ("edit", "write", "str_replace_based_edit_tool", "str_replace"):
