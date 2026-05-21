@@ -543,7 +543,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             if not _recent_pycompile:
                                 # Warn immediately if written content has triple-quoted strings (will be truncated)
                                 _raw_ast = _r.get("content", "")
-                                _has_triple = bool(re.search(r'\\\"\\\"\\\"', _raw_ast) or "'''" in _raw_ast)
+                                # Only block if triple quotes are used in content-generating contexts
+                                # (return f"""...""", h = """...""") — not just module/function docstrings
+                                _has_triple = bool(
+                                    re.search(r'return\s+f?\\\"\\\"\\\"', _raw_ast) or
+                                    re.search(r'=\s*f?\\\"\\\"\\\"', _raw_ast) or
+                                    re.search(r"return\s+f?'''", _raw_ast) or
+                                    re.search(r"=\s*f?'''", _raw_ast)
+                                )
                                 logger.info(f"[WRITE-PY] tool={last_tool_name} file={_py_file} has_triple={_has_triple} raw_len={len(_raw_ast)}")
                                 if _has_triple:
                                     write_block_count[_py_file] = write_block_count.get(_py_file, 0) + 1
