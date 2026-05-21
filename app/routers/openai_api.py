@@ -596,13 +596,11 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             if not _recent_pycompile:
                                 _is_html_py = re.search(r'\bhtml\.py\b', _py_file or "")
                                 if _is_html_py:
-                                    _pyfw_dir = _py_file.rsplit('/', 1)[0] if '/' in _py_file else '.'
                                     content_str += (
                                         f"\n\n[MANDATORY: Verify html.py RIGHT NOW before writing any other file. "
-                                        f"Run both checks: "
-                                        f"bash(command='python3 -m py_compile {_py_file} && echo SYNTAX_OK && cd {_pyfw_dir} && python3 -c \"import sys; sys.path.insert(0,\\\".\\\"); from html import buildWeb; print(\\\"BUILDWEB_OK\\\")\"') "
-                                        f"If SYNTAX_OK but BUILDWEB_OK is missing: the function is not named buildWeb — rename it to buildWeb. "
-                                        f"Do NOT write cli.py until both SYNTAX_OK and BUILDWEB_OK appear.]"
+                                        f"Run: bash(command='python3 -m py_compile {_py_file} && echo SYNTAX_OK && grep -q \"def buildWeb\" {_py_file} && echo BUILDWEB_OK || echo BUILDWEB_MISSING') "
+                                        f"If BUILDWEB_MISSING appears: the main function is not named buildWeb — rename it immediately. "
+                                        f"Do NOT write cli.py until SYNTAX_OK and BUILDWEB_OK both appear.]"
                                     )
                                 else:
                                     content_str += f"\n\n[PROXY REMINDER: After editing Python files, always verify syntax before continuing: bash(command='python3 -m py_compile {_py_file} && echo OK')]"
