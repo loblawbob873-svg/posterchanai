@@ -661,6 +661,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 break
 
                     if _auto_content and _auto_target:
+                        # Resolve relative path using a known absolute path from _write_success_paths
+                        import os as _os
+                        if not _os.path.isabs(_auto_target):
+                            _base = _os.path.basename(_auto_target)
+                            for _sp in _write_success_paths:
+                                if _os.path.basename(_sp) != _base:
+                                    _auto_target = _os.path.join(_os.path.dirname(_sp), _base)
+                                    break
                         try:
                             with open(_auto_target, 'w') as f:
                                 f.write(_auto_content)
