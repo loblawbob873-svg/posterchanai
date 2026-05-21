@@ -463,6 +463,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
     bash_history = []     # ordered list of bash commands issued so far
     write_block_count = {}  # file path -> how many times WRITE-BLOCKED has fired for it this call
     _token_limit_trunc_files = set()  # files where TOKEN-LIMIT-TRUNC fired — always re-verify syntax after rewrite
+    _syntax_err_count = {}  # file path -> how many times SYNTAX-BRACKET-ERR or TOKEN-LIMIT-TRUNC has fired
     non_bash_write_done = False  # True if model used write_file/str_replace/edit tool (non-bash)
     fetch_head_reset_done = False  # True after model successfully runs reset --hard FETCH_HEAD
     colorize_task_done = False     # True after model successfully colorizes a .sh file
@@ -717,15 +718,43 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     # Extract the error line for context
                     _err_line_m = re.search(r'line (\d+)', content_str)
                     _err_line = f" (line {_err_line_m.group(1)})" if _err_line_m else ""
-                    content_str = (
-                        f"[SYNTAX ERROR: {_pyc_fname} has a bracket/parenthesis mismatch{_err_line} — NOT a truncation issue. "
-                        f"The file was saved but Python cannot parse it. "
-                        f"Two most common causes: "
-                        f"(1) CSS/HTML {{}} in an f-string — f-strings interpret {{}} as interpolation; use regular strings or escape as {{{{}}}}. "
-                        f"(2) An implicit line-continuation tuple like h = ('line1' 'line2') where the closing ) is missing. "
-                        f"Read {_pyc_fname}, find line {_err_line.strip() or 'N'}, fix the specific mismatch, then rewrite the file.]"
-                    )
-                    logger.info(f"[SYNTAX-BRACKET-ERR] bracket mismatch in {_pyc_fname} — injecting fix hint")
+                    _err_line_num = _err_line_m.group(1) if _err_line_m else "N"
+                    # Escalate on repeated occurrences — model is stuck on same bug
+                    if _pyc_fullpath:
+                        _syntax_err_count[_pyc_fullpath] = _syntax_err_count.get(_pyc_fullpath, 0) + 1
+                    _bracket_attempt = _syntax_err_count.get(_pyc_fullpath, 1)
+                    if _bracket_attempt <= 1:
+                        content_str = (
+                            f"[SYNTAX ERROR: {_pyc_fname} has a bracket/parenthesis mismatch{_err_line} — NOT a truncation issue. "
+                            f"The file was saved but Python cannot parse it. "
+                            f"Two most common causes: "
+                            f"(1) CSS/HTML {{}} in an f-string — f-strings interpret {{}} as interpolation; use regular strings or escape as {{{{}}}}. "
+                            f"(2) An implicit line-continuation tuple like h = ('line1' 'line2') where the closing ) is missing — "
+                            f"every opening '(' must have a closing ')' before end of file. "
+                            f"Read {_pyc_fname}, find line {_err_line_num}, fix the mismatch, rewrite the file.]"
+                        )
+                    elif _bracket_attempt == 2:
+                        content_str = (
+                            f"[SYNTAX ERROR (attempt 2): {_pyc_fname} STILL has the bracket mismatch at line {_err_line_num}. "
+                            f"STOP using the h = ('...' '...') pattern — it requires a closing ) that you keep omitting. "
+                            f"Switch to string concatenation instead: "
+                            f"  h = ''\n"
+                            f"  h += '<tag>line1</tag>'\n"
+                            f"  h += '<tag>line2</tag>'\n"
+                            f"  return h\n"
+                            f"Rewrite {_pyc_fname} using this h += approach. No tuple, no open (. Under 35 lines.]"
+                        )
+                    else:
+                        content_str = (
+                            f"[SYNTAX ERROR (attempt {_bracket_attempt}): {_pyc_fname} has had this bracket mismatch {_bracket_attempt} times. "
+                            f"COMPLETELY DIFFERENT APPROACH: do NOT use any parenthesis-based grouping at all. "
+                            f"Build the string on ONE variable using only + operator: "
+                            f"  h = '<html>' + '<body>' + '<div>content</div>' + '</body>' + '</html>'\n"
+                            f"  return h\n"
+                            f"No h = (...), no h += in a loop, just one assignment with + between each part. "
+                            f"Write {_pyc_fname} with this flat concatenation style now. Under 30 lines.]"
+                        )
+                    logger.info(f"[SYNTAX-BRACKET-ERR] attempt={_bracket_attempt} bracket mismatch in {_pyc_fname}{_err_line}")
                 else:
                     content_str = (
                         f"[TOKEN LIMIT: {_pyc_fname} was truncated mid-file — triple-quoted strings always get cut off. "
@@ -740,6 +769,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     logger.info(f"[TOKEN-LIMIT-TRUNC] py_compile SyntaxError after Write truncation — injecting short-design hint for {_pyc_fname}")
                 if _pyc_fullpath:
                     _token_limit_trunc_files.add(_pyc_fullpath)
+                    if not _is_bracket_mismatch:
+                        _syntax_err_count[_pyc_fullpath] = _syntax_err_count.get(_pyc_fullpath, 0) + 1
             # Intercept sed syntax errors — unify into one clear fix instruction
             elif _sed_error:
                 content_str += (
