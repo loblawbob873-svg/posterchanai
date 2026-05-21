@@ -1393,7 +1393,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         )
             # Detect repeated successful command — build/deploy scripts run multiple times with same success output
             _is_build_or_deploy_cmd = bool(re.search(
-                r'\./\S+\.sh\b|flutter\s+build|flutter\s+pub|gradle|make\s+|npm\s+run\s+build|cargo\s+build|pip\s+install\s',
+                r'(?:\./|)\S+\.sh\b|flutter\s+build|flutter\s+pub|gradle|make\s+|npm\s+run\s+build|cargo\s+build|pip\s+install\s',
                 last_cmd or ""
             ))
             _is_repeated_success = (
@@ -2774,15 +2774,28 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                         _cap_cmd
                     ))
                     if not _cap_cmd_is_write:
-                        _adict_cap["command"] = (
-                            "echo '[BASH BLOCKED: Exploration cap reached. Stop running bash commands. "
-                            "You have already read the files you need. "
-                            "THIS SINGLE RESPONSE must include Write tool calls for EVERY file that needs to change. "
-                            "Include multiple Write calls back-to-back in this same response — no Bash between them. "
-                            "Write the COMPLETE redesigned content for each file, one after another. "
-                            "Do NOT write one file and then run bash to verify — write ALL files first in this response, "
-                            "then check syntax in a single bash call at the very end.]'"
+                        # If BASH BLOCKED already fired once, use a different marker to avoid LOOP-SC
+                        _bash_blocked_already = any(
+                            "[BASH BLOCKED:" in str(m.get("content") or "")
+                            for m in messages if m.get("role") == "user"
                         )
+                        if _bash_blocked_already:
+                            _adict_cap["command"] = (
+                                "echo '[WRITE NOW: The exploration cap already fired — bash is still blocked. "
+                                "Use Write tool calls immediately. Do NOT run any more bash commands. "
+                                "Write EVERY file that needs to change in this response, back-to-back Write calls.]'"
+                            )
+                            logger.info("[EXPLORATION-CAP-BLOCK] Bash already blocked once — using WRITE NOW marker")
+                        else:
+                            _adict_cap["command"] = (
+                                "echo '[BASH BLOCKED: Exploration cap reached. Stop running bash commands. "
+                                "You have already read the files you need. "
+                                "THIS SINGLE RESPONSE must include Write tool calls for EVERY file that needs to change. "
+                                "Include multiple Write calls back-to-back in this same response — no Bash between them. "
+                                "Write the COMPLETE redesigned content for each file, one after another. "
+                                "Do NOT write one file and then run bash to verify — write ALL files first in this response, "
+                                "then check syntax in a single bash call at the very end.]'"
+                            )
                         _tc_cap = {**_tc_cap, "function": {**_fn_cap, "arguments": json.dumps(_adict_cap)}}
                         logger.info("[EXPLORATION-CAP-BLOCK] Blocked bash call after exploration cap — no writes yet")
                     else:
@@ -2834,7 +2847,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 _cmd_m = re.search(r'"command"\s*:\s*"((?:[^"\\]|\\.){1,200})"', str(_prev_ast.get("content") or ""))
                 if _cmd_m:
                     _scmd = _cmd_m.group(1).replace('\\"', '"').strip()
-                    if re.search(r'\./\S+\.sh\b|flutter\s+build|gradle|make\s+|npm\s+run\s+build|cargo\s+build', _scmd):
+                    if re.search(r'(?:\./|)\S+\.sh\b|flutter\s+build|gradle|make\s+|npm\s+run\s+build|cargo\s+build', _scmd):
                         _successful_build_cmds.add(_scmd)
     if _successful_build_cmds and tool_calls:
         _new_tcs_build = []
