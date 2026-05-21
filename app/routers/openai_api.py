@@ -598,7 +598,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                     f"If it fails, fix the syntax error before writing anything else.]"
                                 )
                         break
-            # If Write tool failed with missing filePath, inject recovery hint
+            # If Write tool failed with missing filePath, REPLACE error with recovery instruction
             if last_tool_name.lower() in ("edit", "write", "str_replace_based_edit_tool", "str_replace"):
                 if 'Missing key' in content_str and 'filePath' in content_str:
                     # Try to find last path from history
@@ -609,18 +609,15 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             if _m:
                                 _schema_path = _m.group(1)
                                 break
-                    if _schema_path:
-                        content_str += (
-                            f"\n\n[PROXY: Write failed — filePath was missing from your tool call. "
-                            f"Retry with explicit path: Write(filePath='{_schema_path}', content='...'). "
-                            f"Write a SHORT file (under 60 lines) to avoid truncation.]"
-                        )
-                    else:
-                        content_str += (
-                            "\n\n[PROXY: Write failed — filePath was missing from your tool call. "
-                            "You must include the file path. Retry: Write(filePath='/full/path/to/file.py', content='...'). "
-                            "Write a SHORT file (under 60 lines) to avoid truncation.]"
-                        )
+                    _target = f"'{_schema_path}'" if _schema_path else "'/full/path/to/file.py'"
+                    # Replace entirely — appending gets ignored by deterministic models
+                    content_str = (
+                        f"[WRITE-FAILED: The Write tool requires BOTH 'filePath' AND 'content' as named parameters. "
+                        f"Your call was missing 'filePath'. "
+                        f"CORRECT FORMAT: Write(filePath={_target}, content='...full file content...'). "
+                        f"Do NOT omit filePath. Do NOT use positional arguments. "
+                        f"Write the file now using the exact format above.]"
+                    )
                     logger.info("[WRITE-SCHEMA-ERR] Write failed with missing filePath — injecting recovery hint")
             # After reading a Python source file, remind the model to edit it directly
             if last_tool_name.lower() in ("read", "read_file", "view") and not non_bash_write_done:
