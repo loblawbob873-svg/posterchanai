@@ -8,9 +8,12 @@ import logging
 import os
 import re
 import uuid
+from contextvars import ContextVar
 from datetime import datetime
 from typing import Optional, AsyncGenerator
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Request
+
+_request_client_host: ContextVar[str] = ContextVar('_request_client_host', default='')
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -322,6 +325,7 @@ async def v1_chat_completions(
         logger.info(f"Detected load-balanced request (header=true), skipping load balancing to prevent loops")
     else:
         logger.debug(f"Request user-agent: {user_agent[:100] if user_agent else 'None'}, load-balanced header: {load_balanced_header}")
+    _request_client_host.set(http_request.client.host if http_request.client else "")
     return await _handle_chat_completions(request, db, skip_load_balancer=skip_lb)
 
 
@@ -348,6 +352,7 @@ async def api_chat_completions(
     skip_lb = load_balanced_header == "true"
     if skip_lb:
         logger.info(f"Detected load-balanced request (header=true), skipping load balancing")
+    _request_client_host.set(http_request.client.host if http_request.client else "")
     return await _handle_chat_completions(request, db, skip_load_balancer=skip_lb)
 
 
@@ -374,6 +379,7 @@ async def root_chat_completions(
     skip_lb = load_balanced_header == "true"
     if skip_lb:
         logger.info(f"Detected load-balanced request (header=true), skipping load balancing")
+    _request_client_host.set(http_request.client.host if http_request.client else "")
     return await _handle_chat_completions(request, db, skip_load_balancer=skip_lb)
 
 
@@ -465,8 +471,9 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
     _token_limit_trunc_files = set()  # files where TOKEN-LIMIT-TRUNC fired — always re-verify syntax after rewrite
     _syntax_err_count = {}  # file path -> how many times SYNTAX-BRACKET-ERR or TOKEN-LIMIT-TRUNC has fired
     _write_failed_count = 0  # how many consecutive Write-tool schema failures have occurred
-    _write_success_paths = set()  # .py files confirmed written (Write followed by "Wrote file successfully", not WRITE-BLOCKED)
-    _pending_write_path = None    # filePath from most recent Write/Edit tool call (to track success)
+    _write_success_paths = set()   # .py files confirmed written (Write followed by "Wrote file successfully", not WRITE-BLOCKED)
+    _write_attempted_paths = set() # .py files where Write was called WITH filePath (regardless of blocking outcome)
+    _pending_write_path = None     # filePath from most recent Write/Edit tool call (to track success)
     non_bash_write_done = False  # True if model used write_file/str_replace/edit tool (non-bash)
     fetch_head_reset_done = False  # True after model successfully runs reset --hard FETCH_HEAD
     colorize_task_done = False     # True after model successfully colorizes a .sh file
@@ -509,6 +516,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     non_bash_write_done = True
                     _fp = args.get("filePath") or args.get("file_path") or args.get("path") or ""
                     _pending_write_path = str(_fp) if _fp else None
+                    if _fp:
+                        _write_attempted_paths.add(str(_fp))
                 # Use XML format matching this model's training format
                 parts.append(f'<tool_call>\n<tool>{name}</tool>\n<input>\n{json.dumps(args, indent=2)}\n</input>\n</tool_call>')
             result.append({"role": "assistant", "content": "\n".join(parts)})
@@ -642,7 +651,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                     pass
                             break
 
-                    # Find target: most recently Read .py file not yet in _write_success_paths
+                    # Find target: most recently Read .py file NOT in _write_attempted_paths
+                    # (files with Write+filePath are already tracked; the missing-filePath write targets a different file)
                     _auto_target = None
                     if _auto_content:
                         _all_read_pys = []
@@ -655,23 +665,54 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                     _rp = _rm.group(1)
                                     if _rp not in _all_read_pys:
                                         _all_read_pys.append(_rp)
+                        import os as _os
                         for _rp in reversed(_all_read_pys):
-                            if _rp not in _write_success_paths:
+                            _rp_base = _os.path.basename(_rp)
+                            _in_attempted = (_rp in _write_attempted_paths or
+                                             any(_os.path.basename(s) == _rp_base for s in _write_attempted_paths))
+                            _in_recovered = (_rp in _write_success_paths or
+                                             any(_os.path.basename(s) == _rp_base for s in _write_success_paths))
+                            if not _in_attempted and not _in_recovered:
                                 _auto_target = _rp
                                 break
+                        # Resolve relative path using a known absolute path from _write_attempted_paths
+                        if _auto_target and not _os.path.isabs(_auto_target):
+                            _base = _os.path.basename(_auto_target)
+                            for _ap in _write_attempted_paths:
+                                if _os.path.isabs(_ap) and _os.path.basename(_ap) != _base:
+                                    _auto_target = _os.path.join(_os.path.dirname(_ap), _base)
+                                    break
 
                     if _auto_content and _auto_target:
-                        # Resolve relative path using a known absolute path from _write_success_paths
-                        import os as _os
-                        if not _os.path.isabs(_auto_target):
-                            _base = _os.path.basename(_auto_target)
-                            for _sp in _write_success_paths:
-                                if _os.path.basename(_sp) != _base:
-                                    _auto_target = _os.path.join(_os.path.dirname(_sp), _base)
-                                    break
-                        try:
-                            with open(_auto_target, 'w') as f:
-                                f.write(_auto_content)
+                        # Try SSH write to client host (proxy may be on a different machine than the model client)
+                        import subprocess as _sp
+                        _client_h = _request_client_host.get()
+                        _wrote_ok = False
+                        if _client_h:
+                            try:
+                                _ssh_r = _sp.run(
+                                    ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', _client_h,
+                                     f"cat > '{_auto_target}'"],
+                                    input=_auto_content.encode('utf-8', errors='replace'),
+                                    capture_output=True, timeout=10
+                                )
+                                if _ssh_r.returncode == 0:
+                                    _wrote_ok = True
+                                    logger.info(f"[WRITE-AUTO-RECOVER] SSH-wrote {_auto_target} ({len(_auto_content)} chars) to {_client_h}")
+                                else:
+                                    logger.warning(f"[WRITE-AUTO-RECOVER] SSH to {_client_h} failed: {_ssh_r.stderr[:200]}")
+                            except Exception as _e:
+                                logger.warning(f"[WRITE-AUTO-RECOVER] SSH exception for {_client_h}: {_e}")
+                        if not _wrote_ok:
+                            # Fallback: try local write
+                            try:
+                                with open(_auto_target, 'w') as f:
+                                    f.write(_auto_content)
+                                _wrote_ok = True
+                                logger.info(f"[WRITE-AUTO-RECOVER] Local-wrote {_auto_target} ({len(_auto_content)} chars)")
+                            except Exception as _e:
+                                logger.warning(f"[WRITE-AUTO-RECOVER] Local write failed for {_auto_target}: {_e}")
+                        if _wrote_ok:
                             _write_success_paths.add(_auto_target)
                             content_str = (
                                 f"Wrote file successfully.\n"
@@ -679,10 +720,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 f"MANDATORY SYNTAX CHECK: run python3 -m py_compile {_auto_target} && echo SYNTAX_OK before writing any other file.]"
                             )
                             _write_failed_count = 0
-                            logger.info(f"[WRITE-AUTO-RECOVER] Wrote {_auto_target} ({len(_auto_content)} chars) from Write call missing filePath")
                             _auto_recovered = True
-                        except Exception as _e:
-                            logger.warning(f"[WRITE-AUTO-RECOVER] Failed to write {_auto_target}: {_e}")
 
                     if not _auto_recovered:
                         # Fallback: guide model to fix the Write call
