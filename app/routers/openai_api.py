@@ -697,6 +697,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                     _auto_target = _mp
                                     break
 
+                    _dbg_read_pys = _all_read_pys if _auto_content else 'skipped'
+                    logger.info(f"[WRITE-AUTO-RECOVER-DEBUG] auto_content={'found('+str(len(_auto_content))+')' if _auto_content else 'None'} auto_target={_auto_target!r} attempted={_write_attempted_paths} read_pys={_dbg_read_pys}")
                     if _auto_content and _auto_target:
                         # Try SSH write to client host (proxy may be on a different machine than the model client)
                         import subprocess as _sp
