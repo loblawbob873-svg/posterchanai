@@ -388,104 +388,6 @@ async def root_list_models(
 
 # ============== Tool call helpers (opencode / agentic) ==============
 
-# Complete verbatim html.py template injected when TOKEN LIMIT fires for python-firewall html.py
-_PYFW_HTML_TEMPLATE = """#!/usr/bin/env python3
-# CRITICAL: function MUST be named buildWeb — firewall.py does: from html import buildWeb
-from commands import get_cpu_usage, get_block_count
-from db import addHTML, clearHTML, getHTML
-from config import REDIRECT
-
-_S = (
-    'body{background:#0a0a0f;color:#0ff;font-family:monospace}'
-    '.neon{text-shadow:0 0 8px #0ff;border:1px solid #0ff}'
-    '.cyberpunk{box-shadow:0 0 15px #0ff}'
-    '.glitch{color:#f0f}'
-    '.glow{box-shadow:0 0 10px #f0f}'
-    '.scanline{position:fixed;top:0;left:0;width:100%;height:100%;'
-    'pointer-events:none;background:repeating-linear-gradient('
-    'transparent,transparent 2px,rgba(0,255,255,.03) 2px,rgba(0,255,255,.03) 4px)}'
-    '#modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:100}'
-    '.overlay{background:rgba(0,0,0,.8);position:fixed;top:0;left:0;width:100%;height:100%}'
-    '.mbox{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);'
-    'background:#0a0a0f;border:1px solid #0ff;padding:20px;z-index:101}'
-)
-
-_J = (
-    'function openModal(){document.getElementById("modal").style.display="block"}'
-    'function closeModal(){document.getElementById("modal").style.display="none"}'
-)
-
-def buildWeb(timestamp):
-    cpu = get_cpu_usage()
-    blocked = get_block_count().strip()
-    h = ('<!DOCTYPE html><html><head><meta charset="utf-8">'
-         '<title>Cyberpunk Firewall</title>'
-         '<style>' + _S + '</style>'
-         '<script>' + _J + '</script>'
-         '</head><body class="cyberpunk neon">'
-         '<div class="scanline"></div>'
-         '<h1 class="neon glitch">&#9888; Cyberpunk Firewall Terminal</h1>'
-         '<button class="neon glow" onclick="openModal()">&#128269;</button>'
-         '<div id="modal">'
-         '<div class="overlay" onclick="closeModal()"></div>'
-         '<div class="mbox neon">'
-         '<h3 class="cyberpunk glitch">Search</h3>'
-         '<input id="search" type="text" placeholder="IP/domain..." '
-         'style="background:#000;color:#0ff;border:1px solid #0ff;width:200px">'
-         '<button onclick="closeModal()" class="neon">&#10005;</button>'
-         '</div></div>'
-         '<div class="neon cyberpunk" style="padding:10px">'
-         + f'<p>CPU: {cpu} | Blocked IPs: {blocked}</p>'
-         + '<p class="glow">Matrix pulse neon glow scanline terminal</p>'
-         '</div>'
-         '</body></html>')
-    addHTML(h)
-    clearHTML()
-    return h
-"""
-
-# Complete verbatim cli.py template injected when TOKEN LIMIT fires for python-firewall cli.py
-_PYFW_CLI_TEMPLATE = """#!/usr/bin/env python3
-from colorama import Fore, Back, Style, init
-import subprocess
-
-init()
-
-NEON_CYAN = Fore.CYAN + Style.BRIGHT
-NEON_MAGENTA = Fore.MAGENTA + Style.BRIGHT
-RESET = Style.RESET_ALL
-DIM = Style.DIM
-
-BANNER = (
-    NEON_CYAN + '+==============================+' + RESET + '\\n' +
-    NEON_MAGENTA + '| CYBERPUNK FIREWALL TERMINAL  |' + RESET + '\\n' +
-    NEON_CYAN + '+==============================+' + RESET
-)
-
-def show_status():
-    print(NEON_MAGENTA + '[STATUS]' + RESET)
-    try:
-        r = subprocess.run(['python3', 'firewall.py', 'status'],
-                           capture_output=True, text=True, cwd='/opt/python-firewall')
-        print(Fore.CYAN + r.stdout + RESET)
-    except Exception as e:
-        print(Fore.RED + 'Error: ' + str(e) + RESET)
-
-def show_header():
-    print(BANNER)
-    print(NEON_CYAN + 'System: ' + RESET + Fore.MAGENTA + 'ACTIVE' + RESET)
-    print(NEON_CYAN + 'Mode:   ' + RESET + Fore.MAGENTA + 'CYBERPUNK' + RESET)
-
-def main():
-    show_header()
-    print(Fore.CYAN + '--- neon glow cyberpunk status ---' + RESET)
-    show_status()
-    print(NEON_MAGENTA + 'MAGENTA pulse active' + RESET)
-    print(NEON_CYAN + 'CYAN scanline active' + RESET)
-
-if __name__ == '__main__':
-    main()
-"""
 
 _TC_RE = re.compile(r'<tool_call>\s*(.*?)\s*</tool_call>', re.DOTALL | re.IGNORECASE)
 _TC_UNCLOSED_RE = re.compile(r'<tool_call>\s*(.*?)$', re.DOTALL | re.IGNORECASE)
@@ -638,24 +540,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             _py_file = _py_m.group(1)
                             _recent_pycompile = any("py_compile" in c for c in bash_history[-4:])
                             if not _recent_pycompile:
-                                _is_html_py = re.search(r'\bhtml\.py\b', _py_file or "")
-                                _is_cli_py = re.search(r'\bcli\.py\b', _py_file or "")
-                                if _is_html_py:
-                                    content_str += (
-                                        f"\n\n[MANDATORY: Verify html.py RIGHT NOW before writing any other file. "
-                                        f"Run: bash(command='python3 -m py_compile {_py_file} && echo SYNTAX_OK && grep -q \"def buildWeb\" {_py_file} && echo BUILDWEB_OK || echo BUILDWEB_MISSING') "
-                                        f"If BUILDWEB_MISSING appears: the main function is not named buildWeb — rename it immediately. "
-                                        f"Do NOT write cli.py until SYNTAX_OK and BUILDWEB_OK both appear.]"
-                                    )
-                                elif _is_cli_py:
-                                    content_str += (
-                                        f"\n\n[MANDATORY: Verify cli.py RIGHT NOW. "
-                                        f"Run: bash(command='python3 -m py_compile {_py_file} && echo SYNTAX_OK && grep -q \"from colorama import\" {_py_file} && echo COLORAMA_OK || echo COLORAMA_MISSING') "
-                                        f"If COLORAMA_MISSING: cli.py MUST use 'from colorama import Fore, Back, Style, init' — NOT a custom Style class. "
-                                        f"Do NOT proceed until SYNTAX_OK and COLORAMA_OK both appear.]"
-                                    )
-                                else:
-                                    content_str += f"\n\n[PROXY REMINDER: After editing Python files, always verify syntax before continuing: bash(command='python3 -m py_compile {_py_file} && echo OK')]"
+                                content_str += f"\n\n[PROXY REMINDER: After editing Python files, always verify syntax before continuing: bash(command='python3 -m py_compile {_py_file} && echo OK')]"
                         break
             # If Write tool failed with missing filePath, inject recovery hint
             if last_tool_name.lower() in ("edit", "write", "str_replace_based_edit_tool", "str_replace"):
@@ -677,10 +562,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     else:
                         content_str += (
                             "\n\n[PROXY: Write failed — filePath was missing from your tool call. "
-                            "You must include the file path. For cli.py use: "
-                            "Write(filePath='/opt/python-firewall/cli.py', content='...'). "
-                            "Write a SHORT file (under 60 lines) with colorama: "
-                            "from colorama import Fore, Back, Style, init. Use Fore.CYAN, Fore.MAGENTA, Style.RESET_ALL.]"
+                            "You must include the file path. Retry: Write(filePath='/full/path/to/file.py', content='...'). "
+                            "Write a SHORT file (under 60 lines) to avoid truncation.]"
                         )
                     logger.info("[WRITE-SCHEMA-ERR] Write failed with missing filePath — injecting recovery hint")
             # After reading a Python source file, remind the model to edit it directly
@@ -764,65 +647,13 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 _pyc_m = re.search(r'py_compile\s+([^\s&|]+\.py)', last_bash_cmd or "")
                 _pyc_fullpath = _pyc_m.group(1) if _pyc_m else None
                 _pyc_fname = _pyc_fullpath.rsplit('/', 1)[-1] if _pyc_fullpath else "the .py file"
-                if "html" in _pyc_fname:
-                    _write_path = _pyc_fullpath or "html.py"
-                    content_str = (
-                        f"[TOKEN LIMIT — html.py was truncated (syntax error). "
-                        f"STOP. Do NOT write a new design. "
-                        f"Write the EXACT content below to {_write_path} using the Write tool. "
-                        f"COPY IT VERBATIM — do not add, remove, or change a single line:\n\n"
-                        + _PYFW_HTML_TEMPLATE
-                        + f"\nWrite the above VERBATIM to {_write_path} NOW. "
-                        f"Do NOT write cli.py until html.py defines def buildWeb and passes py_compile.]"
-                    )
-                else:
-                    _is_cli_py = "cli" in _pyc_fname
-                    if _is_cli_py:
-                        _cli_path = _pyc_fullpath or "cli.py"
-                        content_str = (
-                            f"[TOKEN LIMIT — cli.py syntax error (file was truncated). "
-                            f"STOP. Write the EXACT content below to {_cli_path} VERBATIM:\n\n"
-                            + _PYFW_CLI_TEMPLATE
-                            + f"\nWrite that EXACT content to {_cli_path} NOW.]"
-                        )
-                    else:
-                        content_str = (
-                            f"[TOKEN LIMIT: {_pyc_fname} was truncated mid-file. "
-                            f"DO NOT use triple-quoted strings — they always get cut off. "
-                            f"Rewrite {_pyc_fname} under 50 lines using string concatenation. Write it now.]"
-                        )
+                content_str = (
+                    f"[TOKEN LIMIT: {_pyc_fname} was truncated mid-file (syntax error at truncation point). "
+                    f"DO NOT use triple-quoted strings — they always get cut off at the token limit. "
+                    f"Rewrite {_pyc_fname} in under 50 lines using string concatenation (single-quoted lines joined with +). "
+                    f"Write the complete file now using Write(filePath='{_pyc_fullpath or _pyc_fname}', content='...').]"
+                )
                 logger.info(f"[TOKEN-LIMIT-TRUNC] py_compile SyntaxError after Write truncation — injecting short-design hint for {_pyc_fname}")
-            # Intercept BUILDWEB_MISSING — html.py passed py_compile but doesn't define buildWeb
-            elif (
-                'BUILDWEB_MISSING' in content_str and
-                re.search(r'py_compile.*html\.py|html\.py.*py_compile', last_bash_cmd or "")
-            ):
-                _bw_m = re.search(r'py_compile\s+([^\s&|]+html\.py)', last_bash_cmd or "")
-                _bw_path = _bw_m.group(1) if _bw_m else "html.py"
-                content_str = (
-                    f"[CRITICAL: html.py does NOT define 'def buildWeb(timestamp)'. "
-                    f"firewall.py does 'from html import buildWeb' — without this exact function name the server crashes. "
-                    f"STOP everything. Write the EXACT content below to {_bw_path} VERBATIM:\n\n"
-                    + _PYFW_HTML_TEMPLATE
-                    + f"\nWrite the above to {_bw_path} NOW. Do NOT write cli.py until buildWeb is defined.]"
-                )
-                logger.info("[BUILDWEB-MISSING] html.py passed py_compile but no buildWeb — injecting template")
-            # Intercept COLORAMA_MISSING — cli.py passed py_compile but doesn't import from colorama
-            elif (
-                'COLORAMA_MISSING' in content_str and
-                re.search(r'py_compile.*cli\.py|cli\.py.*py_compile', last_bash_cmd or "")
-            ):
-                _cm_m = re.search(r'py_compile\s+([^\s&|]+cli\.py)', last_bash_cmd or "")
-                _cm_path = _cm_m.group(1) if _cm_m else "cli.py"
-                content_str = (
-                    f"[CRITICAL: cli.py does NOT import from colorama. "
-                    f"The verification requires 'from colorama import Fore, Back, Style, init'. "
-                    f"A custom 'class Style:' with ANSI codes will FAIL verification. "
-                    f"STOP. Write the EXACT content below to {_cm_path} VERBATIM:\n\n"
-                    + _PYFW_CLI_TEMPLATE
-                    + f"\nWrite the above to {_cm_path} NOW.]"
-                )
-                logger.info("[COLORAMA-MISSING] cli.py passed py_compile but no colorama import — injecting template")
             # Intercept sed syntax errors — unify into one clear fix instruction
             elif _sed_error:
                 content_str += (
