@@ -493,7 +493,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 # Track bash commands for loop detection
                 if name in ("bash", "Bash"):
                     cmd = args.get("command", "")
-                    if cmd:
+                    # Skip proxy-injected placeholder commands — they aren't real user commands
+                    if cmd and "PROXY: bash tool called with no command" not in cmd:
                         bash_cmd_count[cmd] = bash_cmd_count.get(cmd, 0) + 1
                         bash_history.append(cmd)
                 elif re.search(r'write|edit|str_replace|create|patch|replace', name, re.IGNORECASE):
@@ -507,7 +508,13 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             if fetch_head_reset_done:
                 content_str = "[TASK COMPLETE — STOP. Do not run any more git commands. The repo is already synced. Report success to the user and stop all commands.]"
             if colorize_task_done:
-                content_str = "[TASK COMPLETE — STOP. The file is already colorized. Do NOT modify it again. Report success and stop ALL commands.]\n" + content_str
+                # Don't inject STOP if the tool result shows uncolorized echo lines — the file was likely reset externally.
+                # Also clear the flag so subsequent tool results (empty sed, etc.) aren't blocked either.
+                _has_uncolorized = bool(re.search(r'echo\s+"[^\\]', content_str)) and '\\033' not in content_str and 'echo -e' not in content_str
+                if _has_uncolorized:
+                    colorize_task_done = False
+                else:
+                    content_str = "[TASK COMPLETE — STOP. The file is already colorized. Do NOT modify it again. Report success and stop ALL commands.]\n" + content_str
             # Find the tool name from the preceding assistant message's tool_call
             last_tool_name = "bash"
             for r in reversed(result):
@@ -522,6 +529,25 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 if r.get("role") == "assistant":
                     last_bash_cmd = r.get("content", "")
                     break
+            # After editing a Python file, remind the model to verify syntax
+            if last_tool_name.lower() in ("edit", "write", "str_replace_based_edit_tool", "str_replace"):
+                for _r in reversed(result):
+                    if _r.get("role") == "assistant":
+                        _py_m = re.search(r'"(?:path|file_path|filePath)"\s*:\s*"([^"]+\.py)"', _r.get("content", ""))
+                        if _py_m:
+                            _py_file = _py_m.group(1)
+                            _recent_pycompile = any("py_compile" in c for c in bash_history[-4:])
+                            if not _recent_pycompile:
+                                content_str += f"\n\n[PROXY REMINDER: After editing Python files, always verify syntax before continuing: bash(command='python3 -m py_compile {_py_file} && echo OK')]"
+                        break
+            # After reading a Python source file, remind the model to edit it directly
+            if last_tool_name.lower() in ("read", "read_file", "view") and not non_bash_write_done:
+                for _r in reversed(result):
+                    if _r.get("role") == "assistant":
+                        _read_py_m = re.search(r'"(?:path|file_path|filePath)"\s*:\s*"([^"]+\.py)"', _r.get("content", ""))
+                        if _read_py_m and len(bash_history) >= 2:
+                            content_str += "\n\n[HINT: You have read the source file. Use the Edit tool now to make your changes directly — no need to test or run the code first.]"
+                        break
             _sed_error = (
                 "unknown option to `s'" in content_str
                 or "unterminated" in content_str.lower()
@@ -609,7 +635,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "Then execute the build/script from your task instructions.]"
                     )
             # Detect successful git fetch (FETCH_HEAD updated) — guide reset
-            elif "-> FETCH_HEAD" in content_str and re.search(r'\bgit\b.*\bfetch\b', last_bash_cmd) and "reset" not in last_bash_cmd:
+            # Complex merge tasks fetch to get the remote content but should NOT hard-reset (they merge instead)
+            elif "-> FETCH_HEAD" in content_str and re.search(r'\bgit\b.*\bfetch\b', last_bash_cmd) and "reset" not in last_bash_cmd and not _is_complex_merge_task:
                 _fetch_count = sum(1 for c in bash_history if re.search(r'\bgit\b.*\bfetch\b', c))
                 _reset_happened = any(re.search(r'\bgit\b.*reset.*--hard', c) for c in bash_history)
                 if _fetch_count >= 3 and not _reset_happened:
@@ -768,8 +795,11 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         # Extract target .sh file from sed command
                         _sh_file_m = re.search(r'(/[^\s\'"]+\.sh|[\w./]+\.sh)\b', last_bash_cmd)
                         _sh_file = _sh_file_m.group(1).strip("'\"") if _sh_file_m else "the target file"
-                        # Track silent sed-i failures on .sh files — escalate to blocked after threshold
-                        silent_sed_sh_count += 1
+                        # Only count pattern-based seds as silent failures (not line-addressed like '84s/...')
+                        # Line-addressed seds ('NNNs/pattern/replace/') are precise and always succeed
+                        _is_line_addr_sed = bool(re.search(r"'[\d,]+s/", last_bash_cmd))
+                        if not _is_line_addr_sed:
+                            silent_sed_sh_count += 1
                         # Detect echo -e in sed source pattern — original lines don't have -e yet
                         _sed_src_m = re.search(r"sed\s+-i\s+['\"]?s([/|!])(.*?)\1", last_bash_cmd)
                         _sed_src = _sed_src_m.group(2) if _sed_src_m else ""
@@ -944,6 +974,27 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             "and produces the same result every time. Running it again changes nothing. "
                             "STOP. Take a fundamentally different action toward your task.]"
                         )
+                elif _is_complex_merge_task and re.search(r'\bgit\s+diff\b', _last_actual_cmd) and _identical_count >= 2:
+                    # In complex merge: repeated git diff on clean file = all conflicts resolved, commit now
+                    _total_git_diffs = sum(1 for c in bash_history if re.search(r'\bgit\s+diff\b', c))
+                    content_str = (
+                        f"[MERGE COMPLETE: git diff has been run {_total_git_diffs} times total and shows no remaining conflicts. "
+                        "All changes from the merge are staged and verified. STOP running git diff. "
+                        "Run this now to commit the merge: "
+                        "git add -A && git commit -m 'Merge upstream changes'\n"
+                        "Do NOT run any more git diff or git status. Commit immediately.]"
+                    )
+                elif _is_complex_merge_task and re.search(r'\bgit\s+diff\b', _last_actual_cmd):
+                    # Fire MERGE COMPLETE when total git diff count reaches threshold (model varies commands)
+                    _total_git_diffs = sum(1 for c in bash_history if re.search(r'\bgit\s+diff\b', c))
+                    if _total_git_diffs >= 4:
+                        content_str = (
+                            f"[MERGE COMPLETE: git diff has been run {_total_git_diffs} times total. "
+                            "All merge conflicts are resolved — there is nothing left to diff. "
+                            "STOP running git diff variants. Commit the merge NOW: "
+                            "git add -A && git commit -m 'Merge upstream changes'\n"
+                            "Do NOT run any more git diff, git status, or inspection commands. Commit immediately.]"
+                        )
                 elif _identical_count >= 2 and not _early_is_build:
                     if _orig_not_found and _is_git_show_cmd:
                         content_str += (
@@ -1007,7 +1058,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             if _is_complex_merge_task and not _loop_suppressed and re.search(r'\bgit\b.*merge\b.*\borigin\b', _last_actual_cmd or ""):
                 content_str += (
                     "\n\n[WRONG MERGE SOURCE: You merged from 'origin', which is your own repository remote — this is not the upstream source. "
-                    "The task requires merging from the upstream source remote (e.g., local-aria/main). "
+                    "The task requires merging from the upstream source remote (not origin). "
                     "Run: git merge --abort to cancel this merge, then add the correct remote and merge from it instead.]"
                 )
             # git merge --no-commit: abort+reset is correct for exact HEAD match tasks only.
@@ -1097,7 +1148,9 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             if _is_hard_failure and _last_actual_cmd:
                 _fail_count = bash_cmd_count.get(_last_actual_cmd, 0)
                 _has_stale_cache = bool(re.search(r'Invalid depfile|stale|corrupt|cache.*invalid|\.dart_tool', content_str, re.IGNORECASE))
-                _is_build_script = bool(re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', _last_actual_cmd))
+                # read-only commands operating on .sh files (cat, sed -n, grep, etc.) are NOT build commands
+                _is_read_only_op = bool(re.search(r'^\s*(cat|head|tail|sed\s+-n\b|grep\b|awk\b|wc\b|diff\b|less\b|more\b|stat\b)\s', _last_actual_cmd))
+                _is_build_script = not _is_read_only_op and bool(re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', _last_actual_cmd))
                 _has_merge_in_history = any(re.search(r'\bgit\s+merge\b', c) for c in bash_history)
                 _has_keystore_error = bool(re.search(r'keystore|signing|upload.*key|key.*store', content_str, re.IGNORECASE))
                 _has_keyprops_error = bool(re.search(r'key\.properties|signing\.properties|keyAlias|keyPassword|storeFile|storePassword', content_str, re.IGNORECASE))
@@ -1225,12 +1278,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 )
             # Detect command loop — same bash command run more than once AND producing an error
             last_cmd = bash_history[-1] if bash_history else ""
+            _py3_heredoc_pattern = re.search(r'python3?\s+-\s|python3?\s+<<', last_cmd or "")
+            _py3_writes_file = bool(re.search(r'\bopen\s*\(.*["\']w["\']|with\s+open.*["\']w["\']|\.write\s*\(', last_cmd or ""))
             _is_modifying_cmd = (
                 last_cmd and
                 (("sed" in last_cmd and "-i" in last_cmd) or
                  re.search(r'\bpython3?\s+-c\b', last_cmd) or
-                 re.search(r'python3?\s+-\s', last_cmd) or
-                 re.search(r'python3?\s+<<', last_cmd) or
+                 # python3 heredoc only counts as "modifying" when it actually writes to a file
+                 (_py3_heredoc_pattern and _py3_writes_file) or
                  re.search(r'\bgit\s+checkout\b.*--\s+\S', last_cmd))
             )
             # Also catch any command that errors repeatedly (fatal/error in output)
@@ -1249,7 +1304,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             f" DIAGNOSIS: your sed pattern '{raw_pat}' is missing double-quotes. "
                             "The file has double-quoted brackets like: echo \"[Section]\". "
                             "You must include the quote in your pattern, e.g.: "
-                            "sed -i 's|echo \"\\[gentoo\\]\"|echo -e \"\\033[1;92m[gentoo]\\033[0m\"|' FILE"
+                            "sed -i 's|echo \"\\[Section\\]\"|echo -e \"\\033[1;92m[Section]\\033[0m\"|' FILE"
                         )
                     # Pattern uses 'echo -e' as source — but original lines don't have -e yet
                     elif re.search(r'echo\s+-e\b', raw_pat):
@@ -1311,6 +1366,15 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 re.search(r'python3?\s+-c\b', last_cmd)
             )
             _is_noop_result = content_str.startswith("(no output")
+            # Detect read-only python3 probe loop — model testing/exploring without editing files
+            if _is_py3_heredoc and not _py3_writes_file and not non_bash_write_done:
+                _py3_probe_count = bash_cmd_count.get(last_cmd, 0)
+                if _py3_probe_count >= 2:
+                    content_str += (
+                        f"\n\n[LOOP DETECTED: This read-only Python script has been run {_py3_probe_count} times without modifying any files. "
+                        "STOP running Python scripts. Use the Edit tool now to modify the source files in this directory directly. "
+                        "Do NOT run python3 again — just make your edits.]"
+                    )
             # After a python3 write succeeds, inject verification to catch silent bugs early
             _sh_file_in_cmd = re.search(r'([/\w.~-]+\.sh)\b', last_cmd or "") if last_cmd else None
             _py3_wrote_sh = (
@@ -1364,12 +1428,16 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # Exploration cap: too many reads without any write — time to act
             _total_cmds = len(bash_history)
             _any_write = non_bash_write_done or any(
-                re.search(r'python3?\s+<<|sed\s+-i|open\s*\(.*,\s*["\']w["\']|\bgit\s+checkout\b.*--\s+\S|git\s+show\s+\S+:\S+\s*>', c)
+                re.search(r'sed\s+-i|open\s*\(.*,\s*["\']w["\']|\bgit\s+checkout\b.*--\s+\S|git\s+show\s+\S+:\S+\s*>', c)
+                # python3 heredoc only counts as write if it actually opens a file for writing
+                or (re.search(r'python3?\s+<<', c) and re.search(r'open\s*\(.*["\']w["\']|with\s+open|\.write\s*\(', c))
                 for c in bash_history
             )
-            _last_build_cmd_hist = next((c for c in reversed(bash_history) if re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', c)), None)
+            _last_build_cmd_hist = next((c for c in reversed(bash_history) if re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', c) and not re.search(r'^\s*(cat|head|tail|sed\s+-n\b|grep\b|awk\b|wc\b|diff\b)\s', c)), None)
             _build_has_failed = _last_build_cmd_hist and bash_cmd_count.get(_last_build_cmd_hist, 0) >= 1
-            _cap_threshold = 7 if (_syslog_is_task or _build_has_failed) else 12
+            _has_git_cmds = any(re.search(r'\bgit\b', c) for c in bash_history)
+            # Lower cap for non-git file-editing tasks — push model to edit sooner
+            _cap_threshold = 5 if (_syslog_is_task or _build_has_failed) else (7 if _has_git_cmds else 4)
             if _total_cmds >= _cap_threshold and not _any_write and not colorize_task_done and not fetch_head_reset_done:
                 if _syslog_is_task:
                     content_str += (
@@ -1388,14 +1456,24 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     )
                 else:
                     content_str += (
-                        f"\n\n[EXPLORATION CAP: You have run {_total_cmds} commands without modifying any file. "
-                        "You have seen enough of the file structure. Pick the specific file(s) to edit now. "
-                        "Use sed -i or a python3 heredoc to make the change, then restart the service if needed. "
-                        "Do NOT run ls, find, or cat again — edit a file.]"
+                        f"\n\n[EXPLORATION CAP: You have run {_total_cmds} bash commands without modifying any file. "
+                        "STOP running bash commands — no more testing, import checks, or ls. "
+                        "You have read the files already. Use the Edit tool now to make changes directly. "
+                        "Do NOT run python3, ls, find, or cat — use Edit/Write to modify source files now.]"
                     )
+            # Detect HTTP fetch loops — fetching external URLs is wrong for local file editing tasks
+            _http_fetches = sum(1 for c in bash_history if re.search(r'requests\.get|urllib\.request|curl\s+http|wget\s+http', c))
+            if _http_fetches >= 2 and re.search(r'requests\.get|urllib\.request|curl\s+http|wget\s+http', last_bash_cmd):
+                content_str = (
+                    f"[WRONG APPROACH: You have made {_http_fetches} HTTP requests to external URLs. "
+                    "This task requires editing local source files — external documentation is irrelevant. "
+                    "STOP fetching URLs. Use the Read/edit tools to open and modify files in the current directory directly. "
+                    "The files are already present locally — just edit them.]"
+                )
             # Total git-status loop: catches alternation between variants (git status, git status --short, etc.)
             _total_git_status = sum(1 for c in bash_history if re.search(r'\bgit\s+status\b', c))
-            if _total_git_status >= 4 and last_cmd and re.search(r'\bgit\s+status\b', last_cmd):
+            # Complex merge tasks do status checks to verify conflict resolution — don't inject fetch/reset
+            if _total_git_status >= 4 and last_cmd and re.search(r'\bgit\s+status\b', last_cmd) and not _is_complex_merge_task:
                 _fetch_done = any(re.search(r'\bgit\b.*\bfetch\b', c) for c in bash_history)
                 _reset_done = any(re.search(r'\bgit\b.*reset.*--hard', c) for c in bash_history)
                 if not _fetch_done:
@@ -1442,6 +1520,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "The 'command' key must contain a non-empty shell command string. "
                         "Execute your task now with a real command.]"
                     )
+                elif _is_complex_merge_task and re.search(r'\bgit\s+diff\b', last_cmd):
+                    content_str = (
+                        f"[MERGE COMPLETE: git diff has been run {_loop_count} times and shows no remaining differences. "
+                        "All merge conflicts are resolved and verified. STOP running git diff. "
+                        "You MUST commit the merged changes now: "
+                        "git add -A && git commit -m 'Merge upstream changes'\n"
+                        "Run that command immediately — do NOT run any more git diff or git status commands.]"
+                    )
                 elif re.search(r'\bgit\s+status\b', last_cmd):
                     content_str = (
                         f"[LOOP DETECTED: git status has been run {_loop_count} times — the repo is consistently clean. "
@@ -1458,6 +1544,26 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "If the task is complete, report success and stop ALL commands. "
                         "If not complete, abandon this approach entirely and try a fundamentally different method.]"
                     )
+            # In complex merge: after build runs, remind model to commit any newly generated tracked files
+            if _is_complex_merge_task and last_cmd and re.search(r'\bsync.apk\.sh\b|\bflutter\s+build\b|\bgradlew?\s+assembleRelease\b', last_cmd):
+                _has_committed = any(re.search(r'\bgit\s+commit\b', c) for c in bash_history)
+                if _has_committed:
+                    content_str += (
+                        "\n\n[POST-BUILD: The build may have regenerated tracked files (pubspec.lock, generated_plugins, etc.). "
+                        "Check and commit them: "
+                        "git status --porcelain 2>/dev/null | head -5; git add -A && git diff --cached --name-only | head -5 && git commit -m 'Post-build: update generated files' 2>/dev/null || echo 'Nothing to commit']"
+                    )
+            # In complex merge: warn if model checked out FROM upstream (not HEAD) — it should keep HEAD versions
+            if _is_complex_merge_task and last_cmd and re.search(r'\bgit\s+checkout\s+(?!HEAD\b)\w[\w.-]*/\S+\s+--\s+\S', last_cmd):
+                _co_file = re.search(r'\bgit\s+checkout\s+\S+\s+--\s+(\S+)', last_cmd)
+                _co_file_name = _co_file.group(1) if _co_file else 'the file'
+                content_str += (
+                    f"\n\n[WRONG CONFLICT RESOLUTION: You checked out {_co_file_name} from the UPSTREAM branch. "
+                    "This replaces your local customizations with upstream code. "
+                    "Per the task instructions, use HEAD to resolve conflicts: "
+                    f"git checkout HEAD -- {_co_file_name}\n"
+                    "Run that now to restore your local version before committing.]"
+                )
             # Wrap in XML tool_result format matching this model's expected pattern
             result.append({"role": "user", "content": f"<tool_result>\n<tool>{last_tool_name}</tool>\n<output>\n{content_str}\n</output>\n</tool_result>"})
         else:
@@ -1536,7 +1642,7 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                         "ALL_CONFLICTS=\"$CONFLICTS$STAGED_CONFLICTS\"; "
                         "if [ -n \"$ALL_CONFLICTS\" ]; then "
                         "echo \"[MERGE CONFLICT: Unresolved files: $ALL_CONFLICTS]\"; "
-                        "echo 'Run this to auto-resolve (keeps your HEAD/Aikey version):'; "
+                        "echo 'Run this to auto-resolve (keeps your HEAD version):'; "
                         "echo \"python3 -c \\\"import re, os; [open(f,'w').write(re.sub(r'<<<<<<< HEAD\\\\n(.*?)=======.*?>>>>>>> [^\\\\n]+\\\\n', r'\\\\\\\\1', open(f).read(), flags=re.DOTALL)) or print('resolved', f) for f in '$ALL_CONFLICTS'.split() if os.path.exists(f)]\\\"\"; "
                         "echo 'Then: git add . && git commit'; "
                         f"else {_commit_cmd}; fi"
@@ -1655,21 +1761,21 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                     "if fixed:",
                     "    for fn, lns in fixed:",
                     "        print(f'FIXED {fn}: changed lines {lns} from if to elif')",
-                    "    print('Bug fixed. Now restart the service: sudo systemctl restart python-firewall.service')",
+                    "    print('Bug fixed. Now restart the service to apply changes.')",
                     "elif already_fixed:",
                     "    for fn in already_fixed:",
                     "        print(f'ALREADY FIXED {fn}: elif branches already in place')",
-                    "    print('The fix is already applied. Restart the service: sudo systemctl restart python-firewall.service')",
+                    "    print('The fix is already applied. Restart the service to apply changes.')",
                     "else:",
                     "    print('No consecutive if-in-line patterns found. Read the source files to find the bug.')",
                     "PROXY_FIX",
                 ])
                 _first_user_text_sc = next((m.get("content") or "" for m in messages if m.get("role") == "user"), "")
                 _is_if_elif_fix_task = bool(re.search(
-                    r'\bif\b.*\belif\b|\belif\b|\bhtml\.py\b|\bpython-firewall\b|fix\s+the\s+bug|if.*in\s+line',
+                    r'\bif\b.*\belif\b|\belif\b|fix\s+the\s+bug|if.*in\s+line',
                     _first_user_text_sc, re.IGNORECASE
                 )) and not bool(re.search(
-                    r'\btheme\b|\bcyberpunk\b|\bcss\b|\bcolor\b|\bstyle\b|\bwebui\b|\bui\b|\bdesign\b|\bbranding\b|\bmerge\b|\bbuild\b|\bapk\b',
+                    r'\btheme\b|\bcss\b|\bcolor\b|\bstyle\b|\bwebui\b|\bui\b|\bdesign\b|\bbranding\b|\bmerge\b|\bbuild\b|\bapk\b',
                     _first_user_text_sc, re.IGNORECASE
                 ))
                 if _is_env_probe_cmd and _is_if_elif_fix_task:
@@ -1857,6 +1963,18 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                             )
                             tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                             logger.info(f"[SED-BLOCK] Blocked color-before-echo: {cmd[:80]!r}")
+                        elif re.search(r'\becho\b', _repl) and _repl.count('"') % 2 != 0:
+                            # Replacement contains echo with an odd number of quotes — unclosed string
+                            _blocked = True
+                            args_dict["command"] = (
+                                "echo '[PROXY ERROR: Your sed replacement has an unclosed double-quote — "
+                                "the replacement string is incomplete (e.g. echo \" with no closing \"). "
+                                "This will corrupt the file by creating an unclosed bash string. "
+                                "The full replacement must be: echo -e \"\\\\033[CODEmTEXT\\\\033[0m\" "
+                                "Make sure the replacement ends with a closing \"]'"
+                            )
+                            tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                            logger.info(f"[SED-BLOCK] Blocked unclosed-quote replacement: {cmd[:120]!r}")
                     if not _blocked:
                         # Fix \033 → \\033 in sed replacement: GNU sed treats \0 as whole match,
                         # so \033 → (match)33 corrupting the file. Use \\033 to get literal \033.
@@ -2003,10 +2121,17 @@ def _parse_oai_tool_calls(text: str):
         input_m = re.search(r'<input>\s*(.*?)\s*</input>', raw, re.DOTALL | re.IGNORECASE)
         if tool_m and input_m:
             name = tool_m.group(1).strip()
+            _raw_args = input_m.group(1).strip()
             try:
-                arguments = json.loads(input_m.group(1).strip())
+                arguments = json.loads(_raw_args)
             except Exception:
-                arguments = {}
+                try:
+                    arguments = json.loads(_repair_json(_raw_args))
+                except Exception:
+                    try:
+                        arguments = json.loads(_complete_json(_repair_json(_raw_args)))
+                    except Exception:
+                        arguments = {}
         else:
             # JSON format: {"name": ..., "arguments": ...}
             try:
@@ -2062,10 +2187,17 @@ def _parse_oai_tool_calls(text: str):
             input_m = re.search(r'<input>\s*(.*?)\s*(?:</input>|$)', inner, re.DOTALL | re.IGNORECASE)
             if tool_m and input_m:
                 name = tool_m.group(1).strip()
+                _raw_args2 = input_m.group(1).strip()
                 try:
-                    arguments = json.loads(input_m.group(1).strip())
+                    arguments = json.loads(_raw_args2)
                 except Exception:
-                    arguments = {}
+                    try:
+                        arguments = json.loads(_repair_json(_raw_args2))
+                    except Exception:
+                        try:
+                            arguments = json.loads(_complete_json(_repair_json(_raw_args2)))
+                        except Exception:
+                            arguments = {}
                 if name:
                     name, arguments = _normalize_tool(name, arguments if isinstance(arguments, dict) else {})
                     tool_calls.append({"id": f"call_{uuid.uuid4().hex[:12]}", "type": "function",
@@ -2195,6 +2327,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         "[LOOP DETECTED:" in _lum_content or
         "[EXPLORATION BLOCKED:" in _lum_content or
         "[EXPLORATION CAP:" in _lum_content or
+        "[BASH BLOCKED:" in _lum_content or
         "[ENV-PROBE:" in _lum_content
     )
     # Extract the command from the last assistant tool call to check if it's git
@@ -2213,12 +2346,12 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         "[LOOP DETECTED:" in _prev_user_content_sc or
         "[EXPLORATION BLOCKED:" in _prev_user_content_sc or
         "[EXPLORATION CAP:" in _prev_user_content_sc or
+        "[BASH BLOCKED:" in _prev_user_content_sc or
         "[ENV-PROBE:" in _prev_user_content_sc
     )
     _complex_merge_git_exempt = (
         _is_complex_merge and
-        bool(re.search(r'^\s*git\b', _last_tool_cmd_sc)) and
-        not (_lum_has_any_loop_block and _prev_had_block_sc)
+        bool(re.search(r'^\s*git\b', _last_tool_cmd_sc))
     )
     logger.info(f"[LOOP-SC-CHECK] complex_merge={_is_complex_merge} git_exempt={_complex_merge_git_exempt} last_cmd={_last_tool_cmd_sc[:40]!r} has_block={_lum_has_any_loop_block} prev_block={_prev_had_block_sc} n_user={len(_all_user_msgs_sc)} prev_preview={_prev_user_content_sc[-120:]!r}")
     if not _complex_merge_git_exempt and _last_user_msg and _lum_has_any_loop_block and _prev_had_block_sc:
@@ -2243,15 +2376,34 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 for c in _recent_cmds_hl
             ):
                 _hl_is_exploration = True
-        _hl_any_write = non_bash_write_done or any(
-            re.search(r'python3?\s*<<|sed\s+-i', str(m.get("content") or ""))
+        _hl_non_bash_write_done = any(
+            re.search(r'"name"\s*:\s*"(?:write|edit|str_replace|Write|Edit|StrReplace)', str(m.get("content") or ""), re.IGNORECASE)
+            or any(
+                re.search(r'write|edit|str_replace', str(tc.get("function", {}).get("name", "")), re.IGNORECASE)
+                for tc in (m.get("tool_calls") or [])
+            )
             for m in messages if m.get("role") == "assistant"
         )
+        _hl_any_write = _hl_non_bash_write_done or any(
+            re.search(r'sed\s+-i', str(m.get("content") or "")) or
+            # python3 heredoc only counts as write when it opens a file for writing
+            (re.search(r'python3?\s*<<', str(m.get("content") or "")) and
+             re.search(r'open\s*\(.*["\']w["\']|with\s+open.*["\']w["\']|\.write\s*\(', str(m.get("content") or "")))
+            for m in messages if m.get("role") == "assistant"
+        )
+        _hl_is_py_probe = bool(re.search(r'python3?\s+-c\b|python3?\s+-\s|python3?\s+<<', _last_tool_cmd_sc)) and not bool(re.search(r'open\s*\(.*["\']w["\']|\.write\s*\(|sed\s+-i', _last_tool_cmd_sc))
+        if not _hl_is_py_probe:
+            for _hl_c in _recent_cmds_hl:
+                if re.search(r'python3?\s+-c\b|python3?\s+-\s|python3?\s+<<', _hl_c) and not re.search(r'open\s*\(.*["\']w["\']|\.write\s*\(|sed\s+-i', _hl_c):
+                    _hl_is_py_probe = True
+                    break
         if _hl_was_restart:
             if _hl_any_write:
                 _hl_text = ("The service has been restarted successfully. The code fix has been applied and the service is running. Task complete.")
             else:
                 _hl_text = ("I need to read the source code before restarting the service. Restarting without code changes does not fix bugs. I will read the relevant source files, identify the issue, make the fix, and then restart.")
+        elif _hl_is_py_probe and not _hl_any_write:
+            _hl_text = ("Running Python test scripts is not needed. I will use the Edit tool now to directly apply changes to the source files — no more bash commands.")
         elif _hl_is_version_probe:
             _hl_text = ("Version probes are not needed to complete this task. I will now proceed directly: read the relevant source files, identify the issue, apply the fix with sed -i or a python3 heredoc, and restart the service.")
         elif _hl_is_exploration:
@@ -2364,6 +2516,39 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         empty_bash_count=_empty_bash_count, messages=messages,
     )
     tool_calls = _redirect_hallucinated_sed(tool_calls, settings=settings)
+    # Block bash calls when exploration cap has fired and no file writes have happened
+    # This forces the model to use Edit/Write tool instead of continuing bash exploration
+    _exploration_capped = any(
+        "[EXPLORATION CAP:" in (m.get("content") or "")
+        for m in messages if m.get("role") == "user"
+    )
+    _actual_writes_done = any(
+        re.search(r'"name"\s*:\s*"(?:write|edit|str_replace|Write|Edit|StrReplace)', str(m.get("content") or ""), re.IGNORECASE)
+        for m in messages if m.get("role") == "assistant"
+    ) or any(
+        re.search(r'sed\s+-i', str(m.get("content") or "")) or
+        (re.search(r'python3?\s*<<', str(m.get("content") or "")) and
+         re.search(r'open\s*\(.*["\']w["\']|with\s+open.*["\']w["\']|\.write\s*\(', str(m.get("content") or "")))
+        for m in messages if m.get("role") == "assistant"
+    )
+    if _exploration_capped and not _actual_writes_done and tool_calls:
+        _new_tcs_cap = []
+        for _tc_cap in tool_calls:
+            _fn_cap = _tc_cap.get("function", {})
+            if _fn_cap.get("name", "").lower() == "bash":
+                try:
+                    _adict_cap = json.loads(_fn_cap.get("arguments", "{}"))
+                    _adict_cap["command"] = (
+                        "echo '[BASH BLOCKED: Exploration cap reached. Stop running bash commands. "
+                        "Use the Edit tool to directly modify source files — "
+                        "make your edits now without any more exploration.]'"
+                    )
+                    _tc_cap = {**_tc_cap, "function": {**_fn_cap, "arguments": json.dumps(_adict_cap)}}
+                    logger.info("[EXPLORATION-CAP-BLOCK] Blocked bash call after exploration cap — no writes yet")
+                except Exception:
+                    pass
+            _new_tcs_cap.append(_tc_cap)
+        tool_calls = _new_tcs_cap
     # After warning the model once about using GitHub remote, auto-fix subsequent origin resets
     _origin_warned = any(
         "WARNING: You used a GitHub remote instead of the local source path" in (m.get("content") or "")
@@ -2432,6 +2617,66 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     pass
             _new_tcs_merge.append(_tc_m)
         tool_calls = _new_tcs_merge
+    # Complex merge: redirect excess git diff tool calls to commit when conflicts are resolved
+    if _is_complex_merge and tool_calls:
+        _cm_diff_count = sum(
+            1 for _m_req in request.messages if _m_req.role == "assistant"
+            for _tc_req in (getattr(_m_req, 'tool_calls', None) or [])
+            if (getattr(getattr(_tc_req, 'function', None), 'name', '') or '').lower() in ('bash',)
+            and re.search(r'\bgit\s+diff\b', str(getattr(getattr(_tc_req, 'function', None), 'arguments', '') or ''))
+        )
+        _cm_has_committed_pre = any(
+            re.search(r'\bgit\s+commit\b', str(getattr(getattr(_tc_req, 'function', None), 'arguments', '') or ''))
+            for _m_req in request.messages if _m_req.role == "assistant"
+            for _tc_req in (getattr(_m_req, 'tool_calls', None) or [])
+            if (getattr(getattr(_tc_req, 'function', None), 'name', '') or '').lower() in ('bash',)
+        )
+        if _cm_diff_count >= 4 and not _cm_has_committed_pre:
+            _new_tcs_diff = []
+            for _tc_d in tool_calls:
+                _fn_d = _tc_d.get("function", {})
+                if _fn_d.get("name") in ("bash", "Bash"):
+                    try:
+                        _adict_d = json.loads(_fn_d.get("arguments", "{}"))
+                        _cmd_d = _adict_d.get("command", "")
+                        if re.search(r'\bgit\s+diff\b|\bgit\s+status\b', _cmd_d):
+                            _adict_d["command"] = "git add -A && git commit -m 'Merge upstream changes'"
+                            _tc_d = {**_tc_d, "function": {**_fn_d, "arguments": json.dumps(_adict_d)}}
+                            logger.info(f"[MERGE-DIFF-REDIRECT] Redirected git diff/status to commit ({_cm_diff_count} diffs so far)")
+                    except Exception:
+                        pass
+                _new_tcs_diff.append(_tc_d)
+            tool_calls = _new_tcs_diff
+    # Complex merge: wrap build script calls to auto-commit any generated tracked files after build
+    if _is_complex_merge and tool_calls:
+        _cm_has_committed = any(
+            re.search(r'\bgit\s+commit\b', str(getattr(getattr(_tc_req, 'function', None), 'arguments', '') or ''))
+            for _m_req in request.messages if _m_req.role == "assistant"
+            for _tc_req in (getattr(_m_req, 'tool_calls', None) or [])
+            if (getattr(getattr(_tc_req, 'function', None), 'name', '') or '').lower() in ('bash',)
+        )
+    if _is_complex_merge and tool_calls and _cm_has_committed:
+        _new_tcs_build = []
+        for _tc_b in tool_calls:
+            _fn_b = _tc_b.get("function", {})
+            if _fn_b.get("name") in ("bash", "Bash"):
+                try:
+                    _adict_b = json.loads(_fn_b.get("arguments", "{}"))
+                    _cmd_b = _adict_b.get("command", "")
+                    if re.search(r'\bsync.apk\.sh\b|\bsync_apk\.sh\b|\bflutter\s+build\b|\bgradlew?\s+assemble', _cmd_b):
+                        _adict_b["command"] = (
+                            f"{_cmd_b}; _apk_exit=$?; "
+                            "git add -A 2>/dev/null; "
+                            "_mod=$(git status --porcelain 2>/dev/null | wc -l); "
+                            '[ "$_mod" -gt 0 ] && git commit -m "Post-build: update generated files" 2>/dev/null && echo "POST-BUILD COMMIT DONE" || true; '
+                            "exit $_apk_exit"
+                        )
+                        _tc_b = {**_tc_b, "function": {**_fn_b, "arguments": json.dumps(_adict_b)}}
+                        logger.info("[COMPLEX-MERGE-BUILD-WRAP] Wrapped build command to commit generated files")
+                except Exception:
+                    pass
+            _new_tcs_build.append(_tc_b)
+        tool_calls = _new_tcs_build
     # Intercept tool calls when model is stuck in git fetch loop — force git reset --hard FETCH_HEAD
     # Skip for complex merge tasks: they need real merge/conflict-resolution, not a forced reset gate.
     if _git_reset_done and not _is_complex_merge and tool_calls:

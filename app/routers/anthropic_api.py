@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Setting
-from app.routers.openai_api import verify_api_key, _resolve_model, _repair_json, _redirect_hallucinated_sed
+from app.routers.openai_api import verify_api_key, _resolve_model, _repair_json, _complete_json, _redirect_hallucinated_sed
 from app.services.inference_factory import get_inference_service, prepare_vram_for_llm
 from app.services.text_utils import inject_no_think, strip_thinking_tags
 
@@ -186,7 +186,8 @@ def _build_model_messages(request: MessagesRequest) -> list:
                         if name.lower() in ("bash",):
                             inp = block.get("input", {})
                             cmd = inp.get("command", "") if isinstance(inp, dict) else ""
-                            if cmd:
+                            # Skip proxy-injected placeholder commands
+                            if cmd and "PROXY: bash tool called with no command" not in cmd:
                                 bash_cmd_count[cmd] = bash_cmd_count.get(cmd, 0) + 1
                                 bash_history.append(cmd)
             text = _content_to_text(content)
@@ -297,7 +298,8 @@ def _build_model_messages(request: MessagesRequest) -> list:
                 _is_hard_failure = bool(
                     re.search(r'BUILD FAILED|FAILURE:|non-zero exit value\s+[1-9]|Execution failed for task|exit code [1-9]|\bfailed\b.*\bexception\b', content_str, re.IGNORECASE)
                 )
-                _is_build_cmd = bool(
+                _is_read_only_op_a = bool(re.search(r'^\s*(cat|head|tail|sed\s+-n\b|grep\b|awk\b|wc\b|diff\b|less\b|more\b|stat\b)\s', last_cmd or ""))
+                _is_build_cmd = not _is_read_only_op_a and bool(
                     re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', last_cmd)
                 )
                 if _is_hard_failure and _is_build_cmd:
@@ -690,10 +692,17 @@ def _parse_tool_calls(text: str):
         input_m = re.search(r'<input>\s*(.*?)\s*</input>', raw, re.DOTALL | re.IGNORECASE)
         if tool_m and input_m:
             name = tool_m.group(1).strip()
+            _raw_args = input_m.group(1).strip()
             try:
-                arguments = json.loads(input_m.group(1).strip())
+                arguments = json.loads(_raw_args)
             except Exception:
-                arguments = {}
+                try:
+                    arguments = json.loads(_repair_json(_raw_args))
+                except Exception:
+                    try:
+                        arguments = json.loads(_complete_json(_repair_json(_raw_args)))
+                    except Exception:
+                        arguments = {}
         else:
             try:
                 parsed = json.loads(raw)
