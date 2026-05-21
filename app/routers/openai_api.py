@@ -2222,6 +2222,33 @@ def _complete_json(raw: str) -> str:
     return raw + ''.join(reversed(opens))
 
 
+def _close_py_triple_quotes(content: str) -> str:
+    """Auto-close unclosed Python triple-quoted strings in source content."""
+    i = 0
+    n = len(content)
+    in_triple_double = False
+    in_triple_single = False
+    while i < n:
+        if not in_triple_single and content[i:i+3] in ('"""', "f\"\"\"", ):
+            # detect f""" or """ — just look for the three-quote sequence
+            if content[i:i+3] == '"""':
+                in_triple_double = not in_triple_double
+                i += 3
+                continue
+        if not in_triple_double and content[i:i+3] == "'''":
+            in_triple_single = not in_triple_single
+            i += 3
+            continue
+        i += 1
+    if in_triple_double:
+        content = content.rstrip() + '\n"""'
+        logger.info("[TRIPLE-QUOTE-AUTOCLOSE] closed unclosed \"\"\" in Write content")
+    elif in_triple_single:
+        content = content.rstrip() + "\n'''"
+        logger.info("[TRIPLE-QUOTE-AUTOCLOSE] closed unclosed ''' in Write content")
+    return content
+
+
 def _repair_json(raw: str) -> str:
     """Escape literal newlines/tabs/unescaped-quotes inside JSON string values."""
     # \xHH is invalid JSON — convert to \u00HH before parsing
@@ -2425,6 +2452,22 @@ def _parse_oai_tool_calls(text: str):
                                            "function": {"name": name, "arguments": json.dumps(arguments)}})
                     else:
                         logger.warning(f"[TC-PARSE] unclosed recovery failed: {_ue}")
+
+    # Auto-close unclosed Python triple-quoted strings in Write calls for .py files
+    for _tc_py in tool_calls:
+        _fn_py = _tc_py.get("function", {})
+        if _fn_py.get("name", "").lower() in ("write", "write_file"):
+            try:
+                _args_py = json.loads(_fn_py.get("arguments", "{}"))
+                _fp_py = _args_py.get("filePath") or _args_py.get("file_path") or _args_py.get("path", "")
+                _ct_py = _args_py.get("content", "")
+                if _fp_py.endswith(".py") and _ct_py:
+                    _fixed_py = _close_py_triple_quotes(_ct_py)
+                    if _fixed_py != _ct_py:
+                        _args_py["content"] = _fixed_py
+                        _tc_py["function"] = {**_fn_py, "arguments": json.dumps(_args_py)}
+            except Exception:
+                pass
 
     # Strip any hallucinated <tool_result>...</tool_result> blocks
     clean = re.sub(r'<tool_result>.*?</tool_result>', '', clean, flags=re.DOTALL | re.IGNORECASE).strip()
