@@ -2548,8 +2548,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         return _SR(_hl_emit(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
 
     temperature = request.temperature if request.temperature is not None else 0.0
-    # Cap agentic completions at 2048 tokens — tool calls are short; large limits cause runaway generation
-    max_tokens = min(max(request.max_tokens or 0, int(settings.get("ollama_num_predict", "2048"))), 2048)
+    # Cap agentic completions at 4096 tokens — write tool calls can contain large files
+    max_tokens = min(max(request.max_tokens or 0, int(settings.get("ollama_num_predict", "2048"))), 4096)
     # Stop at </tool_call> so model never hallucinates <tool_result> blocks after its tool call
     kwargs = {"temperature": temperature, "max_tokens": max_tokens, "stop": ["</tool_call>"]}
     if request.top_p is not None:
