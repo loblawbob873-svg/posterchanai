@@ -539,7 +539,15 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             _py_file = _py_m.group(1)
                             _recent_pycompile = any("py_compile" in c for c in bash_history[-4:])
                             if not _recent_pycompile:
-                                content_str += f"\n\n[PROXY REMINDER: After editing Python files, always verify syntax before continuing: bash(command='python3 -m py_compile {_py_file} && echo OK')]"
+                                _is_html_py = re.search(r'\bhtml\.py\b', _py_file or "")
+                                if _is_html_py:
+                                    content_str += (
+                                        f"\n\n[MANDATORY: Verify html.py syntax RIGHT NOW before writing any other file. "
+                                        f"Run: bash(command='python3 -m py_compile {_py_file} && echo OK') "
+                                        f"Do NOT write cli.py until this passes.]"
+                                    )
+                                else:
+                                    content_str += f"\n\n[PROXY REMINDER: After editing Python files, always verify syntax before continuing: bash(command='python3 -m py_compile {_py_file} && echo OK')]"
                         break
             # After reading a Python source file, remind the model to edit it directly
             if last_tool_name.lower() in ("read", "read_file", "view") and not non_bash_write_done:
