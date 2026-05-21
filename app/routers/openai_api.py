@@ -543,6 +543,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 # Warn immediately if written content has triple-quoted strings (will be truncated)
                                 _raw_ast = _r.get("content", "")
                                 _has_triple = bool(re.search(r'\\\"\\\"\\\"', _raw_ast) or "'''" in _raw_ast)
+                                logger.info(f"[WRITE-PY] tool={last_tool_name} file={_py_file} has_triple={_has_triple} raw_len={len(_raw_ast)}")
                                 if _has_triple:
                                     content_str += (
                                         f"\n\n[WRITE-TRUNCATION-RISK: {_py_file} contains triple-quoted strings (\"\"\" or '''). "
