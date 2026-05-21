@@ -465,6 +465,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
     _token_limit_trunc_files = set()  # files where TOKEN-LIMIT-TRUNC fired — always re-verify syntax after rewrite
     _syntax_err_count = {}  # file path -> how many times SYNTAX-BRACKET-ERR or TOKEN-LIMIT-TRUNC has fired
     _write_failed_count = 0  # how many consecutive Write-tool schema failures have occurred
+    _write_success_paths = set()  # .py files confirmed written (Write followed by "Wrote file successfully", not WRITE-BLOCKED)
+    _pending_write_path = None    # filePath from most recent Write/Edit tool call (to track success)
     non_bash_write_done = False  # True if model used write_file/str_replace/edit tool (non-bash)
     fetch_head_reset_done = False  # True after model successfully runs reset --hard FETCH_HEAD
     colorize_task_done = False     # True after model successfully colorizes a .sh file
@@ -505,11 +507,17 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         bash_history.append(cmd)
                 elif re.search(r'write|edit|str_replace|create|patch|replace', name, re.IGNORECASE):
                     non_bash_write_done = True
+                    _fp = args.get("filePath") or args.get("file_path") or args.get("path") or ""
+                    _pending_write_path = str(_fp) if _fp else None
                 # Use XML format matching this model's training format
                 parts.append(f'<tool_call>\n<tool>{name}</tool>\n<input>\n{json.dumps(args, indent=2)}\n</input>\n</tool_call>')
             result.append({"role": "assistant", "content": "\n".join(parts)})
         elif role == "tool":
             content_str = str(content)
+            # Track Write success: if the original result says "Wrote file successfully" for a .py file, record it.
+            # We check BEFORE proxy modifications so we see the real opencode result, not proxy-injected text.
+            _orig_write_ok = _pending_write_path and "Wrote file successfully" in content_str
+            _pending_write_path = None  # reset after each tool result
             # If task was already completed, replace result entirely to prevent the model from acting on git status output
             if fetch_head_reset_done:
                 content_str = "[TASK COMPLETE — STOP. Do not run any more git commands. The repo is already synced. Report success to the user and stop all commands.]"
@@ -610,38 +618,92 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                     f"If it fails, fix the syntax error before writing anything else.]"
                                 )
                         break
-            # If Write tool failed with missing filePath, REPLACE error with recovery instruction
+            # If Write tool failed with missing filePath, try WRITE-AUTO-RECOVER first,
+            # then fall back to WRITE-FAILED guidance.
             if last_tool_name.lower() in ("edit", "write", "str_replace_based_edit_tool", "str_replace"):
                 if 'Missing key' in content_str and 'filePath' in content_str:
-                    # Try to find last path from history
-                    _schema_path = None
+                    _auto_recovered = False
+
+                    # WRITE-AUTO-RECOVER: extract content from failing Write call, infer target file, write it ourselves.
+                    # This handles deterministic models that always omit filePath for certain files.
+                    _auto_content = None
                     for _r in reversed(result):
                         if _r.get("role") == "assistant":
-                            _m = re.search(r'"(?:path|file_path|filePath)"\s*:\s*"([^"]+)"', _r.get("content", ""))
-                            if _m:
-                                _schema_path = _m.group(1)
+                            _call_m = re.search(
+                                r'<tool>\s*[Ww]rite\s*</tool>\s*<input>\s*(.*?)\s*</input>',
+                                _r.get("content", ""), re.DOTALL
+                            )
+                            if _call_m:
+                                try:
+                                    _call_json = json.loads(_call_m.group(1))
+                                    if "content" in _call_json and "filePath" not in _call_json and "path" not in _call_json:
+                                        _auto_content = _call_json["content"]
+                                except Exception:
+                                    pass
+                            break
+
+                    # Find target: most recently Read .py file not yet in _write_success_paths
+                    _auto_target = None
+                    if _auto_content:
+                        _all_read_pys = []
+                        for _r in result:
+                            if _r.get("role") == "assistant":
+                                for _rm in re.finditer(
+                                    r'<tool>\s*[Rr]ead\w*\s*</tool>\s*<input>\s*\{[^}]*"(?:path|file_path|filePath)"\s*:\s*"([^"]+\.py)"',
+                                    _r.get("content", ""), re.DOTALL
+                                ):
+                                    _rp = _rm.group(1)
+                                    if _rp not in _all_read_pys:
+                                        _all_read_pys.append(_rp)
+                        for _rp in reversed(_all_read_pys):
+                            if _rp not in _write_success_paths:
+                                _auto_target = _rp
                                 break
-                    _target = f"'{_schema_path}'" if _schema_path else "'/full/path/to/file.py'"
-                    _write_failed_count += 1
-                    if _write_failed_count <= 3:
-                        # Replace entirely — appending gets ignored by deterministic models
-                        content_str = (
-                            f"[WRITE-FAILED (attempt {_write_failed_count}): The Write tool requires BOTH 'filePath' AND 'content'. "
-                            f"Your call was missing 'filePath'. "
-                            f"CORRECT FORMAT: Write(filePath={_target}, content='...full file content...'). "
-                            f"Do NOT omit filePath. Write the file now.]"
-                        )
-                    else:
-                        # After many failures, direct the model to use bash instead
-                        content_str = (
-                            f"[WRITE-FAILED (attempt {_write_failed_count}): The Write tool keeps failing because filePath is missing. "
-                            f"SWITCH TO BASH: write the file using bash instead:\n"
-                            f"  bash(command=\"cat > {_schema_path or '/path/to/file.py'} << 'HEREDOC'\\n...file content...\\nHEREDOC\")\n"
-                            f"Or use the Write tool with the COMPLETE required format:\n"
-                            f"  Write(filePath={_target}, content='def main(): ...')\n"
-                            f"One of these MUST work. Do it now.]"
-                        )
-                    logger.info(f"[WRITE-SCHEMA-ERR] attempt={_write_failed_count} Write failed with missing filePath")
+
+                    if _auto_content and _auto_target:
+                        try:
+                            with open(_auto_target, 'w') as f:
+                                f.write(_auto_content)
+                            _write_success_paths.add(_auto_target)
+                            content_str = (
+                                f"Wrote file successfully.\n"
+                                f"[AUTO-RECOVERED: filePath was missing in Write call — wrote {len(_auto_content)} chars to {_auto_target}. "
+                                f"MANDATORY SYNTAX CHECK: run python3 -m py_compile {_auto_target} && echo SYNTAX_OK before writing any other file.]"
+                            )
+                            _write_failed_count = 0
+                            logger.info(f"[WRITE-AUTO-RECOVER] Wrote {_auto_target} ({len(_auto_content)} chars) from Write call missing filePath")
+                            _auto_recovered = True
+                        except Exception as _e:
+                            logger.warning(f"[WRITE-AUTO-RECOVER] Failed to write {_auto_target}: {_e}")
+
+                    if not _auto_recovered:
+                        # Fallback: guide model to fix the Write call
+                        _schema_path = None
+                        for _r in reversed(result):
+                            if _r.get("role") == "assistant":
+                                _m = re.search(r'"(?:path|file_path|filePath)"\s*:\s*"([^"]+)"', _r.get("content", ""))
+                                if _m:
+                                    _schema_path = _m.group(1)
+                                    break
+                        _target = f"'{_schema_path}'" if _schema_path else "'/full/path/to/file.py'"
+                        _write_failed_count += 1
+                        if _write_failed_count <= 3:
+                            content_str = (
+                                f"[WRITE-FAILED (attempt {_write_failed_count}): The Write tool requires BOTH 'filePath' AND 'content'. "
+                                f"Your call was missing 'filePath'. "
+                                f"CORRECT FORMAT: Write(filePath={_target}, content='...full file content...'). "
+                                f"Do NOT omit filePath. Write the file now.]"
+                            )
+                        else:
+                            content_str = (
+                                f"[WRITE-FAILED (attempt {_write_failed_count}): The Write tool keeps failing because filePath is missing. "
+                                f"SWITCH TO BASH: write the file using bash instead:\n"
+                                f"  bash(command=\"cat > {_schema_path or '/path/to/file.py'} << 'HEREDOC'\\n...file content...\\nHEREDOC\")\n"
+                                f"Or use the Write tool with the COMPLETE required format:\n"
+                                f"  Write(filePath={_target}, content='def main(): ...')\n"
+                                f"One of these MUST work. Do it now.]"
+                            )
+                        logger.info(f"[WRITE-SCHEMA-ERR] attempt={_write_failed_count} Write failed with missing filePath")
             # After reading a Python source file, remind the model to edit it directly
             if last_tool_name.lower() in ("read", "read_file", "view") and not non_bash_write_done:
                 # Detect doubled-path "File not found" error (model prepended CWD to filename)
@@ -1806,6 +1868,15 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     f"git checkout HEAD -- {_co_file_name}\n"
                     "Run that now to restore your local version before committing.]"
                 )
+            # Track write success: after all proxy logic, if write was not WRITE-BLOCKED/SIZE-BLOCKED, record it
+            if _orig_write_ok and not content_str.startswith("[WRITE-BLOCKED") and not content_str.startswith("[SIZE-BLOCKED"):
+                # Recover the file path from the PREVIOUS assistant's Write call
+                for _r in reversed(result):
+                    if _r.get("role") == "assistant":
+                        _ws_m = re.search(r'"(?:filePath|file_path|path)"\s*:\s*"([^"]+\.py)"', _r.get("content", ""))
+                        if _ws_m:
+                            _write_success_paths.add(_ws_m.group(1))
+                        break
             # Wrap in XML tool_result format matching this model's expected pattern
             result.append({"role": "user", "content": f"<tool_result>\n<tool>{last_tool_name}</tool>\n<output>\n{content_str}\n</output>\n</tool_result>"})
         else:
