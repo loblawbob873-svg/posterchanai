@@ -136,8 +136,8 @@ Steps:
 2. CRITICAL: Resolve theme_props.dart conflict by keeping Aikey version (defaultDarkThemeProps = cyberpunkDarkThemeProps)
 3. For all other conflicts: git diff --name-only --diff-filter=U | xargs git checkout HEAD --
 4. Commit: git add -A && git commit -m 'Merge local-aria/main'
-5. Run sync-apk.sh ONCE. Fix any build errors, then run it once more if needed.
-6. STOP IMMEDIATELY after sync-apk.sh completes successfully. Do not run git status, git log, or sync-apk.sh again.
+5. Run ./sync-apk.sh ONCE. Fix any build errors, then run it once more if needed.
+6. STOP IMMEDIATELY after ./sync-apk.sh completes successfully. Do not run git status, git log, or ./sync-apk.sh again.
 PROMPT
 )
 

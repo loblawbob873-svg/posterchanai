@@ -1154,13 +1154,23 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             "git ls-files --deleted | xargs -r git checkout HEAD -- "
                             "Then run the build/script from your task instructions.]"
                         )
-            # Command not found: the required program isn't installed — terminal, never retryable by the model
+            # Command not found: if a .sh script failed without ./ prefix, tell model to add it
             if not _loop_suppressed and re.search(r'\bcommand not found\b', content_str, re.IGNORECASE):
-                content_str = (
-                    "[COMMAND NOT FOUND: A required program is not installed on this machine. "
-                    "STOP — retrying will not help. Report what was accomplished and note that the missing "
-                    "program must be installed before this step can run.]"
-                )
+                _cnf_cmd = last_cmd or _last_actual_cmd or ""
+                if re.search(r'^\s*\S+\.sh\b', _cnf_cmd) and not re.search(r'^\s*\./', _cnf_cmd):
+                    # Shell script called without ./ prefix — not installed as a command, just run it with ./
+                    _sh_name = re.search(r'^\s*(\S+\.sh\b)', _cnf_cmd)
+                    _sh_name = _sh_name.group(1) if _sh_name else _cnf_cmd.strip()
+                    content_str = (
+                        f"[COMMAND NOT FOUND: '{_sh_name}' is a local script, not a system command. "
+                        f"Run it with a ./ prefix: ./{_sh_name}]"
+                    )
+                else:
+                    content_str = (
+                        "[COMMAND NOT FOUND: A required program is not installed on this machine. "
+                        "STOP — retrying will not help. Report what was accomplished and note that the missing "
+                        "program must be installed before this step can run.]"
+                    )
                 _loop_suppressed = True
             # Command timeout: build script was killed by the default 120s timeout — tell model to add a longer timeout.
             if (re.search(r'timeout.*ms|expected to take longer|retry with a larger timeout', content_str, re.IGNORECASE)
@@ -2577,8 +2587,9 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         return _SR(_hl_emit(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
 
     temperature = request.temperature if request.temperature is not None else 0.0
-    # Cap agentic completions at 4096 tokens — write tool calls can contain large files
-    max_tokens = min(max(request.max_tokens or 0, int(settings.get("ollama_num_predict", "2048"))), 4096)
+    # Cap agentic completions at 8192 tokens — write tool calls can contain large files;
+    # the </tool_call> stop token prevents runaway generation
+    max_tokens = min(max(request.max_tokens or 0, int(settings.get("ollama_num_predict", "2048"))), 8192)
     # Stop at </tool_call> so model never hallucinates <tool_result> blocks after its tool call
     kwargs = {"temperature": temperature, "max_tokens": max_tokens, "stop": ["</tool_call>"]}
     if request.top_p is not None:
