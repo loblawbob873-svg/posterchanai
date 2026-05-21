@@ -2815,7 +2815,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     _adict_rep = json.loads(_fn_rep.get("arguments", "{}"))
                     _cmd_rep = _adict_rep.get("command", "")
                     _is_verify_or_explore = bool(re.search(
-                        r'py_compile|python3\s+-m\s+py|bash\s+-n|--check|--syntax|^cat\b|^grep\b|^ls\b|^find\b|^wc\b|^head\b',
+                        r'^cat\b|^grep\b|^ls\b|^find\b|^wc\b|^head\b',
                         _cmd_rep
                     ))
                     if _is_verify_or_explore:
