@@ -443,6 +443,49 @@ def buildWeb(timestamp):
     return h
 """
 
+# Complete verbatim cli.py template injected when TOKEN LIMIT fires for python-firewall cli.py
+_PYFW_CLI_TEMPLATE = """#!/usr/bin/env python3
+from colorama import Fore, Back, Style, init
+import subprocess
+
+init()
+
+NEON_CYAN = Fore.CYAN + Style.BRIGHT
+NEON_MAGENTA = Fore.MAGENTA + Style.BRIGHT
+RESET = Style.RESET_ALL
+DIM = Style.DIM
+
+BANNER = (
+    NEON_CYAN + '+==============================+' + RESET + '\\n' +
+    NEON_MAGENTA + '| CYBERPUNK FIREWALL TERMINAL  |' + RESET + '\\n' +
+    NEON_CYAN + '+==============================+' + RESET
+)
+
+def show_status():
+    print(NEON_MAGENTA + '[STATUS]' + RESET)
+    try:
+        r = subprocess.run(['python3', 'firewall.py', 'status'],
+                           capture_output=True, text=True, cwd='/opt/python-firewall')
+        print(Fore.CYAN + r.stdout + RESET)
+    except Exception as e:
+        print(Fore.RED + 'Error: ' + str(e) + RESET)
+
+def show_header():
+    print(BANNER)
+    print(NEON_CYAN + 'System: ' + RESET + Fore.MAGENTA + 'ACTIVE' + RESET)
+    print(NEON_CYAN + 'Mode:   ' + RESET + Fore.MAGENTA + 'CYBERPUNK' + RESET)
+
+def main():
+    show_header()
+    print(Fore.CYAN + '--- neon glow cyberpunk status ---' + RESET)
+    show_status()
+    print(NEON_MAGENTA + 'MAGENTA pulse active' + RESET)
+    print(NEON_CYAN + 'CYAN scanline active' + RESET)
+
+if __name__ == '__main__':
+    main()
+"""
+
 _TC_RE = re.compile(r'<tool_call>\s*(.*?)\s*</tool_call>', re.DOTALL | re.IGNORECASE)
 _TC_UNCLOSED_RE = re.compile(r'<tool_call>\s*(.*?)$', re.DOTALL | re.IGNORECASE)
 _THINK_STRIP_RE = re.compile(r'<think(?:ing)?>(.*?)</think(?:ing)?>', re.DOTALL | re.IGNORECASE)
@@ -726,21 +769,12 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 else:
                     _is_cli_py = "cli" in _pyc_fname
                     if _is_cli_py:
+                        _cli_path = _pyc_fullpath or "cli.py"
                         content_str = (
-                            f"[TOKEN LIMIT: cli.py was truncated (syntax error). "
-                            f"Write a SHORT cli.py — under 50 lines total. "
-                            f"RULES: No emoji characters (they cause encoding errors). No triple-quoted strings. "
-                            f"Use only simple print() calls with colorama. Example:\n"
-                            f"from colorama import Fore, Back, Style, init\n"
-                            f"import subprocess\n"
-                            f"init()\n"
-                            f"def main():\n"
-                            f"    print(Fore.CYAN + Style.BRIGHT + '=== CYBERPUNK FIREWALL ===' + Style.RESET_ALL)\n"
-                            f"    print(Fore.MAGENTA + 'Status: ACTIVE' + Style.RESET_ALL)\n"
-                            f"    r = subprocess.run(['python3','firewall.py','status'],capture_output=True,text=True)\n"
-                            f"    print(Fore.CYAN + r.stdout + Style.RESET_ALL)\n"
-                            f"if __name__ == '__main__': main()\n"
-                            f"Write cli.py now with at least 10 Fore./Back./Style. uses.]"
+                            f"[TOKEN LIMIT — cli.py syntax error (file was truncated). "
+                            f"STOP. Write the EXACT content below to {_cli_path} VERBATIM:\n\n"
+                            + _PYFW_CLI_TEMPLATE
+                            + f"\nWrite that EXACT content to {_cli_path} NOW.]"
                         )
                     else:
                         content_str = (
