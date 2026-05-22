@@ -721,9 +721,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                                         logger.info(f"[WRITE-SAVED-AUTOFIX] py_compile still failing after fix for {_py_file} (fstr={_is_fstr})")
                                             except Exception as _af_e:
                                                 logger.warning(f"[WRITE-SAVED-AUTOFIX] failed: {_af_e}")
-                                        # Only use AUTOFIX on first attempt — repeated same-message AUTOFIX never changes
-                                        # model behavior at temp=0; escalate on subsequent attempts instead.
-                                        if _af_ok and _prior_blocks == 0:
+                                        if _af_ok:
                                             _write_success_paths.add(_py_file)
                                             content_str = (
                                                 f"[WRITE-SAVED-AUTOFIX: {_py_file} — truncated triple-quoted string detected. "
