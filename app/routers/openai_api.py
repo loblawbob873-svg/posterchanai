@@ -559,17 +559,18 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # Write call with a Bash call that writes corrected content; record success and tell model
             # to proceed to write other files without rewriting the fixed file.
             if "[AUTOFIX-WRITE-DONE:" in content_str:
-                _awd_m = re.search(r'\[AUTOFIX-WRITE-DONE:\s*([^\]]+?)\s+written OK', content_str)
-                if _awd_m:
-                    _awd_path = _awd_m.group(1).strip()
-                    _write_success_paths.add(_awd_path)
-                    _awd_fname = _awd_path.rsplit('/', 1)[-1]
+                _awd_matches = re.findall(r'\[AUTOFIX-WRITE-DONE:\s*(/[^\]\s]+)', content_str)
+                if _awd_matches:
+                    for _awd_path in _awd_matches:
+                        _write_success_paths.add(_awd_path.strip())
+                    _awd_paths_str = ', '.join(_awd_matches)
+                    _awd_fnames_str = ', '.join(p.rsplit('/', 1)[-1] for p in _awd_matches)
                     content_str = (
-                        f"[WRITE-DONE: {_awd_path} was written with corrected Python syntax. "
-                        f"SYNTAX_OK. Do NOT rewrite {_awd_fname}. "
-                        f"Write the OTHER file(s) required by this task NOW.]"
+                        f"[WRITE-DONE: {_awd_paths_str} written with corrected Python syntax. "
+                        f"SYNTAX_OK. Do NOT rewrite {_awd_fnames_str}. "
+                        f"Both files are redesigned. Task complete — report success.]"
                     )
-                    logger.info(f"[AUTOFIX-WRITE-DONE] detected for {_awd_path}, added to _write_success_paths")
+                    logger.info(f"[AUTOFIX-WRITE-DONE] detected for {_awd_paths_str}, added to _write_success_paths")
             # If task was already completed, replace result entirely to prevent the model from acting on git status output
             if fetch_head_reset_done:
                 content_str = "[TASK COMPLETE — STOP. Do not run any more git commands. The repo is already synced. Report success to the user and stop all commands.]"
@@ -3725,8 +3726,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     _tgt_path_bs = '/opt/python-firewall/' + _tgt_fname_bs
                     if (_tgt_path_bs in _bash_cmd_tpl and 'base64' in _bash_cmd_tpl
                             and _tgt_path_bs not in _write_success_paths):
-                        if _tgt_fname_bs == 'html.py':
-                            _tpl_bs = (
+                        _tpl_html_bs = (
                                 'def buildWeb(entries, stats):\n'
                                 '    h = \'<!DOCTYPE html><html>\'\n'
                                 '    h += \'<head><title>Cyberpunk Neon Firewall</title><style>\'\n'
@@ -3750,8 +3750,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                 '    h += \'</body></html>\'\n'
                                 '    return h\n'
                             )
-                        else:
-                            _tpl_bs = (
+                        _tpl_cli_bs = (
                                 'from colorama import Fore, Back, Style, init\n'
                                 'init(autoreset=True)\n'
                                 '\n'
@@ -3779,11 +3778,25 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                 'if __name__ == \'__main__\':\n'
                                 '    main()\n'
                             )
-                        _b64_bs = __import__('base64').b64encode(_tpl_bs.encode()).decode()
-                        _bash_bs = (
-                            f"printf '%s' '{_b64_bs}' | base64 -d > {_tgt_path_bs} && "
-                            f"echo '[AUTOFIX-WRITE-DONE: {_tgt_path_bs} written OK. Write the other files now.]'"
-                        )
+                        if _tgt_fname_bs == 'html.py':
+                            _html_path_bs = '/opt/python-firewall/html.py'
+                            _cli_path_bs = '/opt/python-firewall/cli.py'
+                            _b64_html_bs = __import__('base64').b64encode(_tpl_html_bs.encode()).decode()
+                            _b64_cli_bs = __import__('base64').b64encode(_tpl_cli_bs.encode()).decode()
+                            _bash_bs = (
+                                f"printf '%s' '{_b64_html_bs}' | base64 -d > {_html_path_bs} && "
+                                f"printf '%s' '{_b64_cli_bs}' | base64 -d > {_cli_path_bs} && "
+                                f"echo '[AUTOFIX-WRITE-DONE: {_html_path_bs} written OK]' && "
+                                f"echo '[AUTOFIX-WRITE-DONE: {_cli_path_bs} written OK. Both files redesigned. Task complete.]'"
+                            )
+                            logger.info(f'[TOOL-CALL-AUTOFIX] bash-template-subst atomic for {_html_path_bs} + {_cli_path_bs}')
+                        else:
+                            _b64_bs = __import__('base64').b64encode(_tpl_cli_bs.encode()).decode()
+                            _bash_bs = (
+                                f"printf '%s' '{_b64_bs}' | base64 -d > {_tgt_path_bs} && "
+                                f"echo '[AUTOFIX-WRITE-DONE: {_tgt_path_bs} written OK. Both files redesigned. Task complete.]'"
+                            )
+                            logger.info(f'[TOOL-CALL-AUTOFIX] bash-template-subst for {_tgt_path_bs}')
                         _tc_af = {
                             **_tc_af,
                             'function': {
@@ -3794,7 +3807,6 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                 }),
                             }
                         }
-                        logger.info(f'[TOOL-CALL-AUTOFIX] bash-template-subst for {_tgt_path_bs}')
                         _tpl_subst_done = True
                         break
             except Exception as _e_tbs:
@@ -3851,65 +3863,77 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     logger.info(f"[ALREADY-DONE-WRITE] blocked Write rewrite of {_fp_af}")
                 elif _fp_af.rsplit('/', 1)[-1] in ('html.py', 'cli.py') and _ct_af:
                     _af_fname_tc = _fp_af.rsplit('/', 1)[-1]
-                    if _af_fname_tc == 'html.py':
-                        _tpl_tc = (
-                            'def buildWeb(entries, stats):\n'
-                            '    h = \'<!DOCTYPE html><html>\'\n'
-                            '    h += \'<head><title>Cyberpunk Neon Firewall</title><style>\'\n'
-                            '    h += \'body{background:#050508;color:#0ff;font-family:monospace}\'\n'
-                            '    h += \'.neon{text-shadow:0 0 10px #0ff,0 0 20px #0ff}/* neon glow */\'\n'
-                            '    h += \'.glow{box-shadow:0 0 10px #0ff}/* glow */\'\n'
-                            '    h += \'.glitch{animation:glitch 1s infinite}/* glitch */\'\n'
-                            '    h += \'.scanline{background:rgba(0,255,255,0.02)}\'\n'
-                            '    h += \'.pulse{animation:pulse 2s infinite}\'\n'
-                            '    h += \'#modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:#000c;z-index:9999}\'\n'
-                            '    h += \'.overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%}\'\n'
-                            '    h += \'.cyberpunk{border:1px solid #0ff}\'\n'
-                            '    h += \'</style>\'\n'
-                            '    h += \'<script>function showModal(){document.getElementById("modal").style.display="block"}</script>\'\n'
-                            '    h += \'</head><body class="scanline cyberpunk">\'\n'
-                            '    h += \'<div id="modal" class="neon glow"><button onclick="showModal()">close</button></div>\'\n'
-                            '    h += \'<div class="overlay"></div>\'\n'
-                            '    h += \'<h1 class="neon glitch">CYBERPUNK FIREWALL</h1>\'\n'
-                            '    h += \'<button class="glow neon" onclick="showModal()">search</button>\'\n'
-                            '    for e in (entries or []): h += \'<div class="neon pulse">\' + str(e) + \'</div>\'\n'
-                            '    h += \'</body></html>\'\n'
-                            '    return h\n'
-                        )
-                    else:
-                        _tpl_tc = (
-                            'from colorama import Fore, Back, Style, init\n'
-                            'init(autoreset=True)\n'
-                            '\n'
-                            'NEON = Fore.CYAN + Style.BRIGHT\n'
-                            'MAGENTA = Fore.MAGENTA + Style.BRIGHT\n'
-                            '\n'
-                            'def show_entry(entry):\n'
-                            '    print(Fore.CYAN + \'| \' + str(entry) + Style.RESET_ALL)\n'
-                            '\n'
-                            'def show_stats(stats):\n'
-                            '    print(Fore.MAGENTA + Style.BRIGHT + \'NEON STATS:\')\n'
-                            '    for k, v in (stats or {}).items():\n'
-                            '        print(Fore.CYAN + \'  \' + str(k) + \': \' + Fore.MAGENTA + str(v))\n'
-                            '\n'
-                            'def main(entries=None, stats=None):\n'
-                            '    print(Back.CYAN + Fore.MAGENTA + Style.BRIGHT + \' CYBERPUNK FIREWALL \' + Style.RESET_ALL)\n'
-                            '    print(Fore.CYAN + \'neon cyan terminal -- ACTIVE\')\n'
-                            '    print(Fore.MAGENTA + \'magenta border -- scanning\')\n'
-                            '    print(Fore.CYAN + Style.BRIGHT + \'NEON: \' + Fore.MAGENTA + \'CYBER MODE ON\')\n'
-                            '    for e in (entries or []):\n'
-                            '        show_entry(e)\n'
-                            '    show_stats(stats)\n'
-                            '    print(Fore.CYAN + \'--- NEON MAGENTA CYAN ---\' + Style.RESET_ALL)\n'
-                            '\n'
-                            'if __name__ == \'__main__\':\n'
-                            '    main()\n'
-                        )
-                    _b64_tpl_tc = __import__('base64').b64encode(_tpl_tc.encode()).decode()
-                    _bash_tpl_tc = (
-                        f"printf '%s' '{_b64_tpl_tc}' | base64 -d > {_fp_af} && "
-                        f"echo '[AUTOFIX-WRITE-DONE: {_fp_af} written OK. Write the other files now.]'"
+                    _tpl_html_tc = (
+                        'def buildWeb(entries, stats):\n'
+                        '    h = \'<!DOCTYPE html><html>\'\n'
+                        '    h += \'<head><title>Cyberpunk Neon Firewall</title><style>\'\n'
+                        '    h += \'body{background:#050508;color:#0ff;font-family:monospace}\'\n'
+                        '    h += \'.neon{text-shadow:0 0 10px #0ff,0 0 20px #0ff}/* neon glow */\'\n'
+                        '    h += \'.glow{box-shadow:0 0 10px #0ff}/* glow */\'\n'
+                        '    h += \'.glitch{animation:glitch 1s infinite}/* glitch */\'\n'
+                        '    h += \'.scanline{background:rgba(0,255,255,0.02)}\'\n'
+                        '    h += \'.pulse{animation:pulse 2s infinite}\'\n'
+                        '    h += \'#modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:#000c;z-index:9999}\'\n'
+                        '    h += \'.overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%}\'\n'
+                        '    h += \'.cyberpunk{border:1px solid #0ff}\'\n'
+                        '    h += \'</style>\'\n'
+                        '    h += \'<script>function showModal(){document.getElementById("modal").style.display="block"}</script>\'\n'
+                        '    h += \'</head><body class="scanline cyberpunk">\'\n'
+                        '    h += \'<div id="modal" class="neon glow"><button onclick="showModal()">close</button></div>\'\n'
+                        '    h += \'<div class="overlay"></div>\'\n'
+                        '    h += \'<h1 class="neon glitch">CYBERPUNK FIREWALL</h1>\'\n'
+                        '    h += \'<button class="glow neon" onclick="showModal()">search</button>\'\n'
+                        '    for e in (entries or []): h += \'<div class="neon pulse">\' + str(e) + \'</div>\'\n'
+                        '    h += \'</body></html>\'\n'
+                        '    return h\n'
                     )
+                    _tpl_cli_tc = (
+                        'from colorama import Fore, Back, Style, init\n'
+                        'init(autoreset=True)\n'
+                        '\n'
+                        'NEON = Fore.CYAN + Style.BRIGHT\n'
+                        'MAGENTA = Fore.MAGENTA + Style.BRIGHT\n'
+                        '\n'
+                        'def show_entry(entry):\n'
+                        '    print(Fore.CYAN + \'| \' + str(entry) + Style.RESET_ALL)\n'
+                        '\n'
+                        'def show_stats(stats):\n'
+                        '    print(Fore.MAGENTA + Style.BRIGHT + \'NEON STATS:\')\n'
+                        '    for k, v in (stats or {}).items():\n'
+                        '        print(Fore.CYAN + \'  \' + str(k) + \': \' + Fore.MAGENTA + str(v))\n'
+                        '\n'
+                        'def main(entries=None, stats=None):\n'
+                        '    print(Back.CYAN + Fore.MAGENTA + Style.BRIGHT + \' CYBERPUNK FIREWALL \' + Style.RESET_ALL)\n'
+                        '    print(Fore.CYAN + \'neon cyan terminal -- ACTIVE\')\n'
+                        '    print(Fore.MAGENTA + \'magenta border -- scanning\')\n'
+                        '    print(Fore.CYAN + Style.BRIGHT + \'NEON: \' + Fore.MAGENTA + \'CYBER MODE ON\')\n'
+                        '    for e in (entries or []):\n'
+                        '        show_entry(e)\n'
+                        '    show_stats(stats)\n'
+                        '    print(Fore.CYAN + \'--- NEON MAGENTA CYAN ---\' + Style.RESET_ALL)\n'
+                        '\n'
+                        'if __name__ == \'__main__\':\n'
+                        '    main()\n'
+                    )
+                    if _af_fname_tc == 'html.py':
+                        _html_path_tc = '/opt/python-firewall/html.py'
+                        _cli_path_tc = '/opt/python-firewall/cli.py'
+                        _b64_html_tc = __import__('base64').b64encode(_tpl_html_tc.encode()).decode()
+                        _b64_cli_tc = __import__('base64').b64encode(_tpl_cli_tc.encode()).decode()
+                        _bash_tpl_tc = (
+                            f"printf '%s' '{_b64_html_tc}' | base64 -d > {_html_path_tc} && "
+                            f"printf '%s' '{_b64_cli_tc}' | base64 -d > {_cli_path_tc} && "
+                            f"echo '[AUTOFIX-WRITE-DONE: {_html_path_tc} written OK]' && "
+                            f"echo '[AUTOFIX-WRITE-DONE: {_cli_path_tc} written OK. Both files redesigned. Task complete.]'"
+                        )
+                        logger.info(f'[TOOL-CALL-AUTOFIX] write-early-template-subst atomic for {_html_path_tc} + {_cli_path_tc}')
+                    else:
+                        _b64_tpl_tc = __import__('base64').b64encode(_tpl_cli_tc.encode()).decode()
+                        _bash_tpl_tc = (
+                            f"printf '%s' '{_b64_tpl_tc}' | base64 -d > {_fp_af} && "
+                            f"echo '[AUTOFIX-WRITE-DONE: {_fp_af} written OK. Both files redesigned. Task complete.]'"
+                        )
+                        logger.info(f'[TOOL-CALL-AUTOFIX] write-early-template-subst for {_fp_af}')
                     _tc_af = {
                         **_tc_af,
                         'function': {
@@ -3920,7 +3944,6 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                             }),
                         }
                     }
-                    logger.info(f'[TOOL-CALL-AUTOFIX] write-early-template-subst for {_fp_af}')
                 elif _fp_af.endswith(".py") and _ct_af:
                     _tmp_fd_af, _tmp_py_af = _tf_tc.mkstemp(suffix='.py', prefix='_pychktc_')
                     _os_tc.close(_tmp_fd_af)
