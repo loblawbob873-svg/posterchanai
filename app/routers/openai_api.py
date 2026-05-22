@@ -3834,10 +3834,15 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 _bash_cmd_blk = _bash_args_blk.get("command", "") or ""
                 for _done_path_blk in list(_write_success_paths):
                     _done_base_blk = _done_path_blk.rsplit('/', 1)[-1]
-                    if (_done_path_blk in _bash_cmd_blk) and (
-                        'write_text' in _bash_cmd_blk or 'pathlib' in _bash_cmd_blk or
-                        ('base64' in _bash_cmd_blk and _done_base_blk in _bash_cmd_blk) or
-                        ('>' in _bash_cmd_blk)
+                    if (
+                        (_done_path_blk in _bash_cmd_blk) and (
+                            'write_text' in _bash_cmd_blk or 'pathlib' in _bash_cmd_blk or
+                            ('base64' in _bash_cmd_blk and _done_base_blk in _bash_cmd_blk) or
+                            ('>' in _bash_cmd_blk)
+                        )
+                    ) or (
+                        ('git checkout' in _bash_cmd_blk or 'git restore' in _bash_cmd_blk) and
+                        _done_base_blk in _bash_cmd_blk
                     ):
                         _bash_args_blk['command'] = (
                             f"echo '[ALREADY-DONE: {_done_path_blk} is already written with "
