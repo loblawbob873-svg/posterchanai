@@ -3844,6 +3844,9 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     ) or (
                         ('git checkout' in _bash_cmd_blk or 'git restore' in _bash_cmd_blk) and
                         _done_base_blk in _bash_cmd_blk
+                    ) or (
+                        _done_base_blk in _bash_cmd_blk and
+                        bool(re.search(r'>\s*' + re.escape(_done_base_blk) + r'\b', _bash_cmd_blk))
                     ):
                         _bash_args_blk['command'] = (
                             f"echo '[ALREADY-DONE: {_done_path_blk} is already written with "
