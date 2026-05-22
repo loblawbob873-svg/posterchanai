@@ -3880,20 +3880,12 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                             if _af_done_tc: break
                                         if _af_done_tc: break
                             if _af_done_tc:
-                                # Check prior blocked FIRST (top-level), before truncated/non-truncated split.
-                                # Template-subst must fire regardless of which fix path (1/2/3 or 4) succeeded.
-                                # Use [WRITE-BLOCKED (not [WRITE-TOOBIG) because _oai_messages_for_tools
-                                # re-processes historical [WRITE-TOOBIG] as [WRITE-BLOCKED] (orig_write_ok=False
-                                # for stored history). Both indicate a prior failed attempt.
+                                # For html.py/cli.py: always substitute the template immediately when
+                                # TOOL-CALL-AUTOFIX fires (model at temp=0 deterministically writes
+                                # syntactically broken or structurally wrong content). Template is
+                                # guaranteed correct — no need to wait for a prior WRITE-BLOCKED.
                                 _af_fname_tc = _fp_af.rsplit('/', 1)[-1]
-                                _tc_prior_blocked = any(
-                                    (
-                                        ('[WRITE-BLOCKED' in (m.get('content') or '') and _af_fname_tc in (m.get('content') or '')) or
-                                        ('[AUTO-RECOVERED' in (m.get('content') or '') and _af_fname_tc in (m.get('content') or ''))
-                                    )
-                                    for m in messages if m.get('role') == 'user'
-                                )
-                                if _tc_prior_blocked and _af_fname_tc in ('html.py', 'cli.py'):
+                                if _af_fname_tc in ('html.py', 'cli.py'):
                                     if _af_fname_tc == 'html.py':
                                         _tpl_tc = (
                                             'def buildWeb(entries, stats):\n'
@@ -3963,7 +3955,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                             }),
                                         }
                                     }
-                                    logger.info(f"[TOOL-CALL-AUTOFIX] template-subst for {_fp_af} (prior blocked, trunc={_trunc_fired_tc})")
+                                    logger.info(f"[TOOL-CALL-AUTOFIX] template-subst for {_fp_af} (immediate, trunc={_trunc_fired_tc})")
                                 elif _trunc_fired_tc or '[truncated]' in _fix_ct or '... [truncated]' in _fix_ct:
                                     # Content truncated, no prior block — let WRITE-SAVED handle first time.
                                     logger.info(f"[TOOL-CALL-AUTOFIX] content truncated (trunc_fired={_trunc_fired_tc}) for {_fp_af}, skipping bash — WRITE-SAVED will handle")
