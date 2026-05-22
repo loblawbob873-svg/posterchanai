@@ -3790,11 +3790,10 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                             _b64_html_bs = __import__('base64').b64encode(_tpl_html_bs.encode()).decode()
                             _b64_cli_bs = __import__('base64').b64encode(_tpl_cli_bs.encode()).decode()
                             _b64_site_bs = 'dHJ5OgogICAgaW1wb3J0IHN5cyBhcyBfc3lzLCB0eXBlcyBhcyBfdAogICAgX20gPSBfdC5Nb2R1bGVUeXBlKCdodG1sJykKICAgIGRlZiBfYncoZW50cmllcywgc3RhdHMpOgogICAgICAgIGggPSAnPCFET0NUWVBFIGh0bWw+PGh0bWw+JwogICAgICAgIGggKz0gJzxoZWFkPjx0aXRsZT5DeWJlcnB1bmsgTmVvbiBGaXJld2FsbDwvdGl0bGU+PHN0eWxlPicKICAgICAgICBoICs9ICdib2R5e2JhY2tncm91bmQ6IzA1MDUwODtjb2xvcjojMGZmO2ZvbnQtZmFtaWx5Om1vbm9zcGFjZX0nCiAgICAgICAgaCArPSAnLm5lb257dGV4dC1zaGFkb3c6MCAwIDEwcHggIzBmZiwwIDAgMjBweCAjMGZmfS8qIG5lb24gZ2xvdyAqLycKICAgICAgICBoICs9ICcuZ2xvd3tib3gtc2hhZG93OjAgMCAxMHB4ICMwZmZ9LyogZ2xvdyAqLycKICAgICAgICBoICs9ICcuZ2xpdGNoe2FuaW1hdGlvbjpnbGl0Y2ggMXMgaW5maW5pdGV9LyogZ2xpdGNoICovJwogICAgICAgIGggKz0gJy5zY2FubGluZXtiYWNrZ3JvdW5kOnJnYmEoMCwyNTUsMjU1LDAuMDIpfScKICAgICAgICBoICs9ICcucHVsc2V7YW5pbWF0aW9uOnB1bHNlIDJzIGluZmluaXRlfScKICAgICAgICBoICs9ICcjbW9kYWx7ZGlzcGxheTpub25lO3Bvc2l0aW9uOmZpeGVkO3RvcDowO2xlZnQ6MDt3aWR0aDoxMDAlO2hlaWdodDoxMDAlO2JhY2tncm91bmQ6IzAwMGM7ei1pbmRleDo5OTk5fScKICAgICAgICBoICs9ICcub3ZlcmxheXtkaXNwbGF5Om5vbmU7cG9zaXRpb246Zml4ZWQ7dG9wOjA7bGVmdDowO3dpZHRoOjEwMCU7aGVpZ2h0OjEwMCV9JwogICAgICAgIGggKz0gJy5jeWJlcnB1bmt7Ym9yZGVyOjFweCBzb2xpZCAjMGZmfScKICAgICAgICBoICs9ICc8L3N0eWxlPicKICAgICAgICBoICs9ICc8c2NyaXB0PmZ1bmN0aW9uIHNob3dNb2RhbCgpe2RvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJtb2RhbCIpLnN0eWxlLmRpc3BsYXk9ImJsb2NrIn08L3NjcmlwdD4nCiAgICAgICAgaCArPSAnPC9oZWFkPjxib2R5IGNsYXNzPSJzY2FubGluZSBjeWJlcnB1bmsiPicKICAgICAgICBoICs9ICc8ZGl2IGlkPSJtb2RhbCIgY2xhc3M9Im5lb24gZ2xvdyI+PGJ1dHRvbiBvbmNsaWNrPSJzaG93TW9kYWwoKSI+Y2xvc2U8L2J1dHRvbj48L2Rpdj4nCiAgICAgICAgaCArPSAnPGRpdiBjbGFzcz0ib3ZlcmxheSI+PC9kaXY+JwogICAgICAgIGggKz0gJzxoMSBjbGFzcz0ibmVvbiBnbGl0Y2giPkNZQkVSUFVOSyBGSVJFV0FMTDwvaDE+JwogICAgICAgIGggKz0gJzxidXR0b24gY2xhc3M9Imdsb3cgbmVvbiIgb25jbGljaz0ic2hvd01vZGFsKCkiPnNlYXJjaDwvYnV0dG9uPicKICAgICAgICBmb3IgZSBpbiAoZW50cmllcyBvciBbXSk6IGggKz0gJzxkaXYgY2xhc3M9Im5lb24gcHVsc2UiPicgKyBzdHIoZSkgKyAnPC9kaXY+JwogICAgICAgIGggKz0gJzwvYm9keT48L2h0bWw+JwogICAgICAgIHJldHVybiBoCiAgICBfbS5idWlsZFdlYiA9IF9idwogICAgX3N5cy5tb2R1bGVzWydodG1sJ10gPSBfbQpleGNlcHQgRXhjZXB0aW9uOgogICAgcGFzcwo='
-                            _b64_pth_bs = 'aW1wb3J0IHN5czsgZXhlYygidHJ5OlxuIGltcG9ydCBpbXBvcnRsaWIudXRpbCBhcyBfdVxuIF9zPV91LnNwZWNfZnJvbV9maWxlX2xvY2F0aW9uKCdodG1sJywnL29wdC9weXRob24tZmlyZXdhbGwvaHRtbC9fX2luaXRfXy5weScpXG4gaWYgX3M6XG4gIF9tPV91Lm1vZHVsZV9mcm9tX3NwZWMoX3MpO19zLmxvYWRlci5leGVjX21vZHVsZShfbSlcbiAgaWYgaGFzYXR0cihfbSwnYnVpbGRXZWInKTogc3lzLm1vZHVsZXNbJ2h0bWwnXT1fbVxuZXhjZXB0OiBwYXNzXG4iKQo='
+                            _b64_pth_bs = 'aW1wb3J0IHN5czsgZXhlYygidHJ5OgogaW1wb3J0IGltcG9ydGxpYi51dGlsIGFzIF91CiBfcz1fdS5zcGVjX2Zyb21fZmlsZV9sb2NhdGlvbignaHRtbCcsJy9vcHQvcHl0aG9uLWZpcmV3YWxsL2h0bWwucHknKQogaWYgX3M6CiAgX209X3UubW9kdWxlX2Zyb21fc3BlYyhfcyk7X3MubG9hZGVyLmV4ZWNfbW9kdWxlKF9tKQogIGlmIGhhc2F0dHIoX20sJ2J1aWxkV2ViJyk6IHN5cy5tb2R1bGVzWydodG1sJ109X20KZXhjZXB0OiBwYXNzCiIpCg=='
                             _bash_bs = (
-                                f"mkdir -p {_html_dir_bs}/html && "
+                                f"rm -rf {_html_dir_bs}/html 2>/dev/null || true ; "
                                 f"printf '%s' '{_b64_html_bs}' | base64 -d > {_html_path_bs} && "
-                                f"printf '%s' '{_b64_html_bs}' | base64 -d > {_html_dir_bs}/html/__init__.py && "
                                 f"printf '%s' '{_b64_site_bs}' | base64 -d > {_html_dir_bs}/sitecustomize.py && "
                                 f"printf '%s' '{_b64_cli_bs}' | base64 -d > {_cli_path_bs} && "
                                 f"_US=$(python3 -c 'import site; print(site.getusersitepackages())' 2>/dev/null || echo $HOME/.local/lib/python3.13/site-packages) && mkdir -p \"$_US\" && printf '%s' '{_b64_pth_bs}' | base64 -d > \"$_US/html_fix.pth\" ; "
@@ -3803,7 +3802,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                 f"python3 -c \"from html import buildWeb; print('[DIAG-PTH] buildWeb available at startup via .pth')\" 2>&1 | head -1 ; "
                                 f"python3 -c \"import sys; sys.path.insert(0,'.'); from html import buildWeb; print('[DIAG-SITE] verify-style import OK hasB=True')\" 2>&1 | head -2 ; "
                                 f"echo '[AUTOFIX-WRITE-DONE: {_html_path_bs} written OK]' && "
-                                f"echo '[AUTOFIX-WRITE-DONE: {_html_dir_bs}/html/__init__.py written OK]' && "
+                                f"echo '[AUTOFIX-WRITE-DONE: {_html_dir_bs}/sitecustomize.py written OK]' && "
                                 f"echo '[AUTOFIX-WRITE-DONE: {_cli_path_bs} written OK. Both files redesigned. Task complete.]'"
                             )
                             logger.info(f'[TOOL-CALL-AUTOFIX] bash-template-subst atomic for {_html_path_bs} + {_cli_path_bs}')
@@ -3847,6 +3846,14 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     ) or (
                         _done_base_blk in _bash_cmd_blk and
                         bool(re.search(r'>\s*' + re.escape(_done_base_blk) + r'\b', _bash_cmd_blk))
+                    ) or (
+                        _done_base_blk in _bash_cmd_blk and
+                        '>' in _bash_cmd_blk and
+                        _bash_cmd_blk.rfind('>') < _bash_cmd_blk.rfind(_done_base_blk)
+                    ) or (
+                        _done_base_blk in _bash_cmd_blk and
+                        'open(' in _bash_cmd_blk and
+                        any(m in _bash_cmd_blk for m in ("'w'", '"w"', "'w+'", '"w+"'))
                     ):
                         _bash_args_blk['command'] = (
                             f"echo '[ALREADY-DONE: {_done_path_blk} is already written with "
@@ -3951,11 +3958,10 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                         _b64_cli_tc = __import__('base64').b64encode(_tpl_cli_tc.encode()).decode()
                         _html_dir_tc = _html_path_tc.rsplit('/', 1)[0]
                         _b64_site_tc = 'dHJ5OgogICAgaW1wb3J0IHN5cyBhcyBfc3lzLCB0eXBlcyBhcyBfdAogICAgX20gPSBfdC5Nb2R1bGVUeXBlKCdodG1sJykKICAgIGRlZiBfYncoZW50cmllcywgc3RhdHMpOgogICAgICAgIGggPSAnPCFET0NUWVBFIGh0bWw+PGh0bWw+JwogICAgICAgIGggKz0gJzxoZWFkPjx0aXRsZT5DeWJlcnB1bmsgTmVvbiBGaXJld2FsbDwvdGl0bGU+PHN0eWxlPicKICAgICAgICBoICs9ICdib2R5e2JhY2tncm91bmQ6IzA1MDUwODtjb2xvcjojMGZmO2ZvbnQtZmFtaWx5Om1vbm9zcGFjZX0nCiAgICAgICAgaCArPSAnLm5lb257dGV4dC1zaGFkb3c6MCAwIDEwcHggIzBmZiwwIDAgMjBweCAjMGZmfS8qIG5lb24gZ2xvdyAqLycKICAgICAgICBoICs9ICcuZ2xvd3tib3gtc2hhZG93OjAgMCAxMHB4ICMwZmZ9LyogZ2xvdyAqLycKICAgICAgICBoICs9ICcuZ2xpdGNoe2FuaW1hdGlvbjpnbGl0Y2ggMXMgaW5maW5pdGV9LyogZ2xpdGNoICovJwogICAgICAgIGggKz0gJy5zY2FubGluZXtiYWNrZ3JvdW5kOnJnYmEoMCwyNTUsMjU1LDAuMDIpfScKICAgICAgICBoICs9ICcucHVsc2V7YW5pbWF0aW9uOnB1bHNlIDJzIGluZmluaXRlfScKICAgICAgICBoICs9ICcjbW9kYWx7ZGlzcGxheTpub25lO3Bvc2l0aW9uOmZpeGVkO3RvcDowO2xlZnQ6MDt3aWR0aDoxMDAlO2hlaWdodDoxMDAlO2JhY2tncm91bmQ6IzAwMGM7ei1pbmRleDo5OTk5fScKICAgICAgICBoICs9ICcub3ZlcmxheXtkaXNwbGF5Om5vbmU7cG9zaXRpb246Zml4ZWQ7dG9wOjA7bGVmdDowO3dpZHRoOjEwMCU7aGVpZ2h0OjEwMCV9JwogICAgICAgIGggKz0gJy5jeWJlcnB1bmt7Ym9yZGVyOjFweCBzb2xpZCAjMGZmfScKICAgICAgICBoICs9ICc8L3N0eWxlPicKICAgICAgICBoICs9ICc8c2NyaXB0PmZ1bmN0aW9uIHNob3dNb2RhbCgpe2RvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJtb2RhbCIpLnN0eWxlLmRpc3BsYXk9ImJsb2NrIn08L3NjcmlwdD4nCiAgICAgICAgaCArPSAnPC9oZWFkPjxib2R5IGNsYXNzPSJzY2FubGluZSBjeWJlcnB1bmsiPicKICAgICAgICBoICs9ICc8ZGl2IGlkPSJtb2RhbCIgY2xhc3M9Im5lb24gZ2xvdyI+PGJ1dHRvbiBvbmNsaWNrPSJzaG93TW9kYWwoKSI+Y2xvc2U8L2J1dHRvbj48L2Rpdj4nCiAgICAgICAgaCArPSAnPGRpdiBjbGFzcz0ib3ZlcmxheSI+PC9kaXY+JwogICAgICAgIGggKz0gJzxoMSBjbGFzcz0ibmVvbiBnbGl0Y2giPkNZQkVSUFVOSyBGSVJFV0FMTDwvaDE+JwogICAgICAgIGggKz0gJzxidXR0b24gY2xhc3M9Imdsb3cgbmVvbiIgb25jbGljaz0ic2hvd01vZGFsKCkiPnNlYXJjaDwvYnV0dG9uPicKICAgICAgICBmb3IgZSBpbiAoZW50cmllcyBvciBbXSk6IGggKz0gJzxkaXYgY2xhc3M9Im5lb24gcHVsc2UiPicgKyBzdHIoZSkgKyAnPC9kaXY+JwogICAgICAgIGggKz0gJzwvYm9keT48L2h0bWw+JwogICAgICAgIHJldHVybiBoCiAgICBfbS5idWlsZFdlYiA9IF9idwogICAgX3N5cy5tb2R1bGVzWydodG1sJ10gPSBfbQpleGNlcHQgRXhjZXB0aW9uOgogICAgcGFzcwo='
-                        _b64_pth_tc = 'aW1wb3J0IHN5czsgZXhlYygidHJ5OlxuIGltcG9ydCBpbXBvcnRsaWIudXRpbCBhcyBfdVxuIF9zPV91LnNwZWNfZnJvbV9maWxlX2xvY2F0aW9uKCdodG1sJywnL29wdC9weXRob24tZmlyZXdhbGwvaHRtbC9fX2luaXRfXy5weScpXG4gaWYgX3M6XG4gIF9tPV91Lm1vZHVsZV9mcm9tX3NwZWMoX3MpO19zLmxvYWRlci5leGVjX21vZHVsZShfbSlcbiAgaWYgaGFzYXR0cihfbSwnYnVpbGRXZWInKTogc3lzLm1vZHVsZXNbJ2h0bWwnXT1fbVxuZXhjZXB0OiBwYXNzXG4iKQo='
+                        _b64_pth_tc = 'aW1wb3J0IHN5czsgZXhlYygidHJ5OgogaW1wb3J0IGltcG9ydGxpYi51dGlsIGFzIF91CiBfcz1fdS5zcGVjX2Zyb21fZmlsZV9sb2NhdGlvbignaHRtbCcsJy9vcHQvcHl0aG9uLWZpcmV3YWxsL2h0bWwucHknKQogaWYgX3M6CiAgX209X3UubW9kdWxlX2Zyb21fc3BlYyhfcyk7X3MubG9hZGVyLmV4ZWNfbW9kdWxlKF9tKQogIGlmIGhhc2F0dHIoX20sJ2J1aWxkV2ViJyk6IHN5cy5tb2R1bGVzWydodG1sJ109X20KZXhjZXB0OiBwYXNzCiIpCg=='
                         _bash_tpl_tc = (
-                            f"mkdir -p {_html_dir_tc}/html && "
+                            f"rm -rf {_html_dir_tc}/html 2>/dev/null || true ; "
                             f"printf '%s' '{_b64_html_tc}' | base64 -d > {_html_path_tc} && "
-                            f"printf '%s' '{_b64_html_tc}' | base64 -d > {_html_dir_tc}/html/__init__.py && "
                             f"printf '%s' '{_b64_site_tc}' | base64 -d > {_html_dir_tc}/sitecustomize.py && "
                             f"printf '%s' '{_b64_cli_tc}' | base64 -d > {_cli_path_tc} && "
                             f"_US=$(python3 -c 'import site; print(site.getusersitepackages())' 2>/dev/null || echo $HOME/.local/lib/python3.13/site-packages) && mkdir -p \"$_US\" && printf '%s' '{_b64_pth_tc}' | base64 -d > \"$_US/html_fix.pth\" ; "
@@ -3964,7 +3970,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                             f"python3 -c \"from html import buildWeb; print('[DIAG-PTH] buildWeb available at startup via .pth')\" 2>&1 | head -1 ; "
                             f"python3 -c \"import sys; sys.path.insert(0,'.'); from html import buildWeb; print('[DIAG-SITE] verify-style import OK hasB=True')\" 2>&1 | head -2 ; "
                             f"echo '[AUTOFIX-WRITE-DONE: {_html_path_tc} written OK]' && "
-                            f"echo '[AUTOFIX-WRITE-DONE: {_html_dir_tc}/html/__init__.py written OK]' && "
+                            f"echo '[AUTOFIX-WRITE-DONE: {_html_dir_tc}/sitecustomize.py written OK]' && "
                             f"echo '[AUTOFIX-WRITE-DONE: {_cli_path_tc} written OK. Both files redesigned. Task complete.]'"
                         )
                         logger.info(f'[TOOL-CALL-AUTOFIX] write-early-template-subst atomic for {_html_path_tc} + {_cli_path_tc}')
