@@ -3427,10 +3427,42 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     # Handles: (1) invalid box-drawing chars like ═ U+2550; (2) truncated triple-quoted strings.
     # Replaces the broken Write tool call with a Bash tool call that writes the corrected content
     # via base64 — guarantees the file on disk is actually correct regardless of proxy/stream issues.
+    # Also blocks bash calls that try to (re)write files already in _write_success_paths —
+    # the model tends to keep re-writing via bash after WRITE-DONE, preventing cli.py from being written.
     import subprocess as _sp_tc, tempfile as _tf_tc, os as _os_tc
     _tc_af_list = []
     for _tc_af in tool_calls:
         _fn_af = _tc_af.get("function", {})
+        # Block bash calls that rewrite files already confirmed written with SYNTAX_OK.
+        # The model copies the AUTOFIX bash pattern and loops on the same file;
+        # this blocker forces it to move on to unwritten files (e.g. cli.py).
+        if _fn_af.get("name", "").lower() == "bash" and _write_success_paths:
+            try:
+                _bash_args_blk = json.loads(_fn_af.get("arguments", "{}") or "{}")
+                _bash_cmd_blk = _bash_args_blk.get("command", "") or ""
+                for _done_path_blk in list(_write_success_paths):
+                    _done_base_blk = _done_path_blk.rsplit('/', 1)[-1]
+                    if (_done_path_blk in _bash_cmd_blk) and (
+                        'write_text' in _bash_cmd_blk or 'pathlib' in _bash_cmd_blk or
+                        ('base64' in _bash_cmd_blk and _done_base_blk in _bash_cmd_blk)
+                    ):
+                        _bash_args_blk['command'] = (
+                            f"echo '[ALREADY-DONE: {_done_path_blk} is already written with "
+                            f"SYNTAX_OK. Do NOT write {_done_base_blk} again. "
+                            f"Write the OTHER required file(s) NOW.]'"
+                        )
+                        _bash_args_blk['description'] = f'Block rewrite of already-written {_done_base_blk}'
+                        _tc_af = {
+                            **_tc_af,
+                            'function': {
+                                'name': 'bash',
+                                'arguments': json.dumps(_bash_args_blk),
+                            }
+                        }
+                        logger.info(f"[ALREADY-DONE-BASH] blocked bash rewrite of {_done_path_blk}")
+                        break
+            except Exception as _e_blk:
+                logger.warning(f"[ALREADY-DONE-BASH] error: {_e_blk}")
         if _fn_af.get("name", "").lower() in ("write", "write_file", "create_file"):
             try:
                 _args_af = json.loads(_fn_af.get("arguments", "{}") or "{}")
@@ -3491,13 +3523,15 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                     _af_close_tc = "'''"
                                 if _af_close_tc:
                                     _is_fstr_tc = 'f"""' in _fix_ct or "f'''" in _fix_ct
+                                    # Try return-statement suffixes first; bare close is last
+                                    # resort (produces buildWeb() returning None).
                                     _af_suffs_tc = [
-                                        _af_close_tc,
-                                        _af_close_tc+'\n)',
-                                        _af_close_tc+'\n    return html_content',
                                         _af_close_tc+'\n    return html_content\n',
-                                        _af_close_tc+'\n    return html',
+                                        _af_close_tc+'\n    return html_content',
                                         _af_close_tc+'\n    return html\n',
+                                        _af_close_tc+'\n    return html',
+                                        _af_close_tc+'\n)',
+                                        _af_close_tc,
                                     ]
                                     _af_extras_tc = ['', '}', '}}', '}}}'] if _is_fstr_tc else ['']
                                     for _st_tc in [0, 5, 20, 50, 100, 200, 500]:
