@@ -1112,17 +1112,52 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                         finally:
                                             try: _os_ar.unlink(_tmp_ar_f3)
                                             except Exception: pass
+                                # Strip metadata/marker lines (e.g. "(End of file - total N lines)") and
+                                # as a fallback strip up to 5 trailing lines for any syntax error
+                                if not _ar_af_ok:
+                                    _ar_lines_m = _auto_content.splitlines()
+                                    # First: strip known metadata patterns
+                                    _ar_meta_cleaned = [_l for _l in _ar_lines_m
+                                                        if not re.match(r'^\s*\(End of file', _l)
+                                                        and not re.match(r'^\s*#\s*End of file', _l)
+                                                        and not re.match(r'^\s*\(end of file', _l, re.IGNORECASE)]
+                                    _ar_meta_changed = len(_ar_meta_cleaned) < len(_ar_lines_m)
+                                    for _ar_strip2 in range(0 if _ar_meta_changed else 999, min(6, len(_ar_lines_m))):
+                                        _ar_src2 = _ar_meta_cleaned if (_ar_strip2 == 0 and _ar_meta_changed) else _ar_lines_m
+                                        if _ar_strip2 == 0 and _ar_meta_changed:
+                                            _ar_af_try3 = '\n'.join(_ar_src2) + '\n'
+                                        elif _ar_strip2 == 0:
+                                            break
+                                        else:
+                                            if len(_ar_src2) <= _ar_strip2:
+                                                break
+                                            _ar_af_try3 = '\n'.join(_ar_src2[:-_ar_strip2]) + '\n'
+                                        _tmp_fd_ar6, _tmp_ar_f6 = _tf_ar.mkstemp(suffix='.py', prefix='_pycarmt_')
+                                        _os_ar.close(_tmp_fd_ar6)
+                                        try:
+                                            with open(_tmp_ar_f6, 'w', errors='replace') as _ar_mt_w:
+                                                _ar_mt_w.write(_ar_af_try3)
+                                            _ar_pyc6 = _sp.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tmp_ar_f6], capture_output=True, timeout=10)
+                                            if _ar_pyc6.returncode == 0:
+                                                _ar_af_ok = True
+                                                _ar_content_final = _ar_af_try3
+                                                logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] meta/trail strip={_ar_strip2} for {_auto_target}, SYNTAX_OK")
+                                                break
+                                        finally:
+                                            try: _os_ar.unlink(_tmp_ar_f6)
+                                            except Exception: pass
                                 if not _ar_af_ok:
                                     logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] fix failed for {_auto_target}")
                             except Exception as _ar_af_e:
                                 logger.warning(f"[WRITE-AUTO-RECOVER-AUTOFIX] failed: {_ar_af_e}")
-                        # Count prior WRITE-AUTO-RECOVER rounds for this target across history
+                        # Count prior WRITE-AUTO-RECOVER rounds for this target across history.
+                        # Tool results are stored as user-role messages with <tool_result> XML content.
                         _ar_prior = 0
                         for _ar_chk_msg in messages:
-                            for _ar_chk_r in (_ar_chk_msg.get("tool_results") or []):
-                                _ar_chk_c = _ar_chk_r.get("content", "")
-                                if "AUTO-RECOVERED" in _ar_chk_c and _auto_target in _ar_chk_c:
-                                    _ar_prior += 1
+                            _ar_chk_role = _ar_chk_msg.get("role", "")
+                            _ar_chk_c = _ar_chk_msg.get("content", "") or ""
+                            if _ar_chk_role == "user" and "AUTO-RECOVERED" in _ar_chk_c and _auto_target in _ar_chk_c:
+                                _ar_prior += 1
                         if _pyc_ok or _ar_af_ok:
                             # Do NOT add to _write_success_paths yet — the file isn't on disk.
                             # ALREADY-DONE would block the Write call we're about to request.
