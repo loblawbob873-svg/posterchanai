@@ -490,8 +490,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
     _is_git_sync_task = bool(re.search(r'\bsync\b|\blocal[-\s]mirror\b|\bfork\s+of\b|\bmerge\s+upstream\b', _first_user_text, re.IGNORECASE))
     # Pre-populate write_block_count from historical write assistant messages so
     # WRITE-BLOCKED escalates correctly across repeated writes within a session.
+    # Only scan from the most recent non-tool-result user message (task start) so that
+    # write counts from previous task cycles don't bleed into the current task.
     # Scan messages[:-2] to exclude the current exchange (assistant_N + tool_result_N).
-    for _pre_msg in messages[:-2]:
+    _wbc_task_start = 0
+    for _i, _wbc_m in enumerate(messages):
+        if _wbc_m.get("role") == "user" and not _wbc_m.get("tool_calls"):
+            _wbc_task_start = _i
+    for _pre_msg in messages[_wbc_task_start:-2]:
         if _pre_msg.get("role") == "assistant":
             for _tc in (_pre_msg.get("tool_calls") or []):
                 _tc_fn = _tc.get("function", {})
@@ -509,6 +515,11 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
         content = msg.get("content") or ""
         tool_calls = msg.get("tool_calls") or []
 
+        if role == "user" and not tool_calls:
+            # Non-tool user message = start of new task. Reset _write_success_paths so
+            # WRITE-DONE from previous task cycles don't block rewrites in the new cycle.
+            # The test resets files between runs; the proxy must allow the model to rewrite.
+            _write_success_paths = set()
         if role == "system":
             combined = (content + "\n\n" + tools_text).strip() if tools_text else content
             result.append({"role": "system", "content": combined})
@@ -3678,7 +3689,17 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     # _write_success_paths is defined in _oai_messages_for_tools (a different function).
     # Rebuild it here from the already-reformatted messages so ALREADY-DONE checks work.
     _write_success_paths = set()
-    for _wsp_m in messages:
+    # Only count WRITE-DONE from the current task run (messages after the most recent
+    # non-tool-result user message). WRITE-DONE from previous task cycles (earlier in the
+    # same opencode session) must not block rewrites in the new cycle — the test resets
+    # files between runs, so the model must be able to write them again.
+    _wsp_task_start = 0
+    for _i, _m in enumerate(messages):
+        if _m.get("role") == "user":
+            _mc = _m.get("content", "") or ""
+            if isinstance(_mc, str) and "<tool_result>" not in _mc:
+                _wsp_task_start = _i
+    for _wsp_m in messages[_wsp_task_start:]:
         _wsp_c = _wsp_m.get("content", "")
         if not isinstance(_wsp_c, str):
             continue
