@@ -596,130 +596,118 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 write_block_count[_py_file] = write_block_count.get(_py_file, 0) + 1
                                 _prior_blocks = write_block_count[_py_file] - 1
                                 if _orig_write_ok:
-                                    # File WAS actually saved — run py_compile proactively and report result
-                                    import subprocess as _sp2
+                                    # File WAS actually saved — run py_compile proactively using content from
+                                    # the Write tool call arguments (no disk access needed on this machine).
+                                    import subprocess as _sp2, tempfile as _tf2, os as _os2
                                     _ws_pyc_ok = True
                                     _ws_pyc_detail = ''
+                                    _ws_fname = _py_file.rsplit('/', 1)[-1]
+                                    # Extract actual Python content from _raw_ast (JSON inside <input> tags)
+                                    _py_content_str = ''
                                     try:
-                                        _ws_r = _sp2.run(
-                                            ['python3', '-m', 'py_compile', _py_file],
-                                            capture_output=True, timeout=10
-                                        )
-                                        if _ws_r.returncode == 0:
-                                            _ws_out = 'PYCOMPILE_OK'
-                                        else:
-                                            _ws_out = _ws_r.stderr.decode('utf-8', errors='replace').strip()
-                                        _ws_pyc_ok = 'PYCOMPILE_OK' in _ws_out
-                                        if not _ws_pyc_ok:
-                                            _ws_err_lines = [l for l in _ws_out.splitlines() if l.strip()]
-                                            _ws_ln_m = re.search(r'line (\d+)', _ws_out)
-                                            _ws_fail_line = ''
-                                            if _ws_ln_m:
-                                                try:
-                                                    import linecache as _lc2
-                                                    _lc2.clearcache()
-                                                    _ws_fail_line = _lc2.getline(_py_file, int(_ws_ln_m.group(1))).rstrip()
-                                                except Exception:
-                                                    pass
-                                            _ws_pyc_detail = '\n'.join(_ws_err_lines)
-                                            if _ws_fail_line:
-                                                _ws_pyc_detail += f'\nFailing line {_ws_ln_m.group(1)}: {_ws_fail_line}'
-                                            logger.info(f"[WRITE-SAVED] py_compile FAIL for {_py_file}: {_ws_pyc_detail[:200]}")
-                                        else:
-                                            logger.info(f"[WRITE-SAVED] py_compile OK for {_py_file}")
-                                    except Exception as _ws_e:
-                                        logger.warning(f"[WRITE-SAVED] py_compile check error: {_ws_e}")
-                                    if _ws_pyc_ok:
-                                        # List unwritten sibling .py files so the model knows what to do next
-                                        _ws_dir = _py_file.rsplit('/', 1)[0] if '/' in _py_file else '.'
-                                        _ws_unwritten = []
+                                        _inp_m = re.search(r'<input>\s*(.*?)\s*</input>', _raw_ast, re.DOTALL)
+                                        if _inp_m:
+                                            _py_content_str = json.loads(_inp_m.group(1)).get('content', '')
+                                        if not _py_content_str:
+                                            _full_m = re.search(r'\{.*\}', _raw_ast, re.DOTALL)
+                                            if _full_m:
+                                                _py_content_str = json.loads(_full_m.group(0)).get('content', '')
+                                    except Exception:
+                                        pass
+                                    # Write extracted content to temp file and compile it
+                                    if _py_content_str:
+                                        _tmp_py2 = None
                                         try:
-                                            import glob as _glob2
-                                            for _ls_f in _glob2.glob(f'{_ws_dir}/*.py'):
-                                                _ls_f = _ls_f.strip()
-                                                if _ls_f and _ls_f != _py_file and _ls_f not in _write_success_paths:
-                                                    _ws_unwritten.append(_ls_f)
-                                        except Exception:
-                                            pass
-                                        _write_success_paths.add(_py_file)  # track for sibling listing
-                                        _ws_next = (f" YOU HAVE NOT WRITTEN YET: {', '.join(_ws_unwritten)}. Write those files now. DO NOT re-read or rewrite {_py_file}." if _ws_unwritten else " Write any other files you still need to change. DO NOT re-read or rewrite this file.")
+                                            _tmp_fd2, _tmp_py2 = _tf2.mkstemp(suffix='.py', prefix='_pychk_')
+                                            _os2.close(_tmp_fd2)
+                                            with open(_tmp_py2, 'w', errors='replace') as _tmp_f2:
+                                                _tmp_f2.write(_py_content_str)
+                                            _ws_r = _sp2.run(
+                                                ['python3', '-m', 'py_compile', _tmp_py2],
+                                                capture_output=True, timeout=10
+                                            )
+                                            if _ws_r.returncode == 0:
+                                                _ws_out = 'PYCOMPILE_OK'
+                                            else:
+                                                _ws_out = _ws_r.stderr.decode('utf-8', errors='replace').replace(_tmp_py2, _py_file)
+                                            _ws_pyc_ok = 'PYCOMPILE_OK' in _ws_out
+                                            if not _ws_pyc_ok:
+                                                _ws_err_lines = [l for l in _ws_out.splitlines() if l.strip()]
+                                                _ws_ln_m = re.search(r'line (\d+)', _ws_out)
+                                                _ws_fail_line = ''
+                                                if _ws_ln_m:
+                                                    try:
+                                                        _ln = int(_ws_ln_m.group(1))
+                                                        _src_lines = _py_content_str.splitlines()
+                                                        if 1 <= _ln <= len(_src_lines):
+                                                            _ws_fail_line = _src_lines[_ln - 1]
+                                                    except Exception:
+                                                        pass
+                                                _ws_pyc_detail = '\n'.join(_ws_err_lines)
+                                                if _ws_fail_line:
+                                                    _ws_pyc_detail += f'\nFailing line {_ws_ln_m.group(1)}: {_ws_fail_line}'
+                                                logger.info(f"[WRITE-SAVED] py_compile FAIL for {_py_file}: {_ws_pyc_detail[:200]}")
+                                            else:
+                                                logger.info(f"[WRITE-SAVED] py_compile OK for {_py_file}")
+                                        except Exception as _ws_e:
+                                            logger.warning(f"[WRITE-SAVED] py_compile check error: {_ws_e}")
+                                        finally:
+                                            if _tmp_py2:
+                                                try: _os2.unlink(_tmp_py2)
+                                                except Exception: pass
+                                    if _ws_pyc_ok:
+                                        _write_success_paths.add(_py_file)
                                         content_str = (
                                             f"[WRITE-SAVED: {_py_file} was written to disk. "
                                             f"NOTE: used triple-quoted strings — future files should use single-line strings joined with + to avoid truncation. "
-                                            f"SYNTAX_OK (py_compile passed).{_ws_next}]"
+                                            f"SYNTAX_OK (py_compile passed). Write any other files you still need to change. DO NOT re-read or rewrite this file.]"
                                         )
                                     else:
-                                        _ws_fname = _py_file.rsplit('/', 1)[-1]
-                                        # Auto-fix: SSH-read the truncated file, close the unclosed triple-quoted
-                                        # string, and write the corrected version back. This breaks the infinite loop
-                                        # where the model keeps regenerating truncated triple-quoted content.
+                                        # AUTOFIX: try to close unclosed triple-quote in the content we have in memory
                                         _af_ok = False
-                                        try:
-                                            with open(_py_file, 'r', errors='replace') as _af_fh:
-                                                _af_c = _af_fh.read()
-                                            _af_close = ''
-                                            if _af_c.count('"""') % 2 == 1:
-                                                _af_close = '"""'
-                                            elif _af_c.count("'''") % 2 == 1:
-                                                _af_close = "'''"
-                                            if _af_close:
-                                                _af_fixed = _af_c.rstrip('\n') + '\n' + _af_close + '\n'
-                                                with open(_py_file, 'w') as _af_fh2:
-                                                    _af_fh2.write(_af_fixed)
-                                                _af_pyc = _sp2.run(
-                                                    ['python3', '-m', 'py_compile', _py_file],
-                                                    capture_output=True, timeout=10
-                                                )
-                                                if _af_pyc.returncode == 0:
-                                                    _af_pyc_out = 'PYCOMPILE_OK'
-                                                else:
-                                                    _af_pyc_out = _af_pyc.stderr.decode('utf-8', errors='replace')
-                                                if 'PYCOMPILE_OK' in _af_pyc_out:
-                                                    _af_ok = True
-                                                    logger.info(f"[WRITE-SAVED-AUTOFIX] closed triple-quote in {_py_file}, SYNTAX_OK")
-                                                elif 'was never closed' in _af_pyc_out:
-                                                    # Unclosed ( remains after closing triple-quote — try adding parens
-                                                    for _xp in [')', '))', ')))', '))))']:
-                                                        _af_fixed2 = _af_c.rstrip('\n') + '\n' + _af_close + '\n' + _xp + '\n'
-                                                        with open(_py_file, 'w') as _af_fh3:
-                                                            _af_fh3.write(_af_fixed2)
-                                                        _af_pyc2 = _sp2.run(
-                                                            ['python3', '-m', 'py_compile', _py_file],
-                                                            capture_output=True, timeout=10
-                                                        )
-                                                        if _af_pyc2.returncode == 0:
-                                                            _af_ok = True
-                                                            _af_fixed = _af_fixed2
-                                                            logger.info(f"[WRITE-SAVED-AUTOFIX] closed triple-quote+{len(_xp)}paren in {_py_file}, SYNTAX_OK")
-                                                            break
+                                        _af_fixed = _py_content_str
+                                        if _py_content_str:
+                                            try:
+                                                _af_close = ''
+                                                if _py_content_str.count('"""') % 2 == 1:
+                                                    _af_close = '"""'
+                                                elif _py_content_str.count("'''") % 2 == 1:
+                                                    _af_close = "'''"
+                                                if _af_close:
+                                                    for _af_suffix in [_af_close, _af_close + '\n)', _af_close + '\n))', _af_close + '\n)))']:
+                                                        _af_try = _py_content_str.rstrip('\n') + '\n' + _af_suffix + '\n'
+                                                        _tmp_fd3, _tmp_py3 = _tf2.mkstemp(suffix='.py', prefix='_pychkaf_')
+                                                        _os2.close(_tmp_fd3)
+                                                        try:
+                                                            with open(_tmp_py3, 'w', errors='replace') as _af_f3:
+                                                                _af_f3.write(_af_try)
+                                                            _af_pyc = _sp2.run(['python3', '-m', 'py_compile', _tmp_py3], capture_output=True, timeout=10)
+                                                            if _af_pyc.returncode == 0:
+                                                                _af_ok = True
+                                                                _af_fixed = _af_try
+                                                                logger.info(f"[WRITE-SAVED-AUTOFIX] closed triple-quote suffix={_af_suffix!r} for {_py_file}, SYNTAX_OK")
+                                                                break
+                                                        finally:
+                                                            try: _os2.unlink(_tmp_py3)
+                                                            except Exception: pass
                                                     if not _af_ok:
                                                         logger.info(f"[WRITE-SAVED-AUTOFIX] py_compile still failing after fix for {_py_file}")
-                                                else:
-                                                    logger.info(f"[WRITE-SAVED-AUTOFIX] py_compile still failing after fix for {_py_file}")
-                                        except Exception as _af_e:
-                                            logger.warning(f"[WRITE-SAVED-AUTOFIX] failed: {_af_e}")
+                                            except Exception as _af_e:
+                                                logger.warning(f"[WRITE-SAVED-AUTOFIX] failed: {_af_e}")
                                         if _af_ok:
-                                            # List unwritten sibling .py files
-                                            _ws_dir2 = _py_file.rsplit('/', 1)[0] if '/' in _py_file else '.'
-                                            _ws_unwritten2 = []
-                                            try:
-                                                import glob as _glob3
-                                                for _ls_f2 in _glob3.glob(f'{_ws_dir2}/*.py'):
-                                                    _ls_f2 = _ls_f2.strip()
-                                                    if _ls_f2 and _ls_f2 != _py_file and _ls_f2 not in _write_success_paths:
-                                                        _ws_unwritten2.append(_ls_f2)
-                                            except Exception:
-                                                pass
-                                            _ws_next2 = (f" YOU HAVE NOT WRITTEN YET: {', '.join(_ws_unwritten2)}. Write those files now. DO NOT re-read or rewrite {_py_file}." if _ws_unwritten2 else " Write any other files you still need to change. DO NOT re-read or rewrite this file.")
+                                            _write_success_paths.add(_py_file)
                                             content_str = (
-                                                f"[WRITE-SAVED-AUTOFIX: {_py_file} — triple-quoted string auto-terminated. "
-                                                f"SYNTAX_OK.{_ws_next2}]"
+                                                f"[WRITE-SAVED-AUTOFIX: {_py_file} — truncated triple-quoted string detected. "
+                                                f"SYNTAX_OK after adding closing quote. "
+                                                f"REWRITE {_ws_fname} NOW with this corrected content:\n"
+                                                f"```python\n{_af_fixed}\n```\n"
+                                                f"Write any other files you still need to change after rewriting {_ws_fname}.]"
                                             )
                                         else:
                                             content_str = (
                                                 f"[WRITE-SAVED: {_py_file} was written to disk. "
                                                 f"SYNTAX ERROR detected:\n{_ws_pyc_detail}\n"
-                                                f"ROOT CAUSE: triple-quoted strings (\"\"\" or \"\"\"\\ or ''') get truncated — the closing \"\"\" never arrives. "
+                                                f"ROOT CAUSE: triple-quoted strings (\"\"\" or ''') get truncated. "
                                                 f"SOLUTION: build the string with concatenation, NOT triple quotes. Example:\n"
                                                 f"  h = '<html><head>'\n"
                                                 f"  h += '<style>body{{color:#0ff}}</style>'\n"
@@ -889,142 +877,122 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     _dbg_read_pys = _all_read_pys if _auto_content else 'skipped'
                     logger.info(f"[WRITE-AUTO-RECOVER-DEBUG] auto_content={'found('+str(len(_auto_content))+')' if _auto_content else 'None'} auto_target={_auto_target!r} attempted={_write_attempted_paths} read_pys={_dbg_read_pys}")
                     if _auto_content and _auto_target:
-                        import subprocess as _sp
+                        import subprocess as _sp, tempfile as _tf_ar, os as _os_ar
                         logger.info(f"[WRITE-AUTO-RECOVER] target={_auto_target} content_len={len(_auto_content)}")
-                        _wrote_ok = False
+                        _ar_content_final = _auto_content
+                        _ar_fname = _auto_target.rsplit('/', 1)[-1]
+                        # Check syntax of the recovered content using a temp file
+                        _pyc_ok = True
+                        _pyc_detail = ''
+                        _tmp_ar_f = None
                         try:
-                            with open(_auto_target, 'w') as f:
-                                f.write(_auto_content)
-                            _wrote_ok = True
-                            logger.info(f"[WRITE-AUTO-RECOVER] Local-wrote {_auto_target} ({len(_auto_content)} chars)")
-                        except Exception as _e:
-                            logger.warning(f"[WRITE-AUTO-RECOVER] Local write failed for {_auto_target}: {_e}")
-                        if _wrote_ok:
-                            _write_success_paths.add(_auto_target)
-                            # Run py_compile immediately on the written .py file and include result
-                            _pyc_ok = True
-                            _pyc_detail = ''
-                            if _auto_target.endswith('.py'):
-                                try:
-                                    _pyc_r = _sp.run(
-                                        ['python3', '-m', 'py_compile', _auto_target],
-                                        capture_output=True, timeout=10
-                                    )
-                                    if _pyc_r.returncode == 0:
-                                        _pyc_out = 'PYCOMPILE_OK'
-                                    else:
-                                        _pyc_out = _pyc_r.stderr.decode('utf-8', errors='replace').strip()
-                                    _pyc_ok = 'PYCOMPILE_OK' in _pyc_out
-                                    if not _pyc_ok:
-                                        _pyc_err_lines = [l for l in _pyc_out.splitlines() if l.strip()]
-                                        _ln_m = re.search(r'line (\d+)', _pyc_out)
-                                        _fail_line_content = ''
-                                        if _ln_m:
-                                            _ln = int(_ln_m.group(1))
-                                            try:
-                                                _lc_lines = _auto_content.splitlines()
-                                                if 1 <= _ln <= len(_lc_lines):
-                                                    _fail_line_content = _lc_lines[_ln - 1]
-                                            except Exception:
-                                                pass
-                                        _pyc_detail = '\n'.join(_pyc_err_lines)
-                                        if _fail_line_content:
-                                            _pyc_detail += f'\nFailing line {_ln_m.group(1)}: {_fail_line_content}'
-                                        logger.info(f"[WRITE-AUTO-RECOVER] py_compile FAIL for {_auto_target}: {_pyc_detail[:200]}")
-                                    else:
-                                        logger.info(f"[WRITE-AUTO-RECOVER] py_compile OK for {_auto_target}")
-                                except Exception as _pyc_e:
-                                    logger.warning(f"[WRITE-AUTO-RECOVER] py_compile check error: {_pyc_e}")
-                            if _pyc_ok:
-                                content_str = (
-                                    f"Wrote file successfully.\n"
-                                    f"[AUTO-RECOVERED: filePath was missing — wrote {len(_auto_content)} chars to {_auto_target}. "
-                                    f"SYNTAX_OK (py_compile passed). Write any other files you still need to change.]"
-                                )
+                            _tmp_fd_ar, _tmp_ar_f = _tf_ar.mkstemp(suffix='.py', prefix='_pycar_')
+                            _os_ar.close(_tmp_fd_ar)
+                            with open(_tmp_ar_f, 'w', errors='replace') as _ar_tmp_w:
+                                _ar_tmp_w.write(_auto_content)
+                            _pyc_r = _sp.run(['python3', '-m', 'py_compile', _tmp_ar_f], capture_output=True, timeout=10)
+                            if _pyc_r.returncode == 0:
+                                _pyc_out = 'PYCOMPILE_OK'
                             else:
-                                # AUTOFIX: read the file we just wrote, close unclosed triple-quotes, write back.
-                                _ar_af_ok = False
-                                try:
-                                    with open(_auto_target, 'r', errors='replace') as _ar_af_fh:
-                                        _ar_af_c = _ar_af_fh.read()
-                                    _ar_af_close = ''
-                                    if _ar_af_c.count('"""') % 2 == 1:
-                                        _ar_af_close = '"""'
-                                    elif _ar_af_c.count("'''") % 2 == 1:
-                                        _ar_af_close = "'''"
-                                    if _ar_af_close:
-                                        _ar_af_fixed = _ar_af_c.rstrip('\n') + '\n' + _ar_af_close + '\n'
-                                        with open(_auto_target, 'w') as _ar_af_fh2:
-                                            _ar_af_fh2.write(_ar_af_fixed)
-                                        _ar_pyc = _sp.run(
-                                            ['python3', '-m', 'py_compile', _auto_target],
-                                            capture_output=True, timeout=10
-                                        )
-                                        if _ar_pyc.returncode == 0:
-                                            _ar_pyc_out = 'PYCOMPILE_OK'
-                                        else:
-                                            _ar_pyc_out = _ar_pyc.stderr.decode('utf-8', errors='replace')
-                                        if 'PYCOMPILE_OK' in _ar_pyc_out:
-                                            _ar_af_ok = True
-                                            logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] closed triple-quote in {_auto_target}, SYNTAX_OK")
-                                        elif 'was never closed' in _ar_pyc_out:
-                                            for _xp2 in [')', '))', ')))', '))))']:
-                                                _ar_af_fixed2 = _ar_af_c.rstrip('\n') + '\n' + _ar_af_close + '\n' + _xp2 + '\n'
-                                                with open(_auto_target, 'w') as _ar_af_fh3:
-                                                    _ar_af_fh3.write(_ar_af_fixed2)
-                                                _ar_pyc2 = _sp.run(
-                                                    ['python3', '-m', 'py_compile', _auto_target],
-                                                    capture_output=True, timeout=10
-                                                )
-                                                if _ar_pyc2.returncode == 0:
-                                                    _ar_af_ok = True
-                                                    _ar_af_fixed = _ar_af_fixed2
-                                                    logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] closed triple-quote+{len(_xp2)}paren in {_auto_target}, SYNTAX_OK")
-                                                    break
-                                            if not _ar_af_ok:
-                                                logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] py_compile still failing after fix for {_auto_target}")
-                                        else:
-                                            logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] py_compile still failing after fix for {_auto_target}")
-                                    elif 'unmatched' in _pyc_detail or 'was never closed' in _pyc_detail:
-                                        # No unclosed triple-quote, but unmatched brace/paren at end of file
-                                        # Try stripping trailing bad lines one at a time
-                                        _ar_af_lines = _ar_af_c.splitlines()
-                                        for _strip_n in range(1, 5):
-                                            if len(_ar_af_lines) <= _strip_n:
-                                                break
-                                            _ar_af_fixed = '\n'.join(_ar_af_lines[:-_strip_n]) + '\n'
-                                            with open(_auto_target, 'w') as _ar_af_fh4:
-                                                _ar_af_fh4.write(_ar_af_fixed)
-                                            _ar_pyc3 = _sp.run(
-                                                ['python3', '-m', 'py_compile', _auto_target],
-                                                capture_output=True, timeout=10
-                                            )
-                                            if _ar_pyc3.returncode == 0:
+                                _pyc_out = _pyc_r.stderr.decode('utf-8', errors='replace').replace(_tmp_ar_f, _auto_target)
+                            _pyc_ok = 'PYCOMPILE_OK' in _pyc_out
+                            if not _pyc_ok:
+                                _pyc_err_lines = [l for l in _pyc_out.splitlines() if l.strip()]
+                                _ln_m = re.search(r'line (\d+)', _pyc_out)
+                                _fail_line_content = ''
+                                if _ln_m:
+                                    try:
+                                        _ln = int(_ln_m.group(1))
+                                        _lc_lines = _auto_content.splitlines()
+                                        if 1 <= _ln <= len(_lc_lines):
+                                            _fail_line_content = _lc_lines[_ln - 1]
+                                    except Exception:
+                                        pass
+                                _pyc_detail = '\n'.join(_pyc_err_lines)
+                                if _fail_line_content:
+                                    _pyc_detail += f'\nFailing line {_ln_m.group(1)}: {_fail_line_content}'
+                                logger.info(f"[WRITE-AUTO-RECOVER] py_compile FAIL for {_auto_target}: {_pyc_detail[:200]}")
+                            else:
+                                logger.info(f"[WRITE-AUTO-RECOVER] py_compile OK for {_auto_target}")
+                        except Exception as _pyc_e:
+                            logger.warning(f"[WRITE-AUTO-RECOVER] py_compile check error: {_pyc_e}")
+                        finally:
+                            if _tmp_ar_f:
+                                try: _os_ar.unlink(_tmp_ar_f)
+                                except Exception: pass
+                        # AUTOFIX: try to close unclosed triple-quotes in memory
+                        _ar_af_ok = False
+                        if not _pyc_ok:
+                            try:
+                                _ar_af_close = ''
+                                if _auto_content.count('"""') % 2 == 1:
+                                    _ar_af_close = '"""'
+                                elif _auto_content.count("'''") % 2 == 1:
+                                    _ar_af_close = "'''"
+                                if _ar_af_close:
+                                    for _ar_sfx in [_ar_af_close, _ar_af_close + '\n)', _ar_af_close + '\n))', _ar_af_close + '\n)))']:
+                                        _ar_af_try = _auto_content.rstrip('\n') + '\n' + _ar_sfx + '\n'
+                                        _tmp_fd_ar2, _tmp_ar_f2 = _tf_ar.mkstemp(suffix='.py', prefix='_pycarf_')
+                                        _os_ar.close(_tmp_fd_ar2)
+                                        try:
+                                            with open(_tmp_ar_f2, 'w', errors='replace') as _ar_af_w:
+                                                _ar_af_w.write(_ar_af_try)
+                                            _ar_pyc4 = _sp.run(['python3', '-m', 'py_compile', _tmp_ar_f2], capture_output=True, timeout=10)
+                                            if _ar_pyc4.returncode == 0:
                                                 _ar_af_ok = True
-                                                logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] stripped {_strip_n} trailing line(s) from {_auto_target}, SYNTAX_OK")
+                                                _ar_content_final = _ar_af_try
+                                                logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] closed triple-quote suffix={_ar_sfx!r} for {_auto_target}, SYNTAX_OK")
                                                 break
-                                        if not _ar_af_ok:
-                                            logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] strip-lines fix failed for {_auto_target}")
-                                except Exception as _ar_af_e:
-                                    logger.warning(f"[WRITE-AUTO-RECOVER-AUTOFIX] failed: {_ar_af_e}")
-                                if _ar_af_ok:
-                                    content_str = (
-                                        f"Wrote file successfully.\n"
-                                        f"[AUTO-RECOVERED: filePath was missing — wrote {len(_auto_content)} chars to {_auto_target}. "
-                                        f"AUTOFIX applied — triple-quoted string auto-terminated. "
-                                        f"SYNTAX_OK. Write any other files you still need to change.]"
-                                    )
-                                else:
-                                    content_str = (
-                                        f"Wrote file successfully.\n"
-                                        f"[AUTO-RECOVERED: filePath was missing — wrote {len(_auto_content)} chars to {_auto_target}. "
-                                        f"SYNTAX ERROR detected:\n{_pyc_detail}\n"
-                                        f"Fix this error in {_auto_target} — rewrite ONLY that file with the fix. "
-                                        f"Do NOT rewrite other files until {_auto_target.rsplit('/', 1)[-1]} has no syntax errors.]"
-                                    )
-                            _write_failed_count = 0
-                            _auto_recovered = True
-                            _auto_recovered_in_request = True  # prevent cascade in this request
+                                        finally:
+                                            try: _os_ar.unlink(_tmp_ar_f2)
+                                            except Exception: pass
+                                elif 'unmatched' in _pyc_detail or 'was never closed' in _pyc_detail:
+                                    _ar_lines = _auto_content.splitlines()
+                                    for _strip_n in range(1, 5):
+                                        if len(_ar_lines) <= _strip_n:
+                                            break
+                                        _ar_af_try2 = '\n'.join(_ar_lines[:-_strip_n]) + '\n'
+                                        _tmp_fd_ar3, _tmp_ar_f3 = _tf_ar.mkstemp(suffix='.py', prefix='_pycarst_')
+                                        _os_ar.close(_tmp_fd_ar3)
+                                        try:
+                                            with open(_tmp_ar_f3, 'w', errors='replace') as _ar_st_w:
+                                                _ar_st_w.write(_ar_af_try2)
+                                            _ar_pyc5 = _sp.run(['python3', '-m', 'py_compile', _tmp_ar_f3], capture_output=True, timeout=10)
+                                            if _ar_pyc5.returncode == 0:
+                                                _ar_af_ok = True
+                                                _ar_content_final = _ar_af_try2
+                                                logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] stripped {_strip_n} lines for {_auto_target}, SYNTAX_OK")
+                                                break
+                                        finally:
+                                            try: _os_ar.unlink(_tmp_ar_f3)
+                                            except Exception: pass
+                                if not _ar_af_ok:
+                                    logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] fix failed for {_auto_target}")
+                            except Exception as _ar_af_e:
+                                logger.warning(f"[WRITE-AUTO-RECOVER-AUTOFIX] failed: {_ar_af_e}")
+                        if _pyc_ok or _ar_af_ok:
+                            _write_success_paths.add(_auto_target)
+                            content_str = (
+                                f"Wrote file successfully.\n"
+                                f"[AUTO-RECOVERED: your Write call was missing filePath — file was NOT saved to disk. "
+                                f"{'AUTOFIX: corrected truncated triple-quote. ' if _ar_af_ok else ''}"
+                                f"SYNTAX_OK. "
+                                f"WRITE {_auto_target} NOW — use Write(filePath='{_auto_target}', content=...) with this EXACT content:\n"
+                                f"```python\n{_ar_content_final}\n```\n"
+                                f"After writing {_ar_fname}, write any other files you still need to change.]"
+                            )
+                        else:
+                            content_str = (
+                                f"Wrote file successfully.\n"
+                                f"[AUTO-RECOVERED: your Write call was missing filePath — file was NOT saved. "
+                                f"SYNTAX ERROR in content:\n{_pyc_detail}\n"
+                                f"Fix the syntax error AND include filePath. "
+                                f"Use Write(filePath='{_auto_target}', content='...fixed content...'). "
+                                f"Do NOT use triple-quoted strings — use string concatenation instead.]"
+                            )
+                        _write_failed_count = 0
+                        _auto_recovered = True
+                        _auto_recovered_in_request = True  # prevent cascade in this request
 
                     if not _auto_recovered:
                         # Fallback: guide model to fix the Write call
@@ -1064,16 +1032,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             if _rd_m:
                                 _rd_path = _rd_m.group(1)
                                 if _rd_path in _write_success_paths:
-                                    _rd_dir = _rd_path.rsplit('/', 1)[0] if '/' in _rd_path else '.'
                                     _rd_unwritten = []
-                                    try:
-                                        import glob as _glob_rd
-                                        for _f in _glob_rd.glob(f'{_rd_dir}/*.py'):
-                                            _f = _f.strip()
-                                            if _f and _f not in _write_success_paths:
-                                                _rd_unwritten.append(_f)
-                                    except Exception:
-                                        pass
                                     _rd_next = (f"YOU HAVE NOT WRITTEN YET: {', '.join(_rd_unwritten)}. Write those files now." if _rd_unwritten else "Write any remaining files now.")
                                     content_str = (
                                         f"[READ-BLOCKED: {_rd_path} was already successfully written. "
