@@ -3526,6 +3526,25 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                 finally:
                                     try: _os_tc.unlink(_tpy_tc)
                                     except: pass
+                            # Fix 3: unmatched '}' or '{' from truncated f-string expression
+                            if 'unmatched' in _pyc_err and not _af_done_tc:
+                                _lines_tc3 = _fix_ct.splitlines(keepends=True)
+                                _cleaned_tc3 = [_l for _l in _lines_tc3 if _l.strip() not in ('}', '{', '},', '{,')]
+                                if len(_cleaned_tc3) < len(_lines_tc3):
+                                    _fixed_ct3 = ''.join(_cleaned_tc3)
+                                    _tfd_tc, _tpy_tc = _tf_tc.mkstemp(suffix='.py', prefix='_pychktcaf_')
+                                    _os_tc.close(_tfd_tc)
+                                    try:
+                                        with open(_tpy_tc, 'w', errors='replace') as _pf2_tc:
+                                            _pf2_tc.write(_fixed_ct3)
+                                        _r2_tc = _sp_tc.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tpy_tc], capture_output=True, timeout=10)
+                                        if _r2_tc.returncode == 0:
+                                            _af_done_tc = True
+                                            _fix_ct = _fixed_ct3
+                                            logger.info(f"[TOOL-CALL-AUTOFIX] unmatched-brace fix for {_fp_af}")
+                                    finally:
+                                        try: _os_tc.unlink(_tpy_tc)
+                                        except: pass
                             # Fix 2: truncated triple-quoted string
                             _has_triple_af = bool(
                                 re.search(r'return\s+f?"""', _fix_ct) or
