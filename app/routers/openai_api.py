@@ -706,7 +706,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                                                         _af_fixed = _af_try
                                                                         logger.info(f"[WRITE-SAVED-AUTOFIX] strip={_strip} extra={_extra!r} suffix={_af_suffix!r} for {_py_file}, SYNTAX_OK")
                                                                         break
-                                                                                    elif not _af_logged_first_err:
+                                                                    elif not _af_logged_first_err:
                                                                         _af_first_err = _af_pyc.stderr.decode('utf-8', errors='replace').replace(_tmp_py3, _py_file)
                                                                         logger.info(f"[WRITE-SAVED-AUTOFIX] first-attempt err repr: {repr(_af_first_err[:500])}")
                                                                         _af_logged_first_err = True
