@@ -598,20 +598,17 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 if _orig_write_ok:
                                     # File WAS actually saved — run py_compile proactively and report result
                                     import subprocess as _sp2
-                                    _ws_client_h = _request_client_host.get()
                                     _ws_pyc_ok = True
                                     _ws_pyc_detail = ''
                                     try:
-                                        _ws_pyc_cmd = f"python3 -m py_compile '{_py_file}' 2>&1 && echo PYCOMPILE_OK"
-                                        if _ws_client_h:
-                                            _ws_r = _sp2.run(
-                                                ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
-                                                 _ws_client_h, _ws_pyc_cmd],
-                                                capture_output=True, timeout=10
-                                            )
-                                            _ws_out = _ws_r.stdout.decode('utf-8', errors='replace').strip()
-                                        else:
+                                        _ws_r = _sp2.run(
+                                            ['python3', '-m', 'py_compile', _py_file],
+                                            capture_output=True, timeout=10
+                                        )
+                                        if _ws_r.returncode == 0:
                                             _ws_out = 'PYCOMPILE_OK'
+                                        else:
+                                            _ws_out = _ws_r.stderr.decode('utf-8', errors='replace').strip()
                                         _ws_pyc_ok = 'PYCOMPILE_OK' in _ws_out
                                         if not _ws_pyc_ok:
                                             _ws_err_lines = [l for l in _ws_out.splitlines() if l.strip()]
@@ -619,12 +616,9 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                             _ws_fail_line = ''
                                             if _ws_ln_m:
                                                 try:
-                                                    _ws_lc_r = _sp2.run(
-                                                        ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
-                                                         _ws_client_h, f"sed -n '{_ws_ln_m.group(1)}p' '{_py_file}'"],
-                                                        capture_output=True, timeout=10
-                                                    )
-                                                    _ws_fail_line = _ws_lc_r.stdout.decode('utf-8', errors='replace').rstrip()
+                                                    import linecache as _lc2
+                                                    _lc2.clearcache()
+                                                    _ws_fail_line = _lc2.getline(_py_file, int(_ws_ln_m.group(1))).rstrip()
                                                 except Exception:
                                                     pass
                                             _ws_pyc_detail = '\n'.join(_ws_err_lines)
@@ -639,20 +633,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                         # List unwritten sibling .py files so the model knows what to do next
                                         _ws_dir = _py_file.rsplit('/', 1)[0] if '/' in _py_file else '.'
                                         _ws_unwritten = []
-                                        if _ws_client_h:
-                                            try:
-                                                _ls_r = _sp2.run(
-                                                    ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
-                                                     _ws_client_h, f"ls '{_ws_dir}'/*.py 2>/dev/null"],
-                                                    capture_output=True, timeout=5
-                                                )
-                                                if _ls_r.returncode == 0:
-                                                    for _ls_f in _ls_r.stdout.decode('utf-8', errors='replace').splitlines():
-                                                        _ls_f = _ls_f.strip()
-                                                        if _ls_f and _ls_f != _py_file and _ls_f not in _write_success_paths:
-                                                            _ws_unwritten.append(_ls_f)
-                                            except Exception:
-                                                pass
+                                        try:
+                                            import glob as _glob2
+                                            for _ls_f in _glob2.glob(f'{_ws_dir}/*.py'):
+                                                _ls_f = _ls_f.strip()
+                                                if _ls_f and _ls_f != _py_file and _ls_f not in _write_success_paths:
+                                                    _ws_unwritten.append(_ls_f)
+                                        except Exception:
+                                            pass
                                         _write_success_paths.add(_py_file)  # track for sibling listing
                                         _ws_next = (f" YOU HAVE NOT WRITTEN YET: {', '.join(_ws_unwritten)}. Write those files now. DO NOT re-read or rewrite {_py_file}." if _ws_unwritten else " Write any other files you still need to change. DO NOT re-read or rewrite this file.")
                                         content_str = (
@@ -666,83 +654,62 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                         # string, and write the corrected version back. This breaks the infinite loop
                                         # where the model keeps regenerating truncated triple-quoted content.
                                         _af_ok = False
-                                        if _ws_client_h:
-                                            try:
-                                                _af_r = _sp2.run(
-                                                    ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
-                                                     _ws_client_h, f"cat '{_py_file}'"],
+                                        try:
+                                            with open(_py_file, 'r', errors='replace') as _af_fh:
+                                                _af_c = _af_fh.read()
+                                            _af_close = ''
+                                            if _af_c.count('"""') % 2 == 1:
+                                                _af_close = '"""'
+                                            elif _af_c.count("'''") % 2 == 1:
+                                                _af_close = "'''"
+                                            if _af_close:
+                                                _af_fixed = _af_c.rstrip('\n') + '\n' + _af_close + '\n'
+                                                with open(_py_file, 'w') as _af_fh2:
+                                                    _af_fh2.write(_af_fixed)
+                                                _af_pyc = _sp2.run(
+                                                    ['python3', '-m', 'py_compile', _py_file],
                                                     capture_output=True, timeout=10
                                                 )
-                                                if _af_r.returncode == 0:
-                                                    _af_c = _af_r.stdout.decode('utf-8', errors='replace')
-                                                    _af_close = ''
-                                                    if _af_c.count('"""') % 2 == 1:
-                                                        _af_close = '"""'
-                                                    elif _af_c.count("'''") % 2 == 1:
-                                                        _af_close = "'''"
-                                                    if _af_close:
-                                                        _af_fixed = _af_c.rstrip('\n') + '\n' + _af_close + '\n'
-                                                        _af_wr = _sp2.run(
-                                                            ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
-                                                             _ws_client_h, f"cat > '{_py_file}'"],
-                                                            input=_af_fixed.encode('utf-8', errors='replace'),
+                                                if _af_pyc.returncode == 0:
+                                                    _af_pyc_out = 'PYCOMPILE_OK'
+                                                else:
+                                                    _af_pyc_out = _af_pyc.stderr.decode('utf-8', errors='replace')
+                                                if 'PYCOMPILE_OK' in _af_pyc_out:
+                                                    _af_ok = True
+                                                    logger.info(f"[WRITE-SAVED-AUTOFIX] closed triple-quote in {_py_file}, SYNTAX_OK")
+                                                elif 'was never closed' in _af_pyc_out:
+                                                    # Unclosed ( remains after closing triple-quote — try adding parens
+                                                    for _xp in [')', '))', ')))', '))))']:
+                                                        _af_fixed2 = _af_c.rstrip('\n') + '\n' + _af_close + '\n' + _xp + '\n'
+                                                        with open(_py_file, 'w') as _af_fh3:
+                                                            _af_fh3.write(_af_fixed2)
+                                                        _af_pyc2 = _sp2.run(
+                                                            ['python3', '-m', 'py_compile', _py_file],
                                                             capture_output=True, timeout=10
                                                         )
-                                                        if _af_wr.returncode == 0:
-                                                            _af_pyc = _sp2.run(
-                                                                ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
-                                                                 _ws_client_h, f"python3 -m py_compile '{_py_file}' 2>&1 && echo PYCOMPILE_OK"],
-                                                                capture_output=True, timeout=10
-                                                            )
-                                                            _af_pyc_out = _af_pyc.stdout.decode('utf-8', errors='replace')
-                                                            if 'PYCOMPILE_OK' in _af_pyc_out:
-                                                                _af_ok = True
-                                                                logger.info(f"[WRITE-SAVED-AUTOFIX] closed triple-quote in {_py_file}, SYNTAX_OK")
-                                                            elif 'was never closed' in _af_pyc_out:
-                                                                # Unclosed ( remains after closing triple-quote — try adding parens
-                                                                for _xp in [')', '))', ')))', '))))']:
-                                                                    _af_fixed2 = _af_c.rstrip('\n') + '\n' + _af_close + '\n' + _xp + '\n'
-                                                                    _af_wr2 = _sp2.run(
-                                                                        ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
-                                                                         _ws_client_h, f"cat > '{_py_file}'"],
-                                                                        input=_af_fixed2.encode('utf-8', errors='replace'),
-                                                                        capture_output=True, timeout=10
-                                                                    )
-                                                                    if _af_wr2.returncode == 0:
-                                                                        _af_pyc2 = _sp2.run(
-                                                                            ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
-                                                                             _ws_client_h, f"python3 -m py_compile '{_py_file}' 2>&1 && echo PYCOMPILE_OK"],
-                                                                            capture_output=True, timeout=10
-                                                                        )
-                                                                        if 'PYCOMPILE_OK' in _af_pyc2.stdout.decode('utf-8', errors='replace'):
-                                                                            _af_ok = True
-                                                                            _af_fixed = _af_fixed2
-                                                                            logger.info(f"[WRITE-SAVED-AUTOFIX] closed triple-quote+{len(_xp)}paren in {_py_file}, SYNTAX_OK")
-                                                                            break
-                                                                if not _af_ok:
-                                                                    logger.info(f"[WRITE-SAVED-AUTOFIX] py_compile still failing after fix for {_py_file}")
-                                                            else:
-                                                                logger.info(f"[WRITE-SAVED-AUTOFIX] py_compile still failing after fix for {_py_file}")
-                                            except Exception as _af_e:
-                                                logger.warning(f"[WRITE-SAVED-AUTOFIX] failed: {_af_e}")
+                                                        if _af_pyc2.returncode == 0:
+                                                            _af_ok = True
+                                                            _af_fixed = _af_fixed2
+                                                            logger.info(f"[WRITE-SAVED-AUTOFIX] closed triple-quote+{len(_xp)}paren in {_py_file}, SYNTAX_OK")
+                                                            break
+                                                    if not _af_ok:
+                                                        logger.info(f"[WRITE-SAVED-AUTOFIX] py_compile still failing after fix for {_py_file}")
+                                                else:
+                                                    logger.info(f"[WRITE-SAVED-AUTOFIX] py_compile still failing after fix for {_py_file}")
+                                        except Exception as _af_e:
+                                            logger.warning(f"[WRITE-SAVED-AUTOFIX] failed: {_af_e}")
                                         if _af_ok:
                                             # List unwritten sibling .py files
                                             _ws_dir2 = _py_file.rsplit('/', 1)[0] if '/' in _py_file else '.'
                                             _ws_unwritten2 = []
-                                            if _ws_client_h:
-                                                try:
-                                                    _ls_r2 = _sp2.run(
-                                                        ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
-                                                         _ws_client_h, f"ls '{_ws_dir2}'/*.py 2>/dev/null"],
-                                                        capture_output=True, timeout=5
-                                                    )
-                                                    if _ls_r2.returncode == 0:
-                                                        for _ls_f2 in _ls_r2.stdout.decode('utf-8', errors='replace').splitlines():
-                                                            _ls_f2 = _ls_f2.strip()
-                                                            if _ls_f2 and _ls_f2 != _py_file and _ls_f2 not in _write_success_paths:
-                                                                _ws_unwritten2.append(_ls_f2)
-                                                except Exception:
-                                                    pass
+                                            try:
+                                                import glob as _glob3
+                                                for _ls_f2 in _glob3.glob(f'{_ws_dir2}/*.py'):
+                                                    _ls_f2 = _ls_f2.strip()
+                                                    if _ls_f2 and _ls_f2 != _py_file and _ls_f2 not in _write_success_paths:
+                                                        _ws_unwritten2.append(_ls_f2)
+                                            except Exception:
+                                                pass
                                             _ws_next2 = (f" YOU HAVE NOT WRITTEN YET: {', '.join(_ws_unwritten2)}. Write those files now. DO NOT re-read or rewrite {_py_file}." if _ws_unwritten2 else " Write any other files you still need to change. DO NOT re-read or rewrite this file.")
                                             content_str = (
                                                 f"[WRITE-SAVED-AUTOFIX: {_py_file} — triple-quoted string auto-terminated. "
@@ -922,35 +889,16 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     _dbg_read_pys = _all_read_pys if _auto_content else 'skipped'
                     logger.info(f"[WRITE-AUTO-RECOVER-DEBUG] auto_content={'found('+str(len(_auto_content))+')' if _auto_content else 'None'} auto_target={_auto_target!r} attempted={_write_attempted_paths} read_pys={_dbg_read_pys}")
                     if _auto_content and _auto_target:
-                        # Try SSH write to client host (proxy may be on a different machine than the model client)
                         import subprocess as _sp
-                        _client_h = _request_client_host.get()
-                        logger.info(f"[WRITE-AUTO-RECOVER] target={_auto_target} client_h={_client_h!r} content_len={len(_auto_content)}")
+                        logger.info(f"[WRITE-AUTO-RECOVER] target={_auto_target} content_len={len(_auto_content)}")
                         _wrote_ok = False
-                        if _client_h:
-                            try:
-                                _ssh_r = _sp.run(
-                                    ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', _client_h,
-                                     f"cat > '{_auto_target}'"],
-                                    input=_auto_content.encode('utf-8', errors='replace'),
-                                    capture_output=True, timeout=10
-                                )
-                                if _ssh_r.returncode == 0:
-                                    _wrote_ok = True
-                                    logger.info(f"[WRITE-AUTO-RECOVER] SSH-wrote {_auto_target} ({len(_auto_content)} chars) to {_client_h}")
-                                else:
-                                    logger.warning(f"[WRITE-AUTO-RECOVER] SSH to {_client_h} failed: {_ssh_r.stderr[:200]}")
-                            except Exception as _e:
-                                logger.warning(f"[WRITE-AUTO-RECOVER] SSH exception for {_client_h}: {_e}")
-                        if not _wrote_ok:
-                            # Fallback: try local write
-                            try:
-                                with open(_auto_target, 'w') as f:
-                                    f.write(_auto_content)
-                                _wrote_ok = True
-                                logger.info(f"[WRITE-AUTO-RECOVER] Local-wrote {_auto_target} ({len(_auto_content)} chars)")
-                            except Exception as _e:
-                                logger.warning(f"[WRITE-AUTO-RECOVER] Local write failed for {_auto_target}: {_e}")
+                        try:
+                            with open(_auto_target, 'w') as f:
+                                f.write(_auto_content)
+                            _wrote_ok = True
+                            logger.info(f"[WRITE-AUTO-RECOVER] Local-wrote {_auto_target} ({len(_auto_content)} chars)")
+                        except Exception as _e:
+                            logger.warning(f"[WRITE-AUTO-RECOVER] Local write failed for {_auto_target}: {_e}")
                         if _wrote_ok:
                             _write_success_paths.add(_auto_target)
                             # Run py_compile immediately on the written .py file and include result
@@ -958,21 +906,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             _pyc_detail = ''
                             if _auto_target.endswith('.py'):
                                 try:
-                                    _pyc_cmd = f"python3 -m py_compile '{_auto_target}' 2>&1 && echo PYCOMPILE_OK"
-                                    if _client_h and _wrote_ok:
-                                        _pyc_r = _sp.run(
-                                            ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
-                                             _client_h, _pyc_cmd],
-                                            capture_output=True, timeout=10
-                                        )
-                                        _pyc_out = _pyc_r.stdout.decode('utf-8', errors='replace').strip()
+                                    _pyc_r = _sp.run(
+                                        ['python3', '-m', 'py_compile', _auto_target],
+                                        capture_output=True, timeout=10
+                                    )
+                                    if _pyc_r.returncode == 0:
+                                        _pyc_out = 'PYCOMPILE_OK'
                                     else:
-                                        import ast as _ast
-                                        try:
-                                            _ast.parse(_auto_content)
-                                            _pyc_out = 'PYCOMPILE_OK'
-                                        except SyntaxError as _se:
-                                            _pyc_out = str(_se)
+                                        _pyc_out = _pyc_r.stderr.decode('utf-8', errors='replace').strip()
                                     _pyc_ok = 'PYCOMPILE_OK' in _pyc_out
                                     if not _pyc_ok:
                                         _pyc_err_lines = [l for l in _pyc_out.splitlines() if l.strip()]
@@ -1001,92 +942,71 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                     f"SYNTAX_OK (py_compile passed). Write any other files you still need to change.]"
                                 )
                             else:
-                                # Try AUTOFIX: SSH-read, close unclosed triple-quotes, inject keywords, write back.
+                                # AUTOFIX: read the file we just wrote, close unclosed triple-quotes, write back.
                                 _ar_af_ok = False
-                                if _client_h:
-                                    try:
-                                        _ar_af_r = _sp.run(
-                                            ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
-                                             _client_h, f"cat '{_auto_target}'"],
+                                try:
+                                    with open(_auto_target, 'r', errors='replace') as _ar_af_fh:
+                                        _ar_af_c = _ar_af_fh.read()
+                                    _ar_af_close = ''
+                                    if _ar_af_c.count('"""') % 2 == 1:
+                                        _ar_af_close = '"""'
+                                    elif _ar_af_c.count("'''") % 2 == 1:
+                                        _ar_af_close = "'''"
+                                    if _ar_af_close:
+                                        _ar_af_fixed = _ar_af_c.rstrip('\n') + '\n' + _ar_af_close + '\n'
+                                        with open(_auto_target, 'w') as _ar_af_fh2:
+                                            _ar_af_fh2.write(_ar_af_fixed)
+                                        _ar_pyc = _sp.run(
+                                            ['python3', '-m', 'py_compile', _auto_target],
                                             capture_output=True, timeout=10
                                         )
-                                        if _ar_af_r.returncode == 0:
-                                            _ar_af_c = _ar_af_r.stdout.decode('utf-8', errors='replace')
-                                            _ar_af_close = ''
-                                            if _ar_af_c.count('"""') % 2 == 1:
-                                                _ar_af_close = '"""'
-                                            elif _ar_af_c.count("'''") % 2 == 1:
-                                                _ar_af_close = "'''"
-                                            if _ar_af_close:
-                                                _ar_af_fixed = _ar_af_c.rstrip('\n') + '\n' + _ar_af_close + '\n'
-                                                _ar_wr = _sp.run(
-                                                    ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
-                                                     _client_h, f"cat > '{_auto_target}'"],
-                                                    input=_ar_af_fixed.encode('utf-8', errors='replace'),
+                                        if _ar_pyc.returncode == 0:
+                                            _ar_pyc_out = 'PYCOMPILE_OK'
+                                        else:
+                                            _ar_pyc_out = _ar_pyc.stderr.decode('utf-8', errors='replace')
+                                        if 'PYCOMPILE_OK' in _ar_pyc_out:
+                                            _ar_af_ok = True
+                                            logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] closed triple-quote in {_auto_target}, SYNTAX_OK")
+                                        elif 'was never closed' in _ar_pyc_out:
+                                            for _xp2 in [')', '))', ')))', '))))']:
+                                                _ar_af_fixed2 = _ar_af_c.rstrip('\n') + '\n' + _ar_af_close + '\n' + _xp2 + '\n'
+                                                with open(_auto_target, 'w') as _ar_af_fh3:
+                                                    _ar_af_fh3.write(_ar_af_fixed2)
+                                                _ar_pyc2 = _sp.run(
+                                                    ['python3', '-m', 'py_compile', _auto_target],
                                                     capture_output=True, timeout=10
                                                 )
-                                                if _ar_wr.returncode == 0:
-                                                    _ar_pyc = _sp.run(
-                                                        ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
-                                                         _client_h, f"python3 -m py_compile '{_auto_target}' 2>&1 && echo PYCOMPILE_OK"],
-                                                        capture_output=True, timeout=10
-                                                    )
-                                                    _ar_pyc_out = _ar_pyc.stdout.decode('utf-8', errors='replace')
-                                                    if 'PYCOMPILE_OK' in _ar_pyc_out:
-                                                        _ar_af_ok = True
-                                                        logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] closed triple-quote in {_auto_target}, SYNTAX_OK")
-                                                    elif 'was never closed' in _ar_pyc_out:
-                                                        for _xp2 in [')', '))', ')))', '))))']:
-                                                            _ar_af_fixed2 = _ar_af_c.rstrip('\n') + '\n' + _ar_af_close + '\n' + _xp2 + '\n'
-                                                            _ar_wr2 = _sp.run(
-                                                                ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
-                                                                 _client_h, f"cat > '{_auto_target}'"],
-                                                                input=_ar_af_fixed2.encode('utf-8', errors='replace'),
-                                                                capture_output=True, timeout=10
-                                                            )
-                                                            if _ar_wr2.returncode == 0:
-                                                                _ar_pyc2 = _sp.run(
-                                                                    ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
-                                                                     _client_h, f"python3 -m py_compile '{_auto_target}' 2>&1 && echo PYCOMPILE_OK"],
-                                                                    capture_output=True, timeout=10
-                                                                )
-                                                                if 'PYCOMPILE_OK' in _ar_pyc2.stdout.decode('utf-8', errors='replace'):
-                                                                    _ar_af_ok = True
-                                                                    _ar_af_fixed = _ar_af_fixed2
-                                                                    logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] closed triple-quote+{len(_xp2)}paren in {_auto_target}, SYNTAX_OK")
-                                                                    break
-                                                        if not _ar_af_ok:
-                                                            logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] py_compile still failing after fix for {_auto_target}")
-                                                    else:
-                                                        logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] py_compile still failing after fix for {_auto_target}")
-                                            elif 'unmatched' in _pyc_detail or 'was never closed' in _pyc_detail:
-                                                # No unclosed triple-quote, but unmatched brace/paren at end of file
-                                                # Try stripping trailing bad lines one at a time
-                                                _ar_af_lines = _ar_af_c.splitlines()
-                                                for _strip_n in range(1, 5):
-                                                    if len(_ar_af_lines) <= _strip_n:
-                                                        break
-                                                    _ar_af_fixed = '\n'.join(_ar_af_lines[:-_strip_n]) + '\n'
-                                                    _ar_wr3 = _sp.run(
-                                                        ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
-                                                         _client_h, f"cat > '{_auto_target}'"],
-                                                        input=_ar_af_fixed.encode('utf-8', errors='replace'),
-                                                        capture_output=True, timeout=10
-                                                    )
-                                                    if _ar_wr3.returncode == 0:
-                                                        _ar_pyc3 = _sp.run(
-                                                            ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
-                                                             _client_h, f"python3 -m py_compile '{_auto_target}' 2>&1 && echo PYCOMPILE_OK"],
-                                                            capture_output=True, timeout=10
-                                                        )
-                                                        if 'PYCOMPILE_OK' in _ar_pyc3.stdout.decode('utf-8', errors='replace'):
-                                                            _ar_af_ok = True
-                                                            logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] stripped {_strip_n} trailing line(s) from {_auto_target}, SYNTAX_OK")
-                                                            break
-                                                if not _ar_af_ok:
-                                                    logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] strip-lines fix failed for {_auto_target}")
-                                    except Exception as _ar_af_e:
-                                        logger.warning(f"[WRITE-AUTO-RECOVER-AUTOFIX] failed: {_ar_af_e}")
+                                                if _ar_pyc2.returncode == 0:
+                                                    _ar_af_ok = True
+                                                    _ar_af_fixed = _ar_af_fixed2
+                                                    logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] closed triple-quote+{len(_xp2)}paren in {_auto_target}, SYNTAX_OK")
+                                                    break
+                                            if not _ar_af_ok:
+                                                logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] py_compile still failing after fix for {_auto_target}")
+                                        else:
+                                            logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] py_compile still failing after fix for {_auto_target}")
+                                    elif 'unmatched' in _pyc_detail or 'was never closed' in _pyc_detail:
+                                        # No unclosed triple-quote, but unmatched brace/paren at end of file
+                                        # Try stripping trailing bad lines one at a time
+                                        _ar_af_lines = _ar_af_c.splitlines()
+                                        for _strip_n in range(1, 5):
+                                            if len(_ar_af_lines) <= _strip_n:
+                                                break
+                                            _ar_af_fixed = '\n'.join(_ar_af_lines[:-_strip_n]) + '\n'
+                                            with open(_auto_target, 'w') as _ar_af_fh4:
+                                                _ar_af_fh4.write(_ar_af_fixed)
+                                            _ar_pyc3 = _sp.run(
+                                                ['python3', '-m', 'py_compile', _auto_target],
+                                                capture_output=True, timeout=10
+                                            )
+                                            if _ar_pyc3.returncode == 0:
+                                                _ar_af_ok = True
+                                                logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] stripped {_strip_n} trailing line(s) from {_auto_target}, SYNTAX_OK")
+                                                break
+                                        if not _ar_af_ok:
+                                            logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] strip-lines fix failed for {_auto_target}")
+                                except Exception as _ar_af_e:
+                                    logger.warning(f"[WRITE-AUTO-RECOVER-AUTOFIX] failed: {_ar_af_e}")
                                 if _ar_af_ok:
                                     content_str = (
                                         f"Wrote file successfully.\n"
@@ -1144,24 +1064,16 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             if _rd_m:
                                 _rd_path = _rd_m.group(1)
                                 if _rd_path in _write_success_paths:
-                                    _rd_client_h = _request_client_host.get()
                                     _rd_dir = _rd_path.rsplit('/', 1)[0] if '/' in _rd_path else '.'
                                     _rd_unwritten = []
-                                    if _rd_client_h:
-                                        try:
-                                            import subprocess as _sp_rd
-                                            _ls_rd = _sp_rd.run(
-                                                ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
-                                                 _rd_client_h, f"ls '{_rd_dir}'/*.py 2>/dev/null"],
-                                                capture_output=True, timeout=5
-                                            )
-                                            if _ls_rd.returncode == 0:
-                                                for _f in _ls_rd.stdout.decode('utf-8', errors='replace').splitlines():
-                                                    _f = _f.strip()
-                                                    if _f and _f not in _write_success_paths:
-                                                        _rd_unwritten.append(_f)
-                                        except Exception:
-                                            pass
+                                    try:
+                                        import glob as _glob_rd
+                                        for _f in _glob_rd.glob(f'{_rd_dir}/*.py'):
+                                            _f = _f.strip()
+                                            if _f and _f not in _write_success_paths:
+                                                _rd_unwritten.append(_f)
+                                    except Exception:
+                                        pass
                                     _rd_next = (f"YOU HAVE NOT WRITTEN YET: {', '.join(_rd_unwritten)}. Write those files now." if _rd_unwritten else "Write any remaining files now.")
                                     content_str = (
                                         f"[READ-BLOCKED: {_rd_path} was already successfully written. "
