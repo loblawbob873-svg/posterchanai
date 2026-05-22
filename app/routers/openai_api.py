@@ -544,6 +544,21 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # We check BEFORE proxy modifications so we see the real opencode result, not proxy-injected text.
             _orig_write_ok = _pending_write_path and "Wrote file successfully" in content_str
             _pending_write_path = None  # reset after each tool result
+            # Detect TOOL-CALL-AUTOFIX bash write completion marker — the proxy replaced a broken
+            # Write call with a Bash call that writes corrected content; record success and tell model
+            # to proceed to write other files without rewriting the fixed file.
+            if "[AUTOFIX-WRITE-DONE:" in content_str:
+                _awd_m = re.search(r'\[AUTOFIX-WRITE-DONE:\s*([^\]]+?)\s+written OK', content_str)
+                if _awd_m:
+                    _awd_path = _awd_m.group(1).strip()
+                    _write_success_paths.add(_awd_path)
+                    _awd_fname = _awd_path.rsplit('/', 1)[-1]
+                    content_str = (
+                        f"[WRITE-DONE: {_awd_path} was written with corrected Python syntax. "
+                        f"SYNTAX_OK. Do NOT rewrite {_awd_fname}. "
+                        f"Write the OTHER file(s) required by this task NOW.]"
+                    )
+                    logger.info(f"[AUTOFIX-WRITE-DONE] detected for {_awd_path}, added to _write_success_paths")
             # If task was already completed, replace result entirely to prevent the model from acting on git status output
             if fetch_head_reset_done:
                 content_str = "[TASK COMPLETE — STOP. Do not run any more git commands. The repo is already synced. Report success to the user and stop all commands.]"
@@ -3408,8 +3423,9 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 pass
         _fstring_fixed_tcs.append(_tc_fs)
     tool_calls = _fstring_fixed_tcs
-    # TOOL-CALL-AUTOFIX: intercept Write calls to .py files with truncated triple-quoted strings
-    # and replace content with corrected version BEFORE opencode writes it to disk.
+    # TOOL-CALL-AUTOFIX: intercept Write calls to .py files with truncated triple-quoted strings.
+    # Replaces the broken Write tool call with a Bash tool call that writes the corrected content
+    # via base64 — guarantees the file on disk is actually correct regardless of proxy/stream issues.
     import subprocess as _sp_tc, tempfile as _tf_tc, os as _os_tc
     _tc_af_list = []
     for _tc_af in tool_calls:
@@ -3439,7 +3455,14 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                 _af_close_tc = "'''"
                             if _af_close_tc:
                                 _is_fstr_tc = 'f"""' in _ct_af or "f'''" in _ct_af
-                                _af_suffs_tc = [_af_close_tc, _af_close_tc+'\n)', _af_close_tc+'\n    return html', _af_close_tc+'\n    return html\n']
+                                _af_suffs_tc = [
+                                    _af_close_tc,
+                                    _af_close_tc+'\n)',
+                                    _af_close_tc+'\n    return html_content',
+                                    _af_close_tc+'\n    return html_content\n',
+                                    _af_close_tc+'\n    return html',
+                                    _af_close_tc+'\n    return html\n',
+                                ]
                                 _af_extras_tc = ['', '}', '}}', '}}}'] if _is_fstr_tc else ['']
                                 _af_done_tc = False
                                 for _st_tc in [0, 5, 20, 50, 100, 200, 500]:
@@ -3457,9 +3480,26 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                                 _r2_tc = _sp_tc.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tpy_tc], capture_output=True, timeout=10)
                                                 if _r2_tc.returncode == 0:
                                                     _af_done_tc = True
-                                                    _args_af['content'] = _try_tc
-                                                    _tc_af = {**_tc_af, 'function': {**_fn_af, 'arguments': json.dumps(_args_af)}}
-                                                    logger.info(f"[TOOL-CALL-AUTOFIX] strip={_st_tc} suf={_su_tc!r} for {_fp_af}, corrected Write content before disk write")
+                                                    # Replace Write call with Bash call that writes
+                                                    # corrected content via base64 — bypasses Write
+                                                    # path so the file on disk is actually fixed.
+                                                    # Echo a marker so the tool result can be detected
+                                                    # and the model told to proceed to other files.
+                                                    _b64_tc = __import__('base64').b64encode(_try_tc.encode()).decode()
+                                                    _bash_cmd_tc = (
+                                                        f"python3 -c \"import base64,pathlib; "
+                                                        f"pathlib.Path('{_fp_af}').write_text("
+                                                        f"base64.b64decode('{_b64_tc}').decode())\" && "
+                                                        f"echo '[AUTOFIX-WRITE-DONE: {_fp_af} written OK. Write the other files now.]'"
+                                                    )
+                                                    _tc_af = {
+                                                        **_tc_af,
+                                                        'function': {
+                                                            'name': 'bash',
+                                                            'arguments': json.dumps({'command': _bash_cmd_tc}),
+                                                        }
+                                                    }
+                                                    logger.info(f"[TOOL-CALL-AUTOFIX] strip={_st_tc} suf={_su_tc!r} for {_fp_af}, replaced Write with Bash to write corrected file")
                                                     break
                                             finally:
                                                 try: _os_tc.unlink(_tpy_tc)
