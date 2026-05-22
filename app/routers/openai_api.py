@@ -678,9 +678,33 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                                                  _ws_client_h, f"python3 -m py_compile '{_py_file}' 2>&1 && echo PYCOMPILE_OK"],
                                                                 capture_output=True, timeout=10
                                                             )
-                                                            if 'PYCOMPILE_OK' in _af_pyc.stdout.decode('utf-8', errors='replace'):
+                                                            _af_pyc_out = _af_pyc.stdout.decode('utf-8', errors='replace')
+                                                            if 'PYCOMPILE_OK' in _af_pyc_out:
                                                                 _af_ok = True
                                                                 logger.info(f"[WRITE-SAVED-AUTOFIX] closed triple-quote in {_py_file}, SYNTAX_OK")
+                                                            elif 'was never closed' in _af_pyc_out:
+                                                                # Unclosed ( remains after closing triple-quote — try adding parens
+                                                                for _xp in [')', '))', ')))', '))))']:
+                                                                    _af_fixed2 = _af_c.rstrip('\n') + '\n' + _af_close + '\n' + _xp + '\n'
+                                                                    _af_wr2 = _sp2.run(
+                                                                        ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
+                                                                         _ws_client_h, f"cat > '{_py_file}'"],
+                                                                        input=_af_fixed2.encode('utf-8', errors='replace'),
+                                                                        capture_output=True, timeout=10
+                                                                    )
+                                                                    if _af_wr2.returncode == 0:
+                                                                        _af_pyc2 = _sp2.run(
+                                                                            ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
+                                                                             _ws_client_h, f"python3 -m py_compile '{_py_file}' 2>&1 && echo PYCOMPILE_OK"],
+                                                                            capture_output=True, timeout=10
+                                                                        )
+                                                                        if 'PYCOMPILE_OK' in _af_pyc2.stdout.decode('utf-8', errors='replace'):
+                                                                            _af_ok = True
+                                                                            _af_fixed = _af_fixed2
+                                                                            logger.info(f"[WRITE-SAVED-AUTOFIX] closed triple-quote+{len(_xp)}paren in {_py_file}, SYNTAX_OK")
+                                                                            break
+                                                                if not _af_ok:
+                                                                    logger.info(f"[WRITE-SAVED-AUTOFIX] py_compile still failing after fix for {_py_file}")
                                                             else:
                                                                 logger.info(f"[WRITE-SAVED-AUTOFIX] py_compile still failing after fix for {_py_file}")
                                             except Exception as _af_e:
@@ -991,11 +1015,60 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                                          _client_h, f"python3 -m py_compile '{_auto_target}' 2>&1 && echo PYCOMPILE_OK"],
                                                         capture_output=True, timeout=10
                                                     )
-                                                    if 'PYCOMPILE_OK' in _ar_pyc.stdout.decode('utf-8', errors='replace'):
+                                                    _ar_pyc_out = _ar_pyc.stdout.decode('utf-8', errors='replace')
+                                                    if 'PYCOMPILE_OK' in _ar_pyc_out:
                                                         _ar_af_ok = True
                                                         logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] closed triple-quote in {_auto_target}, SYNTAX_OK")
+                                                    elif 'was never closed' in _ar_pyc_out:
+                                                        for _xp2 in [')', '))', ')))', '))))']:
+                                                            _ar_af_fixed2 = _ar_af_c.rstrip('\n') + '\n' + _ar_af_close + '\n' + _xp2 + '\n'
+                                                            _ar_wr2 = _sp.run(
+                                                                ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
+                                                                 _client_h, f"cat > '{_auto_target}'"],
+                                                                input=_ar_af_fixed2.encode('utf-8', errors='replace'),
+                                                                capture_output=True, timeout=10
+                                                            )
+                                                            if _ar_wr2.returncode == 0:
+                                                                _ar_pyc2 = _sp.run(
+                                                                    ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
+                                                                     _client_h, f"python3 -m py_compile '{_auto_target}' 2>&1 && echo PYCOMPILE_OK"],
+                                                                    capture_output=True, timeout=10
+                                                                )
+                                                                if 'PYCOMPILE_OK' in _ar_pyc2.stdout.decode('utf-8', errors='replace'):
+                                                                    _ar_af_ok = True
+                                                                    _ar_af_fixed = _ar_af_fixed2
+                                                                    logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] closed triple-quote+{len(_xp2)}paren in {_auto_target}, SYNTAX_OK")
+                                                                    break
+                                                        if not _ar_af_ok:
+                                                            logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] py_compile still failing after fix for {_auto_target}")
                                                     else:
                                                         logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] py_compile still failing after fix for {_auto_target}")
+                                            elif 'unmatched' in _pyc_detail or 'was never closed' in _pyc_detail:
+                                                # No unclosed triple-quote, but unmatched brace/paren at end of file
+                                                # Try stripping trailing bad lines one at a time
+                                                _ar_af_lines = _ar_af_c.splitlines()
+                                                for _strip_n in range(1, 5):
+                                                    if len(_ar_af_lines) <= _strip_n:
+                                                        break
+                                                    _ar_af_fixed = '\n'.join(_ar_af_lines[:-_strip_n]) + '\n'
+                                                    _ar_wr3 = _sp.run(
+                                                        ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
+                                                         _client_h, f"cat > '{_auto_target}'"],
+                                                        input=_ar_af_fixed.encode('utf-8', errors='replace'),
+                                                        capture_output=True, timeout=10
+                                                    )
+                                                    if _ar_wr3.returncode == 0:
+                                                        _ar_pyc3 = _sp.run(
+                                                            ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
+                                                             _client_h, f"python3 -m py_compile '{_auto_target}' 2>&1 && echo PYCOMPILE_OK"],
+                                                            capture_output=True, timeout=10
+                                                        )
+                                                        if 'PYCOMPILE_OK' in _ar_pyc3.stdout.decode('utf-8', errors='replace'):
+                                                            _ar_af_ok = True
+                                                            logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] stripped {_strip_n} trailing line(s) from {_auto_target}, SYNTAX_OK")
+                                                            break
+                                                if not _ar_af_ok:
+                                                    logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] strip-lines fix failed for {_auto_target}")
                                     except Exception as _ar_af_e:
                                         logger.warning(f"[WRITE-AUTO-RECOVER-AUTOFIX] failed: {_ar_af_e}")
                                 if _ar_af_ok:
