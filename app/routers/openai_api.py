@@ -704,18 +704,35 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                                 f"Write any other files you still need to change after rewriting {_ws_fname}.]"
                                             )
                                         else:
-                                            content_str = (
-                                                f"[WRITE-SAVED: {_py_file} was written to disk. "
-                                                f"SYNTAX ERROR detected:\n{_ws_pyc_detail}\n"
-                                                f"ROOT CAUSE: triple-quoted strings (\"\"\" or ''') get truncated. "
-                                                f"SOLUTION: build the string with concatenation, NOT triple quotes. Example:\n"
-                                                f"  h = '<html><head>'\n"
-                                                f"  h += '<style>body{{color:#0ff}}</style>'\n"
-                                                f"  h += '</head><body>' + content + '</body></html>'\n"
-                                                f"  return h\n"
-                                                f"No return \"\"\", no html = \"\"\", no triple quotes anywhere. "
-                                                f"Rewrite {_ws_fname} using += concatenation now.]"
-                                            )
+                                            if _prior_blocks == 0:
+                                                content_str = (
+                                                    f"[WRITE-SAVED: {_py_file} was written to disk. "
+                                                    f"SYNTAX ERROR detected:\n{_ws_pyc_detail}\n"
+                                                    f"ROOT CAUSE: triple-quoted strings (\"\"\" or ''') get truncated. "
+                                                    f"SOLUTION: build the string with concatenation, NOT triple quotes. Example:\n"
+                                                    f"  h = '<html><head>'\n"
+                                                    f"  h += '<style>body{{color:#0ff}}</style>'\n"
+                                                    f"  h += '</head><body>' + content + '</body></html>'\n"
+                                                    f"  return h\n"
+                                                    f"No return \"\"\", no html = \"\"\", no triple quotes anywhere. "
+                                                    f"Rewrite {_ws_fname} using += concatenation now.]"
+                                                )
+                                            elif _prior_blocks == 1:
+                                                content_str = (
+                                                    f"[WRITE-SAVED (attempt 2): {_py_file} still has a syntax error:\n{_ws_pyc_detail}\n"
+                                                    f"DIFFERENT approach — use a list:\n"
+                                                    f"  parts = ['<html><head>', '<style>...</style>', '</head><body>',\n"
+                                                    f"           '<div>content</div>', '</body></html>']\n"
+                                                    f"  return ''.join(parts)\n"
+                                                    f"No triple quotes, no f-strings. Under 30 lines. Rewrite {_ws_fname} now.]"
+                                                )
+                                            else:
+                                                content_str = (
+                                                    f"[WRITE-SAVED (attempt {_prior_blocks + 1}): {_py_file} keeps failing with:\n{_ws_pyc_detail}\n"
+                                                    f"SWITCH to bash — write the file with bash instead:\n"
+                                                    f"  bash(command='python3 -c \"\nimport pathlib\npathlib.Path(\\'{_py_file}\\').write_text(\\\"\\\"\\\"def get_html(entries,stats):\\n    h = \\\"\\\"\\\"<html><body>...\\\"\\\"\\\": return h\\n\\\"\\\"\\\")')\n"
+                                                    f"Or make {_ws_fname} just 10 lines: one function, plain string += only, no f-strings, no triple quotes. Write now.]"
+                                                )
                                 elif _prior_blocks == 0:
                                     content_str = (
                                         f"[WRITE-BLOCKED: {_py_file} was NOT saved — it contains triple-quoted strings (\"\"\" or ''') which always get truncated. "
