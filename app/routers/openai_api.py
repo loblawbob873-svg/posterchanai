@@ -590,7 +590,15 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 "'''" in _raw_ast
                             )
                             logger.info(f"[WRITE-PY] tool={last_tool_name} file={_py_file} has_triple={_has_triple} raw_len={len(_raw_ast)}")
-                            if _has_triple:
+                            if _py_file in _write_success_paths:
+                                _ws_fname2 = _py_file.rsplit('/', 1)[-1]
+                                content_str = (
+                                    f"[ALREADY-DONE: {_py_file} was already written and SYNTAX_OK. "
+                                    f"Do NOT rewrite {_ws_fname2}. "
+                                    f"Write the OTHER file(s) in this task NOW — cli.py if not yet done.]"
+                                )
+                                logger.info(f"[ALREADY-DONE] {_py_file} in _write_success_paths, blocking rewrite")
+                            elif _has_triple:
                                 # WRITE-BLOCKED always fires for triple quotes — regardless of recent py_compile,
                                 # so the escalation counter accumulates correctly across all rounds.
                                 write_block_count[_py_file] = write_block_count.get(_py_file, 0) + 1
@@ -3400,6 +3408,71 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 pass
         _fstring_fixed_tcs.append(_tc_fs)
     tool_calls = _fstring_fixed_tcs
+    # TOOL-CALL-AUTOFIX: intercept Write calls to .py files with truncated triple-quoted strings
+    # and replace content with corrected version BEFORE opencode writes it to disk.
+    import subprocess as _sp_tc, tempfile as _tf_tc, os as _os_tc
+    _tc_af_list = []
+    for _tc_af in tool_calls:
+        _fn_af = _tc_af.get("function", {})
+        if _fn_af.get("name", "").lower() in ("write", "write_file", "create_file"):
+            try:
+                _args_af = json.loads(_fn_af.get("arguments", "{}") or "{}")
+                _fp_af = _args_af.get("filePath") or _args_af.get("file_path") or _args_af.get("path") or ""
+                _ct_af = _args_af.get("content", "") or ""
+                _has_triple_af = _fp_af.endswith(".py") and _ct_af and bool(
+                    re.search(r'return\s+f?"""', _ct_af) or
+                    re.search(r'=\s*f?"""', _ct_af) or
+                    "'''" in _ct_af
+                )
+                if _has_triple_af:
+                    _tmp_fd_af, _tmp_py_af = _tf_tc.mkstemp(suffix='.py', prefix='_pychktc_')
+                    _os_tc.close(_tmp_fd_af)
+                    try:
+                        with open(_tmp_py_af, 'w', errors='replace') as _pf_af:
+                            _pf_af.write(_ct_af)
+                        _pyc_af = _sp_tc.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tmp_py_af], capture_output=True, timeout=10)
+                        if _pyc_af.returncode != 0:
+                            _af_close_tc = ''
+                            if _ct_af.count('"""') % 2 == 1:
+                                _af_close_tc = '"""'
+                            elif _ct_af.count("'''") % 2 == 1:
+                                _af_close_tc = "'''"
+                            if _af_close_tc:
+                                _is_fstr_tc = 'f"""' in _ct_af or "f'''" in _ct_af
+                                _af_suffs_tc = [_af_close_tc, _af_close_tc+'\n)', _af_close_tc+'\n    return html', _af_close_tc+'\n    return html\n']
+                                _af_extras_tc = ['', '}', '}}', '}}}'] if _is_fstr_tc else ['']
+                                _af_done_tc = False
+                                for _st_tc in [0, 5, 20, 50, 100, 200, 500]:
+                                    _base_tc = _ct_af.rstrip('\n')
+                                    if _st_tc and len(_base_tc) > _st_tc:
+                                        _base_tc = _base_tc[:-_st_tc]
+                                    for _ex_tc in _af_extras_tc:
+                                        for _su_tc in _af_suffs_tc:
+                                            _try_tc = _base_tc + _ex_tc + '\n' + _su_tc + '\n'
+                                            _tfd_tc, _tpy_tc = _tf_tc.mkstemp(suffix='.py', prefix='_pychktcaf_')
+                                            _os_tc.close(_tfd_tc)
+                                            try:
+                                                with open(_tpy_tc, 'w', errors='replace') as _pf2_tc:
+                                                    _pf2_tc.write(_try_tc)
+                                                _r2_tc = _sp_tc.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tpy_tc], capture_output=True, timeout=10)
+                                                if _r2_tc.returncode == 0:
+                                                    _af_done_tc = True
+                                                    _args_af['content'] = _try_tc
+                                                    _tc_af = {**_tc_af, 'function': {**_fn_af, 'arguments': json.dumps(_args_af)}}
+                                                    logger.info(f"[TOOL-CALL-AUTOFIX] strip={_st_tc} suf={_su_tc!r} for {_fp_af}, corrected Write content before disk write")
+                                                    break
+                                            finally:
+                                                try: _os_tc.unlink(_tpy_tc)
+                                                except: pass
+                                        if _af_done_tc: break
+                                    if _af_done_tc: break
+                    finally:
+                        try: _os_tc.unlink(_tmp_py_af)
+                        except: pass
+            except Exception as _e_af:
+                logger.warning(f"[TOOL-CALL-AUTOFIX] error: {_e_af}")
+        _tc_af_list.append(_tc_af)
+    tool_calls = _tc_af_list
     # Block bash calls when exploration cap has fired and no file writes have happened
     # This forces the model to use Edit/Write tool instead of continuing bash exploration
     _exploration_capped = any(
