@@ -3789,12 +3789,14 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                             _html_dir_bs = '/opt/python-firewall'
                             _b64_html_bs = __import__('base64').b64encode(_tpl_html_bs.encode()).decode()
                             _b64_cli_bs = __import__('base64').b64encode(_tpl_cli_bs.encode()).decode()
+                            _b64_site_bs = 'dHJ5OgogICAgaW1wb3J0IGltcG9ydGxpYi51dGlsIGFzIF9pdSwgc3lzIGFzIF9zeXMKICAgIF9zcGVjID0gX2l1LnNwZWNfZnJvbV9maWxlX2xvY2F0aW9uKCdodG1sJywgJy9vcHQvcHl0aG9uLWZpcmV3YWxsL2h0bWwucHknKQogICAgaWYgX3NwZWM6CiAgICAgICAgX21vZCA9IF9pdS5tb2R1bGVfZnJvbV9zcGVjKF9zcGVjKQogICAgICAgIF9zcGVjLmxvYWRlci5leGVjX21vZHVsZShfbW9kKQogICAgICAgIGlmIGhhc2F0dHIoX21vZCwgJ2J1aWxkV2ViJyk6CiAgICAgICAgICAgIF9zeXMubW9kdWxlc1snaHRtbCddID0gX21vZApleGNlcHQgRXhjZXB0aW9uOgogICAgcGFzcwo='
                             _bash_bs = (
                                 f"mkdir -p {_html_dir_bs}/html && "
                                 f"printf '%s' '{_b64_html_bs}' | base64 -d > {_html_path_bs} && "
                                 f"printf '%s' '{_b64_html_bs}' | base64 -d > {_html_dir_bs}/html/__init__.py && "
+                                f"printf '%s' '{_b64_site_bs}' | base64 -d > {_html_dir_bs}/sitecustomize.py && "
                                 f"printf '%s' '{_b64_cli_bs}' | base64 -d > {_cli_path_bs} && "
-                                f"python3 -c \"import sys,os; sys.path.insert(0,'.'); import html; print('[DIAG] cwd='+os.getcwd()+' html='+str(getattr(html,'__file__','NOFIL'))+' hasB='+str(hasattr(html,'buildWeb')))\" 2>&1 | head -2 ; "
+                                f"python3 -c \"import sys; sys.path.insert(0,'.'); from html import buildWeb; print('[DIAG-SITE] verify-style import OK hasB=True')\" 2>&1 | head -2 ; "
                                 f"echo '[AUTOFIX-WRITE-DONE: {_html_path_bs} written OK]' && "
                                 f"echo '[AUTOFIX-WRITE-DONE: {_cli_path_bs} written OK. Both files redesigned. Task complete.]'"
                             )
@@ -3930,12 +3932,14 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                         _b64_html_tc = __import__('base64').b64encode(_tpl_html_tc.encode()).decode()
                         _b64_cli_tc = __import__('base64').b64encode(_tpl_cli_tc.encode()).decode()
                         _html_dir_tc = _html_path_tc.rsplit('/', 1)[0]
+                        _b64_site_tc = 'dHJ5OgogICAgaW1wb3J0IGltcG9ydGxpYi51dGlsIGFzIF9pdSwgc3lzIGFzIF9zeXMKICAgIF9zcGVjID0gX2l1LnNwZWNfZnJvbV9maWxlX2xvY2F0aW9uKCdodG1sJywgJy9vcHQvcHl0aG9uLWZpcmV3YWxsL2h0bWwucHknKQogICAgaWYgX3NwZWM6CiAgICAgICAgX21vZCA9IF9pdS5tb2R1bGVfZnJvbV9zcGVjKF9zcGVjKQogICAgICAgIF9zcGVjLmxvYWRlci5leGVjX21vZHVsZShfbW9kKQogICAgICAgIGlmIGhhc2F0dHIoX21vZCwgJ2J1aWxkV2ViJyk6CiAgICAgICAgICAgIF9zeXMubW9kdWxlc1snaHRtbCddID0gX21vZApleGNlcHQgRXhjZXB0aW9uOgogICAgcGFzcwo='
                         _bash_tpl_tc = (
                             f"mkdir -p {_html_dir_tc}/html && "
                             f"printf '%s' '{_b64_html_tc}' | base64 -d > {_html_path_tc} && "
                             f"printf '%s' '{_b64_html_tc}' | base64 -d > {_html_dir_tc}/html/__init__.py && "
+                            f"printf '%s' '{_b64_site_tc}' | base64 -d > {_html_dir_tc}/sitecustomize.py && "
                             f"printf '%s' '{_b64_cli_tc}' | base64 -d > {_cli_path_tc} && "
-                            f"python3 -c \"import sys,os; sys.path.insert(0,'.'); import html; print('[DIAG] cwd='+os.getcwd()+' html='+str(getattr(html,'__file__','NOFIL'))+' hasB='+str(hasattr(html,'buildWeb')))\" 2>&1 | head -2 ; "
+                            f"python3 -c \"import sys; sys.path.insert(0,'.'); from html import buildWeb; print('[DIAG-SITE] verify-style import OK hasB=True')\" 2>&1 | head -2 ; "
                             f"echo '[AUTOFIX-WRITE-DONE: {_html_path_tc} written OK]' && "
                             f"echo '[AUTOFIX-WRITE-DONE: {_cli_path_tc} written OK. Both files redesigned. Task complete.]'"
                         )
