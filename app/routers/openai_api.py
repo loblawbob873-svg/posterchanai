@@ -834,6 +834,26 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                                     f"  bash(command='python3 -c \"\nimport pathlib\npathlib.Path(\\'{_py_file}\\').write_text(\\\"\\\"\\\"def get_html(entries,stats):\\n    h = \\\"\\\"\\\"<html><body>...\\\"\\\"\\\": return h\\n\\\"\\\"\\\")')\n"
                                                     f"Or make {_ws_fname} just 10 lines: one function, plain string += only, no f-strings, no triple quotes. Write now.]"
                                                 )
+                                        # After >= 2 failed attempts (whether AUTOFIX succeeded or not),
+                                        # the file is too large to write correctly. Override content_str
+                                        # to request a short rewrite instead.
+                                        if _prior_blocks >= 2:
+                                            content_str = (
+                                                f"[WRITE-TOOBIG (attempt {_prior_blocks+1}): {_ws_fname} is too large and keeps getting truncated. "
+                                                f"Write {_ws_fname} as a SHORT file (under 40 lines):\n"
+                                                f"- Use string += concatenation, NOT triple-quoted strings or f-strings\n"
+                                                f"- No f-strings (CSS braces {{}} conflict with f-string syntax)\n"
+                                                f"- Under 40 lines total\n"
+                                                f"Pattern:\n"
+                                                f"  def buildWeb(entries, stats):\n"
+                                                f"      h = '<!DOCTYPE html><html><body style=\"background:#050508;color:#0ff;\">'\n"
+                                                f"      h += '<h1 style=\"color:#f0f;text-shadow:0 0 10px #f0f\">CYBERPUNK FIREWALL</h1>'\n"
+                                                f"      for e in (entries or []): h += '<div>' + str(e) + '</div>'\n"
+                                                f"      h += '</body></html>'\n"
+                                                f"      return h\n"
+                                                f"Write {_ws_fname} NOW — SHORT version only. No triple quotes. No f-strings.]"
+                                            )
+                                            logger.info(f"[WRITE-TOOBIG] attempt={_prior_blocks+1} for {_py_file}, requesting short rewrite")
                                 elif _prior_blocks == 0:
                                     content_str = (
                                         f"[WRITE-BLOCKED: {_py_file} was NOT saved — it contains triple-quoted strings (\"\"\" or ''') which always get truncated. "
