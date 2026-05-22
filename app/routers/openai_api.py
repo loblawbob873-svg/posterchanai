@@ -786,6 +786,11 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                                         logger.info(f"[WRITE-SAVED-AUTOFIX] py_compile still failing after fix for {_py_file} (fstr={_is_fstr})")
                                             except Exception as _af_e:
                                                 logger.warning(f"[WRITE-SAVED-AUTOFIX] failed: {_af_e}")
+                                        # Don't use truncated content even if py_compile passes — the file
+                                        # would be syntactically valid but semantically incomplete.
+                                        if _af_ok and ('[truncated]' in _af_fixed or '... [truncated]' in _af_fixed):
+                                            _af_ok = False
+                                            logger.info(f"[WRITE-SAVED-AUTOFIX] skipping bash cmd — content contains [truncated] marker for {_py_file}")
                                         if _af_ok:
                                             # Do NOT add to _write_success_paths yet — only add after the bash
                                             # command below actually writes the file (AUTOFIX-WRITE-DONE detection
