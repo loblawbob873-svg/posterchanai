@@ -3423,7 +3423,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 pass
         _fstring_fixed_tcs.append(_tc_fs)
     tool_calls = _fstring_fixed_tcs
-    # TOOL-CALL-AUTOFIX: intercept Write calls to .py files with truncated triple-quoted strings.
+    # TOOL-CALL-AUTOFIX: intercept Write calls to .py files with syntax errors.
+    # Handles: (1) invalid box-drawing chars like ═ U+2550; (2) truncated triple-quoted strings.
     # Replaces the broken Write tool call with a Bash tool call that writes the corrected content
     # via base64 — guarantees the file on disk is actually correct regardless of proxy/stream issues.
     import subprocess as _sp_tc, tempfile as _tf_tc, os as _os_tc
@@ -3435,12 +3436,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 _args_af = json.loads(_fn_af.get("arguments", "{}") or "{}")
                 _fp_af = _args_af.get("filePath") or _args_af.get("file_path") or _args_af.get("path") or ""
                 _ct_af = _args_af.get("content", "") or ""
-                _has_triple_af = _fp_af.endswith(".py") and _ct_af and bool(
-                    re.search(r'return\s+f?"""', _ct_af) or
-                    re.search(r'=\s*f?"""', _ct_af) or
-                    "'''" in _ct_af
-                )
-                if _has_triple_af:
+                if _fp_af.endswith(".py") and _ct_af:
                     _tmp_fd_af, _tmp_py_af = _tf_tc.mkstemp(suffix='.py', prefix='_pychktc_')
                     _os_tc.close(_tmp_fd_af)
                     try:
@@ -3448,64 +3444,105 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                             _pf_af.write(_ct_af)
                         _pyc_af = _sp_tc.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tmp_py_af], capture_output=True, timeout=10)
                         if _pyc_af.returncode != 0:
-                            _af_close_tc = ''
-                            if _ct_af.count('"""') % 2 == 1:
-                                _af_close_tc = '"""'
-                            elif _ct_af.count("'''") % 2 == 1:
-                                _af_close_tc = "'''"
-                            if _af_close_tc:
-                                _is_fstr_tc = 'f"""' in _ct_af or "f'''" in _ct_af
-                                _af_suffs_tc = [
-                                    _af_close_tc,
-                                    _af_close_tc+'\n)',
-                                    _af_close_tc+'\n    return html_content',
-                                    _af_close_tc+'\n    return html_content\n',
-                                    _af_close_tc+'\n    return html',
-                                    _af_close_tc+'\n    return html\n',
-                                ]
-                                _af_extras_tc = ['', '}', '}}', '}}}'] if _is_fstr_tc else ['']
-                                _af_done_tc = False
-                                for _st_tc in [0, 5, 20, 50, 100, 200, 500]:
-                                    _base_tc = _ct_af.rstrip('\n')
-                                    if _st_tc and len(_base_tc) > _st_tc:
-                                        _base_tc = _base_tc[:-_st_tc]
-                                    for _ex_tc in _af_extras_tc:
-                                        for _su_tc in _af_suffs_tc:
-                                            _try_tc = _base_tc + _ex_tc + '\n' + _su_tc + '\n'
-                                            _tfd_tc, _tpy_tc = _tf_tc.mkstemp(suffix='.py', prefix='_pychktcaf_')
-                                            _os_tc.close(_tfd_tc)
-                                            try:
-                                                with open(_tpy_tc, 'w', errors='replace') as _pf2_tc:
-                                                    _pf2_tc.write(_try_tc)
-                                                _r2_tc = _sp_tc.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tpy_tc], capture_output=True, timeout=10)
-                                                if _r2_tc.returncode == 0:
-                                                    _af_done_tc = True
-                                                    # Replace Write call with Bash call that writes
-                                                    # corrected content via base64 — bypasses Write
-                                                    # path so the file on disk is actually fixed.
-                                                    # Echo a marker so the tool result can be detected
-                                                    # and the model told to proceed to other files.
-                                                    _b64_tc = __import__('base64').b64encode(_try_tc.encode()).decode()
-                                                    _bash_cmd_tc = (
-                                                        f"python3 -c \"import base64,pathlib; "
-                                                        f"pathlib.Path('{_fp_af}').write_text("
-                                                        f"base64.b64decode('{_b64_tc}').decode())\" && "
-                                                        f"echo '[AUTOFIX-WRITE-DONE: {_fp_af} written OK. Write the other files now.]'"
-                                                    )
-                                                    _tc_af = {
-                                                        **_tc_af,
-                                                        'function': {
-                                                            'name': 'bash',
-                                                            'arguments': json.dumps({'command': _bash_cmd_tc}),
-                                                        }
-                                                    }
-                                                    logger.info(f"[TOOL-CALL-AUTOFIX] strip={_st_tc} suf={_su_tc!r} for {_fp_af}, replaced Write with Bash to write corrected file")
-                                                    break
-                                            finally:
-                                                try: _os_tc.unlink(_tpy_tc)
-                                                except: pass
+                            _pyc_err = (_pyc_af.stderr or b'').decode('utf-8', errors='replace')
+                            _af_done_tc = False
+                            _fix_ct = _ct_af
+                            # Fix 1: box-drawing / invalid Unicode characters (e.g. ═ U+2550)
+                            # These appear outside string literals as identifiers and cause SyntaxError.
+                            if 'invalid character' in _pyc_err and not _af_done_tc:
+                                _box_map = {
+                                    '═': '=', '─': '-', '━': '=', '─': '-',
+                                    '║': '|', '│': '|', '┃': '|',
+                                    '╔': '+', '╗': '+', '╚': '+', '╝': '+',
+                                    '╠': '+', '╣': '+', '╦': '+', '╩': '+', '╬': '+',
+                                    '┌': '+', '┐': '+', '└': '+', '┘': '+',
+                                    '├': '+', '┤': '+', '┬': '+', '┴': '+', '┼': '+',
+                                    '▀': '#', '▄': '#', '█': '#', '▌': '|', '▐': '|',
+                                    '▶': '>', '◀': '<', '●': '*', '○': 'o',
+                                }
+                                _fixed_ct = ''.join(
+                                    _box_map.get(_c, '-') if 0x2500 <= ord(_c) <= 0x25FF else _c
+                                    for _c in _ct_af
+                                )
+                                _tfd_tc, _tpy_tc = _tf_tc.mkstemp(suffix='.py', prefix='_pychktcaf_')
+                                _os_tc.close(_tfd_tc)
+                                try:
+                                    with open(_tpy_tc, 'w', errors='replace') as _pf2_tc:
+                                        _pf2_tc.write(_fixed_ct)
+                                    _r2_tc = _sp_tc.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tpy_tc], capture_output=True, timeout=10)
+                                    if _r2_tc.returncode == 0:
+                                        _af_done_tc = True
+                                        _fix_ct = _fixed_ct
+                                        logger.info(f"[TOOL-CALL-AUTOFIX] box-char fix for {_fp_af}")
+                                finally:
+                                    try: _os_tc.unlink(_tpy_tc)
+                                    except: pass
+                            # Fix 2: truncated triple-quoted string
+                            _has_triple_af = bool(
+                                re.search(r'return\s+f?"""', _fix_ct) or
+                                re.search(r'=\s*f?"""', _fix_ct) or
+                                "'''" in _fix_ct
+                            )
+                            if _has_triple_af and not _af_done_tc:
+                                _af_close_tc = ''
+                                if _fix_ct.count('"""') % 2 == 1:
+                                    _af_close_tc = '"""'
+                                elif _fix_ct.count("'''") % 2 == 1:
+                                    _af_close_tc = "'''"
+                                if _af_close_tc:
+                                    _is_fstr_tc = 'f"""' in _fix_ct or "f'''" in _fix_ct
+                                    _af_suffs_tc = [
+                                        _af_close_tc,
+                                        _af_close_tc+'\n)',
+                                        _af_close_tc+'\n    return html_content',
+                                        _af_close_tc+'\n    return html_content\n',
+                                        _af_close_tc+'\n    return html',
+                                        _af_close_tc+'\n    return html\n',
+                                    ]
+                                    _af_extras_tc = ['', '}', '}}', '}}}'] if _is_fstr_tc else ['']
+                                    for _st_tc in [0, 5, 20, 50, 100, 200, 500]:
+                                        _base_tc = _fix_ct.rstrip('\n')
+                                        if _st_tc and len(_base_tc) > _st_tc:
+                                            _base_tc = _base_tc[:-_st_tc]
+                                        for _ex_tc in _af_extras_tc:
+                                            for _su_tc in _af_suffs_tc:
+                                                _try_tc = _base_tc + _ex_tc + '\n' + _su_tc + '\n'
+                                                _tfd_tc, _tpy_tc = _tf_tc.mkstemp(suffix='.py', prefix='_pychktcaf_')
+                                                _os_tc.close(_tfd_tc)
+                                                try:
+                                                    with open(_tpy_tc, 'w', errors='replace') as _pf2_tc:
+                                                        _pf2_tc.write(_try_tc)
+                                                    _r2_tc = _sp_tc.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tpy_tc], capture_output=True, timeout=10)
+                                                    if _r2_tc.returncode == 0:
+                                                        _af_done_tc = True
+                                                        _fix_ct = _try_tc
+                                                        logger.info(f"[TOOL-CALL-AUTOFIX] strip={_st_tc} suf={_su_tc!r} for {_fp_af}")
+                                                        break
+                                                finally:
+                                                    try: _os_tc.unlink(_tpy_tc)
+                                                    except: pass
+                                            if _af_done_tc: break
                                         if _af_done_tc: break
-                                    if _af_done_tc: break
+                            if _af_done_tc:
+                                # Replace Write call with Bash call that writes corrected content
+                                # via base64 — bypasses Write path so the file on disk is fixed.
+                                # Echo a marker so the tool result can be detected and the model
+                                # told to proceed to other files.
+                                _b64_tc = __import__('base64').b64encode(_fix_ct.encode()).decode()
+                                _bash_cmd_tc = (
+                                    f"python3 -c \"import base64,pathlib; "
+                                    f"pathlib.Path('{_fp_af}').write_text("
+                                    f"base64.b64decode('{_b64_tc}').decode())\" && "
+                                    f"echo '[AUTOFIX-WRITE-DONE: {_fp_af} written OK. Write the other files now.]'"
+                                )
+                                _tc_af = {
+                                    **_tc_af,
+                                    'function': {
+                                        'name': 'bash',
+                                        'arguments': json.dumps({'command': _bash_cmd_tc}),
+                                    }
+                                }
+                                logger.info(f"[TOOL-CALL-AUTOFIX] replaced Write with Bash for {_fp_af}")
                     finally:
                         try: _os_tc.unlink(_tmp_py_af)
                         except: pass
