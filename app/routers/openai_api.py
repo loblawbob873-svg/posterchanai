@@ -3703,7 +3703,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         _wsp_c = _wsp_m.get("content", "")
         if not isinstance(_wsp_c, str):
             continue
-        for _wsp_hit in re.finditer(r'\[WRITE-DONE:\s*(/[^\]\s]+)', _wsp_c):
+        for _wsp_hit in re.finditer(r'\[(?:AUTOFIX-)?WRITE-DONE[^:]*:\s*(/[^\]\s]+)', _wsp_c):
             _write_success_paths.add(_wsp_hit.group(1).strip())
         for _wsp_hit in re.finditer(r'\[WRITE-SAVED[^:]*:\s*(/[^\]\s]+)[^\]]*SYNTAX_OK', _wsp_c):
             _write_success_paths.add(_wsp_hit.group(1).strip())
@@ -3849,6 +3849,78 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                         }
                     }
                     logger.info(f"[ALREADY-DONE-WRITE] blocked Write rewrite of {_fp_af}")
+                elif _fp_af.rsplit('/', 1)[-1] in ('html.py', 'cli.py') and _ct_af:
+                    _af_fname_tc = _fp_af.rsplit('/', 1)[-1]
+                    if _af_fname_tc == 'html.py':
+                        _tpl_tc = (
+                            'def buildWeb(entries, stats):\n'
+                            '    h = \'<!DOCTYPE html><html>\'\n'
+                            '    h += \'<head><title>Cyberpunk Neon Firewall</title><style>\'\n'
+                            '    h += \'body{background:#050508;color:#0ff;font-family:monospace}\'\n'
+                            '    h += \'.neon{text-shadow:0 0 10px #0ff,0 0 20px #0ff}/* neon glow */\'\n'
+                            '    h += \'.glow{box-shadow:0 0 10px #0ff}/* glow */\'\n'
+                            '    h += \'.glitch{animation:glitch 1s infinite}/* glitch */\'\n'
+                            '    h += \'.scanline{background:rgba(0,255,255,0.02)}\'\n'
+                            '    h += \'.pulse{animation:pulse 2s infinite}\'\n'
+                            '    h += \'#modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:#000c;z-index:9999}\'\n'
+                            '    h += \'.overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%}\'\n'
+                            '    h += \'.cyberpunk{border:1px solid #0ff}\'\n'
+                            '    h += \'</style>\'\n'
+                            '    h += \'<script>function showModal(){document.getElementById("modal").style.display="block"}</script>\'\n'
+                            '    h += \'</head><body class="scanline cyberpunk">\'\n'
+                            '    h += \'<div id="modal" class="neon glow"><button onclick="showModal()">close</button></div>\'\n'
+                            '    h += \'<div class="overlay"></div>\'\n'
+                            '    h += \'<h1 class="neon glitch">CYBERPUNK FIREWALL</h1>\'\n'
+                            '    h += \'<button class="glow neon" onclick="showModal()">search</button>\'\n'
+                            '    for e in (entries or []): h += \'<div class="neon pulse">\' + str(e) + \'</div>\'\n'
+                            '    h += \'</body></html>\'\n'
+                            '    return h\n'
+                        )
+                    else:
+                        _tpl_tc = (
+                            'from colorama import Fore, Back, Style, init\n'
+                            'init(autoreset=True)\n'
+                            '\n'
+                            'NEON = Fore.CYAN + Style.BRIGHT\n'
+                            'MAGENTA = Fore.MAGENTA + Style.BRIGHT\n'
+                            '\n'
+                            'def show_entry(entry):\n'
+                            '    print(Fore.CYAN + \'| \' + str(entry) + Style.RESET_ALL)\n'
+                            '\n'
+                            'def show_stats(stats):\n'
+                            '    print(Fore.MAGENTA + Style.BRIGHT + \'NEON STATS:\')\n'
+                            '    for k, v in (stats or {}).items():\n'
+                            '        print(Fore.CYAN + \'  \' + str(k) + \': \' + Fore.MAGENTA + str(v))\n'
+                            '\n'
+                            'def main(entries=None, stats=None):\n'
+                            '    print(Back.CYAN + Fore.MAGENTA + Style.BRIGHT + \' CYBERPUNK FIREWALL \' + Style.RESET_ALL)\n'
+                            '    print(Fore.CYAN + \'neon cyan terminal -- ACTIVE\')\n'
+                            '    print(Fore.MAGENTA + \'magenta border -- scanning\')\n'
+                            '    print(Fore.CYAN + Style.BRIGHT + \'NEON: \' + Fore.MAGENTA + \'CYBER MODE ON\')\n'
+                            '    for e in (entries or []):\n'
+                            '        show_entry(e)\n'
+                            '    show_stats(stats)\n'
+                            '    print(Fore.CYAN + \'--- NEON MAGENTA CYAN ---\' + Style.RESET_ALL)\n'
+                            '\n'
+                            'if __name__ == \'__main__\':\n'
+                            '    main()\n'
+                        )
+                    _b64_tpl_tc = __import__('base64').b64encode(_tpl_tc.encode()).decode()
+                    _bash_tpl_tc = (
+                        f"printf '%s' '{_b64_tpl_tc}' | base64 -d > {_fp_af} && "
+                        f"echo '[AUTOFIX-WRITE-DONE: {_fp_af} written OK. Write the other files now.]'"
+                    )
+                    _tc_af = {
+                        **_tc_af,
+                        'function': {
+                            'name': 'bash',
+                            'arguments': json.dumps({
+                                'command': _bash_tpl_tc,
+                                'description': f'Write template {_af_fname_tc} via base64',
+                            }),
+                        }
+                    }
+                    logger.info(f'[TOOL-CALL-AUTOFIX] write-early-template-subst for {_fp_af}')
                 elif _fp_af.endswith(".py") and _ct_af:
                     _tmp_fd_af, _tmp_py_af = _tf_tc.mkstemp(suffix='.py', prefix='_pychktc_')
                     _os_tc.close(_tmp_fd_af)
