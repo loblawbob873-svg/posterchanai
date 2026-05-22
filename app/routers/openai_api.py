@@ -3706,7 +3706,10 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         _wsp_c = _wsp_m.get("content", "")
         if not isinstance(_wsp_c, str):
             continue
-        for _wsp_hit in re.finditer(r'\[(?:AUTOFIX-)?WRITE-DONE[^:]*:\s*(/[^\]\s]+)', _wsp_c):
+        for _wsp_hit in re.finditer(r'\[(?:AUTOFIX-)?WRITE-DONE[^:]*:\s*(/[^\]\s,]+)', _wsp_c):
+            _write_success_paths.add(_wsp_hit.group(1).strip())
+        # Multi-path format: [WRITE-DONE: /path1, /path2 written...] — capture second path after comma
+        for _wsp_hit in re.finditer(r'\[(?:AUTOFIX-)?WRITE-DONE[^\]]*,\s*(/opt/[^\]\s,]+)', _wsp_c):
             _write_success_paths.add(_wsp_hit.group(1).strip())
         for _wsp_hit in re.finditer(r'\[WRITE-SAVED[^:]*:\s*(/[^\]\s]+)[^\]]*SYNTAX_OK', _wsp_c):
             _write_success_paths.add(_wsp_hit.group(1).strip())
