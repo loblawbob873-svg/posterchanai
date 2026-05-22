@@ -1016,21 +1016,43 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                     logger.info(f"[WRITE-AUTO-RECOVER-AUTOFIX] fix failed for {_auto_target}")
                             except Exception as _ar_af_e:
                                 logger.warning(f"[WRITE-AUTO-RECOVER-AUTOFIX] failed: {_ar_af_e}")
+                        # Count prior WRITE-AUTO-RECOVER rounds for this target across history
+                        _ar_prior = 0
+                        for _ar_chk_msg in messages:
+                            for _ar_chk_r in (_ar_chk_msg.get("tool_results") or []):
+                                _ar_chk_c = _ar_chk_r.get("content", "")
+                                if "AUTO-RECOVERED" in _ar_chk_c and _auto_target in _ar_chk_c:
+                                    _ar_prior += 1
                         if _pyc_ok or _ar_af_ok:
                             _write_success_paths.add(_auto_target)
-                            content_str = (
-                                f"Wrote file successfully.\n"
-                                f"[AUTO-RECOVERED: your Write call was missing filePath — file was NOT saved to disk. "
-                                f"{'AUTOFIX: corrected truncated triple-quote. ' if _ar_af_ok else ''}"
-                                f"SYNTAX_OK. "
-                                f"WRITE {_auto_target} NOW — use Write(filePath='{_auto_target}', content=...) with this EXACT content:\n"
-                                f"```python\n{_ar_content_final}\n```\n"
-                                f"After writing {_ar_fname}, write any other files you still need to change.]"
-                            )
+                            if _ar_prior == 0:
+                                # First time: show corrected content for model to copy
+                                content_str = (
+                                    f"[AUTO-RECOVERED: your Write call was missing filePath — {_ar_fname} was NOT saved to disk. "
+                                    f"{'AUTOFIX: corrected truncated content. ' if _ar_af_ok else ''}"
+                                    f"SYNTAX_OK. "
+                                    f"WRITE {_auto_target} NOW — use Write(filePath='{_auto_target}', content=...) with this EXACT content:\n"
+                                    f"```python\n{_ar_content_final}\n```\n"
+                                    f"After writing {_ar_fname}, write any other files you still need to change.]"
+                                )
+                            elif _ar_prior == 1:
+                                content_str = (
+                                    f"[AUTO-RECOVERED (attempt 2): {_ar_fname} STILL not saved — filePath was missing AGAIN. "
+                                    f"MANDATORY: your ONLY next action is Write(filePath='{_auto_target}', content='...your code...'). "
+                                    f"Requirements: no triple-quoted strings, no f-strings, under 40 lines, plain += only. "
+                                    f"DO NOT omit filePath. Write {_ar_fname} NOW.]"
+                                )
+                            else:
+                                content_str = (
+                                    f"[AUTO-RECOVERED (attempt {_ar_prior + 1}): {_ar_fname} keeps missing filePath after {_ar_prior} attempts. "
+                                    f"SWITCH TO BASH to write it:\n"
+                                    f"  bash(command=\"cat > {_auto_target} << 'EOF'\\ndef main(): ...\\nEOF\")\n"
+                                    f"Or: Write(filePath='{_auto_target}', content='...') — filePath is REQUIRED. "
+                                    f"Short code only, no f-strings, no triple quotes.]"
+                                )
                         else:
                             content_str = (
-                                f"Wrote file successfully.\n"
-                                f"[AUTO-RECOVERED: your Write call was missing filePath — file was NOT saved. "
+                                f"[AUTO-RECOVERED: your Write call was missing filePath — {_ar_fname} was NOT saved. "
                                 f"SYNTAX ERROR in content:\n{_pyc_detail}\n"
                                 f"Fix the syntax error AND include filePath. "
                                 f"Use Write(filePath='{_auto_target}', content='...fixed content...'). "
