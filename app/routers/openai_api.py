@@ -674,22 +674,38 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                                 elif _py_content_str.count("'''") % 2 == 1:
                                                     _af_close = "'''"
                                                 if _af_close:
-                                                    for _af_suffix in [_af_close, _af_close + '\n)', _af_close + '\n))', _af_close + '\n)))']:
-                                                        _af_try = _py_content_str.rstrip('\n') + '\n' + _af_suffix + '\n'
-                                                        _tmp_fd3, _tmp_py3 = _tf2.mkstemp(suffix='.py', prefix='_pychkaf_')
-                                                        _os2.close(_tmp_fd3)
-                                                        try:
-                                                            with open(_tmp_py3, 'w', errors='replace') as _af_f3:
-                                                                _af_f3.write(_af_try)
-                                                            _af_pyc = _sp2.run(['python3', '-m', 'py_compile', _tmp_py3], capture_output=True, timeout=10)
-                                                            if _af_pyc.returncode == 0:
-                                                                _af_ok = True
-                                                                _af_fixed = _af_try
-                                                                logger.info(f"[WRITE-SAVED-AUTOFIX] closed triple-quote suffix={_af_suffix!r} for {_py_file}, SYNTAX_OK")
-                                                                break
-                                                        finally:
-                                                            try: _os2.unlink(_tmp_py3)
-                                                            except Exception: pass
+                                                    _af_suffixes = [
+                                                        _af_close,
+                                                        _af_close + '\n)',
+                                                        _af_close + '\n))',
+                                                        _af_close + '\n)))',
+                                                        _af_close + '\n    return html',
+                                                        _af_close + '\n    return html\n',
+                                                        _af_close + '\n\n    return html\n',
+                                                        _af_close + '\n    return html\ndef ',
+                                                    ]
+                                                    for _strip in [0, 5, 20, 50, 100]:
+                                                        _base = _py_content_str.rstrip('\n')
+                                                        if _strip and len(_base) > _strip:
+                                                            _base = _base[:-_strip]
+                                                        for _af_suffix in _af_suffixes:
+                                                            _af_try = _base + '\n' + _af_suffix + '\n'
+                                                            _tmp_fd3, _tmp_py3 = _tf2.mkstemp(suffix='.py', prefix='_pychkaf_')
+                                                            _os2.close(_tmp_fd3)
+                                                            try:
+                                                                with open(_tmp_py3, 'w', errors='replace') as _af_f3:
+                                                                    _af_f3.write(_af_try)
+                                                                _af_pyc = _sp2.run(['python3', '-m', 'py_compile', _tmp_py3], capture_output=True, timeout=10)
+                                                                if _af_pyc.returncode == 0:
+                                                                    _af_ok = True
+                                                                    _af_fixed = _af_try
+                                                                    logger.info(f"[WRITE-SAVED-AUTOFIX] strip={_strip} suffix={_af_suffix!r} for {_py_file}, SYNTAX_OK")
+                                                                    break
+                                                            finally:
+                                                                try: _os2.unlink(_tmp_py3)
+                                                                except Exception: pass
+                                                        if _af_ok:
+                                                            break
                                                     if not _af_ok:
                                                         logger.info(f"[WRITE-SAVED-AUTOFIX] py_compile still failing after fix for {_py_file}")
                                             except Exception as _af_e:
