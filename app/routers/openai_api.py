@@ -488,6 +488,22 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
     _is_complex_merge_task = bool(re.search(r'\b(conflict|preserve|resolve|keep\s+\w+\s+version|branding|checkout\s+HEAD)\b', _first_user_text, re.IGNORECASE))
     # Git sync task: fetching from a local mirror to sync two repos (not just incidental git operations)
     _is_git_sync_task = bool(re.search(r'\bsync\b|\blocal[-\s]mirror\b|\bfork\s+of\b|\bmerge\s+upstream\b', _first_user_text, re.IGNORECASE))
+    # Pre-populate write_block_count from historical write assistant messages so
+    # WRITE-BLOCKED escalates correctly across repeated writes within a session.
+    # Scan messages[:-2] to exclude the current exchange (assistant_N + tool_result_N).
+    for _pre_msg in messages[:-2]:
+        if _pre_msg.get("role") == "assistant":
+            for _tc in (_pre_msg.get("tool_calls") or []):
+                _tc_fn = _tc.get("function", {})
+                if re.search(r'\bwrite\b|\bedit\b', _tc_fn.get("name", ""), re.IGNORECASE):
+                    try:
+                        _tc_args = json.loads(_tc_fn.get("arguments", "{}"))
+                        _f = _tc_args.get("filePath") or _tc_args.get("path") or ""
+                        if _f.endswith(".py"):
+                            write_block_count[_f] = write_block_count.get(_f, 0) + 1
+                    except Exception:
+                        pass
+
     for msg in messages:
         role = msg.get("role", "")
         content = msg.get("content") or ""
