@@ -3526,20 +3526,24 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                             if _af_done_tc:
                                 # Replace Write call with Bash call that writes corrected content
                                 # via base64 — bypasses Write path so the file on disk is fixed.
+                                # Use printf+base64 -d (not python3 -c "...") to avoid double-quote
+                                # escaping issues with long embedded strings.
                                 # Echo a marker so the tool result can be detected and the model
                                 # told to proceed to other files.
                                 _b64_tc = __import__('base64').b64encode(_fix_ct.encode()).decode()
+                                _fname_tc = _fp_af.rsplit('/', 1)[-1]
                                 _bash_cmd_tc = (
-                                    f"python3 -c \"import base64,pathlib; "
-                                    f"pathlib.Path('{_fp_af}').write_text("
-                                    f"base64.b64decode('{_b64_tc}').decode())\" && "
+                                    f"printf '%s' '{_b64_tc}' | base64 -d > {_fp_af} && "
                                     f"echo '[AUTOFIX-WRITE-DONE: {_fp_af} written OK. Write the other files now.]'"
                                 )
                                 _tc_af = {
                                     **_tc_af,
                                     'function': {
                                         'name': 'bash',
-                                        'arguments': json.dumps({'command': _bash_cmd_tc}),
+                                        'arguments': json.dumps({
+                                            'command': _bash_cmd_tc,
+                                            'description': f'Write syntax-fixed {_fname_tc} via base64',
+                                        }),
                                     }
                                 }
                                 logger.info(f"[TOOL-CALL-AUTOFIX] replaced Write with Bash for {_fp_af}")
