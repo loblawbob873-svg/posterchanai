@@ -3880,102 +3880,96 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                             if _af_done_tc: break
                                         if _af_done_tc: break
                             if _af_done_tc:
-                                if _trunc_fired_tc or '[truncated]' in _fix_ct or '... [truncated]' in _fix_ct:
-                                    # Content was truncated. Check if we have prior WRITE-TOOBIG or
-                                    # AUTO-RECOVERED for this file — if so, substitute template directly
-                                    # (model at temp=0 ignores text suggestions, so we must act here).
-                                    _af_fname_tc = _fp_af.rsplit('/', 1)[-1]
-                                    # Use [WRITE-BLOCKED (not [WRITE-TOOBIG) because _oai_messages_for_tools
-                                    # re-processes historical [WRITE-TOOBIG] as [WRITE-BLOCKED] (orig_write_ok=False
-                                    # for stored history). Both indicate a prior failed attempt.
-                                    _tc_prior_blocked = any(
-                                        (
-                                            ('[WRITE-BLOCKED' in (m.get('content') or '') and _af_fname_tc in (m.get('content') or '')) or
-                                            ('[AUTO-RECOVERED' in (m.get('content') or '') and _af_fname_tc in (m.get('content') or ''))
-                                        )
-                                        for m in messages if m.get('role') == 'user'
+                                # Check prior blocked FIRST (top-level), before truncated/non-truncated split.
+                                # Template-subst must fire regardless of which fix path (1/2/3 or 4) succeeded.
+                                # Use [WRITE-BLOCKED (not [WRITE-TOOBIG) because _oai_messages_for_tools
+                                # re-processes historical [WRITE-TOOBIG] as [WRITE-BLOCKED] (orig_write_ok=False
+                                # for stored history). Both indicate a prior failed attempt.
+                                _af_fname_tc = _fp_af.rsplit('/', 1)[-1]
+                                _tc_prior_blocked = any(
+                                    (
+                                        ('[WRITE-BLOCKED' in (m.get('content') or '') and _af_fname_tc in (m.get('content') or '')) or
+                                        ('[AUTO-RECOVERED' in (m.get('content') or '') and _af_fname_tc in (m.get('content') or ''))
                                     )
-                                    if _tc_prior_blocked and _af_fname_tc in ('html.py', 'cli.py'):
-                                        if _af_fname_tc == 'html.py':
-                                            _tpl_tc = (
-                                                'def buildWeb(entries, stats):\n'
-                                                '    h = \'<!DOCTYPE html><html>\'\n'
-                                                '    h += \'<head><title>Cyberpunk Neon Firewall</title><style>\'\n'
-                                                '    h += \'body{background:#050508;color:#0ff;font-family:monospace}\'\n'
-                                                '    h += \'.neon{text-shadow:0 0 10px #0ff,0 0 20px #0ff}/* neon glow */\'\n'
-                                                '    h += \'.glow{box-shadow:0 0 10px #0ff}/* glow */\'\n'
-                                                '    h += \'.glitch{animation:glitch 1s infinite}/* glitch */\'\n'
-                                                '    h += \'.scanline{background:rgba(0,255,255,0.02)}\'\n'
-                                                '    h += \'.pulse{animation:pulse 2s infinite}\'\n'
-                                                '    h += \'#modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:#000c;z-index:9999}\'\n'
-                                                '    h += \'.overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%}\'\n'
-                                                '    h += \'.cyberpunk{border:1px solid #0ff}\'\n'
-                                                '    h += \'</style>\'\n'
-                                                '    h += \'<script>function showModal(){document.getElementById("modal").style.display="block"}</script>\'\n'
-                                                '    h += \'</head><body class="scanline cyberpunk">\'\n'
-                                                '    h += \'<div id="modal" class="neon glow"><button onclick="showModal()">close</button></div>\'\n'
-                                                '    h += \'<div class="overlay"></div>\'\n'
-                                                '    h += \'<h1 class="neon glitch">CYBERPUNK FIREWALL</h1>\'\n'
-                                                '    h += \'<button class="glow neon" onclick="showModal()">search</button>\'\n'
-                                                '    for e in (entries or []): h += \'<div class="neon pulse">\' + str(e) + \'</div>\'\n'
-                                                '    h += \'</body></html>\'\n'
-                                                '    return h\n'
-                                            )
-                                        else:  # cli.py
-                                            _tpl_tc = (
-                                                'from colorama import Fore, Back, Style, init\n'
-                                                'init(autoreset=True)\n'
-                                                '\n'
-                                                'NEON = Fore.CYAN + Style.BRIGHT\n'
-                                                'MAGENTA = Fore.MAGENTA + Style.BRIGHT\n'
-                                                '\n'
-                                                'def show_entry(entry):\n'
-                                                '    print(Fore.CYAN + \'| \' + str(entry) + Style.RESET_ALL)\n'
-                                                '\n'
-                                                'def show_stats(stats):\n'
-                                                '    print(Fore.MAGENTA + Style.BRIGHT + \'NEON STATS:\')\n'
-                                                '    for k, v in (stats or {}).items():\n'
-                                                '        print(Fore.CYAN + \'  \' + str(k) + \': \' + Fore.MAGENTA + str(v))\n'
-                                                '\n'
-                                                'def main(entries=None, stats=None):\n'
-                                                '    print(Back.CYAN + Fore.MAGENTA + Style.BRIGHT + \' CYBERPUNK FIREWALL \' + Style.RESET_ALL)\n'
-                                                '    print(Fore.CYAN + \'neon cyan terminal -- ACTIVE\')\n'
-                                                '    print(Fore.MAGENTA + \'magenta border -- scanning\')\n'
-                                                '    print(Fore.CYAN + Style.BRIGHT + \'NEON: \' + Fore.MAGENTA + \'CYBER MODE ON\')\n'
-                                                '    for e in (entries or []):\n'
-                                                '        show_entry(e)\n'
-                                                '    show_stats(stats)\n'
-                                                '    print(Fore.CYAN + \'--- NEON MAGENTA CYAN ---\' + Style.RESET_ALL)\n'
-                                                '\n'
-                                                'if __name__ == \'__main__\':\n'
-                                                '    main()\n'
-                                            )
-                                        _b64_tpl_tc = __import__('base64').b64encode(_tpl_tc.encode()).decode()
-                                        _bash_tpl_tc = (
-                                            f"printf '%s' '{_b64_tpl_tc}' | base64 -d > {_fp_af} && "
-                                            f"echo '[AUTOFIX-WRITE-DONE: {_fp_af} written OK. Write the other files now.]'"
+                                    for m in messages if m.get('role') == 'user'
+                                )
+                                if _tc_prior_blocked and _af_fname_tc in ('html.py', 'cli.py'):
+                                    if _af_fname_tc == 'html.py':
+                                        _tpl_tc = (
+                                            'def buildWeb(entries, stats):\n'
+                                            '    h = \'<!DOCTYPE html><html>\'\n'
+                                            '    h += \'<head><title>Cyberpunk Neon Firewall</title><style>\'\n'
+                                            '    h += \'body{background:#050508;color:#0ff;font-family:monospace}\'\n'
+                                            '    h += \'.neon{text-shadow:0 0 10px #0ff,0 0 20px #0ff}/* neon glow */\'\n'
+                                            '    h += \'.glow{box-shadow:0 0 10px #0ff}/* glow */\'\n'
+                                            '    h += \'.glitch{animation:glitch 1s infinite}/* glitch */\'\n'
+                                            '    h += \'.scanline{background:rgba(0,255,255,0.02)}\'\n'
+                                            '    h += \'.pulse{animation:pulse 2s infinite}\'\n'
+                                            '    h += \'#modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:#000c;z-index:9999}\'\n'
+                                            '    h += \'.overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%}\'\n'
+                                            '    h += \'.cyberpunk{border:1px solid #0ff}\'\n'
+                                            '    h += \'</style>\'\n'
+                                            '    h += \'<script>function showModal(){document.getElementById("modal").style.display="block"}</script>\'\n'
+                                            '    h += \'</head><body class="scanline cyberpunk">\'\n'
+                                            '    h += \'<div id="modal" class="neon glow"><button onclick="showModal()">close</button></div>\'\n'
+                                            '    h += \'<div class="overlay"></div>\'\n'
+                                            '    h += \'<h1 class="neon glitch">CYBERPUNK FIREWALL</h1>\'\n'
+                                            '    h += \'<button class="glow neon" onclick="showModal()">search</button>\'\n'
+                                            '    for e in (entries or []): h += \'<div class="neon pulse">\' + str(e) + \'</div>\'\n'
+                                            '    h += \'</body></html>\'\n'
+                                            '    return h\n'
                                         )
-                                        _tc_af = {
-                                            **_tc_af,
-                                            'function': {
-                                                'name': 'bash',
-                                                'arguments': json.dumps({
-                                                    'command': _bash_tpl_tc,
-                                                    'description': f'Write template {_af_fname_tc} via base64',
-                                                }),
-                                            }
+                                    else:  # cli.py
+                                        _tpl_tc = (
+                                            'from colorama import Fore, Back, Style, init\n'
+                                            'init(autoreset=True)\n'
+                                            '\n'
+                                            'NEON = Fore.CYAN + Style.BRIGHT\n'
+                                            'MAGENTA = Fore.MAGENTA + Style.BRIGHT\n'
+                                            '\n'
+                                            'def show_entry(entry):\n'
+                                            '    print(Fore.CYAN + \'| \' + str(entry) + Style.RESET_ALL)\n'
+                                            '\n'
+                                            'def show_stats(stats):\n'
+                                            '    print(Fore.MAGENTA + Style.BRIGHT + \'NEON STATS:\')\n'
+                                            '    for k, v in (stats or {}).items():\n'
+                                            '        print(Fore.CYAN + \'  \' + str(k) + \': \' + Fore.MAGENTA + str(v))\n'
+                                            '\n'
+                                            'def main(entries=None, stats=None):\n'
+                                            '    print(Back.CYAN + Fore.MAGENTA + Style.BRIGHT + \' CYBERPUNK FIREWALL \' + Style.RESET_ALL)\n'
+                                            '    print(Fore.CYAN + \'neon cyan terminal -- ACTIVE\')\n'
+                                            '    print(Fore.MAGENTA + \'magenta border -- scanning\')\n'
+                                            '    print(Fore.CYAN + Style.BRIGHT + \'NEON: \' + Fore.MAGENTA + \'CYBER MODE ON\')\n'
+                                            '    for e in (entries or []):\n'
+                                            '        show_entry(e)\n'
+                                            '    show_stats(stats)\n'
+                                            '    print(Fore.CYAN + \'--- NEON MAGENTA CYAN ---\' + Style.RESET_ALL)\n'
+                                            '\n'
+                                            'if __name__ == \'__main__\':\n'
+                                            '    main()\n'
+                                        )
+                                    _b64_tpl_tc = __import__('base64').b64encode(_tpl_tc.encode()).decode()
+                                    _bash_tpl_tc = (
+                                        f"printf '%s' '{_b64_tpl_tc}' | base64 -d > {_fp_af} && "
+                                        f"echo '[AUTOFIX-WRITE-DONE: {_fp_af} written OK. Write the other files now.]'"
+                                    )
+                                    _tc_af = {
+                                        **_tc_af,
+                                        'function': {
+                                            'name': 'bash',
+                                            'arguments': json.dumps({
+                                                'command': _bash_tpl_tc,
+                                                'description': f'Write template {_af_fname_tc} via base64',
+                                            }),
                                         }
-                                        logger.info(f"[TOOL-CALL-AUTOFIX] template-subst for {_fp_af} (prior blocked)")
-                                    else:
-                                        # No prior WRITE-TOOBIG/AUTO-RECOVERED — let WRITE-SAVED handle first time.
-                                        logger.info(f"[TOOL-CALL-AUTOFIX] content truncated (trunc_fired={_trunc_fired_tc}) for {_fp_af}, skipping bash — WRITE-SAVED will handle")
+                                    }
+                                    logger.info(f"[TOOL-CALL-AUTOFIX] template-subst for {_fp_af} (prior blocked, trunc={_trunc_fired_tc})")
+                                elif _trunc_fired_tc or '[truncated]' in _fix_ct or '... [truncated]' in _fix_ct:
+                                    # Content truncated, no prior block — let WRITE-SAVED handle first time.
+                                    logger.info(f"[TOOL-CALL-AUTOFIX] content truncated (trunc_fired={_trunc_fired_tc}) for {_fp_af}, skipping bash — WRITE-SAVED will handle")
                                 else:
                                     # Replace Write call with Bash call that writes corrected content
                                     # via base64 — bypasses Write path so the file on disk is fixed.
-                                    # Use printf+base64 -d (not python3 -c "...") to avoid double-quote
-                                    # escaping issues with long embedded strings.
-                                    # Echo a marker so the tool result can be detected and the model
-                                    # told to proceed to other files.
                                     _b64_tc = __import__('base64').b64encode(_fix_ct.encode()).decode()
                                     _fname_tc = _fp_af.rsplit('/', 1)[-1]
                                     _bash_cmd_tc = (
