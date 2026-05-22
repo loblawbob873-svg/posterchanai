@@ -764,14 +764,21 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                             except Exception as _af_e:
                                                 logger.warning(f"[WRITE-SAVED-AUTOFIX] failed: {_af_e}")
                                         if _af_ok:
-                                            _write_success_paths.add(_py_file)
+                                            # Do NOT add to _write_success_paths yet — only add after the bash
+                                            # command below actually writes the file (AUTOFIX-WRITE-DONE detection
+                                            # at stream-processing time does the add).  Adding here would cause
+                                            # ALREADY-DONE-BASH to block the very command we're about to tell
+                                            # the model to run.
                                             _af_b64 = __import__('base64').b64encode(_af_fixed.encode()).decode()
-                                            _af_bash_py = f"import base64,pathlib; pathlib.Path('{_py_file}').write_text(base64.b64decode('{_af_b64}').decode())"
+                                            _af_bash_cmd = (
+                                                f"printf '%s' '{_af_b64}' | base64 -d > {_py_file} && "
+                                                f"echo '[AUTOFIX-WRITE-DONE: {_py_file} written OK. Write the other files now.]'"
+                                            )
                                             content_str = (
                                                 f"[WRITE-SAVED-AUTOFIX (attempt {_prior_blocks+1}): {_py_file} — truncated triple-quoted string. "
                                                 f"SYNTAX_OK after correction. "
                                                 f"Run this bash command to save the corrected file:\n"
-                                                f"bash(command='python3 -c \"{_af_bash_py}\"')\n"
+                                                f"bash(command='{_af_bash_cmd}')\n"
                                                 f"After the bash succeeds, write any other files you still need to change.]"
                                             )
                                         else:
@@ -1074,7 +1081,9 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 if "AUTO-RECOVERED" in _ar_chk_c and _auto_target in _ar_chk_c:
                                     _ar_prior += 1
                         if _pyc_ok or _ar_af_ok:
-                            _write_success_paths.add(_auto_target)
+                            # Do NOT add to _write_success_paths yet — the file isn't on disk.
+                            # ALREADY-DONE would block the Write call we're about to request.
+                            # The add happens when the model actually writes with filePath (WRITE-SAVED path).
                             if _ar_prior == 0:
                                 # First time: show corrected content for model to copy
                                 content_str = (
