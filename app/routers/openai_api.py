@@ -788,9 +788,16 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                                 logger.warning(f"[WRITE-SAVED-AUTOFIX] failed: {_af_e}")
                                         # Don't use truncated content even if py_compile passes — the file
                                         # would be syntactically valid but semantically incomplete.
-                                        if _af_ok and ('[truncated]' in _af_fixed or '... [truncated]' in _af_fixed):
+                                        # Also skip when the original error was "unterminated" string: the LLM
+                                        # stopped generating mid-string (TC-PARSE strips [truncated] before we see it),
+                                        # so the content is always semantically incomplete even after autofix.
+                                        if _af_ok and (
+                                            '[truncated]' in _af_fixed or
+                                            '... [truncated]' in _af_fixed or
+                                            'unterminated' in _ws_pyc_detail
+                                        ):
                                             _af_ok = False
-                                            logger.info(f"[WRITE-SAVED-AUTOFIX] skipping bash cmd — content contains [truncated] marker for {_py_file}")
+                                            logger.info(f"[WRITE-SAVED-AUTOFIX] skipping bash cmd — content truncated/unterminated for {_py_file}")
                                         if _af_ok:
                                             # Do NOT add to _write_success_paths yet — only add after the bash
                                             # command below actually writes the file (AUTOFIX-WRITE-DONE detection
@@ -3632,6 +3639,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                         if _pyc_af.returncode != 0:
                             _pyc_err = (_pyc_af.stderr or b'').decode('utf-8', errors='replace')
                             _af_done_tc = False
+                            _trunc_fired_tc = False  # set True when Fix 4 (unterminated-str truncation) fires
                             _fix_ct = _ct_af
                             # Fix 1: box-drawing / invalid Unicode characters (e.g. ═ U+2550)
                             # These appear outside string literals as identifiers and cause SyntaxError.
@@ -3698,6 +3706,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                             _r4_tc = _sp_tc.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tpy_tc], capture_output=True, timeout=10)
                                             if _r4_tc.returncode == 0:
                                                 _af_done_tc = True
+                                                _trunc_fired_tc = True  # content was truncated by LLM output limit
                                                 _fix_ct = _trunc_ct4
                                                 logger.info(f"[TOOL-CALL-AUTOFIX] unterminated-str: truncated at line {_trunc4} for {_fp_af}")
                                         finally:
@@ -3756,13 +3765,13 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                             if _af_done_tc: break
                                         if _af_done_tc: break
                             if _af_done_tc:
-                                if '[truncated]' in _fix_ct or '... [truncated]' in _fix_ct:
-                                    # Fixed content still has the [truncated] marker — the file is
-                                    # semantically incomplete (model output was cut off mid-string).
-                                    # Skip the bash write: let the Write call go through to opencode
-                                    # so WRITE-SAVED-AUTOFIX + fix-4 can fire WRITE-BLOCKED /
-                                    # WRITE-TOOBIG with the short-file template on the next turn.
-                                    logger.info(f"[TOOL-CALL-AUTOFIX] content has [truncated] for {_fp_af}, skipping bash — WRITE-SAVED will handle")
+                                if _trunc_fired_tc or '[truncated]' in _fix_ct or '... [truncated]' in _fix_ct:
+                                    # Content was truncated by LLM output limit (Fix 4 stripped to
+                                    # error line, or [truncated] marker present) — the file is
+                                    # semantically incomplete. Skip the bash write: let the Write call
+                                    # go through to opencode so WRITE-SAVED-AUTOFIX + fix-4 can fire
+                                    # WRITE-BLOCKED / WRITE-TOOBIG with the short-file template.
+                                    logger.info(f"[TOOL-CALL-AUTOFIX] content truncated (trunc_fired={_trunc_fired_tc}) for {_fp_af}, skipping bash — WRITE-SAVED will handle")
                                 else:
                                     # Replace Write call with Bash call that writes corrected content
                                     # via base64 — bypasses Write path so the file on disk is fixed.
