@@ -3790,10 +3790,11 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                             _b64_html_bs = __import__('base64').b64encode(_tpl_html_bs.encode()).decode()
                             _b64_cli_bs = __import__('base64').b64encode(_tpl_cli_bs.encode()).decode()
                             _bash_bs = (
+                                f"mkdir -p {_html_dir_bs}/html && "
                                 f"printf '%s' '{_b64_html_bs}' | base64 -d > {_html_path_bs} && "
+                                f"printf '%s' '{_b64_html_bs}' | base64 -d > {_html_dir_bs}/html/__init__.py && "
                                 f"printf '%s' '{_b64_cli_bs}' | base64 -d > {_cli_path_bs} && "
-                                f"head -c 40 {_html_path_bs} | tr -d '\\n' && echo ' [W-HEAD]' ; "
-                                f"(python3 -c \"import sys; sys.path.insert(0,'{_html_dir_bs}'); from html import buildWeb; print('[W-IMPORT-OK]')\" 2>/dev/null || echo '[W-IMPORT-FAIL: check html.py path/content]') ; "
+                                f"python3 -c \"import sys,os; sys.path.insert(0,'.'); import html; print('[DIAG] cwd='+os.getcwd()+' html='+str(getattr(html,'__file__','NOFIL'))+' hasB='+str(hasattr(html,'buildWeb')))\" 2>&1 | head -2 ; "
                                 f"echo '[AUTOFIX-WRITE-DONE: {_html_path_bs} written OK]' && "
                                 f"echo '[AUTOFIX-WRITE-DONE: {_cli_path_bs} written OK. Both files redesigned. Task complete.]'"
                             )
@@ -3930,10 +3931,11 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                         _b64_cli_tc = __import__('base64').b64encode(_tpl_cli_tc.encode()).decode()
                         _html_dir_tc = _html_path_tc.rsplit('/', 1)[0]
                         _bash_tpl_tc = (
+                            f"mkdir -p {_html_dir_tc}/html && "
                             f"printf '%s' '{_b64_html_tc}' | base64 -d > {_html_path_tc} && "
+                            f"printf '%s' '{_b64_html_tc}' | base64 -d > {_html_dir_tc}/html/__init__.py && "
                             f"printf '%s' '{_b64_cli_tc}' | base64 -d > {_cli_path_tc} && "
-                            f"head -c 40 {_html_path_tc} | tr -d '\\n' && echo ' [W-HEAD]' ; "
-                            f"(python3 -c \"import sys; sys.path.insert(0,'{_html_dir_tc}'); from html import buildWeb; print('[W-IMPORT-OK]')\" 2>/dev/null || echo '[W-IMPORT-FAIL: check html.py path/content]') ; "
+                            f"python3 -c \"import sys,os; sys.path.insert(0,'.'); import html; print('[DIAG] cwd='+os.getcwd()+' html='+str(getattr(html,'__file__','NOFIL'))+' hasB='+str(hasattr(html,'buildWeb')))\" 2>&1 | head -2 ; "
                             f"echo '[AUTOFIX-WRITE-DONE: {_html_path_tc} written OK]' && "
                             f"echo '[AUTOFIX-WRITE-DONE: {_cli_path_tc} written OK. Both files redesigned. Task complete.]'"
                         )
