@@ -623,7 +623,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                             with open(_tmp_py2, 'w', errors='replace') as _tmp_f2:
                                                 _tmp_f2.write(_py_content_str)
                                             _ws_r = _sp2.run(
-                                                ['python3', '-m', 'py_compile', _tmp_py2],
+                                                ['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tmp_py2],
                                                 capture_output=True, timeout=10
                                             )
                                             if _ws_r.returncode == 0:
@@ -700,7 +700,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                                                 try:
                                                                     with open(_tmp_py3, 'w', errors='replace') as _af_f3:
                                                                         _af_f3.write(_af_try)
-                                                                    _af_pyc = _sp2.run(['python3', '-m', 'py_compile', _tmp_py3], capture_output=True, timeout=10)
+                                                                    _af_pyc = _sp2.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tmp_py3], capture_output=True, timeout=10)
                                                                     if _af_pyc.returncode == 0:
                                                                         _af_ok = True
                                                                         _af_fixed = _af_try
@@ -934,7 +934,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             _os_ar.close(_tmp_fd_ar)
                             with open(_tmp_ar_f, 'w', errors='replace') as _ar_tmp_w:
                                 _ar_tmp_w.write(_auto_content)
-                            _pyc_r = _sp.run(['python3', '-m', 'py_compile', _tmp_ar_f], capture_output=True, timeout=10)
+                            _pyc_r = _sp.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tmp_ar_f], capture_output=True, timeout=10)
                             if _pyc_r.returncode == 0:
                                 _pyc_out = 'PYCOMPILE_OK'
                             else:
@@ -981,7 +981,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                         try:
                                             with open(_tmp_ar_f2, 'w', errors='replace') as _ar_af_w:
                                                 _ar_af_w.write(_ar_af_try)
-                                            _ar_pyc4 = _sp.run(['python3', '-m', 'py_compile', _tmp_ar_f2], capture_output=True, timeout=10)
+                                            _ar_pyc4 = _sp.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tmp_ar_f2], capture_output=True, timeout=10)
                                             if _ar_pyc4.returncode == 0:
                                                 _ar_af_ok = True
                                                 _ar_content_final = _ar_af_try
@@ -1001,7 +1001,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                         try:
                                             with open(_tmp_ar_f3, 'w', errors='replace') as _ar_st_w:
                                                 _ar_st_w.write(_ar_af_try2)
-                                            _ar_pyc5 = _sp.run(['python3', '-m', 'py_compile', _tmp_ar_f3], capture_output=True, timeout=10)
+                                            _ar_pyc5 = _sp.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tmp_ar_f3], capture_output=True, timeout=10)
                                             if _ar_pyc5.returncode == 0:
                                                 _ar_af_ok = True
                                                 _ar_content_final = _ar_af_try2
