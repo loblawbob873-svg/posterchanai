@@ -555,6 +555,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # We check BEFORE proxy modifications so we see the real opencode result, not proxy-injected text.
             _orig_write_ok = _pending_write_path and "Wrote file successfully" in content_str
             _pending_write_path = None  # reset after each tool result
+            _awd_content_set = False  # True when AUTOFIX-WRITE-DONE sets content_str; guards against downstream overwrite
             # Detect TOOL-CALL-AUTOFIX bash write completion marker — the proxy replaced a broken
             # Write call with a Bash call that writes corrected content; record success and tell model
             # to proceed to write other files without rewriting the fixed file.
@@ -571,6 +572,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         f"Both files are redesigned. Task complete — report success.]"
                     )
                     logger.info(f"[AUTOFIX-WRITE-DONE] detected for {_awd_paths_str}, added to _write_success_paths")
+                    _awd_content_set = True
             # If task was already completed, replace result entirely to prevent the model from acting on git status output
             if fetch_head_reset_done:
                 content_str = "[TASK COMPLETE — STOP. Do not run any more git commands. The repo is already synced. Report success to the user and stop all commands.]"
@@ -617,7 +619,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 "'''" in _raw_ast
                             )
                             logger.info(f"[WRITE-PY] tool={last_tool_name} file={_py_file} has_triple={_has_triple} raw_len={len(_raw_ast)}")
-                            if _py_file in _write_success_paths:
+                            if _py_file in _write_success_paths and not _awd_content_set:
                                 _ws_fname2 = _py_file.rsplit('/', 1)[-1]
                                 content_str = (
                                     f"[ALREADY-DONE: {_py_file} was already written and SYNTAX_OK. "
