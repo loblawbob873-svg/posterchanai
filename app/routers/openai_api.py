@@ -3457,6 +3457,20 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     # via base64 — guarantees the file on disk is actually correct regardless of proxy/stream issues.
     # Also blocks bash calls that try to (re)write files already in _write_success_paths —
     # the model tends to keep re-writing via bash after WRITE-DONE, preventing cli.py from being written.
+    #
+    # _write_success_paths is defined in _oai_messages_for_tools (a different function).
+    # Rebuild it here from the already-reformatted messages so ALREADY-DONE checks work.
+    _write_success_paths = set()
+    for _wsp_m in messages:
+        _wsp_c = _wsp_m.get("content", "")
+        if not isinstance(_wsp_c, str):
+            continue
+        for _wsp_hit in re.finditer(r'\[WRITE-DONE:\s*(/[^\]\s]+)', _wsp_c):
+            _write_success_paths.add(_wsp_hit.group(1).strip())
+        for _wsp_hit in re.finditer(r'\[WRITE-SAVED[^:]*:\s*(/[^\]\s]+)[^\]]*SYNTAX_OK', _wsp_c):
+            _write_success_paths.add(_wsp_hit.group(1).strip())
+        for _wsp_hit in re.finditer(r'\[ALREADY-DONE[^:]*:\s*(/[^\]\s]+)', _wsp_c):
+            _write_success_paths.add(_wsp_hit.group(1).strip())
     import subprocess as _sp_tc, tempfile as _tf_tc, os as _os_tc
     _tc_af_list = []
     for _tc_af in tool_calls:
