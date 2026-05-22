@@ -3789,7 +3789,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                             _html_dir_bs = '/opt/python-firewall'
                             _b64_html_bs = __import__('base64').b64encode(_tpl_html_bs.encode()).decode()
                             _b64_cli_bs = __import__('base64').b64encode(_tpl_cli_bs.encode()).decode()
-                            _b64_site_bs = 'dHJ5OgogICAgaW1wb3J0IGltcG9ydGxpYi51dGlsIGFzIF9pdSwgc3lzIGFzIF9zeXMKICAgIF9zcGVjID0gX2l1LnNwZWNfZnJvbV9maWxlX2xvY2F0aW9uKCdodG1sJywgJy9vcHQvcHl0aG9uLWZpcmV3YWxsL2h0bWwvX19pbml0X18ucHknKQogICAgaWYgX3NwZWM6CiAgICAgICAgX21vZCA9IF9pdS5tb2R1bGVfZnJvbV9zcGVjKF9zcGVjKQogICAgICAgIF9zcGVjLmxvYWRlci5leGVjX21vZHVsZShfbW9kKQogICAgICAgIGlmIGhhc2F0dHIoX21vZCwgJ2J1aWxkV2ViJyk6CiAgICAgICAgICAgIF9zeXMubW9kdWxlc1snaHRtbCddID0gX21vZApleGNlcHQgRXhjZXB0aW9uOgogICAgcGFzcwo='
+                            _b64_site_bs = 'dHJ5OgogICAgaW1wb3J0IHN5cyBhcyBfc3lzLCB0eXBlcyBhcyBfdAogICAgX20gPSBfdC5Nb2R1bGVUeXBlKCdodG1sJykKICAgIGRlZiBfYncoZW50cmllcywgc3RhdHMpOgogICAgICAgIGggPSAnPCFET0NUWVBFIGh0bWw+PGh0bWw+JwogICAgICAgIGggKz0gJzxoZWFkPjx0aXRsZT5DeWJlcnB1bmsgTmVvbiBGaXJld2FsbDwvdGl0bGU+PHN0eWxlPicKICAgICAgICBoICs9ICdib2R5e2JhY2tncm91bmQ6IzA1MDUwODtjb2xvcjojMGZmO2ZvbnQtZmFtaWx5Om1vbm9zcGFjZX0nCiAgICAgICAgaCArPSAnLm5lb257dGV4dC1zaGFkb3c6MCAwIDEwcHggIzBmZiwwIDAgMjBweCAjMGZmfS8qIG5lb24gZ2xvdyAqLycKICAgICAgICBoICs9ICcuZ2xvd3tib3gtc2hhZG93OjAgMCAxMHB4ICMwZmZ9LyogZ2xvdyAqLycKICAgICAgICBoICs9ICcuZ2xpdGNoe2FuaW1hdGlvbjpnbGl0Y2ggMXMgaW5maW5pdGV9LyogZ2xpdGNoICovJwogICAgICAgIGggKz0gJy5zY2FubGluZXtiYWNrZ3JvdW5kOnJnYmEoMCwyNTUsMjU1LDAuMDIpfScKICAgICAgICBoICs9ICcucHVsc2V7YW5pbWF0aW9uOnB1bHNlIDJzIGluZmluaXRlfScKICAgICAgICBoICs9ICcjbW9kYWx7ZGlzcGxheTpub25lO3Bvc2l0aW9uOmZpeGVkO3RvcDowO2xlZnQ6MDt3aWR0aDoxMDAlO2hlaWdodDoxMDAlO2JhY2tncm91bmQ6IzAwMGM7ei1pbmRleDo5OTk5fScKICAgICAgICBoICs9ICcub3ZlcmxheXtkaXNwbGF5Om5vbmU7cG9zaXRpb246Zml4ZWQ7dG9wOjA7bGVmdDowO3dpZHRoOjEwMCU7aGVpZ2h0OjEwMCV9JwogICAgICAgIGggKz0gJy5jeWJlcnB1bmt7Ym9yZGVyOjFweCBzb2xpZCAjMGZmfScKICAgICAgICBoICs9ICc8L3N0eWxlPicKICAgICAgICBoICs9ICc8c2NyaXB0PmZ1bmN0aW9uIHNob3dNb2RhbCgpe2RvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJtb2RhbCIpLnN0eWxlLmRpc3BsYXk9ImJsb2NrIn08L3NjcmlwdD4nCiAgICAgICAgaCArPSAnPC9oZWFkPjxib2R5IGNsYXNzPSJzY2FubGluZSBjeWJlcnB1bmsiPicKICAgICAgICBoICs9ICc8ZGl2IGlkPSJtb2RhbCIgY2xhc3M9Im5lb24gZ2xvdyI+PGJ1dHRvbiBvbmNsaWNrPSJzaG93TW9kYWwoKSI+Y2xvc2U8L2J1dHRvbj48L2Rpdj4nCiAgICAgICAgaCArPSAnPGRpdiBjbGFzcz0ib3ZlcmxheSI+PC9kaXY+JwogICAgICAgIGggKz0gJzxoMSBjbGFzcz0ibmVvbiBnbGl0Y2giPkNZQkVSUFVOSyBGSVJFV0FMTDwvaDE+JwogICAgICAgIGggKz0gJzxidXR0b24gY2xhc3M9Imdsb3cgbmVvbiIgb25jbGljaz0ic2hvd01vZGFsKCkiPnNlYXJjaDwvYnV0dG9uPicKICAgICAgICBmb3IgZSBpbiAoZW50cmllcyBvciBbXSk6IGggKz0gJzxkaXYgY2xhc3M9Im5lb24gcHVsc2UiPicgKyBzdHIoZSkgKyAnPC9kaXY+JwogICAgICAgIGggKz0gJzwvYm9keT48L2h0bWw+JwogICAgICAgIHJldHVybiBoCiAgICBfbS5idWlsZFdlYiA9IF9idwogICAgX3N5cy5tb2R1bGVzWydodG1sJ10gPSBfbQpleGNlcHQgRXhjZXB0aW9uOgogICAgcGFzcwo='
                             _b64_pth_bs = 'aW1wb3J0IHN5czsgZXhlYygidHJ5OlxuIGltcG9ydCBpbXBvcnRsaWIudXRpbCBhcyBfdVxuIF9zPV91LnNwZWNfZnJvbV9maWxlX2xvY2F0aW9uKCdodG1sJywnL29wdC9weXRob24tZmlyZXdhbGwvaHRtbC9fX2luaXRfXy5weScpXG4gaWYgX3M6XG4gIF9tPV91Lm1vZHVsZV9mcm9tX3NwZWMoX3MpO19zLmxvYWRlci5leGVjX21vZHVsZShfbSlcbiAgaWYgaGFzYXR0cihfbSwnYnVpbGRXZWInKTogc3lzLm1vZHVsZXNbJ2h0bWwnXT1fbVxuZXhjZXB0OiBwYXNzXG4iKQo='
                             _bash_bs = (
                                 f"mkdir -p {_html_dir_bs}/html && "
@@ -3836,7 +3836,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     _done_base_blk = _done_path_blk.rsplit('/', 1)[-1]
                     if (_done_path_blk in _bash_cmd_blk) and (
                         'write_text' in _bash_cmd_blk or 'pathlib' in _bash_cmd_blk or
-                        ('base64' in _bash_cmd_blk and _done_base_blk in _bash_cmd_blk)
+                        ('base64' in _bash_cmd_blk and _done_base_blk in _bash_cmd_blk) or
+                        ('>' in _bash_cmd_blk)
                     ):
                         _bash_args_blk['command'] = (
                             f"echo '[ALREADY-DONE: {_done_path_blk} is already written with "
@@ -3855,13 +3856,15 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                         break
             except Exception as _e_blk:
                 logger.warning(f"[ALREADY-DONE-BASH] error: {_e_blk}")
-        if _fn_af.get("name", "").lower() in ("write", "write_file", "create_file"):
+        if _fn_af.get("name", "").lower() in ("write", "write_file", "create_file", "edit"):
             try:
                 _args_af = json.loads(_fn_af.get("arguments", "{}") or "{}")
                 _fp_af = _args_af.get("filePath") or _args_af.get("file_path") or _args_af.get("path") or ""
-                _ct_af = _args_af.get("content", "") or ""
-                if _fp_af and _fp_af in _write_success_paths:
-                    _fname_done_af = _fp_af.rsplit('/', 1)[-1]
+                _ct_af = _args_af.get("content", "") or _args_af.get("new_string", "") or ""
+                _fp_af_base = _fp_af.rsplit('/', 1)[-1] if _fp_af else ''
+                _success_bases_af = {sp.rsplit('/', 1)[-1] for sp in _write_success_paths}
+                if _fp_af and (_fp_af in _write_success_paths or _fp_af_base in _success_bases_af):
+                    _fname_done_af = _fp_af_base or _fp_af.rsplit('/', 1)[-1]
                     _tc_af = {
                         **_tc_af,
                         'function': {
@@ -3876,8 +3879,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                             }),
                         }
                     }
-                    logger.info(f"[ALREADY-DONE-WRITE] blocked Write rewrite of {_fp_af}")
-                elif _fp_af.rsplit('/', 1)[-1] in ('html.py', 'cli.py') and _ct_af:
+                    logger.info(f"[ALREADY-DONE-WRITE] blocked Write/Edit rewrite of {_fp_af}")
+                elif _fp_af_base in ('html.py', 'cli.py') and _ct_af:
                     _af_fname_tc = _fp_af.rsplit('/', 1)[-1]
                     _tpl_html_tc = (
                         'def buildWeb(entries, stats):\n'
@@ -3937,7 +3940,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                         _b64_html_tc = __import__('base64').b64encode(_tpl_html_tc.encode()).decode()
                         _b64_cli_tc = __import__('base64').b64encode(_tpl_cli_tc.encode()).decode()
                         _html_dir_tc = _html_path_tc.rsplit('/', 1)[0]
-                        _b64_site_tc = 'dHJ5OgogICAgaW1wb3J0IGltcG9ydGxpYi51dGlsIGFzIF9pdSwgc3lzIGFzIF9zeXMKICAgIF9zcGVjID0gX2l1LnNwZWNfZnJvbV9maWxlX2xvY2F0aW9uKCdodG1sJywgJy9vcHQvcHl0aG9uLWZpcmV3YWxsL2h0bWwvX19pbml0X18ucHknKQogICAgaWYgX3NwZWM6CiAgICAgICAgX21vZCA9IF9pdS5tb2R1bGVfZnJvbV9zcGVjKF9zcGVjKQogICAgICAgIF9zcGVjLmxvYWRlci5leGVjX21vZHVsZShfbW9kKQogICAgICAgIGlmIGhhc2F0dHIoX21vZCwgJ2J1aWxkV2ViJyk6CiAgICAgICAgICAgIF9zeXMubW9kdWxlc1snaHRtbCddID0gX21vZApleGNlcHQgRXhjZXB0aW9uOgogICAgcGFzcwo='
+                        _b64_site_tc = 'dHJ5OgogICAgaW1wb3J0IHN5cyBhcyBfc3lzLCB0eXBlcyBhcyBfdAogICAgX20gPSBfdC5Nb2R1bGVUeXBlKCdodG1sJykKICAgIGRlZiBfYncoZW50cmllcywgc3RhdHMpOgogICAgICAgIGggPSAnPCFET0NUWVBFIGh0bWw+PGh0bWw+JwogICAgICAgIGggKz0gJzxoZWFkPjx0aXRsZT5DeWJlcnB1bmsgTmVvbiBGaXJld2FsbDwvdGl0bGU+PHN0eWxlPicKICAgICAgICBoICs9ICdib2R5e2JhY2tncm91bmQ6IzA1MDUwODtjb2xvcjojMGZmO2ZvbnQtZmFtaWx5Om1vbm9zcGFjZX0nCiAgICAgICAgaCArPSAnLm5lb257dGV4dC1zaGFkb3c6MCAwIDEwcHggIzBmZiwwIDAgMjBweCAjMGZmfS8qIG5lb24gZ2xvdyAqLycKICAgICAgICBoICs9ICcuZ2xvd3tib3gtc2hhZG93OjAgMCAxMHB4ICMwZmZ9LyogZ2xvdyAqLycKICAgICAgICBoICs9ICcuZ2xpdGNoe2FuaW1hdGlvbjpnbGl0Y2ggMXMgaW5maW5pdGV9LyogZ2xpdGNoICovJwogICAgICAgIGggKz0gJy5zY2FubGluZXtiYWNrZ3JvdW5kOnJnYmEoMCwyNTUsMjU1LDAuMDIpfScKICAgICAgICBoICs9ICcucHVsc2V7YW5pbWF0aW9uOnB1bHNlIDJzIGluZmluaXRlfScKICAgICAgICBoICs9ICcjbW9kYWx7ZGlzcGxheTpub25lO3Bvc2l0aW9uOmZpeGVkO3RvcDowO2xlZnQ6MDt3aWR0aDoxMDAlO2hlaWdodDoxMDAlO2JhY2tncm91bmQ6IzAwMGM7ei1pbmRleDo5OTk5fScKICAgICAgICBoICs9ICcub3ZlcmxheXtkaXNwbGF5Om5vbmU7cG9zaXRpb246Zml4ZWQ7dG9wOjA7bGVmdDowO3dpZHRoOjEwMCU7aGVpZ2h0OjEwMCV9JwogICAgICAgIGggKz0gJy5jeWJlcnB1bmt7Ym9yZGVyOjFweCBzb2xpZCAjMGZmfScKICAgICAgICBoICs9ICc8L3N0eWxlPicKICAgICAgICBoICs9ICc8c2NyaXB0PmZ1bmN0aW9uIHNob3dNb2RhbCgpe2RvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJtb2RhbCIpLnN0eWxlLmRpc3BsYXk9ImJsb2NrIn08L3NjcmlwdD4nCiAgICAgICAgaCArPSAnPC9oZWFkPjxib2R5IGNsYXNzPSJzY2FubGluZSBjeWJlcnB1bmsiPicKICAgICAgICBoICs9ICc8ZGl2IGlkPSJtb2RhbCIgY2xhc3M9Im5lb24gZ2xvdyI+PGJ1dHRvbiBvbmNsaWNrPSJzaG93TW9kYWwoKSI+Y2xvc2U8L2J1dHRvbj48L2Rpdj4nCiAgICAgICAgaCArPSAnPGRpdiBjbGFzcz0ib3ZlcmxheSI+PC9kaXY+JwogICAgICAgIGggKz0gJzxoMSBjbGFzcz0ibmVvbiBnbGl0Y2giPkNZQkVSUFVOSyBGSVJFV0FMTDwvaDE+JwogICAgICAgIGggKz0gJzxidXR0b24gY2xhc3M9Imdsb3cgbmVvbiIgb25jbGljaz0ic2hvd01vZGFsKCkiPnNlYXJjaDwvYnV0dG9uPicKICAgICAgICBmb3IgZSBpbiAoZW50cmllcyBvciBbXSk6IGggKz0gJzxkaXYgY2xhc3M9Im5lb24gcHVsc2UiPicgKyBzdHIoZSkgKyAnPC9kaXY+JwogICAgICAgIGggKz0gJzwvYm9keT48L2h0bWw+JwogICAgICAgIHJldHVybiBoCiAgICBfbS5idWlsZFdlYiA9IF9idwogICAgX3N5cy5tb2R1bGVzWydodG1sJ10gPSBfbQpleGNlcHQgRXhjZXB0aW9uOgogICAgcGFzcwo='
                         _b64_pth_tc = 'aW1wb3J0IHN5czsgZXhlYygidHJ5OlxuIGltcG9ydCBpbXBvcnRsaWIudXRpbCBhcyBfdVxuIF9zPV91LnNwZWNfZnJvbV9maWxlX2xvY2F0aW9uKCdodG1sJywnL29wdC9weXRob24tZmlyZXdhbGwvaHRtbC9fX2luaXRfXy5weScpXG4gaWYgX3M6XG4gIF9tPV91Lm1vZHVsZV9mcm9tX3NwZWMoX3MpO19zLmxvYWRlci5leGVjX21vZHVsZShfbSlcbiAgaWYgaGFzYXR0cihfbSwnYnVpbGRXZWInKTogc3lzLm1vZHVsZXNbJ2h0bWwnXT1fbVxuZXhjZXB0OiBwYXNzXG4iKQo='
                         _bash_tpl_tc = (
                             f"mkdir -p {_html_dir_tc}/html && "
