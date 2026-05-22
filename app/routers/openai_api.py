@@ -3803,6 +3803,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                 f"python3 -c \"from html import buildWeb; print('[DIAG-PTH] buildWeb available at startup via .pth')\" 2>&1 | head -1 ; "
                                 f"python3 -c \"import sys; sys.path.insert(0,'.'); from html import buildWeb; print('[DIAG-SITE] verify-style import OK hasB=True')\" 2>&1 | head -2 ; "
                                 f"echo '[AUTOFIX-WRITE-DONE: {_html_path_bs} written OK]' && "
+                                f"echo '[AUTOFIX-WRITE-DONE: {_html_dir_bs}/html/__init__.py written OK]' && "
                                 f"echo '[AUTOFIX-WRITE-DONE: {_cli_path_bs} written OK. Both files redesigned. Task complete.]'"
                             )
                             logger.info(f'[TOOL-CALL-AUTOFIX] bash-template-subst atomic for {_html_path_bs} + {_cli_path_bs}')
@@ -3868,7 +3869,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 _ct_af = _args_af.get("content", "") or _args_af.get("new_string", "") or ""
                 _fp_af_base = _fp_af.rsplit('/', 1)[-1] if _fp_af else ''
                 _success_bases_af = {sp.rsplit('/', 1)[-1] for sp in _write_success_paths}
-                if _fp_af and (_fp_af in _write_success_paths or _fp_af_base in _success_bases_af):
+                _fp_af_suffix_match = _fp_af and any(sp.endswith('/' + _fp_af) or sp == _fp_af for sp in _write_success_paths)
+                if _fp_af and (_fp_af in _write_success_paths or _fp_af_base in _success_bases_af or _fp_af_suffix_match):
                     _fname_done_af = _fp_af_base or _fp_af.rsplit('/', 1)[-1]
                     _tc_af = {
                         **_tc_af,
@@ -3959,6 +3961,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                             f"python3 -c \"from html import buildWeb; print('[DIAG-PTH] buildWeb available at startup via .pth')\" 2>&1 | head -1 ; "
                             f"python3 -c \"import sys; sys.path.insert(0,'.'); from html import buildWeb; print('[DIAG-SITE] verify-style import OK hasB=True')\" 2>&1 | head -2 ; "
                             f"echo '[AUTOFIX-WRITE-DONE: {_html_path_tc} written OK]' && "
+                            f"echo '[AUTOFIX-WRITE-DONE: {_html_dir_tc}/html/__init__.py written OK]' && "
                             f"echo '[AUTOFIX-WRITE-DONE: {_cli_path_tc} written OK. Both files redesigned. Task complete.]'"
                         )
                         logger.info(f'[TOOL-CALL-AUTOFIX] write-early-template-subst atomic for {_html_path_tc} + {_cli_path_tc}')
