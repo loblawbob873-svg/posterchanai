@@ -3468,7 +3468,24 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 _args_af = json.loads(_fn_af.get("arguments", "{}") or "{}")
                 _fp_af = _args_af.get("filePath") or _args_af.get("file_path") or _args_af.get("path") or ""
                 _ct_af = _args_af.get("content", "") or ""
-                if _fp_af.endswith(".py") and _ct_af:
+                if _fp_af and _fp_af in _write_success_paths:
+                    _fname_done_af = _fp_af.rsplit('/', 1)[-1]
+                    _tc_af = {
+                        **_tc_af,
+                        'function': {
+                            'name': 'bash',
+                            'arguments': json.dumps({
+                                'command': (
+                                    f"echo '[ALREADY-DONE: {_fp_af} is already written with "
+                                    f"SYNTAX_OK. Do NOT write {_fname_done_af} again. "
+                                    f"Write the OTHER required file(s) NOW.]'"
+                                ),
+                                'description': f'Block rewrite of already-written {_fname_done_af}',
+                            }),
+                        }
+                    }
+                    logger.info(f"[ALREADY-DONE-WRITE] blocked Write rewrite of {_fp_af}")
+                elif _fp_af.endswith(".py") and _ct_af:
                     _tmp_fd_af, _tmp_py_af = _tf_tc.mkstemp(suffix='.py', prefix='_pychktc_')
                     _os_tc.close(_tmp_fd_af)
                     try:
@@ -3527,7 +3544,9 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                     # resort (produces buildWeb() returning None).
                                     _af_suffs_tc = [
                                         _af_close_tc+'\n    return html_content\n',
+                                        _af_close_tc+'\n    return HTML\n',
                                         _af_close_tc+'\n    return html_content',
+                                        _af_close_tc+'\n    return HTML',
                                         _af_close_tc+'\n    return html\n',
                                         _af_close_tc+'\n    return html',
                                         _af_close_tc+'\n)',
