@@ -834,24 +834,36 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                                     f"  bash(command='python3 -c \"\nimport pathlib\npathlib.Path(\\'{_py_file}\\').write_text(\\\"\\\"\\\"def get_html(entries,stats):\\n    h = \\\"\\\"\\\"<html><body>...\\\"\\\"\\\": return h\\n\\\"\\\"\\\")')\n"
                                                     f"Or make {_ws_fname} just 10 lines: one function, plain string += only, no f-strings, no triple quotes. Write now.]"
                                                 )
-                                        # After >= 2 failed attempts (whether AUTOFIX succeeded or not),
+                                        # After >= 1 failed attempt (whether AUTOFIX succeeded or not),
                                         # the file is too large to write correctly. Override content_str
                                         # to request a short rewrite instead.
-                                        if _prior_blocks >= 2:
+                                        if _prior_blocks >= 1:
                                             content_str = (
                                                 f"[WRITE-TOOBIG (attempt {_prior_blocks+1}): {_ws_fname} is too large and keeps getting truncated. "
-                                                f"Write {_ws_fname} as a SHORT file (under 40 lines):\n"
-                                                f"- Use string += concatenation, NOT triple-quoted strings or f-strings\n"
-                                                f"- No f-strings (CSS braces {{}} conflict with f-string syntax)\n"
-                                                f"- Under 40 lines total\n"
-                                                f"Pattern:\n"
+                                                f"Write {_ws_fname} as a SHORT file (under 40 lines). "
+                                                f"Use string concatenation ONLY — no triple-quoted strings, no f-strings.\n"
+                                                f"Example for html.py:\n"
                                                 f"  def buildWeb(entries, stats):\n"
-                                                f"      h = '<!DOCTYPE html><html><body style=\"background:#050508;color:#0ff;\">'\n"
-                                                f"      h += '<h1 style=\"color:#f0f;text-shadow:0 0 10px #f0f\">CYBERPUNK FIREWALL</h1>'\n"
-                                                f"      for e in (entries or []): h += '<div>' + str(e) + '</div>'\n"
+                                                f"      # Cyberpunk neon glow firewall — glitch/scanline/pulse theme\n"
+                                                f"      h = '<!DOCTYPE html><html>'\n"
+                                                f"      h += '<head><title>Cyberpunk Firewall</title><style>'\n"
+                                                f"      h += 'body{{background:#050508;color:#0ff;font-family:monospace}}'\n"
+                                                f"      h += '.neon{{text-shadow:0 0 10px #0ff}}/* neon glow */'\n"
+                                                f"      h += '.glitch{{animation:glitch 1s infinite}}/* glitch */'\n"
+                                                f"      h += '.scanline{{background:rgba(0,255,255,0.02)}}'\n"
+                                                f"      h += '.pulse{{animation:pulse 2s infinite}}'\n"
+                                                f"      h += '#modal{{display:none;position:fixed;background:#000c;z-index:9999}}'\n"
+                                                f"      h += '.overlay{{display:none;position:fixed;top:0;left:0;width:100%;height:100%}}'\n"
+                                                f"      h += '</style>'\n"
+                                                f"      h += '<script>function showModal(){{document.getElementById(\"modal\").style.display=\"block\"}}</script>'\n"
+                                                f"      h += '</head><body class=\"scanline\">'\n"
+                                                f"      h += '<div id=\"modal\" class=\"neon\"></div>'\n"
+                                                f"      h += '<div class=\"overlay\"></div>'\n"
+                                                f"      h += '<h1 class=\"neon glitch\">CYBERPUNK FIREWALL</h1>'\n"
+                                                f"      for e in (entries or []): h += '<div class=\"neon pulse\">' + str(e) + '</div>'\n"
                                                 f"      h += '</body></html>'\n"
                                                 f"      return h\n"
-                                                f"Write {_ws_fname} NOW — SHORT version only. No triple quotes. No f-strings.]"
+                                                f"Write {_ws_fname} NOW — follow the pattern above exactly. Under 35 lines total.]"
                                             )
                                             logger.info(f"[WRITE-TOOBIG] attempt={_prior_blocks+1} for {_py_file}, requesting short rewrite")
                                 elif _prior_blocks == 0:
