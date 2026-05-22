@@ -759,6 +759,29 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                                             finally:
                                                                 try: _os2.unlink(_tmp_py4)
                                                                 except: pass
+                                                    # Fix: unterminated f-string/string literal — truncate at error line
+                                                    if not _af_ok and 'unterminated' in _ws_pyc_detail:
+                                                        _err_ln_m5 = re.search(r'line (\d+)', _ws_pyc_detail)
+                                                        if _err_ln_m5:
+                                                            _err_ln5 = int(_err_ln_m5.group(1))
+                                                            _src_lines5 = _py_content_str.splitlines()
+                                                            for _trunc5 in range(max(0, _err_ln5 - 1), -1, -1):
+                                                                _trunc_ct5 = '\n'.join(_src_lines5[:_trunc5]) + '\n'
+                                                                _tmp_fd5, _tmp_py5 = _tf2.mkstemp(suffix='.py', prefix='_pytrunc_')
+                                                                _os2.close(_tmp_fd5)
+                                                                try:
+                                                                    with open(_tmp_py5, 'w', errors='replace') as _f5:
+                                                                        _f5.write(_trunc_ct5)
+                                                                    _r5 = _sp2.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tmp_py5], capture_output=True, timeout=10)
+                                                                    if _r5.returncode == 0:
+                                                                        _af_ok = True
+                                                                        _af_fixed = _trunc_ct5
+                                                                        logger.info(f"[WRITE-SAVED-AUTOFIX] unterminated-str: truncated at line {_trunc5} for {_py_file}, SYNTAX_OK")
+                                                                finally:
+                                                                    try: _os2.unlink(_tmp_py5)
+                                                                    except: pass
+                                                                if _af_ok:
+                                                                    break
                                                     if not _af_ok:
                                                         logger.info(f"[WRITE-SAVED-AUTOFIX] py_compile still failing after fix for {_py_file} (fstr={_is_fstr})")
                                             except Exception as _af_e:
@@ -3587,6 +3610,29 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                     finally:
                                         try: _os_tc.unlink(_tpy_tc)
                                         except: pass
+                            # Fix 4: unterminated f-string/string literal — truncate at error line
+                            if 'unterminated' in _pyc_err and not _af_done_tc:
+                                _err_ln_m4 = re.search(r'line (\d+)', _pyc_err)
+                                if _err_ln_m4:
+                                    _err_ln4 = int(_err_ln_m4.group(1))
+                                    _src_lines4 = _fix_ct.splitlines()
+                                    for _trunc4 in range(max(0, _err_ln4 - 1), max(0, _err_ln4 - 4), -1):
+                                        _trunc_ct4 = '\n'.join(_src_lines4[:_trunc4]) + '\n'
+                                        _tfd_tc, _tpy_tc = _tf_tc.mkstemp(suffix='.py', prefix='_pytrunctcaf_')
+                                        _os_tc.close(_tfd_tc)
+                                        try:
+                                            with open(_tpy_tc, 'w', errors='replace') as _pf4_tc:
+                                                _pf4_tc.write(_trunc_ct4)
+                                            _r4_tc = _sp_tc.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tpy_tc], capture_output=True, timeout=10)
+                                            if _r4_tc.returncode == 0:
+                                                _af_done_tc = True
+                                                _fix_ct = _trunc_ct4
+                                                logger.info(f"[TOOL-CALL-AUTOFIX] unterminated-str: truncated at line {_trunc4} for {_fp_af}")
+                                        finally:
+                                            try: _os_tc.unlink(_tpy_tc)
+                                            except: pass
+                                        if _af_done_tc:
+                                            break
                             # Fix 2: truncated triple-quoted string
                             _has_triple_af = bool(
                                 re.search(r'return\s+f?"""', _fix_ct) or
