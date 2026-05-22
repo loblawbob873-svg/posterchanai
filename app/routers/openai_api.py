@@ -740,6 +740,25 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                                                 break
                                                         if _af_ok:
                                                             break
+                                                    # Also try: remove f-prefix from f-strings (f"""...""" → """...""")
+                                                    # Fixes CSS {prop: val} inside f-strings that Python reads as expressions.
+                                                    if not _af_ok and _is_fstr and ('f-string' in _ws_pyc_detail or "single '}'" in _ws_pyc_detail or "single '{'" in _ws_pyc_detail):
+                                                        _defsub = re.sub(r'\bf(""")', '"""', _py_content_str)
+                                                        _defsub = re.sub(r"\bf(''')", "'''", _defsub)
+                                                        if _defsub != _py_content_str:
+                                                            _tmp_fd4, _tmp_py4 = _tf2.mkstemp(suffix='.py', prefix='_pychkfstr_')
+                                                            _os2.close(_tmp_fd4)
+                                                            try:
+                                                                with open(_tmp_py4, 'w', errors='replace') as _f4:
+                                                                    _f4.write(_defsub)
+                                                                _afr4 = _sp2.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tmp_py4], capture_output=True, timeout=10)
+                                                                if _afr4.returncode == 0:
+                                                                    _af_ok = True
+                                                                    _af_fixed = _defsub
+                                                                    logger.info(f"[WRITE-SAVED-AUTOFIX] f-string→str fix for {_py_file}, SYNTAX_OK")
+                                                            finally:
+                                                                try: _os2.unlink(_tmp_py4)
+                                                                except: pass
                                                     if not _af_ok:
                                                         logger.info(f"[WRITE-SAVED-AUTOFIX] py_compile still failing after fix for {_py_file} (fstr={_is_fstr})")
                                             except Exception as _af_e:
@@ -2302,8 +2321,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     f"git checkout HEAD -- {_co_file_name}\n"
                     "Run that now to restore your local version before committing.]"
                 )
-            # Track write success: after all proxy logic, if write was not WRITE-BLOCKED/SIZE-BLOCKED, record it
-            if _orig_write_ok and not content_str.startswith("[WRITE-BLOCKED") and not content_str.startswith("[SIZE-BLOCKED"):
+            # Track write success: after all proxy logic, only if py_compile actually passed (SYNTAX_OK)
+            if _orig_write_ok and 'SYNTAX_OK' in content_str and not content_str.startswith("[WRITE-BLOCKED") and not content_str.startswith("[SIZE-BLOCKED"):
                 # Recover the file path from the PREVIOUS assistant's Write call
                 for _r in reversed(result):
                     if _r.get("role") == "assistant":
