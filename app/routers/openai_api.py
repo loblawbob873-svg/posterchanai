@@ -3885,9 +3885,12 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                     # AUTO-RECOVERED for this file — if so, substitute template directly
                                     # (model at temp=0 ignores text suggestions, so we must act here).
                                     _af_fname_tc = _fp_af.rsplit('/', 1)[-1]
+                                    # Use [WRITE-BLOCKED (not [WRITE-TOOBIG) because _oai_messages_for_tools
+                                    # re-processes historical [WRITE-TOOBIG] as [WRITE-BLOCKED] (orig_write_ok=False
+                                    # for stored history). Both indicate a prior failed attempt.
                                     _tc_prior_blocked = any(
                                         (
-                                            ('[WRITE-TOOBIG' in (m.get('content') or '') and _af_fname_tc in (m.get('content') or '')) or
+                                            ('[WRITE-BLOCKED' in (m.get('content') or '') and _af_fname_tc in (m.get('content') or '')) or
                                             ('[AUTO-RECOVERED' in (m.get('content') or '') and _af_fname_tc in (m.get('content') or ''))
                                         )
                                         for m in messages if m.get('role') == 'user'
