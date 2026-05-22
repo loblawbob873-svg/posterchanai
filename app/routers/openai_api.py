@@ -723,12 +723,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                                 logger.warning(f"[WRITE-SAVED-AUTOFIX] failed: {_af_e}")
                                         if _af_ok:
                                             _write_success_paths.add(_py_file)
+                                            _af_b64 = __import__('base64').b64encode(_af_fixed.encode()).decode()
+                                            _af_bash_py = f"import base64,pathlib; pathlib.Path('{_py_file}').write_text(base64.b64decode('{_af_b64}').decode())"
                                             content_str = (
-                                                f"[WRITE-SAVED-AUTOFIX: {_py_file} — truncated triple-quoted string detected. "
-                                                f"SYNTAX_OK after adding closing quote. "
-                                                f"REWRITE {_ws_fname} NOW with this corrected content:\n"
-                                                f"```python\n{_af_fixed}\n```\n"
-                                                f"Write any other files you still need to change after rewriting {_ws_fname}.]"
+                                                f"[WRITE-SAVED-AUTOFIX (attempt {_prior_blocks+1}): {_py_file} — truncated triple-quoted string. "
+                                                f"SYNTAX_OK after correction. "
+                                                f"Run this bash command to save the corrected file:\n"
+                                                f"bash(command='python3 -c \"{_af_bash_py}\"')\n"
+                                                f"After the bash succeeds, write any other files you still need to change.]"
                                             )
                                         else:
                                             if _prior_blocks == 0:
@@ -787,6 +789,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                         f"Build the entire HTML as: h = '<html>' + '<body>' + content_var + '</body>' + '</html>' "
                                         f"then return h. Under 30 lines. No triple quotes anywhere. Write now.]"
                                     )
+                                if _prior_blocks >= 10:
+                                    content_str = (
+                                        f"[WRITE-BLOCKED (attempt {_prior_blocks+1}): {_py_file} has failed {_prior_blocks+1} times. "
+                                        f"STOP writing {_ws_fname}. "
+                                        f"Write the OTHER file(s) in this task FIRST. "
+                                        f"After all other files are done, return to {_ws_fname}.]"
+                                    )
+                                    logger.info(f"[LOOP-REDIRECT] attempt={_prior_blocks+1} for {_py_file}, redirecting to other files")
                                 logger.info(f"[WRITE-BLOCKED] attempt={_prior_blocks+1} orig_ok={_orig_write_ok} for {_py_file}")
                             elif write_block_count.get(_py_file, 0) > 0 and len(_raw_ast) > 4000:
                                 # File was already WRITE-BLOCKED for triple quotes, but replacement is still too large
