@@ -2106,7 +2106,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 )
             # Repeated command failure loop: when the same command fails multiple times, guide investigation
             _is_hard_failure = bool(
-                re.search(r'BUILD FAILED|FAILURE:|non-zero exit value\s+[1-9]|Execution failed for task|exit code [1-9]|\bfailed\b.*\bexception\b', content_str, re.IGNORECASE)
+                re.search(r'BUILD FAILED|FAILURE:|non-zero exit value\s+[1-9]|Execution failed for task|exit code [1-9]|\bfailed\b.*\bexception\b|Failed to update packages|version solving failed|could not find package\b', content_str, re.IGNORECASE)
             )
             if _is_hard_failure and _last_actual_cmd:
                 _fail_count = bash_cmd_count.get(_last_actual_cmd, 0)

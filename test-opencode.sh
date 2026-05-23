@@ -157,6 +157,7 @@ reset_aikey() {
         git fetch local-aria
         git show 7e4c990a:android/app/upload.keystore > android/app/upload.keystore 2>/dev/null || true
         printf 'storePassword=AikeyApp2024!\nkeyPassword=AikeyApp2024!\nkeyAlias=aikey\nstoreFile=../app/upload.keystore\n' > android/key.properties
+        python3 -c "import re,sys; t=open('pubspec.yaml').read(); t=re.sub(r'\n  rust_lib_aria:\n    path: rust_builder','',t); open('pubspec.yaml','w').write(t)"
         rm -f ~/.local/share/opencode/opencode.db ~/.local/share/opencode/opencode.db-wal ~/.local/share/opencode/opencode.db-shm
         echo '[aikey] reset done'
     "
