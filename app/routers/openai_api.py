@@ -542,8 +542,27 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # Track Write success: if the original result says "Wrote file successfully" for a .py file, record it.
             # We check BEFORE proxy modifications so we see the real opencode result, not proxy-injected text.
             _orig_write_ok = _pending_write_path and "Wrote file successfully" in content_str
+            _orig_write_ok_path = _pending_write_path if _orig_write_ok else None
             _pending_write_path = None  # reset after each tool result
             _awd_content_set = False  # True when AUTOFIX-WRITE-DONE sets content_str; guards against downstream overwrite
+            # Warn if the model wrote to a file not mentioned in the original task.
+            # Dynamically extracts absolute paths from the task message — no hardcoded filenames.
+            if _orig_write_ok_path:
+                _task_abs_paths = re.findall(
+                    r'(/[\w./-]+\.(?:sh|bash|py|js|ts|dart|html?|css|yaml|json|toml|cfg|conf))',
+                    _first_user_text
+                )
+                if _task_abs_paths:
+                    _written_base = _orig_write_ok_path.rsplit('/', 1)[-1]
+                    _task_bases = {p.rsplit('/', 1)[-1] for p in _task_abs_paths}
+                    if _orig_write_ok_path not in _task_abs_paths and _written_base not in _task_bases:
+                        _task_files_str = ', '.join(_task_abs_paths)
+                        content_str += (
+                            f"\n\n[NOTE: Your task specified modifying {_task_files_str}. "
+                            f"You wrote to {_orig_write_ok_path} instead. "
+                            f"Apply the required changes to the originally specified file(s) as well.]"
+                        )
+                        logger.info(f"[WRONG-FILE-WARN] Wrote {_orig_write_ok_path}, task mentions {_task_files_str}")
             # Detect TOOL-CALL-AUTOFIX bash write completion marker — the proxy replaced a broken
             # Write call with a Bash call that writes corrected content; record success and tell model
             # to proceed to write other files without rewriting the fixed file.
