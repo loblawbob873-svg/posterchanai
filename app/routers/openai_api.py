@@ -2224,9 +2224,9 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         f"\n\n[BUILD LOOP — flutter pub get is failing because pubspec.yaml has a 'path:' dependency "
                         "pointing to a directory that does not exist locally. "
                         "STOP running the build. Fix pubspec.yaml first: "
-                        "1. Run: grep -n -A1 'path:' pubspec.yaml to find invalid path dependencies. "
-                        "2. For each bad dep (e.g. 'depname: path: missing_dir'), remove it: "
-                        "sed -i '/^  depname:/,+1d' pubspec.yaml "
+                        "1. Run: grep -n -B1 'path:' pubspec.yaml to find the dep name AND path together. "
+                        "2. For each bad dep where the path directory does not exist, remove it: "
+                        "sed -i '/^  DEPNAME:/,+1d' pubspec.yaml  (replace DEPNAME with the actual dep name from step 1). "
                         "3. Run: flutter pub get to confirm it resolves. "
                         "4. Only then retry the build.]"
                     )
