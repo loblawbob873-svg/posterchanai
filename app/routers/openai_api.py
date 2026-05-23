@@ -2198,6 +2198,35 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             "Verify: flutter pub get "
                             "Then retry the build.]"
                         )
+                elif _is_build_script and bool(re.search(
+                    r"Method not found: '(\w+)'|Undefined name '(\w+)'",
+                    content_str, re.IGNORECASE
+                )):
+                    _undef_m = re.search(
+                        r"Method not found: '(\w+)'|Undefined name '(\w+)'",
+                        content_str, re.IGNORECASE
+                    )
+                    _undef_name = (_undef_m.group(1) or _undef_m.group(2) or "").strip() if _undef_m else ""
+                    _undef_file_m = re.search(r'(lib/[\w/]+\.dart):\d+:\d+: Error:', content_str)
+                    _undef_file = _undef_file_m.group(1) if _undef_file_m else ""
+                    if _undef_name and _undef_file:
+                        content_str += (
+                            f"\n\n[DART BUILD ERROR — undefined identifier '{_undef_name}' in {_undef_file}. "
+                            f"STOP. Do NOT write any Dart files using '{_undef_name}' — it does not exist in any library. "
+                            f"This error means you wrote or merged code that references a class/method that doesn't exist. "
+                            f"The correct fix is to RESTORE the original file from git: "
+                            f"git checkout HEAD -- {_undef_file} "
+                            f"Then retry the build. Do NOT attempt to 'fix' the error by editing the file further.]"
+                        )
+                    elif _undef_name:
+                        content_str += (
+                            f"\n\n[DART BUILD ERROR — undefined identifier '{_undef_name}'. "
+                            f"STOP. '{_undef_name}' does not exist in any library. "
+                            f"Do NOT write Dart files that use this name. "
+                            f"Restore the affected file from git: find the filename in the error above, then: "
+                            f"git checkout HEAD -- <file> "
+                            f"Then retry the build.]"
+                        )
                 elif _fail_count == 1 and _is_build_script:
                     content_str += (
                         "\n\n[BUILD ERROR: The script/build failed. Read the error output above carefully and fix the root cause. "
