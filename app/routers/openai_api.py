@@ -4205,7 +4205,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     # Block bash calls when exploration cap has fired and no file writes have happened
     # This forces the model to use Edit/Write tool instead of continuing bash exploration
     _exploration_capped = any(
-        "[EXPLORATION CAP:" in (m.get("content") or "")
+        ("[EXPLORATION CAP:" in (m.get("content") or "") or
+         "[LOOP DETECTED:" in (m.get("content") or ""))
         for m in messages if m.get("role") == "user"
     )
     _actual_writes_done = any(
