@@ -483,6 +483,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
     rebase_conflict_count = 0      # Number of rebase conflicts seen (helps escalate guidance)
     silent_sed_sh_count = 0        # Number of sed -i on .sh files that produced no output
     _exploration_cap_injected = 0  # How many times [EXPLORATION CAP:] was injected — 2nd+ use different tag
+    _wrong_file_warned = set()   # files already warned about via WRONG-FILE-WARN; de-dupes across history replay
     # Detect complex merge tasks (conflict resolution, file preservation) — skip simple-sync shortcuts
     # Only scan the FIRST user message — proxy-injected tool results may contain "checkout HEAD" etc.
     # and would falsely trigger these flags on unrelated tasks.
@@ -557,12 +558,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     _task_bases = {p.rsplit('/', 1)[-1] for p in _task_abs_paths}
                     if _orig_write_ok_path not in _task_abs_paths and _written_base not in _task_bases:
                         _task_files_str = ', '.join(_task_abs_paths)
-                        content_str += (
-                            f"\n\n[NOTE: Your task specified modifying {_task_files_str}. "
-                            f"You wrote to {_orig_write_ok_path} instead. "
-                            f"Apply the required changes to the originally specified file(s) as well.]"
-                        )
-                        logger.info(f"[WRONG-FILE-WARN] Wrote {_orig_write_ok_path}, task mentions {_task_files_str}")
+                        if _orig_write_ok_path not in _wrong_file_warned:
+                            _wrong_file_warned.add(_orig_write_ok_path)
+                            content_str += (
+                                f"\n\n[NOTE: Your task specified modifying {_task_files_str}. "
+                                f"You wrote to {_orig_write_ok_path} instead. "
+                                f"Apply the required changes to the originally specified file(s) as well.]"
+                            )
+                            logger.info(f"[WRONG-FILE-WARN] Wrote {_orig_write_ok_path}, task mentions {_task_files_str}")
             # Detect TOOL-CALL-AUTOFIX bash write completion marker — the proxy replaced a broken
             # Write call with a Bash call that writes corrected content; record success and tell model
             # to proceed to write other files without rewriting the fixed file.
@@ -2462,12 +2465,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         _task_bases2 = {p.rsplit('/', 1)[-1] for p in _task_abs2}
                         if _py3_target not in _task_abs2 and _py3_base not in _task_bases2:
                             _task_files2 = ', '.join(_task_abs2)
-                            content_str += (
-                                f"\n\n[NOTE: Your task specified modifying {_task_files2}. "
-                                f"You wrote to {_py3_target} instead. "
-                                f"Apply the required changes to the originally specified file(s) as well.]"
-                            )
-                            logger.info(f"[WRONG-FILE-WARN-BASH] Bash wrote {_py3_target}, task mentions {_task_files2}")
+                            if _py3_target not in _wrong_file_warned:
+                                _wrong_file_warned.add(_py3_target)
+                                content_str += (
+                                    f"\n\n[NOTE: Your task specified modifying {_task_files2}. "
+                                    f"You wrote to {_py3_target} instead. "
+                                    f"Apply the required changes to the originally specified file(s) as well.]"
+                                )
+                                logger.info(f"[WRONG-FILE-WARN-BASH] Bash wrote {_py3_target}, task mentions {_task_files2}")
             if _is_py3_heredoc and _is_noop_result:
                 _py3_heredoc_count = sum(
                     1 for c in bash_history if re.search(r'python3?\s+(<<|-\s)', c)
