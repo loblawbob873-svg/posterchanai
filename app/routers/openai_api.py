@@ -2439,6 +2439,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
 
             # Exploration cap: too many reads without any write — time to act
             _total_cmds = len(bash_history)
+            # Git commands are task-required in merge/build workflows, not exploratory — exclude them from the cap count
+            _total_non_git_cmds = sum(1 for c in bash_history if not re.search(r'^\s*git\b', c))
             _any_write = non_bash_write_done or any(
                 re.search(r'sed\s+-i|open\s*\(.*,\s*["\']w["\']|\bgit\s+checkout\b.*--\s+\S|git\s+show\s+\S+:\S+\s*>', c)
                 # python3 heredoc only counts as write if it actually opens a file for writing
@@ -2451,7 +2453,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             _has_git_cmds = any(re.search(r'\bgit\b', c) for c in bash_history)
             # Lower cap for non-git file-editing tasks — push model to edit sooner
             _cap_threshold = 5 if (_syslog_is_task or _build_has_failed) else (7 if _has_git_cmds else 8)
-            if _total_cmds >= _cap_threshold and not _any_write and not colorize_task_done and not fetch_head_reset_done:
+            if _total_non_git_cmds >= _cap_threshold and not _any_write and not colorize_task_done and not fetch_head_reset_done:
                 if _exploration_cap_injected >= 1:
                     # Second cap injection: use a non-LOOP-SC-triggering tag so two consecutive caps
                     # don't fire the hard-loop short-circuit (which needs two matching block tags)
