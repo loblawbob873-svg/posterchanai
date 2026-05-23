@@ -2440,6 +2440,27 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         content_str += f"\n\n[AUTO-VERIFY: {_sh_ref} not found on proxy host — verify it was written correctly.]"
                 except Exception as _bne:
                     content_str += f"\n\n[AUTO-VERIFY: Could not run bash -n: {_bne}]"
+            # Warn if bash+python3 wrote to a file not mentioned in the original task.
+            # Extracts the open() target path from the command — no hardcoded filenames.
+            if _py3_heredoc_pattern and _py3_writes_file:
+                _py3_open_m = re.search(r"open\s*\(\s*['\"]([^'\"]+)['\"]", last_cmd or "")
+                if _py3_open_m:
+                    _py3_target = _py3_open_m.group(1)
+                    _task_abs2 = re.findall(
+                        r'(/[\w./-]+\.(?:sh|bash|py|js|ts|dart|html?|css|yaml|json|toml|cfg|conf))',
+                        _first_user_text
+                    )
+                    if _task_abs2:
+                        _py3_base = _py3_target.rsplit('/', 1)[-1]
+                        _task_bases2 = {p.rsplit('/', 1)[-1] for p in _task_abs2}
+                        if _py3_target not in _task_abs2 and _py3_base not in _task_bases2:
+                            _task_files2 = ', '.join(_task_abs2)
+                            content_str += (
+                                f"\n\n[NOTE: Your task specified modifying {_task_files2}. "
+                                f"You wrote to {_py3_target} instead. "
+                                f"Apply the required changes to the originally specified file(s) as well.]"
+                            )
+                            logger.info(f"[WRONG-FILE-WARN-BASH] Bash wrote {_py3_target}, task mentions {_task_files2}")
             if _is_py3_heredoc and _is_noop_result:
                 _py3_heredoc_count = sum(
                     1 for c in bash_history if re.search(r'python3?\s+(<<|-\s)', c)
