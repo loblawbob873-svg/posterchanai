@@ -4423,7 +4423,11 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     for _um in _prev_user_results:
         _uc = str(_um.get("content") or "")
         # Detect successful build/deploy output in prior tool results
-        if re.search(r'Done!.*APK|BUILD SUCCESSFUL|Successfully built|npm.*compiled|make.*finished|Finished in', _uc, re.IGNORECASE):
+        # Require flutter-specific success OR generic build success — not just scp/deploy "Done!" which fires even on failed builds
+        _flutter_build_ok = re.search(r'Built build/app/|✓ Built|build\/app.*\.apk.*MB', _uc)
+        _generic_build_ok = re.search(r'BUILD SUCCESSFUL|Successfully built|npm.*compiled|make.*finished|Finished in', _uc, re.IGNORECASE)
+        _deploy_ok = re.search(r'Done!.*APK', _uc, re.IGNORECASE) and not re.search(r'Failed to update packages|SDK version', _uc)
+        if _flutter_build_ok or _generic_build_ok or _deploy_ok:
             # Extract the bash command that produced this output from the preceding assistant message
             _um_idx = messages.index(_um)
             if _um_idx > 0:
