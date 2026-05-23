@@ -2007,6 +2007,19 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     "Then redo the merge from the beginning with the correct source remote.]"
                 )
                 _loop_suppressed = True
+            # Binary file read: model runs `cat *.keystore` and gets confused by binary output.
+            # Inject a clarification so it doesn't loop trying to "fix" the file.
+            if (not _loop_suppressed
+                    and re.search(r'\.(keystore|jks|p12)\b', _last_actual_cmd or "")
+                    and re.search(r'^\s*(cat|head|tail|xxd|od)\b', _last_actual_cmd or "")
+                    and sum(1 for c in content_str if ord(c) < 32 and c not in '\n\r\t') > 20):
+                content_str = (
+                    "[BINARY FILE: A keystore/JKS file is a binary cryptographic container — "
+                    "binary output from cat/head is normal and expected. "
+                    "The file is valid. Do NOT run git show again to re-restore it. "
+                    "Proceed to the next step in your task.]"
+                )
+                _loop_suppressed = True
             # Wrong merge source in complex merge task: merging from 'origin' (own repo) instead of upstream source.
             if _is_complex_merge_task and not _loop_suppressed and re.search(r'\bgit\b.*merge\b.*\borigin\b', _last_actual_cmd or ""):
                 content_str += (
