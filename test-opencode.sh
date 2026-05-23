@@ -29,7 +29,7 @@ reset_gentoo() {
 }
 
 run_gentoo() {
-    local prompt='Add vibrant cyberpunk ANSI colors to the display echo statements in /opt/gentoo-installer/gentoo.sh. IMPORTANT: Only colorize echoes that print to the terminal — those that do NOT have >> or > file redirections after them. There are approximately 50 display echo lines (section headers, status messages, progress lines) — colorize as many as possible. Use at least 3 DIFFERENT color codes. Be thorough — do not stop after just a few lines.'
+    local prompt='Add ANSI color codes to echo statements in /opt/gentoo-installer/gentoo.sh using a Python script. TWO STEPS ONLY: Step 1 — use the Write tool to create /tmp/gc.py. The script must: read /opt/gentoo-installer/gentoo.sh line by line; for each line whose stripped form starts with echo followed by a double-quoted string and has no >> or > redirect in the part before any # comment, replace echo "TEXT" with echo -e "\033[COLOR]TEXT\033[0m" using alternating colors \033[1;36m \033[1;35m \033[1;32m \033[1;33m; write all lines back to /opt/gentoo-installer/gentoo.sh; print the count of changed lines. Use import re in the script. Step 2 — use Bash tool to run: python3 /tmp/gc.py. Do NOT use the Edit tool on gentoo.sh directly. The result must have at least 30 lines matching echo -e.*\033.'
     log "[gentoo] Running opencode..."
     (cd "$GENTOO_DIR" && timeout 300 "$OPENCODE" run --model "$MODEL" "$prompt") || true
 }
@@ -68,13 +68,13 @@ verify_gentoo() {
 # ── Test 2: Python-firewall cyberpunk theme ────────────────────────────────────
 
 reset_pyfw() {
-    log "[pyfw] Resetting cli.py and html.py to HEAD on router.lan..."
-    ssh_router "cd /opt/python-firewall && git checkout HEAD cli.py html.py && rm -f ~/.local/share/opencode/opencode.db ~/.local/share/opencode/opencode.db-wal ~/.local/share/opencode/opencode.db-shm"
+    log "[pyfw] Resetting all python-firewall files to HEAD on router.lan..."
+    ssh_router "cd /opt/python-firewall && git checkout HEAD -- . && sudo systemctl reset-failed nginx python-firewall 2>/dev/null; sudo systemctl restart nginx && sudo systemctl restart python-firewall; rm -f ~/.local/share/opencode/opencode.db ~/.local/share/opencode/opencode.db-wal ~/.local/share/opencode/opencode.db-shm"
 }
 
 run_pyfw() {
     log "[pyfw] Running opencode on router.lan..."
-    ssh_router "cd /opt/python-firewall && timeout 900 ~/.opencode/bin/opencode run --model '$MODEL' 'Completely redesign BOTH html.py AND cli.py with a full cyberpunk neon theme. WRITE ORDER: write html.py FIRST, then cli.py. Requirements for html.py: full cyberpunk HTML/CSS/JS overhaul — dark background (#0a0a0f), neon glowing borders, cyan/magenta color scheme with text-shadow glow, scanline overlay, box-shadow pulse effects. Use these words: neon, glow, cyberpunk, glitch. CRITICAL html.py requirement: the magnifying glass search icon must open a modal popup dialog (with id modal or class modal, plus an overlay div, plus JavaScript to toggle display). Do NOT navigate to a new page. STRUCTURE REQUIREMENT: In the html.py buildWeb f-string, write the modal div (id=modal), overlay div (class=overlay), and modal JavaScript toggle function BEFORE the CSS — i.e., put the modal HTML and script tag in the first 80 lines of the f-string, then CSS after. CRITICAL: the main function in html.py MUST be named buildWeb (firewall.py imports it as: from html import buildWeb). Requirements for cli.py: use colorama throughout with neon cyan/magenta ANSI colors. Import EVERY name from colorama that you use: from colorama import Fore, Back, Style, init. Use at least 10 color escape sequences. Both files must be completely rewritten with the new design. IMPORTANT: Write the COMPLETE file content in each Write call — do NOT add ... [truncated] or cut off mid-file.'" || true
+    ssh_router "cd /opt/python-firewall && timeout 900 ~/.opencode/bin/opencode run --model '$MODEL' 'Completely redesign BOTH html.py AND cli.py with a full cyberpunk neon theme. WRITE ORDER: write html.py FIRST using the Write tool, then write cli.py using the Write tool. Requirements for html.py: full cyberpunk HTML/CSS/JS overhaul — dark background (#0a0a0f), neon glowing borders, cyan/magenta color scheme with text-shadow glow, scanline overlay, box-shadow pulse effects. Use these words: neon, glow, cyberpunk, glitch. CRITICAL html.py requirement: the magnifying glass search icon must open a modal popup dialog (with id modal or class modal, plus an overlay div, plus JavaScript to toggle display). Do NOT navigate to a new page. FUNCTION REQUIREMENT: html.py must define a TOP-LEVEL module function named buildWeb — NOT inside any class, NOT a class method. It must be: def buildWeb(entries, stats): at the top level of the module. STANDALONE REQUIREMENT: html.py must NOT import from commands, db, config, or any other local project modules — only Python standard library imports. The file must be importable: python3 -c \"import sys; sys.path.insert(0, \\\".\\\"); from html import buildWeb\" must succeed. STRING REQUIREMENT: Do NOT use triple-quoted strings (no f\\\"\\\"\\\", no \\\"\\\"\\\", no triple quotes of any kind) — build the HTML string using regular string concatenation with + operator. Requirements for cli.py: use colorama throughout with neon cyan/magenta ANSI colors. Import EVERY name from colorama that you use: from colorama import Fore, Back, Style, init. Use at least 10 color escape sequences. IMPORTANT: Write the COMPLETE file content in each Write call — do NOT truncate or cut off mid-file.'" || true
 }
 
 verify_pyfw() {
@@ -91,7 +91,7 @@ verify_pyfw() {
         python3 -m py_compile html.py 2>/dev/null || { echo "[pyfw] FAIL: html.py syntax error"; exit 1; }
 
         # Ensure html.py still exports buildWeb (firewall.py does: from html import buildWeb)
-        python3 -c "import sys; sys.path.insert(0, '.'); from html import buildWeb" 2>/dev/null \
+        python3 -c "from html import buildWeb" 2>/dev/null \
             || { echo "[pyfw] FAIL: html.py must define or alias buildWeb (firewall.py imports it)"; exit 1; }
 
         # Check colorama names are actually imported — catches NameError: Style/Fore/Back not defined
@@ -236,3 +236,5 @@ while true; do
 done
 
 log "=== All tests passed. ==="
+log "=== Running sync.sh ==="
+bash /home/verita84/posterchanai/sync.sh

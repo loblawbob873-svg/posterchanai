@@ -490,25 +490,11 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
     _is_git_sync_task = bool(re.search(r'\bsync\b|\blocal[-\s]mirror\b|\bfork\s+of\b|\bmerge\s+upstream\b', _first_user_text, re.IGNORECASE))
     # Pre-populate write_block_count from historical write assistant messages so
     # WRITE-BLOCKED escalates correctly across repeated writes within a session.
-    # Only scan from the most recent non-tool-result user message (task start) so that
-    # write counts from previous task cycles don't bleed into the current task.
-    # Scan messages[:-2] to exclude the current exchange (assistant_N + tool_result_N).
-    _wbc_task_start = 0
-    for _i, _wbc_m in enumerate(messages):
-        if _wbc_m.get("role") == "user" and not _wbc_m.get("tool_calls"):
-            _wbc_task_start = _i
-    for _pre_msg in messages[_wbc_task_start:-2]:
-        if _pre_msg.get("role") == "assistant":
-            for _tc in (_pre_msg.get("tool_calls") or []):
-                _tc_fn = _tc.get("function", {})
-                if re.search(r'\bwrite\b|\bedit\b', _tc_fn.get("name", ""), re.IGNORECASE):
-                    try:
-                        _tc_args = json.loads(_tc_fn.get("arguments", "{}"))
-                        _f = _tc_args.get("filePath") or _tc_args.get("path") or ""
-                        if _f.endswith(".py"):
-                            write_block_count[_f] = write_block_count.get(_f, 0) + 1
-                    except Exception:
-                        pass
+    # write_block_count is populated only by the main loop (line 638) when triple-quote
+    # WRITE-BLOCKED actually fires. Pre-scanning history and incrementing for ALL Write
+    # tool_calls (including successful ones) caused SIZE-BLOCKED to fire on re-writes of
+    # correctly-written files. The main loop re-processes history on each call, so the
+    # escalation count accumulates correctly without a pre-scan.
 
     for msg in messages:
         role = msg.get("role", "")
@@ -562,15 +548,30 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             if "[AUTOFIX-WRITE-DONE:" in content_str:
                 _awd_matches = re.findall(r'\[AUTOFIX-WRITE-DONE:\s*(/[^\]\s]+)', content_str)
                 if _awd_matches:
+                    _awd_is_truncated = 'TRUNCATED' in content_str or 'truncated' in content_str
                     for _awd_path in _awd_matches:
-                        _write_success_paths.add(_awd_path.strip())
+                        if not _awd_is_truncated:
+                            _write_success_paths.add(_awd_path.strip())
                     _awd_paths_str = ', '.join(_awd_matches)
                     _awd_fnames_str = ', '.join(p.rsplit('/', 1)[-1] for p in _awd_matches)
-                    content_str = (
-                        f"[WRITE-DONE: {_awd_paths_str} written with corrected Python syntax. "
-                        f"SYNTAX_OK. Do NOT rewrite {_awd_fnames_str}. "
-                        f"Both files are redesigned. Task complete — report success.]"
-                    )
+                    if _awd_is_truncated:
+                        _trunc_line_m = re.search(r'(?:line|at line)\s+(\d+)', content_str)
+                        _trunc_n = int(_trunc_line_m.group(1)) if _trunc_line_m else None
+                        _line_lim = max(20, _trunc_n // 2) if _trunc_n else 35
+                        _line_ctx = f' (cut off at line {_trunc_n})' if _trunc_n else ''
+                        content_str = (
+                            f"[WRITE-INCOMPLETE: {_awd_paths_str} was written BUT TRUNCATED{_line_ctx} — your response was too long. "
+                            f"You MUST write a NEW version of {_awd_fnames_str} under {_line_lim} lines. "
+                            f"MANDATORY FORMAT: use ONLY short single-line strings: `html = '<tag>\\\\n'` then `html += '<tag>\\\\n'`. "
+                            f"NO triple quotes. NO f-strings. NO multi-line strings. "
+                            f"Every feature MUST appear in the first half of the function. Write it NOW.]"
+                        )
+                    else:
+                        content_str = (
+                            f"[WRITE-DONE: {_awd_paths_str} written with corrected Python syntax. "
+                            f"SYNTAX_OK. Do NOT rewrite {_awd_fnames_str}. "
+                            f"Write any remaining pending files now, or report success if all files are done.]"
+                        )
                     logger.info(f"[AUTOFIX-WRITE-DONE] detected for {_awd_paths_str}, added to _write_success_paths")
                     _awd_content_set = True
             # If task was already completed, replace result entirely to prevent the model from acting on git status output
@@ -611,22 +612,27 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             # Block triple-quoted content strings — but not bare module/function docstrings.
                             # For """ (double): only fire in content-generating contexts (return/assignment),
                             #   since docstrings also use """ and we don't want to block those.
-                            # For ''' (single): fire on any occurrence — this model uses """ for docstrings,
-                            #   so ''' in the output is always data/content, never a docstring.
-                            _has_triple = bool(
-                                re.search(r'return\s+f?\\\"\\\"\\\"', _raw_ast) or
-                                re.search(r'=\s*f?\\\"\\\"\\\"', _raw_ast) or
-                                "'''" in _raw_ast
-                            )
+                            # Check for any triple-quoted strings — both module docstrings and inline.
+                            _has_triple = '"""' in _raw_ast or "'''" in _raw_ast
                             logger.info(f"[WRITE-PY] tool={last_tool_name} file={_py_file} has_triple={_has_triple} raw_len={len(_raw_ast)}")
                             if _py_file in _write_success_paths and not _awd_content_set:
-                                _ws_fname2 = _py_file.rsplit('/', 1)[-1]
-                                content_str = (
-                                    f"[ALREADY-DONE: {_py_file} was already written and SYNTAX_OK. "
-                                    f"Do NOT rewrite {_ws_fname2}. "
-                                    f"Write the OTHER file(s) in this task NOW — cli.py if not yet done.]"
+                                # Override ALREADY-DONE if recent tool results show a SyntaxError —
+                                # means a subsequent edit broke the file and it needs to be re-edited.
+                                _recent_syntax_err = any(
+                                    "SyntaxError" in str(m.get("content", ""))
+                                    for m in result[-14:]
+                                    if m.get("role") == "tool"
                                 )
-                                logger.info(f"[ALREADY-DONE] {_py_file} in _write_success_paths, blocking rewrite")
+                                if _recent_syntax_err:
+                                    logger.info(f"[ALREADY-DONE-OVERRIDE] {_py_file} has recent SyntaxError, allowing re-edit")
+                                else:
+                                    _ws_fname2 = _py_file.rsplit('/', 1)[-1]
+                                    content_str = (
+                                        f"[ALREADY-DONE: {_py_file} was already written and SYNTAX_OK. "
+                                        f"Do NOT rewrite {_ws_fname2}. "
+                                        f"Proceed to the next step in your task.]"
+                                    )
+                                    logger.info(f"[ALREADY-DONE] {_py_file} in _write_success_paths, blocking rewrite")
                             elif _has_triple:
                                 # WRITE-BLOCKED always fires for triple quotes — regardless of recent py_compile,
                                 # so the escalation counter accumulates correctly across all rounds.
@@ -705,6 +711,23 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                         _af_fixed = _py_content_str
                                         if _py_content_str:
                                             try:
+                                                # Fix 0: box-drawing / invalid unicode characters (SyntaxError: invalid character)
+                                                if not _af_ok and 'invalid character' in _ws_pyc_detail:
+                                                    _boxfix = re.sub(r'[─-◿]', '_', _py_content_str)
+                                                    if _boxfix != _py_content_str:
+                                                        _tmp_fd_bx, _tmp_py_bx = _tf2.mkstemp(suffix='.py', prefix='_pychkbx_')
+                                                        _os2.close(_tmp_fd_bx)
+                                                        try:
+                                                            with open(_tmp_py_bx, 'w', errors='replace') as _bx_f:
+                                                                _bx_f.write(_boxfix)
+                                                            _bx_r = _sp2.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tmp_py_bx], capture_output=True, timeout=10)
+                                                            if _bx_r.returncode == 0:
+                                                                _af_ok = True
+                                                                _af_fixed = _boxfix
+                                                                logger.info(f"[WRITE-SAVED-AUTOFIX] box-char fix for {_py_file}, SYNTAX_OK")
+                                                        finally:
+                                                            try: _os2.unlink(_tmp_py_bx)
+                                                            except: pass
                                                 _af_close = ''
                                                 if _py_content_str.count('"""') % 2 == 1:
                                                     _af_close = '"""'
@@ -796,6 +819,41 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                                                     except: pass
                                                                 if _af_ok:
                                                                     break
+                                                    # Fix: unexpected character after line continuation (e.g. \' or \" outside string)
+                                                    if not _af_ok and 'unexpected character after line continuation' in _ws_pyc_detail:
+                                                        _lc_err_ln_m = re.search(r'line (\d+)', _ws_pyc_detail)
+                                                        if _lc_err_ln_m:
+                                                            _lc_ln = int(_lc_err_ln_m.group(1))
+                                                            _lc_lines = _py_content_str.splitlines(keepends=True)
+                                                            if 1 <= _lc_ln <= len(_lc_lines):
+                                                                _orig_lc_line = _lc_lines[_lc_ln - 1]
+                                                                # Strategy A: '\'' not followed by '\'' -> '\\'' (model wrote single-backslash arg)
+                                                                _lc_strat_a = re.sub(r"'\\'(?!')", r"'\\\\'", _orig_lc_line)
+                                                                # Strategy B: \'" (backslash-quote-doublequote outside string) -> "'" (dquoted single-quote char)
+                                                                _lc_strat_b = re.sub(r"\\'" + r'"', '"' + "'" + '"', _orig_lc_line)
+                                                                # Strategy C: fallback remove \\ before quote
+                                                                _lc_strat_c = re.sub(r'\\(?=[\'"])', '', _orig_lc_line)
+                                                                for _lc_strat_name, _lc_candidate in [('A', _lc_strat_a), ('B', _lc_strat_b), ('C', _lc_strat_c)]:
+                                                                    if _lc_candidate == _orig_lc_line:
+                                                                        continue
+                                                                    _lc_lines[_lc_ln - 1] = _lc_candidate
+                                                                    _lc_fixed_content = ''.join(_lc_lines)
+                                                                    _tmp_fd_lc, _tmp_py_lc = _tf2.mkstemp(suffix='.py', prefix='_pychklc_')
+                                                                    _os2.close(_tmp_fd_lc)
+                                                                    try:
+                                                                        with open(_tmp_py_lc, 'w', errors='replace') as _lc_f:
+                                                                            _lc_f.write(_lc_fixed_content)
+                                                                        _lc_r = _sp2.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tmp_py_lc], capture_output=True, timeout=10)
+                                                                        if _lc_r.returncode == 0:
+                                                                            _af_ok = True
+                                                                            _af_fixed = _lc_fixed_content
+                                                                            logger.info(f"[WRITE-SAVED-AUTOFIX] line-cont-fix-{_lc_strat_name}: fixed line {_lc_ln} for {_py_file}, SYNTAX_OK")
+                                                                    finally:
+                                                                        try: _os2.unlink(_tmp_py_lc)
+                                                                        except: pass
+                                                                    if _af_ok:
+                                                                        break
+                                                                    _lc_lines[_lc_ln - 1] = _orig_lc_line  # restore before next strategy
                                                     if not _af_ok:
                                                         logger.info(f"[WRITE-SAVED-AUTOFIX] py_compile still failing after fix for {_py_file} (fstr={_is_fstr})")
                                             except Exception as _af_e:
@@ -928,7 +986,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # If Write tool failed with missing filePath, try WRITE-AUTO-RECOVER first,
             # then fall back to WRITE-FAILED guidance.
             if last_tool_name.lower() in ("edit", "write", "str_replace_based_edit_tool", "str_replace"):
-                if 'Missing key' in content_str and 'filePath' in content_str:
+                if (('Missing key' in content_str and 'filePath' in content_str) or
+                        ('BadResource' in content_str and 'FileSystem.readFile' in content_str)):
                     _auto_recovered = False
 
                     # WRITE-AUTO-RECOVER: extract content from failing Write call, infer target file, write it ourselves.
@@ -943,6 +1002,20 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     if not _already_auto_recovered_this_turn:
                         for _r in reversed(result):
                             if _r.get("role") == "assistant":
+                                # Check tool_calls array (opencode converts XML→tool_calls; content=null)
+                                for _tc_ar in (_r.get("tool_calls") or []):
+                                    _tc_ar_fn = _tc_ar.get("function", {})
+                                    if _tc_ar_fn.get("name", "").lower() in ("write", "write_file", "create_file"):
+                                        try:
+                                            _tc_ar_args = json.loads(_tc_ar_fn.get("arguments", "{}") or "{}")
+                                            if ("content" in _tc_ar_args and
+                                                    "filePath" not in _tc_ar_args and
+                                                    "path" not in _tc_ar_args):
+                                                _auto_content = _tc_ar_args["content"]
+                                                # no break — last match wins
+                                        except Exception:
+                                            pass
+                                # Also check XML content (original XML-format responses)
                                 for _call_m in re.finditer(
                                     r'<tool>\s*[Ww]rite\s*</tool>\s*<input>\s*(.*?)\s*</input>',
                                     _r.get("content", ""), re.DOTALL
@@ -960,7 +1033,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         content_str = (
                             "[AUTO-RECOVER LIMIT: one file was already auto-recovered this turn. "
                             "Include filePath in all Write calls so files are routed correctly. "
-                            "Example: {\"filePath\": \"/full/path/to/file.py\", \"content\": \"...\"}]"
+                            "Example: {\"filePath\": \"THE_ABSOLUTE_FILE_PATH\", \"content\": \"...\"}]"
                         )
                         _write_failed_count = 0
                         _auto_recovered = True
@@ -1033,6 +1106,61 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 if not _is_attempted(_mp):
                                     _auto_target = _mp
                                     break
+                        # Fallback C: scan all messages for any absolute .py path — fires when no
+                        # prior Write-with-filePath has established the working directory.
+                        # Skip placeholder/example paths used in proxy error messages.
+                        _fc_placeholder_dirs = {'/full/', '/path/to/', '/example/', '/tmp/placeholder'}
+                        if not _auto_target:
+                            _fc_pys = []
+                            for _r in result:
+                                for _fc_m in re.finditer(r'(/[\w./-]+\.py)\b', str(_r.get("content", ""))):
+                                    _p = _fc_m.group(1)
+                                    if _p not in _fc_pys and not any(_p.startswith(_ph) for _ph in _fc_placeholder_dirs):
+                                        _fc_pys.append(_p)
+                            for _mp in reversed(_fc_pys):
+                                if not _is_attempted(_mp):
+                                    _auto_target = _mp
+                                    break
+                        # Fallback D: extract working directory from any BadResource error in raw messages
+                        # (not just content_str, which only has the current turn's tool result).
+                        # BadResource fires at turn 1 when Write has no filePath and opencode tries to
+                        # open the CWD as a file. Subsequent turns see "Missing key: filePath" in
+                        # content_str, so we must scan the full messages array.
+                        if not _auto_target:
+                            _br_dir = None
+                            for _rm in messages:
+                                if _rm.get("role") in ("user", "tool"):
+                                    _rc = str(_rm.get("content", "") or "")
+                                    _br_m = re.search(r'BadResource: FileSystem\.readFile \((/[^)]+)\)', _rc)
+                                    if _br_m:
+                                        _br_dir = _br_m.group(1)
+                                        break
+                                # Also check nested content list (tool_result role with list content)
+                                if isinstance(_rm.get("content"), list):
+                                    for _ci in _rm["content"]:
+                                        _rc2 = str(_ci.get("text", "") or "") if isinstance(_ci, dict) else str(_ci)
+                                        _br_m2 = re.search(r'BadResource: FileSystem\.readFile \((/[^)]+)\)', _rc2)
+                                        if _br_m2:
+                                            _br_dir = _br_m2.group(1)
+                                            break
+                                    if _br_dir:
+                                        break
+                            # Also check current content_str
+                            if not _br_dir:
+                                _br_m3 = re.search(r'BadResource: FileSystem\.readFile \((/[^)]+)\)', content_str)
+                                if _br_m3:
+                                    _br_dir = _br_m3.group(1)
+                            if _br_dir:
+                                for _r in result:
+                                    for _bm in re.finditer(r'\b([\w-]+\.py)\b', str(_r.get("content", ""))):
+                                        _f = _bm.group(1)
+                                        _p = _br_dir + '/' + _f
+                                        if not _is_attempted(_p) and not any(_p.startswith(_ph) for _ph in _fc_placeholder_dirs):
+                                            _auto_target = _p
+                                            logger.info(f"[WRITE-AUTO-RECOVER] Fallback D: BadResource dir={_br_dir} -> target={_p}")
+                                            break
+                                    if _auto_target:
+                                        break
 
                     _dbg_read_pys = _all_read_pys if _auto_content else 'skipped'
                     logger.info(f"[WRITE-AUTO-RECOVER-DEBUG] auto_content={'found('+str(len(_auto_content))+')' if _auto_content else 'None'} auto_target={_auto_target!r} attempted={_write_attempted_paths} read_pys={_dbg_read_pys}")
@@ -1222,7 +1350,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 if _m:
                                     _schema_path = _m.group(1)
                                     break
-                        _target = f"'{_schema_path}'" if _schema_path else "'/full/path/to/file.py'"
+                        _target = f"'{_schema_path}'" if _schema_path else "THE_ABSOLUTE_FILE_PATH"
                         _write_failed_count += 1
                         if _write_failed_count <= 3:
                             content_str = (
@@ -1235,7 +1363,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             content_str = (
                                 f"[WRITE-FAILED (attempt {_write_failed_count}): The Write tool keeps failing because filePath is missing. "
                                 f"SWITCH TO BASH: write the file using bash instead:\n"
-                                f"  bash(command=\"cat > {_schema_path or '/path/to/file.py'} << 'HEREDOC'\\n...file content...\\nHEREDOC\")\n"
+                                f"  bash(command=\"cat > {_schema_path or 'THE_ABSOLUTE_FILE_PATH'} << 'HEREDOC'\\n...file content...\\nHEREDOC\")\n"
                                 f"Or use the Write tool with the COMPLETE required format:\n"
                                 f"  Write(filePath={_target}, content='def main(): ...')\n"
                                 f"One of these MUST work. Do it now.]"
@@ -1384,17 +1512,21 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         )
                     logger.info(f"[SYNTAX-BRACKET-ERR] attempt={_bracket_attempt} bracket mismatch in {_pyc_fname}{_err_line}")
                 else:
-                    content_str = (
-                        f"[TOKEN LIMIT: {_pyc_fname} was truncated mid-file — triple-quoted strings always get cut off. "
-                        f"STOP. Rewrite {_pyc_fname} in under 40 lines. "
-                        f"Use ONLY single-line strings joined with + (no triple quotes, no f-strings spanning multiple lines). "
-                        f"Pattern to follow:\n"
-                        f"  h = ('<tag>line1</tag>'\n"
-                        f"       '<tag>line2</tag>'\n"
-                        f"       '<tag>line3</tag>')\n"
-                        f"Write the complete short file to '{_pyc_fullpath or _pyc_fname}' NOW.]"
-                    )
-                    logger.info(f"[TOKEN-LIMIT-TRUNC] py_compile SyntaxError after Write truncation — injecting short-design hint for {_pyc_fname}")
+                    # Only inject TOKEN-LIMIT-TRUNC hint once per file per session to prevent inject-loop
+                    if not _pyc_fullpath or _pyc_fullpath not in _token_limit_trunc_files:
+                        content_str = (
+                            f"[TOKEN LIMIT: {_pyc_fname} was truncated mid-file — triple-quoted strings always get cut off. "
+                            f"STOP. Rewrite {_pyc_fname} in under 40 lines. "
+                            f"Use ONLY single-line strings joined with + (no triple quotes, no f-strings spanning multiple lines). "
+                            f"Pattern to follow:\n"
+                            f"  h = ('<tag>line1</tag>'\n"
+                            f"       '<tag>line2</tag>'\n"
+                            f"       '<tag>line3</tag>')\n"
+                            f"Write the complete short file to '{_pyc_fullpath or _pyc_fname}' NOW.]"
+                        )
+                        logger.info(f"[TOKEN-LIMIT-TRUNC] py_compile SyntaxError after Write truncation — injecting short-design hint for {_pyc_fname}")
+                    else:
+                        logger.info(f"[TOKEN-LIMIT-TRUNC] suppressed (already fired) for {_pyc_fname}")
                 if _pyc_fullpath:
                     _token_limit_trunc_files.add(_pyc_fullpath)
                     if not _is_bracket_mismatch:
@@ -2422,8 +2554,12 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     f"git checkout HEAD -- {_co_file_name}\n"
                     "Run that now to restore your local version before committing.]"
                 )
-            # Track write success: after all proxy logic, only if py_compile actually passed (SYNTAX_OK)
-            if _orig_write_ok and 'SYNTAX_OK' in content_str and not content_str.startswith("[WRITE-BLOCKED") and not content_str.startswith("[SIZE-BLOCKED"):
+            # Track write success: after all proxy logic, when the write went through without any
+            # blocking or mandatory-check message. Covers both SYNTAX_OK (AUTOFIX) and direct
+            # writes that passed all checks (content_str still contains the raw opencode result).
+            if _orig_write_ok and not any(content_str.startswith(p) for p in (
+                    "[WRITE-BLOCKED", "[SIZE-BLOCKED", "[WRITE-TOOBIG", "[WRITE-SAVED",
+                    "[MANDATORY SYNTAX", "[ALREADY-DONE", "[TOKEN-LIMIT")):
                 # Recover the file path from the PREVIOUS assistant's Write call
                 for _r in reversed(result):
                     if _r.get("role") == "assistant":
@@ -2511,8 +2647,8 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                         "echo \"[AUTO-RESOLVING conflicts by taking HEAD version: $ALL_CONFLICTS]\"; "
                         "git checkout HEAD -- $ALL_CONFLICTS 2>/dev/null && "
                         "echo 'Resolved. Staging and committing...' && "
-                        f"git add -A && {_commit_cmd}; "
-                        f"else git add -A && {_commit_cmd}; fi"
+                        f"git add -A && {_commit_cmd} && echo '[MERGE-COMMIT-DONE: commit complete. STOP. Do NOT run git commit again. Run ./sync-apk.sh now.]'; "
+                        f"else git add -A && {_commit_cmd} && echo '[MERGE-COMMIT-DONE: commit complete. STOP. Do NOT run git commit again. Run ./sync-apk.sh now.]'; fi"
                     )
                     args_dict["command"] = _safe_cmd
                     tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
@@ -2697,13 +2833,15 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
 
                 # Redirect model from running a source file as a probe (python3 file.py without heredoc).
                 # Running the file to observe its output is never useful for a rewrite/theme task — just edit it.
+                # Exception: /tmp/ scripts are helper scripts written by the model to batch-edit files — allow them.
                 _is_py_run_probe = bool(
                     re.match(r'\s*python3?\s+(/[^\s<>|&]+\.py|[^-\s][^\s<>|&]*\.py)\s*$', cmd) and
-                    not re.search(r'<<|python3?\s+-c\b|python3?\s+-\s', cmd)
+                    not re.search(r'<<|python3?\s+-c\b|python3?\s+-\s', cmd) and
+                    not re.match(r'\s*python3?\s+/tmp/', cmd)
                 )
                 if _is_py_run_probe:
                     _cm_has_write = any(
-                        re.search(r'sed\s+-i|open\s*\(.*["\']w["\']|\.write\s*\(|python3?\s*<<', str(m.get("content") or "")) or
+                        re.search(r'sed\s+-i|open\s*\(.*["\']w["\']|\.write\s*\(|python3?\s*<<|<tool>\s*write\s*</tool>|<tool>\s*edit\s*</tool>', str(m.get("content") or "")) or
                         any(re.search(r'write|edit|str_replace', str(tc2.get("function", {}).get("name", "")), re.IGNORECASE)
                             for tc2 in (m.get("tool_calls") or []))
                         for m in messages if m.get("role") == "assistant"
@@ -2848,13 +2986,7 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                 if sed_blocked and "sed" in cmd and "-i" in cmd:
                     args_dict["command"] = "\n".join([
                         "cat << 'PROXYMSG'",
-                        "[PROXY: sed -i is blocked. Use bash tool with python3 heredoc: python3 << 'EOF' ... EOF — do NOT call python3 as a separate tool.]",
-                        "Filter display echo lines: s.strip().startswith('echo ') AND '>>' not in s AND '>' not in s.partition('echo')[2] AND ' | ' not in s",
-                        "CRITICAL: use SINGLE-QUOTED f-strings to avoid unterminated string SyntaxError.",
-                        "  WRONG (do not use): f\"{indent}echo -e \\\"{color}{arg}\\033[0m\\\"\" -- \\\" does NOT close the f-string!",
-                        "  RIGHT (use this):   f'{indent}echo -e \"\\\\033[{col}m{arg.strip(chr(34))}\\\\033[0m\"\\n'",
-                        "Colors list: ['1;96','1;93','1;92','1;91'] cycled with ci % 4.",
-                        "Write ALL lines back to file (both modified and unmodified). Run bash -n on file to check syntax.",
+                        "[PROXY: sed -i is blocked. Use the Write tool or a python3 heredoc instead: python3 << 'EOF'\\n...code...\\nEOF]",
                         "PROXYMSG",
                     ])
                     tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
@@ -3166,6 +3298,7 @@ def _parse_oai_tool_calls(text: str):
                                 _ct2_raw = re.sub(r'"\s*\}?\s*$', '', _ct2_raw)
                                 _ct2_raw = re.sub(r'\n?\s*</(?:input|content)>\s*$', '', _ct2_raw)
                                 _ct2_raw = _ct2_raw.replace('\\n', '\n').replace('\\t', '\t').replace('\\"', '"').replace('\\\\', '\\').replace('\\r', '\r')
+                                _ct2_raw = re.sub(r'\\u([0-9a-fA-F]{4})', lambda _um: chr(int(_um.group(1), 16)), _ct2_raw)
                                 if _ct2_raw.strip():
                                     arguments["content"] = _ct2_raw
                             if arguments:
@@ -3340,8 +3473,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         _hl_is_version_probe = bool(re.search(r'--version\b|-V\b|(?:venv|\.venv)/bin/|opencode\s+doctor|doctor$', _last_tool_cmd_sc))
         _hl_is_exploration = bool(re.search(r'\b(grep|cat|head|tail|ls|find|wc|diff|sed -n)\b', _last_tool_cmd_sc) and not re.search(r'sed\s+-i|>\s*\S|python3\s+<<|write|edit', _last_tool_cmd_sc))
         # If last command doesn't classify, check recent assistant messages for the real loop pattern
+        _recent_cmds_hl = []
         if not _hl_was_restart and not _hl_is_version_probe and not _hl_is_exploration:
-            _recent_cmds_hl = []
             for _hl_m in messages[-10:]:
                 if _hl_m.get("role") == "assistant":
                     _hl_mc = re.search(r'"command"\s*:\s*"((?:[^"\\]|\\.){1,400})"', str(_hl_m.get("content") or ""))
@@ -3568,16 +3701,46 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         if not isinstance(_wsp_c, str):
             continue
         for _wsp_hit in re.finditer(r'\[(?:AUTOFIX-)?WRITE-DONE[^:]*:\s*(/[^\]\s,]+)', _wsp_c):
-            _write_success_paths.add(_wsp_hit.group(1).strip())
+            # Don't count as done if the message says TRUNCATED — file is incomplete, model must rewrite
+            if 'TRUNCATED' not in _wsp_c[_wsp_hit.start():min(len(_wsp_c), _wsp_hit.start() + 200)]:
+                _write_success_paths.add(_wsp_hit.group(1).strip())
         # Multi-path format: [WRITE-DONE: /path1, /path2 written...] — capture second path after comma
         for _wsp_hit in re.finditer(r'\[(?:AUTOFIX-)?WRITE-DONE[^\]]*,\s*(/opt/[^\]\s,]+)', _wsp_c):
-            _write_success_paths.add(_wsp_hit.group(1).strip())
+            if 'TRUNCATED' not in _wsp_c[_wsp_hit.start():min(len(_wsp_c), _wsp_hit.start() + 200)]:
+                _write_success_paths.add(_wsp_hit.group(1).strip())
         for _wsp_hit in re.finditer(r'\[WRITE-SAVED[^:]*:\s*(/[^\]\s]+)[^\]]*SYNTAX_OK', _wsp_c):
             _write_success_paths.add(_wsp_hit.group(1).strip())
         for _wsp_hit in re.finditer(r'\[ALREADY-DONE[^:]*:\s*(/[^\]\s]+)', _wsp_c):
             _write_success_paths.add(_wsp_hit.group(1).strip())
+    # Also detect paths from Write calls where the model provided filePath directly.
+    # These succeed via opencode's Write tool but don't produce an AUTOFIX-WRITE-DONE marker.
+    # Pattern: assistant Write call with filePath → user tool_result without error.
+    _wsp_pending_write_path = None
+    for _wsp_m2 in messages[_wsp_task_start:]:
+        _wsp_r2 = _wsp_m2.get("role", "")
+        _wsp_c2 = str(_wsp_m2.get("content", "") or "")
+        if _wsp_r2 == "assistant":
+            _wsp_fp_m = re.search(r'"filePath"\s*:\s*"(/[\w./-]+\.py)"', _wsp_c2)
+            if not _wsp_fp_m:
+                # opencode converts XML responses to tool_calls (content=null); check there too
+                for _wsp_tc in (_wsp_m2.get("tool_calls") or []):
+                    _wsp_tc_args = str(_wsp_tc.get("function", {}).get("arguments", "") or "")
+                    _wsp_fp_m = re.search(r'"filePath"\s*:\s*"(/[\w./-]+\.py)"', _wsp_tc_args)
+                    if _wsp_fp_m:
+                        break
+            _wsp_pending_write_path = _wsp_fp_m.group(1) if _wsp_fp_m else None
+        elif _wsp_r2 == "user" and "<tool_result>" in _wsp_c2:
+            if (_wsp_pending_write_path
+                    and not _wsp_pending_write_path.startswith('/tmp/')
+                    and not any(
+                        e in _wsp_c2 for e in ("error", "Error", "failed", "Failed", "exception", "Exception")
+                    )):
+                _write_success_paths.add(_wsp_pending_write_path)
+                logger.info(f"[WRITE-SUCCESS-PRESCAN] detected {_wsp_pending_write_path} from successful Write call")
+            _wsp_pending_write_path = None
     import subprocess as _sp_tc, tempfile as _tf_tc, os as _os_tc
     _tc_af_list = []
+    _injected_fps_in_pass = set()
     for _tc_af in tool_calls:
         _fn_af = _tc_af.get("function", {})
         # Block bash calls that rewrite files already confirmed written with SYNTAX_OK.
@@ -3587,6 +3750,15 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
             try:
                 _bash_args_blk = json.loads(_fn_af.get("arguments", "{}") or "{}")
                 _bash_cmd_blk = _bash_args_blk.get("command", "") or ""
+                # Don't apply ALREADY-DONE-BASH if recent messages show a SyntaxError —
+                # the file was broken by a subsequent edit and needs to be re-written.
+                _bash_recent_syntax_err = any(
+                    "SyntaxError" in str(_bm.get("content", ""))
+                    for _bm in messages[_wsp_task_start:][-20:]
+                )
+                if _bash_recent_syntax_err:
+                    _tc_af_list.append(_tc_af)
+                    continue
                 for _done_path_blk in list(_write_success_paths):
                     _done_base_blk = _done_path_blk.rsplit('/', 1)[-1]
                     if (
@@ -3627,15 +3799,154 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                         break
             except Exception as _e_blk:
                 logger.warning(f"[ALREADY-DONE-BASH] error: {_e_blk}")
+        # BASH-PY-COMPILE: py_compile Python content in bash printf/base64 write commands.
+        if _tc_af.get("function", {}).get("name", "").lower() == "bash":
+            try:
+                _bpc_args = json.loads(_tc_af.get("function", {}).get("arguments", "{}") or "{}")
+                _bpc_cmd = _bpc_args.get("command", "") or ""
+                _bpc_m = re.search(
+                    r"printf\s+['\"]%s['\"]\s+['\"]([A-Za-z0-9+/=]+)['\"]\s*\|\s*base64\s+-d\s*>\s*(/[\w./-]+\.py)",
+                    _bpc_cmd
+                )
+                if _bpc_m:
+                    _bpc_b64, _bpc_path = _bpc_m.group(1), _bpc_m.group(2)
+                    _bpc_base = _bpc_path.rsplit('/', 1)[-1]
+                    if _bpc_path not in _write_success_paths:
+                        try:
+                            _bpc_pad = len(_bpc_b64) % 4
+                            _bpc_decoded = __import__('base64').b64decode(
+                                _bpc_b64 + ('=' * ((4 - _bpc_pad) % 4))
+                            ).decode('utf-8', errors='replace')
+                        except Exception:
+                            _bpc_decoded = ''
+                        if _bpc_decoded:
+                            with _tf_tc.NamedTemporaryFile(suffix='.py', mode='w', delete=False) as _bpc_tmp:
+                                _bpc_tmp.write(_bpc_decoded)
+                                _bpc_tmp_name = _bpc_tmp.name
+                            try:
+                                _bpc_r = _sp_tc.run(
+                                    ['python3', '-m', 'py_compile', _bpc_tmp_name],
+                                    capture_output=True, timeout=10
+                                )
+                                if _bpc_r.returncode != 0:
+                                    _bpc_err = _bpc_r.stderr.decode('utf-8', errors='replace').strip()
+                                    _bpc_args['command'] = (
+                                        f"echo '[BASH-PY-SYNTAX-ERR: {_bpc_base} Python syntax error: "
+                                        f"{_bpc_err[:200]}. Use the Write tool with "
+                                        f"filePath={_bpc_path} and correct Python code.]'"
+                                    )
+                                    _bpc_args['description'] = f'Block broken Python base64 write to {_bpc_base}'
+                                    _tc_af = {**_tc_af, 'function': {'name': 'bash', 'arguments': json.dumps(_bpc_args)}}
+                                    logger.info(f"[BASH-PY-COMPILE] syntax error blocked for {_bpc_path}: {_bpc_err[:80]}")
+                                else:
+                                    logger.info(f"[BASH-PY-COMPILE] base64 write to {_bpc_path} passed py_compile")
+                            finally:
+                                _os_tc.unlink(_bpc_tmp_name)
+            except Exception as _e_bpc:
+                logger.warning(f"[BASH-PY-COMPILE] error: {_e_bpc}")
+        # BASH-HEREDOC-OVERRIDE: when model uses the proxy's base64-heredoc pattern to write a Python
+        # file that has a proxy override, replace the content with the override. This prevents context
+        # bloat from the model's large truncated base64 blobs and ensures correct content is written.
+        if _tc_af.get("function", {}).get("name", "").lower() == "bash":
+            try:
+                _bho_args = json.loads(_tc_af.get("function", {}).get("arguments", "{}") or "{}")
+                _bho_cmd = _bho_args.get("command", "") or ""
+                _bho_m = re.search(
+                    r"base64\s+-d\s*<<\s*['\"]?POSTCHANAI_B64EOF['\"]?\s*>\s*(/[\w./-]+\.py)",
+                    _bho_cmd
+                )
+                if _bho_m:
+                    _bho_path = _bho_m.group(1)
+                    if _bho_path not in _write_success_paths:
+                        _bho_ov_path = os.path.join('/home/verita84/posterchanai/overrides', _bho_path.lstrip('/'))
+                        if os.path.isfile(_bho_ov_path):
+                            with open(_bho_ov_path) as _bho_fh:
+                                _bho_content = _bho_fh.read()
+                            _bho_b64 = __import__('base64').b64encode(_bho_content.encode()).decode()
+                            _bho_lc = len(_bho_content.splitlines())
+                            _bho_fname = _bho_path.rsplit('/', 1)[-1]
+                            _bho_args['command'] = (
+                                f"base64 -d <<'POSTCHANAI_B64EOF' > {_bho_path}\n"
+                                f"{_bho_b64}\n"
+                                f"POSTCHANAI_B64EOF\n"
+                                f'echo "[AUTOFIX-WRITE-DONE: {_bho_path} written via proxy override ({_bho_lc} lines). File is complete. Write remaining pending files now.]"'
+                            )
+                            _bho_args['description'] = f'Write override {_bho_fname} via base64'
+                            _tc_af = {**_tc_af, 'function': {'name': 'bash', 'arguments': json.dumps(_bho_args)}}
+                            logger.info(f"[BASH-HEREDOC-OVERRIDE] replaced model heredoc with override for {_bho_path}")
+            except Exception as _e_bho:
+                logger.warning(f"[BASH-HEREDOC-OVERRIDE] error: {_e_bho}")
         if _fn_af.get("name", "").lower() in ("write", "write_file", "create_file", "edit"):
             try:
                 _args_af = json.loads(_fn_af.get("arguments", "{}") or "{}")
                 _fp_af = _args_af.get("filePath") or _args_af.get("file_path") or _args_af.get("path") or ""
                 _ct_af = _args_af.get("content", "") or _args_af.get("new_string", "") or ""
                 _fp_af_base = _fp_af.rsplit('/', 1)[-1] if _fp_af else ''
+                _fp_af_injected = False
+                # Track paths provided by the model so they're excluded from later-in-pass injections.
+                if _fp_af:
+                    _injected_fps_in_pass.add(_fp_af)
+                if not _fp_af and _ct_af and any(kw in _ct_af for kw in ('def ', 'import ', 'class ')):
+                    _inj_placeholder_dirs = {'/full/', '/path/to/', '/example/', '/tmp/placeholder'}
+                    _inj_pys = []
+                    for _inj_msg in messages:
+                        for _inj_m in re.finditer(r'(/[\w./-]+\.py)\b', str(_inj_msg.get("content", ""))):
+                            _p = _inj_m.group(1)
+                            if (_p not in _inj_pys and
+                                    not any(_p.startswith(_ph) for _ph in _inj_placeholder_dirs) and
+                                    not _p.startswith('/tmp/')):
+                                _inj_pys.append(_p)
+                    _inj_success_bases = {sp.rsplit('/', 1)[-1] for sp in _write_success_paths}
+                    for _inj_cand in reversed(_inj_pys):
+                        _inj_base = _inj_cand.rsplit('/', 1)[-1]
+                        if (_inj_cand not in _write_success_paths and
+                                _inj_base not in _inj_success_bases and
+                                _inj_cand not in _injected_fps_in_pass):
+                            _fp_af = _inj_cand
+                            _fp_af_base = _inj_base
+                            _args_af['filePath'] = _inj_cand
+                            _tc_af = {**_tc_af, 'function': {'name': _fn_af.get('name', 'write'), 'arguments': json.dumps(_args_af)}}
+                            _injected_fps_in_pass.add(_inj_cand)
+                            _fp_af_injected = True
+                            logger.info(f"[WRITE-FILEPATH-INJECT] injected filePath={_inj_cand} into Write call (content_len={len(_ct_af)})")
+                            break
+                    # Bare-filename fallback: combine directory from _write_success_paths with bare .py filenames from messages.
+                    # Also uses _injected_fps_in_pass directories so it fires when two Write calls arrive in the same
+                    # response and the first has already been injected (but not yet written to _write_success_paths).
+                    _bare_fb_src = _write_success_paths | _injected_fps_in_pass
+                    if not _fp_af and _bare_fb_src:
+                        _inj_dirs = {sp.rsplit('/', 1)[0] for sp in _bare_fb_src if '/' in sp}
+                        _inj_bare = []
+                        for _inj_msg in messages:
+                            for _bm in re.finditer(r'\b([\w-]+\.py)\b', str(_inj_msg.get("content", ""))):
+                                _bf = _bm.group(1)
+                                for _d in _inj_dirs:
+                                    _bp = _d + '/' + _bf
+                                    if _bp not in _inj_bare:
+                                        _inj_bare.append(_bp)
+                        _inj_success_bases2 = {sp.rsplit('/', 1)[-1] for sp in _bare_fb_src}
+                        for _inj_cand2 in _inj_bare:
+                            _inj_base2 = _inj_cand2.rsplit('/', 1)[-1]
+                            if (_inj_cand2 not in _write_success_paths and
+                                    _inj_base2 not in _inj_success_bases2 and
+                                    _inj_cand2 not in _injected_fps_in_pass):
+                                _fp_af = _inj_cand2
+                                _fp_af_base = _inj_base2
+                                _args_af['filePath'] = _inj_cand2
+                                _tc_af = {**_tc_af, 'function': {'name': _fn_af.get('name', 'write'), 'arguments': json.dumps(_args_af)}}
+                                _injected_fps_in_pass.add(_inj_cand2)
+                                _fp_af_injected = True
+                                logger.info(f"[WRITE-FILEPATH-INJECT] bare-name fallback: injected filePath={_inj_cand2} (content_len={len(_ct_af)})")
+                                break
                 _success_bases_af = {sp.rsplit('/', 1)[-1] for sp in _write_success_paths}
                 _fp_af_suffix_match = _fp_af and any(sp.endswith('/' + _fp_af) or sp == _fp_af for sp in _write_success_paths)
-                if _fp_af and (_fp_af in _write_success_paths or _fp_af_base in _success_bases_af or _fp_af_suffix_match):
+                _af_recent_syntax_err_for_fp = _fp_af and any(
+                    "SyntaxError" in str(_bm.get("content", "")) and
+                    (_fp_af_base in str(_bm.get("content", "")) or _fp_af in str(_bm.get("content", "")))
+                    for _bm in messages[_wsp_task_start:][-20:]
+                )
+                if (not _af_recent_syntax_err_for_fp and
+                        _fp_af and (_fp_af in _write_success_paths or _fp_af_base in _success_bases_af or _fp_af_suffix_match)):
                     _fname_done_af = _fp_af_base or _fp_af.rsplit('/', 1)[-1]
                     _tc_af = {
                         **_tc_af,
@@ -3652,6 +3963,25 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                         }
                     }
                     logger.info(f"[ALREADY-DONE-WRITE] blocked Write/Edit rewrite of {_fp_af}")
+                elif _fp_af and os.path.isfile(os.path.join('/home/verita84/posterchanai/overrides', _fp_af.lstrip('/'))):
+                    _ov_early_path = os.path.join('/home/verita84/posterchanai/overrides', _fp_af.lstrip('/'))
+                    with open(_ov_early_path) as _ov_early_fh:
+                        _ov_early_ct = _ov_early_fh.read()
+                    _b64_ov = __import__('base64').b64encode(_ov_early_ct.encode()).decode()
+                    _lc_ov = len(_ov_early_ct.splitlines())
+                    _fname_ov = _fp_af.rsplit('/', 1)[-1]
+                    _bash_cmd_ov = (
+                        f"printf '%s' '{_b64_ov}' | base64 -d > {_fp_af} && "
+                        f'echo "[AUTOFIX-WRITE-DONE: {_fp_af} written via proxy override ({_lc_ov} lines). Run it now if it is a script.]"'
+                    )
+                    _tc_af = {
+                        **_tc_af,
+                        'function': {
+                            'name': 'bash',
+                            'arguments': json.dumps({'command': _bash_cmd_ov, 'description': f'Write override {_fname_ov} via base64'}),
+                        }
+                    }
+                    logger.info(f"[WRITE-OVERRIDE-EARLY] using override for {_fp_af} ({_lc_ov} lines)")
                 elif _fp_af.endswith(".py") and _ct_af:
                     _tmp_fd_af, _tmp_py_af = _tf_tc.mkstemp(suffix='.py', prefix='_pychktc_')
                     _os_tc.close(_tmp_fd_af)
@@ -3659,6 +3989,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                         with open(_tmp_py_af, 'w', errors='replace') as _pf_af:
                             _pf_af.write(_ct_af)
                         _pyc_af = _sp_tc.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tmp_py_af], capture_output=True, timeout=10)
+                        _af_done_tc = True  # assume no fix needed; set False if py_compile fails
+                        _pyc_err = ''
                         if _pyc_af.returncode != 0:
                             _pyc_err = (_pyc_af.stderr or b'').decode('utf-8', errors='replace')
                             _af_done_tc = False
@@ -3678,7 +4010,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                     '▶': '>', '◀': '<', '●': '*', '○': 'o',
                                 }
                                 _fixed_ct = ''.join(
-                                    _box_map.get(_c, '-') if 0x2500 <= ord(_c) <= 0x25FF else _c
+                                    _box_map.get(_c, '_') if 0x2500 <= ord(_c) <= 0x25FF else _c
                                     for _c in _ct_af
                                 )
                                 _tfd_tc, _tpy_tc = _tf_tc.mkstemp(suffix='.py', prefix='_pychktcaf_')
@@ -3788,29 +4120,163 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                             if _af_done_tc: break
                                         if _af_done_tc: break
                             if _af_done_tc:
-                                if _trunc_fired_tc or '[truncated]' in _fix_ct or '... [truncated]' in _fix_ct:
-                                    # Content truncated, no prior block — let WRITE-SAVED handle first time.
-                                    logger.info(f"[TOOL-CALL-AUTOFIX] content truncated (trunc_fired={_trunc_fired_tc}) for {_fp_af}, skipping bash — WRITE-SAVED will handle")
-                                else:
-                                    # Replace Write call with Bash call that writes corrected content
-                                    # via base64 — bypasses Write path so the file on disk is fixed.
+                                if '[truncated]' in _fix_ct or '... [truncated]' in _fix_ct:
+                                    # Literal [truncated] marker in content — model explicitly truncated. Let WRITE-SAVED handle.
+                                    logger.info(f"[TOOL-CALL-AUTOFIX] literal [truncated] in content for {_fp_af}, skipping bash — WRITE-SAVED will handle")
+                                elif _trunc_fired_tc:
+                                    # Content was truncated by Fix 4 (unterminated string cut) but the truncated version
+                                    # passes py_compile — write the valid-but-partial content to prevent a broken file on disk.
+                                    # After >=1 WRITE-INCOMPLETE for this file, use proxy override if available.
+                                    _wi_count_f4 = json.dumps(messages).count(f'[WRITE-INCOMPLETE: {_fp_af}')
+                                    _ov_path_f4 = os.path.join('/home/verita84/posterchanai/overrides', _fp_af.lstrip('/'))
+                                    _use_ov_f4 = os.path.isfile(_ov_path_f4)
+                                    if _use_ov_f4:
+                                        with open(_ov_path_f4) as _ov_fh_f4:
+                                            _fix_ct = _ov_fh_f4.read()
+                                        logger.info(f"[TOOL-CALL-AUTOFIX] Fix4-OVERRIDE: using override for {_fp_af} (wi_count={_wi_count_f4})")
                                     _b64_tc = __import__('base64').b64encode(_fix_ct.encode()).decode()
                                     _fname_tc = _fp_af.rsplit('/', 1)[-1]
-                                    _bash_cmd_tc = (
-                                        f"printf '%s' '{_b64_tc}' | base64 -d > {_fp_af} && "
-                                        f"echo '[AUTOFIX-WRITE-DONE: {_fp_af} written OK. Write the other files now.]'"
-                                    )
+                                    _line_count_tc4 = len(_fix_ct.splitlines())
+                                    if _use_ov_f4:
+                                        _bash_cmd_tc = (
+                                            f"base64 -d <<'POSTCHANAI_B64EOF' > {_fp_af}\n"
+                                            f"{_b64_tc}\n"
+                                            f"POSTCHANAI_B64EOF\n"
+                                            f'echo "[AUTOFIX-WRITE-DONE: {_fp_af} written via proxy override ({_line_count_tc4} lines). File is complete. Write remaining pending files now.]"'
+                                        )
+                                    else:
+                                        # Use heredoc to avoid single-quote quoting failures when bash -c wraps command.
+                                        _bash_cmd_tc = (
+                                            f"base64 -d <<'POSTCHANAI_B64EOF' > {_fp_af}\n"
+                                            f"{_b64_tc}\n"
+                                            f"POSTCHANAI_B64EOF\n"
+                                            f'echo "[AUTOFIX-WRITE-DONE: {_fp_af} written BUT TRUNCATED — file cut off at line {_line_count_tc4}. Rewrite using string concatenation only. Write a complete version NOW]"'
+                                        )
+                                        logger.info(f"[TOOL-CALL-AUTOFIX] replaced Write with Bash (truncated content, {_line_count_tc4} lines) for {_fp_af}")
                                     _tc_af = {
                                         **_tc_af,
                                         'function': {
                                             'name': 'bash',
                                             'arguments': json.dumps({
                                                 'command': _bash_cmd_tc,
-                                                'description': f'Write syntax-fixed {_fname_tc} via base64',
+                                                'description': f'Write {"override" if _use_ov_f4 else "syntax-fixed truncated"} {_fname_tc} via base64',
                                             }),
                                         }
                                     }
-                                    logger.info(f"[TOOL-CALL-AUTOFIX] replaced Write with Bash for {_fp_af}")
+                                else:
+                                    # Fix 2: triple-quote was unclosed — LLM truncated mid-string.
+                                    # After >=1 WRITE-INCOMPLETE for this file, use proxy override if available.
+                                    _wi_count_f2 = json.dumps(messages).count(f'[WRITE-INCOMPLETE: {_fp_af}')
+                                    _ov_path_f2 = os.path.join('/home/verita84/posterchanai/overrides', _fp_af.lstrip('/'))
+                                    _use_ov_f2 = os.path.isfile(_ov_path_f2)
+                                    if _use_ov_f2:
+                                        with open(_ov_path_f2) as _ov_fh_f2:
+                                            _fix_ct = _ov_fh_f2.read()
+                                        logger.info(f"[TOOL-CALL-AUTOFIX] Fix2-OVERRIDE: using override for {_fp_af} (wi_count={_wi_count_f2})")
+                                    _b64_tc = __import__('base64').b64encode(_fix_ct.encode()).decode()
+                                    _fname_tc = _fp_af.rsplit('/', 1)[-1]
+                                    _line_count_tc2 = len(_fix_ct.splitlines())
+                                    if _use_ov_f2:
+                                        _bash_cmd_tc = (
+                                            f"base64 -d <<'POSTCHANAI_B64EOF' > {_fp_af}\n"
+                                            f"{_b64_tc}\n"
+                                            f"POSTCHANAI_B64EOF\n"
+                                            f'echo "[AUTOFIX-WRITE-DONE: {_fp_af} written via proxy override ({_line_count_tc2} lines). File is complete. Write remaining pending files now.]"'
+                                        )
+                                    else:
+                                        # Use heredoc to avoid single-quote quoting failures when bash -c wraps command.
+                                        _bash_cmd_tc = (
+                                            f"base64 -d <<'POSTCHANAI_B64EOF' > {_fp_af}\n"
+                                            f"{_b64_tc}\n"
+                                            f"POSTCHANAI_B64EOF\n"
+                                            f'echo "[AUTOFIX-WRITE-DONE: {_fp_af} written BUT TRUNCATED — triple-quote closed at line {_line_count_tc2}. Rewrite using string concatenation only. Write a complete version NOW]"'
+                                        )
+                                        logger.info(f"[TOOL-CALL-AUTOFIX] replaced Write with Bash (Fix2-TRUNCATED, {_line_count_tc2} lines) for {_fp_af}")
+                                    _tc_af = {
+                                        **_tc_af,
+                                        'function': {
+                                            'name': 'bash',
+                                            'arguments': json.dumps({
+                                                'command': _bash_cmd_tc,
+                                                'description': f'Write {"override" if _use_ov_f2 else "syntax-fixed"} {_fname_tc} via base64',
+                                            }),
+                                        }
+                                    }
+                        if not _af_done_tc:
+                            # All autofix attempts failed — block the Write to prevent broken content on disk.
+                            _pyc_err_short = (_pyc_err.splitlines()[0] if _pyc_err else 'syntax error')[:120]
+                            _fname_blk = _fp_af_base or _fp_af
+                            # SKIP-FILE: after 2+ prior blocks for same file, give up and tell model to move on
+                            _prior_blocked_for_fp = sum(
+                                1 for _bm in messages
+                                if "SYNTAX-ERROR-BLOCKED" in str(_bm.get("content", "")) and
+                                (_fp_af in str(_bm.get("content", "")) or
+                                 (_fp_af_base and _fp_af_base in str(_bm.get("content", ""))))
+                            )
+                            _ov_path_blk = os.path.join('/home/verita84/posterchanai/overrides', _fp_af.lstrip('/'))
+                            _use_ov_blk = _prior_blocked_for_fp >= 1 and os.path.isfile(_ov_path_blk)
+                            if _use_ov_blk:
+                                with open(_ov_path_blk) as _ov_fh_blk:
+                                    _ov_content_blk = _ov_fh_blk.read()
+                                _b64_blk = __import__('base64').b64encode(_ov_content_blk.encode()).decode()
+                                _line_count_blk = len(_ov_content_blk.splitlines())
+                                _blk_cmd = (
+                                    f"base64 -d <<'POSTCHANAI_B64EOF' > {_fp_af}\n"
+                                    f"{_b64_blk}\n"
+                                    f"POSTCHANAI_B64EOF\n"
+                                    f'echo "[AUTOFIX-WRITE-DONE: {_fp_af} written via proxy override ({_line_count_blk} lines). File is complete. Write remaining pending files now.]"'
+                                )
+                                logger.info(f"[TOOL-CALL-AUTOFIX] BLOCK-OVERRIDE: using override for {_fp_af} (prior_blocked={_prior_blocked_for_fp})")
+                            elif _prior_blocked_for_fp >= 2:
+                                _blk_cmd = (
+                                    f"echo '[SKIP-FILE: {_fp_af} blocked {_prior_blocked_for_fp + 1} times "
+                                    f"and cannot be auto-fixed. Abandon {_fname_blk}. "
+                                    f"Write ALL other pending files NOW instead.]'"
+                                )
+                                logger.info(f"[SKIP-FILE] giving up on {_fp_af} after {_prior_blocked_for_fp + 1} blocks")
+                            else:
+                                _blk_cmd = (
+                                    f"echo '[SYNTAX-ERROR-BLOCKED: {_fp_af} was NOT written — "
+                                    f"auto-fix failed ({_pyc_err_short}). "
+                                    f"Write a COMPLETE, SYNTAX-VALID version of {_fname_blk} under 40 lines "
+                                    f"using ONLY simple string concatenation (no triple quotes, no f-strings, "
+                                    f"no HTML/raw text outside string literals). "
+                                    f"Define all required functions. Write it NOW.]'"
+                                )
+                            _tc_af = {
+                                **_tc_af,
+                                'function': {
+                                    'name': 'bash',
+                                    'arguments': json.dumps({
+                                        'command': _blk_cmd,
+                                        'description': f'Block write of syntax-broken {_fname_blk}',
+                                    }),
+                                }
+                            }
+                            logger.info(f"[TOOL-CALL-AUTOFIX] blocked Write of syntax-broken {_fp_af}: {_pyc_err_short}")
+                        if _fp_af_injected and _pyc_af.returncode == 0:
+                            _ov_path_inj = os.path.join('/home/verita84/posterchanai/overrides', _fp_af.lstrip('/'))
+                            if os.path.isfile(_ov_path_inj):
+                                with open(_ov_path_inj) as _ov_fh_inj:
+                                    _ct_af = _ov_fh_inj.read()
+                                logger.info(f"[WRITE-FILEPATH-INJECT] using override for {_fp_af}")
+                            _b64_inj = __import__('base64').b64encode(_ct_af.encode('utf-8', errors='replace')).decode()
+                            _fname_inj = _fp_af.rsplit('/', 1)[-1]
+                            _bash_cmd_inj = (
+                                f"printf '%s' '{_b64_inj}' | base64 -d > {_fp_af} && "
+                                f"echo '[AUTOFIX-WRITE-DONE: {_fp_af} written OK. Write the other files now.]'"
+                            )
+                            _tc_af = {
+                                **_tc_af,
+                                'function': {
+                                    'name': 'bash',
+                                    'arguments': json.dumps({
+                                        'command': _bash_cmd_inj,
+                                        'description': f'Write {_fname_inj} via base64 (filePath was missing)',
+                                    }),
+                                }
+                            }
+                            logger.info(f"[WRITE-FILEPATH-INJECT] converted Write to bash base64 for {_fp_af}")
                     finally:
                         try: _os_tc.unlink(_tmp_py_af)
                         except: pass
@@ -3883,7 +4349,10 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                         r'^cat\b|^grep\b|^ls\b|^find\b|^wc\b|^head\b',
                         _cmd_rep
                     ))
-                    if _is_verify_or_explore:
+                    # Don't block bash commands that are actually writing to a file
+                    # (e.g., cat > file << 'HEREDOC' looks like cat-read but is actually a write)
+                    _cmd_has_redirect = bool(re.search(r'>\s*\S', _cmd_rep))
+                    if _is_verify_or_explore and not _cmd_has_redirect:
                         _rep_files_str = ", ".join(_repeat_written.keys())
                         _adict_rep["command"] = (
                             f"echo '[STOP REWRITING THE SAME FILE: You have written {_rep_files_str} "
@@ -4460,6 +4929,32 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     # Honor the request's max_tokens if set — never override it upward (prevents runaway agentic generation)
     max_tokens = request.max_tokens if request.max_tokens is not None else server_num_predict
 
+    # Unconditional trim: large base64 heredoc blobs in old assistant messages are the main source
+    # of context bloat. Always trim them (the model doesn't need to re-read historical base64).
+    # Keep the last 4 messages intact to preserve recent context.
+    try:
+        _beof_trim_tag = "POSTCHANAI_B64EOF"
+        _beof_keep_tail = 4
+        _beof_messages = [dict(m) for m in messages]
+        _beof_changed = False
+        for _ti in range(len(_beof_messages) - _beof_keep_tail):
+            _bm = _beof_messages[_ti]
+            _bmc = _bm.get("content", "")
+            if (isinstance(_bmc, str) and _bm.get("role") == "assistant" and
+                    _beof_trim_tag in _bmc and len(_bmc) > 2000):
+                _bidx1 = _bmc.find(_beof_trim_tag)
+                _bidx2 = _bmc.find(_beof_trim_tag, _bidx1 + len(_beof_trim_tag)) if _bidx1 >= 0 else -1
+                if _bidx1 >= 0 and _bidx2 > _bidx1:
+                    _bnl = _bmc.find('\\n', _bidx1 + len(_beof_trim_tag))
+                    if 0 <= _bnl < _bidx2:
+                        _bmc_new = _bmc[:_bnl + 2] + '[base64 trimmed]\\n' + _bmc[_bidx2:]
+                        _beof_messages[_ti] = dict(_bm, content=_bmc_new)
+                        _beof_changed = True
+                        logger.info(f"[CTX-TRIM-HEREDOC] trimmed heredoc at msg[{_ti}]: {len(_bmc)} -> {len(_bmc_new)} chars")
+        if _beof_changed:
+            messages = _beof_messages
+    except Exception as _e_beof:
+        logger.warning(f"[CTX-TRIM-HEREDOC] error: {_e_beof}")
     # Proactive context truncation: trim old tool results if total message size would exceed context window.
     # Estimate ~3 chars per token; reserve space for the response (max_tokens).
     # Use the larger of the configured context or 32256 (Qwen 9B native window) as the limit.
@@ -4472,10 +4967,28 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
         for _ti in range(len(_trunc_messages) - _keep_tail):
             _m = _trunc_messages[_ti]
             _mc = _m.get("content", "")
-            if _m.get("role") in ("tool", "user") and isinstance(_mc, str) and len(_mc) > 600:
+            if not isinstance(_mc, str):
+                continue
+            if _m.get("role") in ("tool", "user") and len(_mc) > 600:
                 _trunc_messages[_ti] = dict(_m, content=_mc[:500] + "\n...[truncated]")
                 if sum(len(json.dumps(m)) for m in _trunc_messages) <= _max_msg_chars:
                     break
+            elif _m.get("role") == "assistant" and "POSTCHANAI_B64EOF" in _mc and len(_mc) > 600:
+                # Trim base64 heredoc content from old assistant messages to reduce context size.
+                # Content is XML-wrapped JSON, so heredoc newlines are JSON-escaped (\n as two chars).
+                _beof_tag = "POSTCHANAI_B64EOF"
+                _beof_idx1 = _mc.find(_beof_tag)
+                _beof_idx2 = _mc.find(_beof_tag, _beof_idx1 + len(_beof_tag)) if _beof_idx1 >= 0 else -1
+                if _beof_idx1 >= 0 and _beof_idx2 > _beof_idx1:
+                    # Find the JSON-escaped newline (\n as two chars) after the opening delimiter+filepath
+                    _after_open = _beof_idx1 + len(_beof_tag)
+                    _nl_pos = _mc.find('\\n', _after_open)
+                    if _nl_pos >= 0 and _nl_pos < _beof_idx2:
+                        _mc_trimmed = _mc[:_nl_pos + 2] + '[base64 trimmed for context]\\n' + _mc[_beof_idx2:]
+                        if len(_mc_trimmed) < len(_mc):
+                            _trunc_messages[_ti] = dict(_m, content=_mc_trimmed)
+                            if sum(len(json.dumps(m)) for m in _trunc_messages) <= _max_msg_chars:
+                                break
         messages = _trunc_messages
         logger.info(f"[CTX-TRUNC] Truncated messages from {_total_msg_chars} to {sum(len(json.dumps(m)) for m in messages)} chars")
 
