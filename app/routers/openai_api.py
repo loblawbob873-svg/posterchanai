@@ -2216,6 +2216,20 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "git show <hash>:<path-from-output> > <path-from-output> "
                         "Do NOT run the build again until the keystore file exists on disk.]"
                     )
+                elif _fail_count >= 2 and _is_build_script and bool(re.search(
+                    r'could not find package|Failed to update packages|version solving failed|Because .* depends on .* from path',
+                    content_str, re.IGNORECASE
+                )):
+                    content_str += (
+                        f"\n\n[BUILD LOOP — flutter pub get is failing because pubspec.yaml has a 'path:' dependency "
+                        "pointing to a directory that does not exist locally. "
+                        "STOP running the build. Fix pubspec.yaml first: "
+                        "1. Run: grep -n -A1 'path:' pubspec.yaml to find invalid path dependencies. "
+                        "2. For each bad dep (e.g. 'depname: path: missing_dir'), remove it: "
+                        "sed -i '/^  depname:/,+1d' pubspec.yaml "
+                        "3. Run: flutter pub get to confirm it resolves. "
+                        "4. Only then retry the build.]"
+                    )
                 elif _fail_count >= 2 and _is_build_script:
                     content_str += (
                         f"\n\n[BUILD LOOP — '{_last_actual_cmd}' has failed {_fail_count} times. "
