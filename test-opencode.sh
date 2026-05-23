@@ -140,17 +140,17 @@ Steps:
 2. CRITICAL: Resolve theme_props.dart conflict by keeping Aikey version (defaultDarkThemeProps = cyberpunkDarkThemeProps)
 3. For all other conflicts: git diff --name-only --diff-filter=U | xargs git checkout HEAD --
 4. Commit: git add -A && git commit -m 'Merge local-aria/main'
-5. Run ./sync-apk.sh ONCE. Fix any build errors, then run it once more if needed.
+5. Run ./sync-apk.sh ONCE. If it fails with a Dart SDK version error (e.g. "requires SDK version >=X"), run `flutter upgrade` to get the required version, then run ./sync-apk.sh once more.
 6. STOP IMMEDIATELY after ./sync-apk.sh completes successfully. Do not run git status, git log, or ./sync-apk.sh again.
 PROMPT
 )
 
 reset_aikey() {
-    log "[aikey] Resetting branch 1.0 to pre-v1.5.1 state on desktop..."
+    log "[aikey] Resetting master to pre-v1.5.1 state on desktop..."
     ssh_desktop "
         cd ~/aikey-android
         git merge --abort 2>/dev/null || true
-        git checkout 1.0 2>/dev/null || true
+        git checkout master 2>/dev/null || true
         git reset --hard $AIKEY_RESET_COMMIT
         git remote get-url local-aria 2>/dev/null || git remote add local-aria /home/verita84/aria
         git fetch local-aria
