@@ -272,7 +272,7 @@ def _sync_reindex_collection(collection_id: int):
 
 
 # Allowed paths for file operations (security)
-ALLOWED_PATHS = ["/home/verita84/posterchanai"]
+ALLOWED_PATHS = [os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))]
 
 
 def _is_path_allowed(file_path: str) -> bool:

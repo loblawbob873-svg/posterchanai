@@ -35,6 +35,7 @@ from app.services.inference_factory import get_inference_service
 from app.services.text_utils import strip_thinking_tags
 
 _OVERRIDES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'overrides')
+_PYTHON = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'venv-xpu', 'bin', 'python3.12')
 
 
 async def inject_rag_context(messages: list, db: Session, user_id: int = 1, top_k: int = 3, rag_api_url: str = None) -> list:
@@ -668,7 +669,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                             with open(_tmp_py2, 'w', errors='replace') as _tmp_f2:
                                                 _tmp_f2.write(_py_content_str)
                                             _ws_r = _sp2.run(
-                                                ['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tmp_py2],
+                                                [_PYTHON, '-m', 'py_compile', _tmp_py2],
                                                 capture_output=True, timeout=10
                                             )
                                             if _ws_r.returncode == 0:
@@ -722,7 +723,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                                         try:
                                                             with open(_tmp_py_bx, 'w', errors='replace') as _bx_f:
                                                                 _bx_f.write(_boxfix)
-                                                            _bx_r = _sp2.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tmp_py_bx], capture_output=True, timeout=10)
+                                                            _bx_r = _sp2.run([_PYTHON, '-m', 'py_compile', _tmp_py_bx], capture_output=True, timeout=10)
                                                             if _bx_r.returncode == 0:
                                                                 _af_ok = True
                                                                 _af_fixed = _boxfix
@@ -762,7 +763,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                                                 try:
                                                                     with open(_tmp_py3, 'w', errors='replace') as _af_f3:
                                                                         _af_f3.write(_af_try)
-                                                                    _af_pyc = _sp2.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tmp_py3], capture_output=True, timeout=10)
+                                                                    _af_pyc = _sp2.run([_PYTHON, '-m', 'py_compile', _tmp_py3], capture_output=True, timeout=10)
                                                                     if _af_pyc.returncode == 0:
                                                                         _af_ok = True
                                                                         _af_fixed = _af_try
@@ -790,7 +791,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                                             try:
                                                                 with open(_tmp_py4, 'w', errors='replace') as _f4:
                                                                     _f4.write(_defsub)
-                                                                _afr4 = _sp2.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tmp_py4], capture_output=True, timeout=10)
+                                                                _afr4 = _sp2.run([_PYTHON, '-m', 'py_compile', _tmp_py4], capture_output=True, timeout=10)
                                                                 if _afr4.returncode == 0:
                                                                     _af_ok = True
                                                                     _af_fixed = _defsub
@@ -811,7 +812,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                                                 try:
                                                                     with open(_tmp_py5, 'w', errors='replace') as _f5:
                                                                         _f5.write(_trunc_ct5)
-                                                                    _r5 = _sp2.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tmp_py5], capture_output=True, timeout=10)
+                                                                    _r5 = _sp2.run([_PYTHON, '-m', 'py_compile', _tmp_py5], capture_output=True, timeout=10)
                                                                     if _r5.returncode == 0:
                                                                         _af_ok = True
                                                                         _af_fixed = _trunc_ct5
@@ -845,7 +846,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                                                     try:
                                                                         with open(_tmp_py_lc, 'w', errors='replace') as _lc_f:
                                                                             _lc_f.write(_lc_fixed_content)
-                                                                        _lc_r = _sp2.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tmp_py_lc], capture_output=True, timeout=10)
+                                                                        _lc_r = _sp2.run([_PYTHON, '-m', 'py_compile', _tmp_py_lc], capture_output=True, timeout=10)
                                                                         if _lc_r.returncode == 0:
                                                                             _af_ok = True
                                                                             _af_fixed = _lc_fixed_content
@@ -1180,7 +1181,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             _os_ar.close(_tmp_fd_ar)
                             with open(_tmp_ar_f, 'w', errors='replace') as _ar_tmp_w:
                                 _ar_tmp_w.write(_auto_content)
-                            _pyc_r = _sp.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tmp_ar_f], capture_output=True, timeout=10)
+                            _pyc_r = _sp.run([_PYTHON, '-m', 'py_compile', _tmp_ar_f], capture_output=True, timeout=10)
                             if _pyc_r.returncode == 0:
                                 _pyc_out = 'PYCOMPILE_OK'
                             else:
@@ -1227,7 +1228,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                         try:
                                             with open(_tmp_ar_f2, 'w', errors='replace') as _ar_af_w:
                                                 _ar_af_w.write(_ar_af_try)
-                                            _ar_pyc4 = _sp.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tmp_ar_f2], capture_output=True, timeout=10)
+                                            _ar_pyc4 = _sp.run([_PYTHON, '-m', 'py_compile', _tmp_ar_f2], capture_output=True, timeout=10)
                                             if _ar_pyc4.returncode == 0:
                                                 _ar_af_ok = True
                                                 _ar_content_final = _ar_af_try
@@ -1247,7 +1248,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                         try:
                                             with open(_tmp_ar_f3, 'w', errors='replace') as _ar_st_w:
                                                 _ar_st_w.write(_ar_af_try2)
-                                            _ar_pyc5 = _sp.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tmp_ar_f3], capture_output=True, timeout=10)
+                                            _ar_pyc5 = _sp.run([_PYTHON, '-m', 'py_compile', _tmp_ar_f3], capture_output=True, timeout=10)
                                             if _ar_pyc5.returncode == 0:
                                                 _ar_af_ok = True
                                                 _ar_content_final = _ar_af_try2
@@ -1281,7 +1282,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                         try:
                                             with open(_tmp_ar_f6, 'w', errors='replace') as _ar_mt_w:
                                                 _ar_mt_w.write(_ar_af_try3)
-                                            _ar_pyc6 = _sp.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tmp_ar_f6], capture_output=True, timeout=10)
+                                            _ar_pyc6 = _sp.run([_PYTHON, '-m', 'py_compile', _tmp_ar_f6], capture_output=True, timeout=10)
                                             if _ar_pyc6.returncode == 0:
                                                 _ar_af_ok = True
                                                 _ar_content_final = _ar_af_try3
@@ -3990,7 +3991,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     try:
                         with open(_tmp_py_af, 'w', errors='replace') as _pf_af:
                             _pf_af.write(_ct_af)
-                        _pyc_af = _sp_tc.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tmp_py_af], capture_output=True, timeout=10)
+                        _pyc_af = _sp_tc.run([_PYTHON, '-m', 'py_compile', _tmp_py_af], capture_output=True, timeout=10)
                         _af_done_tc = True  # assume no fix needed; set False if py_compile fails
                         _pyc_err = ''
                         if _pyc_af.returncode != 0:
@@ -4020,7 +4021,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                 try:
                                     with open(_tpy_tc, 'w', errors='replace') as _pf2_tc:
                                         _pf2_tc.write(_fixed_ct)
-                                    _r2_tc = _sp_tc.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tpy_tc], capture_output=True, timeout=10)
+                                    _r2_tc = _sp_tc.run([_PYTHON, '-m', 'py_compile', _tpy_tc], capture_output=True, timeout=10)
                                     if _r2_tc.returncode == 0:
                                         _af_done_tc = True
                                         _fix_ct = _fixed_ct
@@ -4039,7 +4040,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                     try:
                                         with open(_tpy_tc, 'w', errors='replace') as _pf2_tc:
                                             _pf2_tc.write(_fixed_ct3)
-                                        _r2_tc = _sp_tc.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tpy_tc], capture_output=True, timeout=10)
+                                        _r2_tc = _sp_tc.run([_PYTHON, '-m', 'py_compile', _tpy_tc], capture_output=True, timeout=10)
                                         if _r2_tc.returncode == 0:
                                             _af_done_tc = True
                                             _fix_ct = _fixed_ct3
@@ -4060,7 +4061,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                         try:
                                             with open(_tpy_tc, 'w', errors='replace') as _pf4_tc:
                                                 _pf4_tc.write(_trunc_ct4)
-                                            _r4_tc = _sp_tc.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tpy_tc], capture_output=True, timeout=10)
+                                            _r4_tc = _sp_tc.run([_PYTHON, '-m', 'py_compile', _tpy_tc], capture_output=True, timeout=10)
                                             if _r4_tc.returncode == 0:
                                                 _af_done_tc = True
                                                 _trunc_fired_tc = True  # content was truncated by LLM output limit
@@ -4110,7 +4111,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                                 try:
                                                     with open(_tpy_tc, 'w', errors='replace') as _pf2_tc:
                                                         _pf2_tc.write(_try_tc)
-                                                    _r2_tc = _sp_tc.run(['/home/verita84/posterchanai/venv-xpu/bin/python3.12', '-m', 'py_compile', _tpy_tc], capture_output=True, timeout=10)
+                                                    _r2_tc = _sp_tc.run([_PYTHON, '-m', 'py_compile', _tpy_tc], capture_output=True, timeout=10)
                                                     if _r2_tc.returncode == 0:
                                                         _af_done_tc = True
                                                         _fix_ct = _try_tc

@@ -625,7 +625,7 @@ async def rescan_storage(
             except:
                 # Method 3: Try common project root locations
                 possible_roots = [
-                    '/home/verita84/posterchanai',
+                    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                     os.path.expanduser('~/posterchanai'),
                     os.getcwd()
                 ]
