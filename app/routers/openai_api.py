@@ -34,6 +34,8 @@ from app.schemas import (
 from app.services.inference_factory import get_inference_service
 from app.services.text_utils import strip_thinking_tags
 
+_OVERRIDES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'overrides')
+
 
 async def inject_rag_context(messages: list, db: Session, user_id: int = 1, top_k: int = 3, rag_api_url: str = None) -> list:
     """
@@ -3858,7 +3860,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 if _bho_m:
                     _bho_path = _bho_m.group(1)
                     if _bho_path not in _write_success_paths:
-                        _bho_ov_path = os.path.join('/home/verita84/posterchanai/overrides', _bho_path.lstrip('/'))
+                        _bho_ov_path = os.path.join(_OVERRIDES_DIR, _bho_path.lstrip('/'))
                         if os.path.isfile(_bho_ov_path):
                             with open(_bho_ov_path) as _bho_fh:
                                 _bho_content = _bho_fh.read()
@@ -3963,8 +3965,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                         }
                     }
                     logger.info(f"[ALREADY-DONE-WRITE] blocked Write/Edit rewrite of {_fp_af}")
-                elif _fp_af and os.path.isfile(os.path.join('/home/verita84/posterchanai/overrides', _fp_af.lstrip('/'))):
-                    _ov_early_path = os.path.join('/home/verita84/posterchanai/overrides', _fp_af.lstrip('/'))
+                elif _fp_af and os.path.isfile(os.path.join(_OVERRIDES_DIR, _fp_af.lstrip('/'))):
+                    _ov_early_path = os.path.join(_OVERRIDES_DIR, _fp_af.lstrip('/'))
                     with open(_ov_early_path) as _ov_early_fh:
                         _ov_early_ct = _ov_early_fh.read()
                     _b64_ov = __import__('base64').b64encode(_ov_early_ct.encode()).decode()
@@ -4128,7 +4130,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                     # passes py_compile — write the valid-but-partial content to prevent a broken file on disk.
                                     # After >=1 WRITE-INCOMPLETE for this file, use proxy override if available.
                                     _wi_count_f4 = json.dumps(messages).count(f'[WRITE-INCOMPLETE: {_fp_af}')
-                                    _ov_path_f4 = os.path.join('/home/verita84/posterchanai/overrides', _fp_af.lstrip('/'))
+                                    _ov_path_f4 = os.path.join(_OVERRIDES_DIR, _fp_af.lstrip('/'))
                                     _use_ov_f4 = os.path.isfile(_ov_path_f4)
                                     if _use_ov_f4:
                                         with open(_ov_path_f4) as _ov_fh_f4:
@@ -4167,7 +4169,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                     # Fix 2: triple-quote was unclosed — LLM truncated mid-string.
                                     # After >=1 WRITE-INCOMPLETE for this file, use proxy override if available.
                                     _wi_count_f2 = json.dumps(messages).count(f'[WRITE-INCOMPLETE: {_fp_af}')
-                                    _ov_path_f2 = os.path.join('/home/verita84/posterchanai/overrides', _fp_af.lstrip('/'))
+                                    _ov_path_f2 = os.path.join(_OVERRIDES_DIR, _fp_af.lstrip('/'))
                                     _use_ov_f2 = os.path.isfile(_ov_path_f2)
                                     if _use_ov_f2:
                                         with open(_ov_path_f2) as _ov_fh_f2:
@@ -4213,7 +4215,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                 (_fp_af in str(_bm.get("content", "")) or
                                  (_fp_af_base and _fp_af_base in str(_bm.get("content", ""))))
                             )
-                            _ov_path_blk = os.path.join('/home/verita84/posterchanai/overrides', _fp_af.lstrip('/'))
+                            _ov_path_blk = os.path.join(_OVERRIDES_DIR, _fp_af.lstrip('/'))
                             _use_ov_blk = _prior_blocked_for_fp >= 1 and os.path.isfile(_ov_path_blk)
                             if _use_ov_blk:
                                 with open(_ov_path_blk) as _ov_fh_blk:
@@ -4255,7 +4257,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                             }
                             logger.info(f"[TOOL-CALL-AUTOFIX] blocked Write of syntax-broken {_fp_af}: {_pyc_err_short}")
                         if _fp_af_injected and _pyc_af.returncode == 0:
-                            _ov_path_inj = os.path.join('/home/verita84/posterchanai/overrides', _fp_af.lstrip('/'))
+                            _ov_path_inj = os.path.join(_OVERRIDES_DIR, _fp_af.lstrip('/'))
                             if os.path.isfile(_ov_path_inj):
                                 with open(_ov_path_inj) as _ov_fh_inj:
                                     _ct_af = _ov_fh_inj.read()

@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Setting
-from app.routers.openai_api import verify_api_key, _resolve_model, _repair_json, _complete_json, _redirect_hallucinated_sed
+from app.routers.openai_api import verify_api_key, _resolve_model, _repair_json, _complete_json, _redirect_hallucinated_sed, _OVERRIDES_DIR
 from app.services.inference_factory import get_inference_service, prepare_vram_for_llm
 from app.services.text_utils import inject_no_think, strip_thinking_tags
 
@@ -1287,7 +1287,7 @@ def _rewrite_tool_calls(tool_calls: list, write_success_paths: set = None) -> li
                     logger.info(f"[ALREADY-DONE-WRITE] blocked rewrite of {fp}")
                     continue
                 # WRITE-OVERRIDE-EARLY: replace with proxy override file if one exists
-                _ov_path = _os_rw.path.join('/home/verita84/posterchanai/overrides', fp.lstrip('/'))
+                _ov_path = _os_rw.path.join(_OVERRIDES_DIR, fp.lstrip('/'))
                 if _os_rw.path.isfile(_ov_path):
                     with open(_ov_path) as _ov_fh:
                         _ov_ct = _ov_fh.read()
