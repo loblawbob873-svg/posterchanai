@@ -156,6 +156,7 @@ reset_aikey() {
         git remote get-url local-aria 2>/dev/null || git remote add local-aria /home/verita84/aria
         git fetch local-aria
         git show 7e4c990a:android/app/upload.keystore > android/app/upload.keystore 2>/dev/null || true
+        printf 'storePassword=AikeyApp2024!\nkeyPassword=AikeyApp2024!\nkeyAlias=aikey\nstoreFile=../app/upload.keystore\n' > android/key.properties
         rm -f ~/.local/share/opencode/opencode.db ~/.local/share/opencode/opencode.db-wal ~/.local/share/opencode/opencode.db-shm
         echo '[aikey] reset done'
     "

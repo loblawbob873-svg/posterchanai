@@ -2118,6 +2118,11 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 _has_keystore_error = bool(re.search(r'keystore|signing|upload.*key|key.*store', content_str, re.IGNORECASE))
                 _has_keyprops_error = bool(re.search(r'key\.properties|signing\.properties|keyAlias|keyPassword|storeFile|storePassword', content_str, re.IGNORECASE))
                 _keystore_was_restored = any(re.search(r'git show .+:.+\.(keystore|jks|p12)', c) for c in bash_history)
+                _build_succeeded_in_history = any(
+                    re.search(r'Built build/app/|✓ Built|build/app.*\.apk.*MB|BUILD SUCCESSFUL|Done!.*APK', str(m.get("content") or ""))
+                    and not re.search(r'FAILURE:|BUILD FAILED|Build failed|Failed to update packages', str(m.get("content") or ""))
+                    for m in (messages or []) if m.get("role") == "user"
+                )
                 # Null signing property: Gradle says a property is missing/null (System.getenv() returned null)
                 # This is different from a missing keystore FILE — the file may exist but credentials aren't set
                 _has_null_signing_property = bool(re.search(
@@ -2163,7 +2168,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "Do NOT read dmesg, journalctl, or system logs — build errors are in the output above, not in kernel logs. "
                         "Fix the code or configuration error shown, then retry the build command.]"
                     )
-                elif _fail_count >= 3 and _is_build_script and not _has_null_signing_property and (_has_keystore_error or _has_keyprops_error or _keystore_was_restored):
+                elif _fail_count >= 3 and _is_build_script and not _has_null_signing_property and not _build_succeeded_in_history and (_has_keystore_error or _has_keyprops_error or _keystore_was_restored):
                     content_str += (
                         f"\n\n[BUILD BLOCKED — '{_last_actual_cmd}' has failed {_fail_count} times on signing. "
                         "Do NOT run the build again yet. Diagnose in order: "
@@ -2183,7 +2188,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "then: git show <hash>:<path-from-output> > <path-from-output> "
                         "Only run the build after completing step (1) above.]"
                     )
-                elif _fail_count >= 2 and _is_build_script and not _has_null_signing_property and (_has_keyprops_error or (_keystore_was_restored and not _has_keystore_error)):
+                elif _fail_count >= 2 and _is_build_script and not _has_null_signing_property and not _build_succeeded_in_history and (_has_keyprops_error or (_keystore_was_restored and not _has_keystore_error)):
                     content_str += (
                         f"\n\n[BUILD ERROR: '{_last_actual_cmd}' failed again after keystore restore. "
                         "The signing configuration file may be missing — it holds the keystore path, password, key alias, and key password. "
