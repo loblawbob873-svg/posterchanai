@@ -140,7 +140,7 @@ PRE-MERGE SETUP:
    keyPassword=AikeyApp2024!
    keyAlias=aikey
    storeFile=../app/upload.keystore
-4. Check pubspec.yaml for path dependencies pointing to non-existent local directories. Remove any such entries with: sed -i '/^  DEPNAME:/,+1d' pubspec.yaml  (replace DEPNAME with the actual dep name). Then run `flutter pub get` to confirm it resolves cleanly.
+4. Check pubspec.yaml for path dependencies pointing to non-existent local directories. Remove any such entries with: sed -i '/^  DEPNAME:/,+1d' pubspec.yaml  (replace DEPNAME with the actual dep name). Do NOT run flutter pub get here.
 
 MERGE:
 5. git merge local-aria/main --no-commit --allow-unrelated-histories
