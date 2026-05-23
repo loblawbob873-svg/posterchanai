@@ -2279,7 +2279,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                  re.search(r'\bgit\s+checkout\b.*--\s+\S', last_cmd))
             )
             # Also catch any command that errors repeatedly (fatal/error in output)
-            _has_error_output = bool(re.search(r'\bfatal\b|\berror\b', content_str, re.IGNORECASE))
+            _has_error_output = bool(re.search(r'\bfatal\b|\berror\b', content_str, re.IGNORECASE)) or _is_hard_failure
             # Whitelist git commit/add — allow retries after conflict resolution
             _is_git_commit_or_add = bool(re.search(r'\bgit\s+(add|commit)\b', last_cmd or ""))
             _is_repeated_error = last_cmd and _has_error_output and bash_cmd_count.get(last_cmd, 0) > 1 and not _is_git_commit_or_add
