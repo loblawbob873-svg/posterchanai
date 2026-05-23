@@ -2444,11 +2444,17 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # Extracts the open() target path from the command — no hardcoded filenames.
             if _py3_heredoc_pattern and _py3_writes_file:
                 _py3_open_m = re.search(r"open\s*\(\s*['\"]([^'\"]+)['\"]", last_cmd or "")
+                # Match absolute paths OR bare filenames in the task description
                 _task_abs2 = re.findall(
                     r'(/[\w./-]+\.(?:sh|bash|py|js|ts|dart|html?|css|yaml|json|toml|cfg|conf))',
                     _first_user_text
                 )
-                logger.info(f"[WRONG-FILE-DBG] open_match={bool(_py3_open_m)} task_paths={_task_abs2} first_user_text_len={len(_first_user_text)} first_user_text_preview={_first_user_text[:120]!r}")
+                if not _task_abs2:
+                    _task_abs2 = re.findall(
+                        r'\b([\w.-]+\.(?:sh|bash|py|js|ts|dart|html?|css|yaml|json|toml|cfg|conf))\b',
+                        _first_user_text
+                    )
+                logger.info(f"[WRONG-FILE-DBG] open_match={bool(_py3_open_m)} task_paths={_task_abs2} first_user_len={len(_first_user_text)} preview={_first_user_text[:120]!r}")
                 if _py3_open_m:
                     _py3_target = _py3_open_m.group(1)
                     if _task_abs2:
