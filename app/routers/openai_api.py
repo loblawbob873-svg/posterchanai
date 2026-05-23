@@ -2170,6 +2170,34 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "git show <hash>:<path-from-output> > <path-from-output> "
                         "Then retry the build.]"
                     )
+                elif _is_build_script and bool(re.search(
+                    r'could not find package|Failed to update packages|version solving failed|Because .* depends on .* from path',
+                    content_str, re.IGNORECASE
+                )):
+                    _dep_m = re.search(
+                        r'could not find package\s+([\w_-]+)|Because \S+ depends on ([\w_-]+) from path',
+                        content_str, re.IGNORECASE
+                    )
+                    if _dep_m:
+                        _bad_dep = (_dep_m.group(1) or _dep_m.group(2) or "").strip()
+                        content_str += (
+                            f"\n\n[BUILD FAIL — pubspec path dep missing] flutter pub get cannot find package '{_bad_dep}' "
+                            f"because pubspec.yaml has a 'path:' dependency pointing to a non-existent local directory. "
+                            f"Fix with these EXACT commands: "
+                            f"sed -i '/^  {_bad_dep}:/,+1d' pubspec.yaml && flutter pub get "
+                            f"CRITICAL: The ',+1d' removes BOTH the '{_bad_dep}:' line AND the 'path: ...' line below it. "
+                            f"Do NOT run sed on the 'path:' line alone — that leaves '{_bad_dep}:' dangling. "
+                            f"After flutter pub get succeeds, retry the build.]"
+                        )
+                    else:
+                        content_str += (
+                            "\n\n[BUILD FAIL — pubspec path dep missing] flutter pub get is failing because pubspec.yaml "
+                            "has a 'path:' dependency pointing to a directory that does not exist locally. "
+                            "Find the dep: grep -n -B1 'path:' pubspec.yaml "
+                            "Remove it: sed -i '/^  DEPNAME:/,+1d' pubspec.yaml (replace DEPNAME with the package name shown above the path: line). "
+                            "Verify: flutter pub get "
+                            "Then retry the build.]"
+                        )
                 elif _fail_count == 1 and _is_build_script:
                     content_str += (
                         "\n\n[BUILD ERROR: The script/build failed. Read the error output above carefully and fix the root cause. "
@@ -2215,20 +2243,6 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "Then restore using the hash and path shown in that output: "
                         "git show <hash>:<path-from-output> > <path-from-output> "
                         "Do NOT run the build again until the keystore file exists on disk.]"
-                    )
-                elif _fail_count >= 2 and _is_build_script and bool(re.search(
-                    r'could not find package|Failed to update packages|version solving failed|Because .* depends on .* from path',
-                    content_str, re.IGNORECASE
-                )):
-                    content_str += (
-                        f"\n\n[BUILD LOOP — flutter pub get is failing because pubspec.yaml has a 'path:' dependency "
-                        "pointing to a directory that does not exist locally. "
-                        "STOP running the build. Fix pubspec.yaml first: "
-                        "1. Run: grep -n -B1 'path:' pubspec.yaml to find the dep name AND path together. "
-                        "2. For each bad dep where the path directory does not exist, remove it: "
-                        "sed -i '/^  DEPNAME:/,+1d' pubspec.yaml  (replace DEPNAME with the actual dep name from step 1). "
-                        "3. Run: flutter pub get to confirm it resolves. "
-                        "4. Only then retry the build.]"
                     )
                 elif _fail_count >= 2 and _is_build_script:
                     content_str += (
