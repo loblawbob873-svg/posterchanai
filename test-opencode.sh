@@ -14,7 +14,7 @@ DESKTOP_USER="verita84"
 DESKTOP_HOST="192.168.0.102"
 DESKTOP_PASS="123456"
 # Pre-v1.5.1-merge commit on aikey-android branch 1.0
-AIKEY_RESET_COMMIT="f45622f65c65ad79a6e1fcb07bac3b92e3a3770c"
+AIKEY_RESET_COMMIT="781c2477"
 
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
 
