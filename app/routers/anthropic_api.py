@@ -158,7 +158,6 @@ def _build_model_messages(request: MessagesRequest) -> list:
     bash_cmd_count: dict = {}
     bash_history: list = []
     fetch_head_reset_done = False
-    colorize_task_done = False
     _write_success_paths: set = set()   # files confirmed written via AUTOFIX-WRITE-DONE
     # Detect complex merge tasks (conflict resolution, file preservation) — skip simple-sync shortcuts
     _all_text_a = " ".join(
@@ -255,9 +254,6 @@ def _build_model_messages(request: MessagesRequest) -> list:
 
                 if fetch_head_reset_done:
                     content_str = "[TASK COMPLETE — STOP. Do not run any more git commands. The repo is already synced. Report success to the user and stop all commands.]"
-
-                elif colorize_task_done:
-                    content_str = "[TASK COMPLETE — STOP. The file is already colorized. Report success and stop ALL commands.]\n" + content_str
 
                 elif not content_str.strip():
                     if re.search(r'\bgit\s+status\b', last_bash_cmd):
@@ -1109,6 +1105,9 @@ async def messages(
                 _new_tcs_bb.append(_tc_bb)
         tool_calls = _new_tcs_bb
 
+    # _all_body_text computed above (before shortcircuit); derive complex merge flag for tool intercepts
+    _is_complex_merge_body = _sc_complex_merge
+
     # CONFLICT-CHECK: wrap git commit with conflict marker guard + MERGE-COMMIT-DONE signal
     _new_tcs_cc = []
     for _tc_cc in tool_calls:
@@ -1129,9 +1128,6 @@ async def messages(
 
     # Rewrite Write calls: overrides, already-done, sudo tee for system paths
     tool_calls = _rewrite_tool_calls(tool_calls, write_success_paths=_anthr_wsp)
-
-    # _all_body_text computed above (before shortcircuit); derive complex merge flag for tool intercepts
-    _is_complex_merge_body = _sc_complex_merge
 
     # Compute git fetch/reset state from Anthropic-format message history
     _git_fetch_count_a = 0

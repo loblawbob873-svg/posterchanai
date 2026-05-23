@@ -480,7 +480,6 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
     non_bash_write_done = False  # True if model used write_file/str_replace/edit tool (non-bash)
     _auto_recovered_in_request = False  # True once any auto-recover fires in this request (prevents cascade)
     fetch_head_reset_done = False  # True after model successfully runs reset --hard FETCH_HEAD
-    colorize_task_done = False     # True after model successfully colorizes a .sh file
     rebase_conflict_count = 0      # Number of rebase conflicts seen (helps escalate guidance)
     silent_sed_sh_count = 0        # Number of sed -i on .sh files that produced no output
     _exploration_cap_injected = 0  # How many times [EXPLORATION CAP:] was injected — 2nd+ use different tag
@@ -580,14 +579,6 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # If task was already completed, replace result entirely to prevent the model from acting on git status output
             if fetch_head_reset_done:
                 content_str = "[TASK COMPLETE — STOP. Do not run any more git commands. The repo is already synced. Report success to the user and stop all commands.]"
-            if colorize_task_done:
-                # Don't inject STOP if the tool result shows uncolorized echo lines — the file was likely reset externally.
-                # Also clear the flag so subsequent tool results (empty sed, etc.) aren't blocked either.
-                _has_uncolorized = bool(re.search(r'echo\s+"[^\\]', content_str)) and '\\033' not in content_str and 'echo -e' not in content_str
-                if _has_uncolorized:
-                    colorize_task_done = False
-                else:
-                    content_str = "[TASK COMPLETE — STOP. The file is already colorized. Do NOT modify it again. Report success and stop ALL commands.]\n" + content_str
             # Find the tool name from the preceding assistant message's tool_call
             last_tool_name = "bash"
             for r in reversed(result):
@@ -1438,27 +1429,18 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 _sh_file_m2 = re.search(r'([/\w.~-]+\.sh)\b', last_bash_cmd)
                 _sh_ref2 = _sh_file_m2.group(1) if _sh_file_m2 else "the target file"
                 if re.search(r'bash\s+-n\b', content_str):
-                    # Model wrote 'bash -n ...' as a Python statement — Python cannot call shell commands directly
                     content_str = (
                         f"[ERROR: Python SyntaxError — 'bash -n' is not valid Python syntax. "
                         f"Python has no 'bash' function; you cannot call shell commands directly inside a Python script. "
-                        f"Remove the 'bash -n ...' line (and any '&& print(...)' attached to it) from the Python script entirely. "
-                        f"Instead: add 'print(ci, \"lines colorized\")' at the END of the Python script (before the closing heredoc). "
-                        f"After the python3 call succeeds, verify in a SEPARATE bash call: "
-                        f"bash(command='bash -n {_sh_ref2} 2>&1 | head -3 && "
-                        f"VALID=$(grep -c \"echo -e.*\\\\033\" {_sh_ref2}); echo Colorized: $VALID'). "
-                        f"Rewrite the python3 heredoc script now — same logic, just without any bash commands inside it.]"
+                        f"Remove the 'bash -n ...' line from the Python script entirely. "
+                        f"After the python3 heredoc succeeds, verify in a SEPARATE bash call: bash -n {_sh_ref2} 2>&1 | head -3. "
+                        f"Rewrite the python3 heredoc now — same logic, just without any bash commands inside it.]"
                     )
                 else:
                     content_str = (
-                        "[ERROR: Python SyntaxError — likely an unescaped quote inside a string or regex that ended it early. "
-                        "Common cause: r\"pattern['\"]\", where the '\"' inside ['\"] terminates the outer double-quoted string. "
-                        "SOLUTION: Avoid regex entirely for matching echo lines — use this simple filter: "
-                        "  s.strip().startswith('echo ') and '>>' not in s and '>' not in s.partition('echo ')[2] and ' | ' not in s "
-                        "No regex needed, no quote mixing issues. "
-                        "Extract the argument: arg = s.partition('echo ')[2].strip().strip('\"').strip(\"'\") "
-                        "Also: add print(ci, 'lines colorized') at the end. "
-                        "Write ALL lines back, run bash -n in a SEPARATE bash call afterward.]"
+                        "[ERROR: Python SyntaxError in heredoc — likely an unescaped quote inside a string or regex. "
+                        "Common cause: a quote character inside a regex or f-string that terminates the outer string early. "
+                        "Fix the quoting in the script, then retry.]"
                     )
             # Intercept py_compile SyntaxError on a .py file written by Write tool
             elif (
@@ -2376,36 +2358,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     )
                 else:
                     # For non-sed: append loop warning but keep original error message visible
-                    _py_writes = bool(re.search(r'\bopen\s*\(.*,\s*["\']w["\']', last_cmd or ""))
-                    _is_colorize_ctx = bool(
-                        (re.search(r'\.sh\b', last_cmd or "") or
-                         any(re.search(r'\.sh\b', c) for c in bash_history[-5:])) and
-                        any(re.search(r'\\\\033|echo -e.*033|gc\.py|coloriz', c, re.IGNORECASE)
-                            for c in bash_history[-10:])
-                    )
-                    if _py_writes and _is_colorize_ctx:
-                        content_str += (
-                            f"\n\n[ERROR: same python3 command run {repeat_n} times with the same SyntaxError. "
-                            "Fix the SyntaxError before anything else can work. "
-                            "Python cannot run shell commands (like 'bash -n') directly inside a Python script — remove any such lines. "
-                            "Use SINGLE-QUOTED f-strings to avoid unterminated string SyntaxError: "
-                            "f'{indent}echo -e \"\\\\033[{col}m{arg.strip(chr(34))}\\\\033[0m\"\\n' "
-                            "(NOT double-quoted f-strings with backslash-quote). "
-                            "After writing, run bash -n as a SEPARATE bash tool call.]"
-                        )
-                    elif _is_colorize_ctx and not _py_writes:
-                        content_str += (
-                            f"\n\n[ERROR: same command run {repeat_n} times, not working. "
-                            "Your script only reads — it does not WRITE to the file. "
-                            "Use bash tool with python3 heredoc (python3 << 'EOF' ... EOF) that modifies the file — do NOT call python3 as a separate tool. "
-                            "Filter: s.strip().startswith('echo ') and '>>' not in s and '>' not in s.partition('echo')[2] and ' | ' not in s. "
-                            "Use SINGLE-QUOTED f-strings: f'{indent}echo -e \"\\\\033[{col}m{arg.strip(chr(34))}\\\\033[0m\"\\n' "
-                            "(NOT double-quoted f-strings with backslash-quote — those leave the string unterminated). "
-                            "Write ALL lines back, run bash -n to check syntax.]"
-                        )
-                    else:
-                        content_str += (
-                            f"\n\n[ERROR: same command has failed {repeat_n} times in a row. "
+                    content_str += (
+                        f"\n\n[ERROR: same command has failed {repeat_n} times in a row. "
                             "This approach is not working. STOP retrying the same command. "
                             "Investigate the root cause from the error output above, then try a completely different approach.]"
                         )
@@ -2451,25 +2405,22 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             )
             if _py3_wrote_sh:
                 _sh_ref = _sh_file_in_cmd.group(1)
-                _colorized_m = re.search(r'(\d+)\s+lines?\s+colorized', content_str)
-                _n_colorized = int(_colorized_m.group(1)) if _colorized_m else 0
-                if _n_colorized > 0:
-                    colorize_task_done = True
-                    content_str += (
-                        f"\n\n[TASK COMPLETE: {_n_colorized} display echo lines colorized with ANSI color codes. "
-                        f"STOP — the task is finished. Do NOT run any more commands. "
-                        f"Report to the user: '{_n_colorized} echo lines in {_sh_ref} have been colorized.']"
-                    )
-                else:
-                    content_str += (
-                        f"\n\n[AUTO-VERIFY: Run: bash -n {_sh_ref} 2>&1 | head -3 && "
-                        f"VALID=$(grep -c 'echo -e.*\\\\033' {_sh_ref} 2>/dev/null || echo 0) && "
-                        f"echo \"Colorized: $VALID\" && "
-                        f"[ \"$VALID\" -ge 20 ] && echo PASS || "
-                        "echo 'FAIL: 0 lines colorized. Bug: your script searched for echo -e in source but originals use just echo. "
-                        "Do NOT re.search(echo -e) — instead apply color to every line where is_display_echo() is True. "
-                        "Write corrected script now.]"
-                    )
+                try:
+                    import subprocess as _sp_sh, os as _os_sh
+                    if _os_sh.path.isfile(_sh_ref):
+                        _bash_n = _sp_sh.run(
+                            ['bash', '-n', _sh_ref],
+                            capture_output=True, text=True, timeout=10
+                        )
+                        if _bash_n.returncode == 0:
+                            content_str += f"\n\n[AUTO-VERIFY: bash -n {_sh_ref} → SYNTAX OK. Verify the changes look correct with grep.]"
+                        else:
+                            _bash_err = (_bash_n.stderr or '').strip()[:300]
+                            content_str += f"\n\n[AUTO-VERIFY: bash -n {_sh_ref} → SYNTAX ERROR:\n{_bash_err}\nFix the above error in {_sh_ref} before proceeding.]"
+                    else:
+                        content_str += f"\n\n[AUTO-VERIFY: {_sh_ref} not found on proxy host — verify it was written correctly.]"
+                except Exception as _bne:
+                    content_str += f"\n\n[AUTO-VERIFY: Could not run bash -n: {_bne}]"
             if _is_py3_heredoc and _is_noop_result:
                 _py3_heredoc_count = sum(
                     1 for c in bash_history if re.search(r'python3?\s+(<<|-\s)', c)
@@ -2509,7 +2460,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             _has_git_cmds = any(re.search(r'\bgit\b', c) for c in bash_history)
             # Lower cap for non-git file-editing tasks — push model to edit sooner
             _cap_threshold = 5 if (_syslog_is_task or _build_has_failed) else (7 if _has_git_cmds else 8)
-            if _total_non_git_cmds >= _cap_threshold and not _any_write and not colorize_task_done and not fetch_head_reset_done:
+            if _total_non_git_cmds >= _cap_threshold and not _any_write and not fetch_head_reset_done:
                 if _exploration_cap_injected >= 1:
                     # Second cap injection: use a non-LOOP-SC-triggering tag so two consecutive caps
                     # don't fire the hard-loop short-circuit (which needs two matching block tags)
@@ -2682,29 +2633,14 @@ def _redirect_hallucinated_sed(tool_calls: list, settings: dict = None) -> list:
     return list(tool_calls)
 
 
-def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_done: bool = False,
+def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False,
                         empty_bash_count: int = 0, messages: list = None) -> list:
     """Fix common sed mistakes in bash tool calls before they reach opencode.
 
     sed_blocked: if True, sed -i calls are replaced with a blocking error (model must use python3).
-    colorize_done: if True, python3 writes to .sh files are blocked (colorization already complete).
     empty_bash_count: how many times model called bash with no command in this conversation.
     messages: full conversation messages for context lookup.
     """
-    # When model is stuck in a persistent empty-bash loop and has been exploring a .sh file,
-    # auto-inject PROXYSCRIPT to break the loop. Threshold: 8 empty bashes.
-    _auto_proxyscript_file = None
-    if empty_bash_count >= 8 and not colorize_done and messages:
-        for _m in messages:
-            if _m.get("role") != "user":
-                continue
-            _mc = _m.get("content") or ""
-            # Look for a .sh file that was listed in grep/cat/sed output (not config paths)
-            for _sh_m in re.finditer(r'([/\w.~-]+\.sh)\b', _mc):
-                _sh_candidate = _sh_m.group(1)
-                if not any(x in _sh_candidate for x in ('.config', '.local', 'opencode', 'test-')):
-                    _auto_proxyscript_file = _sh_candidate
-        logger.info(f"[EMPTY-LOOP] empty_bash_count={empty_bash_count}, auto_proxyscript_file={_auto_proxyscript_file}")
 
     out = []
     for tc in tool_calls:
@@ -2714,11 +2650,6 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
             try:
                 args_dict = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
                 cmd = args_dict.get("command", "")
-                # Block python3 writes to .sh files after colorization is already complete
-                _is_py3_write_sh = (
-                    bool(re.search(r'python3?\s+(<<|-\s|-c\b)', cmd)) and
-                    bool(re.search(r'open\s*\(.*\.sh.*,\s*["\']w["\']', cmd))
-                )
                 # Intercept git commit — check staged files for unresolved conflict markers first
                 _is_git_commit = bool(re.search(r'\bgit\b.*\bcommit\b', cmd)) and "git commit" in cmd
                 if _is_git_commit:
@@ -2744,103 +2675,6 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                     tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                     out.append(tc)
                     logger.info("[CONFLICT-CHECK] Wrapped git commit with conflict marker guard")
-                    continue
-                if colorize_done and _is_py3_write_sh:
-                    args_dict["command"] = "printf '\\n◆ proxy: file already colorized — report success and stop.\\n'"
-                    tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
-                    logger.info("[COLORIZE-DONE] Blocked python3 write to .sh after colorization complete")
-                    out.append(tc)
-                    continue
-                # Auto-inject PROXYSCRIPT when model is stuck in persistent empty-bash loop
-                _is_empty_bash = "PROXY: bash tool called with no command" in cmd
-                if _is_empty_bash and _auto_proxyscript_file:
-                    _sh_file = _auto_proxyscript_file
-                    _tmpl = (
-                        f"with open('{_sh_file}') as f: lines = f.readlines()\n"
-                        "colors = ['1;96', '1;93', '1;92', '1;91']\n"
-                        "ci = 0; out = []\n"
-                        "for line in lines:\n"
-                        "    s = line.rstrip()\n"
-                        "    if s.strip().startswith('echo ') and '>>' not in s and '>' not in s.partition('echo')[2] and ' | ' not in s and '\\\\033' not in s:\n"
-                        "        col = colors[ci % 4]; ci += 1\n"
-                        "        arg = s.partition('echo ')[2].strip().strip('\"').strip(\"'\")\n"
-                        "        indent = s[:len(s) - len(s.lstrip())]\n"
-                        "        out.append(indent + 'echo -e \"\\\\033[' + col + 'm' + arg + '\\\\033[0m\"\\n')\n"
-                        "    else: out.append(line)\n"
-                        f"with open('{_sh_file}', 'w') as f: f.writelines(out)\n"
-                        "print(ci, 'lines colorized')"
-                    )
-                    args_dict["command"] = "python3 << 'PROXYSCRIPT'\n" + _tmpl + "\nPROXYSCRIPT"
-                    tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
-                    out.append(tc)
-                    logger.info(f"[EMPTY-LOOP-FIX] Auto-injected PROXYSCRIPT on {_sh_file} after {empty_bash_count} empty bashes")
-                    continue
-                # Block sed -i after repeated loop failures — force model to use python3
-                # Detect python3 script that searches for 'echo -e' in source lines — original lines don't have -e yet
-                _is_py3_cmd = bool(re.search(r'python3?\s+(<<|-\s)', cmd))
-                _writes_sh = bool(re.search(r'open\s*\(.*\.sh.*,\s*["\']w["\']', cmd))
-                _reads_sh_readonly = bool(re.search(r'open\s*\([rf]?[\'"][^\'\"]+\.sh[\'"](?!\s*,\s*[\'"]w)', cmd))
-                _searches_echo_e_as_source = bool(re.search(r're\.\w+\s*\(\s*[rf]?["\'].*echo.*-e', cmd))
-                # Also catch: regex used to match echo lines for colorization (any pattern with echo + color intent)
-                _re_matches_echo = bool(re.search(r're\.\w+\s*\(\s*[rf]?["\'].*echo', cmd))
-                _has_color_intent = bool(re.search(r'\\\\033|colors\s*=\s*\[', cmd))
-                # When sed is blocked, also catch read-only python3 probes on .sh files with echo/color intent
-                # and redirect them to the write-enabled version immediately
-                if sed_blocked and _is_py3_cmd and _reads_sh_readonly and not _writes_sh and (
-                    _searches_echo_e_as_source or _re_matches_echo or _has_color_intent or
-                    re.search(r'startswith.*echo|echo.*filter|filter.*echo', cmd)
-                ):
-                    _sh_file_m_ro = re.search(r"open\s*\([rf]?['\"]([^'\"]+\.sh)['\"]", cmd)
-                    if _sh_file_m_ro:
-                        _sh_file_ro = _sh_file_m_ro.group(1)
-                        _tmpl_ro = (
-                            f"with open('{_sh_file_ro}') as f: lines = f.readlines()\n"
-                            "colors = ['1;96', '1;93', '1;92', '1;91']\n"
-                            "ci = 0; out = []\n"
-                            "for line in lines:\n"
-                            "    s = line.rstrip()\n"
-                            "    if s.strip().startswith('echo ') and '>>' not in s and '>' not in s.partition('echo')[2] and ' | ' not in s and '\\\\033' not in s:\n"
-                            "        col = colors[ci % 4]; ci += 1\n"
-                            "        arg = s.partition('echo ')[2].strip().strip('\"').strip(\"'\")\n"
-                            "        indent = s[:len(s) - len(s.lstrip())]\n"
-                            "        out.append(indent + 'echo -e \"\\\\033[' + col + 'm' + arg + '\\\\033[0m\"\\n')\n"
-                            "    else: out.append(line)\n"
-                            f"with open('{_sh_file_ro}', 'w') as f: f.writelines(out)\n"
-                            "print(ci, 'lines colorized')"
-                        )
-                        args_dict["command"] = "python3 << 'PROXYSCRIPT'\n" + _tmpl_ro + "\nPROXYSCRIPT"
-                        tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
-                        out.append(tc)
-                        logger.info(f"[PY3-READONLY-FIX] Redirected read-only .sh probe to write-enabled PROXYSCRIPT on {_sh_file_ro}")
-                        continue
-                if _is_py3_cmd and _writes_sh and (_searches_echo_e_as_source or _has_color_intent):
-                    # Extract target file from the command; skip if not found
-                    _sh_file_m = re.search(r"open\s*\([rf]?['\"]([^'\"]+\.sh)['\"]", cmd)
-                    if not _sh_file_m:
-                        out.append(tc)
-                        continue
-                    _sh_file = _sh_file_m.group(1)
-                    # Replace the broken script with a corrected one using string concat (no f-strings)
-                    # Note: '\\\\033' not in s skips already-colorized lines (idempotent on re-run)
-                    _tmpl = (
-                        f"with open('{_sh_file}') as f: lines = f.readlines()\n"
-                        "colors = ['1;96', '1;93', '1;92', '1;91']\n"
-                        "ci = 0; out = []\n"
-                        "for line in lines:\n"
-                        "    s = line.rstrip()\n"
-                        "    if s.strip().startswith('echo ') and '>>' not in s and '>' not in s.partition('echo')[2] and ' | ' not in s and '\\\\033' not in s:\n"
-                        "        col = colors[ci % 4]; ci += 1\n"
-                        "        arg = s.partition('echo ')[2].strip().strip('\"').strip(\"'\")\n"
-                        "        indent = s[:len(s) - len(s.lstrip())]\n"
-                        "        out.append(indent + 'echo -e \"\\\\033[' + col + 'm' + arg + '\\\\033[0m\"\\n')\n"
-                        "    else: out.append(line)\n"
-                        f"with open('{_sh_file}', 'w') as f: f.writelines(out)\n"
-                        "print(ci, 'lines colorized')"
-                    )
-                    args_dict["command"] = "python3 << 'PROXYSCRIPT'\n" + _tmpl + "\nPROXYSCRIPT"
-                    tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
-                    out.append(tc)
-                    logger.info("[PY3-FIX] Corrected python3 with echo -e in source match — running fixed script")
                     continue
                 # Auto-add sudo for systemctl commands (avoid "Access denied")
                 if re.match(r'\s*systemctl\s+(restart|start|stop|reload|enable|disable)\b', cmd) and 'sudo' not in cmd:
@@ -3525,7 +3359,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     _last_user_msg = next((m for m in reversed(messages) if m.get("role") == "user"), None)
     _lum_content = str(_last_user_msg.get("content") or "") if _last_user_msg else ""
     _lum_has_any_loop_block = (
-        "◆ proxy:" in _lum_content or
+        bool(re.search(r'◆ proxy:(?![^\n]*\balready\s+(?:written|colorized|non-empty)\b)', _lum_content)) or
         "[REPEATED COMMAND BLOCKED:" in _lum_content or
         "[LOOP DETECTED:" in _lum_content or
         "[EXPLORATION BLOCKED:" in _lum_content or
@@ -3545,7 +3379,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     _all_user_msgs_sc = [m for m in messages if m.get("role") == "user"]
     _prev_user_content_sc = str(_all_user_msgs_sc[-2].get("content") or "") if len(_all_user_msgs_sc) >= 2 else ""
     _prev_had_block_sc = (
-        "◆ proxy:" in _prev_user_content_sc or
+        bool(re.search(r'◆ proxy:(?![^\n]*\balready\s+(?:written|colorized|non-empty)\b)', _prev_user_content_sc)) or
         "[REPEATED COMMAND BLOCKED:" in _prev_user_content_sc or
         "[LOOP DETECTED:" in _prev_user_content_sc or
         "[EXPLORATION BLOCKED:" in _prev_user_content_sc or
@@ -3686,11 +3520,6 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
          "[PROXY: sed -i is blocked" in (m.get("content") or ""))
         for m in messages if m.get("role") == "user"
     )
-    # Detect if colorization task was already completed — block further .sh writes
-    _colorize_done = any(
-        ("[TASK COMPLETE:" in (m.get("content") or "") and "lines colorized" in (m.get("content") or ""))
-        for m in messages if m.get("role") == "user"
-    )
     # Count how many times model called bash with no command — detect persistent empty-bash loop
     _empty_bash_count = sum(
         1 for m in messages if m.get("role") == "user"
@@ -3726,7 +3555,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
             if re.search(r'\bgit\b.*reset.*--hard.*FETCH_HEAD', _ch):
                 _git_reset_done = True
     tool_calls = _fix_sed_tool_calls(
-        tool_calls, sed_blocked=_sed_blocked, colorize_done=_colorize_done,
+        tool_calls, sed_blocked=_sed_blocked,
         empty_bash_count=_empty_bash_count, messages=messages,
     )
     tool_calls = _redirect_hallucinated_sed(tool_calls, settings=settings)
@@ -4474,14 +4303,14 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                         )
                         if _bash_blocked_already:
                             _adict_cap["command"] = (
-                                "printf '\\n◆ proxy: bash is still blocked — use Write tool to write files now.\\n'"
+                                "printf '\\n[WRITE NOW: bash is still blocked — use Write tool to write the file(s) now.]\\n'"
                             )
                             logger.info("[EXPLORATION-CAP-BLOCK] Bash already blocked once — using WRITE NOW marker")
                         else:
                             _adict_cap["command"] = (
-                                "printf '\\n◆ proxy: exploration limit reached. Write all changed files now using "
+                                "printf '\\n[WRITE NOW: Exploration limit reached. Write all changed files now using "
                                 "Write tool calls back-to-back — no bash between writes. "
-                                "Write complete file content for each file, then run one syntax check at the end.\\n'"
+                                "Write complete file content for each file, then run one syntax check at the end.]\\n'"
                             )
                         _tc_cap = {**_tc_cap, "function": {**_fn_cap, "arguments": json.dumps(_adict_cap)}}
                         logger.info("[EXPLORATION-CAP-BLOCK] Blocked bash call after exploration cap — no writes yet")
@@ -4729,7 +4558,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     # intercept any further ls/find/tree tool calls and replace with a blocking echo.
     # Mirrors RESET-DONE-GATE: we act on the tool CALL, not just the result.
     _lum_has_loop_block = (
-        "◆ proxy:" in _lum_content or
+        bool(re.search(r'◆ proxy:(?![^\n]*\balready\s+(?:written|colorized|non-empty)\b)', _lum_content)) or
         "[REPEATED COMMAND BLOCKED:" in _lum_content or
         "[LOOP DETECTED:" in _lum_content or
         "[EXPLORATION LOOP — RESULT SUPPRESSED:" in _lum_content or
@@ -4774,7 +4603,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 pass
         _new_tcs_timeout.append(_tc_to)
     tool_calls = _new_tcs_timeout
-    logger.info(f"[OAI-AGENTIC] len={len(full_text)} head={full_text[:200]!r} tail={full_text[-200:]!r} tool_calls={len(tool_calls)} sed_blocked={_sed_blocked} colorize_done={_colorize_done} empty_bash={_empty_bash_count} origin_warned={_origin_warned} git_fetches={_git_fetch_count} git_reset_done={_git_reset_done}")
+    logger.info(f"[OAI-AGENTIC] len={len(full_text)} head={full_text[:200]!r} tail={full_text[-200:]!r} tool_calls={len(tool_calls)} sed_blocked={_sed_blocked} empty_bash={_empty_bash_count} origin_warned={_origin_warned} git_fetches={_git_fetch_count} git_reset_done={_git_reset_done}")
 
     # If model responded with text-only or unparseable tool call (no tool call), nudge it once.
     # But suppress the nudge when the response looks like task completion — the model is done and
@@ -4803,7 +4632,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 r2 = await service.chat_completion(messages=nudge_messages, model=request.model, **kwargs)
                 nudge_result = r2.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
             nc, ntc = _parse_oai_tool_calls(nudge_result)
-            ntc = _fix_sed_tool_calls(ntc, sed_blocked=_sed_blocked, colorize_done=_colorize_done,
+            ntc = _fix_sed_tool_calls(ntc, sed_blocked=_sed_blocked,
                                       empty_bash_count=_empty_bash_count, messages=messages)
             ntc = _redirect_hallucinated_sed(ntc, settings=settings)
             logger.info(f"[OAI-NUDGE] nudge result len={len(nudge_result)} tool_calls={len(ntc)}")
