@@ -2115,7 +2115,15 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 _is_read_only_op = bool(re.search(r'^\s*(cat|head|tail|sed\s+-n\b|grep\b|awk\b|wc\b|diff\b|less\b|more\b|stat\b)\s', _last_actual_cmd))
                 _is_build_script = not _is_read_only_op and bool(re.search(r'\.sh\b|flutter\b|gradle\b|gradlew\b|npm\b|make\b|dart\b', _last_actual_cmd))
                 _has_merge_in_history = any(re.search(r'\bgit\s+merge\b', c) for c in bash_history)
-                _has_keystore_error = bool(re.search(r'keystore|signing|upload.*key|key.*store', content_str, re.IGNORECASE))
+                # Only treat as a signing error if the failure message itself names keystore/signing
+                # (not just Gradle task names like :app:validateSigningRelease in an unrelated failure)
+                _has_keystore_error = bool(re.search(
+                    r'(keystore|signing key|upload[\s_-]?key|key[\s_-]?store).*(?:not found|missing|does not exist|no such file|invalid|failed|error)|'
+                    r'(?:error|failed|missing|not found).*(?:keystore|signing key|upload[\s_-]?key)|'
+                    r'Keystore file.*does not exist|Could not read keystore|'
+                    r'Failed to read key|PKIX path|certificate',
+                    content_str, re.IGNORECASE
+                ))
                 _has_keyprops_error = bool(re.search(r'key\.properties|signing\.properties|keyAlias|keyPassword|storeFile|storePassword', content_str, re.IGNORECASE))
                 _keystore_was_restored = any(re.search(r'git show .+:.+\.(keystore|jks|p12)', c) for c in bash_history)
                 _build_succeeded_in_history = any(
@@ -2888,6 +2896,20 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                         tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                         cmd = _gs_new_cmd
                         logger.info(f"[GIT-SHOW-MKDIR] Auto-prepended mkdir -p for: {_gs_dir}")
+
+                # Guard: prevent git show from truncating an existing non-empty signing config file.
+                # git show returns empty when the path isn't in that commit; the > redirect then truncates
+                # an existing file to 0 bytes. Rewrite to a conditional so it only writes if file is absent/empty.
+                _gs_signing_m = re.match(r'(\s*(?:mkdir[^&]+&&\s*)?)(\bgit\s+show\s+\S+:\S*(?:key\.properties|signing\.properties))\s*>\s*(\S+)', cmd)
+                if _gs_signing_m:
+                    _gs_prefix = _gs_signing_m.group(1)
+                    _gs_showcmd = _gs_signing_m.group(2)
+                    _gs_target = _gs_signing_m.group(3).strip('\'"')
+                    _safe_cmd = f'{_gs_prefix.rstrip()} sh -c \'[ -s "{_gs_target}" ] && echo "◆ proxy: {_gs_target} already non-empty, skipping" || {_gs_showcmd} > {_gs_target}\''
+                    args_dict["command"] = _safe_cmd
+                    tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                    cmd = _safe_cmd
+                    logger.info(f"[GIT-SHOW-SIGN-GUARD] Rewrote git show to conditional for {_gs_target}")
 
                 # Block attempts to write text content into binary keystore/signing files
                 if re.search(r'open\s*\([^\)]*\.(keystore|jks|p12)[^\)]*,\s*[\'"]w[\'"]', cmd):
