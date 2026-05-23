@@ -130,19 +130,36 @@ verify_pyfw() {
 
 # Base64-encode the complex prompt to avoid SSH quoting issues
 AIKEY_PROMPT=$(cat <<'PROMPT'
-~/aikey-android is a fork of /home/verita84/aria (local mirror). Merge upstream changes while preserving:
+~/aikey-android is a fork of /home/verita84/aria (local mirror). Complete ALL steps in order:
+
+PRE-MERGE SETUP:
+1. Run `flutter --version`. If Dart SDK < 3.12.0, run `flutter upgrade` first.
+2. Restore signing keystore from git history: git show 7e4c990a:android/app/upload.keystore > android/app/upload.keystore
+3. Write android/key.properties with EXACTLY these contents (use the Write tool):
+   storePassword=AikeyApp2024!
+   keyPassword=AikeyApp2024!
+   keyAlias=aikey
+   storeFile=../app/upload.keystore
+4. Check pubspec.yaml for path dependencies pointing to non-existent local directories. Remove any such entries with: sed -i '/^  DEPNAME:/,+1d' pubspec.yaml  (replace DEPNAME with the actual dep name). Then run `flutter pub get` to confirm it resolves cleanly.
+
+MERGE:
+5. git merge local-aria/main --no-commit --allow-unrelated-histories
+6. CRITICAL: Resolve theme_props.dart conflict by keeping Aikey version (defaultDarkThemeProps = cyberpunkDarkThemeProps)
+7. For all other conflicts: git diff --name-only --diff-filter=U | xargs git checkout HEAD --
+8. Commit: git add -A && git commit -m 'Merge local-aria/main'
+
+BUILD:
+9. Run ./sync-apk.sh ONCE. If it fails:
+   - Dart SDK version error: run `flutter upgrade`, then retry once
+   - "proguard-android.txt is no longer supported" error: run: find ~/.pub-cache -name 'build.gradle' -path '*/flutter_inappwebview_android*' -exec sed -i 's/proguard-android\.txt/proguard-android-optimize.txt/g' {} +  then retry once
+   - Any other build error: investigate and fix, then retry once
+10. STOP IMMEDIATELY after ./sync-apk.sh completes successfully. Do not run git status, git log, or ./sync-apk.sh again.
+
+PRESERVE throughout:
 - Aikey branding (name, version in pubspec.yaml)
 - AI features: lib/provider/api/ai_service_provider.dart, lib/view/page/ai_chat_page.dart, lib/view/widget/ai_chat_widget.dart, lib/provider/api/auto_update_provider.dart
 - Custom theme: lib/constant/theme_props.dart (Cyberpunk Dark with defaultDarkThemeProps = cyberpunkDarkThemeProps), lib/constant/colors.dart (aikeyColor), lib/constant/builtin_misskey_colors.g.dart (Cyberpunk Dark with id: cafe0001-0000-4000-8000-cafe00000001)
 - Modified lib files: about_aria_page.dart, timeline_page.dart, post_form.dart, note_footer.dart, general_settings.dart, router.dart
-Steps:
-0. Run `flutter --version`. If Dart SDK < 3.12.0, run `flutter upgrade` first.
-1. git merge local-aria/main --no-commit --allow-unrelated-histories
-2. CRITICAL: Resolve theme_props.dart conflict by keeping Aikey version (defaultDarkThemeProps = cyberpunkDarkThemeProps)
-3. For all other conflicts: git diff --name-only --diff-filter=U | xargs git checkout HEAD --
-4. Commit: git add -A && git commit -m 'Merge local-aria/main'
-5. Run ./sync-apk.sh ONCE. If it fails with a Dart SDK version error (e.g. "requires SDK version >=X"), run `flutter upgrade` to get the required version, then run ./sync-apk.sh once more.
-6. STOP IMMEDIATELY after ./sync-apk.sh completes successfully. Do not run git status, git log, or ./sync-apk.sh again.
 PROMPT
 )
 
@@ -155,11 +172,6 @@ reset_aikey() {
         git reset --hard $AIKEY_RESET_COMMIT
         git remote get-url local-aria 2>/dev/null || git remote add local-aria /home/verita84/aria
         git fetch local-aria
-        git show 7e4c990a:android/app/upload.keystore > android/app/upload.keystore 2>/dev/null || true
-        printf 'storePassword=AikeyApp2024!\nkeyPassword=AikeyApp2024!\nkeyAlias=aikey\nstoreFile=../app/upload.keystore\n' > android/key.properties
-        sed -i '/^  rust_lib_aria:/,+1d' pubspec.yaml
-        git add pubspec.yaml && git commit -m 'Remove missing rust_lib_aria path dependency' 2>/dev/null || true
-        sed -i "s/getDefaultProguardFile('proguard-android.txt')/getDefaultProguardFile('proguard-android-optimize.txt')/g" ~/.pub-cache/hosted/pub.dev/flutter_inappwebview_android-*/android/build.gradle 2>/dev/null || true
         rm -f ~/.local/share/opencode/opencode.db ~/.local/share/opencode/opencode.db-wal ~/.local/share/opencode/opencode.db-shm
         echo '[aikey] reset done'
     "
