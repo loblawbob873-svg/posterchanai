@@ -2308,8 +2308,10 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     # For non-sed: append loop warning but keep original error message visible
                     _py_writes = bool(re.search(r'\bopen\s*\(.*,\s*["\']w["\']', last_cmd or ""))
                     _is_colorize_ctx = bool(
-                        re.search(r'\.sh\b', last_cmd or "") or
-                        any(re.search(r'\.sh\b', c) for c in bash_history[-5:])
+                        (re.search(r'\.sh\b', last_cmd or "") or
+                         any(re.search(r'\.sh\b', c) for c in bash_history[-5:])) and
+                        any(re.search(r'\\\\033|echo -e.*033|gc\.py|coloriz', c, re.IGNORECASE)
+                            for c in bash_history[-10:])
                     )
                     if _py_writes and _is_colorize_ctx:
                         content_str += (
