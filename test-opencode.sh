@@ -159,6 +159,7 @@ reset_aikey() {
         printf 'storePassword=AikeyApp2024!\nkeyPassword=AikeyApp2024!\nkeyAlias=aikey\nstoreFile=../app/upload.keystore\n' > android/key.properties
         sed -i '/^  rust_lib_aria:/,+1d' pubspec.yaml
         git add pubspec.yaml && git commit -m 'Remove missing rust_lib_aria path dependency' 2>/dev/null || true
+        sed -i "s/getDefaultProguardFile('proguard-android.txt')/getDefaultProguardFile('proguard-android-optimize.txt')/g" ~/.pub-cache/hosted/pub.dev/flutter_inappwebview_android-*/android/build.gradle 2>/dev/null || true
         rm -f ~/.local/share/opencode/opencode.db ~/.local/share/opencode/opencode.db-wal ~/.local/share/opencode/opencode.db-shm
         echo '[aikey] reset done'
     "

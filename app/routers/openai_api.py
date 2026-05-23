@@ -2551,7 +2551,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "If not complete, abandon this approach entirely and try a fundamentally different method.]"
                     )
             # In complex merge: after build runs, remind model to commit any newly generated tracked files
-            if _is_complex_merge_task and last_cmd and re.search(r'\bsync.apk\.sh\b|\bflutter\s+build\b|\bgradlew?\s+assembleRelease\b', last_cmd):
+            if _is_complex_merge_task and not _is_hard_failure and last_cmd and re.search(r'\bsync.apk\.sh\b|\bflutter\s+build\b|\bgradlew?\s+assembleRelease\b', last_cmd):
                 _has_committed = any(re.search(r'\bgit\s+commit\b', c) for c in bash_history)
                 if _has_committed:
                     content_str += (
