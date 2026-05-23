@@ -155,7 +155,8 @@ reset_aikey() {
         git reset --hard $AIKEY_RESET_COMMIT
         git remote get-url local-aria 2>/dev/null || git remote add local-aria /home/verita84/aria
         git fetch local-aria
-        rm -f ~/.local/share/opencode/opencode.db
+        git show 7e4c990a:android/app/upload.keystore > android/app/upload.keystore 2>/dev/null || true
+        rm -f ~/.local/share/opencode/opencode.db ~/.local/share/opencode/opencode.db-wal ~/.local/share/opencode/opencode.db-shm
         echo '[aikey] reset done'
     "
 }
