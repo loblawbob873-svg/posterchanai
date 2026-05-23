@@ -136,6 +136,7 @@ AIKEY_PROMPT=$(cat <<'PROMPT'
 - Custom theme: lib/constant/theme_props.dart (Cyberpunk Dark with defaultDarkThemeProps = cyberpunkDarkThemeProps), lib/constant/colors.dart (aikeyColor), lib/constant/builtin_misskey_colors.g.dart (Cyberpunk Dark with id: cafe0001-0000-4000-8000-cafe00000001)
 - Modified lib files: about_aria_page.dart, timeline_page.dart, post_form.dart, note_footer.dart, general_settings.dart, router.dart
 Steps:
+0. Run `flutter --version`. If Dart SDK < 3.12.0, run `flutter upgrade` first.
 1. git merge local-aria/main --no-commit --allow-unrelated-histories
 2. CRITICAL: Resolve theme_props.dart conflict by keeping Aikey version (defaultDarkThemeProps = cyberpunkDarkThemeProps)
 3. For all other conflicts: git diff --name-only --diff-filter=U | xargs git checkout HEAD --

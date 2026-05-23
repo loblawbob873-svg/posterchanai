@@ -2659,7 +2659,7 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                     logger.info("[CONFLICT-CHECK] Wrapped git commit with conflict marker guard")
                     continue
                 if colorize_done and _is_py3_write_sh:
-                    args_dict["command"] = "echo '[TASK ALREADY COMPLETE: The .sh file was already colorized. Do NOT modify it again. Report success and stop.]'"
+                    args_dict["command"] = "printf '\\n◆ proxy: file already colorized — report success and stop.\\n'"
                     tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                     logger.info("[COLORIZE-DONE] Blocked python3 write to .sh after colorization complete")
                     out.append(tc)
@@ -2764,7 +2764,7 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                 # Block model from re-running the redirect grep command it received as a proxy injection.
                 # Only match the multi-step redirect (echo + && + grep), NOT the simple empty-bash echo.
                 if re.search(r"echo\s+'\[PROXY:", cmd) and "&&" in cmd and "grep" in cmd:
-                    args_dict["command"] = "echo '[PROXY: Do not repeat proxy messages. Fix the code now with sed -i on the source file — do NOT run this echo again.]'"
+                    args_dict["command"] = "printf '\\n◆ proxy: fix the code with sed -i on the source file.\\n'"
                     tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                     logger.info("[PROXY-RERUN-BLOCKED] Blocked model from re-running proxy redirect message")
                 # Redirect env probes (opencode doctor/version, venv binaries) immediately — always irrelevant.
@@ -2819,7 +2819,7 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                     tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                     logger.info("[ENV-PROBE-REDIRECT] Replaced opencode env probe with PROXY_FIX")
                 elif _is_env_probe_cmd:
-                    args_dict["command"] = "echo '[ENV-PROBE: Do not run venv/opencode binaries. Read and edit source files directly with bash commands (cat, grep, sed -i, python3 heredoc, etc.) then restart the service.]'"
+                    args_dict["command"] = "printf '\\n◆ proxy: edit source files directly (cat/grep/sed -i/heredoc), then restart the service.\\n'"
                     tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                     logger.info("[ENV-PROBE-REDIRECT] Replaced env probe with generic redirect for non-fix task")
                 elif (_is_restart_cmd or _is_git_detour_cmd) and messages:
@@ -2852,9 +2852,7 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                     if not _cm_has_write:
                         _py_probe_file = re.match(r'\s*python3?\s+(/[^\s<>|&]+\.py|[^-\s][^\s<>|&]*\.py)\s*$', cmd).group(1)
                         args_dict["command"] = (
-                            f"echo '[PROBE-BLOCKED: Do not run {_py_probe_file} to test it — "
-                            "use the Edit or Write tool to directly modify the file with the requested changes. "
-                            "You have already read the file. Apply the theme/redesign changes now.]'"
+                            f"printf '\\n◆ proxy: do not run {_py_probe_file} — use Write/Edit tool to apply changes directly.\\n'"
                         )
                         tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                         logger.info(f"[PY-RUN-PROBE-BLOCKED] Blocked python3 file run before any writes: {cmd[:80]}")
@@ -3011,10 +3009,8 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                             # Replacement starts with color code — wrong! Inject error into result
                             _blocked = True
                             args_dict["command"] = (
-                                f"echo '[PROXY ERROR: Your sed replacement puts color codes BEFORE echo — "
-                                f"this produces broken bash syntax. "
-                                f"Correct pattern: sed -i '\"'\"'s/echo \\\"text\\\"/echo -e \"\\\\033[CODEmtext\\\\033[0m\"/'\"'\"' file "
-                                f"(color codes go INSIDE the echo string, not before the echo keyword)]'"
+                                f"printf '\\n◆ proxy: sed error — color codes must go inside the echo string, not before echo. "
+                                f"Pattern: sed -i s/echo \\\"text\\\"/echo -e \\\"\\\\033[CODEmtext\\\\033[0m\\\"/ file\\n'"
                             )
                             tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                             logger.info(f"[SED-BLOCK] Blocked color-before-echo: {cmd[:80]!r}")
@@ -3022,11 +3018,8 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False, colorize_do
                             # Replacement contains echo with an odd number of quotes — unclosed string
                             _blocked = True
                             args_dict["command"] = (
-                                "echo '[PROXY ERROR: Your sed replacement has an unclosed double-quote — "
-                                "the replacement string is incomplete (e.g. echo \" with no closing \"). "
-                                "This will corrupt the file by creating an unclosed bash string. "
-                                "The full replacement must be: echo -e \"\\\\033[CODEmTEXT\\\\033[0m\" "
-                                "Make sure the replacement ends with a closing \"]'"
+                                "printf '\\n◆ proxy: sed error — unclosed double-quote in replacement. "
+                                "Full replacement must end with closing quote: echo -e \\\"\\\\033[CODEmTEXT\\\\033[0m\\\"\\n'"
                             )
                             tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                             logger.info(f"[SED-BLOCK] Blocked unclosed-quote replacement: {cmd[:120]!r}")
@@ -3072,7 +3065,7 @@ def _normalize_tool(name: str, args: dict) -> tuple:
         args["description"] = (args.get("command") or "")[:80]
     # bash requires command — inject placeholder to avoid SchemaError and give model a clear signal
     if name in ("bash", "Bash") and not args.get("command"):
-        args["command"] = "echo '[PROXY: bash tool called with no command. Retry with {\"command\": \"<your shell command here>\"}]'"
+        args["command"] = "printf '\\n◆ proxy: bash called with no command — retry with {\"command\": \"<cmd>\"}\\n'"
     return name, args
 
 
@@ -3431,6 +3424,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     _last_user_msg = next((m for m in reversed(messages) if m.get("role") == "user"), None)
     _lum_content = str(_last_user_msg.get("content") or "") if _last_user_msg else ""
     _lum_has_any_loop_block = (
+        "◆ proxy:" in _lum_content or
         "[REPEATED COMMAND BLOCKED:" in _lum_content or
         "[LOOP DETECTED:" in _lum_content or
         "[EXPLORATION BLOCKED:" in _lum_content or
@@ -3450,6 +3444,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     _all_user_msgs_sc = [m for m in messages if m.get("role") == "user"]
     _prev_user_content_sc = str(_all_user_msgs_sc[-2].get("content") or "") if len(_all_user_msgs_sc) >= 2 else ""
     _prev_had_block_sc = (
+        "◆ proxy:" in _prev_user_content_sc or
         "[REPEATED COMMAND BLOCKED:" in _prev_user_content_sc or
         "[LOOP DETECTED:" in _prev_user_content_sc or
         "[EXPLORATION BLOCKED:" in _prev_user_content_sc or
@@ -3713,7 +3708,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 _write_success_paths.add(_wsp_hit.group(1).strip())
         for _wsp_hit in re.finditer(r'\[WRITE-SAVED[^:]*:\s*(/[^\]\s]+)[^\]]*SYNTAX_OK', _wsp_c):
             _write_success_paths.add(_wsp_hit.group(1).strip())
-        for _wsp_hit in re.finditer(r'\[ALREADY-DONE[^:]*:\s*(/[^\]\s]+)', _wsp_c):
+        for _wsp_hit in re.finditer(r'(?:\[ALREADY-DONE[^:]*:|◆ proxy: )(/[^\s\]]+)\s+already written', _wsp_c):
             _write_success_paths.add(_wsp_hit.group(1).strip())
     # Also detect paths from Write calls where the model provided filePath directly.
     # These succeed via opencode's Write tool but don't produce an AUTOFIX-WRITE-DONE marker.
@@ -3786,9 +3781,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                         any(m in _bash_cmd_blk for m in ("'w'", '"w"', "'w+'", '"w+"'))
                     ):
                         _bash_args_blk['command'] = (
-                            f"echo '[ALREADY-DONE: {_done_path_blk} is already written with "
-                            f"SYNTAX_OK. Do NOT write {_done_base_blk} again. "
-                            f"Write the OTHER required file(s) NOW.]'"
+                            f"printf '\\n◆ proxy: {_done_base_blk} already written (syntax OK) — write the other required files now.\\n'"
                         )
                         _bash_args_blk['description'] = f'Block rewrite of already-written {_done_base_blk}'
                         _tc_af = {
@@ -3834,9 +3827,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                 if _bpc_r.returncode != 0:
                                     _bpc_err = _bpc_r.stderr.decode('utf-8', errors='replace').strip()
                                     _bpc_args['command'] = (
-                                        f"echo '[BASH-PY-SYNTAX-ERR: {_bpc_base} Python syntax error: "
-                                        f"{_bpc_err[:200]}. Use the Write tool with "
-                                        f"filePath={_bpc_path} and correct Python code.]'"
+                                        f"printf '\\n◆ proxy: {_bpc_base} syntax error: {_bpc_err[:200]}. "
+                                        f"Use Write tool with filePath={_bpc_path} and correct code.\\n'"
                                     )
                                     _bpc_args['description'] = f'Block broken Python base64 write to {_bpc_base}'
                                     _tc_af = {**_tc_af, 'function': {'name': 'bash', 'arguments': json.dumps(_bpc_args)}}
@@ -3957,9 +3949,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                             'name': 'bash',
                             'arguments': json.dumps({
                                 'command': (
-                                    f"echo '[ALREADY-DONE: {_fp_af} is already written with "
-                                    f"SYNTAX_OK. Do NOT write {_fname_done_af} again. "
-                                    f"Write the OTHER required file(s) NOW.]'"
+                                    f"printf '\\n◆ proxy: {_fname_done_af} already written (syntax OK) — write the other required files now.\\n'"
                                 ),
                                 'description': f'Block rewrite of already-written {_fname_done_af}',
                             }),
@@ -4212,7 +4202,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                             # SKIP-FILE: after 2+ prior blocks for same file, give up and tell model to move on
                             _prior_blocked_for_fp = sum(
                                 1 for _bm in messages
-                                if "SYNTAX-ERROR-BLOCKED" in str(_bm.get("content", "")) and
+                                if ("SYNTAX-ERROR-BLOCKED" in str(_bm.get("content", "")) or
+                                    ("◆ proxy:" in str(_bm.get("content", "")) and "not written" in str(_bm.get("content", "")))) and
                                 (_fp_af in str(_bm.get("content", "")) or
                                  (_fp_af_base and _fp_af_base in str(_bm.get("content", ""))))
                             )
@@ -4232,19 +4223,13 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                 logger.info(f"[TOOL-CALL-AUTOFIX] BLOCK-OVERRIDE: using override for {_fp_af} (prior_blocked={_prior_blocked_for_fp})")
                             elif _prior_blocked_for_fp >= 2:
                                 _blk_cmd = (
-                                    f"echo '[SKIP-FILE: {_fp_af} blocked {_prior_blocked_for_fp + 1} times "
-                                    f"and cannot be auto-fixed. Abandon {_fname_blk}. "
-                                    f"Write ALL other pending files NOW instead.]'"
+                                    f"printf '\\n◆ proxy: {_fname_blk} cannot be auto-fixed — write the other pending files now.\\n'"
                                 )
                                 logger.info(f"[SKIP-FILE] giving up on {_fp_af} after {_prior_blocked_for_fp + 1} blocks")
                             else:
                                 _blk_cmd = (
-                                    f"echo '[SYNTAX-ERROR-BLOCKED: {_fp_af} was NOT written — "
-                                    f"auto-fix failed ({_pyc_err_short}). "
-                                    f"Write a COMPLETE, SYNTAX-VALID version of {_fname_blk} under 40 lines "
-                                    f"using ONLY simple string concatenation (no triple quotes, no f-strings, "
-                                    f"no HTML/raw text outside string literals). "
-                                    f"Define all required functions. Write it NOW.]'"
+                                    f"printf '\\n◆ proxy: {_fname_blk} not written — syntax error: {_pyc_err_short}. "
+                                    f"Write a complete, valid version under 40 lines using string concatenation only.\\n'"
                                 )
                             _tc_af = {
                                 **_tc_af,
@@ -4358,11 +4343,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     if _is_verify_or_explore and not _cmd_has_redirect:
                         _rep_files_str = ", ".join(_repeat_written.keys())
                         _adict_rep["command"] = (
-                            f"echo '[STOP REWRITING THE SAME FILE: You have written {_rep_files_str} "
-                            f"{list(_repeat_written.values())[0]} times but it still has errors. "
-                            "Stop trying to fix it now. Write the OTHER files that need to change FIRST. "
-                            "Come back to fix this file AFTER all other files are written. "
-                            "Use the Write tool to write the next required file NOW.]'"
+                            f"printf '\\n◆ proxy: {_rep_files_str} rewritten {list(_repeat_written.values())[0]}x — "
+                            f"write the other required files first, then come back to fix this one.\\n'"
                         )
                         _tc_rep = {**_tc_rep, "function": {**_fn_rep, "arguments": json.dumps(_adict_rep)}}
                         logger.info(f"[SAME-FILE-LOOP-BLOCK] Blocked verify after {_repeat_written} repeated writes")
@@ -4386,25 +4368,19 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     if not _cap_cmd_is_write:
                         # If BASH BLOCKED already fired once, use a different marker to avoid LOOP-SC
                         _bash_blocked_already = any(
-                            "[BASH BLOCKED:" in str(m.get("content") or "")
+                            ("◆ proxy:" in str(m.get("content") or "") or "[BASH BLOCKED:" in str(m.get("content") or ""))
                             for m in messages if m.get("role") == "user"
                         )
                         if _bash_blocked_already:
                             _adict_cap["command"] = (
-                                "echo '[WRITE NOW: The exploration cap already fired — bash is still blocked. "
-                                "Use Write tool calls immediately. Do NOT run any more bash commands. "
-                                "Write EVERY file that needs to change in this response, back-to-back Write calls.]'"
+                                "printf '\\n◆ proxy: bash is still blocked — use Write tool to write files now.\\n'"
                             )
                             logger.info("[EXPLORATION-CAP-BLOCK] Bash already blocked once — using WRITE NOW marker")
                         else:
                             _adict_cap["command"] = (
-                                "echo '[BASH BLOCKED: Exploration cap reached. Stop running bash commands. "
-                                "You have already read the files you need. "
-                                "THIS SINGLE RESPONSE must include Write tool calls for EVERY file that needs to change. "
-                                "Include multiple Write calls back-to-back in this same response — no Bash between them. "
-                                "Write the COMPLETE redesigned content for each file, one after another. "
-                                "Do NOT write one file and then run bash to verify — write ALL files first in this response, "
-                                "then check syntax in a single bash call at the very end.]'"
+                                "printf '\\n◆ proxy: exploration limit reached. Write all changed files now using "
+                                "Write tool calls back-to-back — no bash between writes. "
+                                "Write complete file content for each file, then run one syntax check at the end.\\n'"
                             )
                         _tc_cap = {**_tc_cap, "function": {**_fn_cap, "arguments": json.dumps(_adict_cap)}}
                         logger.info("[EXPLORATION-CAP-BLOCK] Blocked bash call after exploration cap — no writes yet")
@@ -4432,10 +4408,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     ))
                     if _is_verify_cmd:
                         _adict_post["command"] = (
-                            f"echo '[WRITE MORE FILES FIRST: You have written {_write_call_count} file(s) so far "
-                            "but verification bash is blocked until all files are written. "
-                            "Write the remaining files NOW using Write tool calls in this same response. "
-                            "Complete all file writes, THEN run a single verification bash at the end.]'"
+                            f"printf '\\n◆ proxy: write remaining files first ({_write_call_count} written so far). "
+                            "Complete all Write calls, then run one verification bash at the end.\\n'"
                         )
                         _tc_post = {**_tc_post, "function": {**_fn_post, "arguments": json.dumps(_adict_post)}}
                         logger.info(f"[POST-WRITE-CAP-BLOCK] Blocked verify bash after {_write_call_count} write(s)")
@@ -4469,10 +4443,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     _cmd_b = _adict_b.get("command", "").strip()
                     if any(_scmd in _cmd_b or _cmd_b in _scmd for _scmd in _successful_build_cmds):
                         _adict_b["command"] = (
-                            f"echo '[REPEATED COMMAND BLOCKED: This build/deploy command already succeeded earlier. "
-                            "Running it again will not change the result. "
-                            "STOP — the build is complete. Do not run any more build or deploy commands. "
-                            "Report the result and stop immediately.]'"
+                            "printf '\\n◆ proxy: this build command already ran and succeeded. "
+                            "Report the result and stop.\\n'"
                         )
                         _tc_b = {**_tc_b, "function": {**_fn_b, "arguments": json.dumps(_adict_b)}}
                         logger.info(f"[BUILD-REPEAT-BLOCK] Blocked repeated build cmd: {_cmd_b[:80]}")
@@ -4619,7 +4591,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     _adict = json.loads(_fn.get("arguments", "{}"))
                     _cmd = _adict.get("command", "")
                     if re.search(r'\bgit\b', _cmd) and not re.search(r'\bgit\b.*reset.*--hard.*FETCH_HEAD', _cmd):
-                        _adict["command"] = "echo '[TASK COMPLETE: The repository was successfully reset to the source HEAD. Stop — do not run any more git commands. Report success.]'"
+                        _adict["command"] = "printf '\\n◆ proxy: repo reset complete — report success and stop.\\n'"
                         _tc = {**_tc, "function": {**_fn, "arguments": json.dumps(_adict)}}
                         logger.info(f"[RESET-DONE-GATE] Blocked git cmd after reset done: {_cmd[:60]}")
                 except Exception:
@@ -4652,6 +4624,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     # intercept any further ls/find/tree tool calls and replace with a blocking echo.
     # Mirrors RESET-DONE-GATE: we act on the tool CALL, not just the result.
     _lum_has_loop_block = (
+        "◆ proxy:" in _lum_content or
         "[REPEATED COMMAND BLOCKED:" in _lum_content or
         "[LOOP DETECTED:" in _lum_content or
         "[EXPLORATION LOOP — RESULT SUPPRESSED:" in _lum_content or
@@ -4669,10 +4642,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     _cmd_exp = _adict_exp.get("command", "")
                     if re.search(r'^\s*(ls\b|find\b|tree\b)', _cmd_exp):
                         _adict_exp["command"] = (
-                            "echo '[EXPLORATION BLOCKED: Directory listing is suppressed — "
-                            "you have already listed directories multiple times. "
-                            "Take a CONCRETE action now: create the missing file, "
-                            "read a specific file with cat/grep, or fix the error directly.]'"
+                            "printf '\\n◆ proxy: directory listing blocked — take a concrete action: "
+                            "create the missing file, read a specific file with cat/grep, or fix the error directly.\\n'"
                         )
                         _tc_exp = {**_tc_exp, "function": {**_fn_exp, "arguments": json.dumps(_adict_exp)}}
                         logger.info(f"[EXPLORATION-GATE] Blocked ls/find/tree after suppression: {_cmd_exp[:60]}")
