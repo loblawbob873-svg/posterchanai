@@ -4323,7 +4323,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 _is_read_dd = bool(re.search(r'^\s*(grep|cat|head|tail|wc|sed\s+-n)\b', _cmd_dd))
                 _is_write_dd = bool(re.search(r'sed\s+-i|>\s*\S|python3?\s*<<|python3?\s+-c|\.write\s*\(', _cmd_dd))
                 _sh_target_dd = (re.search(r'(/[\w./-]+\.sh)\b', _cmd_dd) or re.search(r"open\s*\(\s*['\"]([^'\"]+\.sh)['\"]", _cmd_dd))
-                _broken_target_dd = _sh_target_dd and (_sh_target_dd.group(1) in _broken_sh_files)
+                _broken_target_dd = False  # _broken_sh_files not in scope here
                 if _is_read_dd and not _is_write_dd and bash_cmd_count.get(_cmd_dd, 0) >= 2:
                     _adict_dd["command"] = (
                         f"printf '\\n◆ proxy: already ran this exact command {bash_cmd_count[_cmd_dd]}x — "
