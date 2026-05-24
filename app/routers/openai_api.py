@@ -4329,7 +4329,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                         "read lines, modify the ones you want, write ALL lines back.\\n'".format(len(_cmd_dd))
                     )
                     _tc_dd = {**_tc_dd, "function": {**_fn_dd, "arguments": json.dumps(_adict_dd)}}
-                    logger.info(f"[LONG-SED-BLOCK] Blocked overly long sed -i ({len(_cmd_dd)} chars)")
+                    logger.info(f"[LONG-SED-BLOCK] Blocked overly long sed -i ({len(_cmd_dd)} chars)")  # general-purpose
                 elif _is_write_dd and _broken_target_dd:
                     _sh_name_dd = _sh_target_dd.group(1)
                     _adict_dd["command"] = (
