@@ -4319,6 +4319,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 _raw_args_dd = _fn_dd.get("arguments", "{}")
                 _adict_dd = json.loads(_raw_args_dd) if isinstance(_raw_args_dd, str) else dict(_raw_args_dd)
                 _cmd_dd = _adict_dd.get("command", "")
+                logger.info(f"[DEDUP-DEBUG] name={_fn_dd.get('name')!r} raw_args_type={type(_raw_args_dd).__name__} raw_args_len={len(_raw_args_dd) if isinstance(_raw_args_dd, str) else '?'} cmd_len={len(_cmd_dd)} cmd_head={_cmd_dd[:80]!r}")
                 _is_read_dd = bool(re.search(r'^\s*(grep|cat|head|tail|wc|sed\s+-n)\b', _cmd_dd))
                 _is_write_dd = bool(re.search(r'sed\s+-i|>\s*\S|python3?\s*<<|python3?\s+-c|\.write\s*\(', _cmd_dd))
                 _sh_target_dd = (re.search(r'(/[\w./-]+\.sh)\b', _cmd_dd) or re.search(r"open\s*\(\s*['\"]([^'\"]+\.sh)['\"]", _cmd_dd))
@@ -4356,8 +4357,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     )
                     _tc_dd = {**_tc_dd, "function": {**_fn_dd, "arguments": json.dumps(_adict_dd)}}
                     logger.info(f"[BROKEN-SH-BLOCK] Blocked write to broken {_sh_name_dd}")
-            except Exception:
-                pass
+            except Exception as _dedup_exc:
+                logger.warning(f"[DEDUP-EXCEPT] Caught exception in dedup loop: {type(_dedup_exc).__name__}: {_dedup_exc}")
         _new_tcs_dedup.append(_tc_dd)
     tool_calls = _new_tcs_dedup
     # Block bash calls when exploration cap has fired and no file writes have happened
