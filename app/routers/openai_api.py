@@ -484,6 +484,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
     silent_sed_sh_count = 0        # Number of sed -i on .sh files that produced no output
     _exploration_cap_injected = 0  # How many times [EXPLORATION CAP:] was injected — 2nd+ use different tag
     _wrong_file_warned = set()   # files already warned about via WRONG-FILE-WARN; de-dupes across history replay
+    _broken_sh_files = set()   # .sh files where a python3 write produced a bash -n syntax error
     # Detect complex merge tasks (conflict resolution, file preservation) — skip simple-sync shortcuts
     # Only scan the FIRST user message — proxy-injected tool results may contain "checkout HEAD" etc.
     # and would falsely trigger these flags on unrelated tasks.
@@ -2463,7 +2464,29 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             content_str += f"\n\n[AUTO-VERIFY: bash -n {_sh_ref} → SYNTAX OK. Verify the changes look correct with grep.]"
                         else:
                             _bash_err = (_bash_n.stderr or '').strip()[:300]
-                            content_str += f"\n\n[AUTO-VERIFY: bash -n {_sh_ref} → SYNTAX ERROR:\n{_bash_err}\nFix the above error in {_sh_ref} before proceeding.]"
+                            _broken_sh_files.add(_sh_ref)
+                            # Check for truncation vs git HEAD
+                            _trunc_hint = ""
+                            try:
+                                import subprocess as _sp_trunc
+                                _orig_txt = _sp_trunc.run(
+                                    ['git', '-C', os.path.dirname(os.path.abspath(_sh_ref)),
+                                     'show', f'HEAD:{os.path.basename(_sh_ref)}'],
+                                    capture_output=True, text=True, timeout=10
+                                )
+                                if _orig_txt.returncode == 0:
+                                    _orig_lc = _orig_txt.stdout.count('\n')
+                                    _new_lc = open(_sh_ref).read().count('\n')
+                                    if _orig_lc > 0 and _new_lc < _orig_lc * 0.85:
+                                        _trunc_hint = (
+                                            f"\n[TRUNCATION: Original had {_orig_lc} lines, rewritten file has only {_new_lc} lines. "
+                                            "Your script is DROPPING non-echo lines. Fix: for every line in the file, "
+                                            "write it back — if it's an echo statement, write the colorized version; "
+                                            "otherwise write the ORIGINAL line unchanged. Do NOT skip any lines.]"
+                                        )
+                            except Exception:
+                                pass
+                            content_str += f"\n\n[AUTO-VERIFY: bash -n {_sh_ref} → SYNTAX ERROR:\n{_bash_err}{_trunc_hint}\nFix the above error in {_sh_ref} before proceeding.]"
                     else:
                         content_str += f"\n\n[AUTO-VERIFY: {_sh_ref} not found on proxy host — verify it was written correctly.]"
                 except Exception as _bne:
@@ -4289,7 +4312,9 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 _adict_dd = json.loads(_fn_dd.get("arguments", "{}"))
                 _cmd_dd = _adict_dd.get("command", "")
                 _is_read_dd = bool(re.search(r'^\s*(grep|cat|head|tail|wc|sed\s+-n)\b', _cmd_dd))
-                _is_write_dd = bool(re.search(r'sed\s+-i|>\s*\S|python3?\s*<<|\.write\s*\(', _cmd_dd))
+                _is_write_dd = bool(re.search(r'sed\s+-i|>\s*\S|python3?\s*<<|python3?\s+-c|\.write\s*\(', _cmd_dd))
+                _sh_target_dd = (re.search(r'(/[\w./-]+\.sh)\b', _cmd_dd) or re.search(r"open\s*\(\s*['\"]([^'\"]+\.sh)['\"]", _cmd_dd))
+                _broken_target_dd = _sh_target_dd and (_sh_target_dd.group(1) in _broken_sh_files)
                 if _is_read_dd and not _is_write_dd and bash_cmd_count.get(_cmd_dd, 0) >= 2:
                     _adict_dd["command"] = (
                         f"printf '\\n◆ proxy: already ran this exact command {bash_cmd_count[_cmd_dd]}x — "
@@ -4297,6 +4322,16 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     )
                     _tc_dd = {**_tc_dd, "function": {**_fn_dd, "arguments": json.dumps(_adict_dd)}}
                     logger.info(f"[REPEAT-BLOCK] Blocked repeated read: {_cmd_dd[:60]!r} (seen {bash_cmd_count[_cmd_dd]}x)")
+                elif _is_write_dd and _broken_target_dd:
+                    _sh_name_dd = _sh_target_dd.group(1)
+                    _adict_dd["command"] = (
+                        f"printf '\\n◆ proxy: {os.path.basename(_sh_name_dd)} was written with syntax errors and missing lines. "
+                        "Fix: your loop must write EVERY line — echo lines get colorized, all other lines written unchanged. "
+                        "Pattern: for line in lines: new_lines.append(colorize(line) if is_echo(line) else line). "
+                        "Do NOT filter out non-echo lines.\\n'"
+                    )
+                    _tc_dd = {**_tc_dd, "function": {**_fn_dd, "arguments": json.dumps(_adict_dd)}}
+                    logger.info(f"[BROKEN-SH-BLOCK] Blocked write to broken {_sh_name_dd}")
             except Exception:
                 pass
         _new_tcs_dedup.append(_tc_dd)
