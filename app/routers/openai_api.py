@@ -4322,6 +4322,14 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     )
                     _tc_dd = {**_tc_dd, "function": {**_fn_dd, "arguments": json.dumps(_adict_dd)}}
                     logger.info(f"[REPEAT-BLOCK] Blocked repeated read: {_cmd_dd[:60]!r} (seen {bash_cmd_count[_cmd_dd]}x)")
+                elif _is_write_dd and re.search(r'\bsed\s+-i\b', _cmd_dd) and len(_cmd_dd) > 2000:
+                    _adict_dd["command"] = (
+                        "printf '\\n◆ proxy: sed -i command is too long ({} chars) — complex sed commands almost always "
+                        "fail due to quoting/escaping issues. Use python3 with open() to edit the file line-by-line instead: "
+                        "read lines, modify the ones you want, write ALL lines back.\\n'".format(len(_cmd_dd))
+                    )
+                    _tc_dd = {**_tc_dd, "function": {**_fn_dd, "arguments": json.dumps(_adict_dd)}}
+                    logger.info(f"[LONG-SED-BLOCK] Blocked overly long sed -i ({len(_cmd_dd)} chars)")
                 elif _is_write_dd and _broken_target_dd:
                     _sh_name_dd = _sh_target_dd.group(1)
                     _adict_dd["command"] = (
