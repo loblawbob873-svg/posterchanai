@@ -3046,12 +3046,13 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False,
                     _replacement_m = re.search(r's[/|!][^/|!]*/([^/|!]+)[/|!]', cmd)
                     if _replacement_m:
                         _repl = _replacement_m.group(1)
-                        if re.search(r'^\\+033|^\\+e\[', _repl):
-                            # Replacement starts with color code — wrong! Inject error into result
+                        if re.search(r'^\\+033|^\\+e\[|^\[[\d;]+m', _repl):
+                            # Replacement starts with color code (with or without \033) — wrong!
                             _blocked = True
                             args_dict["command"] = (
                                 f"printf '\\n◆ proxy: sed error — color codes must go inside the echo string, not before echo. "
-                                f"Pattern: sed -i s/echo \\\"text\\\"/echo -e \\\"\\\\033[CODEmtext\\\\033[0m\\\"/ file\\n'"
+                                f"The replacement must start with echo -e and the \\\\033 escape: "
+                                f"sed -i s/echo \\\"text\\\"/echo -e \\\"\\\\033[CODEmtext\\\\033[0m\\\"/ file\\n'"
                             )
                             tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                             logger.info(f"[SED-BLOCK] Blocked color-before-echo: {cmd[:80]!r}")
