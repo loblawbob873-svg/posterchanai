@@ -1486,9 +1486,15 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     )
                 else:
                     content_str = (
-                        "[ERROR: Python SyntaxError in heredoc — likely an unescaped quote inside a string or regex. "
-                        "Common cause: a quote character inside a regex or f-string that terminates the outer string early. "
-                        "Fix the quoting in the script, then retry.]"
+                        content_str +
+                        "\n\n[PROXY: Python SyntaxError in heredoc — backslash or quote escaping inside the heredoc body "
+                        "caused a Python parse error. To avoid this entirely: write the script to a temp file instead: "
+                        "cat > /tmp/fix.py << 'FIXEOF'\\n"
+                        "# python script here — no heredoc quoting issues, backslashes work normally\\n"
+                        "FIXEOF\\n"
+                        "python3 /tmp/fix.py\\n"
+                        "Inside a quoted cat heredoc (FIXEOF not FIXEOF), the Python source is passed "
+                        "byte-for-byte with no shell expansion or extra escaping.]"
                     )
             # Intercept py_compile SyntaxError on a .py file written by Write tool
             elif (
