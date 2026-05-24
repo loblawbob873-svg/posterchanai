@@ -488,6 +488,26 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
     # Only scan the FIRST user message — proxy-injected tool results may contain "checkout HEAD" etc.
     # and would falsely trigger these flags on unrelated tasks.
     _first_user_text = next((m.get("content") or "" for m in messages if m.get("role") == "user"), "")
+    # FILE-INJECT: On the very first proxy call (no assistant messages yet), pre-load files mentioned in
+    # the task prompt into the context so the model can write them without grep exploration.
+    # Generic — applies to any file-editing task with an absolute path in the prompt.
+    _is_first_proxy_call = not any(m.get("role") == "assistant" for m in messages)
+    _file_inject_map: dict = {}  # path -> content, built once here, applied when we hit the user message
+    if _is_first_proxy_call and _first_user_text:
+        _fi_paths = re.findall(
+            r'(/[\w./-]+\.(?:sh|bash|py|js|ts|dart|html?|css|yaml|json|toml|cfg|conf|txt))',
+            _first_user_text
+        )
+        for _fip in _fi_paths[:3]:
+            if os.path.isfile(_fip):
+                try:
+                    with open(_fip, 'r', errors='replace') as _fh:
+                        _fc = _fh.read()
+                    if 0 < len(_fc) < 200000:
+                        _file_inject_map[_fip] = _fc
+                        logger.info(f"[FILE-INJECT] Will inject {_fip} ({len(_fc)} chars) into initial context")
+                except Exception as _fie:
+                    logger.warning(f"[FILE-INJECT] Error reading {_fip}: {_fie}")
     _is_complex_merge_task = bool(re.search(r'\b(conflict|preserve|resolve|keep\s+\w+\s+version|branding|checkout\s+HEAD)\b', _first_user_text, re.IGNORECASE))
     # Git sync task: fetching from a local mirror to sync two repos (not just incidental git operations)
     _is_git_sync_task = bool(re.search(r'\bsync\b|\blocal[-\s]mirror\b|\bfork\s+of\b|\bmerge\s+upstream\b', _first_user_text, re.IGNORECASE))
@@ -509,6 +529,11 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # WRITE-DONE from previous task cycles don't block rewrites in the new cycle.
             # The test resets files between runs; the proxy must allow the model to rewrite.
             _write_success_paths = set()
+            # FILE-INJECT: apply pre-loaded file content to the first user message only
+            if _file_inject_map:
+                for _fip, _fc in _file_inject_map.items():
+                    content = str(content) + f'\n\n<file path="{_fip}">\n{_fc}\n</file>'
+                _file_inject_map = {}  # only inject once
         if role == "system":
             combined = (content + "\n\n" + tools_text).strip() if tools_text else content
             result.append({"role": "system", "content": combined})
@@ -4254,6 +4279,28 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 logger.warning(f"[TOOL-CALL-AUTOFIX] error: {_e_af}")
         _tc_af_list.append(_tc_af)
     tool_calls = _tc_af_list
+    # Block repeated identical read-only bash commands early (before the LLM call adds them to history).
+    # The ◆ proxy: marker gets stored by opencode so LOOP-SC-CHECK can detect it.
+    _new_tcs_dedup = []
+    for _tc_dd in tool_calls:
+        _fn_dd = _tc_dd.get("function", {})
+        if _fn_dd.get("name", "").lower() == "bash":
+            try:
+                _adict_dd = json.loads(_fn_dd.get("arguments", "{}"))
+                _cmd_dd = _adict_dd.get("command", "")
+                _is_read_dd = bool(re.search(r'^\s*(grep|cat|head|tail|wc|sed\s+-n)\b', _cmd_dd))
+                _is_write_dd = bool(re.search(r'sed\s+-i|>\s*\S|python3?\s*<<|\.write\s*\(', _cmd_dd))
+                if _is_read_dd and not _is_write_dd and bash_cmd_count.get(_cmd_dd, 0) >= 2:
+                    _adict_dd["command"] = (
+                        f"printf '\\n◆ proxy: already ran this exact command {bash_cmd_count[_cmd_dd]}x — "
+                        f"the output will not change. Try a different approach or write the file directly.\\n'"
+                    )
+                    _tc_dd = {**_tc_dd, "function": {**_fn_dd, "arguments": json.dumps(_adict_dd)}}
+                    logger.info(f"[REPEAT-BLOCK] Blocked repeated read: {_cmd_dd[:60]!r} (seen {bash_cmd_count[_cmd_dd]}x)")
+            except Exception:
+                pass
+        _new_tcs_dedup.append(_tc_dd)
+    tool_calls = _new_tcs_dedup
     # Block bash calls when exploration cap has fired and no file writes have happened
     # This forces the model to use Edit/Write tool instead of continuing bash exploration
     _exploration_capped = any(
