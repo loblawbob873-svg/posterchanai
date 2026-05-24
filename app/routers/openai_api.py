@@ -4316,7 +4316,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         _fn_dd = _tc_dd.get("function", {})
         if _fn_dd.get("name", "").lower() == "bash":
             try:
-                _adict_dd = json.loads(_fn_dd.get("arguments", "{}"))
+                _raw_args_dd = _fn_dd.get("arguments", "{}")
+                _adict_dd = json.loads(_raw_args_dd) if isinstance(_raw_args_dd, str) else dict(_raw_args_dd)
                 _cmd_dd = _adict_dd.get("command", "")
                 _is_read_dd = bool(re.search(r'^\s*(grep|cat|head|tail|wc|sed\s+-n)\b', _cmd_dd))
                 _is_write_dd = bool(re.search(r'sed\s+-i|>\s*\S|python3?\s*<<|python3?\s+-c|\.write\s*\(', _cmd_dd))
