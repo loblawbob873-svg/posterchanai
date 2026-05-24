@@ -4311,6 +4311,34 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     tool_calls = _tc_af_list
     # Block repeated identical read-only bash commands early (before the LLM call adds them to history).
     # The ◆ proxy: marker gets stored by opencode so LOOP-SC-CHECK can detect it.
+    # Build local bash command frequency map from history (bash_cmd_count lives in _oai_messages_for_tools scope)
+    _bash_cmd_count_dd = {}
+    for _m_bcc in messages:
+        if _m_bcc.get("role") != "assistant":
+            continue
+        for _tc_bcc in (_m_bcc.get("tool_calls") or []):
+            try:
+                _fn_bcc = _tc_bcc.get("function", {})
+                if _fn_bcc.get("name", "") in ("bash", "Bash"):
+                    _args_bcc = json.loads(_fn_bcc.get("arguments", "{}") or "{}")
+                    _cmd_bcc = _args_bcc.get("command", "")
+                    if _cmd_bcc:
+                        _bash_cmd_count_dd[_cmd_bcc] = _bash_cmd_count_dd.get(_cmd_bcc, 0) + 1
+            except Exception:
+                pass
+        _c_bcc = str(_m_bcc.get("content") or "")
+        for _tcx in re.finditer(r'<tool_call>(.*?)</tool_call>', _c_bcc, re.DOTALL):
+            try:
+                _px = json.loads(_tcx.group(1).strip())
+                if _px.get("name", "") in ("bash", "Bash"):
+                    _ax = _px.get("arguments", {})
+                    if isinstance(_ax, str):
+                        _ax = json.loads(_ax)
+                    _cx = _ax.get("command", "")
+                    if _cx:
+                        _bash_cmd_count_dd[_cx] = _bash_cmd_count_dd.get(_cx, 0) + 1
+            except Exception:
+                pass
     _new_tcs_dedup = []
     for _tc_dd in tool_calls:
         _fn_dd = _tc_dd.get("function", {})
@@ -4319,26 +4347,25 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 _raw_args_dd = _fn_dd.get("arguments", "{}")
                 _adict_dd = json.loads(_raw_args_dd) if isinstance(_raw_args_dd, str) else dict(_raw_args_dd)
                 _cmd_dd = _adict_dd.get("command", "")
-                logger.info(f"[DEDUP-DEBUG] name={_fn_dd.get('name')!r} raw_args_type={type(_raw_args_dd).__name__} raw_args_len={len(_raw_args_dd) if isinstance(_raw_args_dd, str) else '?'} cmd_len={len(_cmd_dd)} cmd_head={_cmd_dd[:80]!r}")
                 _is_read_dd = bool(re.search(r'^\s*(grep|cat|head|tail|wc|sed\s+-n)\b', _cmd_dd))
                 _is_write_dd = bool(re.search(r'sed\s+-i|>\s*\S|python3?\s*<<|python3?\s+-c|\.write\s*\(', _cmd_dd))
                 _sh_target_dd = (re.search(r'(/[\w./-]+\.sh)\b', _cmd_dd) or re.search(r"open\s*\(\s*['\"]([^'\"]+\.sh)['\"]", _cmd_dd))
                 _broken_target_dd = False  # _broken_sh_files not in scope here
-                if _is_read_dd and not _is_write_dd and bash_cmd_count.get(_cmd_dd, 0) >= 2:
+                if _is_read_dd and not _is_write_dd and _bash_cmd_count_dd.get(_cmd_dd, 0) >= 2:
                     _adict_dd["command"] = (
-                        f"printf '\\n◆ proxy: already ran this exact command {bash_cmd_count[_cmd_dd]}x — "
+                        f"printf '\\n◆ proxy: already ran this exact command {_bash_cmd_count_dd[_cmd_dd]}x — "
                         f"the output will not change. Try a different approach or write the file directly.\\n'"
                     )
                     _tc_dd = {**_tc_dd, "function": {**_fn_dd, "arguments": json.dumps(_adict_dd)}}
-                    logger.info(f"[REPEAT-BLOCK] Blocked repeated read: {_cmd_dd[:60]!r} (seen {bash_cmd_count[_cmd_dd]}x)")
-                elif _is_write_dd and bash_cmd_count.get(_cmd_dd, 0) >= 3:
+                    logger.info(f"[REPEAT-BLOCK] Blocked repeated read: {_cmd_dd[:60]!r} (seen {_bash_cmd_count_dd[_cmd_dd]}x)")
+                elif _is_write_dd and _bash_cmd_count_dd.get(_cmd_dd, 0) >= 3:
                     _adict_dd["command"] = (
-                        f"printf '\\n◆ proxy: this exact write command has run {bash_cmd_count[_cmd_dd]}x with no new result — "
+                        f"printf '\\n◆ proxy: this exact write command has run {_bash_cmd_count_dd[_cmd_dd]}x with no new result — "
                         f"retrying identical code will not fix the problem. "
                         f"Write the script to /tmp/fix.py using cat > /tmp/fix.py << FIXEOF ... FIXEOF, then run python3 /tmp/fix.py.\\n'"
                     )
                     _tc_dd = {**_tc_dd, "function": {**_fn_dd, "arguments": json.dumps(_adict_dd)}}
-                    logger.info(f"[REPEAT-WRITE-BLOCK] Blocked repeated write: {_cmd_dd[:60]!r} (seen {bash_cmd_count[_cmd_dd]}x)")
+                    logger.info(f"[REPEAT-WRITE-BLOCK] Blocked repeated write: {_cmd_dd[:60]!r} (seen {_bash_cmd_count_dd[_cmd_dd]}x)")
                 elif _is_write_dd and re.search(r'\bsed\s+-i\b', _cmd_dd) and len(_cmd_dd) > 2000:
                     _adict_dd["command"] = (
                         "printf '\\n◆ proxy: sed -i command is too long ({} chars) — complex sed commands almost always "
