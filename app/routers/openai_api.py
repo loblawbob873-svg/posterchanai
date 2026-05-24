@@ -4329,6 +4329,14 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     )
                     _tc_dd = {**_tc_dd, "function": {**_fn_dd, "arguments": json.dumps(_adict_dd)}}
                     logger.info(f"[REPEAT-BLOCK] Blocked repeated read: {_cmd_dd[:60]!r} (seen {bash_cmd_count[_cmd_dd]}x)")
+                elif _is_write_dd and bash_cmd_count.get(_cmd_dd, 0) >= 3:
+                    _adict_dd["command"] = (
+                        f"printf '\\n◆ proxy: this exact write command has run {bash_cmd_count[_cmd_dd]}x with no new result — "
+                        f"retrying identical code will not fix the problem. "
+                        f"Write the script to /tmp/fix.py using cat > /tmp/fix.py << FIXEOF ... FIXEOF, then run python3 /tmp/fix.py.\\n'"
+                    )
+                    _tc_dd = {**_tc_dd, "function": {**_fn_dd, "arguments": json.dumps(_adict_dd)}}
+                    logger.info(f"[REPEAT-WRITE-BLOCK] Blocked repeated write: {_cmd_dd[:60]!r} (seen {bash_cmd_count[_cmd_dd]}x)")
                 elif _is_write_dd and re.search(r'\bsed\s+-i\b', _cmd_dd) and len(_cmd_dd) > 2000:
                     _adict_dd["command"] = (
                         "printf '\\n◆ proxy: sed -i command is too long ({} chars) — complex sed commands almost always "
