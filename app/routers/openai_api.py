@@ -2886,9 +2886,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # Git commands are task-required in merge/build workflows, not exploratory — exclude them from the cap count
             _total_non_git_cmds = sum(1 for c in bash_history if not re.search(r'^\s*git\b', c))
             _any_write = non_bash_write_done or any(
-                re.search(r'sed\s+-i|open\s*\(.*,\s*["\']w["\']|\bgit\s+checkout\b.*--\s+\S|git\s+show\s+\S+:\S+\s*>', c)
-                # python3 heredoc only counts as write if it actually opens a file for writing
-                or (re.search(r'python3?\s+<<', c) and re.search(r'open\s*\(.*["\']w["\']|with\s+open|\.write\s*\(', c))
+                # Exclude proxy-injected block commands — they contain sed -i text but aren't real writes
+                not re.match(r"cat\s+<<\s+'?PROXYMSG", c) and
+                not re.match(r"printf\s+'\\n(?:◆ proxy:|\\\\u25c6 proxy:|\[(?:SED|PROXY|WRONG|NOTE|BASH|LOOP|REPEATED|HELPER|AUTO))", c) and
+                (
+                    re.search(r'sed\s+-i|open\s*\(.*,\s*["\']w["\']|\bgit\s+checkout\b.*--\s+\S|git\s+show\s+\S+:\S+\s*>', c)
+                    # python3 heredoc only counts as write if it actually opens a file for writing
+                    or (re.search(r'python3?\s+<<', c) and re.search(r'open\s*\(.*["\']w["\']|with\s+open|\.write\s*\(', c))
+                )
                 for c in bash_history
             )
             # Detect build/compile commands (not git commands which may contain .dart/.sh paths as arguments)
