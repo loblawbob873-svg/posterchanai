@@ -3691,12 +3691,18 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False,
                     _sb_path = _sb_task_sh[0] if _sb_task_sh else '/path/to/file.sh'
                     args_dict["command"] = "\n".join([
                         "cat << 'PROXYMSG'",
-                        (f"[PROXY: sed -i is blocked. Use a python3 heredoc that reads the file and writes ALL lines back. "
-                         f"Do NOT use tput — use literal \\\\033 codes. Do NOT use the Write tool (destroys file). "
-                         f"Correct template: python3 << 'PYEOF'\\nimport re\\nlines = open('{_sb_path}').readlines()\\nout = []\\n"
-                         f"for ln in lines:\\n    m = re.match(r'^(\\\\s*)echo \\\"(\\\\[.*?\\\\])\\\"', ln)\\n"
-                         f"    if m: out.append(m.group(1) + 'echo -e \\\"\\\\\\\\033[1;36m' + m.group(2) + '\\\\\\\\033[0m\\\"\\\\n')\\n"
-                         f"    else: out.append(ln)\\nopen('{_sb_path}', 'w').writelines(out)\\nPYEOF]"),
+                        "[PROXY: sed -i is blocked. Use python3 to rewrite the file. Run this NOW:",
+                        f"python3 << 'PYEOF'",
+                        "import re",
+                        f"lines = open('{_sb_path}').readlines()",
+                        "out = []",
+                        "for ln in lines:",
+                        r"    m = re.match(r'^(\t| *)echo \"(\[[^\]]+\])\"\s*$', ln)",
+                        r"    if m: out.append(m.group(1) + 'echo -e \"\\033[1;36m' + m.group(2) + '\\033[0m\"\n')",
+                        "    else: out.append(ln)",
+                        f"open('{_sb_path}', 'w').writelines(out)",
+                        f"print('Done:', sum(1 for l in open('{_sb_path}') if '\\\\033[' in l), 'colorized')",
+                        "PYEOF",
                         "PROXYMSG",
                     ])
                     tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
