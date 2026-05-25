@@ -482,6 +482,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
     fetch_head_reset_done = False  # True after model successfully runs reset --hard FETCH_HEAD
     rebase_conflict_count = 0      # Number of rebase conflicts seen (helps escalate guidance)
     silent_sed_sh_count = 0        # Number of sed -i on .sh files that produced no output
+    _sed_ansi_count_prev = 0       # Colorized echo-line count from prior sed operations (for delta tracking)
     _exploration_cap_injected = 0  # How many times [EXPLORATION CAP:] was injected — 2nd+ use different tag
     # Detect whether sed was blocked in a prior turn (affects probe/search guidance)
     _sed_blocked_prior = any(
@@ -2014,16 +2015,27 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                         _sed_ansi_count = int(_sc_res.stdout.strip() or "0")
                                 except Exception:
                                     pass
-                                if _sed_ansi_count > 0:
+                                _added_count = _sed_ansi_count - _sed_ansi_count_prev
+                                if _added_count > 0:
+                                    # Current sed actually added new colorized lines
+                                    _sed_ansi_count_prev = _sed_ansi_count
                                     content_str = (
-                                        f"(sed -i succeeded — {_sh_file} now has {_sed_ansi_count} colorized echo lines. "
+                                        f"(sed -i succeeded — added {_added_count} colorized line(s). {_sh_file} now has {_sed_ansi_count} total. "
                                         f"sed -i is ALWAYS silent on both success and failure. "
                                         f"Do NOT retry the same sed — it already worked. "
                                         f"Continue with the NEXT section header to colorize. "
                                         f"Run: grep -n 'echo \"\\[' {_sh_file} | grep -v '>>' | grep -v 'echo -e' | head -20 to see remaining uncolorized headers.){_batch_hint}"
                                     )
+                                elif _sed_ansi_count > 0:
+                                    # Count unchanged — this sed matched 0 lines, but prior seds already colorized some
+                                    content_str = (
+                                        f"(sed -i matched 0 lines — your pattern did NOT match any line. "
+                                        f"{_sed_ansi_count} colorized lines from prior successful seds still exist. "
+                                        f"This section header may not exist in the file or may have different capitalization/punctuation. "
+                                        f"Use: grep -n 'echo \"\\[' {_sh_file} | grep -v '>>' | grep -v 'echo -e' | head -30 to see ACTUAL remaining headers.{_actual_echo_hint}){_batch_hint}"
+                                    )
                                 else:
-                                    # Only count as failure when zero colorized lines exist (not after prior successes)
+                                    # No colorized lines at all — genuine first failure
                                     if not _is_line_addr_sed:
                                         silent_sed_sh_count += 1
                                     content_str = (
