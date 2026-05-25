@@ -1930,8 +1930,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         # Only count pattern-based seds as silent failures (not line-addressed like '84s/...')
                         # Line-addressed seds ('NNNs/pattern/replace/') are precise and always succeed
                         _is_line_addr_sed = bool(re.search(r"'[\d,]+s/", last_bash_cmd))
-                        if not _is_line_addr_sed:
-                            silent_sed_sh_count += 1
+                        # silent_sed_sh_count incremented below ONLY when no colorized lines exist
+                        # (so successful seds followed by failed seds don't trigger blocking)
                         # Detect echo -e in sed source pattern — original lines don't have -e yet
                         _sed_src_m = re.search(r"sed\s+-i\s+['\"]?s([/|!])(.*?)\1", last_bash_cmd)
                         _sed_src = _sed_src_m.group(2) if _sed_src_m else ""
@@ -2023,6 +2023,9 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                         f"Run: grep -n 'echo \"\\[' {_sh_file} | grep -v '>>' | grep -v 'echo -e' | head -20 to see remaining uncolorized headers.){_batch_hint}"
                                     )
                                 else:
+                                    # Only count as failure when zero colorized lines exist (not after prior successes)
+                                    if not _is_line_addr_sed:
+                                        silent_sed_sh_count += 1
                                     content_str = (
                                         f"(sed -i produced no output — sed is always silent. File check: {_sed_ansi_count} colorized lines so far in {_sh_file}. "
                                         f"sed may have matched 0 lines — verify your pattern.{_actual_echo_hint} "
