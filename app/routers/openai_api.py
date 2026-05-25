@@ -2684,25 +2684,39 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                             f"echo -e \"\\033[1;36m[Title]\\033[0m\", NOT echo -e \"${{CYAN}}[Title]${{RESET}}\"."
                                         )
                                         logger.info(f"[VAR-REF-WARN] {len(_var_ref_lines)} echo lines use variable refs instead of literal ANSI in {_sh_ref}")
-                                    # When 0 colorized lines, show actual echo lines so model sees the real format
+                                    # When < 10 colorized lines, show uncolorized echo headers so model sees real format
                                     _echo_preview = ""
-                                    if _ansi_count == 0:
+                                    if _ansi_count < 10:
                                         try:
                                             import subprocess as _sp_ep
-                                            _ep_res = _sp_ep.run(
-                                                ['grep', '-n', 'echo'],
-                                                input=_ansi_txt, capture_output=True, text=True, timeout=5
-                                            )
-                                            _ep_lines = [
-                                                l for l in _ep_res.stdout.splitlines()
-                                                if not re.match(r'^\d+:\s*#', l)
-                                            ][:12]
-                                            if _ep_lines:
+                                            # Show bracket-header echo lines still uncolorized
+                                            _ep_uncolored = [
+                                                l for l in _ansi_txt.splitlines()
+                                                if re.match(r'^\s*echo\s+"?\[', l) and
+                                                not re.search(r'\\033\[', l)
+                                            ][:8]
+                                            if _ep_uncolored:
                                                 _echo_preview = (
-                                                    f" ACTUAL ECHO LINES IN FILE (first {len(_ep_lines)}):\n" +
-                                                    "\n".join(_ep_lines) +
-                                                    f"\nYour pattern must match EXACTLY these lines."
+                                                    f" UNCOLORIZED HEADERS STILL REMAINING ({len(_ep_uncolored)} examples):\n" +
+                                                    "\n".join(_ep_uncolored) +
+                                                    f"\nMatch with: re.match(r'^(\\\\s*)echo \"(\\\\[.*?\\\\])\"', ln) "
+                                                    f"then replace with: indent + 'echo -e \"\\\\\\\\033[1;36m' + m.group(2) + '\\\\\\\\033[0m\"\\\\n'"
                                                 )
+                                            elif _ansi_count == 0:
+                                                _ep_res = _sp_ep.run(
+                                                    ['grep', '-n', 'echo'],
+                                                    input=_ansi_txt, capture_output=True, text=True, timeout=5
+                                                )
+                                                _ep_lines = [
+                                                    l for l in _ep_res.stdout.splitlines()
+                                                    if not re.match(r'^\d+:\s*#', l)
+                                                ][:12]
+                                                if _ep_lines:
+                                                    _echo_preview = (
+                                                        f" ACTUAL ECHO LINES IN FILE (first {len(_ep_lines)}):\n" +
+                                                        "\n".join(_ep_lines) +
+                                                        f"\nYour pattern must match EXACTLY these lines."
+                                                    )
                                         except Exception:
                                             pass
                                     _ansi_warn = (
@@ -2812,9 +2826,22 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 )
                             _hv_warn = ""
                             if _hv_strict < 10:
+                                _hv_uncolored = [
+                                    ln.rstrip() for ln in _hv_txt.splitlines()
+                                    if re.match(r'^\s*echo\s+"?\[', ln) and
+                                    not re.search(r'\\033\[', ln)
+                                ][:6]
+                                _hv_sample = ""
+                                if _hv_uncolored:
+                                    _hv_sample = (
+                                        f" STILL UNCOLORIZED ({len(_hv_uncolored)} headers):\n" +
+                                        "\n".join(_hv_uncolored) +
+                                        f"\nCorrect fix: re.match(r'^(\\\\s*)echo \"(\\\\[.*?\\\\])\"', ln) → "
+                                        f"indent + 'echo -e \"\\\\\\\\033[1;36m' + m.group(2) + '\\\\\\\\033[0m\"\\\\n'"
+                                    )
                                 _hv_warn = (
                                     f" NEED MORE: only {_hv_strict} of ≥10 required verify-format lines. "
-                                    f"Format MUST be: echo -e \"\\033[Nm<text>\\033[0m\" — literal codes, \\033[0m reset.{_hv_rst_hint}"
+                                    f"Format MUST be: echo -e \"\\033[Nm<text>\\033[0m\" — literal codes, \\033[0m reset.{_hv_rst_hint}{_hv_sample}"
                                 )
                             content_str += f"\n\n[HELPER-VERIFY: {_hsh} syntax OK. Strict verify-format lines: {_hv_strict}/10.{_hv_warn}]"
                             logger.info(f"[HELPER-VERIFY] {_hsh}: {_hv_strict} strict lines, bad_reset={len(_hv_bad)}")
@@ -2825,7 +2852,10 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         pass
             # Warn if bash+python3 wrote to a file not mentioned in the original task.
             # Extracts the open() target path from the command — no hardcoded filenames.
-            if _py3_heredoc_pattern and _py3_writes_file:
+            # Skip when last_cmd is a proxy-injected PROXYMSG cat command (false positive:
+            # proxy template contains python3+open() text in the PROXYMSG body).
+            _is_proxymsg_cat = bool(re.search(r"cat\s+<<\s+'?PROXYMSG", last_cmd or ""))
+            if _py3_heredoc_pattern and _py3_writes_file and not _is_proxymsg_cat:
                 _py3_open_m = re.search(r"open\s*\(\s*['\"]([^'\"]+)['\"]", last_cmd or "")
                 # Match absolute paths OR bare filenames in the task description
                 _task_abs2 = re.findall(
