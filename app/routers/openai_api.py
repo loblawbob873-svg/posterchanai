@@ -3409,7 +3409,7 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False,
                 if sed_blocked and "sed" in cmd and "-i" in cmd:
                     args_dict["command"] = "\n".join([
                         "cat << 'PROXYMSG'",
-                        "[PROXY: sed -i is blocked. Use the Write tool or a python3 heredoc instead: python3 << 'EOF'\\n...code...\\nEOF]",
+                        "[PROXY: sed -i is blocked. Use a python3 heredoc to READ the file and write it back — do NOT use the Write tool (it would overwrite the whole file with empty content): python3 << 'PYEOF'\\nimport re\\nlines = open('/path/to/file.sh').readlines()\\nout = [re.sub(r'pattern', r'replacement', ln) for ln in lines]\\nopen('/path/to/file.sh', 'w').writelines(out)\\nPYEOF]",
                         "PROXYMSG",
                     ])
                     tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
@@ -4758,6 +4758,46 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     finally:
                         try: _os_tc.unlink(_tmp_py_af)
                         except: pass
+                elif _fp_af.endswith(".sh") and _ct_af:
+                    # Guard: block Write to a .sh file when content is far smaller than the original.
+                    # This prevents the model from accidentally overwriting a 900-line task script
+                    # with a few lines of content after being told "don't use sed -i".
+                    _sh_new_lines = len(_ct_af.splitlines())
+                    _sh_orig_lines = 0
+                    if os.path.isfile(_fp_af):
+                        try:
+                            with open(_fp_af) as _sh_orig_fh:
+                                _sh_orig_lines = sum(1 for _ in _sh_orig_fh)
+                        except Exception:
+                            pass
+                    _sh_fname = _fp_af.rsplit('/', 1)[-1]
+                    if _sh_orig_lines > 50 and _sh_new_lines < int(_sh_orig_lines * 0.8):
+                        _tc_af = {
+                            **_tc_af,
+                            'function': {
+                                'name': 'bash',
+                                'arguments': json.dumps({
+                                    'command': (
+                                        f"printf '\\n[WRITE-SH-BLOCK: Writing {_sh_fname} with only {_sh_new_lines} lines "
+                                        f"would destroy the {_sh_orig_lines}-line original. "
+                                        f"Do NOT rewrite the whole file. Instead, use a python3 heredoc that reads the original "
+                                        f"and applies targeted changes, then writes ALL lines back:\\n"
+                                        f"python3 << PYEOF\\n"
+                                        f"import re\\n"
+                                        f"lines = open(\\'{_fp_af}\\').readlines()\\n"
+                                        f"out = []\\n"
+                                        f"for ln in lines:\\n"
+                                        f"    m = re.match(r\\'echo \\\"(\\\\[.*?\\\\])\\\"\\', ln.strip())\\n"
+                                        f"    if m: out.append(ln[:len(ln)-len(ln.lstrip())] + \\'echo -e \\\"\\\\\\\\033[1;36m\\' + m.group(1) + \\'\\\\\\\\033[0m\\\"\\\\n\\')\\n"
+                                        f"    else: out.append(ln)\\n"
+                                        f"open(\\'{_fp_af}\\', \\'w\\').writelines(out)\\n"
+                                        f"PYEOF\\n]\\n'"
+                                    ),
+                                    'description': f'Block destructive Write of {_sh_fname}',
+                                }),
+                            }
+                        }
+                        logger.info(f"[WRITE-SH-BLOCK] Blocked Write of {_fp_af}: {_sh_new_lines} lines vs {_sh_orig_lines} original")
             except Exception as _e_af:
                 logger.warning(f"[TOOL-CALL-AUTOFIX] error: {_e_af}")
         _tc_af_list.append(_tc_af)
