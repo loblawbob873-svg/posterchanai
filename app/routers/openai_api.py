@@ -1616,6 +1616,16 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     f"Run the corrected script after restoring the file.]"
                 )
                 logger.info(f"[WRIT-ATTR-ERROR] Detected f.writ truncation, target={_trunc_fname!r}")
+            # Intercept Python NameError from missing import — inject specific import hint
+            elif "NameError: name" in content_str and "is not defined" in content_str:
+                _ne_m = re.search(r"NameError: name '(\w+)' is not defined", content_str)
+                if _ne_m:
+                    _missing_mod = _ne_m.group(1)
+                    content_str += (
+                        f"\n\n[PROXY: Python NameError — '{_missing_mod}' is not defined. "
+                        f"Add 'import {_missing_mod}' at the very top of your script before using it.]"
+                    )
+                    logger.info(f"[NAMEERROR-FIX] Injected import hint for: {_missing_mod!r}")
             # Intercept "No changes" errors — model needs a new strategy
             elif "no changes to apply" in content_str.lower() or "identical" in content_str.lower():
                 _edit_fstring_hint = ""
