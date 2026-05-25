@@ -483,6 +483,13 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
     rebase_conflict_count = 0      # Number of rebase conflicts seen (helps escalate guidance)
     silent_sed_sh_count = 0        # Number of sed -i on .sh files that produced no output
     _exploration_cap_injected = 0  # How many times [EXPLORATION CAP:] was injected — 2nd+ use different tag
+    # Detect whether sed was blocked in a prior turn (affects probe/search guidance)
+    _sed_blocked_prior = any(
+        "SED IS NOW BLOCKED" in (m.get("content") or "") or
+        "[PROXY: sed -i is blocked" in (m.get("content") or "") or
+        "[SED-FORMAT ERROR:" in (m.get("content") or "")
+        for m in messages if m.get("role") == "user"
+    )
     _wrong_file_warned = set()   # files already warned about via WRONG-FILE-WARN; de-dupes across history replay
     _broken_sh_files = set()   # .sh files where a python3 write produced a bash -n syntax error
     # Detect complex merge tasks (conflict resolution, file preservation) — skip simple-sync shortcuts
@@ -2026,12 +2033,60 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             "(no output — sed -i is silent on success. If the pattern was not found, "
                             "run grep to verify the file contents and check your pattern.)"
                         )
+                elif is_grep_cmd and _sed_blocked_prior and re.search(r'(/[\w./-]+\.sh)\b', last_bash_cmd):
+                    # grep on task .sh file returned nothing AND sed was previously blocked — skip to global template
+                    _gnm_sh_paths2 = re.findall(r'(/[\w./-]+\.sh)\b', _first_user_text)
+                    _gnm_sh_path2 = _gnm_sh_paths2[0] if _gnm_sh_paths2 else None
+                    if _gnm_sh_path2:
+                        content_str = (
+                            f"(no output — grep found nothing. sed is blocked. Stop searching — use this global script NOW:\n"
+                            f"python3 << 'PYEOF'\n"
+                            f"import re\n"
+                            f"lines = open('{_gnm_sh_path2}').readlines()\n"
+                            f"out = []\n"
+                            f"for ln in lines:\n"
+                            f"    m = re.match(r'^(\\t| *)echo \"(\\[[^\\]]+\\])\"\\s*$', ln)\n"
+                            f"    if m:\n"
+                            f"        out.append(m.group(1) + 'echo -e \"\\\\033[1;36m' + m.group(2) + '\\\\033[0m\"\\n')\n"
+                            f"    else:\n"
+                            f"        out.append(ln)\n"
+                            f"open('{_gnm_sh_path2}', 'w').writelines(out)\n"
+                            f"print('Done:', sum(1 for l in open('{_gnm_sh_path2}') if '\\\\033[' in l), 'lines colorized')\n"
+                            f"PYEOF\n)"
+                        )
+                        logger.info(f"[GREP-NO-MATCH-SEDBLOCKED-2] Injecting global template for {_gnm_sh_path2}")
+                    else:
+                        content_str = "(no output — grep found nothing. Your pattern does not match any line in the file.)"
                 elif is_grep_cmd and re.search(r'\\?\[', last_bash_cmd):
-                    content_str = (
-                        "(no output — grep found NO matches. Your pattern does not match any line. "
-                        "Bracket text in this file is double-quoted, e.g.: echo \"[Section]\". "
-                        "Run: grep -n 'echo \"\\[' file | head -20 to see the actual quoted text.)"
-                    )
+                    _gnm_sh_paths = re.findall(r'(/[\w./-]+\.sh)\b', _first_user_text)
+                    _gnm_sh_path = _gnm_sh_paths[0] if _gnm_sh_paths else None
+                    if _sed_blocked_prior and _gnm_sh_path:
+                        content_str = (
+                            f"(no output — grep found NO matches. Your pattern is case-sensitive and likely wrong. "
+                            f"STOP searching for individual lines — sed is already blocked. "
+                            f"Use this global script to colorize ALL echo \"[...]\" headers at once:\n"
+                            f"python3 << 'PYEOF'\n"
+                            f"import re\n"
+                            f"lines = open('{_gnm_sh_path}').readlines()\n"
+                            f"out = []\n"
+                            f"for ln in lines:\n"
+                            f"    m = re.match(r'^(\\t| *)echo \"(\\[[^\\]]+\\])\"\\s*$', ln)\n"
+                            f"    if m:\n"
+                            f"        out.append(m.group(1) + 'echo -e \"\\\\033[1;36m' + m.group(2) + '\\\\033[0m\"\\n')\n"
+                            f"    else:\n"
+                            f"        out.append(ln)\n"
+                            f"open('{_gnm_sh_path}', 'w').writelines(out)\n"
+                            f"print('Done:', sum(1 for l in open('{_gnm_sh_path}') if '\\\\033[' in l), 'lines colorized')\n"
+                            f"PYEOF\n"
+                            f"Run this NOW — do NOT grep or search for more lines.)"
+                        )
+                        logger.info(f"[GREP-NO-MATCH-SEDBLOCKED] Injecting global template for {_gnm_sh_path}")
+                    else:
+                        content_str = (
+                            "(no output — grep found NO matches. Your pattern does not match any line. "
+                            "Bracket text in this file is double-quoted, e.g.: echo \"[Section]\". "
+                            "Run: grep -n 'echo \"\\[' file | head -20 to see the actual quoted text.)"
+                        )
                 elif re.search(r'\bgit\s+status\b', last_bash_cmd):
                     content_str = (
                         "(no output — git status is clean: working tree has no uncommitted changes. "
@@ -2648,7 +2703,31 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # Detect read-only python3 probe loop — model testing/exploring without editing files
             if _is_py3_heredoc and not _py3_writes_file and not non_bash_write_done:
                 _py3_probe_count = bash_cmd_count.get(last_cmd, 0)
-                if _py3_probe_count >= 2:
+                # When sed is blocked and the probe returned nothing, inject global template immediately
+                if _is_noop_result and _sed_blocked_prior:
+                    _sbp_sh_paths = re.findall(r'(/[\w./-]+\.sh)\b', _first_user_text)
+                    _sbp_sh_path = _sbp_sh_paths[0] if _sbp_sh_paths else None
+                    if _sbp_sh_path and "[SED-BLOCKED-PROBE" not in content_str:
+                        content_str += (
+                            f"\n\n[SED-BLOCKED-PROBE: sed is blocked and your search found nothing — your pattern is wrong or case-sensitive. "
+                            f"Stop searching for individual lines. Run this global script NOW:\n"
+                            f"python3 << 'PYEOF'\n"
+                            f"import re\n"
+                            f"lines = open('{_sbp_sh_path}').readlines()\n"
+                            f"out = []\n"
+                            f"for ln in lines:\n"
+                            f"    m = re.match(r'^(\\t| *)echo \"(\\[[^\\]]+\\])\"\\s*$', ln)\n"
+                            f"    if m:\n"
+                            f"        out.append(m.group(1) + 'echo -e \"\\\\033[1;36m' + m.group(2) + '\\\\033[0m\"\\n')\n"
+                            f"    else:\n"
+                            f"        out.append(ln)\n"
+                            f"open('{_sbp_sh_path}', 'w').writelines(out)\n"
+                            f"print('Done:', sum(1 for l in open('{_sbp_sh_path}') if '\\\\033[' in l), 'lines colorized')\n"
+                            f"PYEOF\n"
+                            f"This matches ALL echo \"[...]\" headers case-insensitively. Do NOT search further — run it NOW.]"
+                        )
+                        logger.info(f"[SED-BLOCKED-PROBE] Injecting global template for {_sbp_sh_path} (noop probe after sed blocked)")
+                elif _py3_probe_count >= 2:
                     content_str += (
                         f"\n\n[LOOP DETECTED: This read-only Python script has been run {_py3_probe_count} times without modifying any files. "
                         "STOP running Python scripts. Use the Edit tool now to modify the source files in this directory directly. "
