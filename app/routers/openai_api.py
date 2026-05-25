@@ -2544,7 +2544,24 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             capture_output=True, text=True, timeout=10
                         )
                         if _bash_n.returncode == 0:
-                            content_str += f"\n\n[AUTO-VERIFY: bash -n {_sh_ref} → SYNTAX OK. Verify the changes look correct with grep.]"
+                            # Count properly colorized echo lines: echo -e "\033[Nm<text>\033[0m"
+                            _ansi_count = 0
+                            _ansi_warn = ""
+                            try:
+                                with open(_sh_ref) as _ansi_f:
+                                    _ansi_txt = _ansi_f.read()
+                                _ansi_count = len(re.findall(r'echo\s+-e\s+["\']?\\033\[[\d;]+m.+\\033\[0m', _ansi_txt))
+                                if _ansi_count < 10:
+                                    _ansi_warn = (
+                                        f" WARNING: only {_ansi_count} colorized echo lines found "
+                                        f"(need ≥10 with echo -e \"\\033[Nm<text>\\033[0m\" format). "
+                                        f"Your script may have only partially colorized the file — "
+                                        f"check that the regex matched ALL target lines, not just a subset. "
+                                        f"Run: grep -c 'echo -e.*\\\\033' {_sh_ref} to count colored lines."
+                                    )
+                            except Exception:
+                                pass
+                            content_str += f"\n\n[AUTO-VERIFY: bash -n {_sh_ref} → SYNTAX OK. Colorized echo lines: {_ansi_count}.{_ansi_warn} Verify the changes look correct with grep.]"
                         else:
                             _bash_err = (_bash_n.stderr or '').strip()[:300]
                             _broken_sh_files.add(_sh_ref)
