@@ -507,6 +507,20 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     if 0 < len(_fc) < 200000:
                         _file_inject_map[_fip] = _fc
                         logger.info(f"[FILE-INJECT] Will inject {_fip} ({len(_fc)} chars) into initial context")
+                        # For .sh files: compute display-only echo bracket headers (no redirect on same line)
+                        if _fip.endswith(('.sh', '.bash')):
+                            try:
+                                _hdr_lines = [
+                                    l.rstrip() for l in _fc.splitlines()
+                                    if re.match(r'^\s*echo\s+"?\[', l) and
+                                    not re.search(r'[>|]\s*\S', l) and
+                                    not l.strip().startswith('#')
+                                ][:40]
+                                if _hdr_lines:
+                                    _file_inject_map[_fip + ':headers'] = '\n'.join(_hdr_lines)
+                                    logger.info(f"[FILE-INJECT] Found {len(_hdr_lines)} display-only headers in {_fip}")
+                            except Exception:
+                                pass
                 except Exception as _fie:
                     logger.warning(f"[FILE-INJECT] Error reading {_fip}: {_fie}")
     _is_complex_merge_task = bool(re.search(r'\b(conflict|preserve|resolve|keep\s+\w+\s+version|branding|checkout\s+HEAD)\b', _first_user_text, re.IGNORECASE))
@@ -532,8 +546,21 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             _write_success_paths = set()
             # FILE-INJECT: apply pre-loaded file content to the first user message only
             if _file_inject_map:
-                for _fip, _fc in _file_inject_map.items():
-                    content = str(content) + f'\n\n<file path="{_fip}">\n{_fc}\n</file>'
+                for _fip, _fc in list(_file_inject_map.items()):
+                    if _fip.endswith(':headers'):
+                        continue  # injected together with their parent file
+                    _inject_text = f'\n\n<file path="{_fip}">\n{_fc}\n</file>'
+                    _hdrs = _file_inject_map.get(_fip + ':headers', '')
+                    if _hdrs:
+                        _inject_text += (
+                            f'\n\n<display-only-headers path="{_fip}">'
+                            f'\nExact display-only section headers to colorize (echo lines with NO file redirect on same line):\n'
+                            f'{_hdrs}'
+                            f'\nUse these EXACT strings as your sed/python source patterns. '
+                            f'Lines with >> or > on the same line are NOT in this list and should NOT be colorized.'
+                            f'\n</display-only-headers>'
+                        )
+                    content = str(content) + _inject_text
                 _file_inject_map = {}  # only inject once
         if role == "system":
             combined = (content + "\n\n" + tools_text).strip() if tools_text else content
