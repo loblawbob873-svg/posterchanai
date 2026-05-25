@@ -2924,14 +2924,25 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 else:
                     content_str += (
                         f"\n\n[EXPLORATION CAP: You have run {_total_cmds} bash commands without modifying any file. "
-                        "STOP reading files. You have enough context — make the changes now. "
-                        "For bulk find-and-replace across many lines in a .sh file, use a python3 heredoc: "
-                        "run `python3 << 'EOF'\\nimport re\\nlines = open('file.sh').readlines()\\n"
-                        "out = []\\nfor ln in lines:\\n    m = re.match(r'^(\\\\s*)PATTERN\\\\s*$', ln)\\n"
-                        "    if m: out.append(...)\\n    else: out.append(ln)\\n"
-                        "open('file.sh', 'w').writelines(out)\\nEOF`. "
-                        "For single-file edits, use the Edit tool. "
-                        "Make the change now — no more bash read commands.]"
+                        "STOP reading files. Make the changes NOW using a python3 heredoc. "
+                        "Correct template for colorizing echo lines in a .sh file:\n"
+                        "python3 << 'PYEOF'\n"
+                        "import re\n"
+                        "lines = open('/path/to/file.sh').readlines()\n"
+                        "out = []\n"
+                        "for ln in lines:\n"
+                        "    m = re.match(r'^(\\t| *)echo \"(\\[[^\\]]+\\])\"\\s*$', ln)\n"
+                        "    if m:\n"
+                        "        out.append(m.group(1) + 'echo -e \"\\\\033[1;36m' + m.group(2) + '\\\\033[0m\"\\n')\n"
+                        "    else:\n"
+                        "        out.append(ln)\n"
+                        "open('/path/to/file.sh', 'w').writelines(out)\n"
+                        "PYEOF\n"
+                        "Key rules: (1) Use \\\\033[0m as reset — NOT \\\\033[22;39m or any other. "
+                        "(2) Write EVERY line back — if not matching, write ln unchanged. "
+                        "(3) Use re.match anchored to start; \\\\s*$ matches trailing whitespace/newline. "
+                        "(4) Adjust the pattern to match the actual echo format in the file. "
+                        "No more bash read commands — write the file NOW.]"
                     )
                 _exploration_cap_injected += 1
             # Detect HTTP fetch loops — fetching external URLs is wrong for local file editing tasks
