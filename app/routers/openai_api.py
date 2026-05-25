@@ -485,11 +485,12 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
     _sed_ansi_count_prev = 0       # Colorized echo-line count from prior sed operations (for delta tracking)
     _exploration_cap_injected = 0  # How many times [EXPLORATION CAP:] was injected — 2nd+ use different tag
     # Detect whether sed was blocked in a prior turn (affects probe/search guidance)
+    # Tool results (role="tool") carry proxy injections like "SED IS NOW BLOCKED" — check both user and tool roles
     _sed_blocked_prior = any(
         "SED IS NOW BLOCKED" in (m.get("content") or "") or
         "[PROXY: sed -i is blocked" in (m.get("content") or "") or
         "[SED-FORMAT ERROR:" in (m.get("content") or "")
-        for m in messages if m.get("role") == "user"
+        for m in messages if m.get("role") in ("user", "tool")
     )
     _wrong_file_warned = set()   # files already warned about via WRONG-FILE-WARN; de-dupes across history replay
     _broken_sh_files = set()   # .sh files where a python3 write produced a bash -n syntax error
@@ -1981,25 +1982,21 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                         "For bulk edits requiring many changes, use python3 to process all target lines "
                                         "in a single script call rather than one sed per line — much faster for bulk edits."
                                     )
-                                # Show actual echo lines from the file so model sees the real format
+                                # Show remaining uncolorized bracket headers so model uses real section names
                                 _actual_echo_hint = ""
                                 try:
                                     import subprocess as _sp_ae, os as _os_ae
                                     if _os_ae.path.isfile(_sh_file):
                                         _ae_res = _sp_ae.run(
-                                            ['grep', '-n', 'echo', _sh_file],
+                                            ['bash', '-c', f"grep -nE 'echo \"\\[' {_sh_file} | grep -v '>>' | grep -v 'echo -e'"],
                                             capture_output=True, text=True, timeout=5
                                         )
-                                        _ae_lines = [
-                                            l for l in _ae_res.stdout.splitlines()
-                                            if not re.match(r'^\d+:\s*#', l) and
-                                            re.search(r'\becho\b', l)
-                                        ][:10]
+                                        _ae_lines = _ae_res.stdout.splitlines()[:20]
                                         if _ae_lines:
                                             _actual_echo_hint = (
-                                                f" ACTUAL ECHO LINES IN {_sh_file} (first {len(_ae_lines)}):\n" +
+                                                f" REMAINING UNCOLORIZED HEADERS IN {_sh_file} ({len(_ae_lines)} found):\n" +
                                                 "\n".join(_ae_lines) +
-                                                "\nYour sed pattern must match EXACTLY this format — no -e or extra flags in the source."
+                                                "\nUse EXACTLY these section names — do NOT invent names not in this list."
                                             )
                                 except Exception:
                                     pass
