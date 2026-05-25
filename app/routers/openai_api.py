@@ -3450,6 +3450,28 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False,
                     tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                     out.append(tc)
                     continue
+                # Block python3 heredocs that use tput when writing to a .sh file.
+                # tput produces terminfo codes that are NOT counted by the verify script.
+                _is_py3_heredoc_cmd = bool(re.search(r'python3?\s+<<', cmd))
+                _writes_sh_file = bool(re.search(r"open\s*\(\s*['\"][^'\"]+\.sh['\"].*['\"]w['\"]", cmd))
+                if _is_py3_heredoc_cmd and _writes_sh_file and re.search(r'\btput\b', cmd):
+                    _tpu_task_sh = re.findall(r'(/[\w./-]+\.sh)\b', _first_user_text)
+                    _tpu_path = _tpu_task_sh[0] if _tpu_task_sh else '/path/to/file.sh'
+                    args_dict["command"] = "\n".join([
+                        "cat << 'PROXYMSG'",
+                        (f"[HEREDOC-TPUT-BLOCK: Your script uses tput which produces terminfo codes. "
+                         f"tput is NOT counted by the verify script — you MUST use literal \\\\033 ANSI codes. "
+                         f"The file was NOT written. Use this template instead:\\n"
+                         f"python3 << 'PYEOF'\\nimport re\\nlines = open('{_tpu_path}').readlines()\\nout = []\\n"
+                         f"for ln in lines:\\n    m = re.match(r'^(\\\\s*)echo \\\"(\\\\[.*?\\\\])\\\"', ln)\\n"
+                         f"    if m: out.append(m.group(1) + 'echo -e \\\"\\\\\\\\033[1;36m' + m.group(2) + '\\\\\\\\033[0m\\\"\\\\n')\\n"
+                         f"    else: out.append(ln)\\nopen('{_tpu_path}', 'w').writelines(out)\\nprint('Done')\\nPYEOF]"),
+                        "PROXYMSG",
+                    ])
+                    tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                    out.append(tc)
+                    logger.info(f"[HEREDOC-TPUT-BLOCK] Blocked python3 heredoc with tput in {cmd[:60]!r}")
+                    continue
                 if sed_blocked and "sed" in cmd and "-i" in cmd:
                     _sb_task_sh = re.findall(r'(/[\w./-]+\.sh)\b', _first_user_text)
                     _sb_path = _sb_task_sh[0] if _sb_task_sh else '/path/to/file.sh'
