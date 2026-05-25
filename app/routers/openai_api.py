@@ -2927,13 +2927,15 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "Do NOT run the build script again without first editing a file.]"
                     )
                 else:
+                    _cap_task_sh = re.findall(r'(/[\w./-]+\.sh)\b', _first_user_text)
+                    _cap_sh_path = _cap_task_sh[0] if _cap_task_sh else '/path/to/file.sh'
                     content_str += (
                         f"\n\n[EXPLORATION CAP: You have run {_total_cmds} bash commands without modifying any file. "
                         "STOP reading files. Make the changes NOW using a python3 heredoc. "
-                        "Correct template for colorizing echo lines in a .sh file:\n"
+                        f"Correct template for colorizing echo lines in {_cap_sh_path}:\n"
                         "python3 << 'PYEOF'\n"
                         "import re\n"
-                        "lines = open('/path/to/file.sh').readlines()\n"
+                        f"lines = open('{_cap_sh_path}').readlines()\n"
                         "out = []\n"
                         "for ln in lines:\n"
                         "    m = re.match(r'^(\\t| *)echo \"(\\[[^\\]]+\\])\"\\s*$', ln)\n"
@@ -2941,7 +2943,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "        out.append(m.group(1) + 'echo -e \"\\\\033[1;36m' + m.group(2) + '\\\\033[0m\"\\n')\n"
                         "    else:\n"
                         "        out.append(ln)\n"
-                        "open('/path/to/file.sh', 'w').writelines(out)\n"
+                    ) + (
+                        # Substitute actual task file path from user prompt if available
+                        lambda _cap_files: (
+                            f"open('{_cap_files[0]}', 'w').writelines(out)\n"
+                            if _cap_files else
+                            "open('/path/to/file.sh', 'w').writelines(out)\n"
+                        )
+                    )(re.findall(r'(/[\w./-]+\.sh)\b', _first_user_text)) + (
                         "PYEOF\n"
                         "Key rules: (1) Use \\\\033[0m as reset — NOT \\\\033[22;39m or any other. "
                         "(2) Write EVERY line back — if not matching, write ln unchanged. "

@@ -15,6 +15,8 @@ log() { echo "[$(date '+%H:%M:%S')] $*"; }
 reset_gentoo() {
     log "[reset] Resetting gentoo.sh to HEAD..."
     git -C "$GENTOO_DIR" checkout HEAD -- gentoo.sh 2>&1
+    # Remove any stray files the model may have created (e.g. bogus opencode.json)
+    rm -f "$GENTOO_DIR"/opencode.json "$GENTOO_DIR"/*.json 2>/dev/null
     # Clear opencode session history so each run starts fresh
     rm -f ~/.local/share/opencode/opencode.db \
           ~/.local/share/opencode/opencode.db-wal \
