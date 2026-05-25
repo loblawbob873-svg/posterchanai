@@ -4360,12 +4360,14 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
             _tcs_filtered.append(_tc_ne)
         tool_calls = _tcs_filtered
     # Detect if sed loop errors appeared in conversation — block further sed -i if so
-    # Tool results (role="tool") also carry these proxy injections — check both roles
+    # Tool results (role="tool") also carry these proxy injections — check both roles.
+    # SED-FORMAT ERROR blocks immediately (tput/printf in replacement) — don't wait for identical repeat.
     _sed_blocked = any(
         ("[ERROR: You have run this EXACT sed command" in (m.get("content") or "") or
          "[ERROR: sed command failed" in (m.get("content") or "") or
          "SED IS NOW BLOCKED" in (m.get("content") or "") or
-         "[PROXY: sed -i is blocked" in (m.get("content") or ""))
+         "[PROXY: sed -i is blocked" in (m.get("content") or "") or
+         "[SED-FORMAT ERROR:" in (m.get("content") or ""))
         for m in messages if m.get("role") in ("user", "tool")
     )
     # Count how many times model called bash with no command — detect persistent empty-bash loop
