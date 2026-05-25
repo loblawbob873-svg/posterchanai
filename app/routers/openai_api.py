@@ -1924,16 +1924,32 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                             )
                                 except Exception:
                                     pass
-                                content_str = (
-                                    f"(sed matched 0 lines — your pattern does not match any line in {_sh_file}.{_actual_echo_hint} "
-                                    f"Run to check progress: "
-                                    f"VALID=$(grep -c 'echo -e.*\\\\033' {_sh_file}); echo \"Colorized echo lines: $VALID\"; "
-                                    f"REDIR=$(grep -cE 'echo -e.*\\\\033.*[>|]' {_sh_file} 2>/dev/null || echo 0); "
-                                    "[ \"$REDIR\" -gt 0 ] && echo \"REDIRECT ERROR: $REDIR colorized echoes redirect to files — revert these\"; "
-                                    f"BROKEN=$(grep -c '\\\\033.*echo' {_sh_file} 2>/dev/null || echo 0); "
-                                    f"[ $BROKEN -gt 0 ] && echo \"BROKEN: $BROKEN lines have color codes BEFORE echo — reset: git checkout HEAD {_sh_file}\"; "
-                                    f"grep -n 'echo -e.*\\\\033' {_sh_file} | head -3){_batch_hint}"
-                                )
+                                # Check the actual file to determine success vs failure
+                                _sed_ansi_count = 0
+                                try:
+                                    import subprocess as _sp_sc, os as _os_sc
+                                    if _os_sc.path.isfile(_sh_file):
+                                        _sc_res = _sp_sc.run(
+                                            ['grep', '-cE', r'echo\s+-e.*\\033\[', _sh_file],
+                                            capture_output=True, text=True, timeout=5
+                                        )
+                                        _sed_ansi_count = int(_sc_res.stdout.strip() or "0")
+                                except Exception:
+                                    pass
+                                if _sed_ansi_count > 0:
+                                    content_str = (
+                                        f"(sed -i succeeded — {_sh_file} now has {_sed_ansi_count} colorized echo lines. "
+                                        f"sed -i is ALWAYS silent on both success and failure. "
+                                        f"Do NOT retry the same sed — it already worked. "
+                                        f"Continue with the NEXT section header to colorize. "
+                                        f"Run: grep -n 'echo \"\\[' {_sh_file} | grep -v '>>' | grep -v 'echo -e' | head -20 to see remaining uncolorized headers.){_batch_hint}"
+                                    )
+                                else:
+                                    content_str = (
+                                        f"(sed -i produced no output — sed is always silent. File check: {_sed_ansi_count} colorized lines so far in {_sh_file}. "
+                                        f"sed may have matched 0 lines — verify your pattern.{_actual_echo_hint} "
+                                        f"Run: grep -c 'echo -e.*\\\\033' {_sh_file} to recheck.){_batch_hint}"
+                                    )
                     else:
                         content_str = (
                             "(no output — sed -i is silent on success. If the pattern was not found, "
@@ -2815,9 +2831,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 else:
                     content_str += (
                         f"\n\n[EXPLORATION CAP: You have run {_total_cmds} bash commands without modifying any file. "
-                        "STOP running bash commands — no more testing, import checks, or ls. "
-                        "You have read the files already. Use the Edit tool now to make changes directly. "
-                        "Do NOT run python3, ls, find, or cat — use Edit/Write to modify source files now.]"
+                        "STOP reading files. You have enough context — make the changes now. "
+                        "For bulk find-and-replace across many lines in a .sh file, use a python3 heredoc: "
+                        "run `python3 << 'EOF'\\nimport re\\nlines = open('file.sh').readlines()\\n"
+                        "out = []\\nfor ln in lines:\\n    m = re.match(r'^(\\\\s*)PATTERN\\\\s*$', ln)\\n"
+                        "    if m: out.append(...)\\n    else: out.append(ln)\\n"
+                        "open('file.sh', 'w').writelines(out)\\nEOF`. "
+                        "For single-file edits, use the Edit tool. "
+                        "Make the change now — no more bash read commands.]"
                     )
                 _exploration_cap_injected += 1
             # Detect HTTP fetch loops — fetching external URLs is wrong for local file editing tasks
@@ -4764,9 +4785,12 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                             logger.info("[EXPLORATION-CAP-BLOCK] Bash already blocked once — using WRITE NOW marker")
                         else:
                             _adict_cap["command"] = (
-                                "printf '\\n[WRITE NOW: Exploration limit reached. Write all changed files now using "
-                                "Write tool calls back-to-back — no bash between writes. "
-                                "Write complete file content for each file, then run one syntax check at the end.]\\n'"
+                                "printf '\\n[WRITE NOW: Exploration limit reached. Make the changes NOW. "
+                                "For bulk changes to a .sh file: run a python3 heredoc (python3 << EOF...EOF) "
+                                "that reads the file with readlines(), loops over lines, matches with re.match anchored to end-of-line ($), "
+                                "builds the replacement with string concatenation (not f-strings), writes with writelines(). "
+                                "For single-file edits: use the Edit tool. "
+                                "No more read-only bash commands — write changes now.]\\n'"
                             )
                         _tc_cap = {**_tc_cap, "function": {**_fn_cap, "arguments": json.dumps(_adict_cap)}}
                         logger.info("[EXPLORATION-CAP-BLOCK] Blocked bash call after exploration cap — no writes yet")
