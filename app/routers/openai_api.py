@@ -1872,10 +1872,22 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 content_str = (
                                     f"[ERROR: sed has silently matched 0 lines {silent_sed_sh_count} times on {_sh_file}. "
                                     "SED IS NOW BLOCKED. Your sed patterns are not matching anything. "
-                                    "Switch to python3 — write a heredoc script that reads all lines and rewrites them. "
-                                    "Filter: s.strip().startswith('echo ') and '>>' not in s and '>' not in s.partition('echo')[2] and ' | ' not in s. "
-                                    "Use SINGLE-QUOTED f-strings: f'{indent}echo -e \"\\\\033[{col}m{text}\\\\033[0m\"\\n' "
-                                    "Colors cycling: ['1;96','1;93','1;92','1;91']. Write ALL lines back.]"
+                                    "Switch to python3 heredoc. Write EXACTLY this to /tmp/fix.py using cat > /tmp/fix.py << 'FIXEOF':\n"
+                                    "import re\n"
+                                    f"with open('{_sh_file}') as f:\n"
+                                    "    content = f.read()\n"
+                                    "colors = ['1;96', '1;93', '1;92', '1;91']\n"
+                                    "i = [0]\n"
+                                    "def colorize(m):\n"
+                                    "    col = colors[i[0] % len(colors)]\n"
+                                    "    i[0] += 1\n"
+                                    "    return 'echo -e \"\\\\033[' + col + 'm' + m.group(1) + '\\\\033[0m\"'\n"
+                                    "content = re.sub(r'echo \"(\\[.+?\\])\"', colorize, content)\n"
+                                    f"with open('{_sh_file}', 'w') as f:\n"
+                                    "    f.write(content)\n"
+                                    "print('Done:', len(re.findall(r'echo -e', content)), 'colorized')\n"
+                                    "FIXEOF\n"
+                                    "then run: python3 /tmp/fix.py]"
                                 )
                             else:
                                 # Count previous individual per-line sed calls to detect slow one-at-a-time pattern
