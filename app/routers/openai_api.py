@@ -3048,6 +3048,46 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "No more bash read commands — write the file NOW.]"
                     )
                 _exploration_cap_injected += 1
+            # RECENT-EXPLORE CAP: model wrote something early (sed/heredoc) but has been in
+            # pure-read mode for the last 5+ commands without further writes.
+            # Fire when: _any_write=True, recent ≥5 cmds all read-only, not already warned.
+            elif _any_write and _total_cmds >= 6 and "[RECENT-EXPLORE" not in content_str:
+                _recent_tail = bash_history[-6:] if len(bash_history) >= 6 else bash_history
+                _recent_readonly = all(
+                    not re.search(
+                        r'sed\s+-i|open\s*\(.*,\s*["\']w["\']|>>\s*\S|>\s*[^|&>]|python3?\s+<<.*open.*w',
+                        c, re.DOTALL
+                    ) for c in _recent_tail
+                ) if len(_recent_tail) >= 5 else False
+                _already_recent_capped = any(
+                    "[RECENT-EXPLORE" in str(m.get("content") or "") for m in messages
+                )
+                if _recent_readonly and not _already_recent_capped:
+                    _rec_task_sh = re.findall(r'(/[\w./-]+\.sh)\b', _first_user_text)
+                    _rec_sh_path = _rec_task_sh[0] if _rec_task_sh else '/path/to/file.sh'
+                    content_str += (
+                        f"\n\n[RECENT-EXPLORE CAP: You made some changes earlier but the last {len(_recent_tail)} commands were read-only. "
+                        f"STOP exploring. Run this global colorization now:\n"
+                        f"python3 << 'PYEOF'\n"
+                        f"import re\n"
+                        f"lines = open('{_rec_sh_path}').readlines()\n"
+                        f"colors = ['1;36','1;35','1;33','1;32','1;31']\n"
+                        f"ci = [0]\n"
+                        f"out = []\n"
+                        f"for ln in lines:\n"
+                        f"    m = re.match(r'^(\\t| *)echo \"(\\[[^\\]]+\\])\"\\s*$', ln)\n"
+                        f"    if m:\n"
+                        f"        col = colors[ci[0] % len(colors)]\n"
+                        f"        ci[0] += 1\n"
+                        f"        out.append(m.group(1) + 'echo -e \"\\\\033[' + col + 'm' + m.group(2) + '\\\\033[0m\"\\n')\n"
+                        f"    else:\n"
+                        f"        out.append(ln)\n"
+                        f"open('{_rec_sh_path}', 'w').writelines(out)\n"
+                        f"print('Done:', sum(1 for l in open('{_rec_sh_path}') if '\\\\033[' in l), 'colorized')\n"
+                        f"PYEOF\n"
+                        f"This script colorizes ALL echo \"[...]\" headers with cycling colors. Run it NOW.]"
+                    )
+                    logger.info(f"[RECENT-EXPLORE-CAP] {len(_recent_tail)} recent read-only cmds after writes — injecting global template")
             # Detect HTTP fetch loops — fetching external URLs is wrong for local file editing tasks
             _http_fetches = sum(1 for c in bash_history if re.search(r'requests\.get|urllib\.request|curl\s+http|wget\s+http', c))
             if _http_fetches >= 2 and re.search(r'requests\.get|urllib\.request|curl\s+http|wget\s+http', last_bash_cmd):
