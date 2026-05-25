@@ -1626,6 +1626,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         f"Add 'import {_missing_mod}' at the very top of your script before using it.]"
                     )
                     logger.info(f"[NAMEERROR-FIX] Injected import hint for: {_missing_mod!r}")
+            # Intercept Python TypeError from re.sub called on a list instead of a string
+            elif "TypeError" in content_str and "expected string or bytes-like object" in content_str:
+                content_str += (
+                    "\n\n[PROXY: Python TypeError — re.sub (or similar) was called on a list instead of a string. "
+                    "Fix: join the list first with content = ''.join(lines), then run re.sub on content. "
+                    "Write back with: with open(path, 'w') as f: f.write(content)]"
+                )
+                logger.info("[TYPEERROR-FIX] Injected re.sub-on-list hint")
             # Intercept "No changes" errors — model needs a new strategy
             elif "no changes to apply" in content_str.lower() or "identical" in content_str.lower():
                 _edit_fstring_hint = ""
