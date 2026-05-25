@@ -611,16 +611,31 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     _task_bases = {p.rsplit('/', 1)[-1] for p in _task_abs_paths}
                     if _orig_write_ok_path not in _task_abs_paths and _written_base not in _task_bases:
                         _task_files_str = ', '.join(_task_abs_paths)
-                        if _orig_write_ok_path not in _wrong_file_warned:
+                        # Skip if proxy already injected this warning in a previous call (content from history already has it)
+                        _already_warned = (
+                            "[NOTE: You wrote" in content_str or
+                            "[NOTE: Your task specified" in content_str or
+                            _orig_write_ok_path in _wrong_file_warned
+                        )
+                        if not _already_warned:
                             _wrong_file_warned.add(_orig_write_ok_path)
                             # If they wrote a /tmp/*.py helper, tell them to RUN it; otherwise redirect
                             _is_tmp_py = _orig_write_ok_path.startswith('/tmp/') and _orig_write_ok_path.endswith('.py')
                             if _is_tmp_py:
-                                content_str += (
-                                    f"\n\n[NOTE: You wrote {_orig_write_ok_path} as a helper script. "
-                                    f"Good — now RUN it: execute `python3 {_orig_write_ok_path}` in bash to apply changes to {_task_files_str}. "
-                                    f"Then verify with: grep -c 'echo -e.*\\\\033\\[' {_task_abs_paths[0] if _task_abs_paths else ''}]"
+                                # Check if they already ran this helper script
+                                _already_ran_helper = any(
+                                    f'python3 {_orig_write_ok_path}' in c or f'python3 {_orig_write_ok_path.rsplit("/",1)[-1]}' in c
+                                    for c in bash_history
                                 )
+                                if _already_ran_helper:
+                                    pass  # Already ran — don't re-nag; HELPER-VERIFY will report results
+                                else:
+                                    content_str += (
+                                        f"\n\n[NOTE: You wrote {_orig_write_ok_path} as a helper script. "
+                                        f"Good — now RUN it: execute `python3 {_orig_write_ok_path}` in bash to apply changes to {_task_files_str}. "
+                                        f"Use \\033[0m (zero) as the reset code — not \\033[22;39m or any other variant. "
+                                        f"Then verify with: grep -cP 'echo\\s+-e.*\\\\033\\[0m' {_task_abs_paths[0] if _task_abs_paths else ''}]"
+                                    )
                             else:
                                 content_str += (
                                     f"\n\n[NOTE: Your task specified modifying {_task_files_str}. "
@@ -2762,6 +2777,52 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         content_str += f"\n\n[AUTO-VERIFY: {_sh_ref} not found on proxy host — verify it was written correctly.]"
                 except Exception as _bne:
                     content_str += f"\n\n[AUTO-VERIFY: Could not run bash -n: {_bne}]"
+            # AUTO-VERIFY when model runs a /tmp/*.py helper script (not heredoc, not py_compile)
+            # Detects: python3 /tmp/fix.py, python3 /tmp/fix2.py, etc.
+            _is_helper_py_run = bool(
+                last_cmd and
+                re.match(r'python3?\s+/tmp/\w+\.py\s*$', last_cmd.strip()) and
+                not re.search(r'-m\s+py_compile|-m\s+py', last_cmd)
+            )
+            if _is_helper_py_run and "[AUTO-VERIFY" not in content_str and "[HELPER-VERIFY" not in content_str:
+                _helper_task_sh = [
+                    p for p in re.findall(r'(/[\w./-]+\.sh)\b', _first_user_text)
+                    if os.path.isfile(p)
+                ]
+                if _helper_task_sh:
+                    _hsh = _helper_task_sh[0]
+                    try:
+                        import subprocess as _sp_hv
+                        _hv_r = _sp_hv.run(['bash', '-n', _hsh], capture_output=True, text=True, timeout=10)
+                        if _hv_r.returncode == 0:
+                            with open(_hsh) as _hv_f:
+                                _hv_txt = _hv_f.read()
+                            _hv_strict = len(re.findall(r'echo\s+-e\s+["\']?\\033\[[\d;]+m.+\\033\[0m', _hv_txt))
+                            _hv_bad = [ln.rstrip() for ln in _hv_txt.splitlines()
+                                       if re.search(r'echo\s+-e\s+.*\\033\[[\d;]+m', ln) and
+                                       not re.search(r'\\033\[0m', ln) and
+                                       not ln.strip().startswith('#')]
+                            _hv_rst_hint = ""
+                            if _hv_bad:
+                                _hv_rst_hint = (
+                                    f" WRONG RESET: {len(_hv_bad)} echo -e line(s) use non-standard reset "
+                                    f"(e.g. \\033[22;39m) instead of \\033[0m. "
+                                    f"Example: {_hv_bad[0][:70]!r}. "
+                                    f"Fix ALL resets to \\033[0m now."
+                                )
+                            _hv_warn = ""
+                            if _hv_strict < 10:
+                                _hv_warn = (
+                                    f" NEED MORE: only {_hv_strict} of ≥10 required verify-format lines. "
+                                    f"Format MUST be: echo -e \"\\033[Nm<text>\\033[0m\" — literal codes, \\033[0m reset.{_hv_rst_hint}"
+                                )
+                            content_str += f"\n\n[HELPER-VERIFY: {_hsh} syntax OK. Strict verify-format lines: {_hv_strict}/10.{_hv_warn}]"
+                            logger.info(f"[HELPER-VERIFY] {_hsh}: {_hv_strict} strict lines, bad_reset={len(_hv_bad)}")
+                        else:
+                            _hv_err = (_hv_r.stderr or '').strip()[:200]
+                            content_str += f"\n\n[HELPER-VERIFY: {_hsh} has SYNTAX ERRORS after your script ran: {_hv_err}. Fix them.]"
+                    except Exception:
+                        pass
             # Warn if bash+python3 wrote to a file not mentioned in the original task.
             # Extracts the open() target path from the command — no hardcoded filenames.
             if _py3_heredoc_pattern and _py3_writes_file:
@@ -2784,7 +2845,12 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         _task_bases2 = {p.rsplit('/', 1)[-1] for p in _task_abs2}
                         if _py3_target not in _task_abs2 and _py3_base not in _task_bases2:
                             _task_files2 = ', '.join(_task_abs2)
-                            if _py3_target not in _wrong_file_warned:
+                            _already_warned2 = (
+                                "[NOTE: Your task specified" in content_str or
+                                "[NOTE: You wrote" in content_str or
+                                _py3_target in _wrong_file_warned
+                            )
+                            if not _already_warned2:
                                 _wrong_file_warned.add(_py3_target)
                                 content_str += (
                                     f"\n\n[NOTE: Your task specified modifying {_task_files2}. "
