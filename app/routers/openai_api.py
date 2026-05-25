@@ -1946,31 +1946,23 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             )
                         else:
                             if silent_sed_sh_count >= 3:
-                                # Multiple silent-fail sed calls on a .sh file — escalate to blocked
+                                # Multiple silent-fail sed calls on .sh file — switch to global template
                                 content_str = (
-                                    f"[ERROR: sed has silently matched 0 lines {silent_sed_sh_count} times on {_sh_file}. "
-                                    "SED IS NOW BLOCKED. Run this python3 heredoc in bash — fill in YOUR_PATTERN and REPLACEMENT:\n"
+                                    f"[ERROR: sed has matched 0 lines {silent_sed_sh_count} times. "
+                                    f"SED IS NOW BLOCKED — your patterns are wrong. "
+                                    f"Run this global script NOW to colorize ALL echo \"[...]\" headers at once:\n"
                                     f"python3 << 'FIXEOF'\n"
-                                    "import re\n"
+                                    f"import re\n"
                                     f"lines = open('{_sh_file}').readlines()\n"
-                                    "colors = ['1;36', '1;35', '1;33', '1;32', '1;31']\n"
-                                    "i = [0]\n"
-                                    "out = []\n"
-                                    "for ln in lines:\n"
-                                    "    m = re.match(r'^(\\s*)YOUR_PATTERN\\s*$', ln)\n"
-                                    "    if m:\n"
-                                    "        col = colors[i[0] % len(colors)]\n"
-                                    "        i[0] += 1\n"
-                                    "        out.append(m.group(1) + REPLACEMENT + '\\n')\n"
-                                    "    else:\n"
-                                    "        out.append(ln)\n"
+                                    f"out = []\n"
+                                    f"for ln in lines:\n"
+                                    r"    m = re.match(r'^(\t| *)echo \"(\[[^\]]+\])\"\s*$', ln)" + "\n"
+                                    r"    if m: out.append(m.group(1) + 'echo -e \"\\033[1;36m' + m.group(2) + '\\033[0m\"\n')" + "\n"
+                                    f"    else: out.append(ln)\n"
                                     f"open('{_sh_file}', 'w').writelines(out)\n"
-                                    "print('Done:', sum(1 for l in out if 'echo -e' in l))\n"
-                                    "FIXEOF\n"
-                                    "KEY RULES: (1) \\s*$ anchor at end means lines with >> or > redirects after the target WON'T match. "
-                                    "(2) Use string concatenation for REPLACEMENT, not f-strings. "
-                                    "(3) Write ALL lines back — matched and unmatched. "
-                                    "(4) Use literal \\\\033[Nm in the replacement string — not shell variables like $CYAN.]"
+                                    f"print('Done:', sum(1 for l in open('{_sh_file}') if '\\\\033[' in l), 'colorized')\n"
+                                    f"FIXEOF\n"
+                                    f"Do NOT modify the pattern — run it exactly as shown.]"
                                 )
                             else:
                                 # Count previous individual per-line sed calls to detect slow one-at-a-time pattern
