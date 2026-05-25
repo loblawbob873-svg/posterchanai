@@ -1499,27 +1499,16 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 else:
                     _is_fstring_trunc = bool(re.search(r'unterminated f-string|f-string.*detected', content_str, re.IGNORECASE))
                     if _is_fstring_trunc:
-                        _fst_sh = re.search(r'(/[\w./-]+\.sh)\b', last_bash_cmd or "")
-                        _fst_path = _fst_sh.group(1) if _fst_sh else "/path/to/file.sh"
                         content_str = (
                             content_str +
-                            "\n\n[PROXY: Python f-string truncated — the f'...' literal was cut off. "
-                            "STOP using f-strings. Use re.sub with a lambda and string concatenation instead. "
-                            "Complete working example — write this EXACTLY to /tmp/fix.py using the Write tool:\n"
-                            "import re\n"
-                            f"with open('{_fst_path}') as f:\n"
-                            "    content = f.read()\n"
-                            "content = re.sub(\n"
-                            "    r'echo \"(\\[.+?\\])\"',\n"
-                            "    lambda m: 'echo -e \"\\\\033[1;36m' + m.group(1) + '\\\\033[0m\"',\n"
-                            "    content\n"
-                            ")\n"
-                            f"with open('{_fst_path}', 'w') as f:\n"
-                            "    f.write(content)\n"
-                            "print('Done')\n"
-                            "Write exactly the above to /tmp/fix.py using the Write tool. Then run: python3 /tmp/fix.py]"
+                            "\n\n[PROXY: Python f-string truncated — the f'...' literal was cut off mid-string. "
+                            "STOP using f-strings entirely. Backslashes inside f-strings cause parse errors. "
+                            "Use plain string concatenation instead: 'prefix' + variable + 'suffix'. "
+                            "Write the script to /tmp/fix.py using the Write tool (not a heredoc) — "
+                            "in a Write tool file, backslashes work normally without shell escaping. "
+                            "Use readlines()/writelines() to process the file line by line with re.match.]"
                         )
-                        logger.info("[FSTRING-TRUNC] Detected unterminated f-string, injected working template")
+                        logger.info("[FSTRING-TRUNC] Detected unterminated f-string, injected general guidance")
                     else:
                         content_str = (
                             content_str +
@@ -1871,15 +1860,28 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 # Multiple silent-fail sed calls on a .sh file — escalate to blocked
                                 content_str = (
                                     f"[ERROR: sed has silently matched 0 lines {silent_sed_sh_count} times on {_sh_file}. "
-                                    "SED IS NOW BLOCKED. Your sed patterns are not matching any lines. "
-                                    "Switch to a python3 heredoc (run via bash, not the python tool): python3 << 'EOF' ... EOF. "
-                                    "Process lines ONE AT A TIME with readlines() — do NOT use re.sub on the whole content string, "
-                                    "because re.sub matches partial lines and will accidentally modify lines that have "
-                                    "extra content after the target (like shell redirects >> or > after the echo string). "
-                                    "Use re.match(r'^(\\\\s*)YOUR_PATTERN\\\\s*$', ln) anchored to end-of-line ($) so only "
-                                    "pure display echo lines match — lines with >> or > after the string will NOT match. "
-                                    "Write ALL lines back (matched and unmatched). "
-                                    f"After writing, run bash -n {_sh_file} to verify syntax.]"
+                                    "SED IS NOW BLOCKED. Run this python3 heredoc in bash — fill in YOUR_PATTERN and REPLACEMENT:\n"
+                                    f"python3 << 'FIXEOF'\n"
+                                    "import re\n"
+                                    f"lines = open('{_sh_file}').readlines()\n"
+                                    "colors = ['1;36', '1;35', '1;33', '1;32', '1;31']\n"
+                                    "i = [0]\n"
+                                    "out = []\n"
+                                    "for ln in lines:\n"
+                                    "    m = re.match(r'^(\\s*)YOUR_PATTERN\\s*$', ln)\n"
+                                    "    if m:\n"
+                                    "        col = colors[i[0] % len(cols)]\n"
+                                    "        i[0] += 1\n"
+                                    "        out.append(m.group(1) + REPLACEMENT + '\\n')\n"
+                                    "    else:\n"
+                                    "        out.append(ln)\n"
+                                    f"open('{_sh_file}', 'w').writelines(out)\n"
+                                    "print('Done:', sum(1 for l in out if 'echo -e' in l))\n"
+                                    "FIXEOF\n"
+                                    "KEY RULES: (1) \\s*$ anchor at end means lines with >> or > redirects after the target WON'T match. "
+                                    "(2) Use string concatenation for REPLACEMENT, not f-strings. "
+                                    "(3) Write ALL lines back — matched and unmatched. "
+                                    "(4) Use literal \\\\033[Nm in the replacement string — not shell variables like $CYAN.]"
                                 )
                             else:
                                 # Count previous individual per-line sed calls to detect slow one-at-a-time pattern
@@ -2557,12 +2559,44 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 with open(_sh_ref) as _ansi_f:
                                     _ansi_txt = _ansi_f.read()
                                 _ansi_count = len(re.findall(r'echo\s+-e\s+["\']?\\033\[[\d;]+m.+\\033\[0m', _ansi_txt))
+                                # Detect lines that have ANSI codes but wrong reset (not \033[0m)
+                                _bad_reset_lines = [
+                                    ln.rstrip() for ln in _ansi_txt.splitlines()
+                                    if re.search(r'echo\s+-e\s+.*\\033\[[\d;]+m', ln) and
+                                    not re.search(r'\\033\[0m', ln) and
+                                    not ln.strip().startswith('#')
+                                ]
+                                # Detect variable-reference approach (e.g. echo -e "${CYAN}...${RESET}")
+                                _var_ref_lines = [
+                                    ln.rstrip() for ln in _ansi_txt.splitlines()
+                                    if re.search(r'echo\s+-e\s+.*\$\{?[A-Z_]{3,}\}?', ln) and
+                                    not re.search(r'\\033\[', ln) and
+                                    not ln.strip().startswith('#')
+                                ]
                                 if _ansi_count < 10:
+                                    _reset_hint = ""
+                                    if _bad_reset_lines:
+                                        _reset_hint = (
+                                            f" WRONG RESET CODE: {len(_bad_reset_lines)} line(s) use a non-standard reset "
+                                            f"like \\033[22;39m or \\033[22m instead of \\033[0m. "
+                                            f"Example: {_bad_reset_lines[0][:80]!r}. "
+                                            f"The reset code MUST be \\033[0m (zero) — no other code works. "
+                                            f"Fix: change all color resets to \\033[0m."
+                                        )
+                                    _var_hint = ""
+                                    if _var_ref_lines:
+                                        _var_hint = (
+                                            f" VARIABLE-REFERENCE WARNING: {len(_var_ref_lines)} echo -e line(s) use "
+                                            f"shell variable references like ${{CYAN}} instead of literal \\033[...] codes. "
+                                            f"Example: {_var_ref_lines[0][:80]!r}. "
+                                            f"Variable references are NOT counted as properly colorized lines — "
+                                            f"you must embed the literal \\033[Nm codes directly in the echo string: "
+                                            f"echo -e \"\\033[1;36m[Title]\\033[0m\", NOT echo -e \"${{CYAN}}[Title]${{RESET}}\"."
+                                        )
+                                        logger.info(f"[VAR-REF-WARN] {len(_var_ref_lines)} echo lines use variable refs instead of literal ANSI in {_sh_ref}")
                                     _ansi_warn = (
-                                        f" WARNING: only {_ansi_count} colorized echo lines found "
-                                        f"(need ≥10 with echo -e \"\\033[Nm<text>\\033[0m\" format). "
-                                        f"Your script may have only partially colorized the file — "
-                                        f"check that the regex matched ALL target lines, not just a subset. "
+                                        f" WARNING: only {_ansi_count} properly colorized echo lines found "
+                                        f"(need ≥10 with format: echo -e \"\\033[Nm<text>\\033[0m\").{_reset_hint}{_var_hint} "
                                         f"Run: grep -c 'echo -e.*\\\\033' {_sh_ref} to count colored lines."
                                     )
                                 # Check for echo -e with ANSI codes that also redirect to files
