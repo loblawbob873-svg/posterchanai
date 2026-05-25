@@ -7,7 +7,7 @@ OPENCODE="$HOME/.opencode/bin/opencode"
 MODEL="poster/Qwen3.5-9B-Claude-Code-Q4_K_M.gguf"
 GENTOO_DIR="/opt/gentoo-installer"
 PROMPT='modify /opt/gentoo-installer/gentoo.sh to have cyberpunk-style menu titles and colors throughout the script'
-MAX_ATTEMPTS=5
+MAX_ATTEMPTS=10
 OPENCODE_TIMEOUT=600
 
 log() { echo "[$(date '+%H:%M:%S')] $*"; }

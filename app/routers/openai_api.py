@@ -586,11 +586,20 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         _task_files_str = ', '.join(_task_abs_paths)
                         if _orig_write_ok_path not in _wrong_file_warned:
                             _wrong_file_warned.add(_orig_write_ok_path)
-                            content_str += (
-                                f"\n\n[NOTE: Your task specified modifying {_task_files_str}. "
-                                f"You wrote to {_orig_write_ok_path} instead. "
-                                f"Apply the required changes to the originally specified file(s) as well.]"
-                            )
+                            # If they wrote a /tmp/*.py helper, tell them to RUN it; otherwise redirect
+                            _is_tmp_py = _orig_write_ok_path.startswith('/tmp/') and _orig_write_ok_path.endswith('.py')
+                            if _is_tmp_py:
+                                content_str += (
+                                    f"\n\n[NOTE: You wrote {_orig_write_ok_path} as a helper script. "
+                                    f"Good — now RUN it: execute `python3 {_orig_write_ok_path}` in bash to apply changes to {_task_files_str}. "
+                                    f"Then verify with: grep -c 'echo -e.*\\\\033\\[' {_task_abs_paths[0] if _task_abs_paths else ''}]"
+                                )
+                            else:
+                                content_str += (
+                                    f"\n\n[NOTE: Your task specified modifying {_task_files_str}. "
+                                    f"You wrote to {_orig_write_ok_path} instead. "
+                                    f"Apply the required changes to the originally specified file(s) as well.]"
+                                )
                             logger.info(f"[WRONG-FILE-WARN] Wrote {_orig_write_ok_path}, task mentions {_task_files_str}")
             # Detect TOOL-CALL-AUTOFIX bash write completion marker — the proxy replaced a broken
             # Write call with a Bash call that writes corrected content; record success and tell model
@@ -1870,7 +1879,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                     "for ln in lines:\n"
                                     "    m = re.match(r'^(\\s*)YOUR_PATTERN\\s*$', ln)\n"
                                     "    if m:\n"
-                                    "        col = colors[i[0] % len(cols)]\n"
+                                    "        col = colors[i[0] % len(colors)]\n"
                                     "        i[0] += 1\n"
                                     "        out.append(m.group(1) + REPLACEMENT + '\\n')\n"
                                     "    else:\n"
@@ -1893,8 +1902,31 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                         "For bulk edits requiring many changes, use python3 to process all target lines "
                                         "in a single script call rather than one sed per line — much faster for bulk edits."
                                     )
+                                # Show actual echo lines from the file so model sees the real format
+                                _actual_echo_hint = ""
+                                try:
+                                    import subprocess as _sp_ae, os as _os_ae
+                                    if _os_ae.path.isfile(_sh_file):
+                                        _ae_res = _sp_ae.run(
+                                            ['grep', '-n', 'echo', _sh_file],
+                                            capture_output=True, text=True, timeout=5
+                                        )
+                                        _ae_lines = [
+                                            l for l in _ae_res.stdout.splitlines()
+                                            if not re.match(r'^\d+:\s*#', l) and
+                                            re.search(r'\becho\b', l)
+                                        ][:10]
+                                        if _ae_lines:
+                                            _actual_echo_hint = (
+                                                f" ACTUAL ECHO LINES IN {_sh_file} (first {len(_ae_lines)}):\n" +
+                                                "\n".join(_ae_lines) +
+                                                "\nYour sed pattern must match EXACTLY this format — no -e or extra flags in the source."
+                                            )
+                                except Exception:
+                                    pass
                                 content_str = (
-                                    f"(no output — sed -i is silent on success. Run to check progress: "
+                                    f"(sed matched 0 lines — your pattern does not match any line in {_sh_file}.{_actual_echo_hint} "
+                                    f"Run to check progress: "
                                     f"VALID=$(grep -c 'echo -e.*\\\\033' {_sh_file}); echo \"Colorized echo lines: $VALID\"; "
                                     f"REDIR=$(grep -cE 'echo -e.*\\\\033.*[>|]' {_sh_file} 2>/dev/null || echo 0); "
                                     "[ \"$REDIR\" -gt 0 ] && echo \"REDIRECT ERROR: $REDIR colorized echoes redirect to files — revert these\"; "
@@ -2594,9 +2626,31 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                             f"echo -e \"\\033[1;36m[Title]\\033[0m\", NOT echo -e \"${{CYAN}}[Title]${{RESET}}\"."
                                         )
                                         logger.info(f"[VAR-REF-WARN] {len(_var_ref_lines)} echo lines use variable refs instead of literal ANSI in {_sh_ref}")
+                                    # When 0 colorized lines, show actual echo lines so model sees the real format
+                                    _echo_preview = ""
+                                    if _ansi_count == 0:
+                                        try:
+                                            import subprocess as _sp_ep
+                                            _ep_res = _sp_ep.run(
+                                                ['grep', '-n', 'echo'],
+                                                input=_ansi_txt, capture_output=True, text=True, timeout=5
+                                            )
+                                            _ep_lines = [
+                                                l for l in _ep_res.stdout.splitlines()
+                                                if not re.match(r'^\d+:\s*#', l)
+                                            ][:12]
+                                            if _ep_lines:
+                                                _echo_preview = (
+                                                    f" ACTUAL ECHO LINES IN FILE (first {len(_ep_lines)}):\n" +
+                                                    "\n".join(_ep_lines) +
+                                                    f"\nYour pattern must match EXACTLY these lines."
+                                                )
+                                        except Exception:
+                                            pass
                                     _ansi_warn = (
                                         f" WARNING: only {_ansi_count} properly colorized echo lines found "
-                                        f"(need ≥10 with format: echo -e \"\\033[Nm<text>\\033[0m\").{_reset_hint}{_var_hint} "
+                                        f"(need ≥10 with format: echo -e \"\\033[Nm<text>\\033[0m\").{_reset_hint}{_var_hint}"
+                                        f"{_echo_preview} "
                                         f"Run: grep -c 'echo -e.*\\\\033' {_sh_ref} to count colored lines."
                                     )
                                 # Check for echo -e with ANSI codes that also redirect to files
