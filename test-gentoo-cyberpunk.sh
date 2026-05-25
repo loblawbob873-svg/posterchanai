@@ -48,9 +48,9 @@ verify_gentoo() {
     fi
 
     # 3. At least 10 echo lines with properly formatted ANSI color codes
-    # Require: echo -e "\033[... (color code immediately after opening quote)
+    # Accept: echo -e "\033[... or echo -e \"\033[... (both valid bash)
     local colored
-    colored=$(grep -cP 'echo\s+-e\s+"\\033\[' "$f" 2>/dev/null; true)
+    colored=$(grep -cP 'echo\s+-e\s+\\?"\\033\[' "$f" 2>/dev/null; true)
     colored=${colored:-0}
     if [ "$colored" -lt 10 ]; then
         log "[verify] FAIL: only $colored properly colorized echo lines (need ≥10 matching: echo -e \"\\033[...\")"
