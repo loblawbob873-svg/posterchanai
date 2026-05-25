@@ -1678,6 +1678,35 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         f"Add 'import {_missing_mod}' at the very top of your script before using it.]"
                     )
                     logger.info(f"[NAMEERROR-FIX] Injected import hint for: {_missing_mod!r}")
+            # Intercept Python PatternError (unbalanced parenthesis / bad regex) in heredocs
+            elif ("PatternError" in content_str or "re.PatternError" in content_str or
+                  ("unbalanced parenthesis" in content_str and "re" in content_str)):
+                _pe_sh = re.findall(r'(/[\w./-]+\.sh)\b', _first_user_text)
+                _pe_path = _pe_sh[0] if _pe_sh else '/path/to/file.sh'
+                content_str += (
+                    f"\n\n[PROXY: Python PatternError — your regex has an unbalanced parenthesis. "
+                    f"Stop trying complex patterns. Use ONLY this simple regex (no named groups, no (?P<..>)): "
+                    f"re.match(r'^(\\t| *)echo \"(\\[[^\\]]+\\])\"\\s*$', ln) "
+                    f"Copy this script exactly:\n"
+                    f"python3 << 'PYEOF'\n"
+                    f"import re\n"
+                    f"lines = open('{_pe_path}').readlines()\n"
+                    f"colors = ['1;36','1;35','1;33','1;32','1;31']\n"
+                    f"ci = [0]\n"
+                    f"out = []\n"
+                    f"for ln in lines:\n"
+                    f"    m = re.match(r'^(\\t| *)echo \"(\\[[^\\]]+\\])\"\\s*$', ln)\n"
+                    f"    if m:\n"
+                    f"        col = colors[ci[0] % len(colors)]\n"
+                    f"        ci[0] += 1\n"
+                    f"        out.append(m.group(1) + 'echo -e \"\\\\033[' + col + 'm' + m.group(2) + '\\\\033[0m\"\\n')\n"
+                    f"    else:\n"
+                    f"        out.append(ln)\n"
+                    f"open('{_pe_path}', 'w').writelines(out)\n"
+                    f"print('Done:', sum(1 for l in open('{_pe_path}') if '\\\\033[' in l), 'colorized')\n"
+                    f"PYEOF]"
+                )
+                logger.info("[PATTERNERROR-FIX] Injected simple regex template after PatternError")
             # Intercept Python TypeError from re.sub called on a list instead of a string
             elif "TypeError" in content_str and "expected string or bytes-like object" in content_str:
                 content_str += (
