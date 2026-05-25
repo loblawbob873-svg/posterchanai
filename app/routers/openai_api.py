@@ -1579,6 +1579,22 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     "Take the exact text from grep output and use it verbatim as the pattern. "
                     "Use the exact literal text from grep output as the pattern, one sed -i call per line, chained with &&.]"
                 )
+            # Intercept f.writ AttributeError — model truncated file write call, also truncated the target file
+            elif (
+                "AttributeError" in content_str and
+                re.search(r"has no attribute ['\"]?writ['\"]?", content_str)
+            ):
+                _trunc_file_m = re.search(r"open\s*\(['\"]([^'\"]+)['\"],\s*['\"]w['\"]", last_bash_cmd or "")
+                _trunc_fname = _trunc_file_m.group(1) if _trunc_file_m else "the target file"
+                _writ_restore_cmd = f"git checkout HEAD -- {_trunc_fname}" if _trunc_fname != "the target file" else "git checkout HEAD -- <file>"
+                content_str = (
+                    f"[ERROR: 'f.writ' is not a valid Python method — the write call was truncated. "
+                    f"CRITICAL: opening '{_trunc_fname}' with open(..., 'w') ERASED its contents before the error — "
+                    f"the file is now EMPTY. You must restore it first with: {_writ_restore_cmd} "
+                    f"Then fix the script: change 'f.writ' to 'f.writelines(lines)' or 'f.write(\"\".join(lines))'. "
+                    f"Run the corrected script after restoring the file.]"
+                )
+                logger.info(f"[WRIT-ATTR-ERROR] Detected f.writ truncation, target={_trunc_fname!r}")
             # Intercept "No changes" errors — model needs a new strategy
             elif "no changes to apply" in content_str.lower() or "identical" in content_str.lower():
                 _edit_fstring_hint = ""
@@ -3082,6 +3098,30 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False,
                             logger.info(f"[SED-FIX] {cmd[:120]!r} → {fixed[:120]!r}")
             except Exception:
                 pass
+            # Fix truncated Python write call: model generates "f.writ" without completing writelines/write.
+            # The model also truncates before the heredoc EOF or closing quote — fix both.
+            try:
+                if cmd and re.search(r'python3?', cmd) and re.search(r'\bf\.writ\s*$', cmd, re.MULTILINE):
+                    _lines_var = 'fixed_lines' if 'fixed_lines' in cmd else 'lines'
+                    _fixed_cmd = re.sub(r'\bf\.writ\s*$', f'f.writelines({_lines_var})', cmd, flags=re.MULTILINE)
+                    # Close missing heredoc terminator: python3 << 'WORD'\n...\nf.writelines() needs \nWORD
+                    _hd_m = re.search(r"python3?\s+<<\s+['\"]?(\w+)['\"]?", _fixed_cmd)
+                    if _hd_m:
+                        _hd_word = _hd_m.group(1)
+                        if not re.search(rf'^\s*{re.escape(_hd_word)}\s*$', _fixed_cmd, re.MULTILINE):
+                            _fixed_cmd = _fixed_cmd.rstrip() + f'\n{_hd_word}\n'
+                    # Close missing bash -c quote: python3 -c "...\nf.writelines() without trailing "
+                    elif re.search(r'python3?\s+-c\s+(["\'])', _fixed_cmd):
+                        _q_m = re.search(r'python3?\s+-c\s+(["\'])', _fixed_cmd)
+                        _q = _q_m.group(1)
+                        if _fixed_cmd.count(_q) % 2 != 0:
+                            _fixed_cmd = _fixed_cmd.rstrip() + _q + '\n'
+                    if _fixed_cmd != cmd:
+                        args_dict["command"] = _fixed_cmd
+                        tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                        logger.info(f"[FWRIT-FIX] Auto-completed f.writ → f.writelines({_lines_var})")
+            except Exception:
+                pass
         out.append(tc)
     return out
 
@@ -3619,6 +3659,23 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         usage = result.get("usage", {})
 
     clean_text, tool_calls = _parse_oai_tool_calls(full_text)
+    # Drop empty-command bash calls when the model also produced text content.
+    # This fixes the case where the model answers a generic question but wraps it
+    # in a bare <tool_call>{"name":"bash","arguments":{}}</tool_call> with no command.
+    if clean_text.strip() and tool_calls:
+        _tcs_filtered = []
+        for _tc_ne in tool_calls:
+            _fn_ne = _tc_ne.get("function", {})
+            if _fn_ne.get("name", "").lower() == "bash":
+                try:
+                    _args_ne = json.loads(_fn_ne.get("arguments", "{}") or "{}")
+                    if not _args_ne.get("command", "").strip():
+                        logger.info("[EMPTY-BASH-DROPPED] Dropped empty-command bash call (model has text response)")
+                        continue
+                except Exception:
+                    pass
+            _tcs_filtered.append(_tc_ne)
+        tool_calls = _tcs_filtered
     # Detect if sed loop errors appeared in conversation — block further sed -i if so
     _sed_blocked = any(
         ("[ERROR: You have run this EXACT sed command" in (m.get("content") or "") or
