@@ -3360,6 +3360,26 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False,
 
                 # Only block sed -i if the TARGET FILE (last token) has a binary extension — not if the replacement text mentions one
                 _sed_target_file = cmd.rstrip().split()[-1] if cmd.strip() else ''
+                # Warn when sed -i targets a non-existent file while the task specifies a different file
+                if "sed" in cmd and "-i" in cmd and _sed_target_file and not os.path.isfile(_sed_target_file):
+                    _first_user_msg_ctx = next(
+                        (m.get("content") or "" for m in (messages or []) if m.get("role") == "user"), ""
+                    )
+                    _ctx_task_files = re.findall(
+                        r'(/[\w./-]+\.(?:sh|bash|py|js|ts|dart|html?|css|yaml|json|toml|cfg|conf))',
+                        _first_user_msg_ctx
+                    )
+                    if _ctx_task_files and _sed_target_file not in _ctx_task_files:
+                        _correct_file = _ctx_task_files[0]
+                        args_dict["command"] = (
+                            f"printf '\\n[SED-WRONG-FILE: You are trying to edit \"{_sed_target_file}\" which does not exist. "
+                            f"Your task specifies modifying \"{_correct_file}\". "
+                            f"Use that path in your sed command instead.\\n'"
+                        )
+                        tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                        logger.info(f"[SED-WRONG-FILE] sed targets non-existent {_sed_target_file!r}, task file is {_correct_file!r}")
+                        out.append(tc)
+                        continue
                 if "sed" in cmd and "-i" in cmd and re.search(r'\.(keystore|jks|p12|apk|aar|aab|so|class|jar|zip|tar)\b', _sed_target_file):
                     args_dict["command"] = "\n".join([
                         "cat << 'PROXYMSG'",
