@@ -2789,7 +2789,16 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                     logger.info(f"[REDIRECT-COLORIZE] {len(_redir_broken)} broken redirect lines in {_sh_ref}")
                             except Exception:
                                 pass
-                            content_str += f"\n\n[AUTO-VERIFY: bash -n {_sh_ref} → SYNTAX OK. Colorized echo lines: {_ansi_count}.{_ansi_warn}{_redir_warn} Verify the changes look correct with grep.]"
+                            if _ansi_count >= 10 and not _ansi_warn and not _redir_warn:
+                                content_str += (
+                                    f"\n\n[AUTO-VERIFY: bash -n {_sh_ref} → SYNTAX OK. Colorized echo lines: {_ansi_count}. "
+                                    f"✓ TASK COMPLETE — {_ansi_count} properly colorized lines found (≥10 required). "
+                                    f"STOP MAKING CHANGES. Your script output may have shown 0 (wrong count method — "
+                                    f"the file HAS \\033[ literals). Report success and do NOT run any more scripts.]"
+                                )
+                                logger.info(f"[AUTO-VERIFY-SUCCESS] {_sh_ref}: {_ansi_count} colorized lines — COMPLETE")
+                            else:
+                                content_str += f"\n\n[AUTO-VERIFY: bash -n {_sh_ref} → SYNTAX OK. Colorized echo lines: {_ansi_count}.{_ansi_warn}{_redir_warn} Verify the changes look correct with grep.]"
                         else:
                             _bash_err = (_bash_n.stderr or '').strip()[:300]
                             _broken_sh_files.add(_sh_ref)
