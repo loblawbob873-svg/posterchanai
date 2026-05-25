@@ -39,7 +39,14 @@ verify_gentoo() {
         return 1
     fi
 
-    # 2. gentoo.sh must actually be modified
+    # 2. Shebang must still be present (model must not delete script header)
+    if ! head -3 "$f" | grep -qP '^#!'; then
+        log "[verify] FAIL: shebang line missing — model deleted script header"
+        head -5 "$f"
+        return 1
+    fi
+
+    # 3. gentoo.sh must actually be modified
     local diff_lines
     diff_lines=$(git -C "$GENTOO_DIR" diff HEAD -- gentoo.sh 2>/dev/null | wc -l)
     if [ "$diff_lines" -lt 5 ]; then
@@ -47,17 +54,20 @@ verify_gentoo() {
         return 1
     fi
 
-    # 3. At least 10 echo lines with properly formatted ANSI color codes
-    # Accept: echo -e "\033[... or echo -e \"\033[... (both valid bash)
+    # 4. At least 10 echo lines with ANSI codes AND a proper closing \033[0m reset.
+    # Requires: echo -e "\033[<code>m<text>\033[0m" — rules out blank-echo→ANSI conversions
+    # that lack a closing reset (the common cheat: changing bare echo to echo -e "\033[Nm[0m").
     local colored
-    colored=$(grep -cP 'echo\s+-e\s+\\?"\\033\[' "$f" 2>/dev/null; true)
+    colored=$(grep -cP 'echo\s+-e\s+\\?"\\033\[[\d;]+m.+\\033\[0m' "$f" 2>/dev/null; true)
     colored=${colored:-0}
     if [ "$colored" -lt 10 ]; then
-        log "[verify] FAIL: only $colored properly colorized echo lines (need ≥10 matching: echo -e \"\\033[...\")"
+        log "[verify] FAIL: only $colored properly colorized echo lines with closing reset (need ≥10 with echo -e \"\\033[Nm..text..\\033[0m\")"
+        log "[verify] Sample of what's there:"
+        grep -P 'echo\s+-e\s+\\?"\\033\[' "$f" | head -5 || true
         return 1
     fi
 
-    log "[verify] PASS: $colored colorized lines, syntax OK, diff=$diff_lines lines changed"
+    log "[verify] PASS: $colored colorized lines with proper reset, syntax OK, diff=$diff_lines lines changed"
     return 0
 }
 
