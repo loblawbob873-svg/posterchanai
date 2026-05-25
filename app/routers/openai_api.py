@@ -1871,23 +1871,15 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 # Multiple silent-fail sed calls on a .sh file — escalate to blocked
                                 content_str = (
                                     f"[ERROR: sed has silently matched 0 lines {silent_sed_sh_count} times on {_sh_file}. "
-                                    "SED IS NOW BLOCKED. Your sed patterns are not matching anything. "
-                                    "Switch to python3 heredoc. Write EXACTLY this to /tmp/fix.py using cat > /tmp/fix.py << 'FIXEOF':\n"
-                                    "import re\n"
-                                    f"with open('{_sh_file}') as f:\n"
-                                    "    content = f.read()\n"
-                                    "colors = ['1;96', '1;93', '1;92', '1;91']\n"
-                                    "i = [0]\n"
-                                    "def colorize(m):\n"
-                                    "    col = colors[i[0] % len(colors)]\n"
-                                    "    i[0] += 1\n"
-                                    "    return 'echo -e \"\\\\033[' + col + 'm' + m.group(1) + '\\\\033[0m\"'\n"
-                                    "content = re.sub(r'echo \"(\\[.+?\\])\"', colorize, content)\n"
-                                    f"with open('{_sh_file}', 'w') as f:\n"
-                                    "    f.write(content)\n"
-                                    "print('Done:', len(re.findall(r'echo -e', content)), 'colorized')\n"
-                                    "FIXEOF\n"
-                                    "then run: python3 /tmp/fix.py]"
+                                    "SED IS NOW BLOCKED. Your sed patterns are not matching any lines. "
+                                    "Switch to a python3 heredoc (run via bash, not the python tool): python3 << 'EOF' ... EOF. "
+                                    "Process lines ONE AT A TIME with readlines() — do NOT use re.sub on the whole content string, "
+                                    "because re.sub matches partial lines and will accidentally modify lines that have "
+                                    "extra content after the target (like shell redirects >> or > after the echo string). "
+                                    "Use re.match(r'^(\\\\s*)YOUR_PATTERN\\\\s*$', ln) anchored to end-of-line ($) so only "
+                                    "pure display echo lines match — lines with >> or > after the string will NOT match. "
+                                    "Write ALL lines back (matched and unmatched). "
+                                    f"After writing, run bash -n {_sh_file} to verify syntax.]"
                                 )
                             else:
                                 # Count previous individual per-line sed calls to detect slow one-at-a-time pattern
@@ -2492,12 +2484,13 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     _file_ref = _file_m.group(1) if _file_m else "the target file"
                     content_str = (
                         f"[ERROR: sed command failed {repeat_n} times.{quoting_hint} "
-                        "SED IS NOW BLOCKED. Use the bash tool to run a python3 heredoc script — do NOT call python3 as a tool, use bash with: python3 << 'EOF' ... EOF. "
-                        "Filter: s.strip().startswith('echo ') and '>>' not in s and '>' not in s.partition('echo')[2] and ' | ' not in s. "
-                        "Use SINGLE-QUOTED f-strings to avoid unterminated string errors: "
-                        "f'{indent}echo -e \"\\\\033[{col}m{arg.strip(chr(34))}\\\\033[0m\"\\n' "
-                        "NOT f\"{indent}echo -e \\\"{col}{arg}...\\\"\" (backslash-quote never closes a double-quoted f-string). "
-                        "Colors: ['1;96','1;93','1;92','1;91'] cycling. Write ALL lines back. Run bash -n to verify syntax.]"
+                        "SED IS NOW BLOCKED. Switch to a python3 heredoc (run via bash: python3 << 'EOF' ... EOF). "
+                        "Process lines ONE AT A TIME with readlines() — do NOT use re.sub on the whole content string "
+                        "because it matches partial lines and accidentally hits lines with extra content after the target "
+                        "(e.g. shell redirects >> or > after the echo string). "
+                        "Use re.match(r'^(\\\\s*)YOUR_PATTERN\\\\s*$', ln) anchored to end-of-line ($) so only "
+                        "standalone target lines match — lines with >> or > after the string will NOT match the anchor. "
+                        "Write ALL lines back. Run bash -n to verify syntax after writing.]"
                     )
                 else:
                     # For non-sed: append loop warning but keep original error message visible
@@ -2559,6 +2552,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             # Count properly colorized echo lines: echo -e "\033[Nm<text>\033[0m"
                             _ansi_count = 0
                             _ansi_warn = ""
+                            _redir_warn = ""
                             try:
                                 with open(_sh_ref) as _ansi_f:
                                     _ansi_txt = _ansi_f.read()
@@ -2571,9 +2565,28 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                         f"check that the regex matched ALL target lines, not just a subset. "
                                         f"Run: grep -c 'echo -e.*\\\\033' {_sh_ref} to count colored lines."
                                     )
+                                # Check for echo -e with ANSI codes that also redirect to files
+                                _redir_broken = [
+                                    ln.rstrip() for ln in _ansi_txt.splitlines()
+                                    if re.search(r'echo\s+-e\s+', ln) and
+                                    re.search(r'\\033\[', ln) and
+                                    re.search(r'[>]\s*\S', ln) and
+                                    not ln.strip().startswith('#')
+                                ]
+                                if _redir_broken:
+                                    _redir_warn = (
+                                        f" REDIRECT-COLORIZE ERROR: {len(_redir_broken)} echo -e line(s) with ANSI codes "
+                                        f"also redirect to files (>> or >). This writes escape codes into config files, "
+                                        f"corrupting them. Example: {_redir_broken[0][:80]!r}. "
+                                        f"Your regex matched lines with redirects after the closing quote. "
+                                        f"Fix: use re.match anchored to end-of-line ($) — "
+                                        f"re.match(r'^(\\\\s*)PATTERN\\\\s*$', ln) — so lines with >> or > after "
+                                        f"the string do NOT match. Revert with: git checkout HEAD {_sh_ref}"
+                                    )
+                                    logger.info(f"[REDIRECT-COLORIZE] {len(_redir_broken)} broken redirect lines in {_sh_ref}")
                             except Exception:
                                 pass
-                            content_str += f"\n\n[AUTO-VERIFY: bash -n {_sh_ref} → SYNTAX OK. Colorized echo lines: {_ansi_count}.{_ansi_warn} Verify the changes look correct with grep.]"
+                            content_str += f"\n\n[AUTO-VERIFY: bash -n {_sh_ref} → SYNTAX OK. Colorized echo lines: {_ansi_count}.{_ansi_warn}{_redir_warn} Verify the changes look correct with grep.]"
                         else:
                             _bash_err = (_bash_n.stderr or '').strip()[:300]
                             _broken_sh_files.add(_sh_ref)
