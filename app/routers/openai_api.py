@@ -2628,7 +2628,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # After a python3 write succeeds, inject verification to catch silent bugs early
             _sh_file_in_cmd = re.search(r'([/\w.~-]+\.sh)\b', last_cmd or "") if last_cmd else None
             _py3_wrote_sh = (
-                _is_py3_heredoc and not _is_noop_result and _sh_file_in_cmd and
+                _is_py3_heredoc and _sh_file_in_cmd and
                 bool(re.search(r'\bopen\s*\(.*,\s*["\']w["\']', last_cmd or ""))
             )
             if _py3_wrote_sh:
@@ -2663,6 +2663,12 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                     not re.search(r'\\033\[', ln) and
                                     not ln.strip().startswith('#')
                                 ]
+                                # Detect tput usage (produces terminfo codes, not \033[ literals)
+                                _tput_lines = [
+                                    ln.rstrip() for ln in _ansi_txt.splitlines()
+                                    if re.search(r'\btput\b', ln) and
+                                    not ln.strip().startswith('#')
+                                ]
                                 if _ansi_count < 10:
                                     _reset_hint = ""
                                     if _bad_reset_lines:
@@ -2673,6 +2679,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                             f"The reset code MUST be \\033[0m (zero) — no other code works. "
                                             f"Fix: change all color resets to \\033[0m."
                                         )
+                                    if _tput_lines:
+                                        _reset_hint += (
+                                            f" TPUT WARNING: {len(_tput_lines)} line(s) use tput instead of literal \\033 codes. "
+                                            f"tput produces terminfo sequences that are NOT counted by verify. "
+                                            f"Example: {_tput_lines[0][:80]!r}. "
+                                            f"Replace tput with literal echo -e \"\\033[1;36m..text..\\033[0m\"."
+                                        )
+                                        logger.info(f"[TPUT-WARN] {len(_tput_lines)} tput lines in {_sh_ref}")
                                     _var_hint = ""
                                     if _var_ref_lines:
                                         _var_hint = (
