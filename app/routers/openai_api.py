@@ -3299,6 +3299,17 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False,
                             )
                             tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                             logger.info(f"[SED-BLOCK] Blocked color-before-echo: {cmd[:80]!r}")
+                        elif re.search(r'\bprintf\b', _repl) and not re.search(r'\becho\s+-e\b', _repl):
+                            # Replacement uses printf instead of echo -e — verify script won't count it
+                            _blocked = True
+                            args_dict["command"] = (
+                                "printf '\\n[SED-FORMAT ERROR: replacement uses printf instead of echo -e. "
+                                "The verify script counts only echo -e lines with \\\\033 codes. "
+                                "Correct format: sed -i s|echo \\\"[TITLE]\\\"|echo -e \\\"\\\\033[1;36m[TITLE]\\\\033[0m\\\"| file "
+                                "(replace TITLE with the exact section name, use \\\\033[COLOR_CODEm...\\\\033[0m).\\n'"
+                            )
+                            tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                            logger.info(f"[SED-BLOCK] Blocked printf-in-replacement: {cmd[:80]!r}")
                         elif re.search(r'\becho\b', _repl) and _repl.count('"') % 2 != 0:
                             # Replacement contains echo with an odd number of quotes — unclosed string
                             _blocked = True
