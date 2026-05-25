@@ -2586,7 +2586,22 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                         )
                             except Exception:
                                 pass
-                            content_str += f"\n\n[AUTO-VERIFY: bash -n {_sh_ref} → SYNTAX ERROR:\n{_bash_err}{_trunc_hint}\nFix the above error in {_sh_ref} before proceeding.]"
+                            # Check if broken line contains a redirect (> or >>) that was colorized
+                            _redir_hint = ""
+                            try:
+                                with open(_sh_ref) as _redir_f:
+                                    for _rln in _redir_f:
+                                        if re.search(r'echo\s+-e\s+.*\\033.*[>|]', _rln) and not re.search(r'echo\s+-e\s+.*\\033.*[>|].*\\033\[0m"$', _rln):
+                                            _redir_hint = (
+                                                "\n[REDIRECT-ERROR: Your colorization wrapped a line that has a shell redirect (> or >>). "
+                                                "Example: echo \"[Section]\" >>file became echo -e \"\\033[...[Section] >>file\\033[0m\" "
+                                                "which breaks the redirect. ONLY colorize standalone echo lines with no '>' or '>>' after the text. "
+                                                "Filter: skip any line where '>' or '>>' appears after the echo string's closing quote.]"
+                                            )
+                                            break
+                            except Exception:
+                                pass
+                            content_str += f"\n\n[AUTO-VERIFY: bash -n {_sh_ref} → SYNTAX ERROR:\n{_bash_err}{_trunc_hint}{_redir_hint}\nFix the above error in {_sh_ref} before proceeding.]"
                     else:
                         content_str += f"\n\n[AUTO-VERIFY: {_sh_ref} not found on proxy host — verify it was written correctly.]"
                 except Exception as _bne:
