@@ -1487,16 +1487,27 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 else:
                     _is_fstring_trunc = bool(re.search(r'unterminated f-string|f-string.*detected', content_str, re.IGNORECASE))
                     if _is_fstring_trunc:
+                        _fst_sh = re.search(r'(/[\w./-]+\.sh)\b', last_bash_cmd or "")
+                        _fst_path = _fst_sh.group(1) if _fst_sh else "/path/to/file.sh"
                         content_str = (
                             content_str +
-                            "\n\n[PROXY: Python f-string truncated — the f'...' literal was cut off mid-token. "
-                            "STOP using f-strings entirely. Use explicit string concatenation instead:\n"
-                            "WRONG (truncates): return f'echo -e \"\\\\033[{col}m{text}\\\\033[0m\"'\n"
-                            "RIGHT (safe): return 'echo -e \"\\\\033[' + col + 'm' + text + '\\\\033[0m\"'\n"
-                            "Rewrite the script using only simple string concatenation with the + operator. "
-                            "No f-strings. No triple quotes. Write it to /tmp/fix.py using the Write tool, then run python3 /tmp/fix.py.]"
+                            "\n\n[PROXY: Python f-string truncated — the f'...' literal was cut off. "
+                            "STOP using f-strings. Use re.sub with a lambda and string concatenation instead. "
+                            "Complete working example — write this EXACTLY to /tmp/fix.py using the Write tool:\n"
+                            "import re\n"
+                            f"with open('{_fst_path}') as f:\n"
+                            "    content = f.read()\n"
+                            "content = re.sub(\n"
+                            "    r'echo \"(\\[.+?\\])\"',\n"
+                            "    lambda m: 'echo -e \"\\\\033[1;36m' + m.group(1) + '\\\\033[0m\"',\n"
+                            "    content\n"
+                            ")\n"
+                            f"with open('{_fst_path}', 'w') as f:\n"
+                            "    f.write(content)\n"
+                            "print('Done')\n"
+                            "Write exactly the above to /tmp/fix.py using the Write tool. Then run: python3 /tmp/fix.py]"
                         )
-                        logger.info("[FSTRING-TRUNC] Detected unterminated f-string, injected concatenation hint")
+                        logger.info("[FSTRING-TRUNC] Detected unterminated f-string, injected working template")
                     else:
                         content_str = (
                             content_str +
