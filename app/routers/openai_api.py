@@ -3681,9 +3681,8 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False,
                 if sed_blocked and "sed" in cmd and "-i" in cmd:
                     _sb_task_sh = re.findall(r'(/[\w./-]+\.sh)\b', _first_user_text)
                     _sb_path = _sb_task_sh[0] if _sb_task_sh else '/path/to/file.sh'
+                    # Run the global template directly instead of just showing it — model ignores text instructions
                     args_dict["command"] = "\n".join([
-                        "cat << 'PROXYMSG'",
-                        "[PROXY: sed -i is blocked. Use python3 to rewrite the file. Run this NOW:",
                         f"python3 << 'PYEOF'",
                         "import re",
                         f"lines = open('{_sb_path}').readlines()",
@@ -3693,13 +3692,12 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False,
                         r"    if m: out.append(m.group(1) + 'echo -e \"\\033[1;36m' + m.group(2) + '\\033[0m\"\n')",
                         "    else: out.append(ln)",
                         f"open('{_sb_path}', 'w').writelines(out)",
-                        f"print('Done:', sum(1 for l in open('{_sb_path}') if '\\\\033[' in l), 'colorized')",
+                        f"print('[PROXY-AUTO-FIX] Done:', sum(1 for l in open('{_sb_path}') if '\\\\033[' in l), 'lines colorized')",
                         "PYEOF",
-                        "PROXYMSG",
                     ])
                     tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                     out.append(tc)
-                    logger.info("[SED-BLOCK] Blocked sed after repeated loop failures")
+                    logger.info("[SED-BLOCK] Auto-executing global template for blocked sed")
                     continue
                 if "sed" in cmd and "-i" in cmd:
                     fixed = cmd
