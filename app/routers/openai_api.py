@@ -1485,17 +1485,27 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         f"Rewrite the python3 heredoc now — same logic, just without any bash commands inside it.]"
                     )
                 else:
-                    content_str = (
-                        content_str +
-                        "\n\n[PROXY: Python SyntaxError in heredoc — backslash or quote escaping inside the heredoc body "
-                        "caused a Python parse error. To avoid this entirely: write the script to a temp file instead: "
-                        "cat > /tmp/fix.py << 'FIXEOF'\\n"
-                        "# python script here — no heredoc quoting issues, backslashes work normally\\n"
-                        "FIXEOF\\n"
-                        "python3 /tmp/fix.py\\n"
-                        "Inside a quoted cat heredoc (FIXEOF not FIXEOF), the Python source is passed "
-                        "byte-for-byte with no shell expansion or extra escaping.]"
-                    )
+                    _is_fstring_trunc = bool(re.search(r'unterminated f-string|f-string.*detected', content_str, re.IGNORECASE))
+                    if _is_fstring_trunc:
+                        content_str = (
+                            content_str +
+                            "\n\n[PROXY: Python f-string truncated — the f'...' literal was cut off mid-token. "
+                            "STOP using f-strings entirely. Use explicit string concatenation instead:\n"
+                            "WRONG (truncates): return f'echo -e \"\\\\033[{col}m{text}\\\\033[0m\"'\n"
+                            "RIGHT (safe): return 'echo -e \"\\\\033[' + col + 'm' + text + '\\\\033[0m\"'\n"
+                            "Rewrite the script using only simple string concatenation with the + operator. "
+                            "No f-strings. No triple quotes. Write it to /tmp/fix.py using the Write tool, then run python3 /tmp/fix.py.]"
+                        )
+                        logger.info("[FSTRING-TRUNC] Detected unterminated f-string, injected concatenation hint")
+                    else:
+                        content_str = (
+                            content_str +
+                            "\n\n[PROXY: Python SyntaxError in heredoc — backslash or quote escaping caused a parse error. "
+                            "Write the script to a file using the Write tool instead of a heredoc: "
+                            "Write tool → path='/tmp/fix.py', content='...python code...'. "
+                            "Then run: python3 /tmp/fix.py. "
+                            "In a Write tool file, backslashes and quotes work normally with no shell escaping.]"
+                        )
             # Intercept py_compile SyntaxError on a .py file written by Write tool
             elif (
                 'SyntaxError' in content_str and
@@ -4070,6 +4080,11 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     }
                     logger.info(f"[WRITE-OVERRIDE-EARLY] using override for {_fp_af} ({_lc_ov} lines)")
                 elif _fp_af.endswith(".py") and _ct_af:
+                    # Pre-fix: auto-complete truncated write call before py_compile (f.writ passes syntax check)
+                    if re.search(r'\bf\.writ\s*$', _ct_af, re.MULTILINE):
+                        _wv = 'fixed_lines' if 'fixed_lines' in _ct_af else 'lines'
+                        _ct_af = re.sub(r'\bf\.writ\s*$', f'f.writelines({_wv})\n', _ct_af, flags=re.MULTILINE)
+                        logger.info(f"[FWRIT-FIX-WRITE] Auto-completed f.writ → f.writelines({_wv}) in Write content")
                     _tmp_fd_af, _tmp_py_af = _tf_tc.mkstemp(suffix='.py', prefix='_pychktc_')
                     _os_tc.close(_tmp_fd_af)
                     try:
