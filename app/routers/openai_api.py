@@ -747,6 +747,18 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                             f"NOTE: used triple-quoted strings — future files should use single-line strings joined with + to avoid truncation. "
                                             f"SYNTAX_OK (py_compile passed). Write any other files you still need to change. DO NOT re-read or rewrite this file.]"
                                         )
+                                        # Detect double-bracket regex: r'...\[' + re.escape('[...) → \\[\\[ never matches
+                                        if _py_content_str and 're.escape(' in _py_content_str:
+                                            if re.search(r"r'[^']*\\\\+\['\s*\+\s*re\.escape\(", _py_content_str):
+                                                content_str += (
+                                                    "\n\n[PROXY: DOUBLE-BRACKET WARNING — your pattern has '\\[' immediately "
+                                                    "before re.escape('[Section]'). re.escape('[Section]') already produces "
+                                                    "'\\[Section\\]'. Combining with another '\\[' creates '\\[\\[Section\\]\\]' "
+                                                    "which NEVER matches the file (the file has echo \"[Section]\" with no backslash). "
+                                                    "Fix: use r'echo \"' + re.escape(title) + r'\"' — no extra \\[ before re.escape. "
+                                                    "Or match all headers at once with: r'echo \"(\\[.+?\\])\"']"
+                                                )
+                                                logger.info(f"[DOUBLE-BRACKET-FIX] Detected \\[ before re.escape in {_py_file} — injecting warning")
                                     else:
                                         # AUTOFIX: try to close unclosed triple-quote in the content we have in memory
                                         _af_ok = False
@@ -1900,6 +1912,16 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "(no output — git status is clean: working tree has no uncommitted changes. "
                         "Proceed with your git task: fetch from the source and merge/reset as needed.)"
                     )
+                elif re.match(r'\s*python3?\s+(/[^\s<>|&]+\.py|[^-\s][^\s<>|&]*\.py)\s*$', last_bash_cmd or ""):
+                    # Python script ran silently — regex may not have matched, file may be unchanged
+                    _spy_m = re.match(r'\s*python3?\s+(/[^\s<>|&]+\.py|[^-\s][^\s<>|&]*\.py)\s*$', last_bash_cmd)
+                    _spy_file = _spy_m.group(1) if _spy_m else "the script"
+                    content_str = (
+                        f"(Script ran with no output. If {_spy_file} was supposed to modify a file, "
+                        f"verify the changes were actually made — your regex pattern may not have matched anything. "
+                        f"Check with: git diff HEAD <target_file> | head -20)"
+                    )
+                    logger.info(f"[SILENT-PYTHON] {_spy_file} ran silently — injecting verification hint")
                 else:
                     content_str = "(no output — command produced no output)"
             elif "-- No entries --" in content_str and re.search(r'\bjournalctl\b', last_bash_cmd):
