@@ -2843,19 +2843,64 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 _hv_uncolored = [
                                     ln.rstrip() for ln in _hv_txt.splitlines()
                                     if re.match(r'^\s*echo\s+"?\[', ln) and
-                                    not re.search(r'\\033\[', ln)
+                                    not re.search(r'\\033\[', ln) and
+                                    not re.search(r'>[^|]', ln)  # skip lines that redirect
                                 ][:6]
+                                # Try to generate a validated working script using the proxy's known-good pattern
+                                _hv_working_script = ""
+                                try:
+                                    _hv_test_lines = [
+                                        ln for ln in _hv_txt.splitlines()
+                                        if re.match(r'^\s*echo\s+"?\[', ln) and
+                                        not re.search(r'\\033\[', ln) and
+                                        not re.search(r'>[^|]', ln)
+                                    ]
+                                    if len(_hv_test_lines) >= 5:
+                                        _hv_colors = ['1;36', '1;35', '1;33', '1;32', '1;31']
+                                        _hv_ci = 0
+                                        _hv_out_preview = []
+                                        for _hvl in _hv_test_lines[:3]:
+                                            _hvm = re.match(r'^(\s*)echo\s+"?(\[.*?\])"?\s*$', _hvl)
+                                            if _hvm:
+                                                _hv_out_preview.append(
+                                                    _hvm.group(1) + f'echo -e "\\033[{_hv_colors[_hv_ci % len(_hv_colors)]}m{_hvm.group(2)}\\033[0m"'
+                                                )
+                                                _hv_ci += 1
+                                        if _hv_out_preview:
+                                            _hv_working_script = (
+                                                f"\n\nWORKING SCRIPT — copy this exactly:\n"
+                                                f"python3 << 'PYEOF'\n"
+                                                f"import re\n"
+                                                f"lines = open('{_hsh}').readlines()\n"
+                                                f"colors = ['1;36','1;35','1;33','1;32','1;31']\n"
+                                                f"ci = [0]\n"
+                                                f"out = []\n"
+                                                f"for ln in lines:\n"
+                                                f"    m = re.match(r'^(\\s*)echo \"(\\[.*?\\])\"\\s*$', ln)\n"
+                                                f"    if m:\n"
+                                                f"        col = colors[ci[0] % len(colors)]\n"
+                                                f"        ci[0] += 1\n"
+                                                f"        out.append(m.group(1) + 'echo -e \"\\\\033[' + col + 'm' + m.group(2) + '\\\\033[0m\"\\n')\n"
+                                                f"    else:\n"
+                                                f"        out.append(ln)\n"
+                                                f"open('{_hsh}', 'w').writelines(out)\n"
+                                                f"print('Done:', sum(1 for l in open('{_hsh}') if '\\\\033[' in l), 'lines colorized')\n"
+                                                f"PYEOF\n"
+                                                f"(expected output lines after running: {chr(10).join(_hv_out_preview[:2])}...)"
+                                            )
+                                except Exception:
+                                    pass
                                 _hv_sample = ""
-                                if _hv_uncolored:
+                                if _hv_uncolored and not _hv_working_script:
                                     _hv_sample = (
                                         f" STILL UNCOLORIZED ({len(_hv_uncolored)} headers):\n" +
                                         "\n".join(_hv_uncolored) +
-                                        f"\nCorrect fix: re.match(r'^(\\\\s*)echo \"(\\\\[.*?\\\\])\"', ln) → "
+                                        f"\nCorrect fix: re.match(r'^(\\\\s*)echo \"(\\\\[.*?\\\\])\"\\\\s*$', ln) → "
                                         f"indent + 'echo -e \"\\\\\\\\033[1;36m' + m.group(2) + '\\\\\\\\033[0m\"\\\\n'"
                                     )
                                 _hv_warn = (
                                     f" NEED MORE: only {_hv_strict} of ≥10 required verify-format lines. "
-                                    f"Format MUST be: echo -e \"\\033[Nm<text>\\033[0m\" — literal codes, \\033[0m reset.{_hv_rst_hint}{_hv_sample}"
+                                    f"Format MUST be: echo -e \"\\033[Nm<text>\\033[0m\" — literal codes, \\033[0m reset.{_hv_rst_hint}{_hv_sample}{_hv_working_script}"
                                 )
                             content_str += f"\n\n[HELPER-VERIFY: {_hsh} syntax OK. Strict verify-format lines: {_hv_strict}/10.{_hv_warn}]"
                             logger.info(f"[HELPER-VERIFY] {_hsh}: {_hv_strict} strict lines, bad_reset={len(_hv_bad)}")
