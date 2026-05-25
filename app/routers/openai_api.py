@@ -3403,6 +3403,18 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False,
                             )
                             tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
                             logger.info(f"[SED-BLOCK] Blocked printf-in-replacement: {cmd[:80]!r}")
+                        elif re.search(r'\btput\b', _repl):
+                            # Replacement uses tput — produces terminfo codes, not literal \\033 ANSI.
+                            # The verify script counts only lines with literal \\033[ escape codes.
+                            _blocked = True
+                            args_dict["command"] = (
+                                "printf '\\n[SED-FORMAT ERROR: replacement uses tput instead of literal ANSI codes. "
+                                "tput produces terminfo codes that are NOT counted by the verify script. "
+                                "Use literal \\\\033 escape codes: echo -e \\\"\\\\033[1;36mTITLE\\\\033[0m\\\". "
+                                "The reset code MUST be \\\\033[0m — no tput, no $RESET, no \\\\033[22;39m.\\n'"
+                            )
+                            tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                            logger.info(f"[SED-BLOCK] Blocked tput-in-replacement: {cmd[:80]!r}")
                         elif re.search(r'\becho\b', _repl) and _repl.count('"') % 2 != 0:
                             # Replacement contains echo with an odd number of quotes — unclosed string
                             _blocked = True
