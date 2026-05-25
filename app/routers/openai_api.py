@@ -3852,6 +3852,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     _lum_has_any_loop_block = (
         bool(re.search(r'◆ proxy:(?![^\n]*\balready\s+(?:written|colorized|non-empty)\b)', _lum_content)) or
         "[REPEATED COMMAND BLOCKED:" in _lum_content or
+        "[REPEATED COMMAND (" in _lum_content or
         "[LOOP DETECTED:" in _lum_content or
         "[EXPLORATION BLOCKED:" in _lum_content or
         "[EXPLORATION CAP:" in _lum_content or
@@ -3872,6 +3873,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     _prev_had_block_sc = (
         bool(re.search(r'◆ proxy:(?![^\n]*\balready\s+(?:written|colorized|non-empty)\b)', _prev_user_content_sc)) or
         "[REPEATED COMMAND BLOCKED:" in _prev_user_content_sc or
+        "[REPEATED COMMAND (" in _prev_user_content_sc or
         "[LOOP DETECTED:" in _prev_user_content_sc or
         "[EXPLORATION BLOCKED:" in _prev_user_content_sc or
         "[EXPLORATION CAP:" in _prev_user_content_sc or
