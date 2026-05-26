@@ -4471,9 +4471,30 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 if re.search(r'python3?\s+-c\b|python3?\s+-\s|python3?\s+<<', _hl_c) and not re.search(r'open\s*\(.*["\']w["\']|\.write\s*\(|sed\s+-i', _hl_c):
                     _hl_is_py_probe = True
                     break
+        # Build written-file set from WRITE-DONE markers and bash writes in all messages
+        _hl_first_user = next((m.get("content") or "" for m in messages if m.get("role") == "user"), "")
+        _hl_task_all = re.findall(r'(?:/[\w./-]+/)?[\w-]+\.(?:py|sh|js|ts|html?|css)\b', _hl_first_user)
+        _hl_task_bases = list(dict.fromkeys(p.rsplit('/', 1)[-1] for p in _hl_task_all))
+        _hl_written_bases: set = set()
+        for _hl_m in messages:
+            _hl_mc = str(_hl_m.get("content") or "")
+            for _hl_wm in re.finditer(r'\[(?:AUTOFIX-)?WRITE-DONE[^:]*:\s*(/[\w./-]+)', _hl_mc):
+                _hl_written_bases.add(_hl_wm.group(1).rsplit('/', 1)[-1])
+            for _hl_wm in re.finditer(r'base64\s+-d\s*>\s*(/[\w./-]+)', _hl_mc):
+                _hl_written_bases.add(_hl_wm.group(1).rsplit('/', 1)[-1])
+        _hl_unwritten = [f for f in _hl_task_bases if f not in _hl_written_bases]
+        def _hl_pending_text():
+            return (
+                f"I have written some task files ({', '.join(sorted(_hl_written_bases)) or 'done'}). "
+                f"I still need to modify: {', '.join(_hl_unwritten[:3])}. "
+                f"Writing {_hl_unwritten[0]} now with the required changes using bash."
+            )
         if _hl_was_restart:
             if _hl_any_write:
-                _hl_text = ("The service has been restarted successfully. The code fix has been applied and the service is running. Task complete.")
+                if _hl_unwritten and len(_hl_task_bases) > 1:
+                    _hl_text = _hl_pending_text()
+                else:
+                    _hl_text = ("The service has been restarted successfully. The code fix has been applied and the service is running. Task complete.")
             else:
                 _hl_text = ("I need to read the source code before restarting the service. Restarting without code changes does not fix bugs. I will read the relevant source files, identify the issue, make the fix, and then restart.")
         elif _hl_is_py_probe and not _hl_any_write:
@@ -4483,7 +4504,10 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         elif _hl_is_exploration:
             _hl_text = ("I've read the source code and found the issue. I will now edit the file to fix it using bash with sed -i or a python3 heredoc — I will NOT read or grep the file again. After the fix I will restart the service.")
         elif _hl_any_write:
-            _hl_text = ("The service has been restarted successfully. The code fix has been applied and the service is running. Task complete.")
+            if _hl_unwritten and len(_hl_task_bases) > 1:
+                _hl_text = _hl_pending_text()
+            else:
+                _hl_text = ("The service has been restarted successfully. The code fix has been applied and the service is running. Task complete.")
         else:
             _hl_text = ("I've investigated but cannot complete the task: a required resource or file is confirmed missing and I cannot create it in this environment. The operation is blocked on a missing dependency or configuration. Please provide the required resource or configuration and try again.")
         _hl_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
