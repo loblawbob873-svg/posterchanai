@@ -4374,7 +4374,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         "[BASH BLOCKED:" in _lum_content or
         "[ENV-PROBE:" in _lum_content or
         "[READ-LOOP-BREAK:" in _lum_content or
-        "[READ-LOOP-CAP:" in _lum_content
+        "[READ-LOOP-CAP:" in _lum_content or
+        "[SED-QUOTE-ERROR:" in _lum_content
     )
     # Extract the command from the last assistant tool call to check if it's git
     _last_assist_msg = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
@@ -4397,7 +4398,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         "[BASH BLOCKED:" in _prev_user_content_sc or
         "[ENV-PROBE:" in _prev_user_content_sc or
         "[READ-LOOP-BREAK:" in _prev_user_content_sc or
-        "[READ-LOOP-CAP:" in _prev_user_content_sc
+        "[READ-LOOP-CAP:" in _prev_user_content_sc or
+        "[SED-QUOTE-ERROR:" in _prev_user_content_sc
     )
     _complex_merge_git_exempt = (
         _is_complex_merge and
