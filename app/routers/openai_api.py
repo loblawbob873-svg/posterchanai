@@ -1485,6 +1485,27 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         logger.info(f"[WRITE-SCHEMA-ERR] attempt={_write_failed_count} Write failed with missing filePath")
             # After reading a Python source file, remind the model to edit it directly
             if last_tool_name.lower() in ("read", "read_file", "view") and not non_bash_write_done:
+                # Detect empty-filePath read loop: model issuing Read("") repeatedly
+                _last_ast_content = next((r.get("content", "") for r in reversed(result) if r.get("role") == "assistant"), "")
+                _read_fp_m = re.search(r'"filePath"\s*:\s*"([^"]*)"', _last_ast_content)
+                if _read_fp_m and _read_fp_m.group(1) == "":
+                    # Count consecutive empty-read user messages in history
+                    _consec_empty_reads = 0
+                    for _er_m in reversed(result):
+                        if _er_m.get("role") == "user" and '"filePath": ""' in (_er_m.get("content") or ""):
+                            _consec_empty_reads += 1
+                        elif _er_m.get("role") == "user":
+                            break
+                    if _consec_empty_reads >= 1:
+                        _fw_files = re.findall(r'/[\w./-]+\.py', _first_user_text)
+                        _fw_hint = f"Edit these files: {', '.join(_fw_files[:3])}" if _fw_files else "Use the Write or Edit tool with a valid absolute file path"
+                        content_str = (
+                            f"[READ-LOOP-BREAK: You have issued {_consec_empty_reads + 1} Read calls with empty filePath. "
+                            "This is invalid — Read requires an absolute file path. "
+                            f"{_fw_hint}. "
+                            "STOP issuing Read tool calls. Make your changes with the Edit or Write tool RIGHT NOW.]"
+                        )
+                        logger.info(f"[READ-LOOP-BREAK] Detected {_consec_empty_reads + 1} empty-filePath reads, injecting redirect")
                 # If model re-reads a file it already successfully wrote, block and redirect to unwritten siblings
                 if _write_success_paths:
                     for _r in reversed(result):
@@ -3104,6 +3125,28 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "A restart without code changes does not fix any bugs. "
                         "Read the source code to find the bug, edit the file, then restart again.]"
                     )
+
+            # Read-tool loop cap: model uses Read (not bash) but hasn't written anything yet
+            # Count consecutive "read" tool results in the message history
+            if last_tool_name.lower() in ("read", "read_file", "view") and not non_bash_write_done:
+                _consec_read_tool_calls = 0
+                for _rtc_m in reversed(result):
+                    _rtc_role = _rtc_m.get("role", "")
+                    _rtc_content = _rtc_m.get("content") or ""
+                    if _rtc_role == "user" and "<tool>read</tool>" in _rtc_content.lower():
+                        _consec_read_tool_calls += 1
+                    elif _rtc_role == "user":
+                        break
+                if _consec_read_tool_calls >= 10 and "[READ-LOOP-CAP:" not in content_str:
+                    _cap_fw_files = re.findall(r'/[\w./-]+\.py', _first_user_text)
+                    _cap_fw_hint = f"The files you need to edit are: {', '.join(_cap_fw_files[:3])}" if _cap_fw_files else "Use the Write or Edit tool with a valid absolute file path"
+                    content_str += (
+                        f"\n\n[READ-LOOP-CAP: You have issued {_consec_read_tool_calls} consecutive Read tool calls without writing any file. "
+                        "STOP reading. You already have enough information. "
+                        f"{_cap_fw_hint}. "
+                        "Use the Write or Edit tool NOW to make your changes. Do not read any more files.]"
+                    )
+                    logger.info(f"[READ-LOOP-CAP] {_consec_read_tool_calls} consecutive reads without write, injecting cap")
 
             # Exploration cap: too many reads without any write — time to act
             _total_cmds = len(bash_history)
