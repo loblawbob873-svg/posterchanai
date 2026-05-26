@@ -69,7 +69,20 @@ verify_gentoo() {
         return 1
     fi
 
-    log "[verify] PASS: $colored colorized lines with proper reset, syntax OK, diff=$diff_lines lines changed"
+    # 5. The menu() function itself must have at least 3 colorized echo lines.
+    # Without this, the model can pass by only colorizing internal section headers
+    # while the main user-visible menu remains unchanged.
+    local menu_colored
+    menu_colored=$(awk '/^menu\(\)/{in_menu=1} in_menu && /echo -e.*\\033\[/{count++} /^\}/{if(in_menu){exit}} END{print count+0}' "$f" 2>/dev/null)
+    menu_colored=${menu_colored:-0}
+    if [ "$menu_colored" -lt 3 ]; then
+        log "[verify] FAIL: only $menu_colored colorized echo lines inside menu() (need ≥3) — main menu not styled"
+        log "[verify] menu() echo lines:"
+        awk '/^menu\(\)/{in_menu=1} in_menu && /echo/{print NR": "$0} /^\}/{if(in_menu)exit}' "$f" | head -10 || true
+        return 1
+    fi
+
+    log "[verify] PASS: $colored colorized lines with proper reset, $menu_colored in menu(), syntax OK, diff=$diff_lines lines changed"
     return 0
 }
 
