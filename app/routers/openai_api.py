@@ -532,7 +532,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 pass
                 except Exception as _fie:
                     logger.warning(f"[FILE-INJECT] Error reading {_fip}: {_fie}")
-    _is_complex_merge_task = bool(re.search(r'\b(conflict|preserve|resolve|keep\s+\w+\s+version|branding|checkout\s+HEAD)\b', _first_user_text, re.IGNORECASE))
+    _is_complex_merge_task = bool(re.search(r'\b(conflict|resolve\s+(?:merge|conflict)|keep\s+\w+\s+version|branding|checkout\s+HEAD)\b', _first_user_text, re.IGNORECASE))
     # Git sync task: fetching from a local mirror to sync two repos (not just incidental git operations)
     _is_git_sync_task = bool(re.search(r'\bsync\b|\blocal[-\s]mirror\b|\bfork\s+of\b|\bmerge\s+upstream\b', _first_user_text, re.IGNORECASE))
     # Pre-populate write_block_count from historical write assistant messages so
@@ -4304,7 +4304,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     # "checkout HEAD" etc. and would falsely trigger this flag on unrelated tasks.
     _first_user_msg = next((m.get("content") or "" for m in messages if m.get("role") == "user"), "")
     _all_msg_text = " ".join((m.get("content") or "") for m in messages if m.get("role") in ("system", "user"))
-    _is_complex_merge = bool(re.search(r'\b(conflict|preserve|resolve|keep\s+\w+\s+version|branding|checkout\s+HEAD)\b', _first_user_msg, re.IGNORECASE))
+    _is_complex_merge = bool(re.search(r'\b(conflict|resolve\s+(?:merge|conflict)|keep\s+\w+\s+version|branding|checkout\s+HEAD)\b', _first_user_msg, re.IGNORECASE))
 
     # Short-circuit: if git reset --hard FETCH_HEAD already ran and _oai_messages_for_tools has
     # replaced the following tool results with a TASK COMPLETE marker, return success directly
@@ -4468,7 +4468,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
             )
             for m in messages if m.get("role") == "assistant"
         )
-        _hl_any_write = _hl_non_bash_write_done or any(
+        _hl_any_write = _hl_non_bash_write_done or bool(_hl_written_bases) or any(
             re.search(r'sed\s+-i', str(m.get("content") or "")) or
             # python3 heredoc only counts as write when it opens a file for writing
             (re.search(r'python3?\s*<<', str(m.get("content") or "")) and
@@ -5025,7 +5025,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     _fname_ov = _fp_af.rsplit('/', 1)[-1]
                     _bash_cmd_ov = (
                         f"printf '%s' '{_b64_ov}' | base64 -d > {_fp_af} && "
-                        f'echo "[AUTOFIX-WRITE-DONE: {_fp_af} written via proxy override ({_lc_ov} lines). Run it now if it is a script.]"'
+                        f'echo "[AUTOFIX-WRITE-DONE: {_fp_af} written via proxy override ({_lc_ov} lines). File is complete. Write remaining pending files now.]"'
                     )
                     _tc_af = {
                         **_tc_af,
