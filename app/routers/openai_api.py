@@ -1704,11 +1704,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     f"ci = [0]\n"
                     f"out = []\n"
                     f"for ln in lines:\n"
-                    f"    m = re.match(r'^([\\t ]*)echo \"(\\[[^\\]]+\\].*?)\"\\s*$', ln)\n"
+                    f"    m = re.match(r'^([\\t ]*)echo \"(\\[?[^\\]]+\\].*?)\"\\s*$', ln)\n"
                     f"    if m:\n"
+                    f"        t = m.group(2) if m.group(2)[0:1]=='[' else '['+m.group(2)\n"
                     f"        col = colors[ci[0] % len(colors)]\n"
                     f"        ci[0] += 1\n"
-                    f"        out.append(m.group(1) + 'echo -e \"\\\\033[' + col + 'm' + m.group(2) + '\\\\033[0m\"\\n')\n"
+                    f"        out.append(m.group(1) + 'echo -e \"\\\\033[' + col + 'm' + t + '\\\\033[0m\"\\n')\n"
+                    f"    elif (m4:=re.match(r'^([\\t ]*)echo \"([-]{{3,}}[^\"]*)\"\\s*$',ln)): out.append(m4.group(1)+'echo -e \"\\\\033[1;35m'+m4.group(2)+'\\\\033[0m\"\\n')\n"
+                    f"    elif (m5:=re.match(r'^([\\t ]*)echo \"([ ]{{2,}}[^\"]+)\"\\s*$',ln)): out.append(m5.group(1)+'echo -e \"\\\\033[1;33m'+m5.group(2)+'\\\\033[0m\"\\n')\n"
                     f"    else:\n"
                     f"        out.append(ln)\n"
                     f"open('{_pe_path}', 'w').writelines(out)\n"
@@ -1956,8 +1959,10 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                     f"lines = open('{_sh_file}').readlines()\n"
                                     f"out = []\n"
                                     f"for ln in lines:\n"
-                                    r"    m = re.match(r'^([\t ]*)echo \"(\[[^\]]+\].*?)\"\s*$', ln)" + "\n"
-                                    r"    if m: out.append(m.group(1) + 'echo -e \"\\033[1;36m' + m.group(2) + '\\033[0m\"\n')" + "\n"
+                                    r"    m = re.match(r'^([\t ]*)echo \"(\[?[^\]]+\].*?)\"\s*$', ln)" + "\n"
+                                    r"    if m: t=(m.group(2) if m.group(2)[0:1]=='[' else '['+m.group(2)); out.append(m.group(1)+'echo -e \"\\033[1;36m'+t+'\\033[0m\"\n')" + "\n"
+                                    r"    elif (m4:=re.match(r'^([\t ]*)echo \"([-]{3,}[^\"]*)\"\s*$',ln)): out.append(m4.group(1)+'echo -e \"\\033[1;35m'+m4.group(2)+'\\033[0m\"\n')" + "\n"
+                                    r"    elif (m5:=re.match(r'^([\t ]*)echo \"([ ]{2,}[^\"]+)\"\s*$',ln)): out.append(m5.group(1)+'echo -e \"\\033[1;33m'+m5.group(2)+'\\033[0m\"\n')" + "\n"
                                     f"    else: out.append(ln)\n"
                                     f"open('{_sh_file}', 'w').writelines(out)\n"
                                     f"print('Done:', sum(1 for l in open('{_sh_file}') if '\\\\033[' in l), 'colorized')\n"
@@ -2049,9 +2054,12 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             f"lines = open('{_gnm_sh_path2}').readlines()\n"
                             f"out = []\n"
                             f"for ln in lines:\n"
-                            f"    m = re.match(r'^([\\t ]*)echo \"(\\[[^\\]]+\\].*?)\"\\s*$', ln)\n"
+                            f"    m = re.match(r'^([\\t ]*)echo \"(\\[?[^\\]]+\\].*?)\"\\s*$', ln)\n"
                             f"    if m:\n"
-                            f"        out.append(m.group(1) + 'echo -e \"\\\\033[1;36m' + m.group(2) + '\\\\033[0m\"\\n')\n"
+                            f"        t = m.group(2) if m.group(2)[0:1]=='[' else '['+m.group(2)\n"
+                            f"        out.append(m.group(1) + 'echo -e \"\\\\033[1;36m' + t + '\\\\033[0m\"\\n')\n"
+                            f"    elif (m4:=re.match(r'^([\\t ]*)echo \"([-]{{3,}}[^\"]*)\"\\s*$',ln)): out.append(m4.group(1)+'echo -e \"\\\\033[1;35m'+m4.group(2)+'\\\\033[0m\"\\n')\n"
+                            f"    elif (m5:=re.match(r'^([\\t ]*)echo \"([ ]{{2,}}[^\"]+)\"\\s*$',ln)): out.append(m5.group(1)+'echo -e \"\\\\033[1;33m'+m5.group(2)+'\\\\033[0m\"\\n')\n"
                             f"    else:\n"
                             f"        out.append(ln)\n"
                             f"open('{_gnm_sh_path2}', 'w').writelines(out)\n"
@@ -2074,9 +2082,12 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             f"lines = open('{_gnm_sh_path}').readlines()\n"
                             f"out = []\n"
                             f"for ln in lines:\n"
-                            f"    m = re.match(r'^([\\t ]*)echo \"(\\[[^\\]]+\\].*?)\"\\s*$', ln)\n"
+                            f"    m = re.match(r'^([\\t ]*)echo \"(\\[?[^\\]]+\\].*?)\"\\s*$', ln)\n"
                             f"    if m:\n"
-                            f"        out.append(m.group(1) + 'echo -e \"\\\\033[1;36m' + m.group(2) + '\\\\033[0m\"\\n')\n"
+                            f"        t = m.group(2) if m.group(2)[0:1]=='[' else '['+m.group(2)\n"
+                            f"        out.append(m.group(1) + 'echo -e \"\\\\033[1;36m' + t + '\\\\033[0m\"\\n')\n"
+                            f"    elif (m4:=re.match(r'^([\\t ]*)echo \"([-]{{3,}}[^\"]*)\"\\s*$',ln)): out.append(m4.group(1)+'echo -e \"\\\\033[1;35m'+m4.group(2)+'\\\\033[0m\"\\n')\n"
+                            f"    elif (m5:=re.match(r'^([\\t ]*)echo \"([ ]{{2,}}[^\"]+)\"\\s*$',ln)): out.append(m5.group(1)+'echo -e \"\\\\033[1;33m'+m5.group(2)+'\\\\033[0m\"\\n')\n"
                             f"    else:\n"
                             f"        out.append(ln)\n"
                             f"open('{_gnm_sh_path}', 'w').writelines(out)\n"
@@ -2720,9 +2731,12 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             f"lines = open('{_sbp_sh_path}').readlines()\n"
                             f"out = []\n"
                             f"for ln in lines:\n"
-                            f"    m = re.match(r'^([\\t ]*)echo \"(\\[[^\\]]+\\].*?)\"\\s*$', ln)\n"
+                            f"    m = re.match(r'^([\\t ]*)echo \"(\\[?[^\\]]+\\].*?)\"\\s*$', ln)\n"
                             f"    if m:\n"
-                            f"        out.append(m.group(1) + 'echo -e \"\\\\033[1;36m' + m.group(2) + '\\\\033[0m\"\\n')\n"
+                            f"        t = m.group(2) if m.group(2)[0:1]=='[' else '['+m.group(2)\n"
+                            f"        out.append(m.group(1) + 'echo -e \"\\\\033[1;36m' + t + '\\\\033[0m\"\\n')\n"
+                            f"    elif (m4:=re.match(r'^([\\t ]*)echo \"([-]{{3,}}[^\"]*)\"\\s*$',ln)): out.append(m4.group(1)+'echo -e \"\\\\033[1;35m'+m4.group(2)+'\\\\033[0m\"\\n')\n"
+                            f"    elif (m5:=re.match(r'^([\\t ]*)echo \"([ ]{{2,}}[^\"]+)\"\\s*$',ln)): out.append(m5.group(1)+'echo -e \"\\\\033[1;33m'+m5.group(2)+'\\\\033[0m\"\\n')\n"
                             f"    else:\n"
                             f"        out.append(ln)\n"
                             f"open('{_sbp_sh_path}', 'w').writelines(out)\n"
@@ -3148,9 +3162,12 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         f"lines = open('{_cap_sh_path}').readlines()\n"
                         "out = []\n"
                         "for ln in lines:\n"
-                        "    m = re.match(r'^([\\t ]*)echo \"(\\[[^\\]]+\\].*?)\"\\s*$', ln)\n"
+                        "    m = re.match(r'^([\\t ]*)echo \"(\\[?[^\\]]+\\].*?)\"\\s*$', ln)\n"
                         "    if m:\n"
-                        "        out.append(m.group(1) + 'echo -e \"\\\\033[1;36m' + m.group(2) + '\\\\033[0m\"\\n')\n"
+                        "        t = m.group(2) if m.group(2)[0:1]=='[' else '['+m.group(2)\n"
+                        "        out.append(m.group(1) + 'echo -e \"\\\\033[1;36m' + t + '\\\\033[0m\"\\n')\n"
+                        "    elif (m4:=re.match(r'^([\\t ]*)echo \"([-]{3,}[^\"]*)\"\\s*$',ln)): out.append(m4.group(1)+'echo -e \"\\\\033[1;35m'+m4.group(2)+'\\\\033[0m\"\\n')\n"
+                        "    elif (m5:=re.match(r'^([\\t ]*)echo \"([ ]{2,}[^\"]+)\"\\s*$',ln)): out.append(m5.group(1)+'echo -e \"\\\\033[1;33m'+m5.group(2)+'\\\\033[0m\"\\n')\n"
                         "    else:\n"
                         "        out.append(ln)\n"
                     ) + (
@@ -3196,11 +3213,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         f"ci = [0]\n"
                         f"out = []\n"
                         f"for ln in lines:\n"
-                        f"    m = re.match(r'^([\\t ]*)echo \"(\\[[^\\]]+\\].*?)\"\\s*$', ln)\n"
+                        f"    m = re.match(r'^([\\t ]*)echo \"(\\[?[^\\]]+\\].*?)\"\\s*$', ln)\n"
                         f"    if m:\n"
+                        f"        t = m.group(2) if m.group(2)[0:1]=='[' else '['+m.group(2)\n"
                         f"        col = colors[ci[0] % len(colors)]\n"
                         f"        ci[0] += 1\n"
-                        f"        out.append(m.group(1) + 'echo -e \"\\\\033[' + col + 'm' + m.group(2) + '\\\\033[0m\"\\n')\n"
+                        f"        out.append(m.group(1) + 'echo -e \"\\\\033[' + col + 'm' + t + '\\\\033[0m\"\\n')\n"
+                        f"    elif (m4:=re.match(r'^([\\t ]*)echo \"([-]{{3,}}[^\"]*)\"\\s*$',ln)): out.append(m4.group(1)+'echo -e \"\\\\033[1;35m'+m4.group(2)+'\\\\033[0m\"\\n')\n"
+                        f"    elif (m5:=re.match(r'^([\\t ]*)echo \"([ ]{{2,}}[^\"]+)\"\\s*$',ln)): out.append(m5.group(1)+'echo -e \"\\\\033[1;33m'+m5.group(2)+'\\\\033[0m\"\\n')\n"
                         f"    else:\n"
                         f"        out.append(ln)\n"
                         f"open('{_rec_sh_path}', 'w').writelines(out)\n"
@@ -3690,8 +3710,10 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False,
                             f"lines = open('{_tpu_path}').readlines()",
                             "out = []",
                             "for ln in lines:",
-                            r"    m = re.match(r'^([\t ]*)echo \"(\[[^\]]+\].*?)\"\s*$', ln)",
-                            r"    if m: out.append(m.group(1) + 'echo -e \"\\033[1;36m' + m.group(2) + '\\033[0m\"\n')",
+                            r"    m = re.match(r'^([\t ]*)echo \"(\[?[^\]]+\].*?)\"\s*$', ln)",
+                            r"    if m: t=(m.group(2) if m.group(2)[0:1]=='[' else '['+m.group(2)); out.append(m.group(1)+'echo -e \"\\033[1;36m'+t+'\\033[0m\"\n')",
+                            r"    elif (m4:=re.match(r'^([\t ]*)echo \"([-]{3,}[^\"]*)\"\s*$',ln)): out.append(m4.group(1)+'echo -e \"\\033[1;35m'+m4.group(2)+'\\033[0m\"\n')",
+                            r"    elif (m5:=re.match(r'^([\t ]*)echo \"([ ]{2,}[^\"]+)\"\s*$',ln)): out.append(m5.group(1)+'echo -e \"\\033[1;33m'+m5.group(2)+'\\033[0m\"\n')",
                             "    else: out.append(ln)",
                             f"open('{_tpu_path}', 'w').writelines(out)",
                             f"print('[PROXY-AUTO-FIX] Done:', sum(1 for l in open('{_tpu_path}') if '\\\\033[' in l), 'lines colorized')",
@@ -3718,8 +3740,10 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False,
                             f"lines = open('{_tput_path}').readlines()",
                             "out = []",
                             "for ln in lines:",
-                            r"    m = re.match(r'^([\t ]*)echo \"(\[[^\]]+\].*?)\"\s*$', ln)",
-                            r"    if m: out.append(m.group(1) + 'echo -e \"\\033[1;36m' + m.group(2) + '\\033[0m\"\n')",
+                            r"    m = re.match(r'^([\t ]*)echo \"(\[?[^\]]+\].*?)\"\s*$', ln)",
+                            r"    if m: t=(m.group(2) if m.group(2)[0:1]=='[' else '['+m.group(2)); out.append(m.group(1)+'echo -e \"\\033[1;36m'+t+'\\033[0m\"\n')",
+                            r"    elif (m4:=re.match(r'^([\t ]*)echo \"([-]{3,}[^\"]*)\"\s*$',ln)): out.append(m4.group(1)+'echo -e \"\\033[1;35m'+m4.group(2)+'\\033[0m\"\n')",
+                            r"    elif (m5:=re.match(r'^([\t ]*)echo \"([ ]{2,}[^\"]+)\"\s*$',ln)): out.append(m5.group(1)+'echo -e \"\\033[1;33m'+m5.group(2)+'\\033[0m\"\n')",
                             "    else: out.append(ln)",
                             f"open('{_tput_path}', 'w').writelines(out)",
                             f"print('[PROXY-AUTO-FIX] Done:', sum(1 for l in open('{_tput_path}') if '\\\\033[' in l), 'lines colorized')",
@@ -3743,8 +3767,10 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False,
                                 f"lines = open('{_rep_path}').readlines()",
                                 "out = []",
                                 "for ln in lines:",
-                                r"    m = re.match(r'^([\t ]*)echo \"(\[[^\]]+\].*?)\"\s*$', ln)",
-                                r"    if m: out.append(m.group(1) + 'echo -e \"\\033[1;36m' + m.group(2) + '\\033[0m\"\n')",
+                                r"    m = re.match(r'^([\t ]*)echo \"(\[?[^\]]+\].*?)\"\s*$', ln)",
+                                r"    if m: t=(m.group(2) if m.group(2)[0:1]=='[' else '['+m.group(2)); out.append(m.group(1)+'echo -e \"\\033[1;36m'+t+'\\033[0m\"\n')",
+                                r"    elif (m4:=re.match(r'^([\t ]*)echo \"([-]{3,}[^\"]*)\"\s*$',ln)): out.append(m4.group(1)+'echo -e \"\\033[1;35m'+m4.group(2)+'\\033[0m\"\n')",
+                                r"    elif (m5:=re.match(r'^([\t ]*)echo \"([ ]{2,}[^\"]+)\"\s*$',ln)): out.append(m5.group(1)+'echo -e \"\\033[1;33m'+m5.group(2)+'\\033[0m\"\n')",
                                 "    else: out.append(ln)",
                                 f"open('{_rep_path}', 'w').writelines(out)",
                                 f"print('[PROXY-AUTO-FIX] Done:', sum(1 for l in open('{_rep_path}') if '\\\\033[' in l), 'lines colorized')",
@@ -3764,8 +3790,10 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False,
                         f"lines = open('{_sb_path}').readlines()",
                         "out = []",
                         "for ln in lines:",
-                        r"    m = re.match(r'^([\t ]*)echo \"(\[[^\]]+\].*?)\"\s*$', ln)",
-                        r"    if m: out.append(m.group(1) + 'echo -e \"\\033[1;36m' + m.group(2) + '\\033[0m\"\n')",
+                        r"    m = re.match(r'^([\t ]*)echo \"(\[?[^\]]+\].*?)\"\s*$', ln)",
+                        r"    if m: t=(m.group(2) if m.group(2)[0:1]=='[' else '['+m.group(2)); out.append(m.group(1)+'echo -e \"\\033[1;36m'+t+'\\033[0m\"\n')",
+                        r"    elif (m4:=re.match(r'^([\t ]*)echo \"([-]{3,}[^\"]*)\"\s*$',ln)): out.append(m4.group(1)+'echo -e \"\\033[1;35m'+m4.group(2)+'\\033[0m\"\n')",
+                        r"    elif (m5:=re.match(r'^([\t ]*)echo \"([ ]{2,}[^\"]+)\"\s*$',ln)): out.append(m5.group(1)+'echo -e \"\\033[1;33m'+m5.group(2)+'\\033[0m\"\n')",
                         "    else: out.append(ln)",
                         f"open('{_sb_path}', 'w').writelines(out)",
                         f"print('[PROXY-AUTO-FIX] Done:', sum(1 for l in open('{_sb_path}') if '\\\\033[' in l), 'lines colorized')",
