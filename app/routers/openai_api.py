@@ -4617,10 +4617,19 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         _wsp_r2 = _wsp_m2.get("role", "")
         _wsp_c2 = str(_wsp_m2.get("content", "") or "")
         if _wsp_r2 == "assistant":
-            _wsp_fp_m = re.search(r'"filePath"\s*:\s*"(/[\w./-]+\.py)"', _wsp_c2)
+            # Only detect Write/Edit tools — Read tool also uses "filePath" and must be excluded
+            _wsp_is_write_content = (
+                re.search(r'<tool>\s*(?:write|edit|str_replace|create|patch|replace)\s*</tool>', _wsp_c2, re.IGNORECASE)
+                and not re.search(r'<tool>\s*(?:read|read_file|glob)\s*</tool>', _wsp_c2, re.IGNORECASE)
+            )
+            _wsp_fp_m = re.search(r'"filePath"\s*:\s*"(/[\w./-]+\.py)"', _wsp_c2) if _wsp_is_write_content else None
             if not _wsp_fp_m:
                 # opencode converts XML responses to tool_calls (content=null); check there too
                 for _wsp_tc in (_wsp_m2.get("tool_calls") or []):
+                    _wsp_tc_name = _wsp_tc.get("function", {}).get("name", "").lower()
+                    # Skip Read/Glob/Bash — only Write/Edit generates real file changes
+                    if not re.search(r'\bwrite\b|\bedit\b|str_replace|create|patch|replace', _wsp_tc_name):
+                        continue
                     _wsp_tc_args = str(_wsp_tc.get("function", {}).get("arguments", "") or "")
                     _wsp_fp_m = re.search(r'"filePath"\s*:\s*"(/[\w./-]+\.py)"', _wsp_tc_args)
                     if _wsp_fp_m:
