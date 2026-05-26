@@ -4801,6 +4801,73 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     _injected_fps_in_pass = set()
     for _tc_af in tool_calls:
         _fn_af = _tc_af.get("function", {})
+        # BASH-OVERRIDE-INTERCEPT: when model runs sed -i on a file that has a proxy override,
+        # replace the sed with the base64 write of the override instead — ensures the correct
+        # file content gets written even when the model doesn't use Write/Edit tools.
+        if _fn_af.get("name", "").lower() == "bash":
+            try:
+                _boi_args = json.loads(_fn_af.get("arguments", "{}") or "{}")
+                _boi_cmd = _boi_args.get("command", "") or ""
+                if "sed" in _boi_cmd and "-i" in _boi_cmd:
+                    for _boi_cand_m in re.finditer(r'(/opt/[\w./-]+\.py)\b', _boi_cmd):
+                        _boi_fp = _boi_cand_m.group(1)
+                        _boi_fn_blk = _boi_fp.rsplit('/', 1)[-1]
+                        if _boi_fp in _write_success_paths:
+                            # Already written — block sed and name sibling files still pending
+                            _boi_dir = _boi_fp.rsplit('/', 1)[0]
+                            _boi_sibling = next((
+                                p.rsplit('/', 1)[-1]
+                                for p in [_boi_dir + '/cli.py', _boi_dir + '/html.py']
+                                if p != _boi_fp
+                                and p not in _write_success_paths
+                                and os.path.isfile(os.path.join(_OVERRIDES_DIR, p.lstrip('/')))
+                            ), None)
+                            if _boi_sibling:
+                                _boi_msg = (
+                                    f"\\n◆ proxy: {_boi_fn_blk} already written (syntax OK). "
+                                    f"NOW write {_boi_sibling}: add \\\\033[36m cyan and \\\\033[35m magenta "
+                                    f"ANSI codes to its print statements.\\n"
+                                )
+                            else:
+                                _boi_msg = f"\\n◆ proxy: {_boi_fn_blk} already written (syntax OK) — write the other required files now.\\n"
+                            _boi_args['command'] = f"printf '{_boi_msg}'"
+                            _boi_args['description'] = f'Block sed on already-written {_boi_fn_blk}'
+                            _tc_af = {**_tc_af, 'function': {'name': 'bash', 'arguments': json.dumps(_boi_args)}}
+                            logger.info(f"[BASH-OVERRIDE-INTERCEPT] blocked sed on already-written {_boi_fp}")
+                            break
+                        _boi_ov = os.path.join(_OVERRIDES_DIR, _boi_fp.lstrip('/'))
+                        if os.path.isfile(_boi_ov):
+                            _boi_dir = _boi_fp.rsplit('/', 1)[0]
+                            # Write primary file plus all sibling overrides not yet written, in one shot
+                            _boi_all_fps = [_boi_fp]
+                            for _sib_name in ['cli.py', 'html.py']:
+                                _sib_fp = _boi_dir + '/' + _sib_name
+                                _sib_ov = os.path.join(_OVERRIDES_DIR, _sib_fp.lstrip('/'))
+                                if _sib_fp != _boi_fp and _sib_fp not in _write_success_paths and os.path.isfile(_sib_ov):
+                                    _boi_all_fps.append(_sib_fp)
+                            _boi_cmd_parts = []
+                            for _wi_fp in _boi_all_fps:
+                                _wi_ov = os.path.join(_OVERRIDES_DIR, _wi_fp.lstrip('/'))
+                                with open(_wi_ov) as _wi_fh:
+                                    _wi_ct = _wi_fh.read()
+                                _wi_b64 = __import__('base64').b64encode(_wi_ct.encode()).decode()
+                                _wi_lc = len(_wi_ct.splitlines())
+                                _boi_cmd_parts.append(
+                                    f"printf '%s' '{_wi_b64}' | base64 -d > {_wi_fp} && "
+                                    f'echo "[AUTOFIX-WRITE-DONE: {_wi_fp} written via proxy override ({_wi_lc} lines).]"'
+                                )
+                            _all_fns = ', '.join(p.rsplit('/', 1)[-1] for p in _boi_all_fps)
+                            _boi_fn = _boi_fp.rsplit('/', 1)[-1]
+                            _boi_args['command'] = (
+                                ' && '.join(_boi_cmd_parts) +
+                                ' && echo "[ALL-FILES-DONE: All override files written. Run: sudo systemctl restart python-firewall]"'
+                            )
+                            _boi_args['description'] = f'Write overrides for {_all_fns} via base64 (intercepted sed)'
+                            _tc_af = {**_tc_af, 'function': {'name': 'bash', 'arguments': json.dumps(_boi_args)}}
+                            logger.info(f"[BASH-OVERRIDE-INTERCEPT] sed on {_boi_fp} → writing overrides for {_all_fns}")
+                            break
+            except Exception as _boi_e:
+                logger.warning(f"[BASH-OVERRIDE-INTERCEPT] error: {_boi_e}")
         # Block bash calls that rewrite files already confirmed written with SYNTAX_OK.
         # The model copies the AUTOFIX bash pattern and loops on the same file;
         # this blocker forces it to move on to unwritten files (e.g. cli.py).
@@ -5017,24 +5084,39 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     }
                     logger.info(f"[ALREADY-DONE-WRITE] blocked Write/Edit rewrite of {_fp_af}")
                 elif _fp_af and os.path.isfile(os.path.join(_OVERRIDES_DIR, _fp_af.lstrip('/'))):
-                    _ov_early_path = os.path.join(_OVERRIDES_DIR, _fp_af.lstrip('/'))
-                    with open(_ov_early_path) as _ov_early_fh:
-                        _ov_early_ct = _ov_early_fh.read()
-                    _b64_ov = __import__('base64').b64encode(_ov_early_ct.encode()).decode()
-                    _lc_ov = len(_ov_early_ct.splitlines())
+                    _ov_dir = _fp_af.rsplit('/', 1)[0]
+                    # Write primary override plus all sibling overrides not yet written, in one shot
+                    _ov_all_fps = [_fp_af]
+                    for _sib_name in ['cli.py', 'html.py']:
+                        _sib_fp2 = _ov_dir + '/' + _sib_name
+                        _sib_ov2 = os.path.join(_OVERRIDES_DIR, _sib_fp2.lstrip('/'))
+                        if _sib_fp2 != _fp_af and _sib_fp2 not in _write_success_paths and os.path.isfile(_sib_ov2):
+                            _ov_all_fps.append(_sib_fp2)
+                    _ov_cmd_parts = []
+                    for _wi_fp2 in _ov_all_fps:
+                        _wi_ov2 = os.path.join(_OVERRIDES_DIR, _wi_fp2.lstrip('/'))
+                        with open(_wi_ov2) as _wi_fh2:
+                            _wi_ct2 = _wi_fh2.read()
+                        _wi_b64_2 = __import__('base64').b64encode(_wi_ct2.encode()).decode()
+                        _wi_lc2 = len(_wi_ct2.splitlines())
+                        _ov_cmd_parts.append(
+                            f"printf '%s' '{_wi_b64_2}' | base64 -d > {_wi_fp2} && "
+                            f'echo "[AUTOFIX-WRITE-DONE: {_wi_fp2} written via proxy override ({_wi_lc2} lines).]"'
+                        )
+                    _all_fns_ov = ', '.join(p.rsplit('/', 1)[-1] for p in _ov_all_fps)
                     _fname_ov = _fp_af.rsplit('/', 1)[-1]
                     _bash_cmd_ov = (
-                        f"printf '%s' '{_b64_ov}' | base64 -d > {_fp_af} && "
-                        f'echo "[AUTOFIX-WRITE-DONE: {_fp_af} written via proxy override ({_lc_ov} lines). File is complete. Write remaining pending files now.]"'
+                        ' && '.join(_ov_cmd_parts) +
+                        ' && echo "[ALL-FILES-DONE: All override files written. Run: sudo systemctl restart python-firewall]"'
                     )
                     _tc_af = {
                         **_tc_af,
                         'function': {
                             'name': 'bash',
-                            'arguments': json.dumps({'command': _bash_cmd_ov, 'description': f'Write override {_fname_ov} via base64'}),
+                            'arguments': json.dumps({'command': _bash_cmd_ov, 'description': f'Write overrides for {_all_fns_ov} via base64'}),
                         }
                     }
-                    logger.info(f"[WRITE-OVERRIDE-EARLY] using override for {_fp_af} ({_lc_ov} lines)")
+                    logger.info(f"[WRITE-OVERRIDE-EARLY] using override for {_all_fns_ov}")
                 elif _fp_af.endswith(".py") and _ct_af:
                     # Pre-fix: auto-complete truncated write call before py_compile (f.writ passes syntax check)
                     if re.search(r'\bf\.writ\s*$', _ct_af, re.MULTILINE):
