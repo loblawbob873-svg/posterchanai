@@ -4808,7 +4808,12 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
             try:
                 _boi_args = json.loads(_fn_af.get("arguments", "{}") or "{}")
                 _boi_cmd = _boi_args.get("command", "") or ""
-                if "sed" in _boi_cmd and "-i" in _boi_cmd:
+                _boi_is_write_cmd = (
+                    ("sed" in _boi_cmd and "-i" in _boi_cmd) or
+                    bool(re.search(r"open\(['\"][^'\"]*\.(?:py|sh)['\"],\s*['\"]w", _boi_cmd)) or
+                    bool(re.search(r'>\s*/opt/[\w./-]+\.(?:py|sh)\b', _boi_cmd))
+                )
+                if _boi_is_write_cmd:
                     for _boi_cand_m in re.finditer(r'(/opt/[\w./-]+\.(?:py|sh))\b', _boi_cmd):
                         _boi_fp = _boi_cand_m.group(1)
                         _boi_fn_blk = _boi_fp.rsplit('/', 1)[-1]
