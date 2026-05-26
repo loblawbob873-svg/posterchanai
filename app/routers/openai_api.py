@@ -1681,23 +1681,18 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             elif _sed_error:
                 _sed_err_has_eof = "unexpected EOF" in content_str
                 if _sed_err_has_eof and last_cmd and "sed" in last_cmd and "-i" in last_cmd:
-                    # sed used with multiline content in single-quoted string — redirect to python3
+                    # sed used with multiline content in single-quoted string — redirect to Write tool
                     _sed_target_m = re.search(r'([/\w.~-]+\.(?:py|sh|js|ts|html?|css))\b', last_cmd)
                     _sed_target = _sed_target_m.group(1) if _sed_target_m else 'TARGET_FILE'
                     content_str = (
-                        f"[SED-QUOTE-ERROR: sed -i with multiline content in single quotes always fails — "
-                        "single quotes cannot be escaped inside single-quoted strings. "
-                        "SED IS BLOCKED for this operation. Use python3 heredoc instead:\n"
-                        f"python3 << 'PYEOF'\n"
-                        f"content = open('{_sed_target}').read()\n"
-                        "# Add cyberpunk CSS/ANSI: use string operations to insert your changes\n"
-                        "# Then write back:\n"
-                        f"open('{_sed_target}', 'w').write(content)\n"
-                        "PYEOF\n"
-                        "Or use the Write tool with the COMPLETE new file content. "
-                        "Do NOT retry sed with the same content.]"
+                        f"[SED-QUOTE-ERROR: sed -i with complex multiline content in single quotes always fails "
+                        "because single quotes cannot be escaped inside single-quoted strings. "
+                        "SED IS BLOCKED. Use the Write tool instead — it handles multiline content safely. "
+                        f"Call Write(filePath='{_sed_target}', content='COMPLETE FILE CONTENT HERE'). "
+                        "Write the ENTIRE file content in the content parameter. "
+                        "Do NOT use bash/sed/python for this — use the Write tool directly.]"
                     )
-                    logger.info(f"[SED-QUOTE-BLOCK] EOF quoting error → python3 heredoc redirect for {_sed_target!r}")
+                    logger.info(f"[SED-QUOTE-BLOCK] EOF quoting error → Write tool redirect for {_sed_target!r}")
                 else:
                     content_str += (
                         "\n\n[IMPORTANT: The sed command failed with a syntax error. "
