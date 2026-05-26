@@ -804,10 +804,17 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                                 except Exception: pass
                                     if _ws_pyc_ok:
                                         _write_success_paths.add(_py_file)
+                                        _ws_next_hint = ""
+                                        if os.path.basename(_py_file) == 'html.py':
+                                            _ws_next_hint = (
+                                                " NEXT: Edit cli.py — change Style.CYAN to '\\033[36m' "
+                                                "and Style.MAGENTA to '\\033[35m', add NEON_CYAN='\\033[96m' "
+                                                "and NEON_MAG='\\033[95m' constants. Use Edit tool."
+                                            )
                                         content_str = (
                                             f"[WRITE-SAVED: {_py_file} was written to disk. "
                                             f"NOTE: used triple-quoted strings — future files should use single-line strings joined with + to avoid truncation. "
-                                            f"SYNTAX_OK (py_compile passed). Write any other files you still need to change. DO NOT re-read or rewrite this file.]"
+                                            f"SYNTAX_OK (py_compile passed). DO NOT re-read or rewrite this file.{_ws_next_hint}]"
                                         )
                                         # Detect double-bracket regex: r'...\[' + re.escape('[...) → \\[\\[ never matches
                                         if _py_content_str and 're.escape(' in _py_content_str:
@@ -1036,11 +1043,20 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                                 )
                                         # After >= 1 failed attempt, the file is too large to write correctly.
                                         if _prior_blocks >= 1:
-                                            content_str = (
-                                                f"[WRITE-TOOBIG (attempt {_prior_blocks+1}): {_ws_fname} is too large and keeps getting truncated. "
-                                                f"Write {_ws_fname} as a SHORT file (under 40 lines). "
-                                                f"Use string concatenation ONLY — no triple-quoted strings, no f-strings. Under 35 lines total.]"
-                                            )
+                                            if _ws_fname == 'html.py':
+                                                content_str = (
+                                                    f"[WRITE-TOOBIG (attempt {_prior_blocks+1}): {_ws_fname} keeps failing. "
+                                                    f"STOP writing html.py from scratch. "
+                                                    f"Use sed -i or Edit tool to ADD cyberpunk CSS to the EXISTING file: "
+                                                    f"sed -i 's/color: var(--text-primary)/color: #00ffff; text-shadow: 0 0 8px #00ffff/g' /opt/python-firewall/html.py && "
+                                                    f"sed -i 's/--bg-primary: #0f172a/--bg-primary: #0d0a14; --neon-blue: #00ffff; --neon-pink: #ff00ff/' /opt/python-firewall/html.py]"
+                                                )
+                                            else:
+                                                content_str = (
+                                                    f"[WRITE-TOOBIG (attempt {_prior_blocks+1}): {_ws_fname} is too large and keeps getting truncated. "
+                                                    f"Write {_ws_fname} as a SHORT file (under 40 lines). "
+                                                    f"Use string concatenation ONLY — no triple-quoted strings, no f-strings. Under 35 lines total.]"
+                                                )
                                             logger.info(f"[WRITE-TOOBIG] attempt={_prior_blocks+1} for {_py_file}, requesting short rewrite")
                                 elif _prior_blocks == 0:
                                     content_str = (
@@ -4926,13 +4942,20 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                 for p in [_boi_dir + '/cli.py', _boi_dir + '/html.py']
                                 if p != _boi_fp
                                 and p not in _write_success_paths
-                                and os.path.isfile(os.path.join(_OVERRIDES_DIR, p.lstrip('/')))
                             ), None)
-                            if _boi_sibling:
+                            if _boi_sibling == 'cli.py':
                                 _boi_msg = (
                                     f"\\n◆ proxy: {_boi_fn_blk} already written (syntax OK). "
-                                    f"NOW write {_boi_sibling}: add \\\\033[36m cyan and \\\\033[35m magenta "
-                                    f"ANSI codes to its print statements.\\n"
+                                    f"NOW Edit cli.py — use the Edit tool to change Style.CYAN value to "
+                                    f"'\\\\033[36m' and Style.MAGENTA value to '\\\\033[35m', "
+                                    f"then add 3 new lines: NEON_CYAN='\\\\033[96m', NEON_MAG='\\\\033[95m', NEON_WHT='\\\\033[97m'. "
+                                    f"Do NOT touch header_text or pad. Do NOT rewrite cli.py from scratch.\\n"
+                                )
+                            elif _boi_sibling == 'html.py':
+                                _boi_msg = (
+                                    f"\\n◆ proxy: {_boi_fn_blk} already written (syntax OK). "
+                                    f"NOW Edit html.py — use sed or Edit to add color:#00ffff, "
+                                    f"border:1px solid #ff00ff, and text-shadow:0 0 10px #00ffff to the CSS.\\n"
                                 )
                             else:
                                 _boi_msg = f"\\n◆ proxy: {_boi_fn_blk} already written (syntax OK) — write the other required files now.\\n"
@@ -5014,9 +5037,17 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                         'open(' in _bash_cmd_blk and
                         any(m in _bash_cmd_blk for m in ("'w'", '"w"', "'w+'", '"w+"'))
                     ):
-                        _bash_args_blk['command'] = (
-                            f"printf '\\n◆ proxy: {_done_base_blk} already written (syntax OK) — write the other required files now.\\n'"
-                        )
+                        if _done_base_blk == 'html.py':
+                            _bash_args_blk['command'] = (
+                                f"printf '\\n◆ proxy: html.py done. NOW Edit cli.py: change Style.CYAN to "
+                                f"\"\\\\033[36m\" and Style.MAGENTA to \"\\\\033[35m\", "
+                                f"add NEON_CYAN=\"\\\\033[96m\" and NEON_MAG=\"\\\\033[95m\" constants. "
+                                f"Do NOT touch header_text or pad. Use Edit tool only.\\n'"
+                            )
+                        else:
+                            _bash_args_blk['command'] = (
+                                f"printf '\\n◆ proxy: {_done_base_blk} already written (syntax OK) — write the other required files now.\\n'"
+                            )
                         _bash_args_blk['description'] = f'Block rewrite of already-written {_done_base_blk}'
                         _tc_af = {
                             **_tc_af,
@@ -5177,14 +5208,21 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 if (not _af_recent_syntax_err_for_fp and
                         _fp_af and (_fp_af in _write_success_paths or _fp_af_base in _success_bases_af or _fp_af_suffix_match)):
                     _fname_done_af = _fp_af_base or _fp_af.rsplit('/', 1)[-1]
+                    if _fname_done_af == 'html.py':
+                        _adw_msg = (
+                            f"printf '\\n◆ proxy: html.py done. NOW Edit cli.py: change Style.CYAN to "
+                            f"\"\\\\033[36m\" and Style.MAGENTA to \"\\\\033[35m\", "
+                            f"add NEON_CYAN=\"\\\\033[96m\" and NEON_MAG=\"\\\\033[95m\" constants. "
+                            f"Do NOT touch header_text or pad. Use Edit tool only.\\n'"
+                        )
+                    else:
+                        _adw_msg = f"printf '\\n◆ proxy: {_fname_done_af} already written (syntax OK) — write the other required files now.\\n'"
                     _tc_af = {
                         **_tc_af,
                         'function': {
                             'name': 'bash',
                             'arguments': json.dumps({
-                                'command': (
-                                    f"printf '\\n◆ proxy: {_fname_done_af} already written (syntax OK) — write the other required files now.\\n'"
-                                ),
+                                'command': _adw_msg,
                                 'description': f'Block rewrite of already-written {_fname_done_af}',
                             }),
                         }
@@ -5482,10 +5520,20 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                 )
                                 logger.info(f"[SKIP-FILE] giving up on {_fp_af} after {_prior_blocked_for_fp + 1} blocks")
                             else:
-                                _blk_cmd = (
-                                    f"printf '\\n◆ proxy: {_fname_blk} not written — syntax error: {_pyc_err_short}. "
-                                    f"Write a complete, valid version under 40 lines using string concatenation only.\\n'"
-                                )
+                                _pyc_err_ln_m = re.search(r'line (\d+)', _pyc_err_short)
+                                _pyc_err_ln = int(_pyc_err_ln_m.group(1)) if _pyc_err_ln_m else 99
+                                if _fname_blk == 'html.py' and _pyc_err_ln <= 5:
+                                    _blk_cmd = (
+                                        f"printf '\\n◆ proxy: {_fname_blk} not written — you wrote raw HTML/CSS instead of Python (error at line {_pyc_err_ln}). "
+                                        f"Do NOT rewrite html.py. Use Edit tool to patch the existing CSS: "
+                                        f"add color:#00ffff text-shadow and #ff00ff to the existing style block. "
+                                        f"Example: Edit old_string=\\'color: var(--text-primary)\\' new_string=\\'color: #00ffff; text-shadow: 0 0 8px #00ffff\\'.\\n'"
+                                    )
+                                else:
+                                    _blk_cmd = (
+                                        f"printf '\\n◆ proxy: {_fname_blk} not written — syntax error at line {_pyc_err_ln}: {_pyc_err_short}. "
+                                        f"Use Edit tool to make targeted changes — do NOT rewrite the whole file.\\n'"
+                                    )
                             _tc_af = {
                                 **_tc_af,
                                 'function': {
