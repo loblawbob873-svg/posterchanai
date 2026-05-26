@@ -1695,7 +1695,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 content_str += (
                     f"\n\n[PROXY: Python PatternError — your regex has an unbalanced parenthesis. "
                     f"Stop trying complex patterns. Use ONLY this simple regex (no named groups, no (?P<..>)): "
-                    f"re.match(r'^(\\t| *)echo \"(\\[[^\\]]+\\].*?)\"\\s*$', ln) "
+                    f"re.match(r'^([\\t ]*)echo \"(\\[[^\\]]+\\].*?)\"\\s*$', ln) "
                     f"Copy this script exactly:\n"
                     f"python3 << 'PYEOF'\n"
                     f"import re\n"
@@ -1704,7 +1704,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     f"ci = [0]\n"
                     f"out = []\n"
                     f"for ln in lines:\n"
-                    f"    m = re.match(r'^(\\t| *)echo \"(\\[[^\\]]+\\].*?)\"\\s*$', ln)\n"
+                    f"    m = re.match(r'^([\\t ]*)echo \"(\\[[^\\]]+\\].*?)\"\\s*$', ln)\n"
                     f"    if m:\n"
                     f"        col = colors[ci[0] % len(colors)]\n"
                     f"        ci[0] += 1\n"
@@ -1956,7 +1956,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                     f"lines = open('{_sh_file}').readlines()\n"
                                     f"out = []\n"
                                     f"for ln in lines:\n"
-                                    r"    m = re.match(r'^(\t| *)echo \"(\[[^\]]+\].*?)\"\s*$', ln)" + "\n"
+                                    r"    m = re.match(r'^([\t ]*)echo \"(\[[^\]]+\].*?)\"\s*$', ln)" + "\n"
                                     r"    if m: out.append(m.group(1) + 'echo -e \"\\033[1;36m' + m.group(2) + '\\033[0m\"\n')" + "\n"
                                     f"    else: out.append(ln)\n"
                                     f"open('{_sh_file}', 'w').writelines(out)\n"
@@ -2049,7 +2049,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             f"lines = open('{_gnm_sh_path2}').readlines()\n"
                             f"out = []\n"
                             f"for ln in lines:\n"
-                            f"    m = re.match(r'^(\\t| *)echo \"(\\[[^\\]]+\\].*?)\"\\s*$', ln)\n"
+                            f"    m = re.match(r'^([\\t ]*)echo \"(\\[[^\\]]+\\].*?)\"\\s*$', ln)\n"
                             f"    if m:\n"
                             f"        out.append(m.group(1) + 'echo -e \"\\\\033[1;36m' + m.group(2) + '\\\\033[0m\"\\n')\n"
                             f"    else:\n"
@@ -2074,7 +2074,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             f"lines = open('{_gnm_sh_path}').readlines()\n"
                             f"out = []\n"
                             f"for ln in lines:\n"
-                            f"    m = re.match(r'^(\\t| *)echo \"(\\[[^\\]]+\\].*?)\"\\s*$', ln)\n"
+                            f"    m = re.match(r'^([\\t ]*)echo \"(\\[[^\\]]+\\].*?)\"\\s*$', ln)\n"
                             f"    if m:\n"
                             f"        out.append(m.group(1) + 'echo -e \"\\\\033[1;36m' + m.group(2) + '\\\\033[0m\"\\n')\n"
                             f"    else:\n"
@@ -2720,7 +2720,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             f"lines = open('{_sbp_sh_path}').readlines()\n"
                             f"out = []\n"
                             f"for ln in lines:\n"
-                            f"    m = re.match(r'^(\\t| *)echo \"(\\[[^\\]]+\\].*?)\"\\s*$', ln)\n"
+                            f"    m = re.match(r'^([\\t ]*)echo \"(\\[[^\\]]+\\].*?)\"\\s*$', ln)\n"
                             f"    if m:\n"
                             f"        out.append(m.group(1) + 'echo -e \"\\\\033[1;36m' + m.group(2) + '\\\\033[0m\"\\n')\n"
                             f"    else:\n"
@@ -3148,7 +3148,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         f"lines = open('{_cap_sh_path}').readlines()\n"
                         "out = []\n"
                         "for ln in lines:\n"
-                        "    m = re.match(r'^(\\t| *)echo \"(\\[[^\\]]+\\].*?)\"\\s*$', ln)\n"
+                        "    m = re.match(r'^([\\t ]*)echo \"(\\[[^\\]]+\\].*?)\"\\s*$', ln)\n"
                         "    if m:\n"
                         "        out.append(m.group(1) + 'echo -e \"\\\\033[1;36m' + m.group(2) + '\\\\033[0m\"\\n')\n"
                         "    else:\n"
@@ -3196,7 +3196,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         f"ci = [0]\n"
                         f"out = []\n"
                         f"for ln in lines:\n"
-                        f"    m = re.match(r'^(\\t| *)echo \"(\\[[^\\]]+\\].*?)\"\\s*$', ln)\n"
+                        f"    m = re.match(r'^([\\t ]*)echo \"(\\[[^\\]]+\\].*?)\"\\s*$', ln)\n"
                         f"    if m:\n"
                         f"        col = colors[ci[0] % len(colors)]\n"
                         f"        ci[0] += 1\n"
@@ -3690,7 +3690,7 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False,
                             f"lines = open('{_tpu_path}').readlines()",
                             "out = []",
                             "for ln in lines:",
-                            r"    m = re.match(r'^(\t| *)echo \"(\[[^\]]+\].*?)\"\s*$', ln)",
+                            r"    m = re.match(r'^([\t ]*)echo \"(\[[^\]]+\].*?)\"\s*$', ln)",
                             r"    if m: out.append(m.group(1) + 'echo -e \"\\033[1;36m' + m.group(2) + '\\033[0m\"\n')",
                             "    else: out.append(ln)",
                             f"open('{_tpu_path}', 'w').writelines(out)",
@@ -3718,7 +3718,7 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False,
                             f"lines = open('{_tput_path}').readlines()",
                             "out = []",
                             "for ln in lines:",
-                            r"    m = re.match(r'^(\t| *)echo \"(\[[^\]]+\].*?)\"\s*$', ln)",
+                            r"    m = re.match(r'^([\t ]*)echo \"(\[[^\]]+\].*?)\"\s*$', ln)",
                             r"    if m: out.append(m.group(1) + 'echo -e \"\\033[1;36m' + m.group(2) + '\\033[0m\"\n')",
                             "    else: out.append(ln)",
                             f"open('{_tput_path}', 'w').writelines(out)",
@@ -3743,7 +3743,7 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False,
                                 f"lines = open('{_rep_path}').readlines()",
                                 "out = []",
                                 "for ln in lines:",
-                                r"    m = re.match(r'^(\t| *)echo \"(\[[^\]]+\].*?)\"\s*$', ln)",
+                                r"    m = re.match(r'^([\t ]*)echo \"(\[[^\]]+\].*?)\"\s*$', ln)",
                                 r"    if m: out.append(m.group(1) + 'echo -e \"\\033[1;36m' + m.group(2) + '\\033[0m\"\n')",
                                 "    else: out.append(ln)",
                                 f"open('{_rep_path}', 'w').writelines(out)",
@@ -3764,7 +3764,7 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False,
                         f"lines = open('{_sb_path}').readlines()",
                         "out = []",
                         "for ln in lines:",
-                        r"    m = re.match(r'^(\t| *)echo \"(\[[^\]]+\].*?)\"\s*$', ln)",
+                        r"    m = re.match(r'^([\t ]*)echo \"(\[[^\]]+\].*?)\"\s*$', ln)",
                         r"    if m: out.append(m.group(1) + 'echo -e \"\\033[1;36m' + m.group(2) + '\\033[0m\"\n')",
                         "    else: out.append(ln)",
                         f"open('{_sb_path}', 'w').writelines(out)",
