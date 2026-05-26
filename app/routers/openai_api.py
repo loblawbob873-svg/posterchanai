@@ -5668,7 +5668,8 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 nudge_result = r2.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
             nc, ntc = _parse_oai_tool_calls(nudge_result)
             ntc = _fix_sed_tool_calls(ntc, sed_blocked=_sed_blocked,
-                                      empty_bash_count=_empty_bash_count, messages=messages)
+                                      empty_bash_count=_empty_bash_count, messages=messages,
+                                      bash_history=bash_history)
             ntc = _redirect_hallucinated_sed(ntc, settings=settings)
             logger.info(f"[OAI-NUDGE] nudge result len={len(nudge_result)} tool_calls={len(ntc)}")
             if ntc:
