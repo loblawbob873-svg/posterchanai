@@ -4844,7 +4844,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                             if os.path.isdir(_boi_ov_dir):
                                 for _sib_fn in sorted(os.listdir(_boi_ov_dir)):
                                     _sib_fp = _boi_dir + '/' + _sib_fn
-                                    if _sib_fp != _boi_fp and _sib_fp not in _write_success_paths:
+                                    if _sib_fp != _boi_fp and _sib_fp not in _write_success_paths and os.path.isfile(os.path.join(_boi_ov_dir, _sib_fn)):
                                         _boi_all_fps.append(_sib_fp)
                             _boi_cmd_parts = []
                             for _wi_fp in _boi_all_fps:
@@ -5092,7 +5092,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     if os.path.isdir(_ov_dir_path):
                         for _sib_fn2 in sorted(os.listdir(_ov_dir_path)):
                             _sib_fp2 = _ov_dir + '/' + _sib_fn2
-                            if _sib_fp2 != _fp_af and _sib_fp2 not in _write_success_paths:
+                            if _sib_fp2 != _fp_af and _sib_fp2 not in _write_success_paths and os.path.isfile(os.path.join(_ov_dir_path, _sib_fn2)):
                                 _ov_all_fps.append(_sib_fp2)
                     _ov_cmd_parts = []
                     for _wi_fp2 in _ov_all_fps:
