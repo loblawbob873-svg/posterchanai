@@ -592,10 +592,11 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         bash_cmd_count[cmd] = bash_cmd_count.get(cmd, 0) + 1
                         bash_history.append(cmd)
                 elif re.search(r'write|edit|str_replace|create|patch|replace', name, re.IGNORECASE):
-                    non_bash_write_done = True
                     _fp = args.get("filePath") or args.get("file_path") or args.get("path") or ""
                     _pending_write_path = str(_fp) if _fp else None
+                    # Only count as write if filePath is non-empty — empty filePath means invalid call
                     if _fp:
+                        non_bash_write_done = True
                         _write_attempted_paths.add(str(_fp))
                 # Use XML format matching this model's training format
                 parts.append(f'<tool_call>\n<tool>{name}</tool>\n<input>\n{json.dumps(args, indent=2)}\n</input>\n</tool_call>')
