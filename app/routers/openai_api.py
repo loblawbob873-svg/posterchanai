@@ -493,6 +493,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
         for m in messages if m.get("role") in ("user", "tool")
     )
     _wrong_file_warned = set()   # files already warned about via WRONG-FILE-WARN; de-dupes across history replay
+    _tfr_already_redirected = set()  # pending files already redirected via TASK-FILE-REDIRECT; one injection per file
     _broken_sh_files = set()   # .sh files where a python3 write produced a bash -n syntax error
     # Detect complex merge tasks (conflict resolution, file preservation) — skip simple-sync shortcuts
     # Only scan the FIRST user message — proxy-injected tool results may contain "checkout HEAD" etc.
@@ -3191,6 +3192,46 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     f"Fix the Python file that caused the error, then restart the service.]"
                 )
                 logger.info(f"[SERVICE-FAILED] {_svc_name} is {content_str.strip()!r}")
+
+            # TASK-FILE-REDIRECT: model has written one task .py file but another is still untouched.
+            # Fires when the model is reading/checking the already-done file instead of moving on.
+            # Only inject once per pending file to avoid spamming.
+            if not re.search(r'TASK-FILE-REDIRECT', content_str):
+                _tfr_task_fps = [p for p in re.findall(r'/[\w./-]+\.py\b', _first_user_text) if '\\033' not in p]
+                if len(_tfr_task_fps) >= 2:
+                    _tfr_written: set = set()
+                    for _tfr_c in bash_history:
+                        _tfr_wm = re.search(r"open\s*\(\s*['\"]([^'\"]+\.py)['\"],\s*['\"]w", _tfr_c)
+                        if _tfr_wm:
+                            _tfr_written.add(_tfr_wm.group(1).rsplit('/', 1)[-1])
+                        if re.search(r'sed\s+-i', _tfr_c):
+                            for _tfr_sm in re.finditer(r'(/[\w./-]+\.py)\b', _tfr_c):
+                                _tfr_written.add(_tfr_sm.group(1).rsplit('/', 1)[-1])
+                    _tfr_written |= {sp.rsplit('/', 1)[-1] for sp in _write_success_paths}
+                    _tfr_pending = [f for f in _tfr_task_fps if f.rsplit('/', 1)[-1] not in _tfr_written]
+                    _tfr_done = [f for f in _tfr_task_fps if f.rsplit('/', 1)[-1] in _tfr_written]
+                    if _tfr_pending and _tfr_done:
+                        # Check if model is currently reading/checking an already-done file
+                        _tfr_cmd_reads_done = any(
+                            f.rsplit('/', 1)[-1] in (last_cmd or '') for f in _tfr_done
+                        )
+                        _tfr_cmd_count_since_last_write = sum(
+                            1 for c in reversed(bash_history)
+                            if not (re.search(r"open\s*\(.*,\s*['\"]w", c) or re.search(r'sed\s+-i', c))
+                        )
+                        # Only fire after 3+ read/probe commands since last write, and model is touching done file
+                        if _tfr_cmd_reads_done and _tfr_cmd_count_since_last_write >= 3:
+                            _tfr_pending_name = _tfr_pending[0].rsplit('/', 1)[-1]
+                            _tfr_done_name = _tfr_done[0].rsplit('/', 1)[-1]
+                            if _tfr_pending_name not in _tfr_already_redirected:
+                                _tfr_already_redirected.add(_tfr_pending_name)
+                                content_str += (
+                                    f"\n\n[TASK-FILE-REDIRECT: You have already modified {_tfr_done_name}. "
+                                    f"STOP reading it. You must ALSO modify {_tfr_pending[0]} — "
+                                    f"it has not been changed yet. "
+                                    f"Read {_tfr_pending_name} now and apply the required changes to it.]"
+                                )
+                                logger.info(f"[TASK-FILE-REDIRECT] done={_tfr_done_name} pending={_tfr_pending_name}")
 
             # Warn when a service was restarted without any code edits in this session
             if last_cmd and re.search(r'^\s*(?:sudo\s+)?systemctl\s+(restart|reload)\s+', last_cmd):
