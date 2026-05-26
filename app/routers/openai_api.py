@@ -1717,6 +1717,27 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     f"Run the corrected script after restoring the file.]"
                 )
                 logger.info(f"[WRIT-ATTR-ERROR] Detected f.writ truncation, target={_trunc_fname!r}")
+            # Intercept service startup ImportError — model changed function signatures or removed functions
+            elif "ImportError: cannot import name" in content_str:
+                _ie_m = re.search(r"ImportError: cannot import name '(\w+)' from '(\w+)'", content_str)
+                if _ie_m:
+                    _ie_name, _ie_mod = _ie_m.group(1), _ie_m.group(2)
+                    _ie_files = re.findall(r'/[\w./-]+\.py', _first_user_text)
+                    _ie_hint = f" Check {', '.join(_ie_files[:2])}." if _ie_files else ""
+                    content_str += (
+                        f"\n\n[SERVICE-IMPORTERROR: The service failed to start because '{_ie_name}' was removed or renamed in '{_ie_mod}.py'. "
+                        f"The file that imports it expects 'def {_ie_name}(...)' to exist.{_ie_hint} "
+                        f"Read the current {_ie_mod}.py, find where {_ie_name} was removed or renamed, and restore it with the correct function signature. "
+                        f"Do NOT rename or remove functions — only add CSS/color styling inside the existing functions.]"
+                    )
+                    logger.info(f"[SERVICE-IMPORTERROR] missing={_ie_name!r} from={_ie_mod!r}")
+                else:
+                    content_str += (
+                        "\n\n[SERVICE-IMPORTERROR: The service failed to start with an ImportError. "
+                        "A required function was removed or renamed. Read the Python files and restore all original function definitions. "
+                        "Only add styling inside existing functions — never rename or remove them.]"
+                    )
+                    logger.info("[SERVICE-IMPORTERROR] generic ImportError detected")
             # Intercept Python NameError from missing import — inject specific import hint
             elif "NameError: name" in content_str and "is not defined" in content_str:
                 _ne_m = re.search(r"NameError: name '(\w+)' is not defined", content_str)
@@ -3132,6 +3153,19 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "Your pattern is not matching any lines. Check what the file actually contains with grep, "
                         "then rewrite the script to match the actual line format.]"
                     )
+            # Detect service in failed/inactive state — prompt model to check journal for root cause
+            if (last_cmd and re.search(r'systemctl\s+is-active\b', last_cmd) and
+                    re.search(r'^(failed|inactive|activating|deactivating)\s*$', content_str.strip())):
+                _svc_m = re.search(r'systemctl\s+is-active\s+([\w.-]+)', last_cmd)
+                _svc_name = _svc_m.group(1) if _svc_m else 'the service'
+                content_str += (
+                    f"\n\n[SERVICE-FAILED: {_svc_name} is not running (status: {content_str.strip()}). "
+                    f"Run: journalctl -u {_svc_name} -n 20 --no-pager 2>&1 | tail -20 "
+                    f"to see why it crashed. Look for ImportError, SyntaxError, or Traceback. "
+                    f"Fix the Python file that caused the error, then restart the service.]"
+                )
+                logger.info(f"[SERVICE-FAILED] {_svc_name} is {content_str.strip()!r}")
+
             # Warn when a service was restarted without any code edits in this session
             if last_cmd and re.search(r'^\s*(?:sudo\s+)?systemctl\s+(restart|reload)\s+', last_cmd):
                 _any_write_pre = non_bash_write_done or any(
