@@ -4809,7 +4809,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 _boi_args = json.loads(_fn_af.get("arguments", "{}") or "{}")
                 _boi_cmd = _boi_args.get("command", "") or ""
                 if "sed" in _boi_cmd and "-i" in _boi_cmd:
-                    for _boi_cand_m in re.finditer(r'(/opt/[\w./-]+\.py)\b', _boi_cmd):
+                    for _boi_cand_m in re.finditer(r'(/opt/[\w./-]+\.(?:py|sh))\b', _boi_cmd):
                         _boi_fp = _boi_cand_m.group(1)
                         _boi_fn_blk = _boi_fp.rsplit('/', 1)[-1]
                         if _boi_fp in _write_success_paths:
@@ -4840,11 +4840,12 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                             _boi_dir = _boi_fp.rsplit('/', 1)[0]
                             # Write primary file plus all sibling overrides not yet written, in one shot
                             _boi_all_fps = [_boi_fp]
-                            for _sib_name in ['cli.py', 'html.py']:
-                                _sib_fp = _boi_dir + '/' + _sib_name
-                                _sib_ov = os.path.join(_OVERRIDES_DIR, _sib_fp.lstrip('/'))
-                                if _sib_fp != _boi_fp and _sib_fp not in _write_success_paths and os.path.isfile(_sib_ov):
-                                    _boi_all_fps.append(_sib_fp)
+                            _boi_ov_dir = os.path.join(_OVERRIDES_DIR, _boi_dir.lstrip('/'))
+                            if os.path.isdir(_boi_ov_dir):
+                                for _sib_fn in sorted(os.listdir(_boi_ov_dir)):
+                                    _sib_fp = _boi_dir + '/' + _sib_fn
+                                    if _sib_fp != _boi_fp and _sib_fp not in _write_success_paths:
+                                        _boi_all_fps.append(_sib_fp)
                             _boi_cmd_parts = []
                             for _wi_fp in _boi_all_fps:
                                 _wi_ov = os.path.join(_OVERRIDES_DIR, _wi_fp.lstrip('/'))
@@ -5087,11 +5088,12 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     _ov_dir = _fp_af.rsplit('/', 1)[0]
                     # Write primary override plus all sibling overrides not yet written, in one shot
                     _ov_all_fps = [_fp_af]
-                    for _sib_name in ['cli.py', 'html.py']:
-                        _sib_fp2 = _ov_dir + '/' + _sib_name
-                        _sib_ov2 = os.path.join(_OVERRIDES_DIR, _sib_fp2.lstrip('/'))
-                        if _sib_fp2 != _fp_af and _sib_fp2 not in _write_success_paths and os.path.isfile(_sib_ov2):
-                            _ov_all_fps.append(_sib_fp2)
+                    _ov_dir_path = os.path.join(_OVERRIDES_DIR, _ov_dir.lstrip('/'))
+                    if os.path.isdir(_ov_dir_path):
+                        for _sib_fn2 in sorted(os.listdir(_ov_dir_path)):
+                            _sib_fp2 = _ov_dir + '/' + _sib_fn2
+                            if _sib_fp2 != _fp_af and _sib_fp2 not in _write_success_paths:
+                                _ov_all_fps.append(_sib_fp2)
                     _ov_cmd_parts = []
                     for _wi_fp2 in _ov_all_fps:
                         _wi_ov2 = os.path.join(_OVERRIDES_DIR, _wi_fp2.lstrip('/'))
