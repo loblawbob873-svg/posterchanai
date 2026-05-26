@@ -1,68 +1,127 @@
-from typing import List, Dict
+from commands import get_cpu_usage
+from commands import get_block_count
+from db import addHTML
+from db import clearHTML
+from db import getHTML
+from db import html
+from config import REDIRECT
 
-def buildWeb(entries: List[Dict], stats: Dict) -> str:
-    h = '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-    h += '<title>CYBERPUNK FIREWALL TERMINAL</title><style>'
-    h += '*{margin:0;padding:0;box-sizing:border-box}'
-    h += 'body{background:#0a0a0f;color:#e0e0ff;font-family:"Courier New",monospace;min-height:100vh}'
-    h += '.neon{color:#00ffff;text-shadow:0 0 8px #00ffff,0 0 16px #00ffff}'
-    h += '.glow{box-shadow:0 0 10px #ff00ff,0 0 20px #ff00ff,inset 0 0 10px rgba(255,0,255,0.1)}'
-    h += '.cyberpunk{border:1px solid #00ffff;background:#050510}'
-    h += '.glitch{position:relative}'
-    h += '@keyframes neon-pulse{0%,100%{text-shadow:0 0 5px #0ff}50%{text-shadow:0 0 20px #0ff,0 0 40px #0ff}}'
-    h += '.terminal{font-family:"Courier New",monospace;background:#050510;padding:4px 8px}'
-    h += '.scanline{background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,255,255,0.02) 2px,rgba(0,255,255,0.02) 4px)}'
-    h += '.header{padding:16px;border-bottom:2px solid #00ffff;display:flex;align-items:center;justify-content:space-between}'
-    h += '.search-btn{background:transparent;border:1px solid #00ffff;color:#00ffff;padding:6px 14px;cursor:pointer;font-family:monospace}'
-    h += '.search-btn:hover{background:rgba(0,255,255,0.1);box-shadow:0 0 8px #0ff}'
-    h += '.entry{margin:6px;padding:10px;border-left:3px solid #333}'
-    h += '.entry.blocked{border-left-color:#ff00ff}.entry.allowed{border-left-color:#00ff00}'
-    h += '.modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:1000}'
-    h += '.overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);cursor:pointer}'
-    h += '.modal-box{position:relative;margin:8% auto;width:70%;max-width:640px;background:#0a0a0f;border:2px solid #00ffff;padding:24px;z-index:1001;box-shadow:0 0 30px #00ffff}'
-    h += '#modal-input{width:100%;background:transparent;border:none;border-bottom:2px solid #00ffff;color:#00ffff;font-size:18px;padding:10px 4px;outline:none;font-family:"Courier New",monospace}'
-    h += '#modal-input::placeholder{color:rgba(0,255,255,0.4)}'
-    h += '.close-btn{float:right;background:transparent;border:1px solid #ff00ff;color:#ff00ff;padding:4px 10px;cursor:pointer;font-family:monospace;margin-top:12px}'
-    h += '</style></head>'
-    h += '<body class="scanline"><div id="modal" class="modal">'
-    h += '<div class="overlay" onclick="closeModal()"></div>'
-    h += '<div class="modal-box cyberpunk">'
-    h += '<div class="neon" style="margin-bottom:12px;font-size:14px">&#9889; SEARCH TERMINAL</div>'
-    h += '<input id="modal-input" type="text" placeholder="QUERY..." autofocus oninput="filterEntries(this.value)">'
-    h += '<button class="close-btn" onclick="closeModal()">&#x2715; CLOSE</button>'
-    h += '</div></div>'
-    h += '<div class="header cyberpunk glow">'
-    h += '<h1 class="neon glitch" style="animation:neon-pulse 2s infinite">&#9889; CYBERPUNK FIREWALL TERMINAL</h1>'
-    h += '<button class="search-btn neon" onclick="showModal()">&#128269; SEARCH</button>'
-    h += '</div>'
-    total = int((stats or {}).get('total', 0))
-    blocked = int((stats or {}).get('blocked', 0))
-    h += '<div class="terminal" style="padding:8px 16px;border-bottom:1px solid #00ffff">'
-    h += '<span class="neon">TOTAL: ' + str(total) + '</span>'
-    h += ' &nbsp; <span style="color:#ff00ff">BLOCKED: ' + str(blocked) + '</span>'
-    h += '</div><div id="entries">'
-    for e in (entries or []):
-        status = str(e.get('status', 'unknown')).lower()
-        cmd = str(e.get('command', '')).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-        out = str(e.get('output', '') or '').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-        h += '<div class="entry cyberpunk ' + status + '" data-cmd="' + cmd.lower() + '">'
-        h += '<div><span class="neon">[' + status.upper() + ']</span> '
-        h += '<span class="terminal">' + cmd + '</span></div>'
-        if out:
-            h += '<pre class="terminal" style="margin-top:4px;color:#888">' + out[:300] + '</pre>'
-        h += '</div>'
-    h += '</div>'
-    h += '<script>'
-    h += 'function showModal(){'
-    h += 'document.getElementById("modal").style.display="block";'
-    h += 'setTimeout(function(){document.getElementById("modal-input").focus();},50);}'
-    h += 'function closeModal(){'
-    h += 'document.getElementById("modal").style.display="none";}'
-    h += 'function filterEntries(q){'
-    h += 'var rows=document.querySelectorAll("#entries .entry");'
-    h += 'rows.forEach(function(r){r.style.display=r.dataset.cmd.includes(q.toLowerCase())?"":"none";});}'
-    h += 'document.addEventListener("keydown",function(e){'
-    h += 'if(e.key==="Escape")closeModal();'
-    h += 'if((e.ctrlKey||e.metaKey)&&e.key==="k"){e.preventDefault();showModal();}});'
-    h += '</script></body></html>'
-    return h
+def basicHTML(timestamp):
+    cpu = get_cpu_usage()
+    blocked = get_block_count().strip()
+    HTML = f"""<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:#0a0a0f;color:#e0e0ff;font-family:"Courier New",monospace;min-height:100vh}}
+.neon{{color:#00ffff;text-shadow:0 0 8px #00ffff,0 0 16px #00ffff}}
+.glow{{box-shadow:0 0 10px #ff00ff,0 0 20px #ff00ff,inset 0 0 10px rgba(255,0,255,0.1)}}
+.cyberpunk{{border:1px solid #00ffff;background:#050510}}
+@keyframes neon-pulse{{0%,100%{{text-shadow:0 0 5px #0ff}}50%{{text-shadow:0 0 20px #0ff,0 0 40px #0ff}}}}
+.terminal{{font-family:"Courier New",monospace;background:#050510;padding:4px 8px}}
+.scanline{{background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,255,255,0.02) 2px,rgba(0,255,255,0.02) 4px)}}
+header{{padding:16px;border-bottom:2px solid #00ffff;display:flex;align-items:center;justify-content:space-between}}
+h1{{color:#00ffff;text-shadow:0 0 10px #00ffff;animation:neon-pulse 2s infinite}}
+.stat-badge{{padding:4px 12px;border:1px solid #ff00ff;color:#ff00ff;font-family:monospace;margin:0 4px}}
+main{{display:flex;flex:1;gap:1rem;padding:1rem}}
+.column{{flex:1;background:#050510;border:1px solid #00ffff;overflow:hidden;display:flex;flex-direction:column}}
+.column-header{{padding:0.75rem 1rem;font-size:0.8rem;font-weight:700;text-transform:uppercase;border-bottom:1px solid #00ffff;color:#00ffff}}
+.column-header.blocked{{color:#ff00ff;border-bottom-color:#ff00ff}}
+.column-header.queries{{color:#ffff00;border-bottom-color:#ffff00}}
+.column-body{{flex:1;overflow-y:auto;padding:0.5rem}}
+.entry{{display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0.625rem;margin-bottom:0.25rem;font-size:0.8125rem;word-break:break-all}}
+.entry a{{color:#00ffff;text-decoration:none}}
+.entry a:hover{{color:#ff00ff;text-shadow:0 0 5px #ff00ff}}
+.entry .meta{{color:#888}}
+.entry .count{{background:rgba(0,255,255,0.1);color:#00ffff;padding:0.125rem 0.5rem;font-size:0.6875rem;margin-left:auto}}
+</style>
+</head><body class="scanline">
+<header class="cyberpunk glow">
+  <h1 class="neon" style="animation:neon-pulse 2s infinite">&#9889; CYBERPUNK FIREWALL TERMINAL</h1>
+  <div>
+    <span class="stat-badge">&#9889; {cpu}</span>
+    <span class="stat-badge">&#128683; Blocked: {blocked}</span>
+  </div>
+</header>
+<div class="terminal" style="padding:8px 16px;border-bottom:1px solid #00ffff">
+  <span class="neon">Traffic as of:</span> {timestamp}
+</div>
+"""
+    return HTML
+
+def htmlRELOAD():
+    return """<script>
+(function() {
+  let seconds = 40;
+  const el = document.getElementById('countdown');
+  const updateCountdown = () => { if (el) el.textContent = seconds + 's'; };
+  const tick = () => {
+    seconds--;
+    if (seconds <= 0) { window.location.reload(); }
+    updateCountdown();
+  };
+  const style = document.createElement('style');
+  style.textContent =
+    '#reload-bar { position: fixed; bottom: 0; left: 0; height: 3px; background: linear-gradient(90deg, #00ffff, #ff00ff); transition: width 1s linear; z-index: 999; }' +
+    '#reload-indicator { position: fixed; bottom: 10px; right: 16px; font-size: 0.75rem; color: #00ffff; z-index: 999; font-family: monospace; }';
+  document.head.appendChild(style);
+  const bar = document.createElement('div'); bar.id = 'reload-bar'; bar.style.width = '100%';
+  const indicator = document.createElement('div'); indicator.id = 'reload-indicator';
+  indicator.innerHTML = '&#9889; <span id="countdown">40s</span>';
+  document.body.appendChild(bar);
+  document.body.appendChild(indicator);
+  setInterval(tick, 1000);
+  let w = 100;
+  setInterval(function() { w -= 2.5; if (w < 0) w = 0; bar.style.width = w + '%'; }, 1000);
+})();
+</script>"""
+
+def buildWeb(activity, timestamp):
+    blocked_array = []
+    standard_queries = []
+    ip_counters = []
+
+    for line in activity:
+        if "🚨 Blocked IP:" in line:
+            value = line.split(" ")
+            line = f'<div class="entry"><span style="color:#ff00ff">&#128683;</span><a target="_blank" href="https://{value[3]}">{value[3]}</a> <span class="meta">{value[4]} {value[5]}</span><a style="color:#00ffff" target="_blank" href="/ip?ip={value[3]}&date={timestamp}">&#128269;</a></div>'
+            blocked_array.append(line)
+        if "🚨 Blocked Subnet:" in line:
+            value = line.split(" ")
+            line = f'<div class="entry"><span style="color:#ff00ff">&#128683;</span><a target="_blank" href="https://{value[3]}">{value[3]}</a> <span class="meta">{value[4]} {value[5]}</span><a style="color:#00ffff" target="_blank" href="/ip?ip={value[3]}&date={timestamp}">&#128269;</a></div>'
+            blocked_array.append(line)
+        if "📍" in line:
+            URL_FIX = line.split(" ")
+            value = line.split(" ")
+            line = f'<div class="entry"><span style="color:#00ffff">&#128205;</span><a target="_blank" href="https://{URL_FIX[1]}">{URL_FIX[1]}</a><span class="count">{value[2]} hits</span><a style="color:#00ffff" target="_blank" href="/ip?ip={URL_FIX[1]}&date={timestamp}">&#128269;</a></div>'
+            ip_counters.append(line)
+        if "🕵️" in line:
+            URL_FIX = line.split(" ")
+            URL_PARSE = line.split(" ")
+            line = f'<div class="entry"><span style="color:#ffff00">&#8265;</span><a target="_blank" href="https://{URL_FIX[1]}">{URL_FIX[1]}</a> <span class="meta">&#10132; {URL_PARSE[2]}</span><a style="color:#00ffff" target="_blank" href="/ip?ip={URL_PARSE[1]}&date={timestamp}">&#128269;</a></div>'
+            standard_queries.append(line)
+
+    clearHTML()
+    addHTML(basicHTML(timestamp))
+
+    addHTML('<main>')
+
+    addHTML('<div class="column"><div class="column-header blocked">&#128683; Blocked Traffic</div><div class="column-body">')
+    for line in blocked_array:
+        addHTML(line)
+    addHTML('</div></div>')
+
+    addHTML('<div class="column"><div class="column-header queries">&#8265; Queries</div><div class="column-body">')
+    for line in standard_queries:
+        addHTML(line)
+    addHTML('</div></div>')
+
+    addHTML('<div class="column"><div class="column-header counters">&#128205; IP Counters</div><div class="column-body">')
+    for line in ip_counters:
+        addHTML(line)
+    addHTML('</div></div>')
+
+    addHTML('</main>')
+    addHTML(htmlRELOAD())
+    addHTML('</body></html>')
