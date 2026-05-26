@@ -3664,8 +3664,8 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False,
                 _is_py3_heredoc_cmd = bool(re.search(r'python3?\s+<<', cmd))
                 _writes_sh_file = bool(re.search(r"open\s*\(\s*['\"][^'\"]+\.sh['\"].*['\"]w['\"]", cmd))
                 if _is_py3_heredoc_cmd and _writes_sh_file and re.search(r'\btput\b', cmd):
-                    _tpu_task_sh = re.findall(r'(/[\w./-]+\.sh)\b', _first_user_text)
-                    _tpu_path = _tpu_task_sh[0] if _tpu_task_sh else None
+                    _tpu_sh_m = re.search(r'(/[\w./-]+\.sh)\b', cmd) or re.search(r'(/[\w./-]+\.sh)\b', _first_user_text)
+                    _tpu_path = _tpu_sh_m.group(1) if _tpu_sh_m else None
                     if _tpu_path:
                         # Auto-execute the correct template instead of showing text (model ignores text)
                         args_dict["command"] = "\n".join([
@@ -3685,11 +3685,16 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False,
                         out.append(tc)
                         logger.info(f"[HEREDOC-TPUT-AUTO] Auto-executing global template for py3 heredoc with tput in {cmd[:60]!r}")
                         continue
+                # Helper: extract .sh target from cmd first, then fall back to first user message
+                def _sh_target(c, fut):
+                    m = re.search(r'(/[\w./-]+\.sh)\b', c)
+                    if m: return m.group(1)
+                    m2 = re.search(r'(/[\w./-]+\.sh)\b', fut)
+                    return m2.group(1) if m2 else None
                 # Tput-in-sed: auto-execute python3 colorizer on first detection — model always fails with tput
                 # Catches both /separator/ and |separator| forms (replacement regex misses |sep| case)
                 if "sed" in cmd and "-i" in cmd and re.search(r'\btput\b', cmd):
-                    _tput_task_sh = re.findall(r'(/[\w./-]+\.sh)\b', _first_user_text)
-                    _tput_path = _tput_task_sh[0] if _tput_task_sh else None
+                    _tput_path = _sh_target(cmd, _first_user_text)
                     if _tput_path:
                         args_dict["command"] = "\n".join([
                             f"python3 << 'PYEOF'",
@@ -3714,8 +3719,7 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False,
                     _cmd_sig = cmd.strip()[:60]
                     _already_ran = any(_cmd_sig in (h or "")[:70] for h in bash_history if "sed" in (h or ""))
                     if _already_ran:
-                        _rep_task_sh = re.findall(r'(/[\w./-]+\.sh)\b', _first_user_text)
-                        _rep_path = _rep_task_sh[0] if _rep_task_sh else None
+                        _rep_path = _sh_target(cmd, _first_user_text)
                         if _rep_path:
                             args_dict["command"] = "\n".join([
                                 f"python3 << 'PYEOF'",
@@ -3735,7 +3739,7 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False,
                             logger.info(f"[REPEAT-SED-AUTO] Auto-executing global template for repeated sed: {cmd[:60]!r}")
                             continue
                 if sed_blocked and "sed" in cmd and "-i" in cmd:
-                    _sb_task_sh = re.findall(r'(/[\w./-]+\.sh)\b', _first_user_text)
+                    _sb_task_sh = re.findall(r'(/[\w./-]+\.sh)\b', cmd) or re.findall(r'(/[\w./-]+\.sh)\b', _first_user_text)
                     _sb_path = _sb_task_sh[0] if _sb_task_sh else '/path/to/file.sh'
                     # Run the global template directly instead of just showing it — model ignores text instructions
                     args_dict["command"] = "\n".join([
