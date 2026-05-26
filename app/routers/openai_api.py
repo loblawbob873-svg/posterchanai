@@ -3147,11 +3147,37 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 _py3_heredoc_count = sum(
                     1 for c in bash_history if re.search(r'python3?\s+(<<|-\s)', c)
                 )
-                if _py3_heredoc_count >= 2:
+                # Count how many times this exact command has been repeated
+                _py3_exact_repeat = bash_cmd_count.get(last_cmd or "", 0)
+                if _py3_exact_repeat >= 3:
+                    # Hard block: same no-op write 3+ times — str.replace() found nothing
+                    _py3_open_blk = re.search(r"open\s*\(\s*['\"]([^'\"]+)['\"]", last_cmd or "")
+                    _py3_blocked_file = _py3_open_blk.group(1).rsplit('/', 1)[-1] if _py3_open_blk else "the file"
+                    # Find task files not yet written, to redirect model
+                    _py3_task_fps = re.findall(r'/[\w./-]+\.(?:py|sh)\b', _first_user_text)
+                    _py3_written_bases = {sp.rsplit('/', 1)[-1] for sp in _write_success_paths}
+                    _py3_also_written = {c for c in bash_history if re.search(r'open\s*\(.*,\s*["\']w["\']', c)}
+                    _py3_written_from_hist = set()
+                    for _phc in _py3_also_written:
+                        _phm = re.search(r"open\s*\(\s*['\"]([^'\"]+)['\"]", _phc)
+                        if _phm:
+                            _py3_written_from_hist.add(_phm.group(1).rsplit('/', 1)[-1])
+                    _py3_all_written = _py3_written_bases | _py3_written_from_hist
+                    _py3_pending = [f for f in _py3_task_fps if f.rsplit('/', 1)[-1] not in _py3_all_written and f.rsplit('/', 1)[-1] != _py3_blocked_file]
+                    _py3_pending_hint = f" NOW move on to: {', '.join(_py3_pending[:2])} — those files still need changes." if _py3_pending else ""
+                    content_str = (
+                        f"[REPEATED-NOOP-BLOCKED: Your str.replace() on {_py3_blocked_file} has produced no output "
+                        f"{_py3_exact_repeat} times in a row. The target string was already changed or never matched. "
+                        f"STOP. Run: grep -n '\\\\033\\|CYAN\\|NEON\\|color\\|#00' /opt/python-firewall/{_py3_blocked_file} | head -20 "
+                        f"to see what is actually in the file now, then use sed -i or the Write tool to make any remaining changes.{_py3_pending_hint}]"
+                    )
+                    logger.info(f"[REPEATED-NOOP-BLOCKED] {_py3_exact_repeat}x same no-op write on {_py3_blocked_file!r}")
+                elif _py3_heredoc_count >= 2:
                     content_str += (
                         f"\n\n[WARNING: You have run {_py3_heredoc_count} python3 scripts that produced no output. "
-                        "Your pattern is not matching any lines. Check what the file actually contains with grep, "
-                        "then rewrite the script to match the actual line format.]"
+                        "Your str.replace() is not matching — the target string was already changed or doesn't exist. "
+                        "Check what the file actually contains with grep, "
+                        "then use sed -i or the Write tool to make any remaining changes.]"
                     )
             # Detect service in failed/inactive state — prompt model to check journal for root cause
             if (last_cmd and re.search(r'systemctl\s+is-active\b', last_cmd) and
