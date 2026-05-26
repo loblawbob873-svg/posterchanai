@@ -3361,6 +3361,22 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False,
     bash_history: list of bash commands already run this session (for repeat-detection).
     """
     _first_user_text = next((m.get("content") or "" for m in (messages or []) if m.get("role") == "user"), "")
+    # Build bash history from messages if not provided — used for repeated-sed detection
+    if bash_history is None and messages:
+        bash_history = []
+        for _mbh in messages:
+            if _mbh.get("role") != "assistant":
+                continue
+            for _tcbh in (_mbh.get("tool_calls") or []):
+                try:
+                    _fnbh = _tcbh.get("function", {})
+                    if _fnbh.get("name", "").lower() == "bash":
+                        _abh = json.loads(_fnbh.get("arguments", "{}") or "{}")
+                        _cbh = _abh.get("command", "")
+                        if _cbh:
+                            bash_history.append(_cbh)
+                except Exception:
+                    pass
 
     out = []
     for tc in tool_calls:
@@ -4463,7 +4479,6 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     tool_calls = _fix_sed_tool_calls(
         tool_calls, sed_blocked=_sed_blocked,
         empty_bash_count=_empty_bash_count, messages=messages,
-        bash_history=bash_history,
     )
     tool_calls = _redirect_hallucinated_sed(tool_calls, settings=settings)
     # Fix edit tool calls on .py files where oldString has CSS-style single braces {/}
@@ -5668,8 +5683,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                 nudge_result = r2.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
             nc, ntc = _parse_oai_tool_calls(nudge_result)
             ntc = _fix_sed_tool_calls(ntc, sed_blocked=_sed_blocked,
-                                      empty_bash_count=_empty_bash_count, messages=messages,
-                                      bash_history=bash_history)
+                                      empty_bash_count=_empty_bash_count, messages=messages)
             ntc = _redirect_hallucinated_sed(ntc, settings=settings)
             logger.info(f"[OAI-NUDGE] nudge result len={len(nudge_result)} tool_calls={len(ntc)}")
             if ntc:
