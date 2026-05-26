@@ -1551,6 +1551,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 "unknown option to `s'" in content_str
                 or "unterminated" in content_str.lower()
                 or "unmatched" in content_str.lower()
+                or "unexpected EOF while looking for matching" in content_str
+                or ("unexpected EOF" in content_str and last_cmd and "sed" in last_cmd)
             )
             # Intercept unavailable tool errors — tell model to use bash/edit/write instead
             if "tried to call unavailable tool" in content_str:
@@ -1676,13 +1678,33 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         _syntax_err_count[_pyc_fullpath] = _syntax_err_count.get(_pyc_fullpath, 0) + 1
             # Intercept sed syntax errors — unify into one clear fix instruction
             elif _sed_error:
-                content_str += (
-                    "\n\n[IMPORTANT: The sed command failed with a syntax error. "
-                    "Do NOT use BRE capture groups (\\\\(...\\\\)) or complex regex — they break easily. "
-                    "Instead, match the EXACT literal text of the line and use '|' as delimiter. "
-                    "Take the exact text from grep output and use it verbatim as the pattern. "
-                    "Use the exact literal text from grep output as the pattern, one sed -i call per line, chained with &&.]"
-                )
+                _sed_err_has_eof = "unexpected EOF" in content_str
+                if _sed_err_has_eof and last_cmd and "sed" in last_cmd and "-i" in last_cmd:
+                    # sed used with multiline content in single-quoted string — redirect to python3
+                    _sed_target_m = re.search(r'([/\w.~-]+\.(?:py|sh|js|ts|html?|css))\b', last_cmd)
+                    _sed_target = _sed_target_m.group(1) if _sed_target_m else 'TARGET_FILE'
+                    content_str = (
+                        f"[SED-QUOTE-ERROR: sed -i with multiline content in single quotes always fails — "
+                        "single quotes cannot be escaped inside single-quoted strings. "
+                        "SED IS BLOCKED for this operation. Use python3 heredoc instead:\n"
+                        f"python3 << 'PYEOF'\n"
+                        f"content = open('{_sed_target}').read()\n"
+                        "# Add cyberpunk CSS/ANSI: use string operations to insert your changes\n"
+                        "# Then write back:\n"
+                        f"open('{_sed_target}', 'w').write(content)\n"
+                        "PYEOF\n"
+                        "Or use the Write tool with the COMPLETE new file content. "
+                        "Do NOT retry sed with the same content.]"
+                    )
+                    logger.info(f"[SED-QUOTE-BLOCK] EOF quoting error → python3 heredoc redirect for {_sed_target!r}")
+                else:
+                    content_str += (
+                        "\n\n[IMPORTANT: The sed command failed with a syntax error. "
+                        "Do NOT use BRE capture groups (\\\\(...\\\\)) or complex regex — they break easily. "
+                        "Instead, match the EXACT literal text of the line and use '|' as delimiter. "
+                        "Take the exact text from grep output and use it verbatim as the pattern. "
+                        "Use the exact literal text from grep output as the pattern, one sed -i call per line, chained with &&.]"
+                    )
             # Intercept f.writ AttributeError — model truncated file write call, also truncated the target file
             elif (
                 "AttributeError" in content_str and
