@@ -4585,6 +4585,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
             )
             for m in messages if m.get("role") == "assistant"
         )
+        _hl_written_bases: set = set()
         _hl_any_write = _hl_non_bash_write_done or bool(_hl_written_bases) or any(
             re.search(r'sed\s+-i', str(m.get("content") or "")) or
             # python3 heredoc only counts as write when it opens a file for writing
