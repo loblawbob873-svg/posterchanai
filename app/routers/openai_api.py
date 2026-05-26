@@ -4481,8 +4481,9 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         if _efp_am.get("role") == "assistant"
         and re.search(r'"filePath"\s*:\s*""', str(_efp_am.get("content") or ""))
     )
+    _efp_first_user = next((m.get("content") or "" for m in messages if m.get("role") == "user"), "")
     if _empty_fp_ast_count >= 3:
-        _efp_files = re.findall(r'/[\w./-]+\.py', _first_user_text)
+        _efp_files = re.findall(r'/[\w./-]+\.py', _efp_first_user)
         _efp_paths = ', '.join(_efp_files[:3]) if _efp_files else 'the target file'
         _efp_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         _efp_text = (
