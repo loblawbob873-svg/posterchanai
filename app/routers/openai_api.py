@@ -3351,13 +3351,16 @@ def _redirect_hallucinated_sed(tool_calls: list, settings: dict = None) -> list:
 
 
 def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False,
-                        empty_bash_count: int = 0, messages: list = None) -> list:
+                        empty_bash_count: int = 0, messages: list = None,
+                        bash_history: list = None) -> list:
     """Fix common sed mistakes in bash tool calls before they reach opencode.
 
     sed_blocked: if True, sed -i calls are replaced with a blocking error (model must use python3).
     empty_bash_count: how many times model called bash with no command in this conversation.
     messages: full conversation messages for context lookup.
+    bash_history: list of bash commands already run this session (for repeat-detection).
     """
+    _first_user_text = next((m.get("content") or "" for m in (messages or []) if m.get("role") == "user"), "")
 
     out = []
     for tc in tool_calls:
@@ -4456,6 +4459,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     tool_calls = _fix_sed_tool_calls(
         tool_calls, sed_blocked=_sed_blocked,
         empty_bash_count=_empty_bash_count, messages=messages,
+        bash_history=bash_history,
     )
     tool_calls = _redirect_hallucinated_sed(tool_calls, settings=settings)
     # Fix edit tool calls on .py files where oldString has CSS-style single braces {/}
