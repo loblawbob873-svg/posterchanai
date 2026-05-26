@@ -4474,6 +4474,36 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         from fastapi.responses import StreamingResponse as _SR
         return _SR(_hl_emit(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
 
+    # Empty-filePath loop short-circuit: model keeps generating tool calls with filePath=""
+    # This appears in assistant messages (which opencode persists), so we can count reliably.
+    _empty_fp_ast_count = sum(
+        1 for _efp_am in messages
+        if _efp_am.get("role") == "assistant"
+        and re.search(r'"filePath"\s*:\s*""', str(_efp_am.get("content") or ""))
+    )
+    if _empty_fp_ast_count >= 3:
+        _efp_files = re.findall(r'/[\w./-]+\.py', _first_user_text)
+        _efp_paths = ', '.join(_efp_files[:3]) if _efp_files else 'the target file'
+        _efp_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+        _efp_text = (
+            f"I need to write the files directly using bash heredocs since my Edit tool calls have been invalid. "
+            f"I'll write the changes to {_efp_paths} now using bash."
+        )
+        logger.info(f"[EMPTY-FP-SHORTCIRCUIT] {_empty_fp_ast_count} empty-filePath tool calls — injecting bash write redirect")
+        _efp_body = {"id": _efp_id, "object": "chat.completion", "created": int(__import__("time").time()), "model": request.model, "choices": [{"index": 0, "message": {"role": "assistant", "content": _efp_text}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}}
+        if not request.stream:
+            return _efp_body
+        async def _efp_emit():
+            def _ck(d, fin=None):
+                return f"data: {json.dumps({'id': _efp_id, 'object': 'chat.completion.chunk', 'choices': [{'index': 0, 'delta': d, 'finish_reason': fin}]})}\n\n"
+            yield _ck({"role": "assistant", "content": ""})
+            for _i in range(0, len(_efp_text), 64):
+                yield _ck({"content": _efp_text[_i:_i+64]})
+            yield _ck({}, fin="stop")
+            yield "data: [DONE]\n\n"
+        from fastapi.responses import StreamingResponse as _SR2
+        return _SR2(_efp_emit(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
+
     temperature = request.temperature if request.temperature is not None else 0.0
     # Cap agentic completions at 8192 tokens — write tool calls can contain large files;
     # the </tool_call> stop token prevents runaway generation
