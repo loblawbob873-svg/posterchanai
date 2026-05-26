@@ -4414,10 +4414,20 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     # the model needs more turns to explore before being forced to commit
     _sc_turn_min_met = len(_all_user_msgs_sc) >= 8 or _hl_any_write_early
     # Exempt python3 heredocs that write files — these are genuine write attempts, not loops
+    # BUT exclude no-op scripts that just read and write back unchanged (content = open().read(); open().write(content))
     _is_py3_write_attempt = bool(
         re.search(r'python3?\s+<<', _last_tool_cmd_sc) and
         re.search(r'open\s*\(.*["\']w["\']|\.writelines\s*\(|\.write\s*\(', _last_tool_cmd_sc, re.DOTALL)
     )
+    # Detect no-op: script reads file into 'content' and writes it back without any intermediate modification
+    if _is_py3_write_attempt:
+        _py3_noop = bool(
+            re.search(r'content\s*=\s*open\s*\(', _last_tool_cmd_sc) and
+            re.search(r'open\s*\(.*["\']w["\'].*\)\.write\s*\(\s*content\s*\)', _last_tool_cmd_sc) and
+            not re.search(r'content\s*[+]=|content\s*=\s*(?!open)', _last_tool_cmd_sc)
+        )
+        if _py3_noop:
+            _is_py3_write_attempt = False  # no-op write = just reading and writing back unchanged
     if not _complex_merge_git_exempt and not _is_py3_write_attempt and _last_user_msg and _lum_has_any_loop_block and _prev_had_block_sc and _sc_turn_min_met:
         _hl_was_restart = bool(re.search(r'systemctl\s+(restart|reload)', _last_tool_cmd_sc))
         _hl_is_version_probe = bool(re.search(r'--version\b|-V\b|(?:venv|\.venv)/bin/|opencode\s+doctor|doctor$', _last_tool_cmd_sc))
