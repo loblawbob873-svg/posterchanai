@@ -1489,11 +1489,11 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
             # Only fire on the latest message to avoid polluting history
             if msg is messages[-1] and not non_bash_write_done:
                 _last_ast_content = next((r.get("content", "") for r in reversed(result) if r.get("role") == "assistant"), "")
-                _efp_m = re.search(r'"filePath"\s*:\s*"([^"]*)"', _last_ast_content)
+                _efp_m = re.search(r'"(?:filePath|file_path|path)"\s*:\s*"([^"]*)"', _last_ast_content)
                 if _efp_m and _efp_m.group(1) == "":
                     _consec_empty_fp = 0
                     for _efp_um in reversed(result):
-                        if _efp_um.get("role") == "user" and '"filePath": ""' in (_efp_um.get("content") or ""):
+                        if _efp_um.get("role") == "user" and re.search(r'"(?:filePath|file_path|path)"\s*:\s*""', _efp_um.get("content") or ""):
                             _consec_empty_fp += 1
                         elif _efp_um.get("role") == "user":
                             break
@@ -3159,7 +3159,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 for _rtc_m in reversed(result):
                     _rtc_role = _rtc_m.get("role", "")
                     _rtc_content = _rtc_m.get("content") or ""
-                    if _rtc_role == "user" and "<tool>read</tool>" in _rtc_content.lower():
+                    if _rtc_role == "user" and re.search(r'<tool>(?:read|read_file|view)</tool>', _rtc_content, re.IGNORECASE):
                         _consec_read_tool_calls += 1
                     elif _rtc_role == "user":
                         break
@@ -4502,7 +4502,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     _empty_fp_ast_count = sum(
         1 for _efp_am in messages
         if _efp_am.get("role") == "assistant"
-        and re.search(r'"filePath"\s*:\s*""', str(_efp_am.get("content") or ""))
+        and re.search(r'"(?:filePath|file_path|path)"\s*:\s*""', str(_efp_am.get("content") or ""))
     )
     _efp_first_user = next((m.get("content") or "" for m in messages if m.get("role") == "user"), "")
     if _empty_fp_ast_count >= 3:
