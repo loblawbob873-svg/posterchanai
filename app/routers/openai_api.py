@@ -4364,6 +4364,14 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     # If the most recent tool result contains BLOCKED, skip the LLM call entirely and return a final answer.
     _last_user_msg = next((m for m in reversed(messages) if m.get("role") == "user"), None)
     _lum_content = str(_last_user_msg.get("content") or "") if _last_user_msg else ""
+    # SED-QUOTE-ERROR only counts as a loop-block after some write attempt has occurred —
+    # prevents premature shortcircuit when model tries sed before writing anything.
+    _any_write_for_sc = any(
+        re.search(r'sed\s+-i|open\s*\(.*["\']w["\']|\.write\s*\(|python3?\s*<<.*open|printf.*base64', str(m.get("content") or "")) or
+        any(re.search(r'write|edit|str_replace', str(tc.get("function", {}).get("name", "")), re.IGNORECASE)
+            for tc in (m.get("tool_calls") or []))
+        for m in messages if m.get("role") == "assistant"
+    )
     _lum_has_any_loop_block = (
         bool(re.search(r'◆ proxy:(?![^\n]*\balready\s+(?:written|colorized|non-empty)\b)', _lum_content)) or
         "[REPEATED COMMAND BLOCKED:" in _lum_content or
@@ -4375,7 +4383,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         "[ENV-PROBE:" in _lum_content or
         "[READ-LOOP-BREAK:" in _lum_content or
         "[READ-LOOP-CAP:" in _lum_content or
-        "[SED-QUOTE-ERROR:" in _lum_content
+        ("[SED-QUOTE-ERROR:" in _lum_content and _any_write_for_sc)
     )
     # Extract the command from the last assistant tool call to check if it's git
     _last_assist_msg = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
@@ -4399,7 +4407,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         "[ENV-PROBE:" in _prev_user_content_sc or
         "[READ-LOOP-BREAK:" in _prev_user_content_sc or
         "[READ-LOOP-CAP:" in _prev_user_content_sc or
-        "[SED-QUOTE-ERROR:" in _prev_user_content_sc
+        ("[SED-QUOTE-ERROR:" in _prev_user_content_sc and _any_write_for_sc)
     )
     _complex_merge_git_exempt = (
         _is_complex_merge and
