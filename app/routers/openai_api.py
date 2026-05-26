@@ -3432,6 +3432,25 @@ def _fix_sed_tool_calls(tool_calls: list, sed_blocked: bool = False,
                     out.append(tc)
                     logger.info("[CONFLICT-CHECK] Wrapped git commit with conflict marker guard")
                     continue
+                # Strip "git checkout HEAD <file> &&" prefix — model resets file then runs script
+                _git_ck_match = re.match(
+                    r'\s*git(?:\s+-C\s+\S+)?\s+checkout\s+HEAD\s+(?:--\s+)?(\S+\.(?:sh|py|js|ts|html?|css|rb|go))\s*&&\s*([\s\S]*)',
+                    cmd
+                )
+                if _git_ck_match:
+                    _after_reset = _git_ck_match.group(2).strip()
+                    if _after_reset:
+                        args_dict["command"] = _after_reset
+                        tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                        logger.info(f"[GIT-RESET-STRIP] Stripped git checkout HEAD prefix, running: {_after_reset[:80]!r}")
+                        out.append(tc)
+                        continue
+                    else:
+                        args_dict["command"] = "printf '\\n[GIT-RESET-BLOCKED: git checkout HEAD on task file not allowed — it would erase your work. Modify the file instead.]\\n'"
+                        tc = {**tc, "function": {**fn, "arguments": json.dumps(args_dict)}}
+                        logger.info(f"[GIT-RESET-BLOCKED] Blocked bare git checkout HEAD {_git_ck_match.group(1)}")
+                        out.append(tc)
+                        continue
                 # Auto-add sudo for systemctl commands (avoid "Access denied")
                 if re.match(r'\s*systemctl\s+(restart|start|stop|reload|enable|disable)\b', cmd) and 'sudo' not in cmd:
                     args_dict["command"] = 'sudo ' + cmd.lstrip()
