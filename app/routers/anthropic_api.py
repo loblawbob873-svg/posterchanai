@@ -928,17 +928,26 @@ async def messages(
     # Complex merge exception applies only to git commands; build/script loops always shortcircuit.
     _anthr_last_user = next((m for m in reversed(messages_for_model) if m.get("role") == "user"), None)
     _anthr_lum = str(_anthr_last_user.get("content") or "") if _anthr_last_user else ""
+    # Pre-compute write detection for SED-QUOTE-ERROR gating (only count as loop-block after a write occurred)
+    _any_write_for_sc = any(
+        re.search(r'sed\s+-i|open\s*\(.*["\']w["\']|\.write\s*\(|python3?\s*<<.*open|printf.*base64', str(m.get("content") or "")) or
+        any(re.search(r'write|edit|str_replace', str(tc.get("name") or ""), re.IGNORECASE)
+            for tc in (m.get("content") or []) if isinstance(tc, dict) and tc.get("type") == "tool_use")
+        for m in messages_for_model if m.get("role") == "assistant"
+    )
     _anthr_has_block = (
         "[REPEATED COMMAND BLOCKED:" in _anthr_lum or
         "[LOOP DETECTED:" in _anthr_lum or
-        "[EXPLORATION BLOCKED:" in _anthr_lum
+        "[EXPLORATION BLOCKED:" in _anthr_lum or
+        ("[SED-QUOTE-ERROR:" in _anthr_lum and _any_write_for_sc)
     )
     _anthr_all_user_msgs = [m for m in messages_for_model if m.get("role") == "user"]
     _anthr_prev_user_content = str(_anthr_all_user_msgs[-2].get("content") or "") if len(_anthr_all_user_msgs) >= 2 else ""
     _anthr_prev_had_block = (
         "[REPEATED COMMAND BLOCKED:" in _anthr_prev_user_content or
         "[LOOP DETECTED:" in _anthr_prev_user_content or
-        "[EXPLORATION BLOCKED:" in _anthr_prev_user_content
+        "[EXPLORATION BLOCKED:" in _anthr_prev_user_content or
+        ("[SED-QUOTE-ERROR:" in _anthr_prev_user_content and _any_write_for_sc)
     )
     # Extract last bash command for LOOP-SC-CHECK
     _anthr_last_assist_lsc = next((m for m in reversed(messages_for_model) if m.get("role") == "assistant"), None)
@@ -961,7 +970,26 @@ async def messages(
         # Complex merge: all git commands exempt (merges require multiple git ops)
         _anthr_git_exempt = _sc_complex_merge and bool(re.search(r'^\s*git\b', _anthr_last_cmd))
         if not _anthr_git_exempt:
-            _anthr_hl_text = "I've investigated but cannot complete the task: a required resource or file is confirmed missing and I cannot create it in this environment. The operation is blocked on a missing dependency or configuration. Please provide the required resource or configuration and try again."
+            # Unwritten-files detection: if some files written but others remain, redirect to writing them
+            _anthr_hl_first_user = next((str(m.get("content") or "") for m in messages_for_model if m.get("role") == "user"), "")
+            _anthr_hl_task_all = re.findall(r'(?:/[\w./-]+/)?[\w-]+\.(?:py|sh|js|ts|html?|css)\b', _anthr_hl_first_user)
+            _anthr_hl_task_bases = list(dict.fromkeys(p.rsplit('/', 1)[-1] for p in _anthr_hl_task_all))
+            _anthr_hl_written: set = set()
+            for _ahl_m in messages_for_model:
+                _ahl_mc = str(_ahl_m.get("content") or "")
+                for _ahl_wm in re.finditer(r'\[(?:AUTOFIX-)?WRITE-DONE[^:]*:\s*(/[\w./-]+)', _ahl_mc):
+                    _anthr_hl_written.add(_ahl_wm.group(1).rsplit('/', 1)[-1])
+                for _ahl_wm in re.finditer(r'base64\s+-d\s*>\s*(/[\w./-]+)', _ahl_mc):
+                    _anthr_hl_written.add(_ahl_wm.group(1).rsplit('/', 1)[-1])
+            _anthr_hl_unwritten = [f for f in _anthr_hl_task_bases if f not in _anthr_hl_written]
+            if _anthr_hl_unwritten and _anthr_hl_written and len(_anthr_hl_task_bases) > 1:
+                _anthr_hl_text = (
+                    f"I have written some task files ({', '.join(sorted(_anthr_hl_written))}). "
+                    f"I still need to modify: {', '.join(_anthr_hl_unwritten[:3])}. "
+                    f"Writing {_anthr_hl_unwritten[0]} now with the required changes using the Write tool."
+                )
+            else:
+                _anthr_hl_text = "I've investigated but cannot complete the task: the required changes could not be applied with the available tools. Please use the Write tool to write the file contents directly instead of using sed or bash."
             logger.info(f"[ANTHR-HARD-LOOP-SC] Blocking after repeated loop cmd={_anthr_last_cmd[:60]!r}")
             _anthr_hl_body = {
                 "id": f"msg_{uuid.uuid4().hex[:24]}", "type": "message", "role": "assistant",
