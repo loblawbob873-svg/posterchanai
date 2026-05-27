@@ -893,9 +893,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                         _ws_next_hint = ""
                                         if os.path.basename(_py_file) == 'html.py':
                                             _ws_next_hint = (
-                                                " NEXT: Edit cli.py — change Style.CYAN to '\\033[36m' "
-                                                "and Style.MAGENTA to '\\033[35m', add NEON_CYAN='\\033[96m' "
-                                                "and NEON_MAG='\\033[95m' constants. Use Edit tool."
+                                                " NEXT: also edit cli.py to apply the required changes. Use the Edit tool."
                                             )
                                         content_str = (
                                             f"[WRITE-SAVED: {_py_file} was written to disk. "
@@ -3269,8 +3267,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     content_str = (
                         f"[REPEATED-NOOP-BLOCKED: Your str.replace() on {_py3_blocked_file} has produced no output "
                         f"{_py3_exact_repeat} times in a row. The target string was already changed or never matched. "
-                        f"STOP. Run: grep -n '\\\\033\\|CYAN\\|NEON\\|color\\|#00' /opt/python-firewall/{_py3_blocked_file} | head -20 "
-                        f"to see what is actually in the file now, then use sed -i or the Write tool to make any remaining changes.{_py3_pending_hint}]"
+                        f"STOP. Run grep on the file to see what it actually contains now, then use sed -i or the Edit tool to make any remaining changes.{_py3_pending_hint}]"
                     )
                     logger.info(f"[REPEATED-NOOP-BLOCKED] {_py3_exact_repeat}x same no-op write on {_py3_blocked_file!r}")
                 elif _py3_heredoc_count >= 2:
@@ -5083,16 +5080,12 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                             if _boi_sibling == 'cli.py':
                                 _boi_msg = (
                                     f"\\n◆ proxy: {_boi_fn_blk} already written (syntax OK). "
-                                    f"NOW Edit cli.py — use the Edit tool to change Style.CYAN value to "
-                                    f"'\\\\033[36m' and Style.MAGENTA value to '\\\\033[35m', "
-                                    f"then add 3 new lines: NEON_CYAN='\\\\033[96m', NEON_MAG='\\\\033[95m', NEON_WHT='\\\\033[97m'. "
-                                    f"Do NOT touch header_text or pad. Do NOT rewrite cli.py from scratch.\\n"
+                                    f"NOW edit cli.py to apply the required changes. Use the Edit tool — do NOT rewrite cli.py from scratch.\\n"
                                 )
                             elif _boi_sibling == 'html.py':
                                 _boi_msg = (
                                     f"\\n◆ proxy: {_boi_fn_blk} already written (syntax OK). "
-                                    f"NOW Edit html.py — use sed or Edit to add color:#00ffff, "
-                                    f"border:1px solid #ff00ff, and text-shadow:0 0 10px #00ffff to the CSS.\\n"
+                                    f"NOW edit html.py to apply the required changes. Use the Edit tool.\\n"
                                 )
                             else:
                                 _boi_msg = f"\\n◆ proxy: {_boi_fn_blk} already written (syntax OK) — write the other required files now.\\n"
@@ -5127,7 +5120,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                             _boi_fn = _boi_fp.rsplit('/', 1)[-1]
                             _boi_args['command'] = (
                                 ' && '.join(_boi_cmd_parts) +
-                                ' && echo "[ALL-FILES-DONE: All override files written. Run: sudo systemctl restart python-firewall]"'
+                                f' && echo "[ALL-FILES-DONE: All override files written. Restart the relevant service to apply changes.]"'
                             )
                             _boi_args['description'] = f'Write overrides for {_all_fns} via base64 (intercepted sed)'
                             _tc_af = {**_tc_af, 'function': {'name': 'bash', 'arguments': json.dumps(_boi_args)}}
@@ -5176,10 +5169,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     ):
                         if _done_base_blk == 'html.py':
                             _bash_args_blk['command'] = (
-                                f"printf '\\n◆ proxy: html.py done. NOW Edit cli.py: change Style.CYAN to "
-                                f"\"\\\\033[36m\" and Style.MAGENTA to \"\\\\033[35m\", "
-                                f"add NEON_CYAN=\"\\\\033[96m\" and NEON_MAG=\"\\\\033[95m\" constants. "
-                                f"Do NOT touch header_text or pad. Use Edit tool only.\\n'"
+                                f"printf '\\n◆ proxy: html.py done. NOW edit cli.py to apply the required changes. Use the Edit tool only.\\n'"
                             )
                         else:
                             _bash_args_blk['command'] = (
@@ -5347,10 +5337,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     _fname_done_af = _fp_af_base or _fp_af.rsplit('/', 1)[-1]
                     if _fname_done_af == 'html.py':
                         _adw_msg = (
-                            f"printf '\\n◆ proxy: html.py done. NOW Edit cli.py: change Style.CYAN to "
-                            f"\"\\\\033[36m\" and Style.MAGENTA to \"\\\\033[35m\", "
-                            f"add NEON_CYAN=\"\\\\033[96m\" and NEON_MAG=\"\\\\033[95m\" constants. "
-                            f"Do NOT touch header_text or pad. Use Edit tool only.\\n'"
+                            f"printf '\\n◆ proxy: html.py done. NOW edit cli.py to apply the required changes. Use Edit tool only.\\n'"
                         )
                     else:
                         _adw_msg = f"printf '\\n◆ proxy: {_fname_done_af} already written (syntax OK) — write the other required files now.\\n'"
@@ -5390,7 +5377,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                     _fname_ov = _fp_af.rsplit('/', 1)[-1]
                     _bash_cmd_ov = (
                         ' && '.join(_ov_cmd_parts) +
-                        ' && echo "[ALL-FILES-DONE: All override files written. Run: sudo systemctl restart python-firewall]"'
+                        f' && echo "[ALL-FILES-DONE: All override files written. Restart the relevant service to apply changes.]"'
                     )
                     _tc_af = {
                         **_tc_af,
@@ -5662,9 +5649,7 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
                                 if _fname_blk == 'html.py' and _pyc_err_ln <= 5:
                                     _blk_cmd = (
                                         f"printf '\\n◆ proxy: {_fname_blk} not written — you wrote raw HTML/CSS instead of Python (error at line {_pyc_err_ln}). "
-                                        f"Do NOT rewrite html.py. Use Edit tool to patch the existing CSS: "
-                                        f"add color:#00ffff text-shadow and #ff00ff to the existing style block. "
-                                        f"Example: Edit old_string=\\'color: var(--text-primary)\\' new_string=\\'color: #00ffff; text-shadow: 0 0 8px #00ffff\\'.\\n'"
+                                        f"Do NOT rewrite html.py. Use the Edit tool to patch the existing CSS in the file.\\n'"
                                     )
                                 else:
                                     _blk_cmd = (
