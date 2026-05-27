@@ -431,6 +431,16 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     if rag_enabled and not has_system and not skip_load_balancer:
         messages = await inject_rag_context(messages, db, user_id=1, top_k=3, rag_api_url=rag_api_url)
 
+    # Inject /no_think for Qwen3 thinking models — but ONLY for direct external API calls
+    # (skip_load_balancer=False). Telegram messages arrive here via chat_service → load_balancer
+    # with skip_load_balancer=True so they are excluded. External bots (e.g. Posterchan bot)
+    # call this endpoint directly with skip_load_balancer=False and need thinking suppressed:
+    # without /no_think the model reasons about extreme personality prompts and refuses to engage.
+    _llm_path = settings.get("llm_model_path", "").lower()
+    if "qwen3" in _llm_path and not skip_load_balancer:
+        from app.services.text_utils import inject_no_think
+        messages = inject_no_think(messages)
+
     # Ensure messages alternate user/assistant properly (prevents "roles must alternate" errors)
     from app.services.chat_service import ChatService
     messages = ChatService._ensure_alternating_roles(messages)
