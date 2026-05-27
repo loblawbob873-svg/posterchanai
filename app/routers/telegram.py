@@ -353,7 +353,7 @@ def _news_menu_keyboard() -> dict:
     }
 
 
-def _news_source_keyboard(sources: list, has_social: bool = False) -> dict:
+def _news_source_keyboard(sources: list) -> dict:
     """Build inline keyboard for news source selection."""
     buttons = []
 
@@ -376,7 +376,7 @@ def _news_source_keyboard(sources: list, has_social: bool = False) -> dict:
     return {"inline_keyboard": buttons}
 
 
-async def _send_news_source_selector(chat_id: str, sources: list, has_social: bool = False):
+async def _send_news_source_selector(chat_id: str, sources: list):
     """Send news source selection menu."""
     # Cache sources for callback handling
     _news_source_cache[chat_id] = sources
@@ -387,7 +387,7 @@ async def _send_news_source_selector(chat_id: str, sources: list, has_social: bo
     await telegram_service.send_message(
         chat_id,
         text,
-        reply_markup=_news_source_keyboard(sources, has_social)
+        reply_markup=_news_source_keyboard(sources)
     )
 
 
@@ -1881,8 +1881,11 @@ async def _handle_telegram_update(update: dict, db: Session):
                     else:
                         # Build messages for the LLM - no DB conversation needed for Telegram
                         # History is managed within the Telegram chat itself
+                        _system_prompt = chat_service.system_prompt.replace(
+                            "{{CURRENT_DATE}}", datetime.utcnow().strftime("%Y-%m-%d")
+                        )
                         messages = [
-                            {"role": "system", "content": chat_service.system_prompt},
+                            {"role": "system", "content": _system_prompt},
                         ]
 
                         last_role = "system"
@@ -2006,6 +2009,8 @@ async def _handle_telegram_update(update: dict, db: Session):
                         text_without_urls = text
                         for url in urls:
                             text_without_urls = text_without_urls.replace(url, '').strip()
+                            if url.startswith("https://"):
+                                text_without_urls = text_without_urls.replace(url[len("https://"):], '').strip()
                         is_only_url = not text_without_urls
 
                     # If message is only a URL, ask what the user wants to do with it.
@@ -2120,8 +2125,9 @@ async def _handle_telegram_update(update: dict, db: Session):
                         db.add(Message(conversation_id=tg_conv.id, role="user", content=text))
                         bot_reply = result.get("content", "")
                         APOLOGY = "I apologize, I wasn't able to generate a proper response. Please try again."
-                        # Don't save errors or apologies — they corrupt future conversation context
-                        if bot_reply and bot_reply != APOLOGY and not bot_reply.startswith("Error:") and not bot_reply.startswith("Sorry,"):
+                        # Don't save errors, apologies, or truncated responses (they corrupt future context)
+                        _reply_looks_complete = bot_reply and not (len(bot_reply) < 80 and bot_reply.rstrip().endswith(":"))
+                        if _reply_looks_complete and bot_reply != APOLOGY and not bot_reply.startswith("Error:") and not bot_reply.startswith("Sorry,"):
                             db.add(Message(conversation_id=tg_conv.id, role="assistant", content=bot_reply))
                         tg_conv.updated_at = datetime.utcnow()
                         db.commit()
@@ -2661,7 +2667,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                 # the button message text (forwarded-link prompts embed the URL there).
                 if cached_url is None and action != "cancel":
                     from app.services.search_service import SearchService as _SS
-                    _msg_text = callback_query.get("message", {}).get("text", "")
+                    _msg_text = (callback_query.get("message") or {}).get("text", "")
                     _recovered = _SS.extract_urls(_msg_text)
                     if _recovered:
                         cached_url = _recovered[0]
@@ -3010,6 +3016,8 @@ async def _handle_telegram_update(update: dict, db: Session):
                     return {"ok": True}
 
                 # action == "post"
+                _pleroma_post_cache.pop(chat_id, None)
+
                 mk_user = db.query(User).filter(
                     User.telegram_chat_id == chat_id,
                     User.telegram_enabled == True
@@ -3021,7 +3029,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     or not getattr(mk_user, "misskey_instance_url", None)
                     or not getattr(mk_user, "misskey_api_token", None)
                 ):
-                    await telegram_service.send_message(chat_id, "No social platform configured on your account. Enable Misskey or Pleroma in User Settings.")
+                    await telegram_service.send_message(chat_id, "Misskey is not configured on your account.")
                     return {"ok": True}
 
                 try:
@@ -3039,6 +3047,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             elif data.startswith("plr:"):
                 action = data.split(":", 1)[1]
                 pending_post = _pleroma_post_cache.pop(chat_id, None)
+                _misskey_post_cache.pop(chat_id, None)
 
                 if action == "skip" or pending_post is None:
                     if pending_post is None:
