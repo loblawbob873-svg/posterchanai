@@ -533,6 +533,31 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 pass
                 except Exception as _fie:
                     logger.warning(f"[FILE-INJECT] Error reading {_fip}: {_fie}")
+    # BARE-FILE-INJECT: task mentions bare .py filenames (no absolute path) — find and inject them
+    # so the model can edit them without doing directory exploration that triggers loop detectors.
+    if _is_first_proxy_call and _first_user_text:
+        import glob as _glob_mod2
+        _bare_names = re.findall(r'\b([\w.-]+\.py)\b', _first_user_text)
+        _bare_names = list(dict.fromkeys(_bare_names))[:4]  # unique, max 4
+        for _bn in _bare_names:
+            if any(p.endswith('/' + _bn) or p == _bn for p in _file_inject_map):
+                continue  # already injected via absolute path
+            _bn_hits = (
+                _glob_mod2.glob(f'/opt/*/{_bn}') +
+                _glob_mod2.glob(f'/var/www/*/{_bn}') +
+                _glob_mod2.glob(f'/srv/*/{_bn}')
+            )
+            for _bn_hit in _bn_hits[:1]:
+                if not os.path.isfile(_bn_hit):
+                    continue
+                try:
+                    with open(_bn_hit, 'r', errors='replace') as _bnh:
+                        _bnc = _bnh.read()
+                    if 0 < len(_bnc) < 200000:
+                        _file_inject_map[_bn_hit] = _bnc
+                        logger.info(f"[BARE-FILE-INJECT] injecting {_bn_hit} for bare name '{_bn}' in task")
+                except Exception:
+                    pass
     # WEBUI-HINT: when task mentions web UI / modal / button but no file path, inject html.py path.
     # Prevents model from confusing the task with shell-colorization patterns from prior context.
     _is_webui_task = bool(re.search(
