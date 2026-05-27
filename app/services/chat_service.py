@@ -237,12 +237,6 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
             # Ensure messages alternate user/assistant properly
             messages = self._ensure_alternating_roles(messages)
 
-            # Inject /no_think for Qwen3 thinking models
-            _llm_path = self._settings.get("llm_model_path", "").lower()
-            if "qwen3" in _llm_path:
-                from app.services.text_utils import inject_no_think
-                messages = inject_no_think(messages)
-
             # Check for site-wide load balancer first
             load_balancer = self._get_load_balancer()
             if load_balancer:
@@ -312,12 +306,6 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
 
             # Ensure messages alternate user/assistant properly
             messages = self._ensure_alternating_roles(messages)
-
-            # Inject /no_think for Qwen3 thinking models
-            _llm_path = self._settings.get("llm_model_path", "").lower()
-            if "qwen3" in _llm_path:
-                from app.services.text_utils import inject_no_think
-                messages = inject_no_think(messages)
 
             # Check for site-wide load balancer first
             load_balancer = self._get_load_balancer()

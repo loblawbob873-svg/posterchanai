@@ -1091,15 +1091,16 @@ async def _handle_telegram_update(update: dict, db: Session):
             logger.warning(f"TELEGRAM: text='{text}', reply_to='{reply_text[:50] if reply_text else ''}', photos={len(photos) if photos else 0}")
             
             # Strip /no_think prefix — it's a Qwen3 control token, not a user query.
-            # chat_service.chat() injects it automatically via inject_no_think(); if it
-            # appears verbatim in the message the model describes it instead of obeying it.
+            # If it appears verbatim in the message the model describes it instead of obeying it.
+            # chat_service no longer injects /no_think unconditionally; strip_thinking_tags
+            # already cleans thinking blocks from every response.
             if text.lower().startswith("/no_think"):
                 text = text[len("/no_think"):].strip()
                 if not text:
-                    # User sent /no_think with no message — ask them for a prompt.
+                    # User sent /no_think with no message — just confirm and wait for next message.
                     await telegram_service.send_message(
                         chat_id,
-                        "Type your message after `/no_think`, e.g.:\n`/no_think What is the capital of France?`"
+                        "✅ Got it — I'll respond directly without thinking.\n\nJust send your message now."
                     )
                     return {"ok": True}
 
