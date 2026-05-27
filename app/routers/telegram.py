@@ -2050,20 +2050,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     
                     # Append URL context to user message if URLs were found
                     if url_context:
-                        if is_only_url:
-                            # Skip injection if the cleaned content is too thin to be useful —
-                            # sparse content puts the model into hallucination/FAQ-loop mode.
-                            content_text = url_context.replace("---", "").strip()
-                            if len(content_text) < 200:
-                                logger.info("Telegram: URL content too sparse after filtering, skipping injection")
-                                url_context = ""
-                                injected = ""
-                            else:
-                                # Instruction comes AFTER content so the model reads data first.
-                                # Explicit anti-Q&A instruction prevents hallucinated question loops.
-                                injected = url_context + "\n\nWrite a single concise paragraph summarizing the above. Output ONLY the summary paragraph, then STOP. Do NOT repeat the content. Do NOT add ratings, labels, or verdicts. Do NOT ask or answer questions."
-                        else:
-                            injected = url_context
+                        injected = url_context
 
                         if injected:
                             if isinstance(messages[-1]["content"], list):
@@ -3034,7 +3021,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     or not getattr(mk_user, "misskey_instance_url", None)
                     or not getattr(mk_user, "misskey_api_token", None)
                 ):
-                    await telegram_service.send_message(chat_id, "No social platform configured on your account. Enable Misskey or Pleroma in User Settings.")
+                    await telegram_service.send_message(chat_id, "Misskey is not configured on your account.")
                     return {"ok": True}
 
                 try:
