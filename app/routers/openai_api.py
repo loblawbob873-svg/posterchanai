@@ -4625,7 +4625,6 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
         for m in messages if m.get("role") == "assistant"
     )
     _lum_has_any_loop_block = (
-        bool(re.search(r'◆ proxy:(?![^\n]*\balready\s+(?:written|colorized|non-empty)\b)', _lum_content)) or
         "[REPEATED COMMAND BLOCKED:" in _lum_content or
         "[REPEATED COMMAND (" in _lum_content or
         "[LOOP DETECTED:" in _lum_content or
@@ -6200,18 +6199,25 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     # Exploration gate: when exploration was just suppressed (4+ consecutive ls/find/tree),
     # intercept any further ls/find/tree tool calls and replace with a blocking echo.
     # Mirrors RESET-DONE-GATE: we act on the tool CALL, not just the result.
+    # Only fire on genuine hard blocks — REPEATED COMMAND or multi-turn exploration loops.
+    # Broad ◆ proxy: matches (like "already written") should NOT trigger exploration gating.
     _lum_has_loop_block = (
-        bool(re.search(r'◆ proxy:(?![^\n]*\balready\s+(?:written|colorized|non-empty)\b)', _lum_content)) or
         "[REPEATED COMMAND BLOCKED:" in _lum_content or
         "[LOOP DETECTED:" in _lum_content or
         "[EXPLORATION LOOP — RESULT SUPPRESSED:" in _lum_content or
         "[EXPLORATION BLOCKED:" in _lum_content or
         "[EXPLORATION CAP:" in _lum_content or
-        "[ENV-PROBE:" in _lum_content or
-        "[READ-LOOP-BREAK:" in _lum_content or
-        "[READ-LOOP-CAP:" in _lum_content
+        "[ENV-PROBE:" in _lum_content
     )
-    if _lum_content and _lum_has_loop_block and tool_calls:
+    # Only gate exploration after at least one write attempt — before that the model is legitimately
+    # discovering its environment and blocking ls/find would just cause shortcircuit loops.
+    _any_write_for_exp_gate = any(
+        re.search(r'sed\s+-i|open\s*\(.*["\']w["\']|\.write\s*\(|python3?\s*<<.*open|printf.*base64', str(m.get("content") or "")) or
+        any(re.search(r'write|edit|str_replace', str(tc.get("function", {}).get("name", "")), re.IGNORECASE)
+            for tc in (m.get("tool_calls") or []))
+        for m in messages if m.get("role") == "assistant"
+    )
+    if _lum_content and _lum_has_loop_block and _any_write_for_exp_gate and tool_calls:
         _new_tcs_exp = []
         for _tc_exp in tool_calls:
             _fn_exp = _tc_exp.get("function", {})
