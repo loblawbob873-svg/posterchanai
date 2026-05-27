@@ -432,12 +432,6 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     from app.services.chat_service import ChatService
     messages = ChatService._ensure_alternating_roles(messages)
 
-    # Inject /no_think into last user message for Qwen3 thinking models
-    _llm_path = settings.get("llm_model_path", "").lower()
-    if "qwen3" in _llm_path:
-        from app.services.text_utils import inject_no_think
-        messages = inject_no_think(messages)
-
     # Fetch URL content from the last user message and inject it so the LLM can summarize.
     # Only do this on the originating server (not on load-balanced hops).
     if not skip_load_balancer:
