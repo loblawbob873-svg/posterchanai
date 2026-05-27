@@ -3284,6 +3284,34 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         "Read the source code to find the bug, edit the file, then restart again.]"
                     )
 
+            # Repeated identical tool call block: same glob/read called 3+ times, replace result
+            if (last_tool_name.lower() in ("glob", "read", "read_file", "view", "list", "ls")
+                    and not non_bash_write_done
+                    and msg is messages[-1]):
+                # Extract the tool call input from the last assistant message to detect repetition
+                _rtb_last_ast = ""
+                for _rtb_m in reversed(result):
+                    if _rtb_m.get("role") == "assistant":
+                        _rtb_last_ast = _rtb_m.get("content", "")
+                        break
+                # Count consecutive identical tool calls
+                _rtb_count = 0
+                for _rtb_m2 in reversed(result):
+                    if _rtb_m2.get("role") == "assistant":
+                        if _rtb_m2.get("content", "") == _rtb_last_ast:
+                            _rtb_count += 1
+                        else:
+                            break
+                if _rtb_count >= 3:
+                    _rtb_fw_files = re.findall(r'/[\w./-]+\.py', _first_user_text)
+                    _rtb_hint = _rtb_fw_files[0] if _rtb_fw_files else "/opt/python-firewall/html.py"
+                    content_str = (
+                        f"[REPEATED-TOOL-BLOCKED: You have called the same {last_tool_name} tool {_rtb_count} times in a row with identical arguments. "
+                        f"This is a loop. STOP. The file you need to edit is {_rtb_hint}. "
+                        f"Do NOT search or glob any more. Use the Read tool on {_rtb_hint} RIGHT NOW, then use Write or Edit to modify it.]"
+                    )
+                    logger.info(f"[REPEATED-TOOL-BLOCKED] {last_tool_name} repeated {_rtb_count}x, blocking and redirecting to {_rtb_hint}")
+
             # Read-tool loop cap: model uses Read (not bash) but hasn't written anything yet
             # Only inject on the LATEST message to avoid polluting history with repeated caps
             if (last_tool_name.lower() in ("read", "read_file", "view", "glob", "list", "ls")
