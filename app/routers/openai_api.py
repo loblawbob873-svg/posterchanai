@@ -551,8 +551,20 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     with open(_wc, 'r', errors='replace') as _wfh:
                         _wfc = _wfh.read()
                     if 0 < len(_wfc) < 200000:
-                        _file_inject_map[_wc] = _wfc
-                        logger.info(f"[WEBUI-HINT] injecting {_wc} for web UI task (no path in prompt)")
+                        # Find lines with 🔍 emoji to add a targeted hint
+                        _wfc_lines = _wfc.splitlines()
+                        _emoji_lines = [f"  line {i+1}: {l.strip()[:120]}" for i, l in enumerate(_wfc_lines) if '🔍' in l]
+                        _emoji_hint = ""
+                        if _emoji_lines and re.search(r'magnifying|🔍', _first_user_text):
+                            _emoji_hint = (
+                                "\n\n[WEBUI-EMOJI-HINT: The magnifying glass in html.py is the Unicode emoji '🔍' (not the word 'magnifying'). "
+                                "Do NOT grep for 'magnifying' — grep for the emoji character: grep -n '🔍' /opt/python-firewall/html.py\n"
+                                "Lines containing 🔍:\n" + "\n".join(_emoji_lines[:6]) + "\n"
+                                "These are <a target='_blank' href='/ip?...'> links. "
+                                "To add a modal: add onclick='showModal(event, this.href); return false;' and add the modal JS/CSS to the page.]"
+                            )
+                        _file_inject_map[_wc] = _wfc + _emoji_hint
+                        logger.info(f"[WEBUI-HINT] injecting {_wc} for web UI task (no path in prompt), emoji_lines={len(_emoji_lines)}")
                 except Exception:
                     pass
     _is_complex_merge_task = bool(re.search(r'\b(conflict|resolve\s+(?:merge|conflict)|keep\s+\w+\s+version|branding|checkout\s+HEAD)\b', _first_user_text, re.IGNORECASE))
@@ -743,6 +755,28 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             f"then use Edit or Write to add the modal JavaScript. Do NOT glob again.]"
                         )
                         logger.info(f"[WEBUI-GLOB-REDIRECT] glob pattern='{_wgr_pattern}' found no .py files, redirecting to {_wgr_redirect_file}")
+            # WEBUI-EMOJI-GREP-HINT: when bash grep on html.py returns no output and task has 🔍/magnifying
+            if (last_tool_name.lower() == "bash" and _is_webui_task
+                    and re.search(r'magnifying|🔍', _first_user_text)
+                    and re.search(r'grep.*html\.py|html\.py.*grep', last_bash_cmd)
+                    and content_str.strip() in ("", "(no output — command produced no output)")):
+                _weg_emoji_lines = []
+                try:
+                    with open('/opt/python-firewall/html.py', 'r', errors='replace') as _weg_f:
+                        for _weg_i, _weg_l in enumerate(_weg_f, 1):
+                            if '🔍' in _weg_l:
+                                _weg_emoji_lines.append(f"line {_weg_i}: {_weg_l.strip()[:140]}")
+                except Exception:
+                    pass
+                _weg_lines_str = "\n".join(_weg_emoji_lines[:6]) if _weg_emoji_lines else "(none found)"
+                content_str = (
+                    f"[WEBUI-EMOJI-GREP-HINT: Your grep found nothing because the magnifying glass is the Unicode emoji '🔍', not the word 'magnifying'. "
+                    f"The 🔍 emoji appears at:\n{_weg_lines_str}\n"
+                    f"These lines have <a target='_blank' href='/ip?ip=...'> links. "
+                    f"To show a modal instead: add onclick='showModal(event, this.href); return false;' attribute and define showModal() in the page's <script> block. "
+                    f"Now use Edit tool on /opt/python-firewall/html.py to make these changes.]"
+                )
+                logger.info(f"[WEBUI-EMOJI-GREP-HINT] empty grep on html.py for magnifying task, injecting emoji line hints")
             # After editing a Python file, remind the model to verify syntax
             if last_tool_name.lower() in ("edit", "write", "str_replace_based_edit_tool", "str_replace"):
                 for _r in reversed(result):
