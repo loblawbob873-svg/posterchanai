@@ -1999,14 +1999,31 @@ async def _handle_telegram_update(update: dict, db: Session):
                             logger.info(f"Telegram: Deduplicated URLs {urls} -> {deduped}")
                         urls = deduped
 
-                    # Check if message is ONLY a URL (no other text) - summarize it
+                    # Check if message is ONLY a URL (no other text)
                     is_only_url = False
                     if urls and len(text.strip()) < 500:
-                        # Check if the entire message is just the URL(s)
                         text_without_urls = text
                         for url in urls:
                             text_without_urls = text_without_urls.replace(url, '').strip()
                         is_only_url = not text_without_urls
+
+                    # If message is only a URL, ask what the user wants to do with it.
+                    # Embed the URL in the message text so the lnk: callback can recover
+                    # it from the message if the in-memory cache is lost (e.g. server restart).
+                    if is_only_url and urls:
+                        _link_action_cache[chat_id] = urls[0]
+                        await telegram_service.send_message(
+                            chat_id,
+                            f"🔗 What would you like to do with this link?\n{urls[0]}",
+                            reply_markup={
+                                "inline_keyboard": [[
+                                    {"text": "📋 Summary", "callback_data": "lnk:summary"},
+                                    {"text": "📣 Post",    "callback_data": "lnk:post"},
+                                    {"text": "❌ Cancel",  "callback_data": "lnk:cancel"},
+                                ]]
+                            },
+                        )
+                        return {"ok": True}
 
                     if urls:
                         logger.info(f"Telegram: Detected URLs in message: {urls}")
@@ -2031,14 +2048,6 @@ async def _handle_telegram_update(update: dict, db: Session):
                             url_context = "\n\n[Note: Could not fetch URL content due to timeout]"
                     
                     # Append URL context to user message if URLs were found
-                    if not url_context and is_only_url:
-                        # Fetch ran but produced no usable content and no error info
-                        await telegram_service.send_message(
-                            chat_id,
-                            "Could not extract readable content from this URL. The page may be dynamic, JavaScript-heavy, paywalled, or require a login."
-                        )
-                        return {"ok": True}
-
                     if url_context:
                         if is_only_url:
                             # Skip injection if the cleaned content is too thin to be useful —
@@ -2046,11 +2055,8 @@ async def _handle_telegram_update(update: dict, db: Session):
                             content_text = url_context.replace("---", "").strip()
                             if len(content_text) < 200:
                                 logger.info("Telegram: URL content too sparse after filtering, skipping injection")
-                                await telegram_service.send_message(
-                                    chat_id,
-                                    "Could not extract readable content from this URL. The page may be dynamic, JavaScript-heavy, paywalled, or require a login."
-                                )
-                                return {"ok": True}
+                                url_context = ""
+                                injected = ""
                             else:
                                 # Instruction comes AFTER content so the model reads data first.
                                 # Explicit anti-Q&A instruction prevents hallucinated question loops.
