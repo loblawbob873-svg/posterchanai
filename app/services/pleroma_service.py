@@ -15,7 +15,7 @@ async def register_app(instance_url: str, redirect_uri: str, app_name: str = "Po
     payload = {
         "client_name": app_name,
         "redirect_uris": redirect_uri,
-        "scopes": "write:statuses",
+        "scopes": "read:accounts write:statuses",
         "website": instance_url,
     }
     async with httpx.AsyncClient(timeout=15) as client:
@@ -58,7 +58,7 @@ def build_auth_url(instance_url: str, client_id: str, redirect_uri: str) -> str:
         "response_type": "code",
         "client_id": client_id,
         "redirect_uri": redirect_uri,
-        "scope": "write:statuses",
+        "scope": "read:accounts write:statuses",
     })
     return f"{base}/oauth/authorize?{params}"
 
