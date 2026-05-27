@@ -422,10 +422,13 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
         if system_prompt:
             messages.insert(0, {"role": "system", "content": system_prompt})
 
-    # Inject RAG context if enabled
+    # Inject RAG context only when the caller did NOT supply its own system prompt.
+    # External bots (e.g. Posterchan bot) send their own persona as a system message;
+    # injecting code RAG from user-1's document store into those calls contaminates the
+    # response (model starts describing indexed files instead of staying in character).
     rag_enabled = settings.get("api_rag_enabled", "true").lower() == "true"
     rag_api_url = settings.get("rag_api_url", "").strip() or None
-    if rag_enabled:
+    if rag_enabled and not has_system and not skip_load_balancer:
         messages = await inject_rag_context(messages, db, user_id=1, top_k=3, rag_api_url=rag_api_url)
 
     # Ensure messages alternate user/assistant properly (prevents "roles must alternate" errors)
