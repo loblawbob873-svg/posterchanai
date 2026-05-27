@@ -431,6 +431,12 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     if rag_enabled and not has_system and not skip_load_balancer:
         messages = await inject_rag_context(messages, db, user_id=1, top_k=3, rag_api_url=rag_api_url)
 
+    # Ensure messages alternate user/assistant properly (prevents "roles must alternate" errors).
+    # Must run BEFORE inject_no_think so /no_think is appended to the final merged user turn,
+    # not buried mid-string inside a merged consecutive-user-message block.
+    from app.services.chat_service import ChatService
+    messages = ChatService._ensure_alternating_roles(messages)
+
     # Inject /no_think for Qwen3 thinking models — but ONLY for direct external API calls
     # (skip_load_balancer=False). Telegram messages arrive here via chat_service → load_balancer
     # with skip_load_balancer=True so they are excluded. External bots (e.g. Posterchan bot)
@@ -440,10 +446,6 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     if "qwen3" in _llm_path and not skip_load_balancer:
         from app.services.text_utils import inject_no_think
         messages = inject_no_think(messages)
-
-    # Ensure messages alternate user/assistant properly (prevents "roles must alternate" errors)
-    from app.services.chat_service import ChatService
-    messages = ChatService._ensure_alternating_roles(messages)
 
     # Fetch URL content from the last user message and inject it so the LLM can summarize.
     # Only do this on the originating server (not on load-balanced hops).

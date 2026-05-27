@@ -1901,11 +1901,6 @@ async def _handle_telegram_update(update: dict, db: Session):
                             for msg in reversed(recent_messages):
                                 if msg.role == last_role:
                                     continue
-                                # Skip any saved message that is a /no_think meta-explanation —
-                                # these are poisoned responses from when inject_no_think was broken
-                                # and would cause the model to keep repeating the same mistake.
-                                if msg.role == "assistant" and "/no_think" in msg.content:
-                                    continue
                                 content = msg.content[:HISTORY_CHAR_LIMIT] if len(msg.content) > HISTORY_CHAR_LIMIT else msg.content
                                 messages.append({"role": msg.role, "content": content})
                                 last_role = msg.role

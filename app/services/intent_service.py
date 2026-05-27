@@ -188,6 +188,14 @@ RESPOND WITH THE COMMAND ONLY!"""
         ]
 
         try:
+            # Suppress Qwen3 thinking for intent detection — it needs a fast single-token answer
+            # (a command keyword or "none"), not extended reasoning. Without /no_think the model
+            # can spend 10-30s in <think> mode and hit the timeout below, silently degrading all
+            # intent-based commands to regular chat. inject_no_think is safe for non-Qwen3 models
+            # (they simply treat it as trailing text they ignore).
+            from app.services.text_utils import inject_no_think
+            messages = inject_no_think(messages)
+
             # Use timeout to prevent hanging
             INTENT_TIMEOUT = 8  # seconds - keep it short to avoid delaying user experience
             response = await asyncio.wait_for(self.chat_service.chat(messages), timeout=INTENT_TIMEOUT)
