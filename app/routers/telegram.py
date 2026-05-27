@@ -3021,7 +3021,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     or not getattr(mk_user, "misskey_instance_url", None)
                     or not getattr(mk_user, "misskey_api_token", None)
                 ):
-                    await telegram_service.send_message(chat_id, "Misskey is not configured on your account.")
+                    await telegram_service.send_message(chat_id, "No social platform configured on your account. Enable Misskey or Pleroma in User Settings.")
                     return {"ok": True}
 
                 try:
