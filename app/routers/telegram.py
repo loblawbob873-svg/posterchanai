@@ -1837,7 +1837,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                         _link_action_cache[chat_id] = _fwd_url
                         await telegram_service.send_message(
                             chat_id,
-                            "🔗 What would you like to do with this link?",
+                            f"🔗 What would you like to do with this link?\n{_fwd_url}",
                             reply_markup={
                                 "inline_keyboard": [[
                                     {"text": "📋 Summary", "callback_data": "lnk:summary"},
@@ -2008,22 +2008,6 @@ async def _handle_telegram_update(update: dict, db: Session):
                             text_without_urls = text_without_urls.replace(url, '').strip()
                         is_only_url = not text_without_urls
 
-                    # If message is only a URL, ask what the user wants to do with it
-                    if is_only_url and urls:
-                        _link_action_cache[chat_id] = urls[0]
-                        await telegram_service.send_message(
-                            chat_id,
-                            "🔗 What would you like to do with this link?",
-                            reply_markup={
-                                "inline_keyboard": [[
-                                    {"text": "📋 Summary", "callback_data": "lnk:summary"},
-                                    {"text": "📣 Post",    "callback_data": "lnk:post"},
-                                    {"text": "❌ Cancel",  "callback_data": "lnk:cancel"},
-                                ]]
-                            },
-                        )
-                        return {"ok": True}
-
                     if urls:
                         logger.info(f"Telegram: Detected URLs in message: {urls}")
                         MAX_URL_CONTENT_CHARS = 2000  # Truncation only — no content cleaning
@@ -2047,6 +2031,14 @@ async def _handle_telegram_update(update: dict, db: Session):
                             url_context = "\n\n[Note: Could not fetch URL content due to timeout]"
                     
                     # Append URL context to user message if URLs were found
+                    if not url_context and is_only_url:
+                        # Fetch ran but produced no usable content and no error info
+                        await telegram_service.send_message(
+                            chat_id,
+                            "Could not extract readable content from this URL. The page may be dynamic, JavaScript-heavy, paywalled, or require a login."
+                        )
+                        return {"ok": True}
+
                     if url_context:
                         if is_only_url:
                             # Skip injection if the cleaned content is too thin to be useful —
@@ -2054,8 +2046,11 @@ async def _handle_telegram_update(update: dict, db: Session):
                             content_text = url_context.replace("---", "").strip()
                             if len(content_text) < 200:
                                 logger.info("Telegram: URL content too sparse after filtering, skipping injection")
-                                url_context = ""
-                                injected = ""
+                                await telegram_service.send_message(
+                                    chat_id,
+                                    "Could not extract readable content from this URL. The page may be dynamic, JavaScript-heavy, paywalled, or require a login."
+                                )
+                                return {"ok": True}
                             else:
                                 # Instruction comes AFTER content so the model reads data first.
                                 # Explicit anti-Q&A instruction prevents hallucinated question loops.
@@ -2668,9 +2663,19 @@ async def _handle_telegram_update(update: dict, db: Session):
                 action = data.split(":", 1)[1]
                 cached_url = _link_action_cache.pop(chat_id, None)
 
+                # If cache missed (e.g. after a server restart), try to recover URL from
+                # the button message text (forwarded-link prompts embed the URL there).
+                if cached_url is None and action != "cancel":
+                    import re as _re
+                    _msg_text = callback_query.get("message", {}).get("text", "")
+                    _url_matches = _re.findall(r'https?://\S+', _msg_text)
+                    if _url_matches:
+                        cached_url = _url_matches[0].rstrip(".,)>")
+                        logger.info(f"lnk:{action} - recovered URL from message text: {cached_url}")
+
                 if action == "cancel" or cached_url is None:
                     if action != "cancel":
-                        await telegram_service.send_message(chat_id, "No pending link found.")
+                        await telegram_service.send_message(chat_id, "No pending link found. Please send the URL again.")
                     return {"ok": True}
 
                 lnk_user = db.query(User).filter(
@@ -2679,6 +2684,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                 ).first()
 
                 if action == "summary":
+                    await telegram_service.send_message(chat_id, "⏳ Fetching and summarizing link, please wait...")
                     try:
                         from app.services.search_service import SearchService as _SS
                         import asyncio as _asyncio
@@ -2692,15 +2698,22 @@ async def _handle_telegram_update(update: dict, db: Session):
                                 {"role": "system", "content": "You are a thorough summarizer. Output only the summary, nothing else. No introductions or meta-commentary."},
                                 {"role": "user", "content": f"Title: {title}\n\n{content}\n\nWrite a detailed summary of the above. Include the key points, important facts, context, and any notable details. Use bullet points where helpful."}
                             ]
-                            summary = await lnk_chat.chat(summary_msgs)
+                            summary = await _asyncio.wait_for(lnk_chat.chat(summary_msgs), timeout=120)
                             await telegram_service.send_message(chat_id, summary)
                         else:
-                            await telegram_service.send_message(chat_id, "Could not fetch content from the URL.")
+                            error_detail = fetched[0].get("error", "") if fetched else "Could not reach URL"
+                            msg = "Could not fetch content from the URL."
+                            if error_detail:
+                                msg += f" ({error_detail})"
+                            await telegram_service.send_message(chat_id, msg)
+                    except _asyncio.TimeoutError:
+                        await telegram_service.send_message(chat_id, "Timed out fetching or summarizing the link.")
                     except Exception as lnk_err:
                         logger.error(f"Link summary error: {lnk_err}", exc_info=True)
                         await telegram_service.send_message(chat_id, f"Error: {lnk_err}")
 
                 elif action == "post":
+                    await telegram_service.send_message(chat_id, "⏳ Generating post, please wait...")
                     try:
                         from app.services.search_service import SearchService as _SS
                         import asyncio as _asyncio
