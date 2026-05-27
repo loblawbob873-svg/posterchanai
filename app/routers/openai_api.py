@@ -558,10 +558,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                         if _emoji_lines and re.search(r'magnifying|🔍', _first_user_text):
                             _emoji_hint = (
                                 "\n\n[WEBUI-EMOJI-HINT: The magnifying glass in html.py is the Unicode emoji '🔍' (not the word 'magnifying'). "
-                                "Do NOT grep for 'magnifying' — grep for the emoji character: grep -n '🔍' /opt/python-firewall/html.py\n"
-                                "Lines containing 🔍:\n" + "\n".join(_emoji_lines[:6]) + "\n"
-                                "These are <a target='_blank' href='/ip?...'> links. "
-                                "To add a modal: add onclick='showModal(event, this.href); return false;' and add the modal JS/CSS to the page.]"
+                                "Do NOT grep for 'magnifying' — grep for the emoji: grep -n '🔍' " + _wc + "\n"
+                                "Lines containing 🔍:\n" + "\n".join(_emoji_lines[:6]) + "]"
                             )
                         _file_inject_map[_wc] = _wfc + _emoji_hint
                         logger.info(f"[WEBUI-HINT] injecting {_wc} for web UI task (no path in prompt), emoji_lines={len(_emoji_lines)}")
@@ -761,20 +759,30 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     and re.search(r'grep.*html\.py|html\.py.*grep', last_bash_cmd)
                     and content_str.strip() in ("", "(no output — command produced no output)")):
                 _weg_emoji_lines = []
-                try:
-                    with open('/opt/python-firewall/html.py', 'r', errors='replace') as _weg_f:
-                        for _weg_i, _weg_l in enumerate(_weg_f, 1):
-                            if '🔍' in _weg_l:
-                                _weg_emoji_lines.append(f"line {_weg_i}: {_weg_l.strip()[:140]}")
-                except Exception:
-                    pass
+                _weg_html_path = ""
+                # Dynamically find which html.py was mentioned in the task
+                for _weg_candidate in ['/opt/python-firewall/html.py']:
+                    if os.path.isfile(_weg_candidate):
+                        _weg_html_path = _weg_candidate
+                        break
+                if not _weg_html_path:
+                    _weg_html_path_m = re.search(r'/[\w./-]+html\.py', _first_user_text + " " + last_bash_cmd)
+                    if _weg_html_path_m:
+                        _weg_html_path = _weg_html_path_m.group(0)
+                if _weg_html_path:
+                    try:
+                        with open(_weg_html_path, 'r', errors='replace') as _weg_f:
+                            for _weg_i, _weg_l in enumerate(_weg_f, 1):
+                                if '🔍' in _weg_l:
+                                    _weg_emoji_lines.append(f"line {_weg_i}: {_weg_l.strip()[:140]}")
+                    except Exception:
+                        pass
                 _weg_lines_str = "\n".join(_weg_emoji_lines[:6]) if _weg_emoji_lines else "(none found)"
                 content_str = (
                     f"[WEBUI-EMOJI-GREP-HINT: Your grep found nothing because the magnifying glass is the Unicode emoji '🔍', not the word 'magnifying'. "
                     f"The 🔍 emoji appears at:\n{_weg_lines_str}\n"
-                    f"These lines have <a target='_blank' href='/ip?ip=...'> links. "
-                    f"To show a modal instead: add onclick='showModal(event, this.href); return false;' attribute and define showModal() in the page's <script> block. "
-                    f"Now use Edit tool on /opt/python-firewall/html.py to make these changes.]"
+                    f"Read those lines and figure out how to change the behavior from opening a new page to showing a modal instead. "
+                    f"Then use Edit or Write on {_weg_html_path or 'html.py'} to implement your changes.]"
                 )
                 logger.info(f"[WEBUI-EMOJI-GREP-HINT] empty grep on html.py for magnifying task, injecting emoji line hints")
             # After editing a Python file, remind the model to verify syntax
