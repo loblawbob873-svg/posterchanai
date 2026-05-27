@@ -533,6 +533,28 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                 pass
                 except Exception as _fie:
                     logger.warning(f"[FILE-INJECT] Error reading {_fip}: {_fie}")
+    # WEBUI-HINT: when task mentions web UI / modal / button but no file path, inject html.py path.
+    # Prevents model from confusing the task with shell-colorization patterns from prior context.
+    _is_webui_task = bool(re.search(
+        r'\b(webui|web\s*ui|web\s*interface|modal|popup|pop-up|button|click|magnifying|🔍|html\.py)\b',
+        _first_user_text, re.IGNORECASE
+    ))
+    _webui_task_paths = re.findall(r'/[\w./-]+\.(?:py|html?|js)\b', _first_user_text)
+    if _is_first_proxy_call and _is_webui_task and not _webui_task_paths:
+        # Try to find html.py relative to task context
+        _webui_candidates = [
+            '/opt/python-firewall/html.py',
+        ]
+        for _wc in _webui_candidates:
+            if os.path.isfile(_wc) and _wc not in _file_inject_map:
+                try:
+                    with open(_wc, 'r', errors='replace') as _wfh:
+                        _wfc = _wfh.read()
+                    if 0 < len(_wfc) < 200000:
+                        _file_inject_map[_wc] = _wfc
+                        logger.info(f"[WEBUI-HINT] injecting {_wc} for web UI task (no path in prompt)")
+                except Exception:
+                    pass
     _is_complex_merge_task = bool(re.search(r'\b(conflict|resolve\s+(?:merge|conflict)|keep\s+\w+\s+version|branding|checkout\s+HEAD)\b', _first_user_text, re.IGNORECASE))
     # Git sync task: fetching from a local mirror to sync two repos (not just incidental git operations)
     _is_git_sync_task = bool(re.search(r'\bsync\b|\blocal[-\s]mirror\b|\bfork\s+of\b|\bmerge\s+upstream\b', _first_user_text, re.IGNORECASE))
@@ -4919,6 +4941,29 @@ async def _agentic_completion(request: ChatCompletionRequest, db: Session, skip_
     _injected_fps_in_pass = set()
     for _tc_af in tool_calls:
         _fn_af = _tc_af.get("function", {})
+        # WRONG-PATH-BLOCK: prevent model from writing to binary executables or clearly wrong paths.
+        # Happens when model applies colorization/write patterns to non-task files (e.g. opencode binary).
+        _wpb_name = _fn_af.get("name", "").lower()
+        if _wpb_name in ("bash", "write", "edit"):
+            try:
+                _wpb_args = json.loads(_fn_af.get("arguments", "{}") or "{}")
+                _wpb_cmd = _wpb_args.get("command", "") or _wpb_args.get("filePath", "") or ""
+                _wpb_wrong = re.search(
+                    r'(\.opencode/bin/|/usr/bin/opencode|/usr/local/bin/opencode'
+                    r'|/home/\w+/\.opencode/bin/)',
+                    _wpb_cmd
+                )
+                if _wpb_wrong:
+                    _wpb_task_files = re.findall(r'/[\w./-]+\.(?:py|sh|dart|yaml|gradle)\b', _first_user_text)
+                    _wpb_hint = f" Edit these task files instead: {', '.join(_wpb_task_files[:3])}." if _wpb_task_files else " Read the task description and edit the correct source files."
+                    _wpb_args2 = dict(_wpb_args)
+                    if _wpb_name == "bash":
+                        _wpb_args2['command'] = f"printf '\\n[WRONG-PATH-BLOCKED: You tried to write to the opencode binary or a system executable. That is not a task file and would corrupt it. STOP.{_wpb_hint}]\\n'"
+                        _wpb_args2['description'] = 'Block write to wrong path (not a task file)'
+                    _tc_af = {**_tc_af, 'function': {'name': 'bash', 'arguments': json.dumps(_wpb_args2)}}
+                    logger.warning(f"[WRONG-PATH-BLOCK] blocked write to {_wpb_wrong.group(1)!r}")
+            except Exception as _wpb_e:
+                logger.warning(f"[WRONG-PATH-BLOCK] error: {_wpb_e}")
         # BASH-OVERRIDE-INTERCEPT: when model runs sed -i on a file that has a proxy override,
         # replace the sed with the base64 write of the override instead — ensures the correct
         # file content gets written even when the model doesn't use Write/Edit tools.
