@@ -353,7 +353,7 @@ def _news_menu_keyboard() -> dict:
     }
 
 
-def _news_source_keyboard(sources: list, has_misskey: bool = False) -> dict:
+def _news_source_keyboard(sources: list, has_social: bool = False) -> dict:
     """Build inline keyboard for news source selection."""
     buttons = []
 
@@ -376,7 +376,7 @@ def _news_source_keyboard(sources: list, has_misskey: bool = False) -> dict:
     return {"inline_keyboard": buttons}
 
 
-async def _send_news_source_selector(chat_id: str, sources: list, has_misskey: bool = False):
+async def _send_news_source_selector(chat_id: str, sources: list, has_social: bool = False):
     """Send news source selection menu."""
     # Cache sources for callback handling
     _news_source_cache[chat_id] = sources
@@ -387,7 +387,7 @@ async def _send_news_source_selector(chat_id: str, sources: list, has_misskey: b
     await telegram_service.send_message(
         chat_id,
         text,
-        reply_markup=_news_source_keyboard(sources, has_misskey)
+        reply_markup=_news_source_keyboard(sources, has_social)
     )
 
 
@@ -886,7 +886,7 @@ router = APIRouter(prefix="/api/telegram", tags=["telegram"])
 _seen_update_ids: set = set()
 _MAX_SEEN_IDS = 500  # Keep a bounded window; Telegram won't replay further back
 
-# Pending Misskey posts: chat_id → post_text  (cleared once confirmed or cancelled)
+# Pending Misskey posts: chat_id → post_text (cleared once confirmed or cancelled)
 _misskey_post_cache: dict = {}
 # Pending Pleroma posts: chat_id → post_text
 _pleroma_post_cache: dict = {}
@@ -1286,7 +1286,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                 except Exception as e:
                     result_content = f"Error generating post: {str(e)}"
 
-                # Check if the linked user has Misskey/Pleroma configured
+                # Check if the linked user has any social platform configured
                 _tg_user = db.query(User).filter(
                     User.telegram_chat_id == chat_id,
                     User.telegram_enabled == True
@@ -2779,7 +2779,7 @@ async def _handle_telegram_update(update: dict, db: Session):
 
                 elif action == "post":
                     # Generate a social media post for the YouTube video
-                    await telegram_service.send_message(chat_id, "⏳ Generating Misskey post...")
+                    await telegram_service.send_message(chat_id, "⏳ Generating social media post...")
                     try:
                         from app.services.youtube_service import fetch_video_info
                         import asyncio as _asyncio
@@ -3031,7 +3031,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     or not getattr(mk_user, "misskey_instance_url", None)
                     or not getattr(mk_user, "misskey_api_token", None)
                 ):
-                    await telegram_service.send_message(chat_id, "Misskey is not configured on your account.")
+                    await telegram_service.send_message(chat_id, "No social platform configured on your account. Enable Misskey or Pleroma in User Settings.")
                     return {"ok": True}
 
                 try:
