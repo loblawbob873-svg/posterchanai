@@ -422,6 +422,9 @@ class UserSettingsUpdate(BaseModel):
     misskey_enabled: Optional[bool] = None
     misskey_instance_url: Optional[str] = None
     misskey_api_token: Optional[str] = None
+    # Pleroma settings (read-only via /api/pleroma/connect; exposed here for display)
+    pleroma_enabled: Optional[bool] = None
+    pleroma_instance_url: Optional[str] = None
 
 
 class UserSettingsResponse(BaseModel):
@@ -453,6 +456,10 @@ class UserSettingsResponse(BaseModel):
     misskey_enabled: bool = False
     misskey_instance_url: Optional[str] = None
     misskey_has_api_token: bool = False
+    # Pleroma settings
+    pleroma_enabled: bool = False
+    pleroma_instance_url: Optional[str] = None
+    pleroma_has_access_token: bool = False
 
 
 class TestConnectionRequest(BaseModel):

@@ -213,6 +213,10 @@ def _run_migrations():
         ("misskey_enabled", "BOOLEAN DEFAULT 0"),
         ("misskey_instance_url", "VARCHAR(500)"),
         ("misskey_api_token", "VARCHAR(500)"),
+        # Pleroma columns
+        ("pleroma_enabled", "BOOLEAN DEFAULT 0"),
+        ("pleroma_instance_url", "VARCHAR(500)"),
+        ("pleroma_access_token", "VARCHAR(500)"),
     ]
 
     # Add missing columns to users table

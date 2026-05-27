@@ -338,6 +338,54 @@ class ChatHandler {
             });
         }
 
+        // Pleroma connect / disconnect buttons
+        const pleromaConnectBtn = document.getElementById('pleromaConnectBtn');
+        const pleromaDisconnectBtn = document.getElementById('pleromaDisconnectBtn');
+        if (pleromaConnectBtn) {
+            pleromaConnectBtn.addEventListener('click', async () => {
+                const instanceUrl = document.getElementById('pleromaInstanceUrl').value.trim();
+                const accessToken = document.getElementById('pleromaAccessToken').value.trim();
+                const statusEl = document.getElementById('pleromaStatus');
+                if (!instanceUrl || !accessToken) {
+                    if (statusEl) { statusEl.textContent = 'Please enter both Instance URL and Access Token.'; statusEl.className = 'test-result error'; }
+                    return;
+                }
+                if (statusEl) { statusEl.textContent = 'Verifying…'; statusEl.className = 'test-result'; }
+                try {
+                    const resp = await csrfFetch('/api/pleroma/connect', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ instance_url: instanceUrl, access_token: accessToken })
+                    });
+                    const data = await resp.json();
+                    if (!resp.ok) {
+                        if (statusEl) { statusEl.textContent = data.detail || 'Connection failed'; statusEl.className = 'test-result error'; }
+                        return;
+                    }
+                    if (statusEl) { statusEl.textContent = `Connected as @${data.username || '?'}`; statusEl.className = 'test-result success'; }
+                    await this.loadUserSettings();
+                } catch (e) {
+                    if (statusEl) { statusEl.textContent = 'Error: ' + e.message; statusEl.className = 'test-result error'; }
+                }
+            });
+        }
+        if (pleromaDisconnectBtn) {
+            pleromaDisconnectBtn.addEventListener('click', async () => {
+                if (!confirm('Disconnect your Pleroma account?')) return;
+                try {
+                    const resp = await csrfFetch('/api/pleroma/disconnect', { method: 'POST' });
+                    if (resp.ok) {
+                        await this.loadUserSettings();
+                    } else {
+                        const d = await resp.json();
+                        alert(d.detail || 'Failed to disconnect');
+                    }
+                } catch (e) {
+                    alert('Error: ' + e.message);
+                }
+            });
+        }
+
         // Telegram unlink button
         const unlinkTelegramBtn = document.getElementById('unlinkTelegramBtn');
         if (unlinkTelegramBtn) {
@@ -653,6 +701,24 @@ class ChatHandler {
                     if (misskeyConnectBtn) misskeyConnectBtn.style.display = 'inline-block';
                     if (misskeyDisconnectBtn) misskeyDisconnectBtn.style.display = 'none';
                     if (misskeyConnectedInfo) misskeyConnectedInfo.style.display = 'none';
+                }
+
+                // Pleroma settings
+                const pleromaInstanceUrlEl = document.getElementById('pleromaInstanceUrl');
+                const pleromaConnectBtnEl = document.getElementById('pleromaConnectBtn');
+                const pleromaDisconnectBtnEl = document.getElementById('pleromaDisconnectBtn');
+                const pleromaConnectedInfo = document.getElementById('pleromaConnectedInfo');
+                const pleromaConnectedMsg = document.getElementById('pleromaConnectedMsg');
+                if (pleromaInstanceUrlEl) pleromaInstanceUrlEl.value = settings.pleroma_instance_url || '';
+                if (settings.pleroma_enabled && settings.pleroma_has_access_token) {
+                    if (pleromaConnectBtnEl) pleromaConnectBtnEl.style.display = 'none';
+                    if (pleromaDisconnectBtnEl) pleromaDisconnectBtnEl.style.display = 'inline-block';
+                    if (pleromaConnectedInfo) pleromaConnectedInfo.style.display = 'block';
+                    if (pleromaConnectedMsg) pleromaConnectedMsg.textContent = `Connected to ${settings.pleroma_instance_url}`;
+                } else {
+                    if (pleromaConnectBtnEl) pleromaConnectBtnEl.style.display = 'inline-block';
+                    if (pleromaDisconnectBtnEl) pleromaDisconnectBtnEl.style.display = 'none';
+                    if (pleromaConnectedInfo) pleromaConnectedInfo.style.display = 'none';
                 }
 
                 // News settings

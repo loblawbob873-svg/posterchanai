@@ -13,6 +13,7 @@
                 <button class="user-tab-btn" data-tab="mail">Mail</button>
                 <button class="user-tab-btn" data-tab="telegram">Telegram</button>
                 <button class="user-tab-btn" data-tab="misskey">Misskey</button>
+                <button class="user-tab-btn" data-tab="pleroma">Pleroma</button>
                 <button class="user-tab-btn" data-tab="apikeys">API Keys</button>
             </div>
 
@@ -260,6 +261,38 @@ My name: John Smith"></textarea>
 
                         <div class="form-group" id="misskeyConnectedInfo" style="display: none;">
                             <div class="settings-status success" id="misskeyConnectedMsg"></div>
+                        </div>
+                    </fieldset>
+                </div>
+
+                <!-- Pleroma Tab -->
+                <div class="user-tab-content" id="user-tab-pleroma">
+                    <fieldset>
+                        <legend>Pleroma Integration</legend>
+                        <p class="fieldset-info">Connect to a Pleroma (or Mastodon-compatible) server to post statuses directly from the Telegram bot's <code>post</code> command.</p>
+
+                        <div class="form-group">
+                            <label for="pleromaInstanceUrl">Instance URL</label>
+                            <input type="url" id="pleromaInstanceUrl" placeholder="https://poster.place">
+                            <small>The full URL of your Pleroma/Mastodon instance</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="pleromaAccessToken">Access Token</label>
+                            <input type="password" id="pleromaAccessToken" placeholder="Your OAuth2 access token">
+                            <small>Generate a token via Pleroma settings → <em>Apps</em>, or use an existing bot token. Needs <code>write:statuses</code> scope.</small>
+                        </div>
+
+                        <div class="form-group">
+                            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                                <button type="button" class="btn-primary" id="pleromaConnectBtn">Connect</button>
+                                <button type="button" class="btn-danger" id="pleromaDisconnectBtn" style="display: none;">Disconnect</button>
+                            </div>
+                            <div id="pleromaStatus" class="test-result" style="margin-top: 8px;"></div>
+                        </div>
+
+                        <div class="form-group" id="pleromaConnectedInfo" style="display: none;">
+                            <div class="settings-status success" id="pleromaConnectedMsg"></div>
                         </div>
                     </fieldset>
                 </div>

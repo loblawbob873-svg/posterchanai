@@ -576,7 +576,12 @@ class IPEXService:
 
             # Handle thinking mode for Qwen3-style models
             is_qwen3_thinker = "qwen3" in os.path.basename(self.model_path).lower()
-            if self.disable_thinking and is_qwen3_thinker:
+            _no_think_in_msg = any(
+                "/no_think" in (m.get("content", "") if isinstance(m.get("content"), str) else
+                                " ".join(p.get("text", "") for p in m.get("content", []) if isinstance(p, dict)))
+                for m in messages if m.get("role") == "user"
+            )
+            if (self.disable_thinking or _no_think_in_msg) and is_qwen3_thinker:
                 # Prefill the assistant turn past an empty <think></think> block so the model
                 # generates the answer directly without a reasoning phase.
                 # stopping_criteria provides a Python-level EOS check as belt-and-suspenders
@@ -822,7 +827,12 @@ class IPEXService:
 
         # Handle thinking mode for Qwen3-style models (same as non-streaming)
         is_qwen3_thinker = "qwen3" in os.path.basename(self.model_path).lower()
-        use_no_think_prefill = self.disable_thinking and is_qwen3_thinker
+        _no_think_in_msg = any(
+            "/no_think" in (m.get("content", "") if isinstance(m.get("content"), str) else
+                            " ".join(p.get("text", "") for p in m.get("content", []) if isinstance(p, dict)))
+            for m in messages if m.get("role") == "user"
+        )
+        use_no_think_prefill = (self.disable_thinking or _no_think_in_msg) and is_qwen3_thinker
         if use_no_think_prefill:
             raw_prompt_for_stream = self._build_no_think_prompt(messages)
             messages_to_use = messages
@@ -1027,7 +1037,12 @@ class IPEXService:
 
             # Handle thinking mode for Qwen3-style models (same as non-streaming)
             _model_lower = os.path.basename(self.model_path).lower()
-            use_no_think_prefill = self.disable_thinking and "qwen3" in _model_lower
+            _no_think_in_msg2 = any(
+                "/no_think" in (m.get("content", "") if isinstance(m.get("content"), str) else
+                                " ".join(p.get("text", "") for p in m.get("content", []) if isinstance(p, dict)))
+                for m in messages if m.get("role") == "user"
+            )
+            use_no_think_prefill = (self.disable_thinking or _no_think_in_msg2) and "qwen3" in _model_lower
             if use_no_think_prefill:
                 no_think_raw_prompt = self._build_no_think_prompt(messages)
                 messages_to_use = messages

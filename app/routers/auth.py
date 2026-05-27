@@ -437,6 +437,10 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         misskey_enabled=current_user.misskey_enabled if hasattr(current_user, 'misskey_enabled') else False,
         misskey_instance_url=current_user.misskey_instance_url if hasattr(current_user, 'misskey_instance_url') else None,
         misskey_has_api_token=bool(current_user.misskey_api_token) if hasattr(current_user, 'misskey_api_token') else False,
+        # Pleroma settings
+        pleroma_enabled=current_user.pleroma_enabled if hasattr(current_user, 'pleroma_enabled') else False,
+        pleroma_instance_url=current_user.pleroma_instance_url if hasattr(current_user, 'pleroma_instance_url') else None,
+        pleroma_has_access_token=bool(current_user.pleroma_access_token) if hasattr(current_user, 'pleroma_access_token') else False,
     )
 
 

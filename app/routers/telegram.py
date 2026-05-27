@@ -888,8 +888,52 @@ _MAX_SEEN_IDS = 500  # Keep a bounded window; Telegram won't replay further back
 
 # Pending Misskey posts: chat_id → post_text  (cleared once confirmed or cancelled)
 _misskey_post_cache: dict = {}
+# Pending Pleroma posts: chat_id → post_text
+_pleroma_post_cache: dict = {}
 # Pending link actions: chat_id → url (cleared once action is chosen)
 _link_action_cache: dict = {}
+
+
+def _has_misskey(user) -> bool:
+    return bool(
+        user
+        and getattr(user, "misskey_enabled", False)
+        and getattr(user, "misskey_instance_url", None)
+        and getattr(user, "misskey_api_token", None)
+    )
+
+
+def _has_pleroma(user) -> bool:
+    return bool(
+        user
+        and getattr(user, "pleroma_enabled", False)
+        and getattr(user, "pleroma_instance_url", None)
+        and getattr(user, "pleroma_access_token", None)
+    )
+
+
+async def _offer_social_post(chat_id: str, post_text: str, user, telegram_svc, prompt: str = "📣 *Post this?*"):
+    """Show the generated post and offer to share it on configured social platforms."""
+    buttons = []
+    has_mk = _has_misskey(user)
+    has_plr = _has_pleroma(user)
+
+    if has_mk:
+        _misskey_post_cache[chat_id] = post_text
+        buttons.append({"text": "📣 Misskey", "callback_data": "mk:post"})
+    if has_plr:
+        _pleroma_post_cache[chat_id] = post_text
+        buttons.append({"text": "📣 Pleroma", "callback_data": "plr:post"})
+
+    if buttons:
+        buttons.append({"text": "❌ Skip", "callback_data": "mk:skip"})
+        await telegram_svc.send_message(
+            chat_id,
+            post_text + f"\n\n{prompt}",
+            reply_markup={"inline_keyboard": [buttons]},
+        )
+    else:
+        await telegram_svc.send_message(chat_id, post_text)
 # Pending YouTube actions: chat_id → url (cleared once action is chosen)
 _youtube_action_cache: dict = {}
 # Pending news Post actions: chat_id → list of (title, url) tuples
@@ -1047,10 +1091,19 @@ async def _handle_telegram_update(update: dict, db: Session):
             logger.warning(f"TELEGRAM: text='{text}', reply_to='{reply_text[:50] if reply_text else ''}', photos={len(photos) if photos else 0}")
             
             # Strip /no_think prefix — it's a Qwen3 control token, not a user query.
-            # chat_service.chat() injects it automatically; if it appears in the message
-            # text the model just describes it instead of obeying it.
+            # chat_service.chat() injects it automatically via inject_no_think(); if it
+            # appears verbatim in the message the model describes it instead of obeying it.
+            _no_think_requested = False
             if text.lower().startswith("/no_think"):
+                _no_think_requested = True
                 text = text[len("/no_think"):].strip()
+                if not text:
+                    # User sent /no_think with no message — ask them for a prompt.
+                    await telegram_service.send_message(
+                        chat_id,
+                        "Type your message after `/no_think`, e.g.:\n`/no_think What is the capital of France?`"
+                    )
+                    return {"ok": True}
 
             # Convert text to lowercase for command matching
             text_lower = text.lower().strip()
@@ -1234,32 +1287,13 @@ async def _handle_telegram_update(update: dict, db: Session):
                 except Exception as e:
                     result_content = f"Error generating post: {str(e)}"
 
-                # Check if the linked user has Misskey configured
+                # Check if the linked user has Misskey/Pleroma configured
                 _tg_user = db.query(User).filter(
                     User.telegram_chat_id == chat_id,
                     User.telegram_enabled == True
                 ).first()
 
-                if (
-                    _tg_user
-                    and getattr(_tg_user, "misskey_enabled", False)
-                    and getattr(_tg_user, "misskey_instance_url", None)
-                    and getattr(_tg_user, "misskey_api_token", None)
-                ):
-                    # Store the post and ask for confirmation via inline buttons
-                    _misskey_post_cache[chat_id] = result_content
-                    await telegram_service.send_message(
-                        chat_id,
-                        result_content + "\n\n📣 *Post this to Misskey?*",
-                        reply_markup={
-                            "inline_keyboard": [[
-                                {"text": "✅ Yes, post it", "callback_data": "mk:post"},
-                                {"text": "❌ No thanks",   "callback_data": "mk:skip"},
-                            ]]
-                        },
-                    )
-                else:
-                    await telegram_service.send_message(chat_id, result_content)
+                await _offer_social_post(chat_id, result_content, _tg_user, telegram_service)
                 return {"ok": True}
 
             # User is guaranteed to be linked at this point (auth check above)
@@ -1690,12 +1724,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                         result = await command_service.execute_command(command, arg)
                         content = _strip_cmd_links(result.get("content", ""))
 
-                        has_misskey = (
-                            user_obj
-                            and getattr(user_obj, "misskey_enabled", False)
-                            and getattr(user_obj, "misskey_instance_url", None)
-                            and getattr(user_obj, "misskey_api_token", None)
-                        )
+                        has_social = _has_misskey(user_obj) or _has_pleroma(user_obj)
 
                         articles = _split_news_into_articles(content)
                         if articles:
@@ -1709,12 +1738,12 @@ async def _handle_telegram_update(update: dict, db: Session):
 
                             # Send each article as its own message
                             for i, (_, title, url, msg_text) in enumerate(articles[:10], 1):
-                                # Build keyboard with Summarize and Post buttons (only if Misskey configured)
+                                # Build keyboard with Summarize and Post buttons (only if a social platform is configured)
                                 buttons = []
-                                if has_misskey:
+                                if has_social:
                                     buttons.append([
                                         {"text": "📝 Summarize", "callback_data": f"news:summarize:{i}"},
-                                        {"text": "📣 Post to Misskey", "callback_data": f"nk:post:{i}"}
+                                        {"text": "📣 Post", "callback_data": f"nk:post:{i}"}
                                     ])
                                 else:
                                     buttons.append([
@@ -1752,19 +1781,13 @@ async def _handle_telegram_update(update: dict, db: Session):
                     logger.info(f"Telegram: YouTube URL detected, prompting action: {youtube_url}")
                     _youtube_action_cache[chat_id] = youtube_url
                     
-                    # Check if user has Misskey configured
-                    _yt_user_for_misskey = db.query(User).filter(
+                    # Check if user has social platforms configured
+                    _yt_user_for_social = db.query(User).filter(
                         User.telegram_chat_id == chat_id,
                         User.telegram_enabled == True
                     ).first()
-                    has_misskey = (
-                        _yt_user_for_misskey
-                        and getattr(_yt_user_for_misskey, "misskey_enabled", False)
-                        and getattr(_yt_user_for_misskey, "misskey_instance_url", None)
-                        and getattr(_yt_user_for_misskey, "misskey_api_token", None)
-                    )
-                    
-                    # Build keyboard with Misskey option if configured
+
+                    # Build keyboard with social post option if any platform is configured
                     yt_keyboard = [
                         [
                             {"text": "📋 Summary",  "callback_data": "yt:summary"},
@@ -1772,9 +1795,9 @@ async def _handle_telegram_update(update: dict, db: Session):
                             {"text": "🎬 Movie",    "callback_data": "yt:video"},
                         ]
                     ]
-                    if has_misskey:
+                    if _has_misskey(_yt_user_for_social) or _has_pleroma(_yt_user_for_social):
                         yt_keyboard.append([
-                            {"text": "📣 Post to Misskey", "callback_data": "yt:post"}
+                            {"text": "📣 Post", "callback_data": "yt:post"}
                         ])
                     
                     await telegram_service.send_message(
@@ -2449,31 +2472,26 @@ async def _handle_telegram_update(update: dict, db: Session):
                     result = await cb_command_service.execute_command("news", "")
                     content = _strip_cmd_links(result.get("content", ""))
                     
-                    # Parse articles and add buttons (same as regular news command)
-                    has_misskey = (
-                        cb_user
-                        and getattr(cb_user, "misskey_enabled", False)
-                        and getattr(cb_user, "misskey_instance_url", None)
-                        and getattr(cb_user, "misskey_api_token", None)
-                    )
-                    
+                    # Parse articles and add buttons
+                    has_social = _has_misskey(cb_user) or _has_pleroma(cb_user)
+
                     articles = _split_news_into_articles(content)
                     if articles:
                         # Cache (title, url) pairs for the Post callbacks
                         _news_post_cache[chat_id] = [(title, url) for (_, title, url, _) in articles]
-                        
+
                         # Send header (date/source summary line) if present
                         header_match = re.match(r'^(##[^\n]+)', content)
                         if header_match:
                             await telegram_service.send_message(chat_id, header_match.group(1))
-                        
-                        # Send each article as its own message with buttons (only if Misskey configured)
+
+                        # Send each article as its own message with buttons
                         for i, (_, title, url, msg_text) in enumerate(articles[:10], 1):
                             buttons = []
-                            if has_misskey:
+                            if has_social:
                                 buttons.append([
                                     {"text": "📝 Summarize", "callback_data": f"news:summarize:{i}"},
-                                    {"text": "📣 Post to Misskey", "callback_data": f"nk:post:{i}"}
+                                    {"text": "📣 Post", "callback_data": f"nk:post:{i}"}
                                 ])
                             else:
                                 buttons.append([
@@ -2496,32 +2514,26 @@ async def _handle_telegram_update(update: dict, db: Session):
                             cb_command_service = CommandService(db, user=cb_user)
                             result = await cb_command_service.execute_command("news", source_name)
                             content = _strip_cmd_links(result.get("content", ""))
-                            
-                            # Parse articles and add buttons (same as regular news command)
-                            has_misskey = (
-                                cb_user
-                                and getattr(cb_user, "misskey_enabled", False)
-                                and getattr(cb_user, "misskey_instance_url", None)
-                                and getattr(cb_user, "misskey_api_token", None)
-                            )
-                            
+
+                            has_social = _has_misskey(cb_user) or _has_pleroma(cb_user)
+
                             articles = _split_news_into_articles(content)
                             if articles:
                                 # Cache (title, url) pairs for the Post callbacks
                                 _news_post_cache[chat_id] = [(title, url) for (_, title, url, _) in articles]
-                                
+
                                 # Send header (date/source summary line) if present
                                 header_match = re.match(r'^(##[^\n]+)', content)
                                 if header_match:
                                     await telegram_service.send_message(chat_id, header_match.group(1))
-                                
-                                # Send each article as its own message with buttons (only if Misskey configured)
+
+                                # Send each article as its own message with buttons
                                 for i, (_, title, url, msg_text) in enumerate(articles[:10], 1):
                                     buttons = []
-                                    if has_misskey:
+                                    if has_social:
                                         buttons.append([
                                             {"text": "📝 Summarize", "callback_data": f"news:summarize:{i}"},
-                                            {"text": "📣 Post to Misskey", "callback_data": f"nk:post:{i}"}
+                                            {"text": "📣 Post", "callback_data": f"nk:post:{i}"}
                                         ])
                                     else:
                                         buttons.append([
@@ -2580,28 +2592,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                                 {"role": "user", "content": f"Title: {title}\nURL: {url}\n\nGenerate a social media post."}
                             ]
                             post_text = await chat_service.chat(messages)
-                            # Store for potential Misskey posting
-                            _misskey_post_cache[chat_id] = post_text
-                            # Check if user has Misskey
-                            has_misskey = (
-                                cb_user
-                                and getattr(cb_user, "misskey_enabled", False)
-                                and getattr(cb_user, "misskey_instance_url", None)
-                                and getattr(cb_user, "misskey_api_token", None)
-                            )
-                            if has_misskey:
-                                await telegram_service.send_message(
-                                    chat_id,
-                                    post_text + "\n\n📣 *Post this to Misskey?*",
-                                    reply_markup={
-                                        "inline_keyboard": [[
-                                            {"text": "✅ Yes, post it", "callback_data": "mk:post"},
-                                            {"text": "❌ No thanks", "callback_data": "mk:skip"},
-                                        ]]
-                                    }
-                                )
-                            else:
-                                await telegram_service.send_message(chat_id, post_text)
+                            await _offer_social_post(chat_id, post_text, cb_user, telegram_service)
                         else:
                             await telegram_service.send_message(chat_id, "❌ Source not found. Please try again.")
                     except (ValueError, IndexError):
@@ -2740,26 +2731,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                         lnk_chat.num_predict = min(lnk_chat.num_predict, 900)
                         post_text = await lnk_chat.chat(post_messages)
                         post_text = post_text.rstrip() + f"\n\n{cached_url}"
-
-                        if (
-                            lnk_user
-                            and getattr(lnk_user, "misskey_enabled", False)
-                            and getattr(lnk_user, "misskey_instance_url", None)
-                            and getattr(lnk_user, "misskey_api_token", None)
-                        ):
-                            _misskey_post_cache[chat_id] = post_text
-                            await telegram_service.send_message(
-                                chat_id,
-                                post_text + "\n\n📣 *Post this to Misskey?*",
-                                reply_markup={
-                                    "inline_keyboard": [[
-                                        {"text": "✅ Yes, post it", "callback_data": "mk:post"},
-                                        {"text": "❌ No thanks",   "callback_data": "mk:skip"},
-                                    ]]
-                                },
-                            )
-                        else:
-                            await telegram_service.send_message(chat_id, post_text)
+                        await _offer_social_post(chat_id, post_text, lnk_user, telegram_service)
                     except Exception as lnk_err:
                         logger.error(f"Link post generation error: {lnk_err}", exc_info=True)
                         await telegram_service.send_message(chat_id, f"Error generating post: {lnk_err}")
@@ -2830,19 +2802,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                         ]
                         post_text = await yt_chat.chat(post_messages)
                         post_text = post_text.rstrip() + f"\n\n{yt_url}"
-                        
-                        # Store and ask for confirmation
-                        _misskey_post_cache[chat_id] = post_text
-                        await telegram_service.send_message(
-                            chat_id,
-                            post_text + "\n\n📣 *Post this to Misskey?*",
-                            reply_markup={
-                                "inline_keyboard": [[
-                                    {"text": "✅ Yes, post it", "callback_data": "mk:post"},
-                                    {"text": "❌ No thanks",   "callback_data": "mk:skip"},
-                                ]]
-                            },
-                        )
+                        await _offer_social_post(chat_id, post_text, yt_user, telegram_service)
                     except Exception as yt_err:
                         logger.error(f"YouTube post generation error: {yt_err}", exc_info=True)
                         await telegram_service.send_message(chat_id, f"❌ Error generating post: {yt_err}")
@@ -2989,16 +2949,11 @@ async def _handle_telegram_update(update: dict, db: Session):
                         User.telegram_enabled == True
                     ).first()
 
-                    if (
-                        not nk_user
-                        or not getattr(nk_user, "misskey_enabled", False)
-                        or not getattr(nk_user, "misskey_instance_url", None)
-                        or not getattr(nk_user, "misskey_api_token", None)
-                    ):
-                        await telegram_service.send_message(chat_id, "⚠️ Misskey is not configured on your account.")
+                    if not nk_user or (not _has_misskey(nk_user) and not _has_pleroma(nk_user)):
+                        await telegram_service.send_message(chat_id, "⚠️ No social platform (Misskey or Pleroma) configured on your account.")
                         return {"ok": True}
 
-                    await telegram_service.send_message(chat_id, f"⏳ Generating Misskey post for: {title}")
+                    await telegram_service.send_message(chat_id, f"⏳ Generating social media post for: {title}")
 
                     try:
                         from app.services.search_service import SearchService as _SS
@@ -3028,20 +2983,9 @@ async def _handle_telegram_update(update: dict, db: Session):
                         ]
                         post_text = await nk_chat.chat(post_messages)
                         post_text = post_text.rstrip() + f"\n\n{url}"
-
-                        _misskey_post_cache[chat_id] = post_text
-                        await telegram_service.send_message(
-                            chat_id,
-                            post_text + "\n\n📣 *Post this to Misskey?*",
-                            reply_markup={
-                                "inline_keyboard": [[
-                                    {"text": "✅ Yes, post it", "callback_data": "mk:post"},
-                                    {"text": "❌ No thanks",   "callback_data": "mk:skip"},
-                                ]]
-                            },
-                        )
+                        await _offer_social_post(chat_id, post_text, nk_user, telegram_service)
                     except Exception as nk_err:
-                        logger.error(f"News Misskey post generation error: {nk_err}", exc_info=True)
+                        logger.error(f"News social post generation error: {nk_err}", exc_info=True)
                         await telegram_service.send_message(chat_id, f"❌ Error generating post: {nk_err}")
 
             elif data.startswith("mk:"):
@@ -3081,6 +3025,39 @@ async def _handle_telegram_update(update: dict, db: Session):
                 except Exception as mk_err:
                     logger.error(f"Misskey post error: {mk_err}", exc_info=True)
                     await telegram_service.send_message(chat_id, f"❌ Failed to post to Misskey: {mk_err}")
+
+            elif data.startswith("plr:"):
+                action = data.split(":", 1)[1]
+                pending_post = _pleroma_post_cache.pop(chat_id, None)
+
+                if action == "skip" or pending_post is None:
+                    if pending_post is None:
+                        await telegram_service.send_message(chat_id, "No pending Pleroma post found.")
+                    else:
+                        await telegram_service.send_message(chat_id, "Post skipped.")
+                    return {"ok": True}
+
+                # action == "post"
+                plr_user = db.query(User).filter(
+                    User.telegram_chat_id == chat_id,
+                    User.telegram_enabled == True
+                ).first()
+
+                if not plr_user or not _has_pleroma(plr_user):
+                    await telegram_service.send_message(chat_id, "Pleroma is not configured on your account.")
+                    return {"ok": True}
+
+                try:
+                    from app.services.pleroma_service import post_status as _pleroma_post_status
+                    await _pleroma_post_status(
+                        plr_user.pleroma_instance_url,
+                        plr_user.pleroma_access_token,
+                        pending_post,
+                    )
+                    await telegram_service.send_message(chat_id, "✅ Posted to Pleroma!")
+                except Exception as plr_err:
+                    logger.error(f"Pleroma post error: {plr_err}", exc_info=True)
+                    await telegram_service.send_message(chat_id, f"❌ Failed to post to Pleroma: {plr_err}")
 
             return {"ok": True}
 

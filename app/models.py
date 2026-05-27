@@ -49,6 +49,11 @@ class User(Base):
     misskey_instance_url = Column(String(500), nullable=True)
     misskey_api_token = Column(String(500), nullable=True)
 
+    # Pleroma integration settings
+    pleroma_enabled = Column(Boolean, default=False)
+    pleroma_instance_url = Column(String(500), nullable=True)
+    pleroma_access_token = Column(String(500), nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")

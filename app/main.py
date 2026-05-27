@@ -25,6 +25,7 @@ from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, news
 from app.routers import fourchan, youtube_thumb
 from app.routers.telegram import router as telegram_router
 from app.routers.misskey import router as misskey_router
+from app.routers.pleroma import router as pleroma_router
 from app.services.load_balancer import NoHealthyServersError
 from fastapi.responses import JSONResponse
 
@@ -157,6 +158,7 @@ app.include_router(youtube_thumb.router)
 app.include_router(storage.router)
 app.include_router(telegram_router)
 app.include_router(misskey_router)
+app.include_router(pleroma_router)
 # OpenAI-compatible API: use OPENAI_API_PREFIX if app is behind a reverse proxy subpath
 _openai_prefix = os.getenv("OPENAI_API_PREFIX", "").strip().rstrip("/")
 app.include_router(openai_api.router, prefix=_openai_prefix)
