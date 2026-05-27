@@ -3286,14 +3286,14 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
 
             # Read-tool loop cap: model uses Read (not bash) but hasn't written anything yet
             # Only inject on the LATEST message to avoid polluting history with repeated caps
-            if (last_tool_name.lower() in ("read", "read_file", "view")
+            if (last_tool_name.lower() in ("read", "read_file", "view", "glob", "list", "ls")
                     and not non_bash_write_done
                     and msg is messages[-1]):
                 _consec_read_tool_calls = 0
                 for _rtc_m in reversed(result):
                     _rtc_role = _rtc_m.get("role", "")
                     _rtc_content = _rtc_m.get("content") or ""
-                    if _rtc_role == "user" and re.search(r'<tool>(?:read|read_file|view)</tool>', _rtc_content, re.IGNORECASE):
+                    if _rtc_role == "user" and re.search(r'<tool>(?:read|read_file|view|glob|list|ls)</tool>', _rtc_content, re.IGNORECASE):
                         _consec_read_tool_calls += 1
                     elif _rtc_role == "user":
                         break
@@ -3301,12 +3301,12 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     _cap_fw_files = re.findall(r'/[\w./-]+\.py', _first_user_text)
                     _cap_fw_hint = f"The files you need to edit are: {', '.join(_cap_fw_files[:3])}" if _cap_fw_files else "Use the Write or Edit tool with a valid absolute file path"
                     content_str += (
-                        f"\n\n[READ-LOOP-CAP: You have issued {_consec_read_tool_calls} consecutive Read tool calls without writing any file. "
-                        "STOP reading. You already have enough information. "
+                        f"\n\n[READ-LOOP-CAP: You have issued {_consec_read_tool_calls} consecutive Read/Glob/List tool calls without writing any file. "
+                        "STOP exploring. You already have enough information. "
                         f"{_cap_fw_hint}. "
-                        "Use the Write or Edit tool NOW to make your changes. Do not read any more files.]"
+                        "Use the Write or Edit tool NOW to make your changes. Do not read or glob any more files.]"
                     )
-                    logger.info(f"[READ-LOOP-CAP] {_consec_read_tool_calls} consecutive reads without write, injecting cap")
+                    logger.info(f"[READ-LOOP-CAP] {_consec_read_tool_calls} consecutive read/glob/list without write, injecting cap")
 
             # Exploration cap: too many reads without any write — time to act
             _total_cmds = len(bash_history)
