@@ -338,32 +338,41 @@ class ChatHandler {
             });
         }
 
-        // Pleroma connect / disconnect buttons
+        // Pleroma OAuth connect / disconnect buttons
         const pleromaConnectBtn = document.getElementById('pleromaConnectBtn');
         const pleromaDisconnectBtn = document.getElementById('pleromaDisconnectBtn');
         if (pleromaConnectBtn) {
             pleromaConnectBtn.addEventListener('click', async () => {
                 const instanceUrl = document.getElementById('pleromaInstanceUrl').value.trim();
-                const accessToken = document.getElementById('pleromaAccessToken').value.trim();
                 const statusEl = document.getElementById('pleromaStatus');
-                if (!instanceUrl || !accessToken) {
-                    if (statusEl) { statusEl.textContent = 'Please enter both Instance URL and Access Token.'; statusEl.className = 'test-result error'; }
+                if (!instanceUrl) {
+                    if (statusEl) { statusEl.textContent = 'Please enter your Pleroma instance URL first.'; statusEl.className = 'test-result error'; }
                     return;
                 }
-                if (statusEl) { statusEl.textContent = 'Verifying…'; statusEl.className = 'test-result'; }
+                if (statusEl) { statusEl.textContent = 'Registering app…'; statusEl.className = 'test-result'; }
                 try {
-                    const resp = await csrfFetch('/api/pleroma/connect', {
+                    const resp = await csrfFetch('/api/pleroma/oauth/start', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ instance_url: instanceUrl, access_token: accessToken })
+                        body: JSON.stringify({ instance_url: instanceUrl })
                     });
                     const data = await resp.json();
                     if (!resp.ok) {
-                        if (statusEl) { statusEl.textContent = data.detail || 'Connection failed'; statusEl.className = 'test-result error'; }
+                        if (statusEl) { statusEl.textContent = data.detail || 'Failed to start OAuth'; statusEl.className = 'test-result error'; }
                         return;
                     }
-                    if (statusEl) { statusEl.textContent = `Connected as @${data.username || '?'}`; statusEl.className = 'test-result success'; }
-                    await this.loadUserSettings();
+                    // Open Pleroma authorization in a new tab
+                    window.open(data.auth_url, '_blank');
+                    if (statusEl) { statusEl.textContent = 'Waiting for authorization…'; statusEl.className = 'test-result'; }
+                    // Listen for postMessage from the callback page
+                    const onMessage = async (event) => {
+                        if (event.data === 'pleroma_connected') {
+                            window.removeEventListener('message', onMessage);
+                            if (statusEl) { statusEl.textContent = 'Connected!'; statusEl.className = 'test-result success'; }
+                            await this.loadUserSettings();
+                        }
+                    };
+                    window.addEventListener('message', onMessage);
                 } catch (e) {
                     if (statusEl) { statusEl.textContent = 'Error: ' + e.message; statusEl.className = 'test-result error'; }
                 }

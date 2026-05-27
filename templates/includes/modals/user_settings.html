@@ -277,18 +277,13 @@ My name: John Smith"></textarea>
                             <small>The full URL of your Pleroma/Mastodon instance</small>
                         </div>
 
-                        <div class="form-group">
-                            <label for="pleromaAccessToken">Access Token</label>
-                            <input type="password" id="pleromaAccessToken" placeholder="Your OAuth2 access token">
-                            <small>Generate a token via Pleroma settings → <em>Apps</em>, or use an existing bot token. Needs <code>write:statuses</code> scope.</small>
-                        </div>
-
-                        <div class="form-group">
+                        <div class="form-group" id="pleromaAuthSection">
                             <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-                                <button type="button" class="btn-primary" id="pleromaConnectBtn">Connect</button>
+                                <button type="button" class="btn-primary" id="pleromaConnectBtn">Connect with OAuth</button>
                                 <button type="button" class="btn-danger" id="pleromaDisconnectBtn" style="display: none;">Disconnect</button>
                             </div>
                             <div id="pleromaStatus" class="test-result" style="margin-top: 8px;"></div>
+                            <small>Opens your Pleroma instance in a new tab to authorize PosterChanAI. No password is shared with this server.</small>
                         </div>
 
                         <div class="form-group" id="pleromaConnectedInfo" style="display: none;">
