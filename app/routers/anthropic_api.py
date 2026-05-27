@@ -173,6 +173,32 @@ def _build_model_messages(request: MessagesRequest) -> list:
         ))
     _is_complex_merge_task = bool(re.search(r'\b(conflict|preserve|resolve|keep\s+\w+\s+version|branding|checkout\s+HEAD)\b', _all_text_a, re.IGNORECASE))
 
+    # WEBUI-HINT: when task mentions web UI / modal / button but no file path, inject html.py.
+    _is_first_call_a = not any(m.role == "assistant" for m in request.messages)
+    _first_user_a = next((
+        (m.content if isinstance(m.content, str) else " ".join(
+            b.get("text", "") if isinstance(b, dict) else "" for b in (m.content or [])
+        ))
+        for m in request.messages if m.role == "user"
+    ), "")
+    _is_webui_task_a = bool(re.search(
+        r'\b(webui|web\s*ui|web\s*interface|modal|popup|pop-up|button|click|magnifying|🔍|html\.py)\b',
+        _first_user_a, re.IGNORECASE
+    ))
+    _webui_task_paths_a = re.findall(r'/[\w./-]+\.(?:py|html?|js)\b', _first_user_a)
+    if _is_first_call_a and _is_webui_task_a and not _webui_task_paths_a:
+        _webui_candidates_a = ['/opt/python-firewall/html.py']
+        for _wca in _webui_candidates_a:
+            if os.path.isfile(_wca):
+                try:
+                    with open(_wca, 'r', errors='replace') as _wfh_a:
+                        _wfc_a = _wfh_a.read()
+                    if 0 < len(_wfc_a) < 200000:
+                        sys_text = sys_text + f"\n\n[WEBUI-HINT: The web UI task requires editing {_wca}. Current file contents:\n```python\n{_wfc_a}\n```\nEdit this file directly using the Write or Edit tool.]"
+                        logger.info(f"[WEBUI-HINT] anthropic: injected {_wca} for web UI task")
+                except Exception:
+                    pass
+
     for msg in request.messages:
         role = msg.role
         content = msg.content
@@ -1153,6 +1179,28 @@ async def messages(
                 continue
         _new_tcs_cc.append(_tc_cc)
     tool_calls = _new_tcs_cc
+
+    # WRONG-PATH-BLOCK: prevent model from writing to binary executables or clearly wrong paths.
+    _anthr_first_user = next((str(m.get("content") or "") for m in messages_for_model if m.get("role") == "user"), "")
+    _new_tcs_wpb = []
+    for _tc_wpb in tool_calls:
+        _tc_cmd_wpb = (_tc_wpb.get("input") or {}).get("command", "") or (_tc_wpb.get("input") or {}).get("file_path", "") or ""
+        _wpb_wrong_a = re.search(
+            r'(\.opencode/bin/|/usr/bin/opencode|/usr/local/bin/opencode|/home/\w+/\.opencode/bin/)',
+            _tc_cmd_wpb
+        )
+        if _wpb_wrong_a:
+            _wpb_task_files_a = re.findall(r'/[\w./-]+\.(?:py|sh|dart|yaml|gradle)\b', _anthr_first_user)
+            _wpb_hint_a = f" Edit these task files instead: {', '.join(_wpb_task_files_a[:3])}." if _wpb_task_files_a else " Read the task description and edit the correct source files."
+            _new_tcs_wpb.append({
+                **_tc_wpb,
+                "name": "Bash",
+                "input": {"command": f"printf '\\n[WRONG-PATH-BLOCKED: You tried to write to the opencode binary or a system executable. That is not a task file and would corrupt it. STOP.{_wpb_hint_a}]\\n'"},
+            })
+            logger.warning(f"[WRONG-PATH-BLOCK] anthropic: blocked write to {_wpb_wrong_a.group(1)!r}")
+        else:
+            _new_tcs_wpb.append(_tc_wpb)
+    tool_calls = _new_tcs_wpb
 
     # Rewrite Write calls: overrides, already-done, sudo tee for system paths
     tool_calls = _rewrite_tool_calls(tool_calls, write_success_paths=_anthr_wsp)
