@@ -541,10 +541,13 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
     ))
     _webui_task_paths = re.findall(r'/[\w./-]+\.(?:py|html?|js)\b', _first_user_text)
     if _is_first_proxy_call and _is_webui_task and not _webui_task_paths:
-        # Try to find html.py relative to task context
-        _webui_candidates = [
-            '/opt/python-firewall/html.py',
-        ]
+        # Find html.py dynamically — search service directories for html.py files
+        import glob as _glob_mod
+        _webui_candidates = (
+            _glob_mod.glob('/opt/*/html.py') +
+            _glob_mod.glob('/var/www/*/html.py') +
+            _glob_mod.glob('/srv/*/html.py')
+        )
         for _wc in _webui_candidates:
             if os.path.isfile(_wc) and _wc not in _file_inject_map:
                 try:
@@ -745,30 +748,31 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                     _wgr_py_files = re.findall(r'/[\w./-]+\.py\b', content_str)
                     _wgr_service_files = re.findall(r'/[\w./-]+\.service\b', content_str)
                     if not _wgr_py_files:
-                        _wgr_redirect_file = '/opt/python-firewall/html.py'
-                        content_str = (
-                            f"[WEBUI-GLOB-REDIRECT: The glob for '{_wgr_pattern}' found {'only systemd service files, not Python source' if _wgr_service_files else 'nothing'}. "
-                            f"The web UI source code is a Python file at {_wgr_redirect_file}. "
-                            f"STOP searching. Use the Read tool with filePath={_wgr_redirect_file} to read it, "
-                            f"then use Edit or Write to add the modal JavaScript. Do NOT glob again.]"
+                        # Derive redirect target from already-injected files, not a hardcoded path
+                        _wgr_injected = [p for p in _file_inject_map if p.endswith('.py')]
+                        _wgr_redirect_file = _wgr_injected[0] if _wgr_injected else next(
+                            (p for p in (_glob_mod.glob('/opt/*/html.py') + _glob_mod.glob('/var/www/*/html.py')) if os.path.isfile(p)), ""
                         )
-                        logger.info(f"[WEBUI-GLOB-REDIRECT] glob pattern='{_wgr_pattern}' found no .py files, redirecting to {_wgr_redirect_file}")
+                        if _wgr_redirect_file:
+                            content_str = (
+                                f"[WEBUI-GLOB-REDIRECT: The glob for '{_wgr_pattern}' found {'only systemd service files, not Python source' if _wgr_service_files else 'nothing'}. "
+                                f"The web UI source code is a Python file at {_wgr_redirect_file}. "
+                                f"STOP searching. Use the Read tool with filePath={_wgr_redirect_file} to read it, "
+                                f"then use Edit or Write to implement the changes. Do NOT glob again.]"
+                            )
+                            logger.info(f"[WEBUI-GLOB-REDIRECT] glob pattern='{_wgr_pattern}' found no .py files, redirecting to {_wgr_redirect_file}")
             # WEBUI-EMOJI-GREP-HINT: when bash grep on html.py returns no output and task has 🔍/magnifying
             if (last_tool_name.lower() == "bash" and _is_webui_task
                     and re.search(r'magnifying|🔍', _first_user_text)
                     and re.search(r'grep.*html\.py|html\.py.*grep', last_bash_cmd)
                     and content_str.strip() in ("", "(no output — command produced no output)")):
                 _weg_emoji_lines = []
-                _weg_html_path = ""
-                # Dynamically find which html.py was mentioned in the task
-                for _weg_candidate in ['/opt/python-firewall/html.py']:
-                    if os.path.isfile(_weg_candidate):
-                        _weg_html_path = _weg_candidate
-                        break
-                if not _weg_html_path:
-                    _weg_html_path_m = re.search(r'/[\w./-]+html\.py', _first_user_text + " " + last_bash_cmd)
-                    if _weg_html_path_m:
-                        _weg_html_path = _weg_html_path_m.group(0)
+                # Find html.py from already-injected files, bash command, or task text — no hardcoding
+                _weg_html_path_m = re.search(r'/[\w./-]+html\.py', last_bash_cmd + " " + _first_user_text)
+                _weg_html_path = (
+                    _weg_html_path_m.group(0) if _weg_html_path_m else
+                    next((p for p in _file_inject_map if p.endswith('html.py')), "")
+                )
                 if _weg_html_path:
                     try:
                         with open(_weg_html_path, 'r', errors='replace') as _weg_f:
@@ -1129,9 +1133,7 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                                                 content_str = (
                                                     f"[WRITE-TOOBIG (attempt {_prior_blocks+1}): {_ws_fname} keeps failing. "
                                                     f"STOP writing html.py from scratch. "
-                                                    f"Use sed -i or Edit tool to ADD cyberpunk CSS to the EXISTING file: "
-                                                    f"sed -i 's/color: var(--text-primary)/color: #00ffff; text-shadow: 0 0 8px #00ffff/g' /opt/python-firewall/html.py && "
-                                                    f"sed -i 's/--bg-primary: #0f172a/--bg-primary: #0d0a14; --neon-blue: #00ffff; --neon-pink: #ff00ff/' /opt/python-firewall/html.py]"
+                                                    f"Use sed -i or the Edit tool to patch the EXISTING file at {_py_file} instead of rewriting it entirely.]"
                                                 )
                                             else:
                                                 content_str = (
@@ -3364,7 +3366,8 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                             break
                 if _rtb_count >= 3:
                     _rtb_fw_files = re.findall(r'/[\w./-]+\.py', _first_user_text)
-                    _rtb_hint = _rtb_fw_files[0] if _rtb_fw_files else "/opt/python-firewall/html.py"
+                    _rtb_hint = (_rtb_fw_files[0] if _rtb_fw_files else
+                                 next((p for p in _file_inject_map if p.endswith('.py')), "the correct source file"))
                     content_str = (
                         f"[REPEATED-TOOL-BLOCKED: You have called the same {last_tool_name} tool {_rtb_count} times in a row with identical arguments. "
                         f"This is a loop. STOP. The file you need to edit is {_rtb_hint}. "
