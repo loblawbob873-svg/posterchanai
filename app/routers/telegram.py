@@ -1046,6 +1046,12 @@ async def _handle_telegram_update(update: dict, db: Session):
             
             logger.warning(f"TELEGRAM: text='{text}', reply_to='{reply_text[:50] if reply_text else ''}', photos={len(photos) if photos else 0}")
             
+            # Strip /no_think prefix — it's a Qwen3 control token, not a user query.
+            # chat_service.chat() injects it automatically; if it appears in the message
+            # text the model just describes it instead of obeying it.
+            if text.lower().startswith("/no_think"):
+                text = text[len("/no_think"):].strip()
+
             # Convert text to lowercase for command matching
             text_lower = text.lower().strip()
 
