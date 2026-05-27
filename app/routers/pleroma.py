@@ -1,5 +1,7 @@
 """Pleroma/Mastodon OAuth2 integration router."""
 
+import html
+import time
 import uuid
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -16,8 +18,17 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/pleroma", tags=["pleroma"])
 
-# In-memory pending OAuth states: state_token → {user_id, instance_url, client_id, client_secret, redirect_uri}
+# In-memory pending OAuth states: state_token → {user_id, instance_url, client_id, client_secret, redirect_uri, created_at}
 _oauth_states: dict[str, dict] = {}
+_OAUTH_STATE_TTL = 3600  # 1 hour
+
+
+def _evict_expired_states() -> None:
+    """Remove OAuth states older than _OAUTH_STATE_TTL seconds."""
+    cutoff = time.time() - _OAUTH_STATE_TTL
+    expired = [k for k, v in _oauth_states.items() if v.get("created_at", 0) < cutoff]
+    for k in expired:
+        _oauth_states.pop(k, None)
 
 
 class PleromaOAuthStartRequest(BaseModel):
@@ -35,6 +46,8 @@ async def start_oauth(
     current_user: User = Depends(get_current_user),
 ):
     """Register PosterChanAI as an app on the Pleroma instance and return the auth URL."""
+    _evict_expired_states()  # prune stale pending flows before adding a new one
+
     instance_url = data.instance_url.strip().rstrip("/")
     if not instance_url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="Instance URL must start with http:// or https://")
@@ -59,6 +72,7 @@ async def start_oauth(
         "client_id": client_id,
         "client_secret": client_secret,
         "redirect_uri": redirect_uri,
+        "created_at": time.time(),
     }
 
     auth_url = build_auth_url(instance_url, client_id, redirect_uri) + f"&state={state}"
@@ -70,13 +84,14 @@ async def oauth_callback(code: str = None, state: str = None, error: str = None,
     """Pleroma redirects here after the user approves. Exchange code for access token."""
 
     def _error_page(msg: str) -> HTMLResponse:
+        safe_msg = html.escape(msg)
         return HTMLResponse(
             "<html><head><style>"
             "body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;"
             "min-height:100vh;margin:0;background:#111;color:#eee;}"
             "div{text-align:center;} h2{color:#f44;}"
             "</style></head><body><div>"
-            f"<h2>❌ Authorization failed</h2><p>{msg}</p>"
+            f"<h2>❌ Authorization failed</h2><p>{safe_msg}</p>"
             "<p>Please close this tab and try again.</p>"
             "</div></body></html>",
             status_code=400,

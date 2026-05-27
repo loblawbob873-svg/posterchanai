@@ -526,6 +526,22 @@ class IPEXService:
 
         return filtered
 
+    @staticmethod
+    def _has_no_think_in_messages(messages: List[Dict[str, Any]]) -> bool:
+        """Return True if any user message contains the /no_think control token."""
+        for m in messages:
+            if m.get("role") != "user":
+                continue
+            content = m.get("content")
+            if isinstance(content, str):
+                if "/no_think" in content:
+                    return True
+            elif content:  # list of content parts (vision messages)
+                for part in content:
+                    if isinstance(part, dict) and "/no_think" in part.get("text", ""):
+                        return True
+        return False
+
     def _build_no_think_prompt(self, messages: List[Dict[str, Any]]) -> str:
         """Build a raw ChatML prompt with an empty <think> block pre-filled.
 
@@ -576,12 +592,7 @@ class IPEXService:
 
             # Handle thinking mode for Qwen3-style models
             is_qwen3_thinker = "qwen3" in os.path.basename(self.model_path).lower()
-            _no_think_in_msg = any(
-                "/no_think" in (m.get("content", "") if isinstance(m.get("content"), str) else
-                                " ".join(p.get("text", "") for p in m.get("content", []) if isinstance(p, dict)))
-                for m in messages if m.get("role") == "user"
-            )
-            if (self.disable_thinking or _no_think_in_msg) and is_qwen3_thinker:
+            if (self.disable_thinking or self._has_no_think_in_messages(messages)) and is_qwen3_thinker:
                 # Prefill the assistant turn past an empty <think></think> block so the model
                 # generates the answer directly without a reasoning phase.
                 # stopping_criteria provides a Python-level EOS check as belt-and-suspenders
@@ -827,12 +838,7 @@ class IPEXService:
 
         # Handle thinking mode for Qwen3-style models (same as non-streaming)
         is_qwen3_thinker = "qwen3" in os.path.basename(self.model_path).lower()
-        _no_think_in_msg = any(
-            "/no_think" in (m.get("content", "") if isinstance(m.get("content"), str) else
-                            " ".join(p.get("text", "") for p in m.get("content", []) if isinstance(p, dict)))
-            for m in messages if m.get("role") == "user"
-        )
-        use_no_think_prefill = (self.disable_thinking or _no_think_in_msg) and is_qwen3_thinker
+        use_no_think_prefill = (self.disable_thinking or self._has_no_think_in_messages(messages)) and is_qwen3_thinker
         if use_no_think_prefill:
             raw_prompt_for_stream = self._build_no_think_prompt(messages)
             messages_to_use = messages
@@ -1037,12 +1043,7 @@ class IPEXService:
 
             # Handle thinking mode for Qwen3-style models (same as non-streaming)
             _model_lower = os.path.basename(self.model_path).lower()
-            _no_think_in_msg2 = any(
-                "/no_think" in (m.get("content", "") if isinstance(m.get("content"), str) else
-                                " ".join(p.get("text", "") for p in m.get("content", []) if isinstance(p, dict)))
-                for m in messages if m.get("role") == "user"
-            )
-            use_no_think_prefill = (self.disable_thinking or _no_think_in_msg2) and "qwen3" in _model_lower
+            use_no_think_prefill = (self.disable_thinking or self._has_no_think_in_messages(messages)) and "qwen3" in _model_lower
             if use_no_think_prefill:
                 no_think_raw_prompt = self._build_no_think_prompt(messages)
                 messages_to_use = messages

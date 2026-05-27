@@ -1093,9 +1093,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Strip /no_think prefix — it's a Qwen3 control token, not a user query.
             # chat_service.chat() injects it automatically via inject_no_think(); if it
             # appears verbatim in the message the model describes it instead of obeying it.
-            _no_think_requested = False
             if text.lower().startswith("/no_think"):
-                _no_think_requested = True
                 text = text[len("/no_think"):].strip()
                 if not text:
                     # User sent /no_think with no message — ask them for a prompt.
@@ -2993,6 +2991,8 @@ async def _handle_telegram_update(update: dict, db: Session):
                 pending_post = _misskey_post_cache.pop(chat_id, None)
 
                 if action == "skip" or pending_post is None:
+                    # Also clear any pending Pleroma post so it can't be posted stale later.
+                    _pleroma_post_cache.pop(chat_id, None)
                     if pending_post is None:
                         await telegram_service.send_message(chat_id, "No pending post found.")
                     else:
