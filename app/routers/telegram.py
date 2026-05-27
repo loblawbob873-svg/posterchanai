@@ -894,6 +894,7 @@ _pleroma_post_cache: dict = {}
 _link_action_cache: dict = {}
 
 
+
 def _has_misskey(user) -> bool:
     return bool(
         user
@@ -2672,11 +2673,11 @@ async def _handle_telegram_update(update: dict, db: Session):
                 # If cache missed (e.g. after a server restart), try to recover URL from
                 # the button message text (forwarded-link prompts embed the URL there).
                 if cached_url is None and action != "cancel":
-                    import re as _re
+                    from app.services.search_service import SearchService as _SS
                     _msg_text = callback_query.get("message", {}).get("text", "")
-                    _url_matches = _re.findall(r'https?://\S+', _msg_text)
-                    if _url_matches:
-                        cached_url = _url_matches[0].rstrip(".,)>")
+                    _recovered = _SS.extract_urls(_msg_text)
+                    if _recovered:
+                        cached_url = _recovered[0]
                         logger.info(f"lnk:{action} - recovered URL from message text: {cached_url}")
 
                 if action == "cancel" or cached_url is None:
@@ -2747,9 +2748,11 @@ async def _handle_telegram_update(update: dict, db: Session):
 
                         lnk_chat = ChatService(db, user=lnk_user)
                         lnk_chat.num_predict = min(lnk_chat.num_predict, 900)
-                        post_text = await lnk_chat.chat(post_messages)
+                        post_text = await _asyncio.wait_for(lnk_chat.chat(post_messages), timeout=120)
                         post_text = post_text.rstrip() + f"\n\n{cached_url}"
                         await _offer_social_post(chat_id, post_text, lnk_user, telegram_service)
+                    except _asyncio.TimeoutError:
+                        await telegram_service.send_message(chat_id, "Timed out generating post.")
                     except Exception as lnk_err:
                         logger.error(f"Link post generation error: {lnk_err}", exc_info=True)
                         await telegram_service.send_message(chat_id, f"Error generating post: {lnk_err}")
