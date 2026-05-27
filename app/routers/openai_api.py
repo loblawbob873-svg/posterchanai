@@ -725,6 +725,24 @@ def _oai_messages_for_tools(messages: list, tools: list, settings: dict = None) 
                 if r.get("role") == "assistant":
                     last_bash_cmd = r.get("content", "")
                     break
+            # WEBUI-GLOB-REDIRECT: when glob returns only .service files for a webui task, redirect
+            if last_tool_name.lower() == "glob" and _is_webui_task:
+                _wgr_ast = last_bash_cmd
+                _wgr_pattern_m = re.search(r'"pattern"\s*:\s*"([^"]+)"', _wgr_ast)
+                _wgr_pattern = _wgr_pattern_m.group(1) if _wgr_pattern_m else ""
+                if re.search(r'webui|openwebui', _wgr_pattern, re.IGNORECASE):
+                    # Check if result only has .service files or is empty
+                    _wgr_py_files = re.findall(r'/[\w./-]+\.py\b', content_str)
+                    _wgr_service_files = re.findall(r'/[\w./-]+\.service\b', content_str)
+                    if not _wgr_py_files:
+                        _wgr_redirect_file = '/opt/python-firewall/html.py'
+                        content_str = (
+                            f"[WEBUI-GLOB-REDIRECT: The glob for '{_wgr_pattern}' found {'only systemd service files, not Python source' if _wgr_service_files else 'nothing'}. "
+                            f"The web UI source code is a Python file at {_wgr_redirect_file}. "
+                            f"STOP searching. Use the Read tool with filePath={_wgr_redirect_file} to read it, "
+                            f"then use Edit or Write to add the modal JavaScript. Do NOT glob again.]"
+                        )
+                        logger.info(f"[WEBUI-GLOB-REDIRECT] glob pattern='{_wgr_pattern}' found no .py files, redirecting to {_wgr_redirect_file}")
             # After editing a Python file, remind the model to verify syntax
             if last_tool_name.lower() in ("edit", "write", "str_replace_based_edit_tool", "str_replace"):
                 for _r in reversed(result):
