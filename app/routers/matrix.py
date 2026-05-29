@@ -484,8 +484,6 @@ async def execute_matrix_command(
                 hint = "\n\n---\n`nyaa download <number>` to download"
         elif command == "news":
             hint = "\n\n---\nTo post an article: `post <article url>`"
-        elif command == "4chan":
-            hint = "\n\n---\nTo view a thread: `4chan <board> <thread_id>`"
         return {"result": content + hint}
     except Exception as e:
         logger.error(f"Matrix command execution error: {e}", exc_info=True)
