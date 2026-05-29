@@ -238,8 +238,11 @@ async def execute_matrix_command(
         suffix = "\n\n---\nReply `share` to post this to your configured social platforms."
         return {"result": post_text + suffix}
 
-    # Handle `share` / `share <text>` — post text to all configured social platforms
-    if command_str.lower().startswith("share"):
+    # Handle `share` / `share <text>` — post text to all configured social platforms.
+    # Require exact "share" or a "share " prefix so normal chat ("shared the news…")
+    # isn't hijacked into the social-posting handler.
+    _cs_lower = command_str.lower()
+    if _cs_lower == "share" or _cs_lower.startswith("share "):
         share_text = command_str[5:].strip()
         # No text provided — try to retrieve the pending post from the last `post` command
         if not share_text:
@@ -256,7 +259,7 @@ async def execute_matrix_command(
                 return {"result": "Nothing to share. Use `post <url>` first, then reply `share`."}
         # Handle `share matrix <number>` — post pending text to a previously listed room
         _share_lower = command_str.lower()
-        if _share_lower.startswith("share matrix"):
+        if _share_lower == "share matrix" or _share_lower.startswith("share matrix "):
             room_arg = command_str[12:].strip()
             from app.models import UserSetting
             _pending = db.query(UserSetting).filter(
@@ -383,9 +386,26 @@ async def execute_matrix_command(
     command, arg = cmd_service.parse_command(command_str)
 
     if not command:
-        # Not a recognized command — let the AI respond
         from app.services.chat_service import ChatService
         chat_svc = ChatService(db, user=user)
+        # If the message is a bare URL, fetch the page and summarize it
+        import re as _re_url
+        _bare = command_str.strip()
+        if _re_url.match(r'^https?://\S+$', _bare):
+            try:
+                from app.services.search_service import SearchService as _SS
+                import asyncio as _aio
+                fetched = await _aio.wait_for(_SS(db).fetch_urls([_bare], max_urls=1), timeout=15)
+                if fetched and fetched[0].get("content") and not fetched[0].get("error"):
+                    ctx = f"Title: {fetched[0].get('title','')}\n\n{fetched[0]['content'][:4000]}"
+                    reply = await chat_svc.chat([
+                        {"role": "system", "content": "You are a concise summarizer. Output only the summary."},
+                        {"role": "user", "content": f"Summarize this page in detail:\n\n{ctx}"},
+                    ])
+                    return {"result": reply}
+            except Exception as e:
+                logger.warning(f"Matrix link summary fetch failed: {e}")
+            # fall through to plain chat if fetch failed
         try:
             reply = await chat_svc.chat([
                 {"role": "system", "content": chat_svc.system_prompt},

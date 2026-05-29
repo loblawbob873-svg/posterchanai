@@ -930,6 +930,15 @@ def _has_matrix(user) -> bool:
     )
 
 
+def _strip_hashtags(text: str) -> str:
+    """Remove hashtag tokens from AI-generated post text (the model often ignores
+    the 'no hashtags' instruction). Apply BEFORE appending any URL so URL fragments
+    like example.com#section are never touched."""
+    import re as _ht
+    text = _ht.sub(r'(?:^|\s)#\w[\w-]*', ' ', text)
+    return _ht.sub(r'[ \t]{2,}', ' ', text).strip()
+
+
 async def _offer_social_post(chat_id: str, post_text: str, user, telegram_svc, prompt: str = "📣 *Post this?*"):
     """Show the generated post and offer to share it on configured social platforms."""
     has_mk = _has_misskey(user)
@@ -1338,6 +1347,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                 _cs.num_predict = min(_cs.num_predict, 900)
                 try:
                     post_text = await _cs.chat(post_messages)
+                    post_text = _strip_hashtags(post_text)
                     # Always append the real URL at the end — the model may mangle it
                     if url_to_append:
                         post_text = post_text.rstrip() + f"\n\n{url_to_append}"
@@ -2705,7 +2715,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                                 {"role": "system", "content": "Generate a short, engaging social media post (under 280 characters) for this news article. Use emojis but no hashtags."},
                                 {"role": "user", "content": f"Title: {title}\nURL: {url}\n\nGenerate a social media post."}
                             ]
-                            post_text = await chat_service.chat(messages)
+                            post_text = _strip_hashtags(await chat_service.chat(messages))
                             await _offer_social_post(chat_id, post_text, cb_user, telegram_service)
                         else:
                             await telegram_service.send_message(chat_id, "❌ Source not found. Please try again.")
@@ -2862,7 +2872,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                         lnk_chat = ChatService(db, user=lnk_user)
                         lnk_chat.num_predict = min(lnk_chat.num_predict, 900)
                         post_text = await _asyncio.wait_for(lnk_chat.chat(post_messages), timeout=120)
-                        post_text = post_text.rstrip() + f"\n\n{cached_url}"
+                        post_text = _strip_hashtags(post_text).rstrip() + f"\n\n{cached_url}"
                         await _offer_social_post(chat_id, post_text, lnk_user, telegram_service)
                     except _asyncio.TimeoutError:
                         await telegram_service.send_message(chat_id, "Timed out generating post.")
@@ -2935,7 +2945,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                             }
                         ]
                         post_text = await yt_chat.chat(post_messages)
-                        post_text = post_text.rstrip() + f"\n\n{yt_url}"
+                        post_text = _strip_hashtags(post_text).rstrip() + f"\n\n{yt_url}"
                         await _offer_social_post(chat_id, post_text, yt_user, telegram_service)
                     except Exception as yt_err:
                         logger.error(f"YouTube post generation error: {yt_err}", exc_info=True)
@@ -3116,7 +3126,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                             }
                         ]
                         post_text = await nk_chat.chat(post_messages)
-                        post_text = post_text.rstrip() + f"\n\n{url}"
+                        post_text = _strip_hashtags(post_text).rstrip() + f"\n\n{url}"
                         await _offer_social_post(chat_id, post_text, nk_user, telegram_service)
                     except Exception as nk_err:
                         logger.error(f"News social post generation error: {nk_err}", exc_info=True)
