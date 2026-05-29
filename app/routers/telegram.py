@@ -3049,7 +3049,15 @@ async def _handle_telegram_update(update: dict, db: Session):
                 # action == "post"
                 pending_post = _misskey_post_cache.pop(chat_id, None)
                 if pending_post is None:
-                    await telegram_service.send_message(chat_id, "No pending Misskey post found.")
+                    _msg_text = (callback_query.get("message") or {}).get("text", "")
+                    if _msg_text:
+                        for _suffix in ("\n\n📣 *Post this?*", "\n\n📣 Post this?"):
+                            if _suffix in _msg_text:
+                                _msg_text = _msg_text[:_msg_text.rfind(_suffix)]
+                                break
+                        pending_post = _msg_text.strip() or None
+                if pending_post is None:
+                    await telegram_service.send_message(chat_id, "No pending Misskey post found. Please generate a new post.")
                     return {"ok": True}
 
                 mk_user = db.query(User).filter(
@@ -3092,7 +3100,15 @@ async def _handle_telegram_update(update: dict, db: Session):
                 # action == "post"
                 pending_post = _pleroma_post_cache.pop(chat_id, None)
                 if pending_post is None:
-                    await telegram_service.send_message(chat_id, "No pending Pleroma post found.")
+                    _msg_text = (callback_query.get("message") or {}).get("text", "")
+                    if _msg_text:
+                        for _suffix in ("\n\n📣 *Post this?*", "\n\n📣 Post this?"):
+                            if _suffix in _msg_text:
+                                _msg_text = _msg_text[:_msg_text.rfind(_suffix)]
+                                break
+                        pending_post = _msg_text.strip() or None
+                if pending_post is None:
+                    await telegram_service.send_message(chat_id, "No pending Pleroma post found. Please generate a new post.")
                     return {"ok": True}
 
                 plr_user = db.query(User).filter(
@@ -3130,8 +3146,21 @@ async def _handle_telegram_update(update: dict, db: Session):
 
                 if action == "post":
                     pending_post = _matrix_post_cache.get(chat_id)
+                    # Cache miss (e.g. after service restart) — recover from message text
                     if not pending_post:
-                        await telegram_service.send_message(chat_id, "No pending Matrix post found.")
+                        _msg_text = (callback_query.get("message") or {}).get("text", "")
+                        if _msg_text:
+                            # Strip the prompt suffix appended by _offer_social_post
+                            for _suffix in ("\n\n📣 *Post this?*", "\n\n📣 Post this?"):
+                                if _suffix in _msg_text:
+                                    _msg_text = _msg_text[:_msg_text.rfind(_suffix)]
+                                    break
+                            pending_post = _msg_text.strip() or None
+                        if pending_post:
+                            _matrix_post_cache[chat_id] = pending_post
+                            logger.info(f"mtx:post — recovered post text from message ({len(pending_post)} chars)")
+                    if not pending_post:
+                        await telegram_service.send_message(chat_id, "No pending Matrix post found. Please generate a new post.")
                         return {"ok": True}
 
                     if not mtx_user or not _has_matrix(mtx_user):
@@ -3224,10 +3253,19 @@ async def _handle_telegram_update(update: dict, db: Session):
                     User.telegram_enabled == True
                 ).first()
 
+                # Recover post text from message if caches were lost (e.g. service restart)
+                def _recover_post_text() -> str:
+                    _msg_text = (callback_query.get("message") or {}).get("text", "")
+                    for _suffix in ("\n\n📣 *Post this?*", "\n\n📣 Post this?"):
+                        if _suffix in _msg_text:
+                            _msg_text = _msg_text[:_msg_text.rfind(_suffix)]
+                            break
+                    return _msg_text.strip()
+
                 results = []
 
                 # Misskey
-                mk_post = _misskey_post_cache.pop(chat_id, None)
+                mk_post = _misskey_post_cache.pop(chat_id, None) or _recover_post_text()
                 if mk_post and all_user and _has_misskey(all_user):
                     try:
                         from app.services.misskey_service import post_note as _mk_note
@@ -3238,7 +3276,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                         results.append(f"❌ Misskey: {_e}")
 
                 # Pleroma
-                plr_post = _pleroma_post_cache.pop(chat_id, None)
+                plr_post = _pleroma_post_cache.pop(chat_id, None) or _recover_post_text()
                 if plr_post and all_user and _has_pleroma(all_user):
                     try:
                         from app.services.pleroma_service import post_status as _plr_status
@@ -3252,7 +3290,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     await telegram_service.send_message(chat_id, "\n".join(results))
 
                 # Matrix — needs room selection; show picker if configured
-                mtx_post = _matrix_post_cache.get(chat_id)
+                mtx_post = _matrix_post_cache.get(chat_id) or _recover_post_text()
                 if mtx_post and all_user and _has_matrix(all_user):
                     try:
                         from app.services.matrix_service import get_joined_rooms as _mtx_rooms
