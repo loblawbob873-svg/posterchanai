@@ -194,50 +194,60 @@ async def _is_encrypted(client: httpx.AsyncClient, hs: str, room_id: str, header
 
 
 async def create_or_get_dm_room(homeserver: str, access_token: str, bot_user_id: str) -> str:
-    """Return an unencrypted DM room ID with bot_user_id, creating one if needed.
+    """Return an unencrypted bot room ID, creating one if needed.
 
-    Iterates m.direct candidates, skipping any that are encrypted or unjoinable.
-    Always creates a new room if no suitable unencrypted room is found.
+    Uses custom account data key `posterchanai.bot_room` to remember the room
+    across calls. Skips any room that is E2EE encrypted (created a new one instead).
+    Does NOT use is_direct so Element won't auto-encrypt it.
     """
     from urllib.parse import quote
     hs = homeserver.rstrip("/")
     headers = {"Authorization": f"Bearer {access_token}"}
+    ACCOUNT_KEY = "posterchanai.bot_room"
 
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         # Get own user_id
         whoami = await client.get(f"{hs}/_matrix/client/v3/account/whoami", headers=headers)
         user_id = whoami.json().get("user_id", "") if whoami.status_code == 200 else ""
 
+        # Check custom account data for a previously created bot room
         if user_id:
-            dm_r = await client.get(
-                f"{hs}/_matrix/client/v3/user/{quote(user_id, safe='')}/account_data/m.direct",
+            acct_r = await client.get(
+                f"{hs}/_matrix/client/v3/user/{quote(user_id, safe='')}/account_data/{ACCOUNT_KEY}",
                 headers=headers,
             )
-            if dm_r.status_code == 200:
-                for candidate in dm_r.json().get(bot_user_id, []):
-                    # Skip encrypted rooms — bot cannot read or reply in E2EE rooms
-                    if await _is_encrypted(client, hs, candidate, headers):
-                        logger.info(f"Skipping encrypted DM room {candidate}")
-                        continue
-                    # Ensure we're a joined member
-                    joined = await _ensure_joined(client, hs, candidate, headers)
-                    if joined:
-                        logger.info(f"Using existing unencrypted DM room {candidate}")
-                        return candidate
-                    logger.debug(f"Skipping DM room {candidate} — join failed")
+            if acct_r.status_code == 200:
+                saved_room = acct_r.json().get("room_id", "")
+                if saved_room:
+                    encrypted = await _is_encrypted(client, hs, saved_room, headers)
+                    if not encrypted:
+                        joined = await _ensure_joined(client, hs, saved_room, headers)
+                        if joined:
+                            logger.info(f"Reusing existing bot room {saved_room}")
+                            return saved_room
+                    logger.info(f"Saved bot room {saved_room} is encrypted or unjoinable, creating new one")
 
-        # Create a new unencrypted DM room
-        logger.info(f"Creating new unencrypted DM room with {bot_user_id}")
+        # Create a new private room without is_direct so clients don't auto-enable E2EE
+        logger.info(f"Creating new unencrypted bot room with {bot_user_id}")
         resp = await client.post(
             f"{hs}/_matrix/client/v3/createRoom",
             json={
+                "name": "Posterchanai Bot",
                 "invite": [bot_user_id],
-                "is_direct": True,
-                "preset": "trusted_private_chat",
-                "initial_state": [],  # No m.room.encryption — keeps the room unencrypted
+                "preset": "private_chat",
+                "initial_state": [],  # No m.room.encryption state = unencrypted
             },
             headers=headers,
         )
         if resp.status_code not in (200, 201):
-            raise ValueError(f"Failed to create DM room: HTTP {resp.status_code} — {resp.text[:200]}")
-        return resp.json()["room_id"]
+            raise ValueError(f"Failed to create bot room: HTTP {resp.status_code} — {resp.text[:200]}")
+        room_id = resp.json()["room_id"]
+
+        # Save room_id to account data so future calls reuse it
+        if user_id:
+            await client.put(
+                f"{hs}/_matrix/client/v3/user/{quote(user_id, safe='')}/account_data/{ACCOUNT_KEY}",
+                json={"room_id": room_id},
+                headers=headers,
+            )
+        return room_id
