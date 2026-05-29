@@ -193,7 +193,7 @@ async def execute_matrix_command(
     # Handle `post` / `post <url>` — generate a social media post and return the text
     import re as _re
     _post_match = _re.match(r'^post\s+(https?://\S+)', command_str, _re.IGNORECASE)
-    if command_str.lower() == "post" or _re.match(r'^post\b', command_str, _re.IGNORECASE):
+    if command_str.lower() == "post" or _re.match(r'^post\s', command_str, _re.IGNORECASE):
         url_arg = _post_match.group(1) if _post_match else ""
         # Plain text after "post" (no URL) — use it directly as context
         raw_arg = command_str[4:].strip() if len(command_str) > 4 else ""
@@ -263,9 +263,10 @@ async def execute_matrix_command(
             _rooms_s = db.query(UserSetting).filter(
                 UserSetting.user_id == user.id, UserSetting.key == "matrix_pending_rooms"
             ).first()
-            pending_text = _pending.value if _pending else share_text
+            # Use saved pending post — never fall back to raw command arg
+            pending_text = _pending.value if (_pending and _pending.value) else None
             if not pending_text:
-                return {"result": "Nothing pending to share. Use `post <url>` first."}
+                return {"result": "Nothing pending to share. Use `post <url>` first, then `share` to see room picker."}
             if not room_arg:
                 # No room specified — list rooms
                 if user.matrix_enabled and user.matrix_access_token and user.matrix_homeserver:

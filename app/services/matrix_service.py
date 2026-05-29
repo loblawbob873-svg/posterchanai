@@ -183,14 +183,15 @@ async def _ensure_joined(client: httpx.AsyncClient, hs: str, room_id: str, heade
 
 
 async def _is_encrypted(client: httpx.AsyncClient, hs: str, room_id: str, headers: dict) -> bool:
-    """Return True if the room has the m.room.encryption state event (E2EE enabled)."""
+    """Return True if the room is encrypted or inaccessible (both mean skip it)."""
     from urllib.parse import quote
     encoded = quote(room_id, safe="")
     r = await client.get(
         f"{hs}/_matrix/client/v3/rooms/{encoded}/state/m.room.encryption",
         headers=headers,
     )
-    return r.status_code == 200
+    # 200 = encrypted, 403 = inaccessible — treat both as unusable
+    return r.status_code in (200, 403)
 
 
 async def create_or_get_dm_room(homeserver: str, access_token: str, bot_user_id: str) -> str:
