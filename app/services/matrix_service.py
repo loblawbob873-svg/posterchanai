@@ -83,14 +83,26 @@ async def _room_display_name(client: httpx.AsyncClient, hs: str, room_id: str, h
 
 
 async def send_message(homeserver: str, access_token: str, room_id: str, text: str) -> None:
-    """Send a plain-text message to a Matrix room."""
+    """Send a message to a Matrix room with URL auto-linking."""
+    import re as _re
     hs = homeserver.rstrip("/")
     from urllib.parse import quote
     encoded_room = quote(room_id, safe="")
     txn_id = str(int(time.time() * 1000))
     url = f"{hs}/_matrix/client/v3/rooms/{encoded_room}/send/m.room.message/{txn_id}"
     headers = {"Authorization": f"Bearer {access_token}"}
-    payload = {"msgtype": "m.text", "body": text}
+    # Build formatted_body with clickable links
+    import html as _html
+    escaped = _html.escape(text)
+    formatted = _re.sub(
+        r'(https?://\S+)',
+        r'<a href="\1">\1</a>',
+        escaped,
+    )
+    payload: dict = {"msgtype": "m.text", "body": text}
+    if formatted != escaped:
+        payload["format"] = "org.matrix.custom.html"
+        payload["formatted_body"] = formatted
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         resp = await client.put(url, json=payload, headers=headers)
         if resp.status_code not in (200, 201):
