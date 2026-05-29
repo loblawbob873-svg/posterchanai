@@ -330,6 +330,21 @@ My name: John Smith"></textarea>
                             <div class="settings-status success" id="matrixConnectedMsg"></div>
                         </div>
                     </fieldset>
+
+                    <fieldset style="margin-top: 24px;">
+                        <legend>Matrix Bot (Notifications &amp; Commands)</legend>
+                        <p class="fieldset-info">Configure the <a href="https://chat.poster.place" target="_blank">posterchan Matrix bot</a> to send you DMs and respond to commands. Enter the bot's Matrix user ID below, then send it a DM to start a chat.</p>
+
+                        <div class="form-group">
+                            <label for="matrixDmBotUserId">Bot User ID</label>
+                            <input type="text" id="matrixDmBotUserId" placeholder="@posterchan:chat.poster.place">
+                            <small>The Matrix user ID of the bot to DM (e.g. <code>@posterchan:chat.poster.place</code>). The bot will respond to all messages in your DM conversation.</small>
+                        </div>
+                        <div class="form-group">
+                            <button type="button" class="btn-secondary" id="matrixTestDmBtn">Send Test DM</button>
+                            <span id="matrixDmStatus" class="test-result" style="margin-top: 8px; display: block;"></span>
+                        </div>
+                    </fieldset>
                 </div>
 
                 <!-- API Keys Tab -->

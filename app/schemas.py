@@ -428,6 +428,7 @@ class UserSettingsUpdate(BaseModel):
     # Matrix settings
     matrix_enabled: Optional[bool] = None
     matrix_homeserver: Optional[str] = None
+    matrix_dm_bot_user_id: Optional[str] = None
 
 
 class UserSettingsResponse(BaseModel):
@@ -468,6 +469,7 @@ class UserSettingsResponse(BaseModel):
     matrix_homeserver: Optional[str] = None
     matrix_user_id: Optional[str] = None
     matrix_has_access_token: bool = False
+    matrix_dm_bot_user_id: Optional[str] = None
 
 
 class TestConnectionRequest(BaseModel):

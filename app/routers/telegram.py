@@ -1203,7 +1203,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -1349,7 +1349,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -1789,6 +1789,39 @@ async def _handle_telegram_update(update: dict, db: Session):
 
                         # Fallback: no articles parsed — send raw content
                         result["content"] = content
+                    elif command == "share":
+                        # Share command: take the user's text (+ optional attachment) and offer to post it
+                        # to configured social platforms directly (no AI generation needed)
+                        share_text = arg.strip() if arg.strip() else text.strip()
+                        if not share_text and not has_images and not attachments:
+                            await telegram_service.send_message(
+                                chat_id,
+                                "Usage: send `share <your post text>` (optionally attach a photo).\n"
+                                "The text will be shared directly to your configured social platforms."
+                            )
+                            return {"ok": True}
+
+                        _share_user = db.query(User).filter(
+                            User.telegram_chat_id == chat_id,
+                            User.telegram_enabled == True
+                        ).first()
+
+                        # Build share text
+                        final_share_text = share_text or "(image)"
+
+                        # Try to upload image to platforms that support it
+                        share_image_bytes = None
+                        share_image_name = "image.jpg"
+                        if has_images and attachments:
+                            for _fn, _fd, _ct in attachments:
+                                if _ct.startswith("image/"):
+                                    share_image_bytes = _fd
+                                    share_image_name = _fn
+                                    break
+
+                        await _offer_social_post(chat_id, final_share_text, _share_user, telegram_service,
+                                                  prompt="📣 *Share this?*")
+                        return {"ok": True}
                     else:
                         # Pass attachments to any command that supports them
                         if attachments:
@@ -2200,6 +2233,33 @@ async def _handle_telegram_update(update: dict, db: Session):
                 if not photo_result.get("ok"):
                     logger.error(f"Failed to send photo: {photo_result}")
                     await telegram_service.send_message(chat_id, f"{response_content}\n\n(Image generation failed to send)")
+                else:
+                    # Offer to share the generated image to configured social platforms
+                    _geni_user = db.query(User).filter(
+                        User.telegram_chat_id == chat_id,
+                        User.telegram_enabled == True
+                    ).first()
+                    if _geni_user and (_has_misskey(_geni_user) or _has_pleroma(_geni_user) or _has_matrix(_geni_user)):
+                        _geni_caption = response_content or "Generated image"
+                        _matrix_post_cache[chat_id] = _geni_caption
+                        _misskey_post_cache[chat_id] = _geni_caption
+                        _pleroma_post_cache[chat_id] = _geni_caption
+                        _share_buttons: list = []
+                        if _has_misskey(_geni_user):
+                            _share_buttons.append({"text": "📣 Misskey", "callback_data": "mk:post"})
+                        if _has_pleroma(_geni_user):
+                            _share_buttons.append({"text": "📣 Pleroma", "callback_data": "plr:post"})
+                        if _has_matrix(_geni_user):
+                            _share_buttons.append({"text": "📣 Matrix", "callback_data": "mtx:post"})
+                        if len(_share_buttons) >= 2:
+                            _share_buttons_rows = [_share_buttons, [{"text": "🚀 Post to All", "callback_data": "all:post"}, {"text": "❌ Skip", "callback_data": "mk:skip"}]]
+                        else:
+                            _share_buttons_rows = [_share_buttons + [{"text": "❌ Skip", "callback_data": "mk:skip"}]]
+                        await telegram_service.send_message(
+                            chat_id,
+                            "📣 Share this image to social platforms?",
+                            reply_markup={"inline_keyboard": _share_buttons_rows},
+                        )
             elif response_type == "search":
                 # Send AI summary, then append top result links
                 search_results = result.get("results", [])

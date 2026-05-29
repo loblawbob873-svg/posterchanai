@@ -95,3 +95,44 @@ async def send_message(homeserver: str, access_token: str, room_id: str, text: s
         resp = await client.put(url, json=payload, headers=headers)
         if resp.status_code not in (200, 201):
             raise ValueError(f"Failed to send Matrix message: HTTP {resp.status_code} — {resp.text[:200]}")
+
+
+async def create_or_get_dm_room(homeserver: str, access_token: str, bot_user_id: str) -> str:
+    """Create a DM room with bot_user_id, or return the existing room ID.
+
+    Uses the m.direct account data to find an existing DM room first.
+    """
+    from urllib.parse import quote
+    hs = homeserver.rstrip("/")
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        # Get own user_id first
+        whoami = await client.get(f"{hs}/_matrix/client/v3/account/whoami", headers=headers)
+        if whoami.status_code == 200:
+            user_id = whoami.json().get("user_id", "")
+            if user_id:
+                dm_r = await client.get(
+                    f"{hs}/_matrix/client/v3/user/{quote(user_id, safe='')}/account_data/m.direct",
+                    headers=headers,
+                )
+                if dm_r.status_code == 200:
+                    dm_data = dm_r.json()
+                    existing_rooms = dm_data.get(bot_user_id, [])
+                    if existing_rooms:
+                        return existing_rooms[0]
+
+        # Create a new DM room
+        payload = {
+            "invite": [bot_user_id],
+            "is_direct": True,
+            "preset": "trusted_private_chat",
+        }
+        resp = await client.post(
+            f"{hs}/_matrix/client/v3/createRoom",
+            json=payload,
+            headers=headers,
+        )
+        if resp.status_code != 200:
+            raise ValueError(f"Failed to create DM room: HTTP {resp.status_code} — {resp.text[:200]}")
+        return resp.json()["room_id"]

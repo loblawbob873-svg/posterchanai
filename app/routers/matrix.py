@@ -1,7 +1,7 @@
 """Matrix integration router — login, logout, room listing."""
 
 import logging
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -95,3 +95,117 @@ async def list_rooms(
         raise HTTPException(status_code=502, detail=f"Could not fetch rooms: {e}")
 
     return {"rooms": rooms}
+
+
+class MatrixTestDmRequest(BaseModel):
+    bot_user_id: str
+
+
+@router.post("/test-dm")
+async def send_test_dm(
+    data: MatrixTestDmRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Create a DM room with the bot user and send a test message."""
+    if not current_user.matrix_enabled or not current_user.matrix_access_token or not current_user.matrix_homeserver:
+        raise HTTPException(status_code=400, detail="Matrix is not connected")
+
+    bot_user_id = data.bot_user_id.strip()
+    if not bot_user_id.startswith("@") or ":" not in bot_user_id:
+        raise HTTPException(status_code=400, detail="Invalid Matrix user ID format (expected @user:server)")
+
+    from app.services.matrix_service import create_or_get_dm_room, send_message as matrix_send
+
+    try:
+        room_id = await create_or_get_dm_room(
+            current_user.matrix_homeserver,
+            current_user.matrix_access_token,
+            bot_user_id,
+        )
+        await matrix_send(
+            current_user.matrix_homeserver,
+            current_user.matrix_access_token,
+            room_id,
+            "Hello from Posterchanai! Your Matrix bot integration is working.",
+        )
+        return {"ok": True, "room_id": room_id}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Matrix test DM error: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+class MatrixCommandRequest(BaseModel):
+    matrix_user_id: str
+    command: str
+
+
+@router.post("/command")
+async def execute_matrix_command(
+    data: MatrixCommandRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Execute a posterchanai command on behalf of a Matrix user.
+
+    Called by the posterchan Matrix bot. Authenticated via the user's stored
+    API key in the Authorization header (Bearer token matching any active api_key).
+    """
+    from app.models import APIKey
+
+    # Authenticate via Bearer API key
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+    token = auth_header[7:].strip()
+
+    # Look up user by API key
+    api_key_obj = db.query(APIKey).filter(
+        APIKey.key == token,
+        APIKey.is_active == True,
+    ).first()
+    if not api_key_obj:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    # The sender's Matrix user ID must match a posterchanai user who has that ID linked
+    sender_matrix_id = data.matrix_user_id.strip()
+    user = db.query(User).filter(
+        User.id == api_key_obj.user_id,
+        User.matrix_enabled == True,
+        User.matrix_user_id == sender_matrix_id,
+    ).first()
+    if not user:
+        raise HTTPException(status_code=403, detail="Matrix user is not linked to this account")
+
+    command_str = data.command.strip()
+    if not command_str:
+        raise HTTPException(status_code=400, detail="Command is required")
+
+    # Parse command
+    from app.services.command_service import CommandService
+    cmd_service = CommandService(db, user=user)
+    command, arg = cmd_service.parse_command(command_str)
+
+    if not command:
+        # Not a recognized command — let the AI respond
+        from app.services.chat_service import ChatService
+        chat_svc = ChatService(db, user=user)
+        try:
+            reply = await chat_svc.chat([
+                {"role": "system", "content": chat_svc.system_prompt},
+                {"role": "user", "content": command_str},
+            ])
+        except Exception as e:
+            logger.error(f"Matrix command chat error: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=str(e))
+        return {"result": reply}
+
+    try:
+        result = await cmd_service.execute_command(command, arg)
+        content = result.get("content", "")
+        return {"result": content}
+    except Exception as e:
+        logger.error(f"Matrix command execution error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))

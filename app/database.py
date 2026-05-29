@@ -222,6 +222,7 @@ def _run_migrations():
         ("matrix_homeserver", "VARCHAR(500)"),
         ("matrix_user_id", "VARCHAR(500)"),
         ("matrix_access_token", "VARCHAR(2000)"),
+        ("matrix_dm_bot_user_id", "VARCHAR(500)"),
     ]
 
     # Add missing columns to users table

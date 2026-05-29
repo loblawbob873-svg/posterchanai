@@ -449,6 +449,34 @@ class ChatHandler {
             });
         }
 
+        const matrixTestDmBtn = document.getElementById('matrixTestDmBtn');
+        if (matrixTestDmBtn) {
+            matrixTestDmBtn.addEventListener('click', async () => {
+                const botUserId = document.getElementById('matrixDmBotUserId').value.trim();
+                const statusEl = document.getElementById('matrixDmStatus');
+                if (!botUserId) {
+                    if (statusEl) { statusEl.textContent = 'Please enter a bot user ID.'; statusEl.className = 'test-result error'; }
+                    return;
+                }
+                if (statusEl) { statusEl.textContent = 'Sending…'; statusEl.className = 'test-result'; }
+                try {
+                    const resp = await csrfFetch('/api/matrix/test-dm', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ bot_user_id: botUserId })
+                    });
+                    const data = await resp.json();
+                    if (resp.ok) {
+                        if (statusEl) { statusEl.textContent = 'DM sent! Check your Matrix client.'; statusEl.className = 'test-result success'; }
+                    } else {
+                        if (statusEl) { statusEl.textContent = data.detail || 'Failed to send DM'; statusEl.className = 'test-result error'; }
+                    }
+                } catch (e) {
+                    if (statusEl) { statusEl.textContent = 'Error: ' + e.message; statusEl.className = 'test-result error'; }
+                }
+            });
+        }
+
         // Telegram unlink button
         const unlinkTelegramBtn = document.getElementById('unlinkTelegramBtn');
         if (unlinkTelegramBtn) {
@@ -502,6 +530,10 @@ class ChatHandler {
                 // Misskey — only persist the instance URL from the form (token is managed via MiAuth)
                 const misskeyInstanceUrlEl = document.getElementById('misskeyInstanceUrl');
                 if (misskeyInstanceUrlEl) settings.misskey_instance_url = misskeyInstanceUrlEl.value.trim();
+
+                // Matrix bot settings
+                const matrixDmBotUserIdEl = document.getElementById('matrixDmBotUserId');
+                if (matrixDmBotUserIdEl) settings.matrix_dm_bot_user_id = matrixDmBotUserIdEl.value.trim();
 
                 try {
                     const response = await csrfFetch('/api/auth/settings', {
@@ -812,6 +844,8 @@ class ChatHandler {
                         if (formRow) formRow.style.display = '';
                     }
                 }
+                const matrixDmBotUserIdEl = document.getElementById('matrixDmBotUserId');
+                if (matrixDmBotUserIdEl) matrixDmBotUserIdEl.value = settings.matrix_dm_bot_user_id || '';
 
                 // News settings
                 const newsScheduleEnabled = document.getElementById('newsScheduleEnabled');

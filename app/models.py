@@ -60,6 +60,9 @@ class User(Base):
     matrix_user_id = Column(String(500), nullable=True)
     matrix_access_token = Column(String(2000), nullable=True)
 
+    # Matrix bot notification settings (posterchan bot DMs)
+    matrix_dm_bot_user_id = Column(String(500), nullable=True)  # Bot to DM via, e.g. @posterchan:server
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
