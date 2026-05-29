@@ -212,8 +212,12 @@ async def execute_matrix_command(
         _cs.num_predict = min(_cs.num_predict, 900)
         post_text = await _cs.chat([
             {"role": "system", "content": "You are a social media expert. Write a compelling post. Output ONLY the post text. No introductions or meta-commentary."},
-            {"role": "user", "content": f"Write a viral and engaging social media post based on this content. Use emojis.\n\nContent:\n{article_context}"},
+            {"role": "user", "content": f"Write a viral and engaging social media post based on this content. Use emojis. Do not use hashtags.\n\nContent:\n{article_context}"},
         ])
+        # Strip Markdown links [text](url) → plain url and remove hashtags
+        import re as _re2
+        post_text = _re2.sub(r'\[([^\]]+)\]\((https?://[^\)]+)\)', r'\2', post_text)
+        post_text = _re2.sub(r'\s*#\w+', '', post_text).strip()
         if url_arg:
             post_text = post_text.rstrip() + f"\n\n{url_arg}"
         # Save for when user replies `share` alone
