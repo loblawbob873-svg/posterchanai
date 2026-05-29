@@ -252,6 +252,58 @@ async def execute_matrix_command(
                 db.commit()
             else:
                 return {"result": "Nothing to share. Use `post <url>` first, then reply `share`."}
+        # Handle `share matrix <number>` — post pending text to a previously listed room
+        _share_lower = command_str.lower()
+        if _share_lower.startswith("share matrix"):
+            room_arg = command_str[12:].strip()
+            from app.models import UserSetting
+            _pending = db.query(UserSetting).filter(
+                UserSetting.user_id == user.id, UserSetting.key == "matrix_pending_post"
+            ).first()
+            _rooms_s = db.query(UserSetting).filter(
+                UserSetting.user_id == user.id, UserSetting.key == "matrix_pending_rooms"
+            ).first()
+            pending_text = _pending.value if _pending else share_text
+            if not pending_text:
+                return {"result": "Nothing pending to share. Use `post <url>` first."}
+            if not room_arg:
+                # No room specified — list rooms
+                if user.matrix_enabled and user.matrix_access_token and user.matrix_homeserver:
+                    from app.services.matrix_service import get_joined_rooms as _rooms
+                    rooms = await _rooms(user.matrix_homeserver, user.matrix_access_token)
+                    if rooms:
+                        import json as _json
+                        if _rooms_s:
+                            _rooms_s.value = _json.dumps(rooms)
+                        else:
+                            db.add(UserSetting(user_id=user.id, key="matrix_pending_rooms",
+                                               value=_json.dumps(rooms)))
+                        db.commit()
+                        lines = ["📬 Which Matrix room? Reply `share matrix <number>`:\n"]
+                        for i, r in enumerate(rooms[:20], 1):
+                            lines.append(f"  {i}. {r['name']}")
+                        return {"result": "\n".join(lines)}
+                    return {"result": "No Matrix rooms found."}
+                return {"result": "Matrix is not connected in User Settings."}
+            # Room number provided
+            try:
+                idx = int(room_arg) - 1
+            except ValueError:
+                return {"result": "Usage: `share matrix <number>` where number is from the room list."}
+            import json as _json
+            rooms = _json.loads(_rooms_s.value) if _rooms_s and _rooms_s.value else []
+            if not rooms or idx < 0 or idx >= len(rooms):
+                return {"result": "Invalid room number. Send `share matrix` to see the list."}
+            room_id = rooms[idx]["room_id"]
+            room_name = rooms[idx]["name"]
+            from app.services.matrix_service import send_message as _mtx_send
+            await _mtx_send(user.matrix_homeserver, user.matrix_access_token, room_id, pending_text)
+            # Clean up
+            if _pending: db.delete(_pending)
+            if _rooms_s: db.delete(_rooms_s)
+            db.commit()
+            return {"result": f"✅ Posted to Matrix room: {room_name}"}
+
         results = []
         if user.misskey_enabled and user.misskey_instance_url and user.misskey_api_token:
             try:
@@ -267,31 +319,37 @@ async def execute_matrix_command(
                 results.append("✅ Pleroma")
             except Exception as e:
                 results.append(f"❌ Pleroma: {e}")
-        # Matrix — look up the user's saved bot room from their Matrix account data
-        if user.matrix_enabled and user.matrix_homeserver and user.matrix_access_token:
+        # Matrix — show room picker instead of auto-posting
+        if user.matrix_enabled and user.matrix_access_token and user.matrix_homeserver:
             try:
-                from app.services.matrix_service import send_message as _mtx_send
-                from urllib.parse import quote as _q
-                import httpx as _httpx
-                # Get the saved bot room from account data
-                _hs = user.matrix_homeserver.rstrip("/")
-                _headers = {"Authorization": f"Bearer {user.matrix_access_token}"}
-                async with _httpx.AsyncClient(timeout=10) as _client:
-                    _whoami = await _client.get(f"{_hs}/_matrix/client/v3/account/whoami", headers=_headers)
-                    _uid = _whoami.json().get("user_id", "") if _whoami.status_code == 200 else ""
-                    _share_room = None
-                    if _uid:
-                        _acct = await _client.get(
-                            f"{_hs}/_matrix/client/v3/user/{_q(_uid, safe='')}/account_data/posterchanai.bot_room",
-                            headers=_headers,
-                        )
-                        if _acct.status_code == 200:
-                            _share_room = _acct.json().get("room_id")
-                if _share_room:
-                    await _mtx_send(user.matrix_homeserver, user.matrix_access_token, _share_room, share_text)
-                    results.append("✅ Matrix")
+                from app.services.matrix_service import get_joined_rooms as _rooms
+                import json as _json
+                from app.models import UserSetting
+                rooms = await _rooms(user.matrix_homeserver, user.matrix_access_token)
+                if rooms:
+                    _rooms_s = db.query(UserSetting).filter(
+                        UserSetting.user_id == user.id, UserSetting.key == "matrix_pending_rooms"
+                    ).first()
+                    if _rooms_s:
+                        _rooms_s.value = _json.dumps(rooms)
+                    else:
+                        db.add(UserSetting(user_id=user.id, key="matrix_pending_rooms",
+                                           value=_json.dumps(rooms)))
+                    # Save share text for when the user picks a room
+                    _ps2 = db.query(UserSetting).filter(
+                        UserSetting.user_id == user.id, UserSetting.key == "matrix_pending_post"
+                    ).first()
+                    if _ps2:
+                        _ps2.value = share_text
+                    else:
+                        db.add(UserSetting(user_id=user.id, key="matrix_pending_post", value=share_text))
+                    db.commit()
+                    lines = ["\n📬 Which Matrix room? Reply `share matrix <number>`:"]
+                    for i, r in enumerate(rooms[:20], 1):
+                        lines.append(f"  {i}. {r['name']}")
+                    results.append("\n".join(lines))
                 else:
-                    results.append("⚠️ Matrix: no room configured — use 'Send Test DM' in User Settings first")
+                    results.append("⚠️ Matrix: no rooms found")
             except Exception as e:
                 results.append(f"❌ Matrix: {e}")
         if not results:
