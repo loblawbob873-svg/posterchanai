@@ -359,6 +359,24 @@ async def execute_matrix_command(
             return {"result": "No social platforms configured. Connect Misskey, Pleroma, or Matrix in User Settings."}
         return {"result": "\n".join(results)}
 
+    # Matrix-specific help — only list commands the Matrix bot actually supports
+    if command_str.lower().strip() == "help":
+        return {"result": (
+            "🤖 *Posterchanai Matrix Bot*\n\n"
+            "• `search <query>` — web search\n"
+            "• `images <query>` — image search\n"
+            "• `news <source>` — headlines, then `share <n>` to post one\n"
+            "• `geni <prompt>` — generate an image\n"
+            "• `yt <url>` / paste a YouTube link — video options\n"
+            "• `ytdl <url>` — download audio (or `ytdl video <url>`)\n"
+            "• `torrents` — browse/search/manage torrents\n"
+            "• `nyaa <query>` — anime torrents\n"
+            "• paste a `magnet:?…` link — add torrent\n"
+            "• `translate <text> to <lang>`\n"
+            "• `post <url or text>` then `share` — post to social platforms\n"
+            "• `logs` — system logs"
+        )}
+
     # Parse command
     from app.services.command_service import CommandService
     cmd_service = CommandService(db, user=user)
@@ -419,12 +437,11 @@ async def execute_matrix_command(
                 file_bytes = f.read()
             mime = "video/mp4" if as_video else "audio/mpeg"
             fname = _os.path.basename(dl.local_path)
-            from app.services.matrix_service import send_image as _mtx_file
-            # Reuse send_image logic but with audio mime
             from urllib.parse import quote as _q
             import httpx as _hx, time as _t
             hs = user.matrix_homeserver.rstrip("/")
             headers = {"Authorization": f"Bearer {user.matrix_access_token}"}
+            mxc_uri = None
             async with _hx.AsyncClient(timeout=120.0) as client:
                 for media_url in [
                     f"{hs}/_matrix/client/v1/media/upload?filename={_q(fname)}",
@@ -435,8 +452,8 @@ async def execute_matrix_command(
                     if up.status_code in (200, 201):
                         mxc_uri = up.json().get("content_uri")
                         break
-                else:
-                    return {"result": f"❌ Media upload failed: HTTP {up.status_code}"}
+                if not mxc_uri:
+                    return {"result": "❌ Media upload failed (no content URI returned)."}
                 encoded_room = _q(data.room_id, safe="")
                 txn_id = str(int(_t.time() * 1000))
                 msg_type = "m.video" if as_video else "m.audio"
@@ -445,8 +462,11 @@ async def execute_matrix_command(
                 send_r = await client.put(
                     f"{hs}/_matrix/client/v3/rooms/{encoded_room}/send/m.room.message/{txn_id}",
                     json=payload, headers=headers)
-            title = dl.title or fname
-            return {"result": f"🎵 **{title}**\nSaved to Matrix chat."}
+                if send_r.status_code not in (200, 201):
+                    return {"result": f"❌ Failed to send to room: HTTP {send_r.status_code}"}
+            # Media already delivered to the room — return empty so the listener
+            # doesn't post a redundant text message.
+            return {"result": ""}
         except Exception as e:
             logger.error(f"Matrix ytdl error: {e}", exc_info=True)
             return {"result": f"❌ Download error: {e}"}

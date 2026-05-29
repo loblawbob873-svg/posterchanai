@@ -183,15 +183,19 @@ async def _ensure_joined(client: httpx.AsyncClient, hs: str, room_id: str, heade
 
 
 async def _is_encrypted(client: httpx.AsyncClient, hs: str, room_id: str, headers: dict) -> bool:
-    """Return True if the room is encrypted or inaccessible (both mean skip it)."""
+    """Return True only if the room definitively has m.room.encryption (HTTP 200).
+
+    A 403/404 means the state is unreadable (often just 'not joined') — NOT proof
+    of encryption. Treating those as encrypted caused duplicate rooms on transient
+    errors; instead let _ensure_joined attempt recovery on the existing room.
+    """
     from urllib.parse import quote
     encoded = quote(room_id, safe="")
     r = await client.get(
         f"{hs}/_matrix/client/v3/rooms/{encoded}/state/m.room.encryption",
         headers=headers,
     )
-    # 200 = encrypted, 403 = inaccessible — treat both as unusable
-    return r.status_code in (200, 403)
+    return r.status_code == 200
 
 
 async def create_or_get_dm_room(homeserver: str, access_token: str, bot_user_id: str) -> str:
