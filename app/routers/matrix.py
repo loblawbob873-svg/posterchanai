@@ -3,6 +3,7 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -140,6 +141,7 @@ async def send_test_dm(
 class MatrixCommandRequest(BaseModel):
     matrix_user_id: str
     command: str
+    room_id: Optional[str] = None
 
 
 @router.post("/command")
@@ -375,6 +377,82 @@ async def execute_matrix_command(
             logger.error(f"Matrix command chat error: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=str(e))
         return {"result": reply}
+
+    # ytdl: download and send audio/video directly to the Matrix room
+    if command == "ytdl" and data.room_id and user.matrix_enabled and user.matrix_access_token:
+        from app.services.youtube_service import (
+            check_ytdlp_available, download_as_mp3, download_as_video, extract_download_urls
+        )
+        import tempfile, os as _os, asyncio as _aio
+        if not check_ytdlp_available():
+            return {"result": "❌ yt-dlp not installed on the server."}
+        parts = arg.strip().split(maxsplit=1)
+        first = parts[0].lower() if parts else ""
+        if first == "video":
+            url_arg = parts[1] if len(parts) > 1 else ""
+            as_video = True
+        elif first == "mp3":
+            url_arg = parts[1] if len(parts) > 1 else ""
+            as_video = False
+        else:
+            url_arg = arg
+            as_video = False
+        urls = extract_download_urls(url_arg)
+        if not urls:
+            return {"result": "❌ Could not find a valid YouTube URL."}
+        from app.models import Setting as _Setting
+        _cookies_s = db.query(_Setting).filter(_Setting.key == "ytdl_cookies_path").first()
+        _cookies_path = str(_cookies_s.value).strip() if _cookies_s and _cookies_s.value else None
+        if _cookies_path and not _os.path.isfile(_cookies_path):
+            _cookies_path = None
+        _ssl_s = db.query(_Setting).filter(_Setting.key == "ytdl_no_ssl_verify").first()
+        _no_ssl = str(_ssl_s.value).strip().lower() in ("true","1","yes") if _ssl_s and _ssl_s.value else False
+        tmp = tempfile.mkdtemp(prefix="matrix_ytdl_")
+        try:
+            if as_video:
+                dl = await _aio.to_thread(download_as_video, urls[0], tmp, "best", _cookies_path, _no_ssl)
+            else:
+                dl = await _aio.to_thread(download_as_mp3, urls[0], tmp, _cookies_path, _no_ssl)
+            if not dl.success:
+                return {"result": f"❌ Download failed: {dl.error}"}
+            with open(dl.local_path, "rb") as f:
+                file_bytes = f.read()
+            mime = "video/mp4" if as_video else "audio/mpeg"
+            fname = _os.path.basename(dl.local_path)
+            from app.services.matrix_service import send_image as _mtx_file
+            # Reuse send_image logic but with audio mime
+            from urllib.parse import quote as _q
+            import httpx as _hx, time as _t
+            hs = user.matrix_homeserver.rstrip("/")
+            headers = {"Authorization": f"Bearer {user.matrix_access_token}"}
+            async with _hx.AsyncClient(timeout=120.0) as client:
+                for media_url in [
+                    f"{hs}/_matrix/client/v1/media/upload?filename={_q(fname)}",
+                    f"{hs}/_matrix/media/v3/upload?filename={_q(fname)}",
+                ]:
+                    up = await client.post(media_url, content=file_bytes,
+                                           headers={**headers, "Content-Type": mime})
+                    if up.status_code in (200, 201):
+                        mxc_uri = up.json().get("content_uri")
+                        break
+                else:
+                    return {"result": f"❌ Media upload failed: HTTP {up.status_code}"}
+                encoded_room = _q(data.room_id, safe="")
+                txn_id = str(int(_t.time() * 1000))
+                msg_type = "m.video" if as_video else "m.audio"
+                payload = {"msgtype": msg_type, "body": fname, "url": mxc_uri,
+                           "info": {"mimetype": mime, "size": len(file_bytes)}}
+                send_r = await client.put(
+                    f"{hs}/_matrix/client/v3/rooms/{encoded_room}/send/m.room.message/{txn_id}",
+                    json=payload, headers=headers)
+            title = dl.title or fname
+            return {"result": f"🎵 **{title}**\nSaved to Matrix chat."}
+        except Exception as e:
+            logger.error(f"Matrix ytdl error: {e}", exc_info=True)
+            return {"result": f"❌ Download error: {e}"}
+        finally:
+            import shutil
+            shutil.rmtree(tmp, ignore_errors=True)
 
     try:
         result = await cmd_service.execute_command(command, arg)
