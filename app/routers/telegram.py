@@ -1301,7 +1301,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                         "content": (
                             f"Write a {tone} social media post based on this content. "
                             f"Be detailed — include key facts, context, and why it matters. "
-                            f"Use emojis and relevant hashtags. Stop after the last hashtag.\n\n"
+                            f"Use emojis.\n\n"
                             f"Content:\n{article_context}"
                         )
                     }
@@ -2614,7 +2614,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                             from app.services.chat_service import ChatService
                             chat_service = ChatService(db, user=cb_user)
                             messages = [
-                                {"role": "system", "content": "Generate a short, engaging social media post (under 280 characters) for this news article. Include relevant hashtags."},
+                                {"role": "system", "content": "Generate a short, engaging social media post (under 280 characters) for this news article. Use emojis but no hashtags."},
                                 {"role": "user", "content": f"Title: {title}\nURL: {url}\n\nGenerate a social media post."}
                             ]
                             post_text = await chat_service.chat(messages)
@@ -2765,7 +2765,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                                 "content": (
                                     "Write a viral and engaging social media post based on this content. "
                                     "Be detailed — include key facts, context, and why it matters. "
-                                    "Use emojis and relevant hashtags. Stop after the last hashtag.\n\n"
+                                    "Use emojis.\n\n"
                                     f"Content:\n{article_context}"
                                 )
                             }
@@ -2841,7 +2841,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                                 "content": (
                                     "Write a viral and engaging social media post for this YouTube video. "
                                     "Be detailed — include key facts, context, and why it matters. "
-                                    "Use emojis and relevant hashtags. Stop after the last hashtag.\n\n"
+                                    "Use emojis.\n\n"
                                     f"Content:\n{video_context}"
                                 )
                             }
@@ -3022,7 +3022,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                                 "content": (
                                     "Write a viral and engaging social media post based on this news article. "
                                     "Be detailed — include key facts, context, and why it matters. "
-                                    "Use emojis and relevant hashtags. Stop after the last hashtag.\n\n"
+                                    "Use emojis.\n\n"
                                     f"Content:\n{article_context}"
                                 )
                             }
