@@ -217,6 +217,11 @@ def _run_migrations():
         ("pleroma_enabled", "BOOLEAN DEFAULT 0"),
         ("pleroma_instance_url", "VARCHAR(500)"),
         ("pleroma_access_token", "VARCHAR(500)"),
+        # Matrix columns
+        ("matrix_enabled", "BOOLEAN DEFAULT 0"),
+        ("matrix_homeserver", "VARCHAR(500)"),
+        ("matrix_user_id", "VARCHAR(500)"),
+        ("matrix_access_token", "VARCHAR(2000)"),
     ]
 
     # Add missing columns to users table
