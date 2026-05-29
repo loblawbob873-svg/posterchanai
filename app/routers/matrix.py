@@ -190,6 +190,35 @@ async def execute_matrix_command(
     if not command_str:
         raise HTTPException(status_code=400, detail="Command is required")
 
+    # Handle `post <url>` — generate a social media post and return the text
+    import re as _re
+    _post_match = _re.match(r'^post\s+(https?://\S+)', command_str, _re.IGNORECASE)
+    if _post_match or command_str.lower() == "post":
+        url_arg = _post_match.group(1) if _post_match else ""
+        from app.services.chat_service import ChatService as _CS
+        from app.services.search_service import SearchService as _SS
+        _cs = _CS(db, user=user)
+        article_context = url_arg
+        if url_arg:
+            try:
+                import asyncio as _aio
+                fetched = await _aio.wait_for(_SS(db).fetch_urls([url_arg], max_urls=1), timeout=15)
+                if fetched and fetched[0].get("content") and not fetched[0].get("error"):
+                    article_context = f"Title: {fetched[0].get('title','')}\n\n{fetched[0]['content'][:3000]}"
+            except Exception:
+                pass
+        if not article_context:
+            return {"result": "Usage: `post <url>` — provide a URL to generate a social media post from."}
+        _cs.num_predict = min(_cs.num_predict, 900)
+        post_text = await _cs.chat([
+            {"role": "system", "content": "You are a social media expert. Write a compelling post. Output ONLY the post text. No introductions or meta-commentary."},
+            {"role": "user", "content": f"Write a viral and engaging social media post based on this content. Use emojis.\n\nContent:\n{article_context}"},
+        ])
+        if url_arg:
+            post_text = post_text.rstrip() + f"\n\n{url_arg}"
+        suffix = "\n\n---\nReply `share` to post this to your social platforms."
+        return {"result": post_text + suffix}
+
     # Parse command
     from app.services.command_service import CommandService
     cmd_service = CommandService(db, user=user)
