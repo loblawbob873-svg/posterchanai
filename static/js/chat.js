@@ -395,6 +395,60 @@ class ChatHandler {
             });
         }
 
+        // Matrix connect / disconnect buttons
+        const matrixConnectBtn = document.getElementById('matrixConnectBtn');
+        const matrixDisconnectBtn = document.getElementById('matrixDisconnectBtn');
+        if (matrixConnectBtn) {
+            matrixConnectBtn.addEventListener('click', async () => {
+                const homeserver = document.getElementById('matrixHomeserver').value.trim();
+                const username = document.getElementById('matrixUsername').value.trim();
+                const password = document.getElementById('matrixPassword').value;
+                const statusEl = document.getElementById('matrixStatus');
+                if (!homeserver) {
+                    if (statusEl) { statusEl.textContent = 'Please enter your homeserver URL.'; statusEl.className = 'test-result error'; }
+                    return;
+                }
+                if (!username || !password) {
+                    if (statusEl) { statusEl.textContent = 'Please enter your username and password.'; statusEl.className = 'test-result error'; }
+                    return;
+                }
+                if (statusEl) { statusEl.textContent = 'Connecting…'; statusEl.className = 'test-result'; }
+                try {
+                    const resp = await csrfFetch('/api/matrix/connect', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ homeserver, username, password })
+                    });
+                    const data = await resp.json();
+                    if (!resp.ok) {
+                        if (statusEl) { statusEl.textContent = data.detail || 'Connection failed'; statusEl.className = 'test-result error'; }
+                        return;
+                    }
+                    document.getElementById('matrixPassword').value = '';
+                    if (statusEl) { statusEl.textContent = 'Connected!'; statusEl.className = 'test-result success'; }
+                    await this.loadUserSettings();
+                } catch (e) {
+                    if (statusEl) { statusEl.textContent = 'Error: ' + e.message; statusEl.className = 'test-result error'; }
+                }
+            });
+        }
+        if (matrixDisconnectBtn) {
+            matrixDisconnectBtn.addEventListener('click', async () => {
+                if (!confirm('Disconnect your Matrix account?')) return;
+                try {
+                    const resp = await csrfFetch('/api/matrix/disconnect', { method: 'POST' });
+                    if (resp.ok) {
+                        await this.loadUserSettings();
+                    } else {
+                        const d = await resp.json();
+                        alert(d.detail || 'Failed to disconnect');
+                    }
+                } catch (e) {
+                    alert('Error: ' + e.message);
+                }
+            });
+        }
+
         // Telegram unlink button
         const unlinkTelegramBtn = document.getElementById('unlinkTelegramBtn');
         if (unlinkTelegramBtn) {
@@ -728,6 +782,35 @@ class ChatHandler {
                     if (pleromaConnectBtnEl) pleromaConnectBtnEl.style.display = 'inline-block';
                     if (pleromaDisconnectBtnEl) pleromaDisconnectBtnEl.style.display = 'none';
                     if (pleromaConnectedInfo) pleromaConnectedInfo.style.display = 'none';
+                }
+
+                // Matrix
+                const matrixHomeserverEl = document.getElementById('matrixHomeserver');
+                const matrixConnectBtnEl = document.getElementById('matrixConnectBtn');
+                const matrixDisconnectBtnEl = document.getElementById('matrixDisconnectBtn');
+                const matrixConnectedInfo = document.getElementById('matrixConnectedInfo');
+                const matrixConnectedMsg = document.getElementById('matrixConnectedMsg');
+                const matrixLoginSection = document.getElementById('matrixLoginSection');
+                if (matrixHomeserverEl) matrixHomeserverEl.value = settings.matrix_homeserver || '';
+                if (settings.matrix_enabled && settings.matrix_has_access_token) {
+                    if (matrixConnectBtnEl) matrixConnectBtnEl.style.display = 'none';
+                    if (matrixDisconnectBtnEl) matrixDisconnectBtnEl.style.display = 'inline-block';
+                    if (matrixConnectedInfo) matrixConnectedInfo.style.display = 'block';
+                    if (matrixConnectedMsg) matrixConnectedMsg.textContent = `Connected as ${settings.matrix_user_id || settings.matrix_homeserver}`;
+                    if (matrixLoginSection) {
+                        const usernameEl = matrixLoginSection.querySelector('#matrixUsername');
+                        const passwordEl = matrixLoginSection.querySelector('#matrixPassword');
+                        if (usernameEl) usernameEl.style.display = 'none';
+                        if (passwordEl) passwordEl.closest('.form-row') && (passwordEl.closest('.form-row').style.display = 'none');
+                    }
+                } else {
+                    if (matrixConnectBtnEl) matrixConnectBtnEl.style.display = 'inline-block';
+                    if (matrixDisconnectBtnEl) matrixDisconnectBtnEl.style.display = 'none';
+                    if (matrixConnectedInfo) matrixConnectedInfo.style.display = 'none';
+                    if (matrixLoginSection) {
+                        const formRow = matrixLoginSection.querySelector('.form-row');
+                        if (formRow) formRow.style.display = '';
+                    }
                 }
 
                 // News settings

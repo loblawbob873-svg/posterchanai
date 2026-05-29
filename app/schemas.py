@@ -425,6 +425,9 @@ class UserSettingsUpdate(BaseModel):
     # Pleroma settings (read-only via /api/pleroma/connect; exposed here for display)
     pleroma_enabled: Optional[bool] = None
     pleroma_instance_url: Optional[str] = None
+    # Matrix settings
+    matrix_enabled: Optional[bool] = None
+    matrix_homeserver: Optional[str] = None
 
 
 class UserSettingsResponse(BaseModel):
@@ -460,6 +463,11 @@ class UserSettingsResponse(BaseModel):
     pleroma_enabled: bool = False
     pleroma_instance_url: Optional[str] = None
     pleroma_has_access_token: bool = False
+    # Matrix settings
+    matrix_enabled: bool = False
+    matrix_homeserver: Optional[str] = None
+    matrix_user_id: Optional[str] = None
+    matrix_has_access_token: bool = False
 
 
 class TestConnectionRequest(BaseModel):

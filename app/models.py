@@ -54,6 +54,12 @@ class User(Base):
     pleroma_instance_url = Column(String(500), nullable=True)
     pleroma_access_token = Column(String(500), nullable=True)
 
+    # Matrix integration settings
+    matrix_enabled = Column(Boolean, default=False)
+    matrix_homeserver = Column(String(500), nullable=True)
+    matrix_user_id = Column(String(500), nullable=True)
+    matrix_access_token = Column(String(2000), nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")

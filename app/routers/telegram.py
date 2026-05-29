@@ -890,6 +890,10 @@ _MAX_SEEN_IDS = 500  # Keep a bounded window; Telegram won't replay further back
 _misskey_post_cache: dict = {}
 # Pending Pleroma posts: chat_id → post_text
 _pleroma_post_cache: dict = {}
+# Pending Matrix posts: chat_id → post_text
+_matrix_post_cache: dict = {}
+# Matrix room selection cache: chat_id → list of {"room_id": str, "name": str}
+_matrix_room_cache: dict = {}
 # Pending link actions: chat_id → url (cleared once action is chosen)
 _link_action_cache: dict = {}
 
@@ -913,11 +917,21 @@ def _has_pleroma(user) -> bool:
     )
 
 
+def _has_matrix(user) -> bool:
+    return bool(
+        user
+        and getattr(user, "matrix_enabled", False)
+        and getattr(user, "matrix_homeserver", None)
+        and getattr(user, "matrix_access_token", None)
+    )
+
+
 async def _offer_social_post(chat_id: str, post_text: str, user, telegram_svc, prompt: str = "📣 *Post this?*"):
     """Show the generated post and offer to share it on configured social platforms."""
     buttons = []
     has_mk = _has_misskey(user)
     has_plr = _has_pleroma(user)
+    has_mtx = _has_matrix(user)
 
     if has_mk:
         _misskey_post_cache[chat_id] = post_text
@@ -925,6 +939,9 @@ async def _offer_social_post(chat_id: str, post_text: str, user, telegram_svc, p
     if has_plr:
         _pleroma_post_cache[chat_id] = post_text
         buttons.append({"text": "📣 Pleroma", "callback_data": "plr:post"})
+    if has_mtx:
+        _matrix_post_cache[chat_id] = post_text
+        buttons.append({"text": "📣 Matrix", "callback_data": "mtx:post"})
 
     if buttons:
         buttons.append({"text": "❌ Skip", "callback_data": "mk:skip"})
@@ -1724,7 +1741,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                         result = await command_service.execute_command(command, arg)
                         content = _strip_cmd_links(result.get("content", ""))
 
-                        has_social = _has_misskey(user_obj) or _has_pleroma(user_obj)
+                        has_social = _has_misskey(user_obj) or _has_pleroma(user_obj) or _has_matrix(user_obj)
 
                         articles = _split_news_into_articles(content)
                         if articles:
@@ -1795,7 +1812,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                             {"text": "🎬 Movie",    "callback_data": "yt:video"},
                         ]
                     ]
-                    if _has_misskey(_yt_user_for_social) or _has_pleroma(_yt_user_for_social):
+                    if _has_misskey(_yt_user_for_social) or _has_pleroma(_yt_user_for_social) or _has_matrix(_yt_user_for_social):
                         yt_keyboard.append([
                             {"text": "📣 Post", "callback_data": "yt:post"}
                         ])
@@ -2467,7 +2484,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     content = _strip_cmd_links(result.get("content", ""))
                     
                     # Parse articles and add buttons
-                    has_social = _has_misskey(cb_user) or _has_pleroma(cb_user)
+                    has_social = _has_misskey(cb_user) or _has_pleroma(cb_user) or _has_matrix(cb_user)
 
                     articles = _split_news_into_articles(content)
                     if articles:
@@ -2509,7 +2526,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                             result = await cb_command_service.execute_command("news", source_name)
                             content = _strip_cmd_links(result.get("content", ""))
 
-                            has_social = _has_misskey(cb_user) or _has_pleroma(cb_user)
+                            has_social = _has_misskey(cb_user) or _has_pleroma(cb_user) or _has_matrix(cb_user)
 
                             articles = _split_news_into_articles(content)
                             if articles:
@@ -2963,8 +2980,8 @@ async def _handle_telegram_update(update: dict, db: Session):
                         User.telegram_enabled == True
                     ).first()
 
-                    if not nk_user or (not _has_misskey(nk_user) and not _has_pleroma(nk_user)):
-                        await telegram_service.send_message(chat_id, "⚠️ No social platform (Misskey or Pleroma) configured on your account.")
+                    if not nk_user or (not _has_misskey(nk_user) and not _has_pleroma(nk_user) and not _has_matrix(nk_user)):
+                        await telegram_service.send_message(chat_id, "⚠️ No social platform (Misskey, Pleroma, or Matrix) configured on your account.")
                         return {"ok": True}
 
                     await telegram_service.send_message(chat_id, f"⏳ Generating social media post for: {title}")
@@ -3004,19 +3021,21 @@ async def _handle_telegram_update(update: dict, db: Session):
 
             elif data.startswith("mk:"):
                 action = data.split(":", 1)[1]
-                pending_post = _misskey_post_cache.pop(chat_id, None)
 
-                if action == "skip" or pending_post is None:
-                    # Also clear any pending Pleroma post so it can't be posted stale later.
+                if action == "skip":
+                    # Clear all social post caches so stale posts can't be sent
+                    _misskey_post_cache.pop(chat_id, None)
                     _pleroma_post_cache.pop(chat_id, None)
-                    if pending_post is None:
-                        await telegram_service.send_message(chat_id, "No pending post found.")
-                    else:
-                        await telegram_service.send_message(chat_id, "Post skipped.")
+                    _matrix_post_cache.pop(chat_id, None)
+                    _matrix_room_cache.pop(chat_id, None)
+                    await telegram_service.send_message(chat_id, "Post skipped.")
                     return {"ok": True}
 
                 # action == "post"
-                _pleroma_post_cache.pop(chat_id, None)
+                pending_post = _misskey_post_cache.pop(chat_id, None)
+                if pending_post is None:
+                    await telegram_service.send_message(chat_id, "No pending Misskey post found.")
+                    return {"ok": True}
 
                 mk_user = db.query(User).filter(
                     User.telegram_chat_id == chat_id,
@@ -3046,17 +3065,21 @@ async def _handle_telegram_update(update: dict, db: Session):
 
             elif data.startswith("plr:"):
                 action = data.split(":", 1)[1]
-                pending_post = _pleroma_post_cache.pop(chat_id, None)
-                _misskey_post_cache.pop(chat_id, None)
 
-                if action == "skip" or pending_post is None:
-                    if pending_post is None:
-                        await telegram_service.send_message(chat_id, "No pending Pleroma post found.")
-                    else:
-                        await telegram_service.send_message(chat_id, "Post skipped.")
+                if action == "skip":
+                    _misskey_post_cache.pop(chat_id, None)
+                    _pleroma_post_cache.pop(chat_id, None)
+                    _matrix_post_cache.pop(chat_id, None)
+                    _matrix_room_cache.pop(chat_id, None)
+                    await telegram_service.send_message(chat_id, "Post skipped.")
                     return {"ok": True}
 
                 # action == "post"
+                pending_post = _pleroma_post_cache.pop(chat_id, None)
+                if pending_post is None:
+                    await telegram_service.send_message(chat_id, "No pending Pleroma post found.")
+                    return {"ok": True}
+
                 plr_user = db.query(User).filter(
                     User.telegram_chat_id == chat_id,
                     User.telegram_enabled == True
@@ -3077,6 +3100,106 @@ async def _handle_telegram_update(update: dict, db: Session):
                 except Exception as plr_err:
                     logger.error(f"Pleroma post error: {plr_err}", exc_info=True)
                     await telegram_service.send_message(chat_id, f"❌ Failed to post to Pleroma: {plr_err}")
+
+            elif data.startswith("mtx:"):
+                # Matrix post flow:
+                # mtx:post   → fetch rooms, show room selector
+                # mtx:room:N → send to room N (index into _matrix_room_cache[chat_id])
+                parts = data.split(":", 2)
+                action = parts[1] if len(parts) > 1 else ""
+
+                mtx_user = db.query(User).filter(
+                    User.telegram_chat_id == chat_id,
+                    User.telegram_enabled == True
+                ).first()
+
+                if action == "post":
+                    pending_post = _matrix_post_cache.get(chat_id)
+                    if not pending_post:
+                        await telegram_service.send_message(chat_id, "No pending Matrix post found.")
+                        return {"ok": True}
+
+                    if not mtx_user or not _has_matrix(mtx_user):
+                        await telegram_service.send_message(chat_id, "Matrix is not configured on your account.")
+                        return {"ok": True}
+
+                    # Fetch rooms
+                    try:
+                        from app.services.matrix_service import get_joined_rooms as _mtx_rooms
+                        rooms = await _mtx_rooms(mtx_user.matrix_homeserver, mtx_user.matrix_access_token)
+                    except Exception as mtx_err:
+                        logger.error(f"Matrix fetch rooms error: {mtx_err}", exc_info=True)
+                        await telegram_service.send_message(chat_id, f"❌ Could not fetch Matrix rooms: {mtx_err}")
+                        return {"ok": True}
+
+                    if not rooms:
+                        await telegram_service.send_message(chat_id, "⚠️ No Matrix rooms found. Join a room first.")
+                        return {"ok": True}
+
+                    _matrix_room_cache[chat_id] = rooms
+
+                    # Build room selector keyboard (up to 20 rooms, 2 per row)
+                    buttons = []
+                    row: list = []
+                    for i, room in enumerate(rooms[:20]):
+                        label = room["name"][:30]
+                        row.append({"text": label, "callback_data": f"mtx:room:{i}"})
+                        if len(row) == 2:
+                            buttons.append(row)
+                            row = []
+                    if row:
+                        buttons.append(row)
+                    buttons.append([{"text": "❌ Cancel", "callback_data": "mtx:cancel"}])
+
+                    await telegram_service.send_message(
+                        chat_id,
+                        "📬 Which Matrix room do you want to post to?",
+                        reply_markup={"inline_keyboard": buttons},
+                    )
+
+                elif action == "room" and len(parts) >= 3:
+                    try:
+                        room_idx = int(parts[2])
+                    except ValueError:
+                        return {"ok": True}
+
+                    # Pop only the matrix caches — leave Misskey/Pleroma caches intact
+                    # so the user can still post to those platforms after choosing a Matrix room
+                    pending_post = _matrix_post_cache.pop(chat_id, None)
+                    rooms = _matrix_room_cache.pop(chat_id, [])
+
+                    if not pending_post:
+                        await telegram_service.send_message(chat_id, "No pending Matrix post found.")
+                        return {"ok": True}
+
+                    if not rooms or room_idx >= len(rooms):
+                        await telegram_service.send_message(chat_id, "Room not found. Please try again.")
+                        return {"ok": True}
+
+                    if not mtx_user or not _has_matrix(mtx_user):
+                        await telegram_service.send_message(chat_id, "Matrix is not configured on your account.")
+                        return {"ok": True}
+
+                    room = rooms[room_idx]
+                    try:
+                        from app.services.matrix_service import send_message as _mtx_send
+                        await _mtx_send(
+                            mtx_user.matrix_homeserver,
+                            mtx_user.matrix_access_token,
+                            room["room_id"],
+                            pending_post,
+                        )
+                        await telegram_service.send_message(chat_id, f"✅ Posted to Matrix room: {room['name']}")
+                    except Exception as mtx_err:
+                        logger.error(f"Matrix send error: {mtx_err}", exc_info=True)
+                        await telegram_service.send_message(chat_id, f"❌ Failed to post to Matrix: {mtx_err}")
+
+                elif action == "cancel":
+                    _matrix_post_cache.pop(chat_id, None)
+                    _matrix_room_cache.pop(chat_id, None)
+                    _misskey_post_cache.pop(chat_id, None)
+                    _pleroma_post_cache.pop(chat_id, None)
+                    await telegram_service.send_message(chat_id, "Post cancelled.")
 
             return {"ok": True}
 

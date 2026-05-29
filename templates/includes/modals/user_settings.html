@@ -14,6 +14,7 @@
                 <button class="user-tab-btn" data-tab="telegram">Telegram</button>
                 <button class="user-tab-btn" data-tab="misskey">Misskey</button>
                 <button class="user-tab-btn" data-tab="pleroma">Pleroma</button>
+                <button class="user-tab-btn" data-tab="matrix">Matrix</button>
                 <button class="user-tab-btn" data-tab="apikeys">API Keys</button>
             </div>
 
@@ -288,6 +289,45 @@ My name: John Smith"></textarea>
 
                         <div class="form-group" id="pleromaConnectedInfo" style="display: none;">
                             <div class="settings-status success" id="pleromaConnectedMsg"></div>
+                        </div>
+                    </fieldset>
+                </div>
+
+                <!-- Matrix Tab -->
+                <div class="user-tab-content" id="user-tab-matrix">
+                    <fieldset>
+                        <legend>Matrix Integration</legend>
+                        <p class="fieldset-info">Connect to a Matrix homeserver to post messages directly from the Telegram bot's <code>post</code> command. You will be prompted to choose a room when posting.</p>
+
+                        <div class="form-group">
+                            <label for="matrixHomeserver">Homeserver URL</label>
+                            <input type="url" id="matrixHomeserver" placeholder="https://matrix.org">
+                            <small>The URL of your Matrix homeserver</small>
+                        </div>
+
+                        <div id="matrixLoginSection">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="matrixUsername">Username</label>
+                                    <input type="text" id="matrixUsername" placeholder="@you:matrix.org">
+                                </div>
+                                <div class="form-group">
+                                    <label for="matrixPassword">Password</label>
+                                    <input type="password" id="matrixPassword" placeholder="••••••••">
+                                </div>
+                            </div>
+                            <div class="form-group" id="matrixAuthSection">
+                                <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                                    <button type="button" class="btn-primary" id="matrixConnectBtn">Connect</button>
+                                    <button type="button" class="btn-danger" id="matrixDisconnectBtn" style="display: none;">Disconnect</button>
+                                </div>
+                                <div id="matrixStatus" class="test-result" style="margin-top: 8px;"></div>
+                                <small>Your password is used only to obtain an access token and is never stored.</small>
+                            </div>
+                        </div>
+
+                        <div class="form-group" id="matrixConnectedInfo" style="display: none;">
+                            <div class="settings-status success" id="matrixConnectedMsg"></div>
                         </div>
                     </fieldset>
                 </div>
