@@ -3153,7 +3153,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                 if pending_post is None:
                     _msg_text = (callback_query.get("message") or {}).get("text", "")
                     if _msg_text:
-                        for _suffix in ("\n\n📣 *Post this?*", "\n\n📣 Post this?", "\n\n📣 *Share this image?*", "\n\n📣 *Share this?*"):
+                        for _suffix in ("\n\n📣 *Post this?*", "\n\n📣 Post this?", "\n\n📣 *Share this image?*", "\n\n📣 Share this image?", "\n\n📣 *Share this?*", "\n\n📣 Share this?"):
                             if _suffix in _msg_text:
                                 _msg_text = _msg_text[:_msg_text.rfind(_suffix)]
                                 break
@@ -3210,7 +3210,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                 if pending_post is None:
                     _msg_text = (callback_query.get("message") or {}).get("text", "")
                     if _msg_text:
-                        for _suffix in ("\n\n📣 *Post this?*", "\n\n📣 Post this?", "\n\n📣 *Share this image?*", "\n\n📣 *Share this?*"):
+                        for _suffix in ("\n\n📣 *Post this?*", "\n\n📣 Post this?", "\n\n📣 *Share this image?*", "\n\n📣 Share this image?", "\n\n📣 *Share this?*", "\n\n📣 Share this?"):
                             if _suffix in _msg_text:
                                 _msg_text = _msg_text[:_msg_text.rfind(_suffix)]
                                 break
@@ -3261,7 +3261,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                         _msg_text = (callback_query.get("message") or {}).get("text", "")
                         if _msg_text:
                             # Strip the prompt suffix appended by _offer_social_post
-                            for _suffix in ("\n\n📣 *Post this?*", "\n\n📣 Post this?", "\n\n📣 *Share this image?*", "\n\n📣 *Share this?*"):
+                            for _suffix in ("\n\n📣 *Post this?*", "\n\n📣 Post this?", "\n\n📣 *Share this image?*", "\n\n📣 Share this image?", "\n\n📣 *Share this?*", "\n\n📣 Share this?"):
                                 if _suffix in _msg_text:
                                     _msg_text = _msg_text[:_msg_text.rfind(_suffix)]
                                     break
@@ -3378,7 +3378,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                 # Recover post text from message if caches were lost (e.g. service restart)
                 def _recover_post_text() -> str:
                     _msg_text = (callback_query.get("message") or {}).get("text", "")
-                    for _suffix in ("\n\n📣 *Post this?*", "\n\n📣 Post this?", "\n\n📣 *Share this image?*", "\n\n📣 *Share this?*"):
+                    for _suffix in ("\n\n📣 *Post this?*", "\n\n📣 Post this?", "\n\n📣 *Share this image?*", "\n\n📣 Share this image?", "\n\n📣 *Share this?*", "\n\n📣 Share this?"):
                         if _suffix in _msg_text:
                             _msg_text = _msg_text[:_msg_text.rfind(_suffix)]
                             break
