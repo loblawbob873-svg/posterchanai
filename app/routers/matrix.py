@@ -273,12 +273,27 @@ async def execute_matrix_command(
         content = _re2.sub(r'\n{3,}', '\n\n', content).strip()
 
         # Add text-based follow-up hints for interactive commands
-        _hints = {
-            "torrents": "\n\n---\nTo download: `torrents download <category> <number>`",
-            "nyaa": "\n\n---\nTo download: `nyaa download <number>`",
-            "news": "\n\n---\nTo post an article: `post <article url>`",
-        }
-        hint = _hints.get(command, "")
+        hint = ""
+        if command == "torrents":
+            arg_lower = arg.strip().lower().split()[0] if arg.strip() else ""
+            if arg_lower in ("list", "ls"):
+                hint = "\n\n---\n`torrents pause <n>` · `torrents resume <n>` · `torrents rm <n>`"
+            elif arg_lower in ("movies", "tv", "anime", "music"):
+                hint = f"\n\n---\n`torrents download {arg_lower} <number>` to download"
+            elif arg_lower in ("search", "s"):
+                hint = "\n\n---\n`torrents download search <number>` to download"
+            elif arg_lower in ("pause", "resume", "rm", "download"):
+                pass  # action already taken, no hint needed
+            elif not arg_lower:
+                hint = "\n\n---\nCategories: `torrents movies` · `torrents tv` · `torrents anime` · `torrents music`\nSearch: `torrents search <query>` · Downloads: `torrents list`"
+        elif command == "nyaa":
+            arg_lower = arg.strip().lower().split()[0] if arg.strip() else ""
+            if arg_lower != "download":
+                hint = "\n\n---\n`nyaa download <number>` to download"
+        elif command == "news":
+            hint = "\n\n---\nTo post an article: `post <article url>`"
+        elif command == "4chan":
+            hint = "\n\n---\nTo view a thread: `4chan <board> <thread_id>`"
         return {"result": content + hint}
     except Exception as e:
         logger.error(f"Matrix command execution error: {e}", exc_info=True)
