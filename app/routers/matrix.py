@@ -150,34 +150,41 @@ async def execute_matrix_command(
 ):
     """Execute a posterchanai command on behalf of a Matrix user.
 
-    Called by the posterchan Matrix bot. Authenticated via the user's stored
-    API key in the Authorization header (Bearer token matching any active api_key).
+    Called by the posterchan Matrix bot. Looks up the posterchanai account
+    linked to the sender's Matrix user ID. Optionally authenticated via a
+    Bearer API key for additional security when the key is configured.
     """
     from app.models import APIKey
 
-    # Authenticate via Bearer API key
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
-    token = auth_header[7:].strip()
-
-    # Look up user by API key
-    api_key_obj = db.query(APIKey).filter(
-        APIKey.key == token,
-        APIKey.is_active == True,
-    ).first()
-    if not api_key_obj:
-        raise HTTPException(status_code=401, detail="Invalid API key")
-
-    # The sender's Matrix user ID must match a posterchanai user who has that ID linked
     sender_matrix_id = data.matrix_user_id.strip()
-    user = db.query(User).filter(
-        User.id == api_key_obj.user_id,
-        User.matrix_enabled == True,
-        User.matrix_user_id == sender_matrix_id,
-    ).first()
-    if not user:
-        raise HTTPException(status_code=403, detail="Matrix user is not linked to this account")
+    if not sender_matrix_id:
+        raise HTTPException(status_code=400, detail="matrix_user_id is required")
+
+    # Optional Bearer API key — if provided, the key's owner must match the linked Matrix user
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:].strip()
+        api_key_obj = db.query(APIKey).filter(
+            APIKey.key == token,
+            APIKey.is_active == True,
+        ).first()
+        if not api_key_obj:
+            raise HTTPException(status_code=401, detail="Invalid API key")
+        user = db.query(User).filter(
+            User.id == api_key_obj.user_id,
+            User.matrix_enabled == True,
+            User.matrix_user_id == sender_matrix_id,
+        ).first()
+        if not user:
+            raise HTTPException(status_code=403, detail="Matrix user is not linked to this account")
+    else:
+        # No API key — look up directly by linked Matrix user ID
+        user = db.query(User).filter(
+            User.matrix_enabled == True,
+            User.matrix_user_id == sender_matrix_id,
+        ).first()
+        if not user:
+            raise HTTPException(status_code=403, detail="Matrix user is not linked to any account")
 
     command_str = data.command.strip()
     if not command_str:
