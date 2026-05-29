@@ -153,14 +153,21 @@ async def send_image(homeserver: str, access_token: str, room_id: str,
         encoded_room = quote(room_id, safe="")
         txn_id = str(int(time.time() * 1000))
         send_url = f"{hs}/_matrix/client/v3/rooms/{encoded_room}/send/m.room.message/{txn_id}"
+        _info = {"mimetype": mime, "size": len(image_bytes)}
+        # Pixel dimensions — Matrix clients (Element) need w/h to render inline
+        # instead of showing a download attachment.
+        try:
+            from PIL import Image as _PILImage
+            from io import BytesIO as _BytesIO
+            with _PILImage.open(_BytesIO(image_bytes)) as _im:
+                _info["w"], _info["h"] = _im.width, _im.height
+        except Exception as _dim_err:
+            logger.debug(f"Could not read image dimensions: {_dim_err}")
         payload = {
             "msgtype": "m.image",
-            "body": caption or "image.png",
+            "body": filename,
             "url": mxc_uri,
-            "info": {
-                "mimetype": mime,
-                "size": len(image_bytes),
-            },
+            "info": _info,
         }
         # If there's a caption send it as a separate text message after the image
         resp = await client.put(send_url, json=payload, headers=headers_auth)
@@ -168,7 +175,7 @@ async def send_image(homeserver: str, access_token: str, room_id: str,
             raise ValueError(f"Failed to send Matrix image: HTTP {resp.status_code} — {resp.text[:200]}")
 
         # Send caption as a follow-up text message if provided
-        if caption and caption != "image.png":
+        if caption:
             txn_id2 = str(int(time.time() * 1000) + 1)
             send_url2 = f"{hs}/_matrix/client/v3/rooms/{encoded_room}/send/m.room.message/{txn_id2}"
             await client.put(send_url2, json={"msgtype": "m.text", "body": caption}, headers=headers_auth)
