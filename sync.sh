@@ -32,4 +32,8 @@ git fetch origin
 git reset --hard origin/master
 _wait_gpu_free nas /tmp/posterchanai_locks/gpu.lock
 sudo systemctl restart posterchanai
+cd ~/posterchan
+git fetch origin
+git reset --hard origin/master
+sudo systemctl restart posterchan
 "
