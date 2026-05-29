@@ -228,6 +228,26 @@ async def create_or_get_dm_room(homeserver: str, access_token: str, bot_user_id:
                             return saved_room
                     logger.info(f"Saved bot room {saved_room} is encrypted or unjoinable, creating new one")
 
+        # Fetch the bot's avatar so the room shows it
+        bot_avatar_mxc = ""
+        try:
+            prof = await client.get(
+                f"{hs}/_matrix/client/v3/profile/{quote(bot_user_id, safe='')}",
+                headers=headers,
+            )
+            if prof.status_code == 200:
+                bot_avatar_mxc = prof.json().get("avatar_url", "") or ""
+        except Exception as e:
+            logger.debug(f"Could not fetch bot avatar: {e}")
+
+        initial_state = []
+        if bot_avatar_mxc:
+            initial_state.append({
+                "type": "m.room.avatar",
+                "state_key": "",
+                "content": {"url": bot_avatar_mxc},
+            })
+
         # Create a new private room without is_direct so clients don't auto-enable E2EE
         logger.info(f"Creating new unencrypted bot room with {bot_user_id}")
         resp = await client.post(
@@ -236,7 +256,7 @@ async def create_or_get_dm_room(homeserver: str, access_token: str, bot_user_id:
                 "name": "Posterchanai Bot",
                 "invite": [bot_user_id],
                 "preset": "private_chat",
-                "initial_state": [],  # No m.room.encryption state = unencrypted
+                "initial_state": initial_state,  # avatar; no m.room.encryption = unencrypted
             },
             headers=headers,
         )
