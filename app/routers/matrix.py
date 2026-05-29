@@ -219,6 +219,30 @@ async def execute_matrix_command(
         suffix = "\n\n---\nReply `share` to post this to your social platforms."
         return {"result": post_text + suffix}
 
+    # Handle `share <text>` — post text directly to all configured social platforms
+    if command_str.lower().startswith("share"):
+        share_text = command_str[5:].strip()
+        if not share_text:
+            return {"result": "Usage: `share <post text>` — posts the text to all your configured social platforms."}
+        results = []
+        if user.misskey_enabled and user.misskey_instance_url and user.misskey_api_token:
+            try:
+                from app.services.misskey_service import post_note as _mk
+                await _mk(user.misskey_instance_url, user.misskey_api_token, share_text)
+                results.append("✅ Misskey")
+            except Exception as e:
+                results.append(f"❌ Misskey: {e}")
+        if user.pleroma_enabled and user.pleroma_instance_url and user.pleroma_access_token:
+            try:
+                from app.services.pleroma_service import post_status as _plr
+                await _plr(user.pleroma_instance_url, user.pleroma_access_token, share_text)
+                results.append("✅ Pleroma")
+            except Exception as e:
+                results.append(f"❌ Pleroma: {e}")
+        if not results:
+            return {"result": "No social platforms configured. Connect Misskey or Pleroma in User Settings."}
+        return {"result": "\n".join(results)}
+
     # Parse command
     from app.services.command_service import CommandService
     cmd_service = CommandService(db, user=user)
@@ -241,7 +265,21 @@ async def execute_matrix_command(
     try:
         result = await cmd_service.execute_command(command, arg)
         content = result.get("content", "")
-        return {"result": content}
+
+        # Strip non-functional cmd: and magnet: links from command output
+        import re as _re2
+        content = _re2.sub(r'\[([^\]]+)\]\(cmd:[^\)]+\)', r'\1', content)
+        content = _re2.sub(r'\[([^\]]+)\]\(magnet:[^\)]+\)', '', content)
+        content = _re2.sub(r'\n{3,}', '\n\n', content).strip()
+
+        # Add text-based follow-up hints for interactive commands
+        _hints = {
+            "torrents": "\n\n---\nTo download: `torrents download <category> <number>`",
+            "nyaa": "\n\n---\nTo download: `nyaa download <number>`",
+            "news": "\n\n---\nTo post an article: `post <article url>`",
+        }
+        hint = _hints.get(command, "")
+        return {"result": content + hint}
     except Exception as e:
         logger.error(f"Matrix command execution error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
