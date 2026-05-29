@@ -81,7 +81,7 @@ async def list_rooms(
     current_user: User = Depends(get_current_user),
 ):
     """Return the list of Matrix rooms the user has joined."""
-    if not current_user.matrix_enabled or not current_user.matrix_access_token:
+    if not current_user.matrix_enabled or not current_user.matrix_access_token or not current_user.matrix_homeserver:
         raise HTTPException(status_code=400, detail="Matrix is not connected")
 
     from app.services.matrix_service import get_joined_rooms

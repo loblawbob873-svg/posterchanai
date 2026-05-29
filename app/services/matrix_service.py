@@ -23,7 +23,7 @@ async def login(homeserver: str, username: str, password: str) -> dict:
     }
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         resp = await client.post(url, json=payload)
-        if resp.status_code == 403:
+        if resp.status_code in (401, 403):
             raise ValueError("Invalid username or password")
         if resp.status_code != 200:
             raise ValueError(f"Login failed: HTTP {resp.status_code} — {resp.text[:200]}")
@@ -57,10 +57,12 @@ async def get_joined_rooms(homeserver: str, access_token: str) -> list[dict]:
             raise ValueError(f"Failed to list rooms: HTTP {resp.status_code}")
         room_ids: list[str] = resp.json().get("joined_rooms", [])
 
-        rooms = []
-        for room_id in room_ids[:30]:  # cap at 30 rooms
-            name = await _room_display_name(client, hs, room_id, headers)
-            rooms.append({"room_id": room_id, "name": name})
+        import asyncio
+        capped = room_ids[:30]
+        names = await asyncio.gather(
+            *[_room_display_name(client, hs, rid, headers) for rid in capped]
+        )
+        rooms = [{"room_id": rid, "name": name} for rid, name in zip(capped, names)]
     return rooms
 
 

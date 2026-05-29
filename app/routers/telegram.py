@@ -894,6 +894,8 @@ _pleroma_post_cache: dict = {}
 _matrix_post_cache: dict = {}
 # Matrix room selection cache: chat_id → list of {"room_id": str, "name": str}
 _matrix_room_cache: dict = {}
+# Sentinel stored in a cache after all:post consumes it, prevents double-post from old buttons
+_CONSUMED = "__consumed__"
 # Pending link actions: chat_id → url (cleared once action is chosen)
 _link_action_cache: dict = {}
 
@@ -3048,6 +3050,9 @@ async def _handle_telegram_update(update: dict, db: Session):
 
                 # action == "post"
                 pending_post = _misskey_post_cache.pop(chat_id, None)
+                if pending_post == _CONSUMED:
+                    await telegram_service.send_message(chat_id, "Already posted via 'Post to All'.")
+                    return {"ok": True}
                 if pending_post is None:
                     _msg_text = (callback_query.get("message") or {}).get("text", "")
                     if _msg_text:
@@ -3099,6 +3104,9 @@ async def _handle_telegram_update(update: dict, db: Session):
 
                 # action == "post"
                 pending_post = _pleroma_post_cache.pop(chat_id, None)
+                if pending_post == _CONSUMED:
+                    await telegram_service.send_message(chat_id, "Already posted via 'Post to All'.")
+                    return {"ok": True}
                 if pending_post is None:
                     _msg_text = (callback_query.get("message") or {}).get("text", "")
                     if _msg_text:
@@ -3216,7 +3224,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                         await telegram_service.send_message(chat_id, "No pending Matrix post found.")
                         return {"ok": True}
 
-                    if not rooms or room_idx >= len(rooms):
+                    if not rooms or room_idx < 0 or room_idx >= len(rooms):
                         await telegram_service.send_message(chat_id, "Room not found. Please try again.")
                         return {"ok": True}
 
@@ -3263,6 +3271,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     return _msg_text.strip()
 
                 results = []
+                matrix_attempted = False
 
                 # Misskey
                 mk_post = _misskey_post_cache.pop(chat_id, None) or _recover_post_text()
@@ -3274,6 +3283,8 @@ async def _handle_telegram_update(update: dict, db: Session):
                     except Exception as _e:
                         logger.error(f"all:post Misskey error: {_e}", exc_info=True)
                         results.append(f"❌ Misskey: {_e}")
+                    # Sentinel prevents old Misskey button from double-posting
+                    _misskey_post_cache[chat_id] = _CONSUMED
 
                 # Pleroma
                 plr_post = _pleroma_post_cache.pop(chat_id, None) or _recover_post_text()
@@ -3285,18 +3296,23 @@ async def _handle_telegram_update(update: dict, db: Session):
                     except Exception as _e:
                         logger.error(f"all:post Pleroma error: {_e}", exc_info=True)
                         results.append(f"❌ Pleroma: {_e}")
+                    # Sentinel prevents old Pleroma button from double-posting
+                    _pleroma_post_cache[chat_id] = _CONSUMED
 
                 if results:
                     await telegram_service.send_message(chat_id, "\n".join(results))
 
                 # Matrix — needs room selection; show picker if configured
                 mtx_post = _matrix_post_cache.get(chat_id) or _recover_post_text()
-                if mtx_post and all_user and _has_matrix(all_user):
+                if mtx_post and mtx_post != _CONSUMED and all_user and _has_matrix(all_user):
+                    matrix_attempted = True
                     try:
                         from app.services.matrix_service import get_joined_rooms as _mtx_rooms
                         rooms = await _mtx_rooms(all_user.matrix_homeserver, all_user.matrix_access_token)
                         if rooms:
                             _matrix_room_cache[chat_id] = rooms
+                            if mtx_post != _matrix_post_cache.get(chat_id):
+                                _matrix_post_cache[chat_id] = mtx_post
                             btns = []
                             row: list = []
                             for i, room in enumerate(rooms[:20]):
@@ -3319,8 +3335,8 @@ async def _handle_telegram_update(update: dict, db: Session):
                         logger.error(f"all:post Matrix rooms error: {_e}", exc_info=True)
                         _matrix_post_cache.pop(chat_id, None)
                         await telegram_service.send_message(chat_id, f"❌ Matrix room fetch failed: {_e}")
-                elif not results:
-                    # Nothing was posted and Matrix not configured
+
+                if not results and not matrix_attempted:
                     await telegram_service.send_message(chat_id, "No social platforms configured.")
 
             return {"ok": True}
