@@ -216,14 +216,36 @@ async def execute_matrix_command(
         ])
         if url_arg:
             post_text = post_text.rstrip() + f"\n\n{url_arg}"
-        suffix = "\n\n---\nReply `share` to post this to your social platforms."
+        # Save for when user replies `share` alone
+        from app.models import UserSetting
+        _ps = db.query(UserSetting).filter(
+            UserSetting.user_id == user.id,
+            UserSetting.key == "matrix_pending_post",
+        ).first()
+        if _ps:
+            _ps.value = post_text
+        else:
+            db.add(UserSetting(user_id=user.id, key="matrix_pending_post", value=post_text))
+        db.commit()
+        suffix = "\n\n---\nReply `share` to post this to your configured social platforms."
         return {"result": post_text + suffix}
 
-    # Handle `share <text>` — post text directly to all configured social platforms
+    # Handle `share` / `share <text>` — post text to all configured social platforms
     if command_str.lower().startswith("share"):
         share_text = command_str[5:].strip()
+        # No text provided — try to retrieve the pending post from the last `post` command
         if not share_text:
-            return {"result": "Usage: `share <post text>` — posts the text to all your configured social platforms."}
+            from app.models import UserSetting
+            pending = db.query(UserSetting).filter(
+                UserSetting.user_id == user.id,
+                UserSetting.key == "matrix_pending_post",
+            ).first()
+            if pending and pending.value:
+                share_text = pending.value
+                db.delete(pending)
+                db.commit()
+            else:
+                return {"result": "Nothing to share. Use `post <url>` first, then reply `share`."}
         results = []
         if user.misskey_enabled and user.misskey_instance_url and user.misskey_api_token:
             try:
