@@ -1278,6 +1278,28 @@ async def _handle_telegram_update(update: dict, db: Session):
                 source_text = reply_text or url_to_append or text
                 logger.info(f"post command: url={url_to_append!r}, source_text={source_text[:80] if source_text else ''}...")
 
+                # If the reply contains a photo but no URL, share the image directly
+                # instead of generating an AI post with no real content
+                _rt_photos = (reply_to or {}).get("photo", []) or message.get("photo", [])
+                if not url_to_append and _rt_photos:
+                    _rt_file_id = _rt_photos[-1].get("file_id")
+                    if _rt_file_id:
+                        _rt_fr = await telegram_service.get_file(_rt_file_id)
+                        if _rt_fr and _rt_fr.get("ok"):
+                            _rt_fp = _rt_fr.get("result", {}).get("file_path")
+                            if _rt_fp:
+                                _rt_data = await telegram_service.download_file(_rt_fp)
+                                if _rt_data:
+                                    _share_caption = arg.strip() or reply_text or "Image"
+                                    _geni_image_cache[chat_id] = _rt_data
+                                    _tg_user_share = db.query(User).filter(
+                                        User.telegram_chat_id == chat_id,
+                                        User.telegram_enabled == True
+                                    ).first()
+                                    await _offer_social_post(chat_id, _share_caption, _tg_user_share,
+                                                             telegram_service, prompt="📣 *Share this image?*")
+                                    return {"ok": True}
+
                 # Fetch URL content if available
                 article_context = source_text
                 if url_to_append:
