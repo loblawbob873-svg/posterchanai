@@ -97,6 +97,12 @@ async def upload_media(instance_url: str, access_token: str, image_bytes: bytes,
                 return media_id
         elif resp.status_code == 404:
             continue
+        elif resp.status_code in (401, 403):
+            raise ValueError(
+                "Pleroma returned 403 Insufficient permissions. "
+                "Your token was issued without write:media scope. "
+                "Please go to User Settings → Pleroma, disconnect, and reconnect to get a new token."
+            )
         elif resp.status_code == 422:
             raise ValueError(f"Pleroma rejected media (422): {resp.text[:300]}")
         else:

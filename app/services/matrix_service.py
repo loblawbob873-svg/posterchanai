@@ -129,7 +129,7 @@ async def send_image(homeserver: str, access_token: str, room_id: str,
                 content=image_bytes,
                 headers={**headers_auth, "Content-Type": mime},
             )
-            if upload_resp.status_code == 200:
+            if upload_resp.status_code in (200, 201):
                 mxc_uri = upload_resp.json().get("content_uri")
                 break
         else:
@@ -199,12 +199,19 @@ async def create_or_get_dm_room(homeserver: str, access_token: str, bot_user_id:
                         return candidate
                     logger.debug(f"Skipping DM room {candidate} — join failed, trying next")
 
-        # No usable existing room — create one
+        # No usable existing room — create one (explicitly unencrypted so the bot can read it)
         resp = await client.post(
             f"{hs}/_matrix/client/v3/createRoom",
-            json={"invite": [bot_user_id], "is_direct": True, "preset": "trusted_private_chat"},
+            json={
+                "invite": [bot_user_id],
+                "is_direct": True,
+                "preset": "trusted_private_chat",
+                "initial_state": [
+                    # Omit m.room.encryption so the room stays unencrypted
+                ],
+            },
             headers=headers,
         )
-        if resp.status_code != 200:
+        if resp.status_code not in (200, 201):
             raise ValueError(f"Failed to create DM room: HTTP {resp.status_code} — {resp.text[:200]}")
         return resp.json()["room_id"]

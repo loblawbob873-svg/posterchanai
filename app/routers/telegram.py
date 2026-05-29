@@ -3166,7 +3166,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     await telegram_service.send_message(chat_id, "Misskey is not configured on your account.")
                     return {"ok": True}
 
-                _mk_image = _geni_image_cache.pop(chat_id, None)
+                _mk_image = _geni_image_cache.get(chat_id)  # .get so other platforms can still use it
                 try:
                     from app.services.misskey_service import post_note as _misskey_post_note
                     await _misskey_post_note(
@@ -3188,6 +3188,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     _pleroma_post_cache.pop(chat_id, None)
                     _matrix_post_cache.pop(chat_id, None)
                     _matrix_room_cache.pop(chat_id, None)
+                    _geni_image_cache.pop(chat_id, None)
                     await telegram_service.send_message(chat_id, "Post skipped.")
                     return {"ok": True}
 
@@ -3217,7 +3218,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     await telegram_service.send_message(chat_id, "Pleroma is not configured on your account.")
                     return {"ok": True}
 
-                _plr_image = _geni_image_cache.pop(chat_id, None)
+                _plr_image = _geni_image_cache.get(chat_id)  # .get so other platforms can still use it
                 try:
                     from app.services.pleroma_service import post_status as _pleroma_post_status
                     await _pleroma_post_status(
@@ -3376,7 +3377,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                 results = []
                 matrix_attempted = False
 
-                _all_image = _geni_image_cache.pop(chat_id, None)
+                _all_image = _geni_image_cache.get(chat_id)  # leave in cache for Matrix room-picker step
 
                 # Misskey
                 mk_post = _misskey_post_cache.pop(chat_id, None) or _recover_post_text()
