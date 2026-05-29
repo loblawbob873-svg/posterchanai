@@ -3166,12 +3166,14 @@ async def _handle_telegram_update(update: dict, db: Session):
                     await telegram_service.send_message(chat_id, "Misskey is not configured on your account.")
                     return {"ok": True}
 
+                _mk_image = _geni_image_cache.pop(chat_id, None)
                 try:
                     from app.services.misskey_service import post_note as _misskey_post_note
                     await _misskey_post_note(
                         mk_user.misskey_instance_url,
                         mk_user.misskey_api_token,
                         pending_post,
+                        image_bytes=_mk_image,
                     )
                     await telegram_service.send_message(chat_id, "✅ Posted to Misskey!")
                 except Exception as mk_err:
@@ -3215,12 +3217,14 @@ async def _handle_telegram_update(update: dict, db: Session):
                     await telegram_service.send_message(chat_id, "Pleroma is not configured on your account.")
                     return {"ok": True}
 
+                _plr_image = _geni_image_cache.pop(chat_id, None)
                 try:
                     from app.services.pleroma_service import post_status as _pleroma_post_status
                     await _pleroma_post_status(
                         plr_user.pleroma_instance_url,
                         plr_user.pleroma_access_token,
                         pending_post,
+                        image_bytes=_plr_image,
                     )
                     await telegram_service.send_message(chat_id, "✅ Posted to Pleroma!")
                 except Exception as plr_err:
@@ -3372,12 +3376,15 @@ async def _handle_telegram_update(update: dict, db: Session):
                 results = []
                 matrix_attempted = False
 
+                _all_image = _geni_image_cache.pop(chat_id, None)
+
                 # Misskey
                 mk_post = _misskey_post_cache.pop(chat_id, None) or _recover_post_text()
                 if mk_post and all_user and _has_misskey(all_user):
                     try:
                         from app.services.misskey_service import post_note as _mk_note
-                        await _mk_note(all_user.misskey_instance_url, all_user.misskey_api_token, mk_post)
+                        await _mk_note(all_user.misskey_instance_url, all_user.misskey_api_token, mk_post,
+                                       image_bytes=_all_image)
                         results.append("✅ Misskey")
                     except Exception as _e:
                         logger.error(f"all:post Misskey error: {_e}", exc_info=True)
@@ -3390,7 +3397,8 @@ async def _handle_telegram_update(update: dict, db: Session):
                 if plr_post and all_user and _has_pleroma(all_user):
                     try:
                         from app.services.pleroma_service import post_status as _plr_status
-                        await _plr_status(all_user.pleroma_instance_url, all_user.pleroma_access_token, plr_post)
+                        await _plr_status(all_user.pleroma_instance_url, all_user.pleroma_access_token, plr_post,
+                                          image_bytes=_all_image)
                         results.append("✅ Pleroma")
                     except Exception as _e:
                         logger.error(f"all:post Pleroma error: {_e}", exc_info=True)

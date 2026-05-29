@@ -129,12 +129,23 @@ async def send_image(homeserver: str, access_token: str, room_id: str,
         send_url = f"{hs}/_matrix/client/v3/rooms/{encoded_room}/send/m.room.message/{txn_id}"
         payload = {
             "msgtype": "m.image",
-            "body": caption or "image",
+            "body": caption or "image.png",
             "url": mxc_uri,
+            "info": {
+                "mimetype": mime,
+                "size": len(image_bytes),
+            },
         }
+        # If there's a caption send it as a separate text message after the image
         resp = await client.put(send_url, json=payload, headers=headers_auth)
         if resp.status_code not in (200, 201):
             raise ValueError(f"Failed to send Matrix image: HTTP {resp.status_code} — {resp.text[:200]}")
+
+        # Send caption as a follow-up text message if provided
+        if caption and caption != "image.png":
+            txn_id2 = str(int(time.time() * 1000) + 1)
+            send_url2 = f"{hs}/_matrix/client/v3/rooms/{encoded_room}/send/m.room.message/{txn_id2}"
+            await client.put(send_url2, json={"msgtype": "m.text", "body": caption}, headers=headers_auth)
 
 
 async def _ensure_joined(client: httpx.AsyncClient, hs: str, room_id: str, headers: dict) -> bool:
