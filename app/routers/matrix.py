@@ -298,7 +298,11 @@ async def execute_matrix_command(
                 return {"result": "Usage: `share matrix <number>` where number is from the room list."}
             import json as _json
             rooms = _json.loads(_rooms_s.value) if _rooms_s and _rooms_s.value else []
-            if not rooms or idx < 0 or idx >= len(rooms):
+            # No pending room list at all → signal "Nothing pending" so the caller can
+            # fall back to other interpretations (e.g. a news-article number).
+            if not rooms:
+                return {"result": "Nothing pending to share. Use `post <url>` first, then `share` to see room picker."}
+            if idx < 0 or idx >= len(rooms):
                 return {"result": "Invalid room number. Send `share matrix` to see the list."}
             room_id = rooms[idx]["room_id"]
             room_name = rooms[idx]["name"]
@@ -392,6 +396,8 @@ async def execute_matrix_command(
         import re as _re_url
         _bare = command_str.strip()
         if _re_url.match(r'^https?://\S+$', _bare):
+            # Bare URL → fetch and summarize. Do NOT fall through to plain chat on
+            # failure: the model would hallucinate a summary of a page it never read.
             try:
                 from app.services.search_service import SearchService as _SS
                 import asyncio as _aio
@@ -402,10 +408,11 @@ async def execute_matrix_command(
                         {"role": "system", "content": "You are a concise summarizer. Output only the summary."},
                         {"role": "user", "content": f"Summarize this page in detail:\n\n{ctx}"},
                     ])
-                    return {"result": reply}
+                    return {"result": reply or "Could not summarize the page (empty response)."}
+                return {"result": "Could not fetch that page — it may be blocking automated access or be unreachable."}
             except Exception as e:
                 logger.warning(f"Matrix link summary fetch failed: {e}")
-            # fall through to plain chat if fetch failed
+                return {"result": "Could not fetch that page (timed out or unreachable)."}
         try:
             reply = await chat_svc.chat([
                 {"role": "system", "content": chat_svc.system_prompt},
