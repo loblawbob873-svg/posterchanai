@@ -97,6 +97,46 @@ async def send_message(homeserver: str, access_token: str, room_id: str, text: s
             raise ValueError(f"Failed to send Matrix message: HTTP {resp.status_code} — {resp.text[:200]}")
 
 
+async def send_image(homeserver: str, access_token: str, room_id: str,
+                     image_bytes: bytes, caption: str = "", mime: str = "image/png") -> None:
+    """Upload image bytes to Matrix media and send as m.image in a room."""
+    hs = homeserver.rstrip("/")
+    from urllib.parse import quote
+    headers_auth = {"Authorization": f"Bearer {access_token}"}
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        # Upload media — try v1 endpoint first, fall back to legacy
+        for media_url in [
+            f"{hs}/_matrix/client/v1/media/upload?filename=image.png",
+            f"{hs}/_matrix/media/v3/upload?filename=image.png",
+        ]:
+            upload_resp = await client.post(
+                media_url,
+                content=image_bytes,
+                headers={**headers_auth, "Content-Type": mime},
+            )
+            if upload_resp.status_code == 200:
+                mxc_uri = upload_resp.json().get("content_uri")
+                break
+        else:
+            raise ValueError(f"Media upload failed: HTTP {upload_resp.status_code} — {upload_resp.text[:200]}")
+
+        if not mxc_uri:
+            raise ValueError("Media upload returned no content_uri")
+
+        encoded_room = quote(room_id, safe="")
+        txn_id = str(int(time.time() * 1000))
+        send_url = f"{hs}/_matrix/client/v3/rooms/{encoded_room}/send/m.room.message/{txn_id}"
+        payload = {
+            "msgtype": "m.image",
+            "body": caption or "image",
+            "url": mxc_uri,
+        }
+        resp = await client.put(send_url, json=payload, headers=headers_auth)
+        if resp.status_code not in (200, 201):
+            raise ValueError(f"Failed to send Matrix image: HTTP {resp.status_code} — {resp.text[:200]}")
+
+
 async def _ensure_joined(client: httpx.AsyncClient, hs: str, room_id: str, headers: dict) -> bool:
     """Join a room if not already a member. Returns True if joined/already joined."""
     from urllib.parse import quote

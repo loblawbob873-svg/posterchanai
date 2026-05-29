@@ -896,6 +896,8 @@ _matrix_post_cache: dict = {}
 _matrix_room_cache: dict = {}
 # Sentinel stored in a cache after all:post consumes it, prevents double-post from old buttons
 _CONSUMED = "__consumed__"
+# Generated image bytes cache: chat_id → bytes (cleared with other share caches)
+_geni_image_cache: dict = {}
 # Pending link actions: chat_id → url (cleared once action is chosen)
 _link_action_cache: dict = {}
 
@@ -1809,15 +1811,25 @@ async def _handle_telegram_update(update: dict, db: Session):
                         # Build share text
                         final_share_text = share_text or "(image)"
 
-                        # Try to upload image to platforms that support it
-                        share_image_bytes = None
-                        share_image_name = "image.jpg"
+                        # Store image bytes so Matrix can send the actual image
                         if has_images and attachments:
                             for _fn, _fd, _ct in attachments:
                                 if _ct.startswith("image/"):
-                                    share_image_bytes = _fd
-                                    share_image_name = _fn
+                                    _geni_image_cache[chat_id] = _fd
                                     break
+                        # Also check replied-to message for a photo
+                        if not _geni_image_cache.get(chat_id) and reply_to:
+                            _rt_photos = reply_to.get("photo", [])
+                            if _rt_photos:
+                                _rt_file_id = _rt_photos[-1].get("file_id")
+                                if _rt_file_id:
+                                    _rt_fr = await telegram_service.get_file(_rt_file_id)
+                                    if _rt_fr and _rt_fr.get("ok"):
+                                        _rt_fp = _rt_fr.get("result", {}).get("file_path")
+                                        if _rt_fp:
+                                            _rt_data = await telegram_service.download_file(_rt_fp)
+                                            if _rt_data:
+                                                _geni_image_cache[chat_id] = _rt_data
 
                         await _offer_social_post(chat_id, final_share_text, _share_user, telegram_service,
                                                   prompt="📣 *Share this?*")
@@ -2241,24 +2253,16 @@ async def _handle_telegram_update(update: dict, db: Session):
                     ).first()
                     if _geni_user and (_has_misskey(_geni_user) or _has_pleroma(_geni_user) or _has_matrix(_geni_user)):
                         _geni_caption = response_content or "Generated image"
-                        _matrix_post_cache[chat_id] = _geni_caption
+                        # Store image bytes so Matrix (and future platforms) can send the actual image
+                        _geni_image_cache[chat_id] = image_data
+                        # Store caption in platform caches using the same offer-post format so
+                        # message-text recovery strips the suffix correctly on restart
                         _misskey_post_cache[chat_id] = _geni_caption
                         _pleroma_post_cache[chat_id] = _geni_caption
-                        _share_buttons: list = []
-                        if _has_misskey(_geni_user):
-                            _share_buttons.append({"text": "📣 Misskey", "callback_data": "mk:post"})
-                        if _has_pleroma(_geni_user):
-                            _share_buttons.append({"text": "📣 Pleroma", "callback_data": "plr:post"})
-                        if _has_matrix(_geni_user):
-                            _share_buttons.append({"text": "📣 Matrix", "callback_data": "mtx:post"})
-                        if len(_share_buttons) >= 2:
-                            _share_buttons_rows = [_share_buttons, [{"text": "🚀 Post to All", "callback_data": "all:post"}, {"text": "❌ Skip", "callback_data": "mk:skip"}]]
-                        else:
-                            _share_buttons_rows = [_share_buttons + [{"text": "❌ Skip", "callback_data": "mk:skip"}]]
-                        await telegram_service.send_message(
-                            chat_id,
-                            "📣 Share this image to social platforms?",
-                            reply_markup={"inline_keyboard": _share_buttons_rows},
+                        _matrix_post_cache[chat_id] = _geni_caption
+                        await _offer_social_post(
+                            chat_id, _geni_caption, _geni_user, telegram_service,
+                            prompt="📣 *Share this image?*"
                         )
             elif response_type == "search":
                 # Send AI summary, then append top result links
@@ -3105,6 +3109,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     _pleroma_post_cache.pop(chat_id, None)
                     _matrix_post_cache.pop(chat_id, None)
                     _matrix_room_cache.pop(chat_id, None)
+                    _geni_image_cache.pop(chat_id, None)
                     await telegram_service.send_message(chat_id, "Post skipped.")
                     return {"ok": True}
 
@@ -3116,7 +3121,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                 if pending_post is None:
                     _msg_text = (callback_query.get("message") or {}).get("text", "")
                     if _msg_text:
-                        for _suffix in ("\n\n📣 *Post this?*", "\n\n📣 Post this?"):
+                        for _suffix in ("\n\n📣 *Post this?*", "\n\n📣 Post this?", "\n\n📣 *Share this image?*", "\n\n📣 *Share this?*"):
                             if _suffix in _msg_text:
                                 _msg_text = _msg_text[:_msg_text.rfind(_suffix)]
                                 break
@@ -3170,7 +3175,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                 if pending_post is None:
                     _msg_text = (callback_query.get("message") or {}).get("text", "")
                     if _msg_text:
-                        for _suffix in ("\n\n📣 *Post this?*", "\n\n📣 Post this?"):
+                        for _suffix in ("\n\n📣 *Post this?*", "\n\n📣 Post this?", "\n\n📣 *Share this image?*", "\n\n📣 *Share this?*"):
                             if _suffix in _msg_text:
                                 _msg_text = _msg_text[:_msg_text.rfind(_suffix)]
                                 break
@@ -3219,7 +3224,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                         _msg_text = (callback_query.get("message") or {}).get("text", "")
                         if _msg_text:
                             # Strip the prompt suffix appended by _offer_social_post
-                            for _suffix in ("\n\n📣 *Post this?*", "\n\n📣 Post this?"):
+                            for _suffix in ("\n\n📣 *Post this?*", "\n\n📣 Post this?", "\n\n📣 *Share this image?*", "\n\n📣 *Share this?*"):
                                 if _suffix in _msg_text:
                                     _msg_text = _msg_text[:_msg_text.rfind(_suffix)]
                                     break
@@ -3293,14 +3298,25 @@ async def _handle_telegram_update(update: dict, db: Session):
                         return {"ok": True}
 
                     room = rooms[room_idx]
+                    image_bytes = _geni_image_cache.pop(chat_id, None)
                     try:
-                        from app.services.matrix_service import send_message as _mtx_send
-                        await _mtx_send(
-                            mtx_user.matrix_homeserver,
-                            mtx_user.matrix_access_token,
-                            room["room_id"],
-                            pending_post,
-                        )
+                        if image_bytes:
+                            from app.services.matrix_service import send_image as _mtx_send_img
+                            await _mtx_send_img(
+                                mtx_user.matrix_homeserver,
+                                mtx_user.matrix_access_token,
+                                room["room_id"],
+                                image_bytes,
+                                caption=pending_post,
+                            )
+                        else:
+                            from app.services.matrix_service import send_message as _mtx_send
+                            await _mtx_send(
+                                mtx_user.matrix_homeserver,
+                                mtx_user.matrix_access_token,
+                                room["room_id"],
+                                pending_post,
+                            )
                         await telegram_service.send_message(chat_id, f"✅ Posted to Matrix room: {room['name']}")
                     except Exception as mtx_err:
                         logger.error(f"Matrix send error: {mtx_err}", exc_info=True)
@@ -3311,6 +3327,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     _matrix_room_cache.pop(chat_id, None)
                     _misskey_post_cache.pop(chat_id, None)
                     _pleroma_post_cache.pop(chat_id, None)
+                    _geni_image_cache.pop(chat_id, None)
                     await telegram_service.send_message(chat_id, "Post cancelled.")
 
             elif data == "all:post":
@@ -3324,7 +3341,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                 # Recover post text from message if caches were lost (e.g. service restart)
                 def _recover_post_text() -> str:
                     _msg_text = (callback_query.get("message") or {}).get("text", "")
-                    for _suffix in ("\n\n📣 *Post this?*", "\n\n📣 Post this?"):
+                    for _suffix in ("\n\n📣 *Post this?*", "\n\n📣 Post this?", "\n\n📣 *Share this image?*", "\n\n📣 *Share this?*"):
                         if _suffix in _msg_text:
                             _msg_text = _msg_text[:_msg_text.rfind(_suffix)]
                             break
