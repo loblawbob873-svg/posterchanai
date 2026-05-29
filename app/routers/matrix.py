@@ -190,10 +190,10 @@ async def execute_matrix_command(
     if not command_str:
         raise HTTPException(status_code=400, detail="Command is required")
 
-    # Handle `post <url>` — generate a social media post and return the text
+    # Handle `post` / `post <url>` — generate a social media post and return the text
     import re as _re
     _post_match = _re.match(r'^post\s+(https?://\S+)', command_str, _re.IGNORECASE)
-    if _post_match or command_str.lower() == "post":
+    if command_str.lower() == "post" or _re.match(r'^post\b', command_str, _re.IGNORECASE):
         url_arg = _post_match.group(1) if _post_match else ""
         from app.services.chat_service import ChatService as _CS
         from app.services.search_service import SearchService as _SS
