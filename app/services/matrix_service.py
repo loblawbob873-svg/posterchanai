@@ -182,12 +182,22 @@ async def _ensure_joined(client: httpx.AsyncClient, hs: str, room_id: str, heade
     return r.status_code in (200, 201)
 
 
-async def create_or_get_dm_room(homeserver: str, access_token: str, bot_user_id: str) -> str:
-    """Return a DM room ID with bot_user_id, creating one if needed.
+async def _is_encrypted(client: httpx.AsyncClient, hs: str, room_id: str, headers: dict) -> bool:
+    """Return True if the room has the m.room.encryption state event (E2EE enabled)."""
+    from urllib.parse import quote
+    encoded = quote(room_id, safe="")
+    r = await client.get(
+        f"{hs}/_matrix/client/v3/rooms/{encoded}/state/m.room.encryption",
+        headers=headers,
+    )
+    return r.status_code == 200
 
-    Checks m.direct account data for an existing room and ensures the user
-    is a joined member before returning it. Falls through to createRoom if
-    no usable room exists (user left, was kicked, or none recorded).
+
+async def create_or_get_dm_room(homeserver: str, access_token: str, bot_user_id: str) -> str:
+    """Return an unencrypted DM room ID with bot_user_id, creating one if needed.
+
+    Iterates m.direct candidates, skipping any that are encrypted or unjoinable.
+    Always creates a new room if no suitable unencrypted room is found.
     """
     from urllib.parse import quote
     hs = homeserver.rstrip("/")
@@ -205,22 +215,26 @@ async def create_or_get_dm_room(homeserver: str, access_token: str, bot_user_id:
             )
             if dm_r.status_code == 200:
                 for candidate in dm_r.json().get(bot_user_id, []):
-                    # Ensure we're a joined member — join is a no-op if already in
+                    # Skip encrypted rooms — bot cannot read or reply in E2EE rooms
+                    if await _is_encrypted(client, hs, candidate, headers):
+                        logger.info(f"Skipping encrypted DM room {candidate}")
+                        continue
+                    # Ensure we're a joined member
                     joined = await _ensure_joined(client, hs, candidate, headers)
                     if joined:
+                        logger.info(f"Using existing unencrypted DM room {candidate}")
                         return candidate
-                    logger.debug(f"Skipping DM room {candidate} — join failed, trying next")
+                    logger.debug(f"Skipping DM room {candidate} — join failed")
 
-        # No usable existing room — create one (explicitly unencrypted so the bot can read it)
+        # Create a new unencrypted DM room
+        logger.info(f"Creating new unencrypted DM room with {bot_user_id}")
         resp = await client.post(
             f"{hs}/_matrix/client/v3/createRoom",
             json={
                 "invite": [bot_user_id],
                 "is_direct": True,
                 "preset": "trusted_private_chat",
-                "initial_state": [
-                    # Omit m.room.encryption so the room stays unencrypted
-                ],
+                "initial_state": [],  # No m.room.encryption — keeps the room unencrypted
             },
             headers=headers,
         )
