@@ -265,8 +265,35 @@ async def execute_matrix_command(
                 results.append("✅ Pleroma")
             except Exception as e:
                 results.append(f"❌ Pleroma: {e}")
+        # Matrix — look up the user's saved bot room from their Matrix account data
+        if user.matrix_enabled and user.matrix_homeserver and user.matrix_access_token:
+            try:
+                from app.services.matrix_service import send_message as _mtx_send
+                from urllib.parse import quote as _q
+                import httpx as _httpx
+                # Get the saved bot room from account data
+                _hs = user.matrix_homeserver.rstrip("/")
+                _headers = {"Authorization": f"Bearer {user.matrix_access_token}"}
+                async with _httpx.AsyncClient(timeout=10) as _client:
+                    _whoami = await _client.get(f"{_hs}/_matrix/client/v3/account/whoami", headers=_headers)
+                    _uid = _whoami.json().get("user_id", "") if _whoami.status_code == 200 else ""
+                    _share_room = None
+                    if _uid:
+                        _acct = await _client.get(
+                            f"{_hs}/_matrix/client/v3/user/{_q(_uid, safe='')}/account_data/posterchanai.bot_room",
+                            headers=_headers,
+                        )
+                        if _acct.status_code == 200:
+                            _share_room = _acct.json().get("room_id")
+                if _share_room:
+                    await _mtx_send(user.matrix_homeserver, user.matrix_access_token, _share_room, share_text)
+                    results.append("✅ Matrix")
+                else:
+                    results.append("⚠️ Matrix: no room configured — use 'Send Test DM' in User Settings first")
+            except Exception as e:
+                results.append(f"❌ Matrix: {e}")
         if not results:
-            return {"result": "No social platforms configured. Connect Misskey or Pleroma in User Settings."}
+            return {"result": "No social platforms configured. Connect Misskey, Pleroma, or Matrix in User Settings."}
         return {"result": "\n".join(results)}
 
     # Parse command
