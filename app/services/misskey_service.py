@@ -16,15 +16,30 @@ async def check_miauth_session(instance_url: str, session_id: str) -> dict:
         return resp.json()
 
 
-async def upload_file(instance_url: str, token: str, image_bytes: bytes, mime: str = "image/png") -> str:
+def _detect_mime(image_bytes: bytes) -> tuple[str, str]:
+    if image_bytes[:3] == b"\xff\xd8\xff":
+        return "image/jpeg", "image.jpg"
+    if image_bytes[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png", "image.png"
+    if image_bytes[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif", "image.gif"
+    if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
+        return "image/webp", "image.webp"
+    return "image/jpeg", "image.jpg"
+
+
+async def upload_file(instance_url: str, token: str, image_bytes: bytes, mime: str = "") -> str:
     """Upload a file to Misskey Drive and return the file ID."""
+    detected_mime, filename = _detect_mime(image_bytes)
+    mime = mime or detected_mime
     url = instance_url.rstrip("/") + "/api/drive/files/create"
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
             url,
             data={"i": token},
-            files={"file": ("image.png", image_bytes, mime)},
+            files={"file": (filename, image_bytes, mime)},
         )
+    logger.info(f"Misskey file upload: HTTP {resp.status_code} — {resp.text[:200]}")
     resp.raise_for_status()
     file_id = resp.json().get("id")
     if not file_id:
@@ -43,11 +58,8 @@ async def post_note(
     """Create a note on the configured Misskey instance. Uploads image_bytes if provided."""
     file_ids = []
     if image_bytes:
-        try:
-            file_id = await upload_file(instance_url, token, image_bytes, image_mime)
-            file_ids.append(file_id)
-        except Exception as e:
-            logger.warning(f"Misskey file upload failed, posting text only: {e}")
+        file_id = await upload_file(instance_url, token, image_bytes, image_mime)
+        file_ids.append(file_id)
 
     url = instance_url.rstrip("/") + "/api/notes/create"
     payload: dict = {"i": token, "text": text, "visibility": visibility}

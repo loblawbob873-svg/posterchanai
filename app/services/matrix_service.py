@@ -97,18 +97,32 @@ async def send_message(homeserver: str, access_token: str, room_id: str, text: s
             raise ValueError(f"Failed to send Matrix message: HTTP {resp.status_code} — {resp.text[:200]}")
 
 
+def _detect_mime(image_bytes: bytes) -> tuple[str, str]:
+    if image_bytes[:3] == b"\xff\xd8\xff":
+        return "image/jpeg", "image.jpg"
+    if image_bytes[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png", "image.png"
+    if image_bytes[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif", "image.gif"
+    if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
+        return "image/webp", "image.webp"
+    return "image/jpeg", "image.jpg"
+
+
 async def send_image(homeserver: str, access_token: str, room_id: str,
-                     image_bytes: bytes, caption: str = "", mime: str = "image/png") -> None:
+                     image_bytes: bytes, caption: str = "", mime: str = "") -> None:
     """Upload image bytes to Matrix media and send as m.image in a room."""
     hs = homeserver.rstrip("/")
     from urllib.parse import quote
+    detected_mime, filename = _detect_mime(image_bytes)
+    mime = mime or detected_mime
     headers_auth = {"Authorization": f"Bearer {access_token}"}
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         # Upload media — try v1 endpoint first, fall back to legacy
         for media_url in [
-            f"{hs}/_matrix/client/v1/media/upload?filename=image.png",
-            f"{hs}/_matrix/media/v3/upload?filename=image.png",
+            f"{hs}/_matrix/client/v1/media/upload?filename={filename}",
+            f"{hs}/_matrix/media/v3/upload?filename={filename}",
         ]:
             upload_resp = await client.post(
                 media_url,

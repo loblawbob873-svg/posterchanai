@@ -15,7 +15,7 @@ async def register_app(instance_url: str, redirect_uri: str, app_name: str = "Po
     payload = {
         "client_name": app_name,
         "redirect_uris": redirect_uri,
-        "scopes": "read:accounts write:statuses",
+        "scopes": "read write",
         "website": instance_url,
     }
     async with httpx.AsyncClient(timeout=15) as client:
@@ -58,31 +58,49 @@ def build_auth_url(instance_url: str, client_id: str, redirect_uri: str) -> str:
         "response_type": "code",
         "client_id": client_id,
         "redirect_uri": redirect_uri,
-        "scope": "read:accounts write:statuses",
+        "scope": "read write",
     })
     return f"{base}/oauth/authorize?{params}"
 
 
-async def upload_media(instance_url: str, access_token: str, image_bytes: bytes, mime: str = "image/png") -> str:
+def _detect_mime(image_bytes: bytes) -> tuple[str, str]:
+    """Return (mime_type, extension) by inspecting the image header bytes."""
+    if image_bytes[:3] == b"\xff\xd8\xff":
+        return "image/jpeg", "image.jpg"
+    if image_bytes[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png", "image.png"
+    if image_bytes[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif", "image.gif"
+    if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
+        return "image/webp", "image.webp"
+    return "image/jpeg", "image.jpg"  # sensible default
+
+
+async def upload_media(instance_url: str, access_token: str, image_bytes: bytes, mime: str = "") -> str:
     """Upload media to Pleroma/Mastodon and return the media ID."""
     base = instance_url.rstrip("/")
     headers = {"Authorization": f"Bearer {access_token}"}
-    # Try v2 endpoint first (Mastodon 3.1.4+/Pleroma), fall back to v1
-    for endpoint in (f"{base}/api/v2/media", f"{base}/api/v1/media"):
+    detected_mime, filename = _detect_mime(image_bytes)
+    mime = mime or detected_mime
+    # Try v1 first (works on Pleroma and all Mastodon), v2 is Mastodon 3.1.4+
+    for endpoint in (f"{base}/api/v1/media", f"{base}/api/v2/media"):
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
                 endpoint,
                 headers=headers,
-                files={"file": ("image.png", image_bytes, mime)},
+                files={"file": (filename, image_bytes, mime)},
             )
+        logger.info(f"Pleroma media upload {endpoint}: HTTP {resp.status_code} — {resp.text[:200]}")
         if resp.status_code in (200, 202):
             media_id = resp.json().get("id")
             if media_id:
                 return media_id
         elif resp.status_code == 404:
             continue
+        elif resp.status_code == 422:
+            raise ValueError(f"Pleroma rejected media (422): {resp.text[:300]}")
         else:
-            resp.raise_for_status()
+            raise ValueError(f"Media upload failed HTTP {resp.status_code}: {resp.text[:300]}")
     raise ValueError("Media upload failed: no endpoint succeeded")
 
 
@@ -97,11 +115,8 @@ async def post_status(
     """Post a status to a Pleroma or Mastodon instance. Uploads image_bytes if provided."""
     media_ids = []
     if image_bytes:
-        try:
-            media_id = await upload_media(instance_url, access_token, image_bytes, image_mime)
-            media_ids.append(media_id)
-        except Exception as e:
-            logger.warning(f"Pleroma media upload failed, posting text only: {e}")
+        media_id = await upload_media(instance_url, access_token, image_bytes, image_mime)
+        media_ids.append(media_id)
 
     url = instance_url.rstrip("/") + "/api/v1/statuses"
     headers = {"Authorization": f"Bearer {access_token}"}
