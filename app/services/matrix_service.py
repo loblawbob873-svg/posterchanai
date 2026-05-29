@@ -97,40 +97,47 @@ async def send_message(homeserver: str, access_token: str, room_id: str, text: s
             raise ValueError(f"Failed to send Matrix message: HTTP {resp.status_code} — {resp.text[:200]}")
 
 
-async def create_or_get_dm_room(homeserver: str, access_token: str, bot_user_id: str) -> str:
-    """Create a DM room with bot_user_id, or return the existing room ID.
+async def _ensure_joined(client: httpx.AsyncClient, hs: str, room_id: str, headers: dict) -> bool:
+    """Join a room if not already a member. Returns True if joined/already joined."""
+    from urllib.parse import quote
+    encoded = quote(room_id, safe="")
+    r = await client.post(f"{hs}/_matrix/client/v3/join/{encoded}", json={}, headers=headers)
+    return r.status_code in (200, 201)
 
-    Uses the m.direct account data to find an existing DM room first.
+
+async def create_or_get_dm_room(homeserver: str, access_token: str, bot_user_id: str) -> str:
+    """Return a DM room ID with bot_user_id, creating one if needed.
+
+    Checks m.direct account data for an existing room and ensures the user
+    is a joined member before returning it. Falls through to createRoom if
+    no usable room exists (user left, was kicked, or none recorded).
     """
     from urllib.parse import quote
     hs = homeserver.rstrip("/")
     headers = {"Authorization": f"Bearer {access_token}"}
 
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        # Get own user_id first
+        # Get own user_id
         whoami = await client.get(f"{hs}/_matrix/client/v3/account/whoami", headers=headers)
-        if whoami.status_code == 200:
-            user_id = whoami.json().get("user_id", "")
-            if user_id:
-                dm_r = await client.get(
-                    f"{hs}/_matrix/client/v3/user/{quote(user_id, safe='')}/account_data/m.direct",
-                    headers=headers,
-                )
-                if dm_r.status_code == 200:
-                    dm_data = dm_r.json()
-                    existing_rooms = dm_data.get(bot_user_id, [])
-                    if existing_rooms:
-                        return existing_rooms[0]
+        user_id = whoami.json().get("user_id", "") if whoami.status_code == 200 else ""
 
-        # Create a new DM room
-        payload = {
-            "invite": [bot_user_id],
-            "is_direct": True,
-            "preset": "trusted_private_chat",
-        }
+        if user_id:
+            dm_r = await client.get(
+                f"{hs}/_matrix/client/v3/user/{quote(user_id, safe='')}/account_data/m.direct",
+                headers=headers,
+            )
+            if dm_r.status_code == 200:
+                for candidate in dm_r.json().get(bot_user_id, []):
+                    # Ensure we're a joined member — join is a no-op if already in
+                    joined = await _ensure_joined(client, hs, candidate, headers)
+                    if joined:
+                        return candidate
+                    logger.debug(f"Skipping DM room {candidate} — join failed, trying next")
+
+        # No usable existing room — create one
         resp = await client.post(
             f"{hs}/_matrix/client/v3/createRoom",
-            json=payload,
+            json={"invite": [bot_user_id], "is_direct": True, "preset": "trusted_private_chat"},
             headers=headers,
         )
         if resp.status_code != 200:
