@@ -195,10 +195,12 @@ async def execute_matrix_command(
     _post_match = _re.match(r'^post\s+(https?://\S+)', command_str, _re.IGNORECASE)
     if command_str.lower() == "post" or _re.match(r'^post\b', command_str, _re.IGNORECASE):
         url_arg = _post_match.group(1) if _post_match else ""
+        # Plain text after "post" (no URL) — use it directly as context
+        raw_arg = command_str[4:].strip() if len(command_str) > 4 else ""
         from app.services.chat_service import ChatService as _CS
         from app.services.search_service import SearchService as _SS
         _cs = _CS(db, user=user)
-        article_context = url_arg
+        article_context = url_arg or raw_arg
         if url_arg:
             try:
                 import asyncio as _aio
@@ -208,7 +210,7 @@ async def execute_matrix_command(
             except Exception:
                 pass
         if not article_context:
-            return {"result": "Usage: `post <url>` — provide a URL to generate a social media post from."}
+            return {"result": "Usage: `post <url or text>` — generate a social media post from a URL or topic."}
         _cs.num_predict = min(_cs.num_predict, 900)
         post_text = await _cs.chat([
             {"role": "system", "content": "You are a social media expert. Write a compelling post. Output ONLY the post text. No introductions or meta-commentary."},
