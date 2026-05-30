@@ -167,33 +167,27 @@ async def execute_matrix_command(
     if not sender_matrix_id:
         raise HTTPException(status_code=400, detail="matrix_user_id is required")
 
-    # Optional Bearer API key — if provided, the key's owner must match the linked Matrix user
+    # Require a valid Bearer API key. This authenticates the caller as the trusted
+    # bot service (not the internet at large), preventing anyone from running
+    # commands as an arbitrary linked Matrix user by simply claiming their ID.
     auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
-        token = auth_header[7:].strip()
-        api_key_obj = db.query(APIKey).filter(
-            APIKey.key == token,
-            APIKey.is_active == True,
-        ).first()
-        if not api_key_obj:
-            raise HTTPException(status_code=401, detail="Invalid API key")
-        # The API key authenticates the bot as a trusted service; the command runs
-        # as whichever linked Matrix user sent it (any posterchanai user), not just
-        # the key owner.
-        user = db.query(User).filter(
-            User.matrix_enabled == True,
-            User.matrix_user_id == sender_matrix_id,
-        ).first()
-        if not user:
-            raise HTTPException(status_code=403, detail="Matrix user is not linked to any account")
-    else:
-        # No API key — look up directly by linked Matrix user ID
-        user = db.query(User).filter(
-            User.matrix_enabled == True,
-            User.matrix_user_id == sender_matrix_id,
-        ).first()
-        if not user:
-            raise HTTPException(status_code=403, detail="Matrix user is not linked to any account")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="API key required")
+    token = auth_header[7:].strip()
+    api_key_obj = db.query(APIKey).filter(
+        APIKey.key == token,
+        APIKey.is_active == True,
+    ).first()
+    if not api_key_obj:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    # The key authenticates the bot; the command runs as whichever linked Matrix
+    # user sent it (any posterchanai user), not the key owner.
+    user = db.query(User).filter(
+        User.matrix_enabled == True,
+        User.matrix_user_id == sender_matrix_id,
+    ).first()
+    if not user:
+        raise HTTPException(status_code=403, detail="Matrix user is not linked to any account")
 
     command_str = data.command.strip()
     if not command_str:
