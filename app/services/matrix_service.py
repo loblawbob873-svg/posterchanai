@@ -9,6 +9,45 @@ logger = logging.getLogger(__name__)
 _TIMEOUT = 15.0
 
 
+def render_matrix_html(text: str) -> str:
+    """Render Markdown/plain text to the limited HTML Matrix (Element) shows.
+
+    A plain `body` is displayed verbatim, but as soon as a message carries a
+    `formatted_body` the client renders the HTML — where newlines collapse to
+    spaces. Auto-linking URLs without also turning newlines into <br> is what
+    made multi-line posts appear "mashed together". This converts the common
+    inline Markdown, auto-links bare URLs, and maps every newline to <br>.
+    """
+    import re as _re
+    import html as _html
+
+    escaped = _html.escape(text, quote=False)
+
+    def inline(s: str) -> str:
+        # Inline code: `code`
+        s = _re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
+        # Markdown links: [text](url)
+        s = _re.sub(r"\[([^\]]+)\]\((https?://[^\s)]+)\)", r'<a href="\2">\1</a>', s)
+        # Bold / italic
+        s = _re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", s)
+        s = _re.sub(r"__([^_]+)__", r"<strong>\1</strong>", s)
+        s = _re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"<em>\1</em>", s)
+        s = _re.sub(r"(?<!_)_([^_\n]+)_(?!_)", r"<em>\1</em>", s)
+        # Auto-link bare URLs not already inside an anchor (href=" or >URL<)
+        s = _re.sub(r'(?<!href=")(?<!>)(https?://[^\s<]+)', r'<a href="\1">\1</a>', s)
+        return s
+
+    lines = []
+    for line in escaped.split("\n"):
+        m = _re.match(r"^\s*(#{1,6})\s+(.*)$", line)
+        if m:
+            lines.append(f"<strong>{inline(m.group(2))}</strong>")
+        else:
+            lines.append(inline(line))
+
+    return "<br>".join(lines)
+
+
 async def login(homeserver: str, username: str, password: str) -> dict:
     """Log in to a Matrix homeserver with username/password.
 
@@ -84,23 +123,18 @@ async def _room_display_name(client: httpx.AsyncClient, hs: str, room_id: str, h
 
 async def send_message(homeserver: str, access_token: str, room_id: str, text: str) -> None:
     """Send a message to a Matrix room with URL auto-linking."""
-    import re as _re
     hs = homeserver.rstrip("/")
     from urllib.parse import quote
     encoded_room = quote(room_id, safe="")
     txn_id = str(int(time.time() * 1000))
     url = f"{hs}/_matrix/client/v3/rooms/{encoded_room}/send/m.room.message/{txn_id}"
     headers = {"Authorization": f"Bearer {access_token}"}
-    # Build formatted_body with clickable links
+    # Build formatted_body so links render AND newlines are preserved as <br>;
+    # without the <br> conversion multi-line posts collapse onto one line.
     import html as _html
-    escaped = _html.escape(text)
-    formatted = _re.sub(
-        r'(https?://\S+)',
-        r'<a href="\1">\1</a>',
-        escaped,
-    )
+    formatted = render_matrix_html(text)
     payload: dict = {"msgtype": "m.text", "body": text}
-    if formatted != escaped:
+    if formatted != _html.escape(text, quote=False):
         payload["format"] = "org.matrix.custom.html"
         payload["formatted_body"] = formatted
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
