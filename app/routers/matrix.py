@@ -589,21 +589,37 @@ async def matrix_ytdl_fetch(
     _ssl_s = db.query(_Setting).filter(_Setting.key == "ytdl_no_ssl_verify").first()
     _no_ssl = str(_ssl_s.value).strip().lower() in ("true", "1", "yes") if _ssl_s and _ssl_s.value else False
 
+    # Cap video at 720p so files stay within typical Matrix upload limits, and
+    # reject anything still too large rather than OOM the worker or have the upload
+    # fail silently downstream.
+    MAX_BYTES = 100 * 1024 * 1024  # 100 MB
+
+    def _read_b64(path):
+        with open(path, "rb") as f:
+            return _b64.b64encode(f.read()).decode("ascii")
+
     tmp = tempfile.mkdtemp(prefix="matrix_ytdl_fetch_")
     try:
         if data.video:
-            dl = await _aio.to_thread(download_as_video, urls[0], tmp, "best", _cookies_path, _no_ssl)
+            dl = await _aio.to_thread(download_as_video, urls[0], tmp, "720p", _cookies_path, _no_ssl)
         else:
             dl = await _aio.to_thread(download_as_mp3, urls[0], tmp, _cookies_path, _no_ssl)
         if not dl.success:
             return {"ok": False, "error": f"Download failed: {dl.error}"}
-        with open(dl.local_path, "rb") as f:
-            file_bytes = f.read()
+        size = _os.path.getsize(dl.local_path)
+        if size > MAX_BYTES:
+            return {
+                "ok": False,
+                "error": (f"Media too large ({size // (1024 * 1024)} MB, max "
+                          f"{MAX_BYTES // (1024 * 1024)} MB). Try audio (`ytdl <url>`) "
+                          f"or a shorter clip."),
+            }
+        # Read + base64 off the event loop — these touch the whole file.
         return {
             "ok": True,
             "filename": _os.path.basename(dl.local_path),
             "mime": "video/mp4" if data.video else "audio/mpeg",
-            "data": _b64.b64encode(file_bytes).decode("ascii"),
+            "data": await _aio.to_thread(_read_b64, dl.local_path),
         }
     except Exception as e:
         logger.error(f"Matrix ytdl-fetch error: {e}", exc_info=True)
