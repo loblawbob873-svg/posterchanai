@@ -144,6 +144,11 @@ class MatrixCommandRequest(BaseModel):
     room_id: Optional[str] = None
 
 
+class MatrixYtdlRequest(BaseModel):
+    url: str
+    video: bool = False
+
+
 @router.post("/command")
 async def execute_matrix_command(
     data: MatrixCommandRequest,
@@ -535,3 +540,71 @@ async def execute_matrix_command(
     except Exception as e:
         logger.error(f"Matrix command execution error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/ytdl")
+async def matrix_ytdl_fetch(
+    data: MatrixYtdlRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Download a YouTube URL and RETURN the media (base64) for the caller to post.
+
+    Authenticated by the bot's API key only — it does NOT require the requesting
+    Matrix user to be linked. This lets the posterchan bot offer `ytdl` to anyone
+    in any room (DM or group) and post the media as the bot itself.
+    """
+    from app.models import APIKey
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="API key required")
+    token = auth_header[7:].strip()
+    api_key_obj = db.query(APIKey).filter(
+        APIKey.key == token, APIKey.is_active == True
+    ).first()
+    if not api_key_obj:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    url = (data.url or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="url is required")
+
+    from app.services.youtube_service import (
+        check_ytdlp_available, download_as_mp3, download_as_video, extract_download_urls
+    )
+    import tempfile, os as _os, asyncio as _aio, base64 as _b64, shutil as _shutil
+    if not check_ytdlp_available():
+        return {"ok": False, "error": "yt-dlp not installed on the server."}
+    urls = extract_download_urls(url)
+    if not urls:
+        return {"ok": False, "error": "Could not find a valid YouTube URL."}
+
+    from app.models import Setting as _Setting
+    _cookies_s = db.query(_Setting).filter(_Setting.key == "ytdl_cookies_path").first()
+    _cookies_path = str(_cookies_s.value).strip() if _cookies_s and _cookies_s.value else None
+    if _cookies_path and not _os.path.isfile(_cookies_path):
+        _cookies_path = None
+    _ssl_s = db.query(_Setting).filter(_Setting.key == "ytdl_no_ssl_verify").first()
+    _no_ssl = str(_ssl_s.value).strip().lower() in ("true", "1", "yes") if _ssl_s and _ssl_s.value else False
+
+    tmp = tempfile.mkdtemp(prefix="matrix_ytdl_fetch_")
+    try:
+        if data.video:
+            dl = await _aio.to_thread(download_as_video, urls[0], tmp, "best", _cookies_path, _no_ssl)
+        else:
+            dl = await _aio.to_thread(download_as_mp3, urls[0], tmp, _cookies_path, _no_ssl)
+        if not dl.success:
+            return {"ok": False, "error": f"Download failed: {dl.error}"}
+        with open(dl.local_path, "rb") as f:
+            file_bytes = f.read()
+        return {
+            "ok": True,
+            "filename": _os.path.basename(dl.local_path),
+            "mime": "video/mp4" if data.video else "audio/mpeg",
+            "data": _b64.b64encode(file_bytes).decode("ascii"),
+        }
+    except Exception as e:
+        logger.error(f"Matrix ytdl-fetch error: {e}", exc_info=True)
+        return {"ok": False, "error": str(e)}
+    finally:
+        _shutil.rmtree(tmp, ignore_errors=True)
