@@ -939,8 +939,19 @@ def _strip_hashtags(text: str) -> str:
     return _ht.sub(r'[ \t]{2,}', ' ', text).strip()
 
 
-async def _offer_social_post(chat_id: str, post_text: str, user, telegram_svc, prompt: str = "📣 *Post this?*"):
-    """Show the generated post and offer to share it on configured social platforms."""
+async def _offer_social_post(chat_id: str, post_text: str, user, telegram_svc, prompt: str = "📣 *Post this?*", image_bytes: Optional[bytes] = None):
+    """Show the generated post and offer to share it on configured social platforms.
+
+    Single source of truth for the per-chat image cache: callers that have an
+    image to attach pass it as `image_bytes`; text-only callers (link summaries,
+    news, yt) leave it None, which CLEARS any stale image left over from an
+    earlier `geni`/photo share so it is never attached to an unrelated post.
+    """
+    if image_bytes is not None:
+        _geni_image_cache[chat_id] = image_bytes
+    else:
+        _geni_image_cache.pop(chat_id, None)
+
     has_mk = _has_misskey(user)
     has_plr = _has_pleroma(user)
     has_mtx = _has_matrix(user)
@@ -1300,13 +1311,13 @@ async def _handle_telegram_update(update: dict, db: Session):
                                 _rt_data = await telegram_service.download_file(_rt_fp)
                                 if _rt_data:
                                     _share_caption = arg.strip() or reply_text or "Image"
-                                    _geni_image_cache[chat_id] = _rt_data
                                     _tg_user_share = db.query(User).filter(
                                         User.telegram_chat_id == chat_id,
                                         User.telegram_enabled == True
                                     ).first()
                                     await _offer_social_post(chat_id, _share_caption, _tg_user_share,
-                                                             telegram_service, prompt="📣 *Share this image?*")
+                                                             telegram_service, prompt="📣 *Share this image?*",
+                                                             image_bytes=_rt_data)
                                     return {"ok": True}
 
                 # Fetch URL content if available
@@ -1843,14 +1854,15 @@ async def _handle_telegram_update(update: dict, db: Session):
                         # Build share text
                         final_share_text = share_text or "(image)"
 
-                        # Store image bytes so Matrix can send the actual image
+                        # Collect image bytes so Matrix can send the actual image
+                        _share_img = None
                         if has_images and attachments:
                             for _fn, _fd, _ct in attachments:
                                 if _ct.startswith("image/"):
-                                    _geni_image_cache[chat_id] = _fd
+                                    _share_img = _fd
                                     break
                         # Also check replied-to message for a photo
-                        if not _geni_image_cache.get(chat_id) and reply_to:
+                        if not _share_img and reply_to:
                             _rt_photos = reply_to.get("photo", [])
                             if _rt_photos:
                                 _rt_file_id = _rt_photos[-1].get("file_id")
@@ -1861,10 +1873,10 @@ async def _handle_telegram_update(update: dict, db: Session):
                                         if _rt_fp:
                                             _rt_data = await telegram_service.download_file(_rt_fp)
                                             if _rt_data:
-                                                _geni_image_cache[chat_id] = _rt_data
+                                                _share_img = _rt_data
 
                         await _offer_social_post(chat_id, final_share_text, _share_user, telegram_service,
-                                                  prompt="📣 *Share this?*")
+                                                  prompt="📣 *Share this?*", image_bytes=_share_img)
                         return {"ok": True}
                     else:
                         # Pass attachments to any command that supports them
@@ -2299,8 +2311,6 @@ async def _handle_telegram_update(update: dict, db: Session):
                                 _geni_bytes = _geni_b64.b64decode(_geni_bytes)
                             except Exception:
                                 _geni_bytes = None
-                        if _geni_bytes:
-                            _geni_image_cache[chat_id] = _geni_bytes
                         # Store caption in platform caches using the same offer-post format so
                         # message-text recovery strips the suffix correctly on restart
                         _misskey_post_cache[chat_id] = _geni_caption
@@ -2308,7 +2318,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                         _matrix_post_cache[chat_id] = _geni_caption
                         await _offer_social_post(
                             chat_id, _geni_caption, _geni_user, telegram_service,
-                            prompt="📣 *Share this image?*"
+                            prompt="📣 *Share this image?*", image_bytes=_geni_bytes
                         )
             elif response_type == "search":
                 # Send AI summary, then append top result links
