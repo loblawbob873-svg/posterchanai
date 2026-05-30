@@ -2285,8 +2285,22 @@ async def _handle_telegram_update(update: dict, db: Session):
                     ).first()
                     if _geni_user and (_has_misskey(_geni_user) or _has_pleroma(_geni_user) or _has_matrix(_geni_user)):
                         _geni_caption = response_content or "Generated image"
-                        # Store image bytes so Matrix (and future platforms) can send the actual image
-                        _geni_image_cache[chat_id] = image_data
+                        # Store image BYTES so Matrix/Misskey/Pleroma share paths (which all
+                        # pass this as image_bytes to send_image) get raw bytes — matching the
+                        # pasted-image path. image_data from generate_image is base64 (optionally
+                        # a data: URL); storing the base64 string broke image posts on all
+                        # platforms (Matrix most visibly).
+                        _geni_bytes = image_data
+                        if isinstance(_geni_bytes, str):
+                            import base64 as _geni_b64
+                            if _geni_bytes.startswith("data:image"):
+                                _geni_bytes = _geni_bytes.split(",", 1)[1]
+                            try:
+                                _geni_bytes = _geni_b64.b64decode(_geni_bytes)
+                            except Exception:
+                                _geni_bytes = None
+                        if _geni_bytes:
+                            _geni_image_cache[chat_id] = _geni_bytes
                         # Store caption in platform caches using the same offer-post format so
                         # message-text recovery strips the suffix correctly on restart
                         _misskey_post_cache[chat_id] = _geni_caption
