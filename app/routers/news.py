@@ -313,14 +313,7 @@ async def generate_daily_news_now(
     Returns the conversation id so the client can open it. If today's summary already
     exists, returns that conversation id.
     """
-    from app.services.news_scheduler import generate_daily_news_for_user
-    conv_id = await generate_daily_news_for_user(current_user.id, force=True)
-    if conv_id is None:
-        return {
-            "conversation_id": None,
-            "error": "Could not generate daily news. Check that you have news sources (User Settings → News Sources) and that the server can fetch them (proxy may be required)."
-        }
-    return {"conversation_id": conv_id}
+    return {"conversation_id": None, "error": "Daily news generation is currently unavailable (scheduler module was removed)."}
 
 
 @router.get("/headlines/{source_url:path}")

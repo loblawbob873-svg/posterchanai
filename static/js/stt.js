@@ -65,19 +65,8 @@ const VOICE_COMMANDS = [
     { patterns: [/^remind\s+me\s+to\s+(.+)$/i], command: 'todo add $1' },
     { patterns: [/^(delete|remove|done)\s+to-?\s?do\s+(\d+)$/i], command: 'todo rm $2' },
     { patterns: [/^(complete|finish)\s+task\s+(\d+)$/i], command: 'todo rm $2' },
-    // ==================== NOTES ====================
-    { patterns: [/^(show\s+)?(my\s+)?notes$/i], command: 'notes' },
-    { patterns: [/^(open|show)\s+notes$/i], command: 'notes' },
-    { patterns: [/^search\s+notes\s+(.+)$/i], command: 'notes search $1' },
-    { patterns: [/^find\s+note\s+(.+)$/i], command: 'notes search $1' },
-    { patterns: [/^note\s+find\s+(.+)$/i], command: 'notes search $1' },
-    { patterns: [/^note\s+(.+)$/i], command: 'notes search $1' },
-    { patterns: [/^notes\s+in\s+(.+)$/i], command: 'notes folder $1' },
-    { patterns: [/^notes\s+folder\s+(.+)$/i], command: 'notes folder $1' },
-
     // ==================== MUSIC ====================
     // Music commands removed
-
     // ==================== NEWS ====================
     { patterns: [/^(the\s+)?news$/i], command: 'news' },
     { patterns: [/^(refresh|update)\s+news$/i], command: 'news refresh' },
@@ -104,7 +93,6 @@ const VOICE_COMMANDS = [
     { patterns: [/^download\s+(movie|film)\s+(\d+)$/i], command: 'torrents download movies $2' },
     { patterns: [/^download\s+(tv|show)\s+(\d+)$/i], command: 'torrents download tv $2' },
     { patterns: [/^download\s+anime\s+(\d+)$/i], command: 'torrents download anime $1' },
-    { patterns: [/^download\s+music\s+(\d+)$/i], command: 'torrents download music $1' },
     // Torrent controls
     { patterns: [/^pause\s+(\d+)$/i], command: 'torrents pause $1' },
     { patterns: [/^resume\s+(\d+)$/i], command: 'torrents resume $1' },

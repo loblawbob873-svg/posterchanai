@@ -3681,29 +3681,6 @@ class ChatHandler {
         }
     }
 
-    async loadNoteTitlesForAutocomplete() {
-        try {
-            const response = await fetch('/api/notes?limit=100'); // Get recent notes for autocomplete
-            if (response.ok) {
-                const notes = await response.json();
-                if (notes && notes.length > 0) {
-                    // Extract note titles and create search hints
-                    const noteTitles = notes.map(n => n.title).filter(t => t && t.length > 0);
-                    console.log('Note titles loaded for autocomplete:', noteTitles.length);
-
-                    // Store for use in autocomplete
-                    this.noteTitles = noteTitles;
-
-                    // Notes autocomplete removed - no longer loading note titles
-                    
-                    console.log('Note titles added to autocomplete:', noteTitles.length, 'titles');
-                }
-            }
-        } catch (e) {
-            console.debug('Could not load note titles:', e);
-        }
-    }
-
     // Render mail account list in user settings
     renderMailAccountList(accounts) {
         const listContainer = document.getElementById('mailAccountList');
@@ -3775,11 +3752,8 @@ class ChatHandler {
         'mail deleteall': [],
         'mail archive': [],
         'mail send': [],
-        // Music subcommands
-        // Music subcommands removed
         // Todo subcommands
         'todo': ['add', 'rm', 'list'],
-        // Notes subcommands removed
         // YouTube download subcommands
         'ytdl': ['mp3', 'video'],
         // 4chan catalog boards
