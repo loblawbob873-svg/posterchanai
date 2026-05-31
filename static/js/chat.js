@@ -4013,13 +4013,6 @@ window.sendMessage = function(text) {
     let currentThreadBoard = 'g';
     let currentThreadId = '';
 
-    function escapeHtml(s) {
-        if (!s) return '';
-        const div = document.createElement('div');
-        div.textContent = s;
-        return div.innerHTML;
-    }
-
     // Decode HTML entities (e.g., &gt; -> >, &lt; -> <, &quot; -> ", etc.)
     function decodeHtmlEntities(s) {
         if (!s) return '';

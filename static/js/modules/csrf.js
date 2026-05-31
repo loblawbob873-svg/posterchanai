@@ -74,6 +74,16 @@ async function csrfDelete(url, options = {}) {
     });
 }
 
+/**
+ * Escape HTML to prevent XSS
+ */
+function escapeHtml(text) {
+    if (text == null) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 // Export for module usage
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getCSRFToken, csrfFetch, csrfPost, csrfPut, csrfDelete };
@@ -85,3 +95,4 @@ window.csrfPost = csrfPost;
 window.csrfPut = csrfPut;
 window.csrfDelete = csrfDelete;
 window.getCSRFToken = getCSRFToken;
+window.escapeHtml = escapeHtml;

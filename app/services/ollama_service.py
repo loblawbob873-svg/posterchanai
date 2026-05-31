@@ -7,7 +7,6 @@ import time
 import uuid
 from typing import AsyncGenerator, Optional, Dict, Any, List
 from sqlalchemy.orm import Session
-from app.models import Setting
 
 logger = logging.getLogger(__name__)
 

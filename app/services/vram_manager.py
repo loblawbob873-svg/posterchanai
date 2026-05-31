@@ -11,7 +11,6 @@ import threading
 from typing import Optional, Literal
 from sqlalchemy.orm import Session
 
-from app.models import Setting
 
 # Configure logging
 logger = logging.getLogger("vram_manager")

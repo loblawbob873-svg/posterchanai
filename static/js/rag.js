@@ -60,13 +60,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Helper function to escape HTML
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-
     // Load collections
     async function loadRagCollections() {
         try {

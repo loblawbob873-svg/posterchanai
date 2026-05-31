@@ -7,7 +7,7 @@ import os
 import time
 import logging
 import hashlib
-from typing import List, Optional
+from typing import List
 from sqlalchemy.orm import Session
 from app.models import Setting
 

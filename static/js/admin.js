@@ -172,12 +172,6 @@ async function loadUsers() {
     }
 }
 
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
 // Reset password
 async function resetPassword(userId, username) {
     const newPassword = prompt(`Enter new password for ${username}:`);

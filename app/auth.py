@@ -8,7 +8,7 @@ from fastapi import Depends, HTTPException, status, Request, WebSocket
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import User, APIKey
+from app.models import User
 from app.utils.auth_utils import query_api_key_with_retry, get_user_from_api_key
 import os
 import urllib.parse

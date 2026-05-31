@@ -2,8 +2,7 @@ import logging
 import httpx
 import asyncio
 import os
-from typing import Optional, List
-from datetime import datetime
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 

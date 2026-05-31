@@ -7,8 +7,8 @@ import sys
 import threading
 import socket
 from pathlib import Path
-from dataclasses import dataclass, field
-from typing import Optional, Callable
+from dataclasses import dataclass
+from typing import Optional
 import logging
 import time
 

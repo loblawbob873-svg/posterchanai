@@ -15,7 +15,6 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
-from app.models import Setting
 
 # Configure logging
 logger = logging.getLogger("health_check")

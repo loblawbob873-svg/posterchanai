@@ -26,13 +26,13 @@ from email.header import decode_header
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.utils import formataddr, formatdate, parseaddr
-from typing import Any, Dict, List, Optional, Tuple
+from email.utils import formatdate, parseaddr
+from typing import List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
 from app.models import UserSetting
-from app.services.crypto_service import decrypt_string, encrypt_string, is_encrypted
+from app.services.crypto_service import decrypt_string, encrypt_string
 
 logger = logging.getLogger(__name__)
 

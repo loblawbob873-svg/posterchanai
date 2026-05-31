@@ -5,7 +5,6 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import AsyncGenerator, Optional, TYPE_CHECKING
 from sqlalchemy.orm import Session
-from app.models import Setting
 from app.services.inference_factory import get_inference_service, prepare_vram_for_llm
 from app.services.custom_ai_service import CustomAIService
 from app.services.load_balancer import LoadBalancer, NoHealthyServersError, parse_server_urls

@@ -9,7 +9,6 @@ from fastapi.responses import FileResponse, JSONResponse
 import json
 from sqlalchemy.orm import Session
 from pathlib import Path
-from typing import List
 from datetime import datetime
 import os
 import time
@@ -1825,7 +1824,6 @@ async def move_files(
     """
     # Check if this is a server-to-server request
     from app.models import Setting
-    from typing import List
     
     # Parse JSON body (server-to-server requests use JSON)
     try:
@@ -2009,7 +2007,6 @@ async def delete_files_bulk(
     """
     # Check if this is a server-to-server request
     from app.models import Setting
-    from typing import List
     
     # Parse JSON body (server-to-server requests use JSON)
     try:

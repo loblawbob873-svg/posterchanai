@@ -30,7 +30,6 @@ from app.services.mail_service import (
     send_email,
 )
 from app.services.nyaa_service import NyaaResult, format_nyaa_results, search_nyaa
-from app.utils.date_utils import get_month_end, get_month_start, get_next_month
 from app.services.search_service import SearchService
 from app.services.torrent_service import (
     TorrentResult,
