@@ -1,13 +1,0 @@
-Collecting wsgidav
-  Using cached WsgiDAV-4.3.3-py3-none-any.whl.metadata (7.0 kB)
-Requirement already satisfied: defusedxml in ./venv-ipex/lib/python3.11/site-packages (from wsgidav) (0.7.1)
-Requirement already satisfied: Jinja2 in ./venv-ipex/lib/python3.11/site-packages (from wsgidav) (3.1.6)
-Collecting json5 (from wsgidav)
-  Using cached json5-0.13.0-py3-none-any.whl.metadata (36 kB)
-Requirement already satisfied: PyYAML in ./venv-ipex/lib/python3.11/site-packages (from wsgidav) (6.0.3)
-Requirement already satisfied: MarkupSafe>=2.0 in ./venv-ipex/lib/python3.11/site-packages (from Jinja2->wsgidav) (3.0.3)
-Using cached WsgiDAV-4.3.3-py3-none-any.whl (164 kB)
-Using cached json5-0.13.0-py3-none-any.whl (36 kB)
-Installing collected packages: json5, wsgidav
-[?25l[2K   [38;2;114;156;31m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m [32m2/2[0m [wsgidav]
-[?25h[1A[2KSuccessfully installed json5-0.13.0 wsgidav-4.3.3

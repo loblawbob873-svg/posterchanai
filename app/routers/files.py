@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, JSONResponse
 import json
 from sqlalchemy.orm import Session
 from pathlib import Path
-from typing import List, Optional, Dict, Tuple
+from typing import List, Optional, Tuple
 from collections import OrderedDict
 from pydantic import BaseModel
 from datetime import datetime, timedelta

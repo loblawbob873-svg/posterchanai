@@ -148,7 +148,7 @@ class SharedFile(Base):
     max_accesses = Column(Integer, nullable=True)  # None = unlimited
     is_active = Column(Boolean, default=True)
 
-    user = relationship("User", backref="api_keys")
+    user = relationship("User", backref="shared_files")
 
 
 class VerificationToken(Base):

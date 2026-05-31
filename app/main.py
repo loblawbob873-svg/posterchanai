@@ -7,9 +7,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 import os
 import logging
-import sys
-
-from app.middleware.csrf import CSRFMiddleware
+import threading
 
 # Configure logging for console output
 logging.basicConfig(
@@ -121,14 +119,10 @@ async def general_exception_handler(request: FastAPIRequest, exc: Exception):
         )
     # For non-API requests, re-raise to let FastAPI's default handler deal with it
     # This allows HTML error pages for web pages
-    from fastapi.responses import HTMLResponse
     return HTMLResponse(
         status_code=500,
         content=f"<html><body><h1>Internal Server Error</h1><p>{error_detail}</p></body></html>"
     )
-
-# Add CSRF protection middleware
-app.add_middleware(CSRFMiddleware)
 
 # Mount static files
 static_path = os.path.join(os.path.dirname(__file__), "..", "static")
@@ -177,7 +171,6 @@ async def startup():
 
         # Check LLM backend configuration
         from app.database import SessionLocal
-        from app.models import Setting
         db = SessionLocal()
         try:
             backend = db.query(Setting).filter(Setting.key == "llm_backend").first()
@@ -203,7 +196,6 @@ async def startup():
         try:
             from app.services.health_check import start_health_check
             # Start health check in background thread to avoid blocking startup
-            import threading
             def start_health_check_background():
                 import time
                 time.sleep(2)  # Wait a moment for server to be ready
@@ -227,12 +219,6 @@ async def startup():
             except Exception as e:
                 logging.error(f"Error starting logs scheduler: {e}", exc_info=True)
 
-            try:
-                # Start Schedule (daily calendar summary) scheduler
-                from app.services.schedule_scheduler import start_schedule_scheduler
-                start_schedule_scheduler()
-            except Exception as e:
-                logging.error(f"Error starting schedule scheduler: {e}", exc_info=True)
         else:
             logging.info(f"Schedulers disabled on port {app_port} (only run on port 3051)")
 
@@ -247,7 +233,6 @@ async def startup():
             if (rag_enabled and rag_enabled.value == "true" and
                 (not rag_auto_warmup or rag_auto_warmup.value == "true") and
                 (not mcp_enabled or mcp_enabled.value != "true")):
-                import threading
                 from app.services.rag_warmup import warmup_rag_cache
                 logging.info("Starting RAG cache warmup in background...")
                 warmup_thread = threading.Thread(target=warmup_rag_cache, daemon=True)
@@ -376,10 +361,6 @@ async def shutdown():
         # Stop Logs scheduler
         from app.services.logs_scheduler import stop_logs_scheduler
         stop_logs_scheduler()
-
-        # Stop Schedule scheduler
-        from app.services.schedule_scheduler import stop_schedule_scheduler
-        stop_schedule_scheduler()
 
     # Stop MCP server
     from app.services.mcp_service import stop_mcp_server

@@ -5,7 +5,6 @@ Supports both JWT auth and API key auth for external services.
 Sequential processing: Only one image is generated at a time to prevent GPU overload.
 """
 import logging
-import os
 from fastapi import APIRouter, Depends, HTTPException, Header, Request
 
 # Configure logging with handler for stdout
@@ -23,7 +22,6 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.auth import get_current_user_optional
 from app.models import Setting
-from sqlalchemy.orm import Session
 from app.services.image_factory import generate_image_with_load_balancing
 # Lock moved to image_factory.py for fine-grained control (local only)
 

@@ -3,9 +3,9 @@ Mail Router - API endpoints for email functionality.
 """
 import logging
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import Response, RedirectResponse, FileResponse
+from fastapi.responses import Response, FileResponse
 from sqlalchemy.orm import Session
-from typing import List
+
 from pathlib import Path
 from urllib.parse import unquote
 

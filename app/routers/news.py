@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 import httpx
 import logging
 from bs4 import BeautifulSoup
-from urllib.parse import urlparse, quote
+from urllib.parse import urlparse
 
 from app.database import get_db
 from app.models import User, Setting

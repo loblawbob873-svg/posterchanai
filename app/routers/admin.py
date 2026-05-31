@@ -12,7 +12,7 @@ from app.schemas import UserCreate, UserResponse, SettingsUpdate, SettingsRespon
 from app.auth import get_admin_user, get_password_hash
 from app.services.email_service import get_email_service
 from app.services.storage_service import StorageService
-from app.services.video_transcode_service import transcode_video, is_video_already_optimized
+from app.services.video_transcode_service import transcode_video
 from app.services.thumbnail_service import is_video_file
 from pathlib import Path
 import asyncio
