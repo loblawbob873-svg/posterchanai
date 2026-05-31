@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi import Query
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError, OperationalError
@@ -546,6 +546,7 @@ def update_user_storage_quota(
 
 @router.post("/storage/rescan")
 async def rescan_storage(
+    request: Request,
     user_id: Optional[int] = Query(None, description="User ID to rescan (None = all users)"),
     db: Session = Depends(get_db),
     admin: User = Depends(get_admin_user)
@@ -573,6 +574,9 @@ async def rescan_storage(
                 headers = {
                     "X-Posterchanai-Load-Balanced": "true"
                 }
+                auth_header = request.headers.get("Authorization")
+                if auth_header:
+                    headers["Authorization"] = auth_header
                 
                 # Proxy to storage server with long timeout for large scans
                 async with httpx.AsyncClient(timeout=600.0) as client:  # 10 minutes
