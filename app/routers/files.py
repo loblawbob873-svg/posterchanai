@@ -568,7 +568,7 @@ async def get_all_images(
                             try:
                                 error_data = response.json()
                                 error_detail = error_data.get("detail", error_data.get("message", response.text))
-                            except:
+                            except Exception:
                                 error_detail = response.text or f"HTTP {response.status_code}"
                             logger.error(f"[FILES] Storage server returned {response.status_code}: {error_detail}")
                             raise HTTPException(status_code=response.status_code, detail=error_detail)
@@ -794,20 +794,16 @@ async def get_all_images(
                             modified_time = 0.0  # Epoch time - will sort to bottom
                             logger.info(f"[FILES] No filename date for {filename}, recent mtime ({mtime_age_days:.1f}d old) - pushing to bottom")
                     
+                    from app.services.thumbnail_service import is_image_file, is_video_file
+                    
+                    is_image = is_image_file(item)
+                    is_video = is_video_file(item)
+                    
                     # Debug: Log if file timestamp seems suspiciously old (more than 1 year old)
                     # This helps identify files that might not have had EXIF restoration applied
                     file_age_days = (time.time() - modified_time) / 86400
                     if file_age_days > 365 and (is_image or is_video):
                         logger.debug(f"[FILES] Old file timestamp detected: {item.name} has mtime={datetime.fromtimestamp(modified_time).date()} ({file_age_days:.0f} days old) - may need EXIF restoration")
-                    
-                    # Note: For accurate sorting by photo date, run /api/admin/storage/rescan
-                    # which restores file timestamps from EXIF metadata. Without this, files
-                    # may be sorted by copy/upload date rather than when the photo was taken.
-                    
-                    from app.services.thumbnail_service import is_image_file, is_video_file
-                    
-                    is_image = is_image_file(item)
-                    is_video = is_video_file(item)
                     
                     # Only include files that are actually images or videos
                     if not is_image and not is_video:
@@ -997,7 +993,7 @@ async def get_all_images(
                     curr_date = datetime.fromtimestamp(curr_ts).strftime('%Y-%m-%d %H:%M:%S')
                     prev_date = datetime.fromtimestamp(prev_ts).strftime('%Y-%m-%d %H:%M:%S')
                     logger.warning(f"[FILES]   Current: {curr_date}, Previous: {prev_date}")
-                except:
+                except Exception:
                     pass
             prev_ts = curr_ts
         
@@ -1024,7 +1020,7 @@ async def get_all_images(
                 newest_date = datetime.fromtimestamp(newest_ts).strftime('%Y-%m-%d %H:%M:%S')
                 oldest_date = datetime.fromtimestamp(oldest_ts).strftime('%Y-%m-%d %H:%M:%S')
                 logger.info(f"[FILES] Timestamp range: Newest={newest_date}, Oldest={oldest_date}")
-            except:
+            except Exception:
                 pass
         
         # Debug: log statistics

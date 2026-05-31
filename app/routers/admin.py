@@ -622,7 +622,7 @@ async def rescan_storage(
                 import inspect
                 current_file = inspect.getfile(_scan_user_files)
                 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(current_file))))
-            except:
+            except Exception:
                 # Method 3: Try common project root locations
                 possible_roots = [
                     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -640,7 +640,7 @@ async def rescan_storage(
             # Change to project root directory
             try:
                 os.chdir(project_root)
-            except:
+            except Exception:
                 pass  # If chdir fails, continue anyway
         
         from app.database import SessionLocal

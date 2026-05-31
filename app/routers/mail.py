@@ -87,7 +87,7 @@ async def serve_saved_attachment(
     # Decode URL-encoded filename
     try:
         decoded_filename = unquote(filename)
-    except:
+    except Exception:
         decoded_filename = filename
     
     # Sanitize filename

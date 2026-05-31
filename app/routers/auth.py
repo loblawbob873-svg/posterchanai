@@ -658,7 +658,7 @@ async def upload_avatar(
                     import json
                     result_json = await result.json() if hasattr(result, 'json') else {}
                     filename = result_json.get("filename", "avatar.png")
-                except:
+                except Exception:
                     # Fallback: use default filename
                     logger.warning("Could not parse avatar upload response, using default filename")
                     filename = "avatar.png"

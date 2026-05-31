@@ -194,7 +194,7 @@ async def proxy_storage_request(
             if response.status_code != 200:
                 try:
                     error_detail = response.json().get("detail", response.text)
-                except:
+                except Exception:
                     error_detail = response.text or f"HTTP {response.status_code}"
                 
                 raise HTTPException(status_code=response.status_code, detail=error_detail)

@@ -78,7 +78,7 @@ async def transcribe_audio(audio_data: bytes, language: str = "en") -> Optional[
         if temp_path and os.path.exists(temp_path):
             try:
                 os.unlink(temp_path)
-            except:
+            except Exception:
                 pass
 
 

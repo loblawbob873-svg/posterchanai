@@ -1114,83 +1114,6 @@ async def get_all_images(
         
         # Return directly without additional cleaning
         return JSONResponse(content=result)
-        
-        # Custom JSON encoder for testing
-        class BytesSafeEncoder(json.JSONEncoder):
-            def default(self, obj):
-                if isinstance(obj, bytes):
-                    return obj.decode('utf-8', errors='ignore')
-                elif isinstance(obj, Path):
-                    return str(obj)
-                return super().default(obj)
-        
-        # CRITICAL: Test serialization BEFORE returning to catch any remaining bytes
-        # Use the same encoder that FastAPI will use (via our global encoder in main.py)
-        try:
-            # First, try with our custom encoder
-            test_json = json.dumps(cleaned_result, cls=BytesSafeEncoder, ensure_ascii=False)
-            # If successful, parse it back to ensure it's valid
-            parsed = json.loads(test_json)
-            logger.debug(f"[STORAGE] Successfully serialized result: {len(cleaned_result.get('images', []))} images")
-        except (TypeError, ValueError) as json_err:
-            # Find the problematic value with detailed logging
-            logger.error(f"[STORAGE] JSON serialization test failed: {json_err}")
-            logger.error(f"[STORAGE] Error type: {type(json_err).__name__}")
-            
-            # Try to find which field has bytes or other non-serializable types
-            problematic_paths = []
-            def find_problematic(obj, path="root", depth=0):
-                if depth > 10:  # Prevent infinite recursion
-                    return
-                try:
-                    if isinstance(obj, bytes):
-                        problematic_paths.append(f"{path} (bytes: {obj[:50] if len(obj) > 50 else obj})")
-                        return
-                    elif isinstance(obj, Path):
-                        problematic_paths.append(f"{path} (Path: {obj})")
-                        return
-                    elif isinstance(obj, dict):
-                        for k, v in obj.items():
-                            find_problematic(v, f"{path}.{k}", depth+1)
-                    elif isinstance(obj, (list, tuple)):
-                        for i, item in enumerate(obj[:20]):  # Check first 20 items
-                            find_problematic(item, f"{path}[{i}]", depth+1)
-                    else:
-                        # Try to serialize this value alone to see if it's the problem
-                        try:
-                            json.dumps(obj, cls=BytesSafeEncoder)
-                        except (TypeError, ValueError) as e:
-                            problematic_paths.append(f"{path} (type {type(obj).__name__}: {e})")
-                except Exception as e:
-                    problematic_paths.append(f"{path} (error checking: {e})")
-            
-            find_problematic(cleaned_result)
-            
-            if problematic_paths:
-                logger.error(f"[STORAGE] Found {len(problematic_paths)} problematic paths:")
-                for path in problematic_paths[:10]:  # Log first 10
-                    logger.error(f"[STORAGE]   - {path}")
-            else:
-                logger.error(f"[STORAGE] Could not identify problematic path, but serialization failed")
-                logger.error(f"[STORAGE] Result type: {type(cleaned_result)}, keys: {list(cleaned_result.keys()) if isinstance(cleaned_result, dict) else 'N/A'}")
-            
-            # Return minimal safe response instead of crashing
-            logger.warning(f"[STORAGE] Returning empty response due to serialization error")
-            return JSONResponse(content={"images": [], "total": 0, "limit": limit, "offset": offset, "has_more": False})
-        
-        # Return as JSONResponse - use custom encoder to handle any edge cases
-        # FastAPI's JSONResponse will use our custom encoder if we provide it
-        try:
-            return JSONResponse(content=cleaned_result)
-        except Exception as final_err:
-            logger.error(f"[STORAGE] JSONResponse failed even after cleaning: {final_err}")
-            # Last resort: manually serialize with our encoder
-            try:
-                json_str = json.dumps(cleaned_result, cls=BytesSafeEncoder, ensure_ascii=False)
-                return JSONResponse(content=json.loads(json_str))
-            except Exception as last_err:
-                logger.error(f"[STORAGE] Manual JSON encoding also failed: {last_err}")
-                return JSONResponse(content={"images": [], "total": 0, "limit": limit, "offset": offset, "has_more": False})
     except Exception as e:
         logger.error(f"[STORAGE] Error in get_all_images: {e}", exc_info=True)
         # Ensure error message is also JSON serializable
@@ -1338,77 +1261,6 @@ async def delete_file(
             # Invalidate parent directory cache
             if file_path:
                 parent_path = '/'.join(file_path.split('/')[:-1]) if '/' in file_path else ""
-                cache.invalidate(f"{username}:{parent_path}")
-        except Exception as e:
-            logger.warning(f"Failed to invalidate cache: {e}")
-        
-        return {"message": "File deleted successfully"}
-    except Exception as e:
-        logger.error(f"Error deleting file: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.delete("/delete-file")
-async def delete_file(
-    request: FastAPIRequest,
-    username: str = Query(...),
-    file_path: str = Query(...),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_optional)
-):
-    """
-    Delete a file or directory. Called by client nodes when proxying file deletions.
-    Only accessible on storage server node.
-    """
-    # Check if this is a server-to-server request (load-balanced from another posterchanai node)
-    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
-    is_server_request = current_user is None or load_balanced_header == "true"
-    
-    if not is_server_request:
-        # Verify username matches for user requests
-        if current_user.username != username:
-            raise HTTPException(status_code=403, detail="Access denied")
-    
-    storage = StorageService(db)
-    user_path = storage.get_user_path(username)
-    
-    # Sanitize and validate path
-    try:
-        safe_path = Path(*[_sanitize_path_component(p) for p in file_path.split('/') if p])
-        full_path = user_path / safe_path
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid path: {e}")
-    
-    # Validate path is within user directory
-    if not _validate_path_within_base(full_path, user_path):
-        raise HTTPException(status_code=403, detail="Access denied")
-    
-    if not full_path.exists():
-        raise HTTPException(status_code=404, detail="File or directory not found")
-    
-    # Run deletion in thread pool
-    def _delete_file_sync():
-        try:
-            if full_path.is_file():
-                full_path.unlink()
-            elif full_path.is_dir():
-                import shutil
-                shutil.rmtree(full_path)
-            else:
-                raise Exception("Path is neither a file nor a directory")
-        except Exception as e:
-            raise Exception(f"Error deleting file: {e}")
-    
-    try:
-        await asyncio.to_thread(_delete_file_sync)
-        
-        # Invalidate file cache
-        try:
-            from app.routers.files import get_file_cache
-            cache = get_file_cache(db)
-            cache.invalidate(f"{username}:")
-            parent_path = '/'.join(file_path.split('/')[:-1]) if '/' in file_path else ""
-            if parent_path:
                 cache.invalidate(f"{username}:{parent_path}")
         except Exception as e:
             logger.warning(f"Failed to invalidate cache: {e}")
@@ -1579,7 +1431,7 @@ async def list_files(
             for f in files:
                 try:
                     total += (Path(root) / f).stat().st_size
-                except:
+                except Exception:
                     pass
         return total
     

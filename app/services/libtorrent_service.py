@@ -304,7 +304,7 @@ class LibtorrentService:
                 # Remove corrupted resume file
                 try:
                     resume_file.unlink()
-                except:
+                except Exception:
                     pass
 
         if count > 0:

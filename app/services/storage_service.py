@@ -738,35 +738,6 @@ class StorageService:
             logger.error(f"[STORAGE] Error proxying mail attachment: {e}", exc_info=True)
             raise
     
-    def _proxy_save_generated_image(self, storage_server_url: str, username: str, image_base64: str, prompt: str = "") -> str:
-        """Proxy generated image save to storage server - uses synchronous requests to avoid event loop issues"""
-        import requests
-        try:
-            # Server-to-server requests don't need authentication
-            url = f"{storage_server_url.rstrip('/')}/api/storage/save-generated-image"
-            headers = {
-                "X-Posterchanai-Load-Balanced": "true"
-            }
-            
-            data = {
-                "username": username,
-                "image_base64": image_base64,
-                "prompt": prompt or ""
-            }
-            
-            response = requests.post(url, headers=headers, data=data, timeout=60)
-            
-            if response.status_code == 200:
-                result = response.json()
-                # Result returns relative path like "Generated Images/generated_*.png"
-                return result.get("filename", "")
-            else:
-                logger.error(f"[STORAGE] Failed to proxy save_generated_image: {response.status_code} - {response.text}")
-                raise Exception(f"Storage server error: {response.status_code}")
-        except Exception as e:
-            logger.error(f"[STORAGE] Error proxying generated image: {e}", exc_info=True)
-            raise
-
     def save_generated_image(self, username: str, image_base64: str, prompt: str = "", bypass_proxy: bool = False) -> str:
         """Save a generated image to Generated Images folder. Proxies to storage server if configured."""
         # Check if storage server is configured - proxy request if so (unless bypass_proxy is True)
