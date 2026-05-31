@@ -17,7 +17,6 @@ class FileManager {
         this.pictureViewerOpen = false;
         this.fullscreenViewerOpen = false;
         this.allImages = [];
-        this.currentImageIndex = 0;
         this.imageLoadOffset = 0;
         this.imageLoadLimit = 50;
         this.hasMoreImages = true;

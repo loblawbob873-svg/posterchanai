@@ -3768,12 +3768,6 @@ class ChatHandler {
         `).join('');
     }
 
-    escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text || '';
-        return div.innerHTML;
-    }
-
     async deleteMailAccount(index) {
         if (!confirm('Delete this email account?')) return;
         

@@ -439,11 +439,6 @@ class MusicPlayer {
 
         // Setup audio context on first user interaction
         this.setupAudioContext();
-        
-        // Ensure Media Session API is set up before playing
-        if ('mediaSession' in navigator) {
-            this.setupMediaSession();
-        }
 
         if (track) {
             // Add to queue if not already there
@@ -590,10 +585,6 @@ class MusicPlayer {
         this.startVisualizer();
         // Update Media Session immediately when playback starts
         this.updateMediaSessionPlaybackState();
-        // Ensure handlers are still registered (some browsers clear them)
-        if ('mediaSession' in navigator) {
-            this.setupMediaSession();
-        }
     }
 
     onPause() {

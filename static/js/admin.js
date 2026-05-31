@@ -1340,13 +1340,6 @@ async function loadExternalStorage() {
     }
 }
 
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
 window.editExternalStorage = async function(id) {
     try {
         // Load users first if not already loaded
