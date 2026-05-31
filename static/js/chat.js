@@ -1789,42 +1789,6 @@ class ChatHandler {
         return encodeURI(url);
     }
 
-    // Music shuffle removed
-    async _removed_startMusicShuffle() {
-        // Send the music shuffle command
-        try {
-            const response = await csrfFetch('/api/command', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ command: 'music shuffle' })
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                console.log('[MUSIC SHUFFLE] Response data:', data);
-                if (data.type === 'music_playlist' && data.tracks && window.musicPlayer) {
-                    console.log('[MUSIC SHUFFLE] Got playlist with', data.tracks.length, 'tracks');
-                    // Shuffle the tracks
-                    const shuffled = [...data.tracks].sort(() => Math.random() - 0.5);
-                    window.musicPlayer.clearQueue();
-                    shuffled.forEach(t => window.musicPlayer.addToQueue(t));
-                    if (shuffled.length > 0) {
-                        window.musicPlayer.play(shuffled[0]);
-                    }
-                    this.showToast(`Shuffling ${shuffled.length} tracks`);
-                } else if (data.type === 'music_play' && data.track && window.musicPlayer) {
-                    window.musicPlayer.play(data.track);
-                } else if (data.content) {
-                    console.log('[MUSIC SHUFFLE] Showing content as toast:', data.content);
-                    this.showToast(data.content);
-                }
-            }
-        } catch (e) {
-            console.error('[MUSIC SHUFFLE] Error:', e);
-            this.showToast('Failed to start shuffle');
-        }
-    }
-
     handleCommandResponse(data) {
         // Always hide typing indicator and reset button first
         this.hideTypingIndicator();
@@ -2021,13 +1985,8 @@ class ChatHandler {
                     htmlPreview: html.substring(0, 1000)
                 });
             }
-        } else if (data.type === 'music_play' || data.type === 'music_playlist') {
-            // Music features removed
         } else if (data.type === 'text' && data.content && data.content.includes('🔍 **Search Results:**')) {
-            // Music search results removed - just show formatted text
             html = contentHtml;
-        } else if (data.type === 'music_next' || data.type === 'music_prev' || data.type === 'music_stop') {
-            // Music player controls removed
         } else if (data.type === '4chan') {
             html = contentHtml || '<p>Opening 4chan catalog.</p>';
         } else {

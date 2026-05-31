@@ -1314,13 +1314,6 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                             in_thinking = False
                             current_close_tag = None  # Track which closing tag we're looking for
 
-                            # DEBUG: Log the exact messages being sent
-                            logger.info(f"=== SENDING {len(messages)} MESSAGES TO LLM ===")
-                            for i, m in enumerate(messages):
-                                content_preview = str(m.get('content', ''))[:80] if not isinstance(m.get('content'), list) else '[vision content]'
-                                logger.info(f"  [{i}] {m.get('role')}: {content_preview}...")
-                            logger.info(f"=== END MESSAGE LOG ===")
-
                             async for chunk in chat_service.chat_stream(messages):
                                 # Check if user requested stop OR switched to another chat
                                 if manager.should_stop(user.id, conn_id):
