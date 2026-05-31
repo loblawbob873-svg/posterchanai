@@ -574,9 +574,12 @@ async def rescan_storage(
                 headers = {
                     "X-Posterchanai-Load-Balanced": "true"
                 }
+                access_token = request.cookies.get("access_token")
                 auth_header = request.headers.get("Authorization")
                 if auth_header:
                     headers["Authorization"] = auth_header
+                elif access_token:
+                    headers["Cookie"] = f"access_token={access_token}"
                 
                 # Proxy to storage server with long timeout for large scans
                 async with httpx.AsyncClient(timeout=600.0) as client:  # 10 minutes
