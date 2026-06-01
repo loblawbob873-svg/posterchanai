@@ -34,6 +34,11 @@ The backend is **Python 3.10+** and **FastAPI**. You can use cloud APIs (OpenAI-
 - **Torrents**: built-in torrent client
 - **File storage** per user and per conversation; file manager in the UI
 
+### Bots & social
+
+- **Telegram and Matrix bots** drive chat, commands, and media from your phone
+- **Social posting** to **Misskey**, **Pleroma/Mastodon**, and **Matrix**: turn any reply, link, or topic into a post with the `post` command (rewrite, verbatim, or with your own instructions). See [Social posting from the bots](#social-posting-from-the-bots).
+
 ### Extensibility & admin
 
 - **4chan** integration (optional)
@@ -115,6 +120,34 @@ The **installer** sets up the virtual environment, dependencies, optional GPU ba
   - Image generation (ComfyUI URL or native)
   - RAG, TTS/STT, email, plugins
 - See **`docs/`** for detailed setup (IPEX, nginx, RAG/MCP, etc.).
+
+### Social posting from the bots
+
+Connect a social account in **User Settings → Misskey / Pleroma / Matrix**, then use
+the `post` command from the **Telegram** or **Matrix** bot to publish.
+
+**Telegram** — reply to any message (a bot answer, a link, a photo) and send:
+
+| Command | What it does |
+| --- | --- |
+| `post` | Rewrites the replied-to content into a viral, engaging post |
+| `post raw` | Shares the reply **exactly as written** — no rewrite (aliases: `verbatim`, `as-is`, `exact`) |
+| `post <instructions>` | Rewrites following your instructions, e.g. `post professional`, `post funny and short`, `post don't include links` |
+
+The bot then shows share buttons (**📣 Misskey / Pleroma / Matrix**, **🚀 Post to All**,
+**❌ Skip**) for whichever platforms you've connected. Replying to a photo shares the
+image itself. The source URL is appended by default; `post don't include links` (or
+"no links", "without url", …) omits it.
+
+**Matrix** — same `post`, adapted to a command (no reply needed):
+
+| Command | What it does |
+| --- | --- |
+| `post <url>` | Fetches the link and writes a post (URL appended) |
+| `post <topic>` | Writes a post about the topic |
+| `post <url> <instructions>` | e.g. `post <url> professional`, `post <url> no links` |
+| `post raw <text>` | Saves `<text>` verbatim, no rewrite |
+| `share` | Publishes the last `post` to your connected platforms (`share matrix <n>` picks a room) |
 
 ### Large files on Telegram (optional)
 

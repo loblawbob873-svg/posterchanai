@@ -201,13 +201,43 @@ async def execute_matrix_command(
     if not command_str:
         raise HTTPException(status_code=400, detail="Command is required")
 
-    # Handle `post` / `post <url>` — generate a social media post and return the text
+    # Handle `post` / `post <url>` / `post raw <text>` — generate or share a social post.
     import re as _re
-    _post_match = _re.match(r'^post\s+(https?://\S+)', command_str, _re.IGNORECASE)
+    _SHARE_SUFFIX = "\n\n---\nReply `share` to post this to your configured social platforms."
+
+    def _save_pending_post(text: str) -> None:
+        from app.models import UserSetting
+        _ps = db.query(UserSetting).filter(
+            UserSetting.user_id == user.id, UserSetting.key == "matrix_pending_post"
+        ).first()
+        if _ps:
+            _ps.value = text
+        else:
+            db.add(UserSetting(user_id=user.id, key="matrix_pending_post", value=text))
+        db.commit()
+
     if command_str.lower() == "post" or _re.match(r'^post\s', command_str, _re.IGNORECASE):
-        url_arg = _post_match.group(1) if _post_match else ""
-        # Plain text after "post" (no URL) — use it directly as context
         raw_arg = command_str[4:].strip() if len(command_str) > 4 else ""
+
+        # `post raw <text>` (also verbatim/as-is/exact) — share text exactly as written, no rewrite.
+        _verb_m = _re.match(r'^(raw|verbatim|as-is|asis|exact|exactly)\b\s*(.*)$', raw_arg, _re.IGNORECASE | _re.DOTALL)
+        if _verb_m:
+            verbatim_text = _verb_m.group(2).strip()
+            if not verbatim_text:
+                return {"result": "Usage: `post raw <text>` — share text exactly as written."}
+            _save_pending_post(verbatim_text)
+            return {"result": verbatim_text + _SHARE_SUFFIX}
+
+        _post_match = _re.match(r'^post\s+(https?://\S+)', command_str, _re.IGNORECASE)
+        url_arg = _post_match.group(1) if _post_match else ""
+        # When a URL is given, any remaining words are free-form instructions
+        # (e.g. "professional", "don't include links"). For a bare topic the text IS the content.
+        instructions = raw_arg.replace(url_arg, "", 1).strip() if url_arg else ""
+        _suppress_link = any(p in instructions.lower() for p in (
+            "no link", "no links", "without link", "don't include link",
+            "dont include link", "do not include link", "exclude link",
+            "no url", "without url", "skip link", "no source",
+        ))
         from app.services.chat_service import ChatService as _CS
         from app.services.search_service import SearchService as _SS
         _cs = _CS(db, user=user)
@@ -221,31 +251,26 @@ async def execute_matrix_command(
             except Exception:
                 pass
         if not article_context:
-            return {"result": "Usage: `post <url or text>` — generate a social media post from a URL or topic."}
+            return {"result": "Usage: `post <url or text>` — generate a social media post from a URL or topic. Use `post raw <text>` to share text exactly as written."}
         _cs.num_predict = min(_cs.num_predict, 900)
+        _tone = "compelling" if instructions else "viral and engaging"
+        _user_prompt = f"Write a {_tone}, detailed social media post based on this content. Use emojis. Do not use hashtags."
+        if instructions:
+            _user_prompt += f"\n\nFollow these user instructions exactly: {instructions}"
+        _user_prompt += f"\n\nContent:\n{article_context}"
         post_text = await _cs.chat([
             {"role": "system", "content": "You are a social media expert. Write a compelling post. Output ONLY the post text. No introductions or meta-commentary."},
-            {"role": "user", "content": f"Write a viral and engaging social media post based on this content. Use emojis. Do not use hashtags.\n\nContent:\n{article_context}"},
+            {"role": "user", "content": _user_prompt},
         ])
         # Strip Markdown links [text](url) → plain url and remove hashtags
         import re as _re2
         post_text = _re2.sub(r'\[([^\]]+)\]\((https?://[^\)]+)\)', r'\2', post_text)
         post_text = _re2.sub(r'\s*#\w+', '', post_text).strip()
-        if url_arg:
+        if url_arg and not _suppress_link:
             post_text = post_text.rstrip() + f"\n\n{url_arg}"
         # Save for when user replies `share` alone
-        from app.models import UserSetting
-        _ps = db.query(UserSetting).filter(
-            UserSetting.user_id == user.id,
-            UserSetting.key == "matrix_pending_post",
-        ).first()
-        if _ps:
-            _ps.value = post_text
-        else:
-            db.add(UserSetting(user_id=user.id, key="matrix_pending_post", value=post_text))
-        db.commit()
-        suffix = "\n\n---\nReply `share` to post this to your configured social platforms."
-        return {"result": post_text + suffix}
+        _save_pending_post(post_text)
+        return {"result": post_text + _SHARE_SUFFIX}
 
     # Handle `share` / `share <text>` — post text to all configured social platforms.
     # Require exact "share" or a "share " prefix so normal chat ("shared the news…")
