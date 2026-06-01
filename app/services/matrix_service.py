@@ -121,6 +121,25 @@ async def _room_display_name(client: httpx.AsyncClient, hs: str, room_id: str, h
     return room_id
 
 
+async def _get_dm_room_ids(client: httpx.AsyncClient, hs: str, headers: dict, own_user_id: str) -> set:
+    """Room IDs the user has tagged as direct messages, from the m.direct account data
+    (a map of other-user -> [room_ids]). Returns an empty set if unset/unavailable."""
+    try:
+        from urllib.parse import quote
+        uid = quote(own_user_id, safe="")
+        r = await client.get(f"{hs}/_matrix/client/v3/user/{uid}/account_data/m.direct", headers=headers)
+        if r.status_code != 200:
+            return set()
+        rooms: set = set()
+        for room_list in (r.json() or {}).values():
+            if isinstance(room_list, list):
+                rooms.update(room_list)
+        return rooms
+    except Exception as e:
+        logger.debug(f"[matrix] could not fetch m.direct: {e}")
+        return set()
+
+
 def _mentions_user(content: dict, own_user_id: str) -> bool:
     """True if a message event mentions own_user_id. Covers modern intentional mentions
     (m.mentions, MSC3952) and the mention pill / raw mxid in the HTML or plain body."""
@@ -134,13 +153,14 @@ def _mentions_user(content: dict, own_user_id: str) -> bool:
 
 async def fetch_notifications(homeserver: str, access_token: str, own_user_id: str,
                               since: str | None = None) -> tuple[list[dict], str]:
-    """Incremental sync for new room messages that MENTION the user. Returns (events,
+    """Incremental sync for new room messages worth notifying about. Returns (events,
     next_batch).
 
-    Each event is {room_id, event_id, sender, body}. Only m.room.message events from other
-    users that mention own_user_id are returned. On the FIRST poll (since is None) we only
-    capture the current next_batch cursor and return no events — this avoids replaying the
-    whole history when the relay is first enabled."""
+    Each event is {room_id, event_id, sender, body}. Forwards m.room.message events from
+    other users when the room is a DM (every message) or, in group rooms, only when the
+    message mentions own_user_id. On the FIRST poll (since is None) we only capture the
+    current next_batch cursor and return no events — this avoids replaying the whole history
+    when the relay is first enabled."""
     import json as _json
     from urllib.parse import quote as _q
     hs = homeserver.rstrip("/")
@@ -159,11 +179,13 @@ async def fetch_notifications(homeserver: str, access_token: str, own_user_id: s
         if resp.status_code != 200:
             raise ValueError(f"Matrix sync failed: HTTP {resp.status_code} — {resp.text[:200]}")
         data = resp.json()
-    next_batch = data.get("next_batch", since or "")
-    if not since:
-        return [], next_batch  # first poll: establish cursor, no backfill
+        next_batch = data.get("next_batch", since or "")
+        if not since:
+            return [], next_batch  # first poll: establish cursor, no backfill
+        dm_rooms = await _get_dm_room_ids(client, hs, headers, own_user_id)
     events: list[dict] = []
     for room_id, room in (data.get("rooms", {}).get("join", {}) or {}).items():
+        is_dm = room_id in dm_rooms
         for ev in room.get("timeline", {}).get("events", []) or []:
             if ev.get("type") != "m.room.message":
                 continue
@@ -171,8 +193,9 @@ async def fetch_notifications(homeserver: str, access_token: str, own_user_id: s
             if sender == own_user_id:
                 continue
             content = ev.get("content", {}) or {}
-            if not _mentions_user(content, own_user_id):
-                continue  # only forward messages that mention the user
+            # DM rooms: every incoming message. Group rooms: mentions only.
+            if not (is_dm or _mentions_user(content, own_user_id)):
+                continue
             body = content.get("body", "")
             events.append({
                 "room_id": room_id,
