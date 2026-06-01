@@ -193,8 +193,9 @@ async def _poll_user(db: Session, tg: TelegramService, user: User) -> None:
 
 
 async def poll_once(db: Session) -> None:
-    """Poll all eligible users once. Gated by the global kill-switch + per-user toggle."""
-    if _get_setting(db, "social_notif_enabled", "false").lower() != "true":
+    """Poll all eligible users once. The per-user toggle is the real control; the global
+    setting is an admin kill-switch that is ON unless explicitly set to "false"."""
+    if _get_setting(db, "social_notif_enabled", "true").lower() == "false":
         return
     tg = _build_telegram(db)
     if not tg:

@@ -221,7 +221,7 @@ class SettingsResponse(BaseModel):
     logs_exclude_patterns: str = ""
     logs_hosts: str = ""  # Comma-separated hostnames for remote log collection via SSH
     # Social notification relay (Misskey/Pleroma/Matrix → Telegram)
-    social_notif_enabled: str = "false"      # global kill-switch (per-user toggle in User Settings)
+    social_notif_enabled: str = "true"       # global kill-switch (on by default; per-user toggle in User Settings is the real control)
     social_notif_poll_seconds: str = "60"    # poll interval in seconds
     # Remote node management (run OS commands on nodes over SSH, or 'local' on this host)
     node_exec_enabled: str = "false"
