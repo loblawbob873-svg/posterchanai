@@ -15,7 +15,7 @@ _MEDIA_GROUP_CACHE: dict = {}
 from app.database import get_db, SessionLocal
 from app.models import User, Setting, Conversation, Message
 from app.auth import get_current_user, get_admin_user
-from app.services.telegram_service import telegram_service
+from app.services.telegram_service import telegram_service, configure_from_settings as _configure_telegram
 from app.services.chat_service import ChatService
 from app.services.command_service import CommandService
 
@@ -1166,7 +1166,10 @@ async def _handle_telegram_update(update: dict, db: Session):
             return {"ok": False, "error": "Bot not configured"}
         
         telegram_service.set_token(bot_token.value)
-        
+        # Point at a local Bot API server if the admin enabled one (lifts the
+        # 20 MB download cap to ~2 GB); otherwise use the cloud API.
+        _configure_telegram(db)
+
         message = update.get("message")
         logger.warning(f"TELEGRAM WEBHOOK: Received update")
         
@@ -1460,9 +1463,10 @@ async def _handle_telegram_update(update: dict, db: Session):
             attachments = []
             has_images = False
             ocr_text = None
-            # Telegram bots cannot download files larger than 20 MB via getFile.
-            # Track any oversized attachment so compress/convert can explain why.
-            TELEGRAM_MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
+            # Cloud Bot API caps bot downloads at 20 MiB; a local Bot API server
+            # raises it to ~2 GB. Track any oversized attachment so compress/convert
+            # can explain why it can't be processed.
+            TELEGRAM_MAX_DOWNLOAD_BYTES = (2000 * 1024 * 1024) if telegram_service.is_local_api else (20 * 1024 * 1024)
             oversized_attachment = None  # (filename, size_bytes)
             
             # Check if the message starts with a known command
@@ -1722,13 +1726,20 @@ async def _handle_telegram_update(update: dict, db: Session):
             # instead of falling through to the chat model.
             if oversized_attachment and command in ("compress", "convert", None):
                 _ov_name, _ov_size = oversized_attachment
-                await telegram_service.send_message(
-                    chat_id,
-                    f"❌ `{_ov_name}` is {_ov_size / (1024 * 1024):.1f} MB. Telegram bots can only "
-                    f"download files up to 20 MiB (≈20.97 MB) — this is a hard Telegram limit, not "
-                    f"something I can change.\n\n"
-                    f"Use the **web UI** for larger files (up to ~48 MB), or send a slightly smaller clip.",
-                )
+                _cap_mb = TELEGRAM_MAX_DOWNLOAD_BYTES / (1024 * 1024)
+                if telegram_service.is_local_api:
+                    _msg = (
+                        f"❌ `{_ov_name}` is {_ov_size / (1024 * 1024):.1f} MB, over the "
+                        f"{_cap_mb:.0f} MB limit of the configured Bot API server."
+                    )
+                else:
+                    _msg = (
+                        f"❌ `{_ov_name}` is {_ov_size / (1024 * 1024):.1f} MB. The cloud Telegram Bot "
+                        f"API only lets bots download files up to 20 MiB (≈20.97 MB).\n\n"
+                        f"Use the **web UI** for larger files, or enable a local Bot API server "
+                        f"in Admin → Services."
+                    )
+                await telegram_service.send_message(chat_id, _msg)
                 return {"ok": True}
 
             # A *caption-less* media upload: prompt with action buttons (like the
@@ -3734,8 +3745,9 @@ async def test_telegram_connection(
         raise HTTPException(status_code=400, detail="Bot token required")
     
     telegram_service.set_token(data.bot_token)
+    _configure_telegram(db)
     result = await telegram_service.get_me()
-    
+
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result.get("error", "Failed to connect to Telegram"))
     
@@ -3773,7 +3785,10 @@ async def configure_webhook(
         if not bot_token or not bot_token.value:
             raise HTTPException(status_code=400, detail="Telegram bot token not configured")
         telegram_service.set_token(bot_token.value)
-    
+
+    # Register the webhook with the local Bot API server when enabled, else cloud.
+    _configure_telegram(db)
+
     if data.webhook_url:
         logger.info(f"Calling set_webhook with URL: {data.webhook_url}")
         result = await telegram_service.set_webhook(data.webhook_url)
@@ -3892,7 +3907,8 @@ async def broadcast_to_telegram_users(
         raise HTTPException(status_code=400, detail="Telegram bot not configured")
     
     telegram_service.set_token(bot_token.value)
-    
+    _configure_telegram(db)
+
     users = db.query(User).filter(
         User.telegram_enabled == True,
         User.telegram_chat_id.isnot(None)

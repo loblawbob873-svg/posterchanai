@@ -584,11 +584,12 @@ async def run_logs_for_admin():
 
         # Send to Telegram if admin has Telegram enabled
         if admin.telegram_enabled and admin.telegram_chat_id:
-            from app.services.telegram_service import telegram_service
+            from app.services.telegram_service import telegram_service, configure_from_settings
             try:
                 telegram_service.set_token(
                     db.query(Setting).filter(Setting.key == "telegram_bot_token").first().value
                 )
+                configure_from_settings(db)
                 await telegram_service.send_message(
                     admin.telegram_chat_id,
                     _to_telegram_markdown(message_text)

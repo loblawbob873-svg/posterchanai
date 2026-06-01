@@ -222,6 +222,31 @@
             <input type="url" id="telegram_webhook_url" name="telegram_webhook_url" placeholder="https://yourdomain.com/api/telegram/webhook">
             <small>URL for receiving Telegram updates (must be publicly accessible)</small>
         </div>
+
+        <div class="form-group" style="margin-top: 15px; padding-top: 12px; border-top: 1px solid var(--border-color, #333);">
+            <label for="telegram_local_api">
+                <input type="checkbox" id="telegram_local_api" name="telegram_local_api"> Use local Bot API server
+            </label>
+            <small>
+                The cloud Telegram Bot API limits the bot to downloading files up to <b>20&nbsp;MB</b>
+                (so <code>compress</code>/<code>convert</code> only work on small files). A local
+                <a href="https://github.com/tdlib/telegram-bot-api" target="_blank" rel="noopener">telegram-bot-api</a>
+                server raises that to <b>~2&nbsp;GB</b>. Leave off to use the cloud API.
+            </small>
+        </div>
+        <div class="form-group">
+            <label for="telegram_api_base">Bot API server URL</label>
+            <input type="url" id="telegram_api_base" name="telegram_api_base" placeholder="http://localhost:8081">
+            <small>
+                Root URL of your local Bot API server (used only when the box above is checked).
+                Set it up once on the bot host:
+                <code>scripts/setup-telegram-local-api.sh</code> (needs an <code>api_id</code>/<code>api_hash</code>
+                from <a href="https://my.telegram.org" target="_blank" rel="noopener">my.telegram.org</a>).
+                Note: switching a bot between the cloud and a local server requires a one-time
+                <code>logOut</code> — the setup script handles it.
+            </small>
+        </div>
+
         <div class="form-row" style="gap: 10px; margin-top: 15px;">
             <button type="button" class="btn-secondary" id="testTelegramBtn">Test Connection</button>
             <button type="button" class="btn-secondary" id="setupWebhookBtn">Setup Webhook</button>

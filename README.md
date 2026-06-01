@@ -116,6 +116,20 @@ The **installer** sets up the virtual environment, dependencies, optional GPU ba
   - RAG, TTS/STT, email, plugins
 - See **`docs/`** for detailed setup (IPEX, nginx, RAG/MCP, etc.).
 
+### Large files on Telegram (optional)
+
+The cloud Telegram Bot API limits the bot to downloading files up to **20 MB**, so
+`compress`/`convert` only work on small uploads there (the web UI and Matrix have no
+such limit). To lift this to **~2 GB**, run a local Bot API server:
+
+```bash
+API_ID=… API_HASH=… BOT_TOKEN=… sudo -E ./scripts/setup-telegram-local-api.sh
+```
+
+(`api_id`/`api_hash` come from https://my.telegram.org.) Then in **Admin → Services →
+Telegram Bot**, tick **Use local Bot API server**, set the URL to `http://localhost:8081`,
+save, and re-run **Setup Webhook**.
+
 ---
 
 ## Project layout

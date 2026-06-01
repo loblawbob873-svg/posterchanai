@@ -8,12 +8,30 @@ logger = logging.getLogger(__name__)
 
 
 class TelegramService:
+    DEFAULT_API_ROOT = "https://api.telegram.org"
+
     def __init__(self, bot_token: str = None):
         self.bot_token = bot_token
-        self.api_base = "https://api.telegram.org/bot"
-    
+        self.api_root = self.DEFAULT_API_ROOT
+        self.api_base = f"{self.api_root}/bot"
+
     def set_token(self, token: str):
         self.bot_token = token
+
+    def set_api_base(self, api_root: str = None):
+        """Point the service at a Bot API server.
+
+        `api_root` is the server root, e.g. "https://api.telegram.org" (cloud,
+        20 MB file cap) or "http://localhost:8081" (local Bot API server, ~2 GB).
+        Falls back to the cloud API when empty.
+        """
+        root = (api_root or self.DEFAULT_API_ROOT).strip().rstrip("/")
+        self.api_root = root
+        self.api_base = f"{root}/bot"
+
+    @property
+    def is_local_api(self) -> bool:
+        return self.api_root != self.DEFAULT_API_ROOT
     
     async def send_message(self, chat_id: str, text: str, parse_mode: str = "Markdown", reply_markup: dict = None) -> dict:
         """Send a message to a Telegram chat."""
@@ -314,7 +332,7 @@ class TelegramService:
         if not self.bot_token:
             return None
 
-        url = f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}"
+        url = f"{self.api_root}/file/bot{self.bot_token}/{file_path}"
 
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
@@ -427,3 +445,17 @@ class TelegramService:
 
 
 telegram_service = TelegramService()
+
+
+def configure_from_settings(db) -> None:
+    """Point the shared telegram_service at the local Bot API server if the admin
+    enabled one, else the cloud API. Call this anywhere the service is used so
+    every Bot API call (webhook setup, sends, file ops) targets the same server.
+    """
+    from app.models import Setting
+    local = db.query(Setting).filter(Setting.key == "telegram_local_api").first()
+    base = db.query(Setting).filter(Setting.key == "telegram_api_base").first()
+    if local and str(local.value).lower() in ("true", "1", "yes") and base and base.value:
+        telegram_service.set_api_base(base.value)
+    else:
+        telegram_service.set_api_base(None)
