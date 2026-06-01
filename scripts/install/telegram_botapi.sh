@@ -4,21 +4,10 @@
 # Delegates the build/install to scripts/setup-telegram-local-api.sh.
 
 setup_telegram_botapi() {
-    print_step "Optional: local Telegram Bot API server (large-file support)"
-    echo ""
-    echo "  Telegram's cloud Bot API only lets bots download files up to 20 MB, so"
-    echo "  'compress'/'convert'/'translate' on Telegram only work on small files."
-    echo "  A local Bot API server raises that to ~2 GB. (The web UI and Matrix"
-    echo "  already handle large files without this.) Compiles telegram-bot-api"
-    echo "  (~10-20 min). This is independent of the install type you chose."
-    echo ""
+    # Runs only if option 5 was chosen during the install-type selection.
+    [ "${INSTALL_TELEGRAM_BOTAPI:-0}" = "1" ] || return 0
 
-    read -p "Set up the local Telegram Bot API server now? [y/N]: " WANT_BOTAPI
-    if [[ ! "$WANT_BOTAPI" =~ ^[Yy] ]]; then
-        echo "  Skipping — you can run scripts/setup-telegram-local-api.sh anytime later."
-        return 0
-    fi
-
+    print_step "Setting up local Telegram Bot API server (option 5)"
     echo ""
     echo "  Get these from https://my.telegram.org (API development tools):"
     read -p "  API ID: " BOTAPI_ID
