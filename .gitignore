@@ -86,3 +86,4 @@ data/
 .aider*
 crush.json
 .encryption_key
+overrides/
