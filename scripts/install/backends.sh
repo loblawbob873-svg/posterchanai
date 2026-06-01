@@ -7,6 +7,7 @@ INSTALL_LLM=0
 INSTALL_IMAGE=0
 INSTALL_TELEGRAM_BOTAPI=0  # optional local Telegram Bot API server (large files)
 TELEGRAM_ONLY=0            # option 5: set up ONLY the Bot API server (add-on)
+UPDATE_ONLY=0             # option 6: update deps + Telegram server, then exit
 LLM_BACKEND=""
 IMAGE_BACKEND=""
 BACKEND=""  # Alias for LLM_BACKEND for backward compatibility
@@ -31,8 +32,12 @@ select_components() {
     echo "     files up to ~2 GB). Skips the rest of the installer — no deps, no"
     echo "     models, no GPU, no service changes. Compiles telegram-bot-api (~10-20 min)."
     echo ""
+    echo -e "  6) ${BOLD}Update${NC} (existing install)"
+    echo "     Safely upgrade posterchanai Python deps (Intel Arc pins protected)"
+    echo "     and optionally rebuild the Telegram Bot API server, then restart."
+    echo ""
 
-    read -p "Select installation type [1-5, default=1]: " INSTALL_TYPE
+    read -p "Select installation type [1-6, default=1]: " INSTALL_TYPE
     INSTALL_TYPE=${INSTALL_TYPE:-1}
 
     # Option 5 is a pure add-on for an existing install: set up ONLY the Telegram
@@ -41,6 +46,13 @@ select_components() {
         INSTALL_TELEGRAM_BOTAPI=1
         TELEGRAM_ONLY=1
         echo -e "  ${GREEN}✓ Telegram Bot API server add-on only (skipping the rest of the install)${NC}"
+        return 0
+    fi
+
+    # Option 6 is update mode: refresh deps + Telegram server, then exit.
+    if [ "$INSTALL_TYPE" = "6" ]; then
+        UPDATE_ONLY=1
+        echo -e "  ${GREEN}✓ Update mode (deps + Telegram Bot API server)${NC}"
         return 0
     fi
 

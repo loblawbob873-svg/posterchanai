@@ -328,9 +328,19 @@ class TelegramService:
             return {"ok": False, "error": str(e)}
     
     async def download_file(self, file_path: str) -> Optional[bytes]:
-        """Download a file from Telegram."""
+        """Download a file from Telegram (cloud or local Bot API server)."""
         if not self.bot_token:
             return None
+
+        # A local Bot API server in --local mode returns an absolute filesystem
+        # path from getFile (files are served off disk, not over HTTP). Read it
+        # directly. (posterchanai and the daemon share the host/filesystem.)
+        if file_path.startswith("/"):
+            try:
+                return await asyncio.to_thread(lambda: open(file_path, "rb").read())
+            except Exception as e:
+                logger.error(f"Failed to read local Bot API file {file_path}: {e}")
+                return None
 
         url = f"{self.api_root}/file/bot{self.bot_token}/{file_path}"
 

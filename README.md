@@ -119,17 +119,33 @@ The **installer** sets up the virtual environment, dependencies, optional GPU ba
 ### Large files on Telegram (optional)
 
 The cloud Telegram Bot API limits the bot to downloading files up to **20 MB**, so
-`compress`/`convert` only work on small uploads there (the web UI and Matrix have no
-such limit). To lift this to **~2 GB**, run a local Bot API server:
+`compress`/`convert`/`translate` only work on small uploads there (the web UI and
+Matrix have no such limit). To lift this to **~2 GB**, run a local Bot API server:
 
 1. In **Admin → Services → Telegram Bot**, enter your **API ID** and **API Hash**
    (from https://my.telegram.org) and save.
-2. On the bot host, run once — it reads those values from the database, nothing to type:
+2. Set it up — either re-run `./install.sh` and pick **option 5** (*Telegram Bot API
+   server — add-on only*, which sets up just the server against your existing install
+   and reads the credentials from the database), or run it directly:
    ```bash
-   sudo ./scripts/setup-telegram-local-api.sh
+   ./scripts/setup-telegram-local-api.sh        # uses sudo internally as needed
    ```
-3. Back in the admin UI, tick **Use local Bot API server**, set the URL to
-   `http://localhost:8081`, save, and re-run **Setup Webhook**.
+3. Back in the admin UI, click **Test Local Server** (it should go green), then tick
+   **Use local Bot API server** and **Setup Webhook**. (The installer/script also set
+   these for you.)
+
+### Updating (option 6)
+
+To upgrade an existing install, re-run `./install.sh` and pick **option 6 (Update)**.
+It upgrades the posterchanai Python dependencies and optionally rebuilds the local
+Telegram Bot API server (`REBUILD`), then restarts the services. On **Intel Arc**
+installs it freezes the fragile IPEX pins (`torch`, `intel-extension-for-pytorch`,
+`ipex-llm`, `numpy<2`, the transformers stack) to their installed versions first, so
+an upgrade can never move them — a conflicting upgrade is skipped rather than allowed
+to break the Arc environment.
+
+> Note: `sync.sh` deploys **code** (git pull + restart); it does **not** touch Python
+> deps or the Telegram server binary. Use **option 6** for dependency upgrades.
 
 ---
 

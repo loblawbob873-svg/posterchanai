@@ -31,6 +31,7 @@ source "$INSTALL_DIR/image.sh"
 source "$INSTALL_DIR/systemd.sh"
 source "$INSTALL_DIR/setup.sh"
 source "$INSTALL_DIR/telegram_botapi.sh"
+source "$INSTALL_DIR/update.sh"
 
 # Handle --help and --packages options
 if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
@@ -69,6 +70,12 @@ main() {
         setup_telegram_botapi
         echo ""
         print_success "Done. Local Telegram Bot API server add-on configured."
+        return
+    fi
+
+    # Option 6 (update): safely refresh deps + Telegram server, then stop.
+    if [ "${UPDATE_ONLY:-0}" = "1" ]; then
+        run_updates
         return
     fi
 

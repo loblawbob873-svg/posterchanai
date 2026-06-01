@@ -55,11 +55,13 @@ WORK_DIR="${WORK_DIR:-/var/lib/telegram-bot-api}"
 [ -n "${API_HASH:-}" ] || err "No API Hash found (set it in Admin -> Services -> Telegram Bot, or pass API_HASH=…). Get it from https://my.telegram.org"
 
 # ---------------------------------------------------------------------------
-# 1. Build telegram-bot-api from source (skipped if already installed)
+# 1. Build telegram-bot-api from source.
+# Skipped if already installed, unless REBUILD=1 (to upgrade to a newer build).
 # ---------------------------------------------------------------------------
-if command -v telegram-bot-api >/dev/null 2>&1; then
-    info "telegram-bot-api already installed: $(command -v telegram-bot-api) — skipping build."
+if [ "${REBUILD:-0}" != "1" ] && command -v telegram-bot-api >/dev/null 2>&1; then
+    info "telegram-bot-api already installed: $(command -v telegram-bot-api) — skipping build (set REBUILD=1 to rebuild/upgrade)."
 else
+    [ "${REBUILD:-0}" = "1" ] && info "REBUILD=1 — rebuilding telegram-bot-api from source."
     info "Installing build dependencies…"
     if command -v apt-get >/dev/null 2>&1; then
         $SUDO apt-get update && $SUDO apt-get install -y make git zlib1g-dev libssl-dev gperf cmake g++
@@ -100,7 +102,10 @@ if [ -n "${BOT_TOKEN:-}" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 3. systemd service (HTTP mode: files served at /file/bot<token>/<path>)
+# 3. systemd service. Runs with --local so the bot can use a webhook pointing at
+# a private/LAN address (e.g. a reverse proxy on 192.168.x.x) — the non-local
+# server rejects "reserved" IPs. In --local mode getFile returns absolute file
+# paths on disk, which posterchanai reads directly (same host/filesystem).
 # ---------------------------------------------------------------------------
 $SUDO mkdir -p "$WORK_DIR"
 $SUDO chown "$RUN_USER" "$WORK_DIR"
@@ -114,7 +119,7 @@ Wants=network-online.target
 
 [Service]
 User=${RUN_USER}
-ExecStart=${BIN} --api-id=${API_ID} --api-hash=${API_HASH} --http-port=${PORT} --dir=${WORK_DIR}
+ExecStart=${BIN} --local --api-id=${API_ID} --api-hash=${API_HASH} --http-port=${PORT} --dir=${WORK_DIR}
 Restart=on-failure
 RestartSec=5
 LimitNOFILE=65536
