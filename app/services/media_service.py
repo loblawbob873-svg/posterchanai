@@ -174,6 +174,65 @@ def compress_image(
 # Video compression
 # ---------------------------------------------------------------------------
 
+_video_encoder_cache = None  # remembers the first encoder that worked
+
+
+def _ffmpeg_encoders_text(ffmpeg: str) -> str:
+    try:
+        out = subprocess.run([ffmpeg, '-hide_banner', '-encoders'], capture_output=True, timeout=10)
+        return out.stdout.decode('utf-8', 'ignore')
+    except Exception:
+        return ""
+
+
+def _render_node() -> str:
+    import glob
+    nodes = sorted(glob.glob('/dev/dri/renderD*'))
+    return nodes[0] if nodes else '/dev/dri/renderD128'
+
+
+def _video_encoder_candidates(ffmpeg: str) -> list:
+    """Ordered list of H.264 encoders to try: GPU (if present) first, libx264 last.
+
+    Smart-detects NVIDIA NVENC and Intel/AMD VAAPI from the available encoders +
+    device nodes. Overridable with VIDEO_ENCODER=…; disable HW with VIDEO_HWACCEL=0.
+    """
+    import glob
+    forced = os.environ.get("VIDEO_ENCODER", "").strip()
+    if forced:
+        return [forced] if forced == "libx264" else [forced, "libx264"]
+    if os.environ.get("VIDEO_HWACCEL", "1").lower() in ("0", "false", "no"):
+        return ["libx264"]
+
+    enc = _ffmpeg_encoders_text(ffmpeg)
+    cands = []
+    if "h264_nvenc" in enc and glob.glob("/dev/nvidia*"):
+        cands.append("h264_nvenc")                       # NVIDIA (e.g. nas.lan)
+    if "h264_vaapi" in enc and glob.glob("/dev/dri/renderD*"):
+        cands.append("h264_vaapi")                       # Intel Arc / AMD (render node)
+    cands.append("libx264")                              # CPU fallback (always)
+    return cands
+
+
+def _video_encode_cmd(ffmpeg, encoder, in_path, out_path, scale_filter, crf, preset):
+    """Build the ffmpeg command for a specific H.264 encoder."""
+    pre, vf = [], scale_filter
+    if encoder == "h264_nvenc":
+        venc = ['-c:v', 'h264_nvenc', '-preset', 'p5', '-cq', str(crf)]
+    elif encoder == "h264_vaapi":
+        pre = ['-vaapi_device', _render_node()]
+        vf = scale_filter + ',format=nv12,hwupload'      # CPU scale → upload to GPU surface
+        venc = ['-c:v', 'h264_vaapi', '-qp', str(crf)]
+    elif encoder == "h264_amf":
+        venc = ['-c:v', 'h264_amf', '-rc', 'cqp', '-qp_i', str(crf), '-qp_p', str(crf)]
+    else:  # libx264
+        venc = ['-c:v', 'libx264', '-preset', preset, '-crf', str(crf)]
+    return [ffmpeg] + pre + ['-i', in_path, '-vf', vf] + venc + [
+        '-c:a', 'aac', '-b:a', VIDEO_AUDIO_BITRATE,
+        '-movflags', '+faststart', '-y', out_path,
+    ]
+
+
 def compress_video(
     data: bytes,
     source_filename: str,
@@ -183,16 +242,14 @@ def compress_video(
 ) -> bytes:
     """Compress a video with ffmpeg (H.264/AAC, downscaled). Returns MP4 bytes.
 
-    Raises RuntimeError if ffmpeg is unavailable or the transcode fails.
+    Uses GPU acceleration when available (NVENC on NVIDIA, VAAPI on Intel Arc/AMD)
+    and falls back to libx264 (CPU) if the GPU encoder is unavailable or fails.
+    Raises RuntimeError if ffmpeg is unavailable or every encoder fails.
     """
+    global _video_encoder_cache
     ffmpeg = resolve_ffmpeg()
     if not ffmpeg_available():
         raise RuntimeError("ffmpeg is not installed on the server")
-    if not _ffmpeg_has_libx264(ffmpeg):
-        raise RuntimeError(
-            "this ffmpeg build has no libx264 (H.264) encoder — install a full "
-            "ffmpeg (e.g. the system/Jellyfin build) for video compression"
-        )
 
     tmp_dir = tempfile.mkdtemp(prefix="media_compress_")
     in_suffix = _ext(source_filename) or ".mp4"
@@ -209,21 +266,27 @@ def compress_video(
             f"force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2"
         )
 
-        cmd = [
-            ffmpeg, '-i', in_path,
-            '-vf', scale_filter,
-            '-c:v', 'libx264', '-preset', preset, '-crf', str(crf),
-            '-c:a', 'aac', '-b:a', VIDEO_AUDIO_BITRATE,
-            '-movflags', '+faststart',
-            '-y', out_path,
-        ]
-        result = subprocess.run(cmd, capture_output=True, timeout=3600, text=True)
-        if result.returncode != 0 or not os.path.exists(out_path):
-            err = (result.stderr or "")[-400:]
-            raise RuntimeError(f"video compression failed: {err}")
+        candidates = _video_encoder_candidates(ffmpeg)
+        # Try the previously-working encoder first to avoid re-failing GPU probes.
+        if _video_encoder_cache and _video_encoder_cache in candidates:
+            candidates = [_video_encoder_cache] + [c for c in candidates if c != _video_encoder_cache]
 
-        with open(out_path, "rb") as f:
-            return f.read()
+        last_err = ""
+        for encoder in candidates:
+            cmd = _video_encode_cmd(ffmpeg, encoder, in_path, out_path, scale_filter, crf, preset)
+            result = subprocess.run(cmd, capture_output=True, timeout=3600, text=True)
+            if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+                if encoder != "libx264":
+                    logger.info(f"Video compressed with GPU encoder: {encoder}")
+                _video_encoder_cache = encoder
+                with open(out_path, "rb") as f:
+                    return f.read()
+            last_err = (result.stderr or "")[-300:]
+            logger.warning(f"Video encoder {encoder} failed, trying next: {last_err}")
+            if os.path.exists(out_path):
+                os.unlink(out_path)
+
+        raise RuntimeError(f"video compression failed (tried {candidates}): {last_err}")
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
