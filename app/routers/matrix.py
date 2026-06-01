@@ -654,10 +654,11 @@ async def matrix_ytdl_fetch(
     _ssl_s = db.query(_Setting).filter(_Setting.key == "ytdl_no_ssl_verify").first()
     _no_ssl = str(_ssl_s.value).strip().lower() in ("true", "1", "yes") if _ssl_s and _ssl_s.value else False
 
-    # Cap video at 720p so files stay within typical Matrix upload limits, and
-    # reject anything still too large rather than OOM the worker or have the upload
-    # fail silently downstream.
-    MAX_BYTES = 100 * 1024 * 1024  # 100 MB
+    # Cap video at 720p so files stay within upload limits, and reject anything
+    # still too large rather than OOM the worker or fail silently downstream.
+    # 95 MB leaves headroom under Cloudflare's 100 MB request-body cap (the real
+    # bottleneck — nginx/Synapse allow much more).
+    MAX_BYTES = 95 * 1024 * 1024  # 95 MB (Cloudflare-safe)
 
     def _read_b64(path):
         with open(path, "rb") as f:
