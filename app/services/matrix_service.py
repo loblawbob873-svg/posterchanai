@@ -215,6 +215,58 @@ async def send_image(homeserver: str, access_token: str, room_id: str,
             await client.put(send_url2, json={"msgtype": "m.text", "body": caption}, headers=headers_auth)
 
 
+def _msgtype_for_mime(mime: str) -> str:
+    """Map a MIME type to the appropriate Matrix message type."""
+    if mime.startswith("image/"):
+        return "m.image"
+    if mime.startswith("video/"):
+        return "m.video"
+    if mime.startswith("audio/"):
+        return "m.audio"
+    return "m.file"
+
+
+async def send_file_to_room(homeserver: str, access_token: str, room_id: str,
+                            file_bytes: bytes, filename: str, mime: str) -> None:
+    """Upload arbitrary file bytes to Matrix media and send into a room.
+
+    Picks the message type (m.image/m.video/m.audio/m.file) from the MIME type.
+    """
+    hs = homeserver.rstrip("/")
+    from urllib.parse import quote
+    headers_auth = {"Authorization": f"Bearer {access_token}"}
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        mxc_uri = None
+        for media_url in [
+            f"{hs}/_matrix/client/v1/media/upload?filename={quote(filename)}",
+            f"{hs}/_matrix/media/v3/upload?filename={quote(filename)}",
+        ]:
+            upload_resp = await client.post(
+                media_url,
+                content=file_bytes,
+                headers={**headers_auth, "Content-Type": mime},
+            )
+            if upload_resp.status_code in (200, 201):
+                mxc_uri = upload_resp.json().get("content_uri")
+                break
+        if not mxc_uri:
+            raise ValueError("Media upload failed (no content URI returned)")
+
+        encoded_room = quote(room_id, safe="")
+        txn_id = str(int(time.time() * 1000))
+        send_url = f"{hs}/_matrix/client/v3/rooms/{encoded_room}/send/m.room.message/{txn_id}"
+        payload = {
+            "msgtype": _msgtype_for_mime(mime),
+            "body": filename,
+            "url": mxc_uri,
+            "info": {"mimetype": mime, "size": len(file_bytes)},
+        }
+        resp = await client.put(send_url, json=payload, headers=headers_auth)
+        if resp.status_code not in (200, 201):
+            raise ValueError(f"Failed to send Matrix file: HTTP {resp.status_code} — {resp.text[:200]}")
+
+
 async def _ensure_joined(client: httpx.AsyncClient, hs: str, room_id: str, headers: dict) -> bool:
     """Join a room if not already a member. Returns True if joined/already joined."""
     from urllib.parse import quote

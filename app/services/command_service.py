@@ -143,6 +143,8 @@ class CommandService:
         "mail": "Email: mail <to> [subject] <body>",
         "translate": "Translate: translate <text> to <lang>",
         "4chan": "4chan browser: 4chan [g|pol|h] - view catalog",
+        "compress": "Compress attached image(s) or video(s)",
+        "convert": "Convert image(s) to PDF or a PDF to images",
     }
     # Command aliases (alias -> canonical command)
     COMMAND_ALIASES = {
@@ -256,6 +258,10 @@ class CommandService:
             return await self._translate_command(arg)
         elif command == "4chan":
             return await self._4chan_command(arg)
+        elif command == "compress":
+            return await self._compress_command(attachments)
+        elif command == "convert":
+            return await self._convert_command(arg, attachments)
         else:
             return {"type": "text", "content": f"Unknown command: {command}"}
 
@@ -2352,6 +2358,41 @@ Files are saved to your Storage.""",
         except Exception as e:
             logger.error(f"Translation error: {e}")
             return {"type": "text", "content": f"Translation failed: {str(e)}"}
+
+    async def _compress_command(self, attachments: Optional[list]) -> dict:
+        """Compress attached image(s) or video(s) and return the smaller files."""
+        if not attachments:
+            return {
+                "type": "text",
+                "content": "Attach an image or video, then send `compress` to shrink it.",
+            }
+        import asyncio
+        from app.services.media_service import compress_attachments
+
+        # ffmpeg transcodes can block; run off the event loop.
+        outputs, summary = await asyncio.to_thread(compress_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _convert_command(self, arg: str, attachments: Optional[list]) -> dict:
+        """Convert attached image(s) to a PDF, or a PDF to images."""
+        if not attachments:
+            return {
+                "type": "text",
+                "content": (
+                    "Attach file(s) then send `convert`:\n"
+                    "- image(s) → a single PDF\n"
+                    "- a PDF → one PNG per page"
+                ),
+            }
+        import asyncio
+        from app.services.media_service import convert_attachments
+
+        outputs, summary = await asyncio.to_thread(convert_attachments, attachments, arg)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
 
     async def _4chan_command(self, arg: str) -> dict:
         """Open 4chan catalog browser. Optional board: g, pol, a, or h."""

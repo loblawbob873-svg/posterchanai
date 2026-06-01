@@ -31,6 +31,71 @@ from app.services.intent_service import IntentService
 router = APIRouter(prefix="/api", tags=["chat"])
 
 
+def _guess_image_content_type(b64: str) -> tuple:
+    """Return (content_type, extension) from a base64 image payload."""
+    if b64.startswith("/9j/"):
+        return "image/jpeg", "jpg"
+    if b64.startswith("R0lGOD"):
+        return "image/gif", "gif"
+    if b64.startswith("UklGR"):
+        return "image/webp", "webp"
+    return "image/png", "png"
+
+
+def build_media_attachments(images, image_data, pdfs, pdf_data, documents, document_data, videos):
+    """Decode webui upload arrays into (filename, bytes, content_type) tuples.
+
+    Used by the `compress`/`convert` commands which operate on the raw file
+    bytes rather than extracted text. Prefers the multi-attachment arrays and
+    falls back to the single-value fields for backward compatibility.
+    """
+    import base64
+    out = []
+
+    def _add_image(b64, filename):
+        try:
+            ct, ext = _guess_image_content_type(b64)
+            out.append((filename or f"image.{ext}", base64.b64decode(b64), ct))
+        except Exception as e:
+            logger.warning(f"[MEDIA] skipping bad image attachment: {e}")
+
+    if images:
+        for img in images:
+            b64 = img.get("base64") if isinstance(img, dict) else img
+            name = img.get("filename") if isinstance(img, dict) else None
+            if b64:
+                _add_image(b64, name)
+    elif image_data:
+        _add_image(image_data, None)
+
+    if pdfs:
+        for pdf in pdfs:
+            b64 = pdf.get("base64") if isinstance(pdf, dict) else pdf
+            name = pdf.get("filename", "document.pdf") if isinstance(pdf, dict) else "document.pdf"
+            if b64:
+                try:
+                    out.append((name, base64.b64decode(b64), "application/pdf"))
+                except Exception as e:
+                    logger.warning(f"[MEDIA] skipping bad PDF attachment: {e}")
+    elif pdf_data:
+        try:
+            out.append(("document.pdf", base64.b64decode(pdf_data), "application/pdf"))
+        except Exception as e:
+            logger.warning(f"[MEDIA] skipping bad PDF attachment: {e}")
+
+    if videos:
+        for vid in videos:
+            b64 = vid.get("base64") if isinstance(vid, dict) else vid
+            name = vid.get("filename", "video.mp4") if isinstance(vid, dict) else "video.mp4"
+            if b64:
+                try:
+                    out.append((name, base64.b64decode(b64), "video/mp4"))
+                except Exception as e:
+                    logger.warning(f"[MEDIA] skipping bad video attachment: {e}")
+
+    return out or None
+
+
 # REST Endpoints
 
 @router.get("/conversations", response_model=List[ConversationResponse])
@@ -698,7 +763,8 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                     pdfs = data.get("pdfs", [])  # Array of {base64, filename}
                     document_data = data.get("document_data")  # base64 Office document (single, for backward compat)
                     documents = data.get("documents", [])  # Array of {base64, filename, type}
-                    
+                    videos = data.get("videos", [])  # Array of {base64, filename} (for compress)
+
                     # If arrays are provided, use them; otherwise fall back to single values for backward compat
                     if images and not image_data:
                         image_data = images[0].get("base64") if images else None
@@ -976,10 +1042,18 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                 if not mail_attachments:
                                     mail_attachments = None
 
+                            # compress/convert operate on raw file bytes
+                            media_attachments = None
+                            if command in ("compress", "convert"):
+                                media_attachments = build_media_attachments(
+                                    images, image_data, pdfs, pdf_data,
+                                    documents, document_data, videos
+                                )
+
                             result = await command_service.execute_command(
                                 command, arg, last_prompt,
                                 stop_check=should_stop_command,
-                                attachments=mail_attachments
+                                attachments=mail_attachments or media_attachments
                             )
 
                             # Check if stopped during execution
@@ -997,6 +1071,32 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             except Exception:
                                 pass
                             result = {"type": "text", "content": f"Error: {cmd_err}"}
+
+                        # compress/convert produce binary files — save them to storage
+                        # and replace the raw bytes with markdown download links so the
+                        # result is JSON-serializable for the websocket.
+                        if result.get("type") == "files":
+                            from urllib.parse import quote as _q
+                            _links = []
+                            for _f in result.get("files", []):
+                                _fbytes = _f.get("data")
+                                _fname = _f.get("filename", "file")
+                                if not _fbytes:
+                                    continue
+                                try:
+                                    _rel = storage_service.save_file_bytes(
+                                        user.username, conversation_id, _fbytes, _fname
+                                    )
+                                    _saved_name = Path(_rel).name
+                                    _url = f"/api/files/{_q(user.username, safe='')}/{conversation_id}/{_saved_name}"
+                                    _links.append(f"[⬇️ {_fname}]({_url})")
+                                except Exception as _save_err:
+                                    logger.error(f"[CHAT] Failed to save output file {_fname}: {_save_err}")
+                                    _links.append(f"❌ {_fname}: save failed")
+                            _content = result.get("content", "")
+                            if _links:
+                                _content += "\n\n" + "\n".join(_links)
+                            result = {"type": "text", "content": _content}
 
                         # Save generated image to disk (non-blocking - don't fail if storage save fails)
                         generated_image_path = None

@@ -51,10 +51,10 @@ check_dependencies() {
 
     # Check optional dependencies
     if ! command -v ffmpeg &>/dev/null; then
-        print_warning "ffmpeg not found - music transcoding will be unavailable"
-        echo "  Install ffmpeg for lower-quality music streaming (saves bandwidth)"
+        print_warning "ffmpeg not found - music transcoding and video compression will be unavailable"
+        echo "  Install ffmpeg for music streaming and the 'compress' command (video)"
     else
-        print_success "ffmpeg found (music transcoding available)"
+        print_success "ffmpeg found (music transcoding + video compression available)"
     fi
 
     # Check for pax-utils (scanelf) - needed for Intel Arc on hardened kernels

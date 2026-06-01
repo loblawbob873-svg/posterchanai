@@ -138,10 +138,18 @@ async def send_test_dm(
         raise HTTPException(status_code=502, detail=str(e))
 
 
+class MatrixMediaItem(BaseModel):
+    filename: str
+    data: str  # base64-encoded file content
+    content_type: Optional[str] = None
+
+
 class MatrixCommandRequest(BaseModel):
     matrix_user_id: str
     command: str
     room_id: Optional[str] = None
+    # Attached files (base64) forwarded by the bot — used by compress/convert.
+    media: Optional[list[MatrixMediaItem]] = None
 
 
 class MatrixYtdlRequest(BaseModel):
@@ -381,6 +389,8 @@ async def execute_matrix_command(
             "• `nyaa <query>` — anime torrents\n"
             "• paste a `magnet:?…` link — add torrent\n"
             "• `translate <text> to <lang>`\n"
+            "• `compress` — attach image(s)/video(s) to shrink them\n"
+            "• `convert` — attach image(s) → PDF, or a PDF → images\n"
             "• `post <url or text>` then `share` — post to social platforms\n"
             "• `logs` — system logs"
         )}
@@ -423,6 +433,50 @@ async def execute_matrix_command(
             logger.error(f"Matrix command chat error: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=str(e))
         return {"result": reply}
+
+    # compress/convert: operate on the bot-forwarded attachments and return files
+    if command in ("compress", "convert"):
+        import base64 as _b64
+        attachments = []
+        for item in (data.media or []):
+            try:
+                attachments.append((item.filename, _b64.b64decode(item.data), item.content_type or ""))
+            except Exception as e:
+                logger.warning(f"Matrix {command}: bad media item {item.filename}: {e}")
+        result = await cmd_service.execute_command(command, arg, attachments=attachments or None)
+        if result.get("type") != "files":
+            return {"result": result.get("content", "")}
+
+        out_files = result.get("files", [])
+        # If we have a room and credentials, upload the outputs directly to the room.
+        if data.room_id and user.matrix_enabled and user.matrix_access_token:
+            from app.services.matrix_service import send_file_to_room
+            sent = 0
+            for f in out_files:
+                try:
+                    await send_file_to_room(
+                        user.matrix_homeserver, user.matrix_access_token, data.room_id,
+                        f["data"], f.get("filename", "file"),
+                        f.get("content_type", "application/octet-stream"),
+                    )
+                    sent += 1
+                except Exception as e:
+                    logger.error(f"Matrix {command}: failed to send {f.get('filename')}: {e}")
+            # Files delivered to the room — return only the summary text.
+            return {"result": result.get("content", "") if sent else "❌ Failed to send processed files."}
+
+        # No room context — hand the base64 files back to the bot to deliver.
+        return {
+            "result": result.get("content", ""),
+            "files": [
+                {
+                    "filename": f.get("filename", "file"),
+                    "data": _b64.b64encode(f["data"]).decode("ascii"),
+                    "content_type": f.get("content_type", "application/octet-stream"),
+                }
+                for f in out_files
+            ],
+        }
 
     # ytdl: download and send audio/video directly to the Matrix room
     if command == "ytdl" and data.room_id and user.matrix_enabled and user.matrix_access_token:

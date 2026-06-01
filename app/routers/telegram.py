@@ -1139,10 +1139,12 @@ async def _handle_telegram_update(update: dict, db: Session):
                 message.get("forward_from_chat")
             )
             
-            # Check for attachments (photos, documents)
+            # Check for attachments (photos, documents, videos)
             # Photos in Telegram messages are in a list - get the highest res (last one)
             photos = message.get("photo", [])
             document = message.get("document", [])
+            # Video / animation (GIF) attachments — used by the compress command
+            video = message.get("video") or message.get("animation")
             
             logger.warning(f"TELEGRAM: text='{text}', reply_to='{reply_text[:50] if reply_text else ''}', photos={len(photos) if photos else 0}")
             
@@ -1224,7 +1226,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "convert"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -1393,7 +1395,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "convert"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -1487,18 +1489,37 @@ async def _handle_telegram_update(update: dict, db: Session):
                         if file_path:
                             downloaded_data = await telegram_service.download_file(file_path)
                             if downloaded_data:
-                                # Determine content type
-                                content_type = "application/octet-stream"
-                                if file_name.endswith('.pdf'):
+                                # Determine content type — prefer Telegram's mime_type,
+                                # fall back to the filename extension.
+                                content_type = document.get("mime_type") or "application/octet-stream"
+                                lname = file_name.lower()
+                                if lname.endswith('.pdf'):
                                     content_type = "application/pdf"
-                                elif file_name.endswith(('.jpg', '.jpeg')):
+                                elif lname.endswith(('.jpg', '.jpeg')):
                                     content_type = "image/jpeg"
-                                elif file_name.endswith('.png'):
+                                elif lname.endswith('.png'):
                                     content_type = "image/png"
-                                elif file_name.endswith('.gif'):
+                                elif lname.endswith('.gif'):
                                     content_type = "image/gif"
+                                elif lname.endswith(('.mp4', '.mov', '.mkv', '.webm', '.avi', '.m4v')):
+                                    content_type = "video/mp4"
                                 attachments.append((file_name, downloaded_data, content_type))
                                 logger.info(f"Downloaded document: {file_name}, size: {len(downloaded_data)}")
+
+            # Download video / animation attachments (for the compress command)
+            if video:
+                file_id = video.get("file_id")
+                if file_id:
+                    v_name = video.get("file_name") or "video.mp4"
+                    v_mime = video.get("mime_type") or "video/mp4"
+                    file_result = await telegram_service.get_file(file_id)
+                    if file_result.get("ok"):
+                        file_path = file_result.get("result", {}).get("file_path")
+                        if file_path:
+                            downloaded_data = await telegram_service.download_file(file_path)
+                            if downloaded_data:
+                                attachments.append((v_name, downloaded_data, v_mime))
+                                logger.info(f"Downloaded video: {v_name}, size: {len(downloaded_data)}")
 
             # Handle Telegram media groups: multiple docs sent together arrive as separate webhooks
             # with the same media_group_id. Accumulate them before processing.
@@ -1569,7 +1590,8 @@ async def _handle_telegram_update(update: dict, db: Session):
                     return {"ok": True}
 
             # If we have images, always run OCR for later use
-            if has_images and attachments:
+            # (skip for compress/convert — they operate on the raw file, not its text)
+            if has_images and attachments and command not in ("compress", "convert"):
                 for filename, file_data, content_type in attachments:
                     if content_type.startswith("image/"):
                         import base64
@@ -2350,6 +2372,21 @@ async def _handle_telegram_update(update: dict, db: Session):
                         if not photo_result.get("ok"):
                             logger.warning(f"Could not send image {img_url}: {photo_result.get('description', '')}")
                         await asyncio.sleep(0.15)
+            elif response_type == "files":
+                # compress/convert output — send each file back as a document
+                files = result.get("files", [])
+                if response_content:
+                    await telegram_service.send_message(chat_id, response_content)
+                for f in files:
+                    f_bytes = f.get("data")
+                    f_name = f.get("filename", "file")
+                    if not f_bytes:
+                        continue
+                    send_result = await telegram_service.send_document_bytes(chat_id, f_bytes, f_name)
+                    if not send_result.get("ok"):
+                        logger.error(f"Failed to send file {f_name}: {send_result}")
+                        await telegram_service.send_message(chat_id, f"❌ Failed to send {f_name}")
+                    await asyncio.sleep(0.15)
             else:
                 await telegram_service.send_message(chat_id, response_content, reply_markup=reply_markup)
 

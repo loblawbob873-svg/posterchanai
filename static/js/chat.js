@@ -31,6 +31,7 @@ class ChatHandler {
         this.uploadedFiles = [];   // Array of {content, filename}
         this.uploadedPDFs = [];    // Array of {base64, filename}
         this.uploadedDocuments = []; // Array of {base64, filename, type}
+        this.uploadedVideos = [];  // Array of {base64, filename} (for compress)
 
         // Callback for when stream ends (used by news to delete prompt)
         this.onStreamEndCallback = null;
@@ -63,7 +64,7 @@ class ChatHandler {
         this.historyIndex = -1;
 
         // Available commands for tab autocomplete
-        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'ytdl', 'torrents', 'nyaa', 'budget', 'firewall', 'news', 'dailynews', 'logs', 'dailynews', 'cal', 'contacts', 'mail', 'todo', 'files', '4chan'];
+        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'ytdl', 'torrents', 'nyaa', 'budget', 'firewall', 'news', 'dailynews', 'logs', 'dailynews', 'cal', 'contacts', 'mail', 'todo', 'files', '4chan', 'compress', 'convert'];
         
 
         // Load mail accounts for autocomplete
@@ -1022,8 +1023,18 @@ class ChatHandler {
         files.forEach(file => {
             const isImage = file.type.startsWith('image/');
             const isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+            const isVideo = file.type.startsWith('video/') || /\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(file.name);
 
-            if (isImage) {
+            if (isVideo) {
+                // Handle video upload (for the compress command) - send as base64
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const base64 = e.target.result.split(',')[1];
+                    this.uploadedVideos.push({ base64, filename: file.name });
+                    this.updateAttachmentsPreview();
+                };
+                reader.readAsDataURL(file);
+            } else if (isImage) {
                 // Handle image upload
                 const reader = new FileReader();
                 reader.onload = (e) => {
@@ -1074,8 +1085,9 @@ class ChatHandler {
         const uploadPreview = document.getElementById('uploadPreview');
         if (!attachmentsList || !uploadPreview) return;
 
-        const totalAttachments = this.uploadedImages.length + this.uploadedPDFs.length + 
-                                this.uploadedDocuments.length + this.uploadedFiles.length;
+        const totalAttachments = this.uploadedImages.length + this.uploadedPDFs.length +
+                                this.uploadedDocuments.length + this.uploadedVideos.length +
+                                this.uploadedFiles.length;
 
         if (totalAttachments === 0) {
             uploadPreview.style.display = 'none';
@@ -1123,6 +1135,18 @@ class ChatHandler {
             attachmentsList.appendChild(item);
         });
 
+        // Add videos
+        this.uploadedVideos.forEach((vid, index) => {
+            const item = document.createElement('div');
+            item.className = 'attachment-item attachment-video';
+            item.innerHTML = `
+                <span class="attachment-icon">🎬</span>
+                <span class="attachment-name">${this.escapeHtml(vid.filename)}</span>
+                <button class="btn-icon attachment-remove" onclick="window.chatHandler.removeAttachment('video', ${index})" title="Remove">×</button>
+            `;
+            attachmentsList.appendChild(item);
+        });
+
         // Add text files
         this.uploadedFiles.forEach((file, index) => {
             const item = document.createElement('div');
@@ -1143,6 +1167,8 @@ class ChatHandler {
             this.uploadedPDFs.splice(index, 1);
         } else if (type === 'document') {
             this.uploadedDocuments.splice(index, 1);
+        } else if (type === 'video') {
+            this.uploadedVideos.splice(index, 1);
         } else if (type === 'file') {
             this.uploadedFiles.splice(index, 1);
         }
@@ -1166,6 +1192,7 @@ class ChatHandler {
         this.uploadedFiles = [];
         this.uploadedPDFs = [];
         this.uploadedDocuments = [];
+        this.uploadedVideos = [];
         this.updateAttachmentsPreview();
     }
 
@@ -1257,8 +1284,9 @@ class ChatHandler {
         const displayContent = content;
 
         // Need either content or at least one attachment
-        const hasAttachments = this.uploadedImages.length > 0 || this.uploadedPDFs.length > 0 || 
-                              this.uploadedDocuments.length > 0 || this.uploadedFiles.length > 0;
+        const hasAttachments = this.uploadedImages.length > 0 || this.uploadedPDFs.length > 0 ||
+                              this.uploadedDocuments.length > 0 || this.uploadedVideos.length > 0 ||
+                              this.uploadedFiles.length > 0;
         if (!content && !hasAttachments) return;
 
         // Save to message history for up arrow recall
@@ -1276,8 +1304,9 @@ class ChatHandler {
         // Build display message
         let displayMsg = displayContent;
         if (hasAttachments) {
-            const count = this.uploadedImages.length + this.uploadedPDFs.length + 
-                         this.uploadedDocuments.length + this.uploadedFiles.length;
+            const count = this.uploadedImages.length + this.uploadedPDFs.length +
+                         this.uploadedDocuments.length + this.uploadedVideos.length +
+                         this.uploadedFiles.length;
             displayMsg = displayContent + (displayContent ? ' ' : '') + `[with ${count} attachment${count > 1 ? 's' : ''}]`;
         }
 
@@ -1305,6 +1334,7 @@ class ChatHandler {
                 images: this.uploadedImages,
                 pdfs: this.uploadedPDFs,
                 documents: this.uploadedDocuments,
+                videos: this.uploadedVideos,
                 files: this.uploadedFiles
             };
         }
@@ -1356,6 +1386,9 @@ class ChatHandler {
         if (this.uploadedDocuments.length > 0) {
             payload.document_data = this.uploadedDocuments[0].base64;  // First document for backward compat
             payload.documents = this.uploadedDocuments.map(doc => ({ base64: doc.base64, filename: doc.filename, type: doc.type }));
+        }
+        if (this.uploadedVideos.length > 0) {
+            payload.videos = this.uploadedVideos.map(vid => ({ base64: vid.base64, filename: vid.filename }));
         }
         if (this.uploadedFiles.length > 0) {
             payload.file_content = this.uploadedFiles[0].content;  // First file for backward compat
