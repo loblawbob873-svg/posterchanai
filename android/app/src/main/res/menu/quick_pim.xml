@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<menu xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:id="@+id/pim_mail" android:title="@string/pim_mail" />
-    <item android:id="@+id/pim_mail_folders" android:title="@string/pim_mail_folders" />
-    <item android:id="@+id/pim_calendar" android:title="@string/pim_calendar" />
-    <item android:id="@+id/pim_add_event" android:title="@string/pim_add_event" />
-    <item android:id="@+id/pim_contacts" android:title="@string/pim_contacts" />
-    <item android:id="@+id/pim_todo" android:title="@string/pim_todo" />
-</menu>

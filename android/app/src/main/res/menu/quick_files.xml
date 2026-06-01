@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<menu xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:id="@+id/files_manager" android:title="@string/files_manager" />
-    <item android:id="@+id/files_photos" android:title="@string/files_photos" />
-</menu>
