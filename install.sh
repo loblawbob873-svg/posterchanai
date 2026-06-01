@@ -63,6 +63,15 @@ main() {
     # Step 3: Select what to install
     select_components
 
+    # Option 5 (add-on only): set up just the local Telegram Bot API server
+    # against an existing install, then stop — skip deps/models/GPU/systemd.
+    if [ "${TELEGRAM_ONLY:-0}" = "1" ]; then
+        setup_telegram_botapi
+        echo ""
+        print_success "Done. Local Telegram Bot API server add-on configured."
+        return
+    fi
+
     # Step 4: Select LLM backend
     select_llm_backend
 

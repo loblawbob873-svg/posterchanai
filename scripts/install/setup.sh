@@ -69,22 +69,29 @@ setup_python_env() {
 
     print_success "Base dependencies installed"
 
-    # Pre-download Whisper model for voice input
-    print_step "Downloading Whisper speech recognition model (~1.5GB)..."
+    # Optionally pre-download the Whisper voice model. It downloads automatically
+    # on first voice use anyway, so this is just a head start — and pointless for
+    # lean/Telegram-only installs, so skip the prompt there.
     if pip show faster-whisper > /dev/null 2>&1; then
-        if python -c "
+        if [ "${INSTALL_LLM:-0}" = "0" ] && [ "${INSTALL_IMAGE:-0}" = "0" ]; then
+            echo "  Skipping Whisper voice-model pre-download (lean install; it downloads on first use if needed)."
+        else
+            read -p "Pre-download the Whisper voice model now (~1.5GB)? It downloads on first voice use otherwise. [y/N]: " DL_WHISPER
+            if [[ "$DL_WHISPER" =~ ^[Yy] ]]; then
+                print_step "Downloading Whisper speech recognition model (~1.5GB)..."
+                if python -c "
 from faster_whisper import WhisperModel
 import sys
 print('Downloading Whisper medium model...', file=sys.stderr)
 model = WhisperModel('medium', device='cpu', compute_type='int8')
 print('Whisper model ready', file=sys.stderr)
 " 2>&1; then
-            print_success "Whisper model downloaded"
-        else
-            print_warning "Whisper download failed (voice input may be slower on first use)"
+                    print_success "Whisper model downloaded"
+                else
+                    print_warning "Whisper download failed (voice input may be slower on first use)"
+                fi
+            fi
         fi
-    else
-        print_warning "faster-whisper not installed, skipping model download"
     fi
 
     deactivate
