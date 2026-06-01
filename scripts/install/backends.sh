@@ -31,8 +31,17 @@ select_components() {
     echo "     Matrix don't need it."
     echo ""
 
-    read -p "Select installation type [1-4, default=1]: " INSTALL_TYPE
+    read -p "Select installation type [1-5, default=1]: " INSTALL_TYPE
     INSTALL_TYPE=${INSTALL_TYPE:-1}
+
+    # Option 5 is the Telegram Bot API add-on. It isn't an install type on its
+    # own, so enable it and ask which base type (1-4) to combine it with.
+    if [ "$INSTALL_TYPE" = "5" ]; then
+        INSTALL_TELEGRAM_BOTAPI=1
+        echo -e "  ${GREEN}✓ Telegram Bot API server add-on enabled${NC}"
+        read -p "  Base install type to combine it with [1-4, default=1]: " INSTALL_TYPE
+        INSTALL_TYPE=${INSTALL_TYPE:-1}
+    fi
 
     case "$INSTALL_TYPE" in
         1)
@@ -61,12 +70,14 @@ select_components() {
             ;;
     esac
 
-    # Option 5 is an add-on, combinable with any install type above.
-    echo ""
-    read -p "Add option 5 (local Telegram Bot API server)? [y/N]: " WANT_TG_BOTAPI
-    if [[ "$WANT_TG_BOTAPI" =~ ^[Yy] ]]; then
-        INSTALL_TELEGRAM_BOTAPI=1
-        echo -e "  ${GREEN}✓ Will set up the local Telegram Bot API server${NC}"
+    # If they picked a plain type (1-4), still offer the add-on.
+    if [ "$INSTALL_TELEGRAM_BOTAPI" != "1" ]; then
+        echo ""
+        read -p "Also add option 5 (local Telegram Bot API server, for files >20MB)? [y/N]: " WANT_TG_BOTAPI
+        if [[ "$WANT_TG_BOTAPI" =~ ^[Yy] ]]; then
+            INSTALL_TELEGRAM_BOTAPI=1
+            echo -e "  ${GREEN}✓ Will set up the local Telegram Bot API server${NC}"
+        fi
     fi
 }
 
