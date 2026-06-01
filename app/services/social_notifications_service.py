@@ -97,7 +97,9 @@ def _norm_matrix(ev: dict) -> dict:
 
 
 def _format(norm: dict) -> str:
-    lines = [f"🔔 *{norm['platform']}* · {norm['type']} from {norm['actor']}"]
+    # Plain text (no Markdown): notification bodies contain arbitrary characters that break
+    # Telegram's Markdown parser, causing a failed send + retry on every message.
+    lines = [f"🔔 {norm['platform']} · {norm['type']} from {norm['actor']}"]
     if norm.get("text"):
         lines.append(norm["text"][:1500])
     if norm.get("url"):
@@ -114,7 +116,7 @@ def _prune(db: Session) -> None:
 
 
 async def _deliver(db: Session, tg: TelegramService, user: User, chat_id: str, norm: dict) -> None:
-    resp = await tg.send_message(chat_id, _format(norm))
+    resp = await tg.send_message(chat_id, _format(norm), parse_mode="")
     msg_id = (resp or {}).get("result", {}).get("message_id")
     if not msg_id:
         logger.warning(f"[social] telegram send returned no message_id for user {user.id}: {resp}")
@@ -138,6 +140,11 @@ async def _relay_pleroma(db: Session, tg: TelegramService, user: User, chat_id: 
     if not raw:
         return
     newest_id = raw[0].get("id")  # API returns newest-first
+    if not user.pleroma_notif_since:
+        # First poll: establish the cursor without forwarding the backlog.
+        user.pleroma_notif_since = newest_id
+        db.commit()
+        return
     for n in reversed(raw):       # deliver oldest-first so chat order is chronological
         await _deliver(db, tg, user, chat_id, _norm_pleroma(n))
     user.pleroma_notif_since = newest_id
@@ -152,6 +159,11 @@ async def _relay_misskey(db: Session, tg: TelegramService, user: User, chat_id: 
     if not raw:
         return
     newest_id = raw[0].get("id")
+    if not user.misskey_notif_since:
+        # First poll: establish the cursor without forwarding the backlog.
+        user.misskey_notif_since = newest_id
+        db.commit()
+        return
     for n in reversed(raw):
         await _deliver(db, tg, user, chat_id, _norm_misskey(n))
     user.misskey_notif_since = newest_id
