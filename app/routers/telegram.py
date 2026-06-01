@@ -1367,7 +1367,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # post command: generate a social media post from a replied-to link
             if command == "post":
                 if not reply_to and not text:
-                    await telegram_service.send_message(chat_id, "Reply to a message and send `post` to generate a social media post, or `post raw` to share it exactly as written.")
+                    await telegram_service.send_message(chat_id, "Reply to a message and send `post` to generate a social media post, or `post raw` to share it exactly as written. You can add instructions too, e.g. `post professional` or `post don't include links`.")
                     return {"ok": True}
 
                 # `post raw` / `post verbatim` shares the replied-to text AS-IS,
@@ -1466,7 +1466,27 @@ async def _handle_telegram_update(update: dict, db: Session):
                     except Exception as _fe:
                         logger.warning(f"post command: failed to fetch URL: {_fe}")
 
-                tone = arg.strip() or "viral and engaging"
+                # `arg` is free-form: a tone adjective (e.g. "professional") or an
+                # explicit instruction (e.g. "don't include links", "keep it short").
+                # Pass it to the model as an instruction rather than jamming it into the
+                # sentence, so multi-word directions are actually honored.
+                _extra = arg.strip()
+                _extra_l = _extra.lower()
+                # If the user asked to omit links, skip the forced URL append below too —
+                # otherwise the link reappears no matter what the model does.
+                _suppress_link = any(p in _extra_l for p in (
+                    "no link", "no links", "without link", "don't include link",
+                    "dont include link", "do not include link", "exclude link",
+                    "no url", "without url", "skip link", "no source",
+                )) if _extra else False
+                _tone = "viral and engaging" if not _extra else "compelling"
+                _user_prompt = (
+                    f"Write a {_tone}, detailed social media post based on this content. "
+                    f"Be detailed — include key facts, context, and why it matters. Use emojis."
+                )
+                if _extra:
+                    _user_prompt += f"\n\nFollow these user instructions exactly: {_extra}"
+                _user_prompt += f"\n\nContent:\n{article_context}"
                 post_messages = [
                     {
                         "role": "system",
@@ -1474,12 +1494,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     },
                     {
                         "role": "user",
-                        "content": (
-                            f"Write a {tone} social media post based on this content. "
-                            f"Be detailed — include key facts, context, and why it matters. "
-                            f"Use emojis.\n\n"
-                            f"Content:\n{article_context}"
-                        )
+                        "content": _user_prompt,
                     }
                 ]
 
@@ -1489,8 +1504,9 @@ async def _handle_telegram_update(update: dict, db: Session):
                 try:
                     post_text = await _cs.chat(post_messages)
                     post_text = _strip_hashtags(post_text)
-                    # Always append the real URL at the end — the model may mangle it
-                    if url_to_append:
+                    # Append the real URL at the end (the model may mangle it), unless
+                    # the user explicitly asked to omit links.
+                    if url_to_append and not _suppress_link:
                         post_text = post_text.rstrip() + f"\n\n{url_to_append}"
                     result_content = post_text
                 except Exception as e:
