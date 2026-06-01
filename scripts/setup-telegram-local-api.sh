@@ -31,6 +31,12 @@ API_ID="${API_ID:-$(_db_get telegram_api_id)}"
 API_HASH="${API_HASH:-$(_db_get telegram_api_hash)}"
 BOT_TOKEN="${BOT_TOKEN:-$(_db_get telegram_bot_token)}"
 
+# Be forgiving of values pasted with their my.telegram.org labels (e.g.
+# "App api_hash: 9a1e…") or stray whitespace — extract just the real value.
+API_ID="$(printf '%s' "$API_ID" | grep -oE '[0-9]{4,}' | head -1)"
+API_HASH="$(printf '%s' "$API_HASH" | grep -oiE '[0-9a-f]{32}' | head -1)"
+BOT_TOKEN="$(printf '%s' "$BOT_TOKEN" | grep -oE '[0-9]+:[A-Za-z0-9_-]+' | head -1)"
+
 PORT="${PORT:-8081}"
 PREFIX="${PREFIX:-/usr/local}"
 BUILD_DIR="${BUILD_DIR:-/tmp/telegram-bot-api-build}"

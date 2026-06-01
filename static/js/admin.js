@@ -415,7 +415,8 @@ document.getElementById('testTelegramBtn').addEventListener('click', async () =>
 });
 
 // Test local Bot API server (reads saved URL + token from settings)
-document.getElementById('testLocalApiBtn').addEventListener('click', async () => {
+const _testLocalApiBtn = document.getElementById('testLocalApiBtn');
+if (_testLocalApiBtn) _testLocalApiBtn.addEventListener('click', async () => {
     const statusDiv = document.getElementById('telegramStatus');
     statusDiv.className = 'test-result loading';
     statusDiv.textContent = 'Pinging local Bot API server… (save the URL + API ID/Hash first)';
