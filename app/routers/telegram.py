@@ -58,6 +58,23 @@ def _split_news_into_articles(content: str) -> list:
     return results
 
 
+def _make_tg_node_notify(telegram_service, chat_id):
+    """Build an async callback that DMs a finished `node` job's output to this chat.
+    Used so long-running node jobs started from Telegram report back here when done."""
+    async def _notify(job):
+        icon = {"done": "✅", "failed": "❌", "killed": "🛑"}.get(job.status, "ℹ️")
+        out = (job.output or "(no output)").strip()
+        text = (
+            f"{icon} Job #{job.id} on `{job.node}` {job.status} (exit {job.exit_code})\n"
+            f"`{job.command}`\n\n```\n{out[:3000]}\n```"
+        )
+        try:
+            await telegram_service.send_message(str(chat_id), text)
+        except Exception as e:
+            logger.warning(f"[node] telegram notify failed for job #{job.id}: {e}")
+    return _notify
+
+
 def _strip_cmd_links(text: str) -> str:
     """Remove [text](cmd:...) and [text](magnet:...) links that don't render in Telegram."""
     # Remove [text](cmd:...) — non-clickable in Telegram
@@ -1327,7 +1344,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "convert"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "convert", "node"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -1551,7 +1568,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "convert"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "convert", "node"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -2107,11 +2124,14 @@ async def _handle_telegram_update(update: dict, db: Session):
                                                   prompt="📣 *Share this?*", image_bytes=_share_img)
                         return {"ok": True}
                     else:
+                        # For `node`, long jobs finish after this handler returns —
+                        # deliver their output back to THIS Telegram chat when done.
+                        node_notify = _make_tg_node_notify(telegram_service, chat_id) if command == "node" else None
                         # Pass attachments to any command that supports them
                         if attachments:
-                            result = await command_service.execute_command(command, arg, attachments=attachments)
+                            result = await command_service.execute_command(command, arg, attachments=attachments, node_notify=node_notify)
                         else:
-                            result = await command_service.execute_command(command, arg)
+                            result = await command_service.execute_command(command, arg, node_notify=node_notify)
                     logger.info(f"Command result: {result}")
                 except Exception as e:
                     logger.error(f"Command execution error: {e}", exc_info=True)

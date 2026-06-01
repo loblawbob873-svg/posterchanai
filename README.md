@@ -163,6 +163,7 @@ This works for any SSH-reachable device: servers, routers, switches, etc.
 | Command | What it does |
 | --- | --- |
 | `node <name> <command>` | Runs a shell command on the node. Fast commands return inline; long-running ones become a background job |
+| `node all <command>` | Runs the command on **every** configured node in parallel and shows each result (`all` is reserved as a node name) |
 | `node agent <name> <goal>` | Agentic mode — the AI runs commands, reads output, and iterates toward your goal |
 | `node list` | Show configured nodes |
 | `node jobs` | List your recent jobs |

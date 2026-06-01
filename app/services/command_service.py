@@ -145,7 +145,7 @@ class CommandService:
         "4chan": "4chan browser: 4chan [g|pol|h] - view catalog",
         "compress": "Compress attached image(s) or video(s)",
         "convert": "Convert image(s) to PDF or a PDF to images",
-        "node": "Remote node mgmt: node <name> <cmd> | node agent <name> <goal> | node list | node jobs | node log <id> | node kill <id>",
+        "node": "Remote node mgmt: node <name> <cmd> | node all <cmd> | node agent <name> <goal> | node list | node jobs | node log <id> | node kill <id>",
     }
     # Command aliases (alias -> canonical command)
     COMMAND_ALIASES = {
@@ -214,6 +214,7 @@ class CommandService:
         last_prompt: Optional[str] = None,
         stop_check: Optional[Callable[[], bool]] = None,
         attachments: Optional[list] = None,
+        node_notify: Optional[Callable] = None,
     ) -> dict:
         """Execute a command and return the result.
 
@@ -265,7 +266,7 @@ class CommandService:
         elif command == "convert":
             return await self._convert_command(arg, attachments)
         elif command == "node":
-            return await self._node_command(arg)
+            return await self._node_command(arg, notify=node_notify)
         else:
             return {"type": "text", "content": f"Unknown command: {command}"}
 
@@ -1395,47 +1396,14 @@ Files are saved to your Storage.""",
             logger.error(f"Logs command error: {e}")
             return {"type": "text", "content": f"Error collecting logs: {str(e)}"}
 
-    def _node_completion_notifier(self):
-        """Build an on_complete callback that DMs the finished job to the user's linked
-        Telegram chat (so long-running jobs ping you when done). Returns None if the user
-        has no Telegram chat linked or no bot token is configured."""
-        from app.models import Setting
-
-        user = self.user
-        if not user or not getattr(user, "telegram_chat_id", None):
-            return None
-        token_row = self.db.query(Setting).filter(Setting.key == "telegram_bot_token").first()
-        token = token_row.value if token_row and token_row.value else None
-        if not token:
-            return None
-        chat_id = user.telegram_chat_id
-        # Capture the API base now, while the request's DB session is open. The callback
-        # fires when the (possibly long-running) job finishes, by which point self.db has
-        # been closed — so it must not touch the database.
-        api_row = self.db.query(Setting).filter(Setting.key == "telegram_api_base").first()
-        api_base = api_row.value if api_row and api_row.value else None
-
-        async def _notify(job):
-            from app.services.telegram_service import TelegramService
-            icon = {"done": "✅", "failed": "❌", "killed": "🛑"}.get(job.status, "ℹ️")
-            out = (job.output or "(no output)").strip()
-            text = (
-                f"{icon} Job #{job.id} on `{job.node}` {job.status} (exit {job.exit_code})\n"
-                f"`{job.command}`\n\n```\n{out[:3000]}\n```"
-            )
-            try:
-                tg = TelegramService(token)
-                if api_base:
-                    tg.set_api_base(api_base)
-                await tg.send_message(str(chat_id), text)
-            except Exception as e:
-                logger.warning(f"[node] telegram notify failed for job #{job.id}: {e}")
-
-        return _notify
-
-    async def _node_command(self, arg: str) -> dict:
+    async def _node_command(self, arg: str, notify: Optional[Callable] = None) -> dict:
         """Run OS commands on configured nodes (SSH or local) as background jobs, with an
-        optional agentic mode. Gated by admin Settings (enabled + user allowlist)."""
+        optional agentic mode. Gated by admin Settings (enabled + user allowlist).
+
+        `notify`, when given, is an async callback the caller supplies to deliver a
+        finished job's output back to the channel the command came from (web UI
+        conversation or Telegram chat). It must not rely on the request's DB session,
+        which is closed by the time a long-running job finishes."""
         from app.services import node_service
 
         if not node_service.user_allowed(self.db, self.user):
@@ -1459,6 +1427,7 @@ Files are saved to your Storage.""",
             usage = (
                 "**Remote node management**\n\n"
                 "- `node <name> <command>` — run a command (long ones run in the background)\n"
+                "- `node all <command>` — run a command on every node\n"
                 "- `node agent <name> <goal>` — let the AI run commands toward a goal\n"
                 "- `node jobs` — list your recent jobs\n"
                 "- `node log <id>` — show a job's output\n"
@@ -1496,6 +1465,34 @@ Files are saved to your Storage.""",
             ok = node_service.kill_job(int(parts[1]))
             return {"type": "text", "content": f"{'🛑 Killed' if ok else 'Could not kill (already finished?)'} job #{parts[1]}."}
 
+        # --- fan-out: run the same command on every node ---
+        if sub == "all":
+            import asyncio
+            command = arg.strip()[len(parts[0]):].strip()
+            if not command:
+                return {"type": "text", "content": "Usage: `node all <command>`"}
+            if not nodes:
+                return {"type": "text", "content": _fmt_nodes()}
+            jobs = {
+                name: node_service.start_job(
+                    self.db, name, target, command,
+                    user_id=self.user.id if self.user else None,
+                )
+                for name, target in nodes.items()
+            }
+            await asyncio.gather(*(node_service.await_job(j, wait=10.0) for j in jobs.values()))
+            icon = {"done": "✅", "failed": "❌", "killed": "🛑"}
+            lines = [f"## `{command}` on {len(jobs)} node(s)"]
+            for name, j in jobs.items():
+                if j.done:
+                    out = (j.output or "(no output)").strip()
+                    lines.append(f"\n**{icon.get(j.status, 'ℹ️')} {name}** (exit {j.exit_code})\n```\n{out[:1200]}\n```")
+                else:
+                    # Still running — deliver its output to this channel when it finishes.
+                    node_service.notify_on_done(j, notify)
+                    lines.append(f"\n**⏳ {name}** — still running (job #{j.id}, `node log {j.id}`)")
+            return {"type": "text", "content": "\n".join(lines)}
+
         # --- agentic mode ---
         if sub == "agent":
             if len(parts) < 3:
@@ -1522,14 +1519,15 @@ Files are saved to your Storage.""",
         job = node_service.start_job(
             self.db, name, nodes[name], command,
             user_id=self.user.id if self.user else None,
-            on_complete=self._node_completion_notifier(),
         )
         await node_service.await_job(job, wait=8.0)
         if job.done:
             out = (job.output or "(no output)").strip()
             icon = {"done": "✅", "failed": "❌", "killed": "🛑"}.get(job.status, "ℹ️")
             return {"type": "text", "content": f"{icon} `{name}` exit {job.exit_code}\n\n```\n{out[:3500]}\n```"}
-        return {"type": "text", "content": f"⏳ Started job #{job.id} on `{name}` (still running).\nCheck with `node log {job.id}` or stop with `node kill {job.id}`."}
+        # Still running — deliver its output to this channel when it finishes.
+        node_service.notify_on_done(job, notify)
+        return {"type": "text", "content": f"⏳ Started job #{job.id} on `{name}` (still running).\nI'll post the output here when it's done — or check with `node log {job.id}` / stop with `node kill {job.id}`."}
 
     async def check_youtube_url(self, message: str) -> Optional[dict]:
         """Check if message contains a YouTube URL and summarize it"""

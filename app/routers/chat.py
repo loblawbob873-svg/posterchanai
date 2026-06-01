@@ -1050,10 +1050,43 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                     documents, document_data, videos
                                 )
 
+                            # For `node`, long-running jobs finish after this request
+                            # returns. Deliver their output back into THIS conversation
+                            # (so web-UI results don't leak to Telegram). The callback runs
+                            # later, so it must use its own DB session.
+                            node_notify = None
+                            if command == "node":
+                                _uid, _conn, _conv = user.id, conn_id, conversation_id
+
+                                async def node_notify(job):
+                                    from app.database import SessionLocal
+                                    from app.models import Message as _Msg, Conversation as _Conv
+                                    _icon = {"done": "✅", "failed": "❌", "killed": "🛑"}.get(job.status, "ℹ️")
+                                    _out = (job.output or "(no output)").strip()
+                                    _text = f"{_icon} Job #{job.id} on `{job.node}` {job.status} (exit {job.exit_code})\n\n```\n{_out[:3500]}\n```"
+                                    _db = SessionLocal()
+                                    try:
+                                        _db.add(_Msg(conversation_id=_conv, role="assistant", content=_text))
+                                        _c = _db.query(_Conv).filter(_Conv.id == _conv).first()
+                                        if _c:
+                                            _c.updated_at = datetime.utcnow()
+                                        _db.commit()
+                                    except Exception as _e:
+                                        logger.warning(f"[node] webui notify save failed: {_e}")
+                                        _db.rollback()
+                                    finally:
+                                        _db.close()
+                                    try:
+                                        await manager.send_json(_uid, {"type": "response", "data": {"type": "text", "content": _text}}, _conn, _conv)
+                                        await manager.send_json(_uid, {"type": "stream_end"}, _conn)
+                                    except Exception as _e:
+                                        logger.warning(f"[node] webui notify send failed: {_e}")
+
                             result = await command_service.execute_command(
                                 command, arg, last_prompt,
                                 stop_check=should_stop_command,
-                                attachments=mail_attachments or media_attachments
+                                attachments=mail_attachments or media_attachments,
+                                node_notify=node_notify,
                             )
 
                             # Check if stopped during execution

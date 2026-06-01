@@ -112,6 +112,7 @@ class Job:
     finished_at: Optional[float] = None
     _proc: Optional[asyncio.subprocess.Process] = None
     _task: Optional[asyncio.Task] = None
+    _on_complete: Optional[Callable[["Job"], Awaitable[None]]] = None
 
     @property
     def done(self) -> bool:
@@ -124,8 +125,7 @@ def _ssh_argv(target: str, command: str) -> list[str]:
     return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", target, command]
 
 
-async def _run(job: Job, timeout: Optional[float],
-               on_complete: Optional[Callable[["Job"], Awaitable[None]]]) -> None:
+async def _run(job: Job, timeout: Optional[float]) -> None:
     """Spawn the process, stream merged output into job.output, and finalize status."""
     try:
         if job.target == "local":
@@ -181,9 +181,14 @@ async def _run(job: Job, timeout: Optional[float],
         if job.finished_at is None:
             job.finished_at = time.time()
         logger.info(f"[node] job #{job.id} {job.node!r} cmd={job.command!r} -> {job.status} (exit={job.exit_code})")
-        if on_complete:
+        # Deliver the result if a callback is registered. It may be attached after launch
+        # (see notify_on_done), so read it under the lock to avoid racing registration.
+        with _lock:
+            cb = job._on_complete
+            job._on_complete = None  # deliver at most once
+        if cb:
             try:
-                await on_complete(job)
+                await cb(job)
             except Exception as e:
                 logger.warning(f"[node] on_complete for job #{job.id} failed: {e}")
 
@@ -204,14 +209,29 @@ def start_job(db: Session, node: str, target: str, command: str,
     global _next_id
     with _lock:
         job = Job(id=_next_id, node=node, target=target, command=command, user_id=user_id)
+        job._on_complete = on_complete
         _jobs[job.id] = job
         _next_id += 1
         # Prune oldest finished jobs so the registry can't grow without bound.
         if len(_jobs) > _MAX_JOBS:
             for jid in sorted(j.id for j in _jobs.values() if j.done)[: len(_jobs) - _MAX_JOBS]:
                 del _jobs[jid]
-    job._task = asyncio.create_task(_run(job, _job_timeout(db), on_complete))
+    job._task = asyncio.create_task(_run(job, _job_timeout(db)))
     return job
+
+
+def notify_on_done(job: Job, cb: Optional[Callable[["Job"], Awaitable[None]]]) -> None:
+    """Register a completion callback on an already-running job. Used by callers that
+    return a job's output inline if it finishes fast, and only want the callback to fire
+    for jobs still running after that wait — avoiding double delivery. If the job already
+    finished (narrow race), deliver immediately here instead."""
+    if cb is None:
+        return
+    with _lock:
+        if not job.done:
+            job._on_complete = cb
+            return
+    asyncio.create_task(cb(job))
 
 
 async def await_job(job: Job, wait: float = 8.0) -> Job:
