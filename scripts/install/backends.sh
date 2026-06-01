@@ -61,11 +61,12 @@ select_components() {
     # the cloud API's 20 MB cap. Compiles telegram-bot-api (~10-20 min) later in
     # the install, only if chosen here.
     echo ""
-    echo -e "  ${BOLD}Optional add-on${NC}"
-    echo "     Local Telegram Bot API server — lets the Telegram bot process files"
-    echo "     up to ~2 GB (compress/convert/translate). The web UI & Matrix don't"
-    echo "     need it. Compiles telegram-bot-api (~10-20 min)."
-    read -p "  Set up the local Telegram Bot API server? [y/N]: " WANT_TG_BOTAPI
+    echo -e "  5) ${BOLD}Telegram Bot API server${NC} (optional add-on)"
+    echo "     Lets the Telegram bot process files up to ~2 GB"
+    echo "     (compress/convert/translate). The web UI & Matrix don't need it."
+    echo "     Compiles telegram-bot-api (~10-20 min). Can be combined with any of 1-4."
+    echo ""
+    read -p "  Add option 5 (local Telegram Bot API server)? [y/N]: " WANT_TG_BOTAPI
     if [[ "$WANT_TG_BOTAPI" =~ ^[Yy] ]]; then
         INSTALL_TELEGRAM_BOTAPI=1
         echo -e "  ${GREEN}✓ Will set up the local Telegram Bot API server${NC}"
