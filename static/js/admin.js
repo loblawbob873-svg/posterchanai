@@ -414,6 +414,31 @@ document.getElementById('testTelegramBtn').addEventListener('click', async () =>
     }
 });
 
+// Test local Bot API server (reads saved URL + token from settings)
+document.getElementById('testLocalApiBtn').addEventListener('click', async () => {
+    const statusDiv = document.getElementById('telegramStatus');
+    statusDiv.className = 'test-result loading';
+    statusDiv.textContent = 'Pinging local Bot API server… (save the URL + API ID/Hash first)';
+    try {
+        const response = await csrfFetch('/api/telegram/test-local-api', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        const data = await response.json();
+        if (response.ok) {
+            statusDiv.className = 'test-result success';
+            statusDiv.textContent = `Local server OK at ${data.api_base} — bot @${data.bot.username}. You can enable "Use local Bot API server" and Setup Webhook.`;
+        } else {
+            statusDiv.className = 'test-result error';
+            statusDiv.textContent = data.detail || 'Local server test failed';
+        }
+    } catch (err) {
+        statusDiv.className = 'test-result error';
+        statusDiv.textContent = 'Error: ' + err.message;
+    }
+});
+
 // Setup Telegram webhook
 document.getElementById('setupWebhookBtn').addEventListener('click', async () => {
     const statusDiv = document.getElementById('telegramStatus');

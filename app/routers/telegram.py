@@ -3762,6 +3762,40 @@ async def test_telegram_connection(
     }
 
 
+@router.post("/test-local-api")
+async def test_local_api(
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """Ping the configured local Bot API server (getMe) to verify it's reachable
+    and the bot is registered there — useful before enabling local mode."""
+    base = db.query(Setting).filter(Setting.key == "telegram_api_base").first()
+    token = db.query(Setting).filter(Setting.key == "telegram_bot_token").first()
+    if not base or not base.value:
+        raise HTTPException(status_code=400, detail="Set and save the Bot API server URL first.")
+    if not token or not token.value:
+        raise HTTPException(status_code=400, detail="Telegram bot token not configured.")
+
+    from app.services.telegram_service import TelegramService
+    svc = TelegramService(token.value)
+    svc.set_api_base(base.value)
+    try:
+        result = await svc.get_me()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not reach {base.value}: {e}")
+    if not result.get("ok"):
+        detail = result.get("error") or result.get("description") or \
+            "Reached the server, but the bot isn't registered there yet (run the setup script; after a cloud logOut it can take ~10 min)."
+        raise HTTPException(status_code=400, detail=detail)
+
+    info = result.get("result", {})
+    return {
+        "ok": True,
+        "api_base": svc.api_root,
+        "bot": {"username": info.get("username"), "first_name": info.get("first_name")},
+    }
+
+
 @router.post("/set-webhook")
 async def configure_webhook(
     data: TelegramBotConfig,
