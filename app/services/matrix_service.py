@@ -162,11 +162,11 @@ async def fetch_notifications(homeserver: str, access_token: str, own_user_id: s
     current next_batch cursor and return no events — this avoids replaying the whole history
     when the relay is first enabled."""
     import json as _json
-    from urllib.parse import quote as _q
     hs = homeserver.rstrip("/")
     headers = {"Authorization": f"Bearer {access_token}"}
     sync_filter = _json.dumps({
-        "room": {"timeline": {"types": ["m.room.message"], "limit": 30}},
+        # m.room.encrypted is included so we can notify about (undecryptable) DMs.
+        "room": {"timeline": {"types": ["m.room.message", "m.room.encrypted"], "limit": 30}},
         "presence": {"types": []},
         "account_data": {"types": []},
     })
@@ -184,25 +184,35 @@ async def fetch_notifications(homeserver: str, access_token: str, own_user_id: s
             return [], next_batch  # first poll: establish cursor, no backfill
         dm_rooms = await _get_dm_room_ids(client, hs, headers, own_user_id)
     events: list[dict] = []
+    encrypted_dm_rooms: set = set()  # DM rooms with new (undecryptable) messages → one notice each
     for room_id, room in (data.get("rooms", {}).get("join", {}) or {}).items():
         is_dm = room_id in dm_rooms
         for ev in room.get("timeline", {}).get("events", []) or []:
-            if ev.get("type") != "m.room.message":
+            etype = ev.get("type")
+            if etype not in ("m.room.message", "m.room.encrypted"):
                 continue
             sender = ev.get("sender", "")
             if sender == own_user_id:
+                continue
+            if etype == "m.room.encrypted":
+                # Can't decrypt; only flag DMs so the user knows to check Element.
+                if is_dm:
+                    encrypted_dm_rooms.add(room_id)
                 continue
             content = ev.get("content", {}) or {}
             # DM rooms: every incoming message. Group rooms: mentions only.
             if not (is_dm or _mentions_user(content, own_user_id)):
                 continue
-            body = content.get("body", "")
             events.append({
                 "room_id": room_id,
                 "event_id": ev.get("event_id", ""),
                 "sender": sender,
-                "body": body,
+                "body": content.get("body", ""),
+                "encrypted": False,
             })
+    # One "you have an encrypted DM" notice per room (collapses a burst into a single ping).
+    for room_id in encrypted_dm_rooms:
+        events.append({"room_id": room_id, "event_id": "", "sender": "", "body": "", "encrypted": True})
     return events, next_batch
 
 

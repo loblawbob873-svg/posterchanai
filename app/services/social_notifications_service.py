@@ -83,6 +83,20 @@ def _norm_pleroma(n: dict) -> dict:
 
 
 def _norm_matrix(ev: dict) -> dict:
+    if ev.get("encrypted"):
+        # Undecryptable DM: notify only, no reply target (we can't post encrypted).
+        return {
+            "platform": "matrix",
+            "type": "encrypted DM",
+            "actor": "a contact",
+            "text": "🔒 You received an encrypted message. Open Element to read and reply.",
+            "reply_target": None,
+            "room_id": None,
+            "event_id": None,
+            "visibility": None,
+            "url": None,
+            "encrypted": True,
+        }
     return {
         "platform": "matrix",
         "type": "message",
@@ -113,7 +127,8 @@ def _format(norm: dict) -> str:
     if norm.get("url"):
         lines.append(f"🔗 {norm['url']}")
     lines.append("──────────────")
-    lines.append("↩️ Reply to this message to respond")
+    # Encrypted notices can't be replied to from here (we can't post encrypted).
+    lines.append("🔒 Open Element to reply" if norm.get("encrypted") else "↩️ Reply to this message to respond")
     return "\n".join(lines)
 
 
@@ -130,6 +145,8 @@ async def _deliver(db: Session, tg: TelegramService, user: User, chat_id: str, n
     if not msg_id:
         logger.warning(f"[social] telegram send returned no message_id for user {user.id}: {resp}")
         return
+    if norm.get("encrypted"):
+        return  # informational only — no reply target to map
     db.add(SocialReplyMap(
         user_id=user.id,
         telegram_chat_id=chat_id,
