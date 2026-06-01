@@ -375,24 +375,35 @@ async def execute_matrix_command(
             return {"result": "No social platforms configured. Connect Misskey, Pleroma, or Matrix in User Settings."}
         return {"result": "\n".join(results)}
 
-    # Matrix-specific help — only list commands the Matrix bot actually supports
+    # Matrix-specific help — explains how to use every feature the bot supports.
     if command_str.lower().strip() == "help":
         return {"result": (
-            "🤖 *Posterchanai Matrix Bot*\n\n"
-            "• `search <query>` — web search\n"
-            "• `images <query>` — image search\n"
-            "• `news <source>` — headlines, then `share <n>` to post one\n"
-            "• `geni <prompt>` — generate an image\n"
-            "• `yt <url>` / paste a YouTube link — video options\n"
-            "• `ytdl <url>` — download audio (or `ytdl video <url>`)\n"
-            "• `torrents` — browse/search/manage torrents\n"
-            "• `nyaa <query>` — anime torrents\n"
-            "• paste a `magnet:?…` link — add torrent\n"
-            "• `translate <text> to <lang>`\n"
-            "• `compress` — attach image(s)/video(s) to shrink them\n"
-            "• `convert` — attach image(s) → PDF, or a PDF → images\n"
-            "• `post <url or text>` then `share` — post to social platforms\n"
-            "• `logs` — system logs"
+            "🤖 *Posterchanai Matrix Bot — Help*\n\n"
+            "In a DM you can just type. In a group room, @mention me first.\n\n"
+            "📎 *Files (compress / convert)*\n"
+            "Upload a file, then send a command — or put the command in the upload's caption:\n"
+            "• `compress` — shrink the image(s) or video(s) you uploaded; I post the smaller file back.\n"
+            "• `convert` — turn image(s) into a single PDF, or a PDF into one image per page.\n"
+            "  (Send several images first, then `convert`, to combine them into one PDF.)\n"
+            "  Uploads are remembered for 5 minutes while you decide.\n\n"
+            "🎨 *Create & fetch*\n"
+            "• `geni <prompt>` — generate an image.\n"
+            "• `yt <url>` or paste a YouTube link — choose summary / audio / video / post.\n"
+            "• `ytdl <url>` — download audio; `ytdl video <url>` for video. I upload it to the room.\n\n"
+            "🔎 *Search & read*\n"
+            "• `search <query>` — web search.\n"
+            "• `images <query>` — image search.\n"
+            "• `news <source>` — headlines; then `share <n>` to post one.\n"
+            "• paste any link — I fetch and summarize the page.\n"
+            "• `translate <text> to <lang>`.\n\n"
+            "🧲 *Torrents*\n"
+            "• `torrents` — browse/search/manage; `nyaa <query>` — anime.\n"
+            "• paste a `magnet:?…` link — add it directly.\n\n"
+            "📣 *Social*\n"
+            "• `post <url or text>` then `share` — post to your connected platforms.\n\n"
+            "🛠 *Misc*\n"
+            "• `logs` — system logs.\n"
+            "• `help` — this message."
         )}
 
     # Parse command

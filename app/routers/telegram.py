@@ -618,8 +618,12 @@ def _help_main_keyboard() -> dict:
                 {"text": "🖼 Image Search", "callback_data": "prompt:images"},
             ],
             [
+                {"text": "📎 Files",       "callback_data": "help:files"},
                 {"text": "🎨 Image Gen",   "callback_data": "help:geni"},
+            ],
+            [
                 {"text": "🧲 Torrents",    "callback_data": "t:menu"},
+                {"text": "🎬 YouTube",     "callback_data": "help:youtube"},
             ],
             [
                 {"text": "🎌 Nyaa",        "callback_data": "n:prompt"},
@@ -642,6 +646,33 @@ def _help_main_keyboard() -> dict:
 
 
 _HELP_SECTIONS = {
+    "files": (
+        "📎 *Files — compress & convert*\n\n"
+        "Just upload a file (no caption needed) and tap a button:\n\n"
+        "*Images:*\n"
+        "• 🗜 Compress — shrink the image\n"
+        "• 📄 To PDF — combine your image(s) into one PDF\n"
+        "• 🔤 Read text — OCR the text out of the image\n"
+        "• 📣 Post to social — share it to your connected platforms\n\n"
+        "*Video:*\n"
+        "• 🗜 Compress — re-encode smaller (H.264, 720p)\n\n"
+        "*PDF:*\n"
+        "• 🖼 To images — one PNG per page\n"
+        "• 📝 Summarize — AI summary of the document\n\n"
+        "Tips:\n"
+        "• Send several images, then tap *To PDF*, to merge them into one PDF.\n"
+        "• You can also skip the buttons: send the file with `compress` or `convert` as the caption.\n"
+        "• Telegram limits bot downloads to 20 MB — use the web UI for bigger files."
+    ),
+    "youtube": (
+        "🎬 *YouTube*\n\n"
+        "Paste a YouTube link (or `yt <url>`) and choose:\n"
+        "• 📋 Summary — AI summary of the video\n"
+        "• 🎵 MP3 — download the audio\n"
+        "• 🎬 Movie — download the video\n"
+        "• 📣 Post — generate & share a social post\n\n"
+        "Or use `ytdl <url>` for audio, `ytdl video <url>` for video."
+    ),
     "4chan": (
         "🍀 *4chan Browser*\n\n"
         "`4chan` — Select a board to browse\n"
@@ -997,17 +1028,19 @@ _media_action_cache: dict = {}
 _MEDIA_ACTION_TTL = 600  # seconds
 
 
-def _media_action_keyboard(attachments: list) -> Optional[dict]:
+def _media_action_keyboard(attachments: list, user=None) -> Optional[dict]:
     """Build an inline keyboard offering actions for uploaded files.
 
     attachments is a list of (filename, data, content_type). Buttons depend on
-    the file types present (image/video/pdf).
+    the file types present (image/video/pdf). If `user` has social platforms
+    connected, an image upload also offers a Post button.
     """
     from app.services.media_service import is_image, is_video, is_pdf
     has_image = any(is_image(fn, ct) for fn, _, ct in attachments)
     has_video = any(is_video(fn, ct) for fn, _, ct in attachments)
     has_pdf = any(is_pdf(fn, ct) for fn, _, ct in attachments)
 
+    _social = bool(user and (_has_misskey(user) or _has_pleroma(user) or _has_matrix(user)))
     rows = []
     if has_video:
         rows.append([{"text": "🗜 Compress video", "callback_data": "media:compress"}])
@@ -1022,6 +1055,9 @@ def _media_action_keyboard(attachments: list) -> Optional[dict]:
             {"text": "🖼 To images", "callback_data": "media:toimg"},
             {"text": "📝 Summarize", "callback_data": "media:summarize"},
         ])
+    # Offer posting an image or video to connected social platforms.
+    if _social and (has_image or has_video):
+        rows.append([{"text": "📣 Post to social", "callback_data": "media:post"}])
     return {"inline_keyboard": rows} if rows else None
 
 
@@ -1699,7 +1735,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # YouTube/link prompts) instead of guessing. A caption WITH text flows
             # to normal command/chat routing so attachments never hijack features.
             if attachments and not command and not text.strip():
-                _media_kbd = _media_action_keyboard(attachments)
+                _media_kbd = _media_action_keyboard(attachments, user=user_obj)
                 if _media_kbd:
                     _media_action_cache[chat_id] = {"attachments": attachments, "ts": time.time()}
                     _n = len(attachments)
@@ -2575,7 +2611,7 @@ async def _handle_telegram_update(update: dict, db: Session):
 
                 _atts = _entry["attachments"]
                 _action = data.split(":", 1)[1]
-                from app.services.media_service import is_image, is_pdf
+                from app.services.media_service import is_image, is_video, is_pdf
                 cb_command_service = CommandService(db, user=cb_user)
 
                 async def _send_files_result(result):
@@ -2611,6 +2647,17 @@ async def _handle_telegram_update(update: dict, db: Session):
                                 if _t:
                                     _texts.append(_t)
                         await telegram_service.send_message(chat_id, ("🔤 *Extracted text:*\n\n" + "\n\n".join(_texts)) if _texts else "No text found in the image(s).")
+                    elif _action == "post":
+                        # Offer to post the uploaded image/video to connected social platforms.
+                        _media = next((fd for fn, fd, ct in _atts if is_image(fn, ct)), None) \
+                            or next((fd for fn, fd, ct in _atts if is_video(fn, ct)), None)
+                        if not _media:
+                            await telegram_service.send_message(chat_id, "Nothing to post.")
+                        else:
+                            await _offer_social_post(
+                                chat_id, "", cb_user, telegram_service,
+                                prompt="📣 *Post this?*", image_bytes=_media,
+                            )
                     elif _action == "summarize":
                         import base64 as _sum_b64
                         from app.services.document_service import extract_pdf_text
