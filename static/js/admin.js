@@ -25,6 +25,28 @@ newsweek.com|Newsweek`;
 const loadedValues = new Map();
 
 // Load settings
+// Gate the "Use local Bot API server" checkbox: it can only be turned ON after
+// a successful "Test Local Server" (so you can't enable it before the daemon is
+// running). It can always be turned OFF if currently on.
+function applyLocalApiGate(unlocked) {
+    const chk = document.getElementById('telegram_local_api');
+    const label = document.getElementById('telegram_local_api_label');
+    const hint = document.getElementById('telegram_local_api_hint');
+    if (!chk) return;
+    const allow = unlocked || chk.checked;
+    chk.disabled = !allow;
+    if (label) label.style.opacity = allow ? '1' : '0.5';
+    if (hint) {
+        if (chk.checked) {
+            hint.innerHTML = 'Local Bot API server is in use. Uncheck to return to the cloud API (20&nbsp;MB cap).';
+        } else if (allow) {
+            hint.innerHTML = '✅ Test passed — tick this, then <b>Save Settings</b> and <b>Setup Webhook</b>.';
+        } else {
+            hint.innerHTML = '🔒 Locked until <b>Test Local Server</b> succeeds (step&nbsp;3) — this prevents enabling it before the server is running.';
+        }
+    }
+}
+
 async function loadSettings() {
     try {
         const response = await fetch('/api/admin/settings');
@@ -63,8 +85,9 @@ async function loadSettings() {
                 }
             }
         }
-        
-        // WebDAV sync client config removed
+
+        // Lock/unlock the local Bot API toggle based on the loaded state.
+        applyLocalApiGate(false);
     } catch (err) {
         console.error('Failed to load settings:', err);
     }
@@ -429,7 +452,8 @@ if (_testLocalApiBtn) _testLocalApiBtn.addEventListener('click', async () => {
         const data = await response.json();
         if (response.ok) {
             statusDiv.className = 'test-result success';
-            statusDiv.textContent = `Local server OK at ${data.api_base} — bot @${data.bot.username}. You can enable "Use local Bot API server" and Setup Webhook.`;
+            statusDiv.textContent = `Local server OK at ${data.api_base} — bot @${data.bot.username}. You can now enable "Use local Bot API server", Save, and Setup Webhook.`;
+            applyLocalApiGate(true);  // unlock the checkbox
         } else {
             statusDiv.className = 'test-result error';
             statusDiv.textContent = data.detail || 'Local server test failed';

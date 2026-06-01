@@ -224,42 +224,43 @@
         </div>
 
         <div class="form-group" style="margin-top: 15px; padding-top: 12px; border-top: 1px solid var(--border-color, #333);">
-            <label for="telegram_local_api">
-                <input type="checkbox" id="telegram_local_api" name="telegram_local_api"> Use local Bot API server
-            </label>
+            <strong>Large files on Telegram (optional)</strong>
             <small>
-                The cloud Telegram Bot API limits the bot to downloading files up to <b>20&nbsp;MB</b>
-                (so <code>compress</code>/<code>convert</code> only work on small files). A local
+                The cloud Bot API caps bot downloads at <b>20&nbsp;MB</b>, so <code>compress</code>/<code>convert</code>
+                only work on small files. A local
                 <a href="https://github.com/tdlib/telegram-bot-api" target="_blank" rel="noopener">telegram-bot-api</a>
-                server raises that to <b>~2&nbsp;GB</b>. Leave off to use the cloud API.
+                server raises that to <b>~2&nbsp;GB</b>. Do these <b>in order</b>:
             </small>
+            <ol style="margin: 8px 0 0 18px; padding: 0; font-size: 0.85em; line-height: 1.6;">
+                <li>Fill in <b>API ID</b>, <b>API Hash</b> and the <b>Bot API server URL</b> below, then click <b>Save Settings</b>.</li>
+                <li>On the bot host (server1) run once: <code>sudo ./scripts/setup-telegram-local-api.sh</code> (builds &amp; starts the server; ~10–20&nbsp;min).</li>
+                <li>Click <b>Test Local Server</b> and wait for the green “OK”.</li>
+                <li>That unlocks <b>Use local Bot API server</b> — tick it, <b>Save Settings</b>, then <b>Setup Webhook</b>.</li>
+            </ol>
         </div>
         <div class="form-group">
-            <label for="telegram_api_base">Bot API server URL</label>
+            <label for="telegram_api_base">① Bot API server URL</label>
             <input type="url" id="telegram_api_base" name="telegram_api_base" placeholder="http://localhost:8081">
-            <small>Root URL of your local Bot API server (used only when the box above is checked). Keep it private — usually <code>http://localhost:8081</code>.</small>
+            <small>Keep it private — usually <code>http://localhost:8081</code>.</small>
         </div>
         <div class="form-row" style="gap: 10px;">
             <div class="form-group" style="flex: 1;">
-                <label for="telegram_api_id">API ID</label>
+                <label for="telegram_api_id">① API ID</label>
                 <input type="text" id="telegram_api_id" name="telegram_api_id" placeholder="123456" autocomplete="off">
             </div>
             <div class="form-group" style="flex: 2;">
-                <label for="telegram_api_hash">API Hash</label>
+                <label for="telegram_api_hash">① API Hash</label>
                 <input type="password" id="telegram_api_hash" name="telegram_api_hash" placeholder="0123456789abcdef0123456789abcdef" autocomplete="off">
             </div>
         </div>
         <div class="form-group">
-            <small>
-                Get <b>API ID</b> / <b>API Hash</b> from
-                <a href="https://my.telegram.org" target="_blank" rel="noopener">my.telegram.org</a>.
-                Save them here, then run this once on the bot host (server1) — it reads these
-                values from the database, so there's nothing to type or edit:
-                <br><code>sudo ./scripts/setup-telegram-local-api.sh</code>
-                <br>The script builds &amp; starts the local Bot API server (and does the one-time
-                <code>logOut</code> needed to switch the bot off the cloud API). Then tick the box
-                above, set the URL, save, and click <b>Setup Webhook</b>.
-            </small>
+            <small>Get <b>API ID</b> / <b>API Hash</b> from <a href="https://my.telegram.org" target="_blank" rel="noopener">my.telegram.org</a> — paste only the values (no labels).</small>
+        </div>
+        <div class="form-group">
+            <label for="telegram_local_api" id="telegram_local_api_label" style="opacity: 0.5;">
+                <input type="checkbox" id="telegram_local_api" name="telegram_local_api" disabled> ④ Use local Bot API server
+            </label>
+            <small id="telegram_local_api_hint">🔒 Locked until <b>Test Local Server</b> succeeds (step&nbsp;3) — this prevents enabling it before the server is running.</small>
         </div>
 
         <div class="form-row" style="gap: 10px; margin-top: 15px;">
