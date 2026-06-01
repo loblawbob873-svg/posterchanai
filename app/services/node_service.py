@@ -30,8 +30,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Cap stored output per job so a chatty command can't exhaust memory.
-_MAX_OUTPUT = 64 * 1024  # 64 KB
+# Cap stored output per job so a chatty command can't exhaust memory. Output beyond the
+# inline threshold is delivered as a .txt attachment rather than truncated in the chat.
+_MAX_OUTPUT = 1024 * 1024  # 1 MB retained per job
+INLINE_LIMIT = 3500  # chars shown inline; longer output is also attached as a file
 
 # In-memory job registry, shared across the process (guarded by _lock).
 _lock = threading.Lock()

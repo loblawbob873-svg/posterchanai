@@ -1422,6 +1422,20 @@ Files are saved to your Storage.""",
                 lines.append(f"- `{name}` → {where}")
             return "\n".join(lines)
 
+        def _result_for(job, header: str) -> dict:
+            """Render a finished job. Short output goes inline; long output shows a tail
+            preview inline and attaches the full output as a .txt (delivered as a Telegram
+            document or a web-UI download link by the existing `type=='files'` handlers)."""
+            out = (job.output or "(no output)").strip()
+            preview = f"{header}\n\n```\n{node_service.tail(out, node_service.INLINE_LIMIT)}\n```"
+            if len(out) > node_service.INLINE_LIMIT:
+                return {
+                    "type": "files",
+                    "content": preview,
+                    "files": [{"filename": f"node-{job.node}-job{job.id}.txt", "data": out.encode("utf-8", "replace")}],
+                }
+            return {"type": "text", "content": preview}
+
         # --- management subcommands ---
         if sub in ("", "list", "ls", "help"):
             usage = (
@@ -1453,8 +1467,7 @@ Files are saved to your Storage.""",
             job = node_service.get_job(int(parts[1]))
             if not job or (self.user and job.user_id != self.user.id):
                 return {"type": "text", "content": f"Job #{parts[1]} not found."}
-            out = (job.output or "(no output)").strip()
-            return {"type": "text", "content": f"**Job #{job.id}** `{job.node}` — {job.status} (exit {job.exit_code})\n`{job.command}`\n\n```\n{node_service.tail(out, 3500)}\n```"}
+            return _result_for(job, f"**Job #{job.id}** `{job.node}` — {job.status} (exit {job.exit_code})\n`{job.command}`")
 
         if sub == "kill":
             if len(parts) < 2 or not parts[1].isdigit():
@@ -1522,9 +1535,8 @@ Files are saved to your Storage.""",
         )
         await node_service.await_job(job, wait=8.0)
         if job.done:
-            out = (job.output or "(no output)").strip()
             icon = {"done": "✅", "failed": "❌", "killed": "🛑"}.get(job.status, "ℹ️")
-            return {"type": "text", "content": f"{icon} `{name}` exit {job.exit_code}\n\n```\n{node_service.tail(out, 3500)}\n```"}
+            return _result_for(job, f"{icon} `{name}` exit {job.exit_code}")
         # Still running — deliver its output to this channel when it finishes.
         node_service.notify_on_done(job, notify)
         return {"type": "text", "content": f"⏳ Started job #{job.id} on `{name}` (still running).\nI'll post the output here when it's done — or check with `node log {job.id}` / stop with `node kill {job.id}`."}

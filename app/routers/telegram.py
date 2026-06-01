@@ -62,7 +62,7 @@ def _make_tg_node_notify(telegram_service, chat_id):
     """Build an async callback that DMs a finished `node` job's output to this chat.
     Used so long-running node jobs started from Telegram report back here when done."""
     async def _notify(job):
-        from app.services.node_service import tail
+        from app.services.node_service import tail, INLINE_LIMIT
         icon = {"done": "✅", "failed": "❌", "killed": "🛑"}.get(job.status, "ℹ️")
         out = (job.output or "(no output)").strip()
         text = (
@@ -71,6 +71,11 @@ def _make_tg_node_notify(telegram_service, chat_id):
         )
         try:
             await telegram_service.send_message(str(chat_id), text)
+            # Long output: also deliver the full thing as a .txt document.
+            if len(out) > INLINE_LIMIT:
+                await telegram_service.send_document_bytes(
+                    str(chat_id), out.encode("utf-8", "replace"), f"node-{job.node}-job{job.id}.txt"
+                )
         except Exception as e:
             logger.warning(f"[node] telegram notify failed for job #{job.id}: {e}")
     return _notify

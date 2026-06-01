@@ -1056,17 +1056,29 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             # later, so it must use its own DB session.
                             node_notify = None
                             if command == "node":
-                                _uid, _conn, _conv = user.id, conn_id, conversation_id
+                                _uid, _conn, _conv, _uname = user.id, conn_id, conversation_id, user.username
 
                                 async def node_notify(job):
+                                    from urllib.parse import quote as _q
                                     from app.database import SessionLocal
                                     from app.models import Message as _Msg, Conversation as _Conv
-                                    from app.services.node_service import tail as _tail
+                                    from app.services.node_service import tail as _tail, INLINE_LIMIT as _IL
                                     _icon = {"done": "✅", "failed": "❌", "killed": "🛑"}.get(job.status, "ℹ️")
                                     _out = (job.output or "(no output)").strip()
-                                    _text = f"{_icon} Job #{job.id} on `{job.node}` {job.status} (exit {job.exit_code})\n\n```\n{_tail(_out, 3500)}\n```"
+                                    _text = f"{_icon} Job #{job.id} on `{job.node}` {job.status} (exit {job.exit_code})\n\n```\n{_tail(_out, _IL)}\n```"
                                     _db = SessionLocal()
                                     try:
+                                        # Long output: save the full thing and link it (inline shows only the tail).
+                                        if len(_out) > _IL:
+                                            try:
+                                                _rel = StorageService(_db).save_file_bytes(
+                                                    _uname, _conv, (job.output or "").encode("utf-8", "replace"),
+                                                    f"node-{job.node}-job{job.id}.txt",
+                                                )
+                                                _saved = _rel.replace("\\", "/").split("/")[-1]
+                                                _text += f"\n\n[⬇️ full output](/api/files/{_q(_uname, safe='')}/{_conv}/{_q(_saved)})"
+                                            except Exception as _fe:
+                                                logger.warning(f"[node] webui full-output save failed: {_fe}")
                                         _db.add(_Msg(conversation_id=_conv, role="assistant", content=_text))
                                         _c = _db.query(_Conv).filter(_Conv.id == _conv).first()
                                         if _c:
