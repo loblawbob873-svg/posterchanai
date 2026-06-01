@@ -25,22 +25,23 @@ select_components() {
     echo -e "  4) ${BOLD}Lightweight${NC}"
     echo "     Web UI only (use external Ollama + ComfyUI)"
     echo ""
-    echo -e "  5) ${BOLD}Telegram Bot API server${NC} (add-on — combine with any of the above)"
-    echo "     Lets the Telegram bot process files up to ~2 GB (compress/convert/"
-    echo "     translate). Compiles telegram-bot-api (~10-20 min). The web UI &"
-    echo "     Matrix don't need it."
+    echo -e "  5) ${BOLD}Telegram Bot API server${NC} (standalone — web UI only, no GPU/LLM)"
+    echo "     Just the local Telegram Bot API server so the bot can handle files"
+    echo "     up to ~2 GB (compress/convert/translate). Compiles telegram-bot-api"
+    echo "     (~10-20 min). Picks the lightweight web UI; no GPU setup."
     echo ""
 
     read -p "Select installation type [1-5, default=1]: " INSTALL_TYPE
     INSTALL_TYPE=${INSTALL_TYPE:-1}
 
-    # Option 5 is the Telegram Bot API add-on. It isn't an install type on its
-    # own, so enable it and ask which base type (1-4) to combine it with.
+    # Option 5 is a standalone, GPU-free choice: lightweight web UI + the local
+    # Telegram Bot API server. It is independent of the LLM/Image stack.
     if [ "$INSTALL_TYPE" = "5" ]; then
+        INSTALL_LLM=0
+        INSTALL_IMAGE=0
         INSTALL_TELEGRAM_BOTAPI=1
-        echo -e "  ${GREEN}✓ Telegram Bot API server add-on enabled${NC}"
-        read -p "  Base install type to combine it with [1-4, default=1]: " INSTALL_TYPE
-        INSTALL_TYPE=${INSTALL_TYPE:-1}
+        echo -e "  ${GREEN}✓ Telegram Bot API server (standalone web UI — no GPU/LLM setup)${NC}"
+        return 0
     fi
 
     case "$INSTALL_TYPE" in
