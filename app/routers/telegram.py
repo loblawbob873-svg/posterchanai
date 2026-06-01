@@ -1367,8 +1367,20 @@ async def _handle_telegram_update(update: dict, db: Session):
             # post command: generate a social media post from a replied-to link
             if command == "post":
                 if not reply_to and not text:
-                    await telegram_service.send_message(chat_id, "Reply to a message containing a link and send `post` to generate a social media post.")
+                    await telegram_service.send_message(chat_id, "Reply to a message and send `post` to generate a social media post, or `post raw` to share it exactly as written.")
                     return {"ok": True}
+
+                # `post raw` / `post verbatim` shares the replied-to text AS-IS,
+                # skipping the LLM rewrite. The keyword is consumed so it isn't
+                # mistaken for a tone modifier (e.g. `post professional`).
+                _arg_l = arg.strip().lower()
+                verbatim = False
+                _inline_after = ""
+                for _kw in ("verbatim", "as-is", "as is", "asis", "raw", "exact", "exactly"):
+                    if _arg_l == _kw or _arg_l.startswith(_kw + " "):
+                        verbatim = True
+                        _inline_after = arg.strip()[len(_kw):].strip()
+                        break
 
                 import re as _re
 
@@ -1418,6 +1430,25 @@ async def _handle_telegram_update(update: dict, db: Session):
                                                              telegram_service, prompt="📣 *Share this image?*",
                                                              image_bytes=_rt_data)
                                     return {"ok": True}
+
+                # Verbatim mode: share the reply text exactly as written, no LLM rewrite.
+                if verbatim:
+                    raw_text = (reply_text or _inline_after).strip()
+                    if not raw_text:
+                        await telegram_service.send_message(chat_id, "Nothing to post — reply to a message with text and send `post raw`.")
+                        return {"ok": True}
+                    # Append the source URL if the reply references one but doesn't already include it.
+                    if url_to_append and url_to_append not in raw_text:
+                        raw_text = raw_text.rstrip() + f"\n\n{url_to_append}"
+                    _tg_user_raw = db.query(User).filter(
+                        User.telegram_chat_id == chat_id,
+                        User.telegram_enabled == True
+                    ).first()
+                    await _offer_social_post(
+                        chat_id, raw_text, _tg_user_raw, telegram_service,
+                        prompt="📣 *Post this (as written)?*"
+                    )
+                    return {"ok": True}
 
                 # Fetch URL content if available
                 article_context = source_text
