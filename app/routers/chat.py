@@ -1061,9 +1061,10 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                 async def node_notify(job):
                                     from app.database import SessionLocal
                                     from app.models import Message as _Msg, Conversation as _Conv
+                                    from app.services.node_service import tail as _tail
                                     _icon = {"done": "✅", "failed": "❌", "killed": "🛑"}.get(job.status, "ℹ️")
                                     _out = (job.output or "(no output)").strip()
-                                    _text = f"{_icon} Job #{job.id} on `{job.node}` {job.status} (exit {job.exit_code})\n\n```\n{_out[:3500]}\n```"
+                                    _text = f"{_icon} Job #{job.id} on `{job.node}` {job.status} (exit {job.exit_code})\n\n```\n{_tail(_out, 3500)}\n```"
                                     _db = SessionLocal()
                                     try:
                                         _db.add(_Msg(conversation_id=_conv, role="assistant", content=_text))

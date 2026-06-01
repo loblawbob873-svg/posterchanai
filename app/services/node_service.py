@@ -79,6 +79,16 @@ def user_allowed(db: Session, user: Optional["User"]) -> bool:
     return (user.username or "").lower() in allowed
 
 
+def tail(text: str, limit: int) -> str:
+    """Return the LAST `limit` chars of command output. Command results put the
+    meaningful part (final status, errors, summary) at the end, so we show the tail,
+    not the head, when output is long."""
+    text = text or ""
+    if len(text) <= limit:
+        return text
+    return f"…(showing last {limit} chars)…\n{text[-limit:]}"
+
+
 def _job_timeout(db: Session) -> Optional[float]:
     try:
         secs = float(_get(db, "node_exec_job_timeout", "0"))

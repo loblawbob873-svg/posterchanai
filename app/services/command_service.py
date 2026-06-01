@@ -1454,7 +1454,7 @@ Files are saved to your Storage.""",
             if not job or (self.user and job.user_id != self.user.id):
                 return {"type": "text", "content": f"Job #{parts[1]} not found."}
             out = (job.output or "(no output)").strip()
-            return {"type": "text", "content": f"**Job #{job.id}** `{job.node}` — {job.status} (exit {job.exit_code})\n`{job.command}`\n\n```\n{out[:3500]}\n```"}
+            return {"type": "text", "content": f"**Job #{job.id}** `{job.node}` — {job.status} (exit {job.exit_code})\n`{job.command}`\n\n```\n{node_service.tail(out, 3500)}\n```"}
 
         if sub == "kill":
             if len(parts) < 2 or not parts[1].isdigit():
@@ -1486,7 +1486,7 @@ Files are saved to your Storage.""",
             for name, j in jobs.items():
                 if j.done:
                     out = (j.output or "(no output)").strip()
-                    lines.append(f"\n**{icon.get(j.status, 'ℹ️')} {name}** (exit {j.exit_code})\n```\n{out[:1200]}\n```")
+                    lines.append(f"\n**{icon.get(j.status, 'ℹ️')} {name}** (exit {j.exit_code})\n```\n{node_service.tail(out, 1200)}\n```")
                 else:
                     # Still running — deliver its output to this channel when it finishes.
                     node_service.notify_on_done(j, notify)
@@ -1524,7 +1524,7 @@ Files are saved to your Storage.""",
         if job.done:
             out = (job.output or "(no output)").strip()
             icon = {"done": "✅", "failed": "❌", "killed": "🛑"}.get(job.status, "ℹ️")
-            return {"type": "text", "content": f"{icon} `{name}` exit {job.exit_code}\n\n```\n{out[:3500]}\n```"}
+            return {"type": "text", "content": f"{icon} `{name}` exit {job.exit_code}\n\n```\n{node_service.tail(out, 3500)}\n```"}
         # Still running — deliver its output to this channel when it finishes.
         node_service.notify_on_done(job, notify)
         return {"type": "text", "content": f"⏳ Started job #{job.id} on `{name}` (still running).\nI'll post the output here when it's done — or check with `node log {job.id}` / stop with `node kill {job.id}`."}
