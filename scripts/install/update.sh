@@ -21,10 +21,17 @@ _update_one_venv() {
         cf="$(mktemp)"
         # Pin the fragile packages to their current versions.
         "$venv/bin/pip" freeze 2>/dev/null | grep -iE "$_IPEX_FROZEN_RE" > "$cf" || true
-        if [ -s "$cf" ]; then
-            echo "  Frozen (will NOT be upgraded):"
-            sed 's/^/    /' "$cf"
+        # SAFETY: never run an unconstrained --upgrade on an Arc venv. If we
+        # couldn't capture the fragile pins, an empty constraints file would let
+        # pip pull numpy>=2 / a newer torch and break IPEX — so bail out instead.
+        if [ ! -s "$cf" ]; then
+            print_warning "Could not detect the Intel Arc/IPEX pins in $venv — skipping its"
+            print_warning "dependency upgrade to avoid breaking it. Upgrade it manually if needed."
+            rm -f "$cf"
+            return 0
         fi
+        echo "  Frozen (will NOT be upgraded):"
+        sed 's/^/    /' "$cf"
         if "$venv/bin/pip" install -r requirements.txt --upgrade -c "$cf" -q; then
             print_success "Updated $venv (Arc pins preserved)"
         else
