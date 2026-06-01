@@ -1391,6 +1391,10 @@ async def _handle_telegram_update(update: dict, db: Session):
             attachments = []
             has_images = False
             ocr_text = None
+            # Telegram bots cannot download files larger than 20 MB via getFile.
+            # Track any oversized attachment so compress/convert can explain why.
+            TELEGRAM_MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
+            oversized_attachment = None  # (filename, size_bytes)
             
             # Check if the message starts with a known command
             command = None
@@ -1481,7 +1485,11 @@ async def _handle_telegram_update(update: dict, db: Session):
             if document:
                 file_id = document.get("file_id")
                 file_name = document.get("file_name", "document")
-                if file_id:
+                doc_size = document.get("file_size") or 0
+                if file_id and doc_size > TELEGRAM_MAX_DOWNLOAD_BYTES:
+                    oversized_attachment = (file_name, doc_size)
+                    logger.warning(f"Document {file_name} is {doc_size} bytes — exceeds Telegram bot download limit")
+                elif file_id:
                     logger.info(f"Processing document: {file_name}")
                     file_result = await telegram_service.get_file(file_id)
                     if file_result.get("ok"):
@@ -1509,6 +1517,11 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Download video / animation attachments (for the compress command)
             if video:
                 file_id = video.get("file_id")
+                v_size = video.get("file_size") or 0
+                if file_id and v_size > TELEGRAM_MAX_DOWNLOAD_BYTES:
+                    oversized_attachment = (video.get("file_name") or "video.mp4", v_size)
+                    logger.warning(f"Video is {v_size} bytes — exceeds Telegram bot download limit")
+                    file_id = None  # skip the doomed getFile call
                 if file_id:
                     v_name = video.get("file_name") or "video.mp4"
                     v_mime = video.get("mime_type") or "video/mp4"
@@ -1898,6 +1911,17 @@ async def _handle_telegram_update(update: dict, db: Session):
 
                         await _offer_social_post(chat_id, final_share_text, _share_user, telegram_service,
                                                   prompt="📣 *Share this?*", image_bytes=_share_img)
+                        return {"ok": True}
+                    elif command in ("compress", "convert") and not attachments and oversized_attachment:
+                        # The file was attached but too big for Telegram bots to download.
+                        _ov_name, _ov_size = oversized_attachment
+                        _ov_mb = _ov_size / (1024 * 1024)
+                        await telegram_service.send_message(
+                            chat_id,
+                            f"❌ `{_ov_name}` is {_ov_mb:.0f} MB. Telegram only lets bots download files up "
+                            f"to 20 MB, so I can't process it here.\n\nUse the web UI for larger files, "
+                            f"or send a smaller clip.",
+                        )
                         return {"ok": True}
                     else:
                         # Pass attachments to any command that supports them

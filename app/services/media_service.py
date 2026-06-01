@@ -77,9 +77,52 @@ def _human_size(size_bytes: int) -> str:
     return f"{size:.1f} TB"
 
 
+_FFMPEG_BIN = None  # cached resolved ffmpeg path
+
+
+def _ffmpeg_has_libx264(path: str) -> bool:
+    try:
+        out = subprocess.run([path, '-hide_banner', '-encoders'],
+                             capture_output=True, timeout=10)
+        return b'libx264' in out.stdout
+    except Exception:
+        return False
+
+
+def resolve_ffmpeg() -> str:
+    """Resolve an ffmpeg binary that can actually encode H.264.
+
+    The service PATH can be polluted — e.g. Intel oneAPI's setvars.sh prepends a
+    conda-forge ffmpeg with no libx264, which rejects `-preset`. So we prefer a
+    known full build (the Jellyfin/system ffmpeg) and verify libx264 support
+    rather than trusting whatever bare `ffmpeg` resolves to. Result is cached.
+    """
+    global _FFMPEG_BIN
+    if _FFMPEG_BIN is not None:
+        return _FFMPEG_BIN
+    candidates = [
+        os.environ.get("FFMPEG_BINARY"),
+        "/usr/bin/ffmpeg",
+        "/usr/local/bin/ffmpeg",
+        shutil.which("ffmpeg"),
+    ]
+    # Prefer a build that has the libx264 encoder.
+    for c in candidates:
+        if c and os.path.exists(c) and _ffmpeg_has_libx264(c):
+            _FFMPEG_BIN = c
+            return c
+    # Fall back to any ffmpeg we can find (video compression may then be limited).
+    for c in candidates:
+        if c and os.path.exists(c):
+            _FFMPEG_BIN = c
+            return c
+    _FFMPEG_BIN = "ffmpeg"
+    return _FFMPEG_BIN
+
+
 def ffmpeg_available() -> bool:
     try:
-        subprocess.run(['ffmpeg', '-version'], capture_output=True, timeout=5, check=True)
+        subprocess.run([resolve_ffmpeg(), '-version'], capture_output=True, timeout=5, check=True)
         return True
     except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
         return False
@@ -142,8 +185,14 @@ def compress_video(
 
     Raises RuntimeError if ffmpeg is unavailable or the transcode fails.
     """
+    ffmpeg = resolve_ffmpeg()
     if not ffmpeg_available():
         raise RuntimeError("ffmpeg is not installed on the server")
+    if not _ffmpeg_has_libx264(ffmpeg):
+        raise RuntimeError(
+            "this ffmpeg build has no libx264 (H.264) encoder — install a full "
+            "ffmpeg (e.g. the system/Jellyfin build) for video compression"
+        )
 
     tmp_dir = tempfile.mkdtemp(prefix="media_compress_")
     in_suffix = _ext(source_filename) or ".mp4"
@@ -161,7 +210,7 @@ def compress_video(
         )
 
         cmd = [
-            'ffmpeg', '-i', in_path,
+            ffmpeg, '-i', in_path,
             '-vf', scale_filter,
             '-c:v', 'libx264', '-preset', preset, '-crf', str(crf),
             '-c:a', 'aac', '-b:a', VIDEO_AUDIO_BITRATE,
