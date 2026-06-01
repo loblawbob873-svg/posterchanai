@@ -399,6 +399,12 @@ def convert_attachments(
                 f"## 🔄 Convert (images → PDF)\n\n"
                 f"Combined {len(images)} image(s) into `converted.pdf` ({names})."
             )
+            if pdfs:
+                # Both images and PDFs were attached; we made a PDF from the images.
+                summary += (
+                    f"\n\n_Ignored {len(pdfs)} PDF(s) — send `convert images` or `convert pdf` "
+                    f"to pick a direction when mixing types._"
+                )
             return outputs, summary
         except Exception as e:
             logger.error(f"image->PDF failed: {e}", exc_info=True)

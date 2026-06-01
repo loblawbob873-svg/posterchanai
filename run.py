@@ -56,5 +56,9 @@ if __name__ == "__main__":
         "app.main:app",
         host=args.host,
         port=port,
-        reload=False
+        reload=False,
+        # Chat uploads (images/PDFs/videos for compress/convert) are sent as
+        # base64 over the WebSocket; the 16 MB default drops large frames and
+        # the message never arrives. Raise to 64 MB.
+        ws_max_size=64 * 1024 * 1024,
     )
