@@ -18,6 +18,7 @@ pip-log.txt
 
 # Virtual environments
 venv/
+venv*/
 env/
 .venv/
 ENV/
