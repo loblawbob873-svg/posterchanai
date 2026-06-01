@@ -71,6 +71,16 @@ open a fresh `SessionLocal` and capture any needed config up front.
 
 ## Notable features
 
+- **Finance (Budget Manager)** (`app/services/finance_service.py`; `budget`/`bills`/`pay`/`addbill`
+  commands): thin async client for the self-hosted Budget Manager Flask app's `/api/v1/*`
+  (summary/bills/add/pay), reached at the global `finance_api_base` setting (default
+  `http://localhost:5001`). It's **multi-user**: each PosterChanAI user connects their own finance
+  account via a **per-user `User.finance_api_key`** (Settings → Finance in the web UI; sent as
+  `X-API-Key`) — a global key would make everyone act as finance user #1. Commands live in
+  `CommandService` so the web UI, Telegram and Matrix all share them; Telegram adds an interactive
+  budget view (`_send_budget`, `fin:` callbacks: tap a bill to pay, ➕ add via ForceReply, 🔄
+  refresh — bill id→name resolved through the per-chat `_finance_bills_cache`). Matrix gets the
+  plain-text rendering for free.
 - **Remote node management** (`app/services/node_service.py`, `node` command): run OS commands
   on SSH-reachable nodes (or `local`), agentic mode, long-running **background jobs**
   (start → job id → result posted back to the originating channel). Config in Admin → Services

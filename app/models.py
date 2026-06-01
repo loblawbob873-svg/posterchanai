@@ -63,6 +63,9 @@ class User(Base):
     # Matrix bot notification settings (posterchan bot DMs)
     matrix_dm_bot_user_id = Column(String(500), nullable=True)  # Bot to DM via, e.g. @posterchan:server
 
+    # Finance (Budget Manager) integration — per-user API key for that user's finance account
+    finance_api_key = Column(String(200), nullable=True)
+
     # Social notification relay → Telegram (master per-user toggle + per-platform cursors)
     social_notif_enabled = Column(Boolean, default=False)
     misskey_notif_since = Column(Text, nullable=True)   # last-seen Misskey notification id

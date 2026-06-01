@@ -15,6 +15,7 @@
                 <button class="user-tab-btn" data-tab="misskey">Misskey</button>
                 <button class="user-tab-btn" data-tab="pleroma">Pleroma</button>
                 <button class="user-tab-btn" data-tab="matrix">Matrix</button>
+                <button class="user-tab-btn" data-tab="finance">Finance</button>
                 <button class="user-tab-btn" data-tab="apikeys">API Keys</button>
             </div>
 
@@ -350,6 +351,22 @@ My name: John Smith"></textarea>
                         <div class="form-group">
                             <button type="button" class="btn-secondary" id="matrixTestDmBtn">Send Test DM</button>
                             <span id="matrixDmStatus" class="test-result" style="margin-top: 8px; display: block;"></span>
+                        </div>
+                    </fieldset>
+                </div>
+
+                <!-- Finance Tab -->
+                <div class="user-tab-content" id="user-tab-finance">
+                    <fieldset>
+                        <legend>Finance (Budget Manager)</legend>
+                        <p class="fieldset-info">Connect your <a href="http://localhost:5001" target="_blank">Budget Manager</a> account to check your budget, list bills, add bills and pay them from chat, Telegram and Matrix. In Budget Manager open <strong>API Keys</strong>, create a key, and paste it here.</p>
+                        <div class="form-group">
+                            <label for="financeApiKey">API Key</label>
+                            <input type="password" id="financeApiKey" placeholder="Paste your Budget Manager API key">
+                            <small id="financeKeyStatus">Not connected.</small>
+                        </div>
+                        <div class="form-group">
+                            <small>Commands: <code>budget</code> · <code>bills</code> · <code>pay &lt;name&gt;</code> · <code>addbill &lt;name&gt; &lt;amount&gt; [income]</code></small>
                         </div>
                     </fieldset>
                 </div>

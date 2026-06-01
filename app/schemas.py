@@ -229,6 +229,8 @@ class SettingsResponse(BaseModel):
     node_exec_users: str = ""  # comma-separated usernames allowed (admins always allowed)
     node_exec_agent_max_steps: str = "8"  # max LLM iterations in agentic mode
     node_exec_job_timeout: str = "0"  # per-job timeout in seconds (0 = no timeout)
+    # Finance (Budget Manager) integration — per-user API keys live on User; this is the shared base URL
+    finance_api_base: str = "http://localhost:5001"
     # Built-in torrent client settings
     bt_enabled: str = "false"
     bt_server_url: str = ""  # Remote torrent server URL (empty = local)
@@ -438,6 +440,8 @@ class UserSettingsUpdate(BaseModel):
     matrix_enabled: Optional[bool] = None
     matrix_homeserver: Optional[str] = None
     matrix_dm_bot_user_id: Optional[str] = None
+    # Finance (Budget Manager) — per-user API key
+    finance_api_key: Optional[str] = None
     # Relay social notifications (Misskey/Pleroma/Matrix) to Telegram
     social_notif_enabled: Optional[bool] = None
 
@@ -481,6 +485,8 @@ class UserSettingsResponse(BaseModel):
     matrix_user_id: Optional[str] = None
     matrix_has_access_token: bool = False
     matrix_dm_bot_user_id: Optional[str] = None
+    # Finance (Budget Manager) — per-user API key (key itself never exposed)
+    finance_has_api_key: bool = False
     # Relay social notifications (Misskey/Pleroma/Matrix) to Telegram
     social_notif_enabled: bool = False
 

@@ -445,6 +445,7 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         matrix_user_id=current_user.matrix_user_id if hasattr(current_user, 'matrix_user_id') else None,
         matrix_has_access_token=bool(current_user.matrix_access_token) if hasattr(current_user, 'matrix_access_token') else False,
         matrix_dm_bot_user_id=current_user.matrix_dm_bot_user_id if hasattr(current_user, 'matrix_dm_bot_user_id') else None,
+        finance_has_api_key=bool(current_user.finance_api_key) if hasattr(current_user, 'finance_api_key') else False,
         social_notif_enabled=current_user.social_notif_enabled if hasattr(current_user, 'social_notif_enabled') else False,
     )
 
@@ -574,6 +575,10 @@ def update_user_settings(
         current_user.matrix_homeserver = settings.matrix_homeserver.strip() if settings.matrix_homeserver else None
     if settings.matrix_dm_bot_user_id is not None:
         current_user.matrix_dm_bot_user_id = settings.matrix_dm_bot_user_id.strip() if settings.matrix_dm_bot_user_id else None
+
+    # Finance (Budget Manager) API key — allow clearing with empty string
+    if settings.finance_api_key is not None:
+        current_user.finance_api_key = settings.finance_api_key.strip() or None
 
     # Relay social notifications to Telegram (master per-user toggle)
     if settings.social_notif_enabled is not None:

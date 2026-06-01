@@ -540,6 +540,13 @@ class ChatHandler {
                 const matrixDmBotUserIdEl = document.getElementById('matrixDmBotUserId');
                 if (matrixDmBotUserIdEl) settings.matrix_dm_bot_user_id = matrixDmBotUserIdEl.value.trim();
 
+                // Finance (Budget Manager) API key — only send when the field was edited,
+                // so a blank field (key already saved, never echoed back) doesn't clear it.
+                const financeApiKeyEl = document.getElementById('financeApiKey');
+                if (financeApiKeyEl && financeApiKeyEl.dataset.dirty === '1') {
+                    settings.finance_api_key = financeApiKeyEl.value.trim();
+                }
+
                 try {
                     const response = await csrfFetch('/api/auth/settings', {
                         method: 'PUT',
@@ -854,6 +861,26 @@ class ChatHandler {
                 }
                 const matrixDmBotUserIdEl = document.getElementById('matrixDmBotUserId');
                 if (matrixDmBotUserIdEl) matrixDmBotUserIdEl.value = settings.matrix_dm_bot_user_id || '';
+
+                // Finance — never echo the key; show connection status and reset dirty flag.
+                const financeApiKeyEl = document.getElementById('financeApiKey');
+                const financeKeyStatus = document.getElementById('financeKeyStatus');
+                if (financeApiKeyEl) {
+                    financeApiKeyEl.value = '';
+                    financeApiKeyEl.dataset.dirty = '0';
+                    financeApiKeyEl.placeholder = settings.finance_has_api_key
+                        ? '•••••••• (key saved — type to replace)'
+                        : 'Paste your Budget Manager API key';
+                    if (!financeApiKeyEl.dataset.bound) {
+                        financeApiKeyEl.addEventListener('input', () => { financeApiKeyEl.dataset.dirty = '1'; });
+                        financeApiKeyEl.dataset.bound = '1';
+                    }
+                }
+                if (financeKeyStatus) {
+                    financeKeyStatus.textContent = settings.finance_has_api_key
+                        ? '✅ Connected. Type a new key here and save to replace it.'
+                        : 'Not connected.';
+                }
 
                 // News settings
                 const newsScheduleEnabled = document.getElementById('newsScheduleEnabled');

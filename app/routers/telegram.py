@@ -664,11 +664,23 @@ def _help_main_keyboard() -> dict:
                 {"text": "💬 Chat & URLs", "callback_data": "help:chat"},
                 {"text": "📋 Logs",        "callback_data": "help:logs"},
             ],
+            [
+                {"text": "💰 Finance",     "callback_data": "help:finance"},
+            ],
         ]
     }
 
 
 _HELP_SECTIONS = {
+    "finance": (
+        "💰 *Finance — Budget Manager*\n\n"
+        "Connect your account in the web UI \\(Settings → Finance\\), then:\n\n"
+        "• `budget` — summary: income, unpaid bills, remaining\\. Tap a bill to pay it\\.\n"
+        "• `bills` — unpaid bills \\(`bills all` / `bills paid` too\\)\n"
+        "• `pay <name>` — pay a bill by name\n"
+        "• `addbill <name> <amount>` — add a bill \\(append `income` for income\\)\n\n"
+        "The budget view has buttons: ✅ pay a bill, ➕ add a bill, 🔄 refresh\\."
+    ),
     "files": (
         "📎 *Files — compress & convert*\n\n"
         "Just upload a file (no caption needed) and tap a button:\n\n"
@@ -957,6 +969,45 @@ _geni_image_cache: dict = {}
 # Pending link actions: chat_id → url (cleared once action is chosen)
 _link_action_cache: dict = {}
 
+# Finance: chat_id → {str(bill_id): bill_dict} for the bills shown in the last budget
+# view, so a `fin:pay:<id>` callback can resolve the exact bill name to pay.
+_finance_bills_cache: dict = {}
+
+
+async def _send_budget(chat_id: str, user, db, message_id: int = None) -> None:
+    """Render the interactive budget view (summary + a Pay button per unpaid bill).
+
+    When message_id is given the existing message is edited in place (used by the
+    Pay / Refresh callbacks); otherwise a new message is sent.
+    """
+    from app.services import finance_service
+    try:
+        base, key = finance_service.get_config(db, user)
+        summary = await finance_service.get_summary(base, key)
+        bills = await finance_service.get_bills(base, key, status="unpaid")
+    except finance_service.FinanceError as e:
+        await telegram_service.send_message(chat_id, f"💰 {e}")
+        return
+
+    # Only expenses get a Pay button; income lines are informational.
+    payable = [b for b in bills if not b.get("is_income")]
+    _finance_bills_cache[chat_id] = {str(b["id"]): b for b in payable}
+
+    text = finance_service.format_summary(summary)
+    rows = [
+        [{"text": f"✅ {b['name'][:24]} ${abs(b.get('amount', 0)):,.0f}",
+          "callback_data": f"fin:pay:{b['id']}"}]
+        for b in payable[:20]
+    ]
+    rows.append([
+        {"text": "➕ Add Bill", "callback_data": "fin:add"},
+        {"text": "🔄 Refresh", "callback_data": "fin:refresh"},
+    ])
+    markup = {"inline_keyboard": rows}
+    if message_id:
+        await telegram_service.edit_message_text(chat_id, message_id, text, parse_mode="", reply_markup=markup)
+    else:
+        await telegram_service.send_message(chat_id, text, parse_mode="", reply_markup=markup)
 
 
 def _has_misskey(user) -> bool:
@@ -1245,6 +1296,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                 "🔍 What would you like to search for?": "search",
                 "🖼 What images would you like to search for?": "images",
                 "🎨 Describe the image you want to generate:": "geni",
+                "💰 Add a bill — reply: name amount [income]": "addbill",
             }
             reply_from = (reply_to or {}).get("from", {})
             if reply_from.get("is_bot") and text.strip():
@@ -1366,7 +1418,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "convert", "node"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "convert", "node", "budget", "finance", "bills", "pay", "addbill"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -1590,7 +1642,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "convert", "node"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "convert", "node", "budget", "finance", "bills", "pay", "addbill"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -1903,6 +1955,19 @@ async def _handle_telegram_update(update: dict, db: Session):
                             db.query(Message).filter(Message.conversation_id == tg_conv.id).delete()
                             db.commit()
                         await telegram_service.send_message(chat_id, "Conversation cleared. Starting fresh!")
+                        return {"ok": True}
+                    elif command in ("budget", "finance"):
+                        await _send_budget(chat_id, user_obj, db)
+                        return {"ok": True}
+                    elif command in ("bills", "pay", "addbill"):
+                        # pay/addbill mutate, then show the refreshed interactive budget;
+                        # bills just returns the formatted list from the shared command service.
+                        result = await command_service.execute_command(command, arg)
+                        await telegram_service.send_message(
+                            chat_id, result.get("content", "Done."), parse_mode=""
+                        )
+                        if command in ("pay", "addbill") and arg.strip():
+                            await _send_budget(chat_id, user_obj, db)
                         return {"ok": True}
                     elif command == "ytdl":
                         if not arg:
@@ -3156,6 +3221,43 @@ async def _handle_telegram_update(update: dict, db: Session):
                     except (ValueError, IndexError):
                         await telegram_service.send_message(chat_id, "❌ Invalid source selection.")
                     return {"ok": True}
+
+            elif data.startswith("fin:"):
+                # Finance buttons: fin:pay:<bill_id> | fin:refresh | fin:add
+                parts = data.split(":")
+                action = parts[1] if len(parts) > 1 else ""
+                message_id = (callback_query.get("message") or {}).get("message_id")
+                cb_user = db.query(User).filter(
+                    User.telegram_chat_id == chat_id,
+                    User.telegram_enabled == True
+                ).first()
+                if not cb_user:
+                    await telegram_service.send_message(chat_id, "Your Telegram account is not linked.")
+                elif action == "add":
+                    await telegram_service.send_message(
+                        chat_id,
+                        "💰 Add a bill — reply: name amount [income]",
+                        reply_markup={"force_reply": True, "selective": True,
+                                      "input_field_placeholder": "e.g. Rent 1200"},
+                    )
+                elif action == "refresh":
+                    await _send_budget(chat_id, cb_user, db, message_id=message_id)
+                elif action == "pay" and len(parts) > 2:
+                    from app.services import finance_service
+                    bill = _finance_bills_cache.get(chat_id, {}).get(parts[2])
+                    if not bill:
+                        await telegram_service.answer_callback_query(
+                            callback_query_id, text="Bill list expired — tap Refresh.", show_alert=True)
+                    else:
+                        try:
+                            base, key = finance_service.get_config(db, cb_user)
+                            res = await finance_service.pay_bill(base, key, bill["name"])
+                            await telegram_service.answer_callback_query(
+                                callback_query_id, text=res.get("message", "Paid."))
+                        except finance_service.FinanceError as e:
+                            await telegram_service.answer_callback_query(
+                                callback_query_id, text=str(e), show_alert=True)
+                        await _send_budget(chat_id, cb_user, db, message_id=message_id)
 
             elif data.startswith("prompt:"):
                 action = data.split(":", 1)[1]

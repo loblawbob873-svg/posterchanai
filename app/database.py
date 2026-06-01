@@ -223,6 +223,8 @@ def _run_migrations():
         ("matrix_user_id", "VARCHAR(500)"),
         ("matrix_access_token", "VARCHAR(2000)"),
         ("matrix_dm_bot_user_id", "VARCHAR(500)"),
+        # Finance (Budget Manager) integration
+        ("finance_api_key", "VARCHAR(200)"),
         # Social notification relay → Telegram
         ("social_notif_enabled", "BOOLEAN DEFAULT 0"),
         ("misskey_notif_since", "TEXT"),
