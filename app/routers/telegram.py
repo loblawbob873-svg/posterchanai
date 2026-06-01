@@ -1421,7 +1421,10 @@ async def _handle_telegram_update(update: dict, db: Session):
                             if _rt_fp:
                                 _rt_data = await telegram_service.download_file(_rt_fp)
                                 if _rt_data:
-                                    _share_caption = arg.strip() or reply_text or "Image"
+                                    # In verbatim mode `arg` is just the keyword ("raw"); don't
+                                    # let it become the image caption — fall back to the reply text.
+                                    _cap_arg = "" if verbatim else arg.strip()
+                                    _share_caption = _cap_arg or reply_text or "Image"
                                     _tg_user_share = db.query(User).filter(
                                         User.telegram_chat_id == chat_id,
                                         User.telegram_enabled == True

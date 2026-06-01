@@ -139,13 +139,15 @@ The bot then shows share buttons (**📣 Misskey / Pleroma / Matrix**, **🚀 Po
 image itself. The source URL is appended by default; `post don't include links` (or
 "no links", "without url", …) omits it.
 
-**Matrix** — same `post`, adapted to a command (no reply needed):
+**Matrix** — reply to a message (mention the bot) **or** type the content inline:
 
 | Command | What it does |
 | --- | --- |
+| reply + `post` | Rewrites the replied-to message into a post |
+| reply + `post raw` | Shares the replied-to message verbatim |
+| reply + `post <instructions>` | Rewrites the replied-to message following your instructions |
 | `post <url>` | Fetches the link and writes a post (URL appended) |
 | `post <topic>` | Writes a post about the topic |
-| `post <url> <instructions>` | e.g. `post <url> professional`, `post <url> no links` |
 | `post raw <text>` | Saves `<text>` verbatim, no rewrite |
 | `share` | Publishes the last `post` to your connected platforms (`share matrix <n>` picks a room) |
 

@@ -150,6 +150,9 @@ class MatrixCommandRequest(BaseModel):
     room_id: Optional[str] = None
     # Attached files (base64) forwarded by the bot — used by compress/convert.
     media: Optional[list[MatrixMediaItem]] = None
+    # Body of the message the user replied to (Matrix rich-reply). Lets `post`
+    # operate on an existing message, mirroring the Telegram reply-to flow.
+    reply_text: Optional[str] = None
 
 
 class MatrixYtdlRequest(BaseModel):
@@ -216,23 +219,34 @@ async def execute_matrix_command(
             db.add(UserSetting(user_id=user.id, key="matrix_pending_post", value=text))
         db.commit()
 
+    # Body of a replied-to message (Matrix rich-reply), if the bot forwarded one.
+    reply_text = (data.reply_text or "").strip()
+
     if command_str.lower() == "post" or _re.match(r'^post\s', command_str, _re.IGNORECASE):
         raw_arg = command_str[4:].strip() if len(command_str) > 4 else ""
 
         # `post raw <text>` (also verbatim/as-is/exact) — share text exactly as written, no rewrite.
+        # When replying to a message, the reply body is the text to share; the typed
+        # words are just the keyword. Otherwise the inline text after the keyword is used.
         _verb_m = _re.match(r'^(raw|verbatim|as-is|asis|exact|exactly)\b\s*(.*)$', raw_arg, _re.IGNORECASE | _re.DOTALL)
         if _verb_m:
-            verbatim_text = _verb_m.group(2).strip()
+            verbatim_text = reply_text or _verb_m.group(2).strip()
             if not verbatim_text:
-                return {"result": "Usage: `post raw <text>` — share text exactly as written."}
+                return {"result": "Usage: `post raw <text>` (or reply to a message with `post raw`) — share text exactly as written."}
             _save_pending_post(verbatim_text)
             return {"result": verbatim_text + _SHARE_SUFFIX}
 
-        _post_match = _re.match(r'^post\s+(https?://\S+)', command_str, _re.IGNORECASE)
-        url_arg = _post_match.group(1) if _post_match else ""
-        # When a URL is given, any remaining words are free-form instructions
-        # (e.g. "professional", "don't include links"). For a bare topic the text IS the content.
-        instructions = raw_arg.replace(url_arg, "", 1).strip() if url_arg else ""
+        if reply_text:
+            # Reply-based: the replied message is the content; typed words are instructions.
+            instructions = raw_arg
+            _u = _re.findall(r'https?://\S+', reply_text)
+            url_arg = _u[0].rstrip('.,)') if _u else ""
+        else:
+            _post_match = _re.match(r'^post\s+(https?://\S+)', command_str, _re.IGNORECASE)
+            url_arg = _post_match.group(1) if _post_match else ""
+            # When a URL is given, any remaining words are free-form instructions
+            # (e.g. "professional", "don't include links"). For a bare topic the text IS the content.
+            instructions = raw_arg.replace(url_arg, "", 1).strip() if url_arg else ""
         _suppress_link = any(p in instructions.lower() for p in (
             "no link", "no links", "without link", "don't include link",
             "dont include link", "do not include link", "exclude link",
@@ -241,7 +255,7 @@ async def execute_matrix_command(
         from app.services.chat_service import ChatService as _CS
         from app.services.search_service import SearchService as _SS
         _cs = _CS(db, user=user)
-        article_context = url_arg or raw_arg
+        article_context = reply_text or url_arg or raw_arg
         if url_arg:
             try:
                 import asyncio as _aio
