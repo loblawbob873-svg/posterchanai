@@ -2176,6 +2176,14 @@ async def _handle_telegram_update(update: dict, db: Session):
                         _system_prompt = chat_service.system_prompt.replace(
                             "{{CURRENT_DATE}}", datetime.utcnow().strftime("%Y-%m-%d")
                         )
+                        # Casual Telegram chat: keep it conversational and stop the
+                        # model from drifting into code/script dumps for short or
+                        # ambiguous messages (a recurring failure mode).
+                        _system_prompt += (
+                            "\n\nThis is a casual Telegram chat. Reply conversationally and briefly. "
+                            "Do NOT output code, shell scripts, or ``` code blocks unless the user's "
+                            "most recent message explicitly asks you to write code."
+                        )
                         messages = [
                             {"role": "system", "content": _system_prompt},
                         ]
@@ -2196,6 +2204,10 @@ async def _handle_telegram_update(update: dict, db: Session):
                             HISTORY_CHAR_LIMIT = 2000  # large enough to hold a full URL summary
                             for msg in reversed(recent_messages):
                                 if msg.role == last_role:
+                                    continue
+                                # Don't feed prior code-block replies back as context — they make
+                                # the model keep emitting code (self-perpetuating loop). Skip them.
+                                if msg.role == "assistant" and "```" in (msg.content or ""):
                                     continue
                                 content = msg.content[:HISTORY_CHAR_LIMIT] if len(msg.content) > HISTORY_CHAR_LIMIT else msg.content
                                 messages.append({"role": msg.role, "content": content})
