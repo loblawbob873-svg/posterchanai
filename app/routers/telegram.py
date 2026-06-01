@@ -1648,6 +1648,28 @@ async def _handle_telegram_update(update: dict, db: Session):
             elif command == "translate" and has_images:
                 logger.warning(f"TRANSLATE: Command detected but no OCR text yet, has_images={has_images}, attachments={len(attachments)}")
             
+            # Attachment too large for Telegram to hand to the bot (20 MB cap).
+            # Handle here so it works whether or not a command caption was given,
+            # instead of falling through to the chat model.
+            if oversized_attachment and command in ("compress", "convert", None):
+                _ov_name, _ov_size = oversized_attachment
+                await telegram_service.send_message(
+                    chat_id,
+                    f"❌ `{_ov_name}` is {_ov_size / (1024 * 1024):.0f} MB. Telegram only lets bots "
+                    f"download files up to 20 MB, so I can't process it here.\n\n"
+                    f"Use the web UI for larger files, or send a smaller clip.",
+                )
+                return {"ok": True}
+
+            # A video/animation with no command shouldn't go to the chat model
+            # (it can't be "chatted about"); nudge the user toward `compress`.
+            if video and not command:
+                await telegram_service.send_message(
+                    chat_id,
+                    "📹 To shrink this video, send it again with **compress** as the caption.",
+                )
+                return {"ok": True}
+
             reply_markup = None
             if command:
                 logger.info(f"Executing command: {command} with arg: {arg}, attachments: {len(attachments)}")
@@ -1911,17 +1933,6 @@ async def _handle_telegram_update(update: dict, db: Session):
 
                         await _offer_social_post(chat_id, final_share_text, _share_user, telegram_service,
                                                   prompt="📣 *Share this?*", image_bytes=_share_img)
-                        return {"ok": True}
-                    elif command in ("compress", "convert") and not attachments and oversized_attachment:
-                        # The file was attached but too big for Telegram bots to download.
-                        _ov_name, _ov_size = oversized_attachment
-                        _ov_mb = _ov_size / (1024 * 1024)
-                        await telegram_service.send_message(
-                            chat_id,
-                            f"❌ `{_ov_name}` is {_ov_mb:.0f} MB. Telegram only lets bots download files up "
-                            f"to 20 MB, so I can't process it here.\n\nUse the web UI for larger files, "
-                            f"or send a smaller clip.",
-                        )
                         return {"ok": True}
                     else:
                         # Pass attachments to any command that supports them

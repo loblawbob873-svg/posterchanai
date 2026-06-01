@@ -447,25 +447,9 @@ async def execute_matrix_command(
         if result.get("type") != "files":
             return {"result": result.get("content", "")}
 
+        # Hand the base64 files back to the bot, which uploads them into the room
+        # itself (posting as the bot — consistent with image/ytdl delivery).
         out_files = result.get("files", [])
-        # If we have a room and credentials, upload the outputs directly to the room.
-        if data.room_id and user.matrix_enabled and user.matrix_access_token:
-            from app.services.matrix_service import send_file_to_room
-            sent = 0
-            for f in out_files:
-                try:
-                    await send_file_to_room(
-                        user.matrix_homeserver, user.matrix_access_token, data.room_id,
-                        f["data"], f.get("filename", "file"),
-                        f.get("content_type", "application/octet-stream"),
-                    )
-                    sent += 1
-                except Exception as e:
-                    logger.error(f"Matrix {command}: failed to send {f.get('filename')}: {e}")
-            # Files delivered to the room — return only the summary text.
-            return {"result": result.get("content", "") if sent else "❌ Failed to send processed files."}
-
-        # No room context — hand the base64 files back to the bot to deliver.
         return {
             "result": result.get("content", ""),
             "files": [
