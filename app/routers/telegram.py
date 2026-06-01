@@ -1774,7 +1774,13 @@ async def _handle_telegram_update(update: dict, db: Session):
             if attachments and not command and not text.strip():
                 _media_kbd = _media_action_keyboard(attachments, user=user_obj)
                 if _media_kbd:
-                    _media_action_cache[chat_id] = {"attachments": attachments, "ts": time.time()}
+                    # Evict expired entries so abandoned uploads don't linger in
+                    # memory (each can hold video-sized bytes).
+                    _now = time.time()
+                    for _cid in [k for k, v in _media_action_cache.items()
+                                 if _now - v.get("ts", 0) > _MEDIA_ACTION_TTL]:
+                        _media_action_cache.pop(_cid, None)
+                    _media_action_cache[chat_id] = {"attachments": attachments, "ts": _now}
                     _n = len(attachments)
                     await telegram_service.send_message(
                         chat_id,
