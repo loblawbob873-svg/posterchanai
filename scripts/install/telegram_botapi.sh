@@ -9,24 +9,18 @@ setup_telegram_botapi() {
 
     print_step "Setting up local Telegram Bot API server (option 5)"
     echo ""
-    echo "  Get these from https://my.telegram.org (API development tools):"
-    read -p "  API ID: " BOTAPI_ID
-    read -p "  API Hash: " BOTAPI_HASH
+    echo "  Credentials come from the web UI: enter your API ID / API Hash in"
+    echo "  Admin -> Services -> Telegram Bot (and Save) if you haven't already."
+    echo "  This step reads them from the database — it won't ask you here."
+    echo ""
 
-    if [ -z "$BOTAPI_ID" ] || [ -z "$BOTAPI_HASH" ]; then
-        print_warning "API ID/Hash not provided — skipping local Bot API setup."
-        return 0
+    # The script reads api_id/api_hash/bot_token from the database, builds &
+    # starts the server, and writes the settings so the web UI just works.
+    if bash "$SCRIPT_DIR/scripts/setup-telegram-local-api.sh"; then
+        print_success "Local Telegram Bot API server is set up."
+    else
+        print_warning "Local Bot API setup didn't complete. Most likely the API ID/Hash"
+        print_warning "aren't saved yet — set them in Admin -> Services -> Telegram Bot, then run:"
+        echo "    ./scripts/setup-telegram-local-api.sh"
     fi
-
-    # Persist the credentials so the web UI and the setup script can use them.
-    if [ -f "posterchanai.db" ]; then
-        sqlite3 posterchanai.db "INSERT OR REPLACE INTO settings (key, value) VALUES ('telegram_api_id', '$BOTAPI_ID');" 2>/dev/null
-        sqlite3 posterchanai.db "INSERT OR REPLACE INTO settings (key, value) VALUES ('telegram_api_hash', '$BOTAPI_HASH');" 2>/dev/null
-    fi
-
-    # Build, install, start, and configure (the script reads creds from the DB
-    # and writes telegram_local_api/telegram_api_base so the web UI just works).
-    API_ID="$BOTAPI_ID" API_HASH="$BOTAPI_HASH" bash "$SCRIPT_DIR/scripts/setup-telegram-local-api.sh" \
-        && print_success "Local Telegram Bot API server is set up." \
-        || print_warning "Local Bot API setup failed — see the output above. The bot still works on the cloud API (20 MB limit)."
 }
