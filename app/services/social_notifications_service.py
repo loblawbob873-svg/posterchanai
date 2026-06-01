@@ -96,14 +96,23 @@ def _norm_matrix(ev: dict) -> dict:
     }
 
 
+_PLATFORM_ICON = {"misskey": "🍮", "pleroma": "💧", "matrix": "🟩"}
+
+
 def _format(norm: dict) -> str:
     # Plain text (no Markdown): notification bodies contain arbitrary characters that break
     # Telegram's Markdown parser, causing a failed send + retry on every message.
-    lines = [f"🔔 {norm['platform']} · {norm['type']} from {norm['actor']}"]
+    icon = _PLATFORM_ICON.get(norm["platform"], "🔔")
+    label = norm["platform"].upper()
+    lines = [
+        f"{icon} 【 {label} · {norm['type']} 】",
+        f"👤 {norm['actor']}",
+    ]
     if norm.get("text"):
-        lines.append(norm["text"][:1500])
+        lines += ["━━━━━━━━━━━━━━", norm["text"][:1500]]
     if norm.get("url"):
-        lines.append(norm["url"])
+        lines.append(f"🔗 {norm['url']}")
+    lines.append("──────────────")
     lines.append("↩️ Reply to this message to respond")
     return "\n".join(lines)
 
@@ -131,6 +140,9 @@ async def _deliver(db: Session, tg: TelegramService, user: User, chat_id: str, n
         event_id=norm.get("event_id"),
         visibility=norm.get("visibility"),
     ))
+    # Commit each mapping right after its message is sent, so a mid-batch failure can't
+    # lose the mapping for an already-delivered message (or bleed it into a later commit).
+    db.commit()
 
 
 async def _relay_pleroma(db: Session, tg: TelegramService, user: User, chat_id: str) -> None:

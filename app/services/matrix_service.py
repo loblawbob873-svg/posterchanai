@@ -121,14 +121,26 @@ async def _room_display_name(client: httpx.AsyncClient, hs: str, room_id: str, h
     return room_id
 
 
+def _mentions_user(content: dict, own_user_id: str) -> bool:
+    """True if a message event mentions own_user_id. Covers modern intentional mentions
+    (m.mentions, MSC3952) and the mention pill / raw mxid in the HTML or plain body."""
+    mentions = content.get("m.mentions") or {}
+    if own_user_id in (mentions.get("user_ids") or []):
+        return True
+    formatted = content.get("formatted_body") or ""   # mention pills embed the mxid here
+    body = content.get("body") or ""
+    return own_user_id in formatted or own_user_id in body
+
+
 async def fetch_notifications(homeserver: str, access_token: str, own_user_id: str,
                               since: str | None = None) -> tuple[list[dict], str]:
-    """Incremental sync for new room messages. Returns (events, next_batch).
+    """Incremental sync for new room messages that MENTION the user. Returns (events,
+    next_batch).
 
     Each event is {room_id, event_id, sender, body}. Only m.room.message events from other
-    users are returned. On the FIRST poll (since is None) we only capture the current
-    next_batch cursor and return no events — this avoids replaying the whole history when
-    the relay is first enabled."""
+    users that mention own_user_id are returned. On the FIRST poll (since is None) we only
+    capture the current next_batch cursor and return no events — this avoids replaying the
+    whole history when the relay is first enabled."""
     import json as _json
     from urllib.parse import quote as _q
     hs = homeserver.rstrip("/")
@@ -158,7 +170,10 @@ async def fetch_notifications(homeserver: str, access_token: str, own_user_id: s
             sender = ev.get("sender", "")
             if sender == own_user_id:
                 continue
-            body = (ev.get("content", {}) or {}).get("body", "")
+            content = ev.get("content", {}) or {}
+            if not _mentions_user(content, own_user_id):
+                continue  # only forward messages that mention the user
+            body = content.get("body", "")
             events.append({
                 "room_id": room_id,
                 "event_id": ev.get("event_id", ""),

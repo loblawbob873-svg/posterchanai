@@ -349,9 +349,9 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
 
         job = await run_to_completion(db, node, target, payload, user_id=user.id)
         out = job.output.strip() or "(no output)"
-        transcript.append(f"```\n{out[:1500]}\n```")
-        # Feed the (truncated) output back to the model for the next decision.
-        messages.append({"role": "user", "content": f"Output (exit {job.exit_code}):\n{out[:4000]}"})
+        transcript.append(f"```\n{tail(out, 1500)}\n```")
+        # Feed the (tail of the) output back to the model — the result is at the end.
+        messages.append({"role": "user", "content": f"Output (exit {job.exit_code}):\n{tail(out, 4000)}"})
 
     transcript.append(f"\n**⏹️ Stopped:** reached step limit ({max_steps}).")
     return "\n".join(transcript)
