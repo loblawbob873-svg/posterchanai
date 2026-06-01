@@ -237,13 +237,28 @@
         <div class="form-group">
             <label for="telegram_api_base">Bot API server URL</label>
             <input type="url" id="telegram_api_base" name="telegram_api_base" placeholder="http://localhost:8081">
+            <small>Root URL of your local Bot API server (used only when the box above is checked). Keep it private — usually <code>http://localhost:8081</code>.</small>
+        </div>
+        <div class="form-row" style="gap: 10px;">
+            <div class="form-group" style="flex: 1;">
+                <label for="telegram_api_id">API ID</label>
+                <input type="text" id="telegram_api_id" name="telegram_api_id" placeholder="123456" autocomplete="off">
+            </div>
+            <div class="form-group" style="flex: 2;">
+                <label for="telegram_api_hash">API Hash</label>
+                <input type="password" id="telegram_api_hash" name="telegram_api_hash" placeholder="0123456789abcdef0123456789abcdef" autocomplete="off">
+            </div>
+        </div>
+        <div class="form-group">
             <small>
-                Root URL of your local Bot API server (used only when the box above is checked).
-                Set it up once on the bot host:
-                <code>scripts/setup-telegram-local-api.sh</code> (needs an <code>api_id</code>/<code>api_hash</code>
-                from <a href="https://my.telegram.org" target="_blank" rel="noopener">my.telegram.org</a>).
-                Note: switching a bot between the cloud and a local server requires a one-time
-                <code>logOut</code> — the setup script handles it.
+                Get <b>API ID</b> / <b>API Hash</b> from
+                <a href="https://my.telegram.org" target="_blank" rel="noopener">my.telegram.org</a>.
+                Save them here, then run this once on the bot host (server1) — it reads these
+                values from the database, so there's nothing to type or edit:
+                <br><code>sudo ./scripts/setup-telegram-local-api.sh</code>
+                <br>The script builds &amp; starts the local Bot API server (and does the one-time
+                <code>logOut</code> needed to switch the bot off the cloud API). Then tick the box
+                above, set the URL, save, and click <b>Setup Webhook</b>.
             </small>
         </div>
 

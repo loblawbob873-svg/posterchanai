@@ -9,15 +9,27 @@
 #      and set the URL to  http://localhost:8081  (or this host's address).
 #   2. Re-run "Setup Webhook" in the admin UI.
 #
-# Usage:
-#   API_ID=123456 API_HASH=abcdef... [BOT_TOKEN=...] [PORT=8081] \
-#       sudo -E ./scripts/setup-telegram-local-api.sh
+# Usage (simplest): enter API ID / API Hash in Admin -> Services -> Telegram Bot,
+# save, then just run:
+#   sudo ./scripts/setup-telegram-local-api.sh
+# The script reads api_id / api_hash / bot_token from the posterchanai database,
+# so there is nothing to type or edit. You can still override via env vars:
+#   API_ID=123456 API_HASH=abcdef... [BOT_TOKEN=...] [PORT=8081] sudo -E ./scripts/setup-telegram-local-api.sh
 #
-# Get API_ID / API_HASH from https://my.telegram.org (API development tools).
-# BOT_TOKEN is optional: if given, the script calls logOut on the cloud API so
-# the bot can move to this local server (required by Telegram for the switch).
+# Get API ID / API Hash from https://my.telegram.org (API development tools).
 
 set -euo pipefail
+
+# Pull any values not supplied via env from the settings database.
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DB_PATH="${POSTERCHANAI_DB:-$REPO_DIR/posterchanai.db}"
+_db_get() {
+    [ -f "$DB_PATH" ] && command -v sqlite3 >/dev/null 2>&1 || return 0
+    sqlite3 "$DB_PATH" "SELECT value FROM settings WHERE key='$1';" 2>/dev/null
+}
+API_ID="${API_ID:-$(_db_get telegram_api_id)}"
+API_HASH="${API_HASH:-$(_db_get telegram_api_hash)}"
+BOT_TOKEN="${BOT_TOKEN:-$(_db_get telegram_bot_token)}"
 
 PORT="${PORT:-8081}"
 PREFIX="${PREFIX:-/usr/local}"
@@ -30,8 +42,8 @@ err() { echo "ERROR: $*" >&2; exit 1; }
 info() { echo -e "\033[1;34m==>\033[0m $*"; }
 
 [ "$(id -u)" = "0" ] || err "Please run with sudo (needs to install a binary + systemd service)."
-[ -n "${API_ID:-}" ]  || err "API_ID is required (get it from https://my.telegram.org)."
-[ -n "${API_HASH:-}" ] || err "API_HASH is required (get it from https://my.telegram.org)."
+[ -n "${API_ID:-}" ]  || err "No API ID found. Enter it in Admin -> Services -> Telegram Bot (or pass API_ID=…). Get it from https://my.telegram.org"
+[ -n "${API_HASH:-}" ] || err "No API Hash found. Enter it in Admin -> Services -> Telegram Bot (or pass API_HASH=…). Get it from https://my.telegram.org"
 [ -n "$RUN_USER" ] || err "Could not determine a non-root user to run the service; set RUN_USER=..."
 
 # ---------------------------------------------------------------------------

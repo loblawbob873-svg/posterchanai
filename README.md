@@ -122,13 +122,14 @@ The cloud Telegram Bot API limits the bot to downloading files up to **20 MB**, 
 `compress`/`convert` only work on small uploads there (the web UI and Matrix have no
 such limit). To lift this to **~2 GB**, run a local Bot API server:
 
-```bash
-API_ID=… API_HASH=… BOT_TOKEN=… sudo -E ./scripts/setup-telegram-local-api.sh
-```
-
-(`api_id`/`api_hash` come from https://my.telegram.org.) Then in **Admin → Services →
-Telegram Bot**, tick **Use local Bot API server**, set the URL to `http://localhost:8081`,
-save, and re-run **Setup Webhook**.
+1. In **Admin → Services → Telegram Bot**, enter your **API ID** and **API Hash**
+   (from https://my.telegram.org) and save.
+2. On the bot host, run once — it reads those values from the database, nothing to type:
+   ```bash
+   sudo ./scripts/setup-telegram-local-api.sh
+   ```
+3. Back in the admin UI, tick **Use local Bot API server**, set the URL to
+   `http://localhost:8081`, save, and re-run **Setup Webhook**.
 
 ---
 
