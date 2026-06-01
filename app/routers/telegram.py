@@ -772,12 +772,15 @@ _HELP_SECTIONS = {
     ),
     "post": (
         "📱 *Social Media Post Generator*\n\n"
-        "Reply to any message containing a link or text with `post` to generate a social media post\\.\n\n"
-        "• Add a tone modifier after `post` to style the output\n\n"
+        "Reply to any message \\(a bot answer, a link, a photo\\) and send a `post` command:\n\n"
+        "• `post` — rewrite it into a viral, engaging post\n"
+        "• `post raw` — share it *exactly as written*, no rewrite \\(also `verbatim`\\)\n"
+        "• `post <instructions>` — rewrite it your way\n\n"
+        "I then show share buttons for your connected platforms \\(Misskey / Pleroma / Matrix\\)\\.\n\n"
         "*Examples:*\n"
-        "\\(reply to a news link\\) `post`\n"
+        "\\(reply to a good answer\\) `post raw`\n"
         "\\(reply to an article\\) `post professional`\n"
-        "\\(reply to a link\\) `post funny`"
+        "\\(reply to a link\\) `post don't include links`"
     ),
     "logs": (
         "📋 *System Logs*\n\n"
