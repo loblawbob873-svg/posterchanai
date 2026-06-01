@@ -445,8 +445,8 @@ async def execute_matrix_command(
             raise HTTPException(status_code=500, detail=str(e))
         return {"result": reply}
 
-    # compress/convert: operate on the bot-forwarded attachments and return files
-    if command in ("compress", "convert"):
+    # compress/convert/translate: operate on the bot-forwarded attachments.
+    if data.media and command in ("compress", "convert", "translate"):
         import base64 as _b64
         attachments = []
         for item in (data.media or []):
@@ -454,6 +454,28 @@ async def execute_matrix_command(
                 attachments.append((item.filename, _b64.b64decode(item.data), item.content_type or ""))
             except Exception as e:
                 logger.warning(f"Matrix {command}: bad media item {item.filename}: {e}")
+
+        # translate: extract text from the uploaded image(s)/PDF(s) and translate it.
+        if command == "translate":
+            from app.services.document_service import extract_pdf_text, extract_image_text
+            from app.services.media_service import is_pdf as _is_pdf, is_image as _is_image
+            parts = []
+            for _fn, _fdata, _ct in attachments:
+                _b = _b64.b64encode(_fdata).decode()
+                if _is_pdf(_fn, _ct):
+                    parts.append(extract_pdf_text(_b) or "")
+                elif _is_image(_fn, _ct):
+                    parts.append(extract_image_text(_b) or "")
+            src = "\n\n".join(p for p in parts if p).strip()
+            if not src:
+                return {"result": "Couldn't extract any text to translate."}
+            lang = (arg or "English").strip().title()
+            translated = await cmd_service.chat_service.chat([
+                {"role": "system", "content": f"Translate the following text to {lang}. Output ONLY the translation, no commentary."},
+                {"role": "user", "content": src[:12000]},
+            ])
+            return {"result": f"🌐 {lang}:\n\n{translated}"}
+
         result = await cmd_service.execute_command(command, arg, attachments=attachments or None)
         if result.get("type") != "files":
             return {"result": result.get("content", "")}

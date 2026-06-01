@@ -30,6 +30,7 @@ source "$INSTALL_DIR/llama_cpp.sh"
 source "$INSTALL_DIR/image.sh"
 source "$INSTALL_DIR/systemd.sh"
 source "$INSTALL_DIR/setup.sh"
+source "$INSTALL_DIR/telegram_botapi.sh"
 
 # Handle --help and --packages options
 if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
@@ -99,7 +100,11 @@ main() {
     # Step 15: Configure database
     configure_database_settings
 
-    # Step 16: Print summary
+    # Step 16: Optional local Telegram Bot API server (large-file support).
+    # Comes after the DB step because it writes settings into the database.
+    setup_telegram_botapi
+
+    # Step 17: Print summary
     print_summary
 }
 

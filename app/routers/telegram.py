@@ -1048,17 +1048,43 @@ def _media_action_keyboard(attachments: list, user=None) -> Optional[dict]:
         rows.append([
             {"text": "🗜 Compress", "callback_data": "media:compress"},
             {"text": "📄 To PDF", "callback_data": "media:topdf"},
+        ])
+        rows.append([
             {"text": "🔤 Read text", "callback_data": "media:ocr"},
+            {"text": "🌐 Translate", "callback_data": "media:translate"},
         ])
     if has_pdf:
         rows.append([
             {"text": "🖼 To images", "callback_data": "media:toimg"},
             {"text": "📝 Summarize", "callback_data": "media:summarize"},
+            {"text": "🌐 Translate", "callback_data": "media:translate"},
         ])
     # Offer posting an image or video to connected social platforms.
     if _social and (has_image or has_video):
         rows.append([{"text": "📣 Post to social", "callback_data": "media:post"}])
     return {"inline_keyboard": rows} if rows else None
+
+
+# Languages offered when translating an uploaded image/PDF.
+_TRANSLATE_LANGS = [
+    "English", "Spanish", "French",
+    "German", "Italian", "Portuguese",
+    "Russian", "Chinese", "Japanese",
+    "Korean", "Arabic", "Thai",
+]
+
+
+def _media_translate_keyboard() -> dict:
+    """Language picker shown after the Translate button on an upload."""
+    rows, row = [], []
+    for lang in _TRANSLATE_LANGS:
+        row.append({"text": lang, "callback_data": f"media:tr:{lang.lower()}"})
+        if len(row) == 3:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return {"inline_keyboard": rows}
 
 
 # Pending news Post actions: chat_id → list of (title, url) tuples
@@ -2684,6 +2710,33 @@ async def _handle_telegram_update(update: dict, db: Session):
                                 {"role": "user", "content": _doc[:12000]},
                             ])
                             await telegram_service.send_message(chat_id, f"📝 *Summary:*\n\n{_summary}")
+                    elif _action == "translate":
+                        # Ask which language to translate the upload's text into.
+                        await telegram_service.send_message(
+                            chat_id, "🌐 Translate to which language?",
+                            reply_markup=_media_translate_keyboard(),
+                        )
+                    elif _action.startswith("tr:"):
+                        _lang = _action[3:].strip().title() or "English"
+                        import base64 as _tr_b64
+                        from app.services.document_service import extract_image_text, extract_pdf_text
+                        _parts = []
+                        for _fn, _fd, _ct in _atts:
+                            _b64 = _tr_b64.b64encode(_fd).decode()
+                            if is_pdf(_fn, _ct):
+                                _parts.append(extract_pdf_text(_b64) or "")
+                            elif is_image(_fn, _ct):
+                                _parts.append(extract_image_text(_b64) or "")
+                        _src = "\n\n".join(p for p in _parts if p).strip()
+                        if not _src:
+                            await telegram_service.send_message(chat_id, "Couldn't extract any text to translate.")
+                        else:
+                            await telegram_service.send_message(chat_id, f"🌐 Translating to {_lang}…")
+                            _translated = await cb_command_service.chat_service.chat([
+                                {"role": "system", "content": f"Translate the following text to {_lang}. Output ONLY the translation, no commentary."},
+                                {"role": "user", "content": _src[:12000]},
+                            ])
+                            await telegram_service.send_message(chat_id, f"🌐 *{_lang}:*\n\n{_translated}")
                 except Exception as _media_err:
                     logger.error(f"Media action '{_action}' failed: {_media_err}", exc_info=True)
                     await telegram_service.send_message(chat_id, f"❌ Failed: {_media_err}")
