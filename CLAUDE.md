@@ -79,9 +79,17 @@ open a fresh `SessionLocal` and capture any needed config up front.
 - **Social notification relay** (`app/services/social_notifications_service.py`): poller
   forwards Misskey/Pleroma/Matrix notifications to a user's Telegram; replying to a forwarded
   message posts back to the platform (`SocialReplyMap` maps Telegram msg → target). Per-user
-  toggle (User Settings → Telegram) + global kill-switch (default on). Matrix is **mentions
-  only** (filters on the user's mxid) and never backfills; first poll just sets the cursor.
-  Misskey needs a one-time re-connect for the `read:notifications` scope.
+  toggle (User Settings → Telegram) + global kill-switch (default on). Misskey needs a one-time
+  re-connect for the `read:notifications` scope.
+  - **Matrix** (`matrix_service.fetch_notifications`, `/sync`-based, never backfills — first
+    poll just sets the cursor): **DM rooms** (resolved from the user's `m.direct` account data)
+    forward every incoming message; **group rooms** forward mentions only (`_mentions_user`
+    matches the mxid in `m.mentions`/pill/body); own messages always excluded.
+  - **Encrypted (E2EE) Matrix** content can't be read (no Olm/Megolm; token-only). The sync
+    filter requests `m.room.message` **and** `m.room.encrypted`; encrypted events in **DM
+    rooms** are collapsed into a single **"open Element" notice per room per poll** (no content,
+    no `SocialReplyMap` row since there's nothing to reply to); encrypted group events are
+    ignored. E2EE-by-default means this is the common DM case.
 
 ## Conventions / gotchas
 

@@ -165,6 +165,15 @@ interval is set).
 - **Reply** to a forwarded message in Telegram to respond on the originating platform — your
   reply is posted as a reply to the original post (inheriting its visibility) or sent into the
   Matrix room.
+- **Pleroma / Misskey:** DMs are direct-visibility mentions, so they arrive as normal
+  notifications and forward with full content; your reply stays `direct`.
+- **Matrix** forwarding rules: **DM rooms** forward every incoming message; **group rooms**
+  forward only messages that mention you; your own messages are never forwarded, and the first
+  poll sets a cursor without backfilling history.
+- **Encrypted (E2EE) Matrix DMs** can't be decrypted (the relay has no E2EE support), so instead
+  of the content you get a **"🔒 You received an encrypted message — open Element"** notice (one
+  per room per poll). Since DMs are encrypted by default in most clients, this is the common
+  case; unencrypted DMs forward in full.
 - **Misskey** must be **re-connected once** (User Settings → Misskey) so the new token includes
   the `read:notifications` permission. Pleroma and Matrix need no changes.
 
