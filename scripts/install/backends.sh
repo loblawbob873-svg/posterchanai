@@ -5,6 +5,7 @@
 # Global variables set by selection
 INSTALL_LLM=0
 INSTALL_IMAGE=0
+INSTALL_TELEGRAM_BOTAPI=0  # optional local Telegram Bot API server (large files)
 LLM_BACKEND=""
 IMAGE_BACKEND=""
 BACKEND=""  # Alias for LLM_BACKEND for backward compatibility
@@ -54,6 +55,21 @@ select_components() {
             INSTALL_IMAGE=1
             ;;
     esac
+
+    # Optional add-on (independent of the install type above): a local Telegram
+    # Bot API server so the Telegram bot can handle files up to ~2 GB instead of
+    # the cloud API's 20 MB cap. Compiles telegram-bot-api (~10-20 min) later in
+    # the install, only if chosen here.
+    echo ""
+    echo -e "  ${BOLD}Optional add-on${NC}"
+    echo "     Local Telegram Bot API server — lets the Telegram bot process files"
+    echo "     up to ~2 GB (compress/convert/translate). The web UI & Matrix don't"
+    echo "     need it. Compiles telegram-bot-api (~10-20 min)."
+    read -p "  Set up the local Telegram Bot API server? [y/N]: " WANT_TG_BOTAPI
+    if [[ "$WANT_TG_BOTAPI" =~ ^[Yy] ]]; then
+        INSTALL_TELEGRAM_BOTAPI=1
+        echo -e "  ${GREEN}✓ Will set up the local Telegram Bot API server${NC}"
+    fi
 }
 
 select_llm_backend() {
