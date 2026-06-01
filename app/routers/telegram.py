@@ -1655,15 +1655,18 @@ async def _handle_telegram_update(update: dict, db: Session):
                 _ov_name, _ov_size = oversized_attachment
                 await telegram_service.send_message(
                     chat_id,
-                    f"❌ `{_ov_name}` is {_ov_size / (1024 * 1024):.0f} MB. Telegram only lets bots "
-                    f"download files up to 20 MB, so I can't process it here.\n\n"
-                    f"Use the web UI for larger files, or send a smaller clip.",
+                    f"❌ `{_ov_name}` is {_ov_size / (1024 * 1024):.1f} MB. Telegram bots can only "
+                    f"download files up to 20 MiB (≈20.97 MB) — this is a hard Telegram limit, not "
+                    f"something I can change.\n\n"
+                    f"Use the **web UI** for larger files (up to ~48 MB), or send a slightly smaller clip.",
                 )
                 return {"ok": True}
 
-            # A video/animation with no command shouldn't go to the chat model
+            # A *caption-less* video/animation shouldn't go to the chat model
             # (it can't be "chatted about"); nudge the user toward `compress`.
-            if video and not command:
+            # A video WITH caption text flows to normal command/chat routing so
+            # other features aren't hijacked by an attachment.
+            if video and not command and not text.strip():
                 await telegram_service.send_message(
                     chat_id,
                     "📹 To shrink this video, send it again with **compress** as the caption.",
