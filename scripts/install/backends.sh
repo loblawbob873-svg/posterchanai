@@ -25,8 +25,13 @@ select_components() {
     echo -e "  4) ${BOLD}Lightweight${NC}"
     echo "     Web UI only (use external Ollama + ComfyUI)"
     echo ""
+    echo -e "  5) ${BOLD}Full Stack + Telegram Bot API server${NC}"
+    echo "     Everything in (1), plus a local Telegram Bot API server so the"
+    echo "     Telegram bot can process files up to ~2 GB (compress/convert/translate)."
+    echo "     Compiles telegram-bot-api (~10-20 min)."
+    echo ""
 
-    read -p "Select installation type [1-4, default=1]: " INSTALL_TYPE
+    read -p "Select installation type [1-5, default=1]: " INSTALL_TYPE
     INSTALL_TYPE=${INSTALL_TYPE:-1}
 
     case "$INSTALL_TYPE" in
@@ -50,27 +55,17 @@ select_components() {
             INSTALL_IMAGE=0
             echo -e "  ${GREEN}✓ Lightweight (external services)${NC}"
             ;;
+        5)
+            INSTALL_LLM=1
+            INSTALL_IMAGE=1
+            INSTALL_TELEGRAM_BOTAPI=1
+            echo -e "  ${GREEN}✓ Full Stack + local Telegram Bot API server${NC}"
+            ;;
         *)
             INSTALL_LLM=1
             INSTALL_IMAGE=1
             ;;
     esac
-
-    # Optional add-on (independent of the install type above): a local Telegram
-    # Bot API server so the Telegram bot can handle files up to ~2 GB instead of
-    # the cloud API's 20 MB cap. Compiles telegram-bot-api (~10-20 min) later in
-    # the install, only if chosen here.
-    echo ""
-    echo -e "  5) ${BOLD}Telegram Bot API server${NC} (optional add-on)"
-    echo "     Lets the Telegram bot process files up to ~2 GB"
-    echo "     (compress/convert/translate). The web UI & Matrix don't need it."
-    echo "     Compiles telegram-bot-api (~10-20 min). Can be combined with any of 1-4."
-    echo ""
-    read -p "  Add option 5 (local Telegram Bot API server)? [y/N]: " WANT_TG_BOTAPI
-    if [[ "$WANT_TG_BOTAPI" =~ ^[Yy] ]]; then
-        INSTALL_TELEGRAM_BOTAPI=1
-        echo -e "  ${GREEN}✓ Will set up the local Telegram Bot API server${NC}"
-    fi
 }
 
 select_llm_backend() {
