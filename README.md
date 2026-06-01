@@ -151,6 +151,31 @@ image itself. The source URL is appended by default; `post don't include links` 
 | `post raw <text>` | Saves `<text>` verbatim, no rewrite |
 | `share` | Publishes the last `post` to your connected platforms (`share matrix <n>` picks a room) |
 
+### Remote node management
+
+Run OS commands on a fleet of machines from chat or Telegram. Enable it in
+**Admin → Services → Remote Node Management**, list your nodes (one per line as
+`name|user@host`, or `name|local` for this host), and pick which users may use it
+(admins always can). Remote nodes are reached over **SSH** — they need nothing
+installed, just the posterchanai host's SSH public key in their `authorized_keys`.
+This works for any SSH-reachable device: servers, routers, switches, etc.
+
+| Command | What it does |
+| --- | --- |
+| `node <name> <command>` | Runs a shell command on the node. Fast commands return inline; long-running ones become a background job |
+| `node agent <name> <goal>` | Agentic mode — the AI runs commands, reads output, and iterates toward your goal |
+| `node list` | Show configured nodes |
+| `node jobs` | List your recent jobs |
+| `node log <id>` | Show a job's output |
+| `node kill <id>` | Stop a running job |
+
+Background jobs keep running server-side; when one finishes you get a Telegram DM
+(if your account is linked) with the result, or check it with `node log <id>`.
+
+> ⚠️ **This is unrestricted command execution by design** — there is no confirmation
+> step or command allowlist. Only enable it on a trusted, private deployment, and keep
+> the allowed-users list tight. Set a **Job Timeout** if you want a hard kill switch.
+
 ### Large files on Telegram (optional)
 
 The cloud Telegram Bot API limits the bot to downloading files up to **20 MB**, so

@@ -35,6 +35,38 @@
     </fieldset>
 
     <fieldset>
+        <legend>Remote Node Management</legend>
+        <div class="form-group">
+            <label for="node_exec_enabled">
+                <input type="checkbox" id="node_exec_enabled" name="node_exec_enabled"> Enable Remote Node Management
+            </label>
+            <small>Run OS commands on configured nodes from chat/Telegram (<code>node &lt;name&gt; &lt;cmd&gt;</code>, <code>node agent &lt;name&gt; &lt;goal&gt;</code>). ⚠️ This is unrestricted command execution — only enable on a trusted, private deployment.</small>
+        </div>
+        <div class="form-group">
+            <label for="node_exec_nodes">Nodes</label>
+            <textarea id="node_exec_nodes" name="node_exec_nodes" rows="5" placeholder="web1|root@10.0.0.5&#10;router|admin@router.lan&#10;this-box|local"></textarea>
+            <small>One per line: <code>name|user@host</code>. Use <code>local</code> (or leave host empty) to run on this host. Remote hosts are reached over SSH — they need nothing installed, just your SSH public key in their <code>authorized_keys</code> (key-based auth).</small>
+        </div>
+        <div class="form-group">
+            <label for="node_exec_users">Allowed Users</label>
+            <input type="text" id="node_exec_users" name="node_exec_users" placeholder="alice,bob">
+            <small>Comma-separated usernames allowed to use this feature. Admins always have access.</small>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="node_exec_agent_max_steps">Agent Max Steps</label>
+                <input type="number" id="node_exec_agent_max_steps" name="node_exec_agent_max_steps" value="8" min="1" max="50">
+                <small>Max command iterations in agentic mode.</small>
+            </div>
+            <div class="form-group">
+                <label for="node_exec_job_timeout">Job Timeout (seconds)</label>
+                <input type="number" id="node_exec_job_timeout" name="node_exec_job_timeout" value="0" min="0">
+                <small>Kill a job after this many seconds. 0 = no timeout (use <code>node kill &lt;id&gt;</code>).</small>
+            </div>
+        </div>
+    </fieldset>
+
+    <fieldset>
         <legend>MCP Server (RAG API)</legend>
         <div class="form-group">
             <label for="mcp_enabled">

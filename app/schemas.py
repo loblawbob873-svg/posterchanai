@@ -220,6 +220,12 @@ class SettingsResponse(BaseModel):
     logs_drives: str = "sda,sdb,nvme0n1"
     logs_exclude_patterns: str = ""
     logs_hosts: str = ""  # Comma-separated hostnames for remote log collection via SSH
+    # Remote node management (run OS commands on nodes over SSH, or 'local' on this host)
+    node_exec_enabled: str = "false"
+    node_exec_nodes: str = ""  # one per line: name|user@host  (host 'local' or empty = run on this host)
+    node_exec_users: str = ""  # comma-separated usernames allowed (admins always allowed)
+    node_exec_agent_max_steps: str = "8"  # max LLM iterations in agentic mode
+    node_exec_job_timeout: str = "0"  # per-job timeout in seconds (0 = no timeout)
     # Built-in torrent client settings
     bt_enabled: str = "false"
     bt_server_url: str = ""  # Remote torrent server URL (empty = local)
