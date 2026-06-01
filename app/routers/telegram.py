@@ -992,6 +992,39 @@ async def _offer_social_post(chat_id: str, post_text: str, user, telegram_svc, p
     )
 # Pending YouTube actions: chat_id → url (cleared once action is chosen)
 _youtube_action_cache: dict = {}
+# Pending uploaded media awaiting a button action: chat_id → {"attachments", "ts"}
+_media_action_cache: dict = {}
+_MEDIA_ACTION_TTL = 600  # seconds
+
+
+def _media_action_keyboard(attachments: list) -> Optional[dict]:
+    """Build an inline keyboard offering actions for uploaded files.
+
+    attachments is a list of (filename, data, content_type). Buttons depend on
+    the file types present (image/video/pdf).
+    """
+    from app.services.media_service import is_image, is_video, is_pdf
+    has_image = any(is_image(fn, ct) for fn, _, ct in attachments)
+    has_video = any(is_video(fn, ct) for fn, _, ct in attachments)
+    has_pdf = any(is_pdf(fn, ct) for fn, _, ct in attachments)
+
+    rows = []
+    if has_video:
+        rows.append([{"text": "🗜 Compress video", "callback_data": "media:compress"}])
+    if has_image:
+        rows.append([
+            {"text": "🗜 Compress", "callback_data": "media:compress"},
+            {"text": "📄 To PDF", "callback_data": "media:topdf"},
+            {"text": "🔤 Read text", "callback_data": "media:ocr"},
+        ])
+    if has_pdf:
+        rows.append([
+            {"text": "🖼 To images", "callback_data": "media:toimg"},
+            {"text": "📝 Summarize", "callback_data": "media:summarize"},
+        ])
+    return {"inline_keyboard": rows} if rows else None
+
+
 # Pending news Post actions: chat_id → list of (title, url) tuples
 _news_post_cache: dict = {}
 # News source cache: chat_id → list of news sources
@@ -1662,16 +1695,20 @@ async def _handle_telegram_update(update: dict, db: Session):
                 )
                 return {"ok": True}
 
-            # A *caption-less* video/animation shouldn't go to the chat model
-            # (it can't be "chatted about"); nudge the user toward `compress`.
-            # A video WITH caption text flows to normal command/chat routing so
-            # other features aren't hijacked by an attachment.
-            if video and not command and not text.strip():
-                await telegram_service.send_message(
-                    chat_id,
-                    "📹 To shrink this video, send it again with **compress** as the caption.",
-                )
-                return {"ok": True}
+            # A *caption-less* media upload: prompt with action buttons (like the
+            # YouTube/link prompts) instead of guessing. A caption WITH text flows
+            # to normal command/chat routing so attachments never hijack features.
+            if attachments and not command and not text.strip():
+                _media_kbd = _media_action_keyboard(attachments)
+                if _media_kbd:
+                    _media_action_cache[chat_id] = {"attachments": attachments, "ts": time.time()}
+                    _n = len(attachments)
+                    await telegram_service.send_message(
+                        chat_id,
+                        f"📎 Got {_n} file{'s' if _n != 1 else ''}. What would you like to do?",
+                        reply_markup=_media_kbd,
+                    )
+                    return {"ok": True}
 
             reply_markup = None
             if command:
@@ -2517,6 +2554,81 @@ async def _handle_telegram_update(update: dict, db: Session):
                 except Exception as cb_err:
                     logger.error(f"Torrent callback error: {cb_err}", exc_info=True)
                     await telegram_service.send_message(chat_id, f"Error: {cb_err}")
+
+            elif data.startswith("media:"):
+                # Uploaded-file action buttons (compress / convert / read text / summarize)
+                cb_user = db.query(User).filter(
+                    User.telegram_chat_id == chat_id,
+                    User.telegram_enabled == True
+                ).first()
+                if not cb_user:
+                    await telegram_service.send_message(chat_id, "Your Telegram account is not linked.")
+                    return {"ok": True}
+
+                # Keep the entry (don't pop) so multiple actions can run on the
+                # same upload; it expires by TTL or is overwritten by the next upload.
+                _entry = _media_action_cache.get(chat_id)
+                if not _entry or (time.time() - _entry.get("ts", 0)) > _MEDIA_ACTION_TTL:
+                    _media_action_cache.pop(chat_id, None)
+                    await telegram_service.send_message(chat_id, "⏳ That upload expired — please send the file again.")
+                    return {"ok": True}
+
+                _atts = _entry["attachments"]
+                _action = data.split(":", 1)[1]
+                from app.services.media_service import is_image, is_pdf
+                cb_command_service = CommandService(db, user=cb_user)
+
+                async def _send_files_result(result):
+                    """Send a CommandService 'files' result back as Telegram documents."""
+                    if result.get("type") == "files":
+                        if result.get("content"):
+                            await telegram_service.send_message(chat_id, result["content"])
+                        for f in result.get("files", []):
+                            if f.get("data"):
+                                await telegram_service.send_document_bytes(chat_id, f["data"], f.get("filename", "file"))
+                                await asyncio.sleep(0.15)
+                    else:
+                        await telegram_service.send_message(chat_id, result.get("content", "Done."))
+
+                try:
+                    if _action == "compress":
+                        await telegram_service.send_message(chat_id, "🗜 Compressing…")
+                        await _send_files_result(await cb_command_service.execute_command("compress", "", attachments=_atts))
+                    elif _action == "topdf":
+                        _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                        await _send_files_result(await cb_command_service.execute_command("convert", "pdf", attachments=_imgs))
+                    elif _action == "toimg":
+                        _pdfs = [a for a in _atts if is_pdf(a[0], a[2])]
+                        await telegram_service.send_message(chat_id, "🖼 Converting…")
+                        await _send_files_result(await cb_command_service.execute_command("convert", "images", attachments=_pdfs))
+                    elif _action == "ocr":
+                        import base64 as _ocr_b64
+                        from app.services.document_service import extract_image_text
+                        _texts = []
+                        for _fn, _fd, _ct in _atts:
+                            if is_image(_fn, _ct):
+                                _t = extract_image_text(_ocr_b64.b64encode(_fd).decode())
+                                if _t:
+                                    _texts.append(_t)
+                        await telegram_service.send_message(chat_id, ("🔤 *Extracted text:*\n\n" + "\n\n".join(_texts)) if _texts else "No text found in the image(s).")
+                    elif _action == "summarize":
+                        import base64 as _sum_b64
+                        from app.services.document_service import extract_pdf_text
+                        _doc = "\n\n".join(
+                            extract_pdf_text(_sum_b64.b64encode(_fd).decode()) or ""
+                            for _fn, _fd, _ct in _atts if is_pdf(_fn, _ct)
+                        ).strip()
+                        if not _doc:
+                            await telegram_service.send_message(chat_id, "Couldn't extract any text from the PDF.")
+                        else:
+                            _summary = await cb_command_service.chat_service.chat([
+                                {"role": "system", "content": "Summarize the following document concisely. Output only the summary."},
+                                {"role": "user", "content": _doc[:12000]},
+                            ])
+                            await telegram_service.send_message(chat_id, f"📝 *Summary:*\n\n{_summary}")
+                except Exception as _media_err:
+                    logger.error(f"Media action '{_action}' failed: {_media_err}", exc_info=True)
+                    await telegram_service.send_message(chat_id, f"❌ Failed: {_media_err}")
 
             elif data.startswith("n:"):
                 # Nyaa inline button
