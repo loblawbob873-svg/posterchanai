@@ -38,10 +38,12 @@ The backend is **Python 3.10+** and **FastAPI**. You can use cloud APIs (OpenAI-
 
 - **Telegram and Matrix bots** drive chat, commands, and media from your phone
 - **Social posting** to **Misskey**, **Pleroma/Mastodon**, and **Matrix**: turn any reply, link, or topic into a post with the `post` command (rewrite, verbatim, or with your own instructions). See [Social posting from the bots](#social-posting-from-the-bots).
+- **Social notification relay**: forward mentions/replies/DMs from Misskey/Pleroma/Matrix to Telegram and reply right from the chat. See [Social notifications to Telegram](#social-notifications-to-telegram).
 
 ### Extensibility & admin
 
 - **4chan** integration (optional)
+- **Remote node management**: run OS commands (and an agentic mode) across SSH-reachable machines from chat or Telegram, with long-running background jobs. See [Remote node management](#remote-node-management).
 - **Admin panel**: users, API keys, LLM/image/RAG/email settings, systemd service setup
 - **Multi-user** with registration (optional), email verification, and quotas
 

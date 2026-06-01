@@ -1,0 +1,95 @@
+# CLAUDE.md
+
+Guidance for working in this repo. Keep changes small, clean, and consistent with the
+patterns below.
+
+## What this is
+
+PosterChanAI — a self-hosted FastAPI app: streaming LLM chat (OpenAI-compatible `/v1/`),
+image gen, RAG/MCP, TTS/STT, email/news/torrents, a file manager, and **Telegram + Matrix
+bots**. Single-admin, multi-user, SQLite-backed.
+
+## Run / dev
+
+- Entry point: `python run.py` (uvicorn, **single worker**, port from `POSTERCHANAI_PORT`,
+  default **3051**). On this deployment the Intel Arc box runs `posterchanai-ipex.service`
+  (port 3051) + `posterchanai-xpu-image.service`; `nas.lan` runs `posterchanai`.
+- venv at `venv/` (`venv/bin/python`). Quick checks: `venv/bin/python -m py_compile <files>`.
+- Logs: `journalctl -u posterchanai-ipex.service` (the fediverse `[PROXY] CONNECT ... SOCKS5`
+  errors are unrelated federation noise — ignore when debugging features).
+
+## Deploy — always via `sync.sh`
+
+`./sync.sh` does `git commit -a -m fix && git push`, then restarts local services and
+resets/restarts `nas.lan`. **`git commit -a` does NOT stage new untracked files** — `git add`
+any new file before running it, or it ships a broken (ImportError) tree to every node.
+`sync.sh` deploys **code only**, not Python deps (use `install.sh` option 6 for deps).
+
+## Architecture
+
+| Area | Where |
+|------|-------|
+| Routers | `app/routers/*.py` (auth, chat, admin, telegram, matrix, misskey, pleroma, …) |
+| Services | `app/services/*.py` (business logic; routers stay thin) |
+| Models | `app/models.py` (SQLAlchemy); DB init + migrations in `app/database.py` |
+| Schemas | `app/schemas.py` (Pydantic) |
+| Templates | `templates/` (Jinja2); admin tabs in `templates/admin/tabs/`, modals in `templates/includes/modals/` |
+| Frontend JS | `static/js/` (`app.js`, `chat.js`, `admin.js`) |
+
+### Commands (shared by web UI + Telegram)
+
+`app/services/command_service.py` → `CommandService.COMMANDS` dict + `execute_command()`
+switch. Reused by the web UI websocket (`app/routers/chat.py`) and Telegram.
+**Gotcha:** Telegram does **not** use `parse_command`; it has its own hardcoded command list
+(two identical spots in `app/routers/telegram.py`). A new command must be added **both** to
+`COMMANDS` and to those Telegram lists, or it works in the web UI but falls through to the LLM
+on Telegram.
+
+### Settings
+
+- **Admin (global):** key/value `Setting` table; typed defaults in
+  `app/schemas.py:SettingsResponse`; `GET/PUT /api/admin/settings`. Admin UI is plain HTML in
+  `templates/admin/tabs/*.html`; `static/js/admin.js` loads/saves **generically** by element
+  `id`/`name` (no per-field JS). Add a field = add to `SettingsResponse` + an input in a tab.
+- **Per-user:** columns on `User` (+ the `UserSetting` key/value table). Migrations for new
+  `User` columns go in `app/database.py:_run_migrations` `new_user_columns` (ALTER-on-startup);
+  **new tables** are auto-created by `Base.metadata.create_all` in `init_db()`. UI lives in
+  `templates/includes/modals/user_settings.html`, saved via `/api/auth/settings`
+  (`app/routers/auth.py`), with payload build/load in `static/js/chat.js`.
+
+### Schedulers
+
+APScheduler `AsyncIOScheduler`, started in `app/main.py` startup **only on port 3051** (guard
+against duplicate runs): `logs_scheduler` and `social_notifications_service`.
+
+### Telegram delivery
+
+Module-level singleton `telegram_service` (`app/services/telegram_service.py`); optional local
+Bot API server via the `telegram_api_base` setting (lifts the 20 MB file cap). Background
+callbacks that fire after a request must **not** reuse the request's DB session (it's closed) —
+open a fresh `SessionLocal` and capture any needed config up front.
+
+## Notable features
+
+- **Remote node management** (`app/services/node_service.py`, `node` command): run OS commands
+  on SSH-reachable nodes (or `local`), agentic mode, long-running **background jobs**
+  (start → job id → result posted back to the originating channel). Config in Admin → Services
+  (`node_exec_*`). Output: tail inline, full output (≤1 MB) as a `.txt`. **Intentionally
+  unrestricted RCE** — gated by enable flag + user allowlist + admins, fully logged.
+- **Social notification relay** (`app/services/social_notifications_service.py`): poller
+  forwards Misskey/Pleroma/Matrix notifications to a user's Telegram; replying to a forwarded
+  message posts back to the platform (`SocialReplyMap` maps Telegram msg → target). Per-user
+  toggle (User Settings → Telegram) + global kill-switch (default on). Matrix is **mentions
+  only** (filters on the user's mxid) and never backfills; first poll just sets the cursor.
+  Misskey needs a one-time re-connect for the `read:notifications` scope.
+
+## Conventions / gotchas
+
+- Routers thin, logic in services. Match surrounding style; plain-text Telegram messages avoid
+  Markdown parse errors on arbitrary content.
+- The in-memory node job registry and the social poller are **per-process** — correct on the
+  single port-3051 instance; would need a shared store if ever scaled to multiple workers.
+- Do not run `git gc`/maintenance on the Gitea server data dir (production).
+- `app/routers/openai_api.py` is a generic proxy — keep it task-agnostic; never hardcode
+  task-specific logic there.
+- Detailed setup (RAG/MCP/LLM/image/IPEX/nginx) lives in `docs/`.
