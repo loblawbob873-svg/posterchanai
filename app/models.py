@@ -63,6 +63,12 @@ class User(Base):
     # Matrix bot notification settings (posterchan bot DMs)
     matrix_dm_bot_user_id = Column(String(500), nullable=True)  # Bot to DM via, e.g. @posterchan:server
 
+    # Social notification relay → Telegram (master per-user toggle + per-platform cursors)
+    social_notif_enabled = Column(Boolean, default=False)
+    misskey_notif_since = Column(Text, nullable=True)   # last-seen Misskey notification id
+    pleroma_notif_since = Column(Text, nullable=True)   # last-seen Pleroma notification id
+    matrix_notif_since = Column(Text, nullable=True)    # Matrix /sync next_batch cursor
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
@@ -242,3 +248,24 @@ class ExternalStorage(Base):
     
     # Many-to-many relationship with User (users allowed to access this storage)
     allowed_users = relationship("User", secondary=external_storage_users, backref="external_storage_mounts")
+
+
+class SocialReplyMap(Base):
+    """Maps a notification forwarded to Telegram → where a reply should be posted.
+
+    When the social-notification poller DMs a notification to a user's Telegram chat, it
+    records the resulting Telegram message id here. If the user replies to that message in
+    Telegram, we look it up to post the reply back to the right platform/target."""
+    __tablename__ = "social_reply_map"
+    __table_args__ = (Index('ix_social_reply_chat_msg', 'telegram_chat_id', 'telegram_message_id'),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    telegram_chat_id = Column(String(50), nullable=False)
+    telegram_message_id = Column(Integer, nullable=False)
+    platform = Column(String(20), nullable=False)   # "misskey" | "pleroma" | "matrix"
+    target_id = Column(String(255), nullable=True)   # note/status id to reply to (null for matrix)
+    room_id = Column(String(255), nullable=True)     # matrix room id
+    event_id = Column(String(255), nullable=True)    # matrix event id being replied to
+    visibility = Column(String(20), nullable=True)   # inherit parent visibility on reply
+    created_at = Column(DateTime, default=datetime.utcnow)

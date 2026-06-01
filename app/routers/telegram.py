@@ -1255,6 +1255,22 @@ async def _handle_telegram_update(update: dict, db: Session):
                     reply_to = {}
                     reply_text = ""
 
+            # Reply to a forwarded social notification → post it back to that platform.
+            # Checked before command/intent handling so the freeform reply isn't misread.
+            _reply_msg_id = (reply_to or {}).get("message_id")
+            if _reply_msg_id and text.strip() and reply_from.get("is_bot"):
+                from app.services import social_notifications_service
+                try:
+                    _social_resp = await social_notifications_service.handle_reply(
+                        db, chat_id, _reply_msg_id, text.strip()
+                    )
+                except Exception as _e:
+                    logger.warning(f"[social] reply handling error: {_e}")
+                    _social_resp = "❌ Failed to send reply."
+                if _social_resp is not None:
+                    await telegram_service.send_message(chat_id, _social_resp)
+                    return {"ok": True}
+
             # Detect forwarded messages
             is_forwarded = bool(
                 message.get("forward_date") or

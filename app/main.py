@@ -219,6 +219,13 @@ async def startup():
             except Exception as e:
                 logging.error(f"Error starting logs scheduler: {e}", exc_info=True)
 
+            try:
+                # Start social-notification relay poller (Pleroma/Misskey/Matrix → Telegram)
+                from app.services.social_notifications_service import start_social_notifications_scheduler
+                start_social_notifications_scheduler()
+            except Exception as e:
+                logging.error(f"Error starting social notifications scheduler: {e}", exc_info=True)
+
         else:
             logging.info(f"Schedulers disabled on port {app_port} (only run on port 3051)")
 

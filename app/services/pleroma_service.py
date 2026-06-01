@@ -119,8 +119,10 @@ async def post_status(
     visibility: str = "public",
     image_bytes: bytes | None = None,
     image_mime: str = "image/png",
+    in_reply_to_id: str | None = None,
 ) -> dict:
-    """Post a status to a Pleroma or Mastodon instance. Uploads image_bytes if provided."""
+    """Post a status to a Pleroma or Mastodon instance. Uploads image_bytes if provided.
+    Pass in_reply_to_id to post the status as a reply to an existing status."""
     media_ids = []
     if image_bytes:
         media_id = await upload_media(instance_url, access_token, image_bytes, image_mime)
@@ -131,10 +133,27 @@ async def post_status(
     payload: dict = {"status": text, "visibility": visibility}
     if media_ids:
         payload["media_ids"] = media_ids
+    if in_reply_to_id:
+        payload["in_reply_to_id"] = in_reply_to_id
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.post(url, json=payload, headers=headers)
         resp.raise_for_status()
         return resp.json()
+
+
+async def fetch_notifications(instance_url: str, access_token: str, since_id: str | None = None, limit: int = 20) -> list[dict]:
+    """Fetch recent notifications (raw Mastodon/Pleroma objects). When since_id is given,
+    only notifications newer than it are returned (newest-first)."""
+    url = instance_url.rstrip("/") + "/api/v1/notifications"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    params: dict = {"limit": limit}
+    if since_id:
+        params["since_id"] = since_id
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(url, headers=headers, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+        return data if isinstance(data, list) else []
 
 
 async def verify_credentials(instance_url: str, access_token: str) -> dict:

@@ -54,8 +54,10 @@ async def post_note(
     visibility: str = "public",
     image_bytes: bytes | None = None,
     image_mime: str = "image/png",
+    reply_id: str | None = None,
 ) -> dict:
-    """Create a note on the configured Misskey instance. Uploads image_bytes if provided."""
+    """Create a note on the configured Misskey instance. Uploads image_bytes if provided.
+    Pass reply_id to post the note as a reply to an existing note."""
     file_ids = []
     if image_bytes:
         file_id = await upload_file(instance_url, token, image_bytes, image_mime)
@@ -65,10 +67,26 @@ async def post_note(
     payload: dict = {"i": token, "text": text, "visibility": visibility}
     if file_ids:
         payload["fileIds"] = file_ids
+    if reply_id:
+        payload["replyId"] = reply_id
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.post(url, json=payload)
         resp.raise_for_status()
         return resp.json()
+
+
+async def fetch_notifications(instance_url: str, token: str, since_id: str | None = None, limit: int = 20) -> list[dict]:
+    """Fetch recent notifications (raw Misskey objects). Returns newest-first; when since_id
+    is given, only notifications newer than it are returned."""
+    url = instance_url.rstrip("/") + "/api/i/notifications"
+    payload: dict = {"i": token, "limit": limit}
+    if since_id:
+        payload["sinceId"] = since_id
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(url, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        return data if isinstance(data, list) else []
 
 
 def build_miauth_url(instance_url: str, session_id: str, callback_url: str, app_name: str = "PosterChanAI") -> str:
@@ -79,5 +97,5 @@ def build_miauth_url(instance_url: str, session_id: str, callback_url: str, app_
         f"{base}/miauth/{session_id}"
         f"?name={app_name}"
         f"&callback={callback_encoded}"
-        f"&permission=write:notes"
+        f"&permission=read:notifications,write:notes"
     )

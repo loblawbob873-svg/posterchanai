@@ -151,6 +151,21 @@ image itself. The source URL is appended by default; `post don't include links` 
 | `post raw <text>` | Saves `<text>` verbatim, no rewrite |
 | `share` | Publishes the last `post` to your connected platforms (`share matrix <n>` picks a room) |
 
+### Social notifications to Telegram
+
+Forward new notifications from your connected **Misskey / Pleroma / Matrix** accounts to your
+linked Telegram chat, and reply to them without leaving Telegram. Enable it per-user in
+**User Settings → Telegram → "Relay social notifications to Telegram"** (the admin must also
+turn on the global switch in **Admin → Services → Social Notification Relay**, where the poll
+interval is set).
+
+- New mentions, replies, DMs, follows, and reactions/boosts are forwarded as they arrive.
+- **Reply** to a forwarded message in Telegram to respond on the originating platform — your
+  reply is posted as a reply to the original post (inheriting its visibility) or sent into the
+  Matrix room.
+- **Misskey** must be **re-connected once** (User Settings → Misskey) so the new token includes
+  the `read:notifications` permission. Pleroma and Matrix need no changes.
+
 ### Remote node management
 
 Run OS commands on a fleet of machines from chat or Telegram. Enable it in

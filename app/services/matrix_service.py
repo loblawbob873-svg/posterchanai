@@ -121,6 +121,53 @@ async def _room_display_name(client: httpx.AsyncClient, hs: str, room_id: str, h
     return room_id
 
 
+async def fetch_notifications(homeserver: str, access_token: str, own_user_id: str,
+                              since: str | None = None) -> tuple[list[dict], str]:
+    """Incremental sync for new room messages. Returns (events, next_batch).
+
+    Each event is {room_id, event_id, sender, body}. Only m.room.message events from other
+    users are returned. On the FIRST poll (since is None) we only capture the current
+    next_batch cursor and return no events — this avoids replaying the whole history when
+    the relay is first enabled."""
+    import json as _json
+    from urllib.parse import quote as _q
+    hs = homeserver.rstrip("/")
+    headers = {"Authorization": f"Bearer {access_token}"}
+    sync_filter = _json.dumps({
+        "room": {"timeline": {"types": ["m.room.message"], "limit": 30}},
+        "presence": {"types": []},
+        "account_data": {"types": []},
+    })
+    params = {"timeout": "0", "filter": sync_filter}
+    if since:
+        params["since"] = since
+    url = f"{hs}/_matrix/client/v3/sync"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(url, headers=headers, params=params)
+        if resp.status_code != 200:
+            raise ValueError(f"Matrix sync failed: HTTP {resp.status_code} — {resp.text[:200]}")
+        data = resp.json()
+    next_batch = data.get("next_batch", since or "")
+    if not since:
+        return [], next_batch  # first poll: establish cursor, no backfill
+    events: list[dict] = []
+    for room_id, room in (data.get("rooms", {}).get("join", {}) or {}).items():
+        for ev in room.get("timeline", {}).get("events", []) or []:
+            if ev.get("type") != "m.room.message":
+                continue
+            sender = ev.get("sender", "")
+            if sender == own_user_id:
+                continue
+            body = (ev.get("content", {}) or {}).get("body", "")
+            events.append({
+                "room_id": room_id,
+                "event_id": ev.get("event_id", ""),
+                "sender": sender,
+                "body": body,
+            })
+    return events, next_batch
+
+
 async def send_message(homeserver: str, access_token: str, room_id: str, text: str) -> None:
     """Send a message to a Matrix room with URL auto-linking."""
     hs = homeserver.rstrip("/")

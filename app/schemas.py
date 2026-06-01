@@ -220,6 +220,9 @@ class SettingsResponse(BaseModel):
     logs_drives: str = "sda,sdb,nvme0n1"
     logs_exclude_patterns: str = ""
     logs_hosts: str = ""  # Comma-separated hostnames for remote log collection via SSH
+    # Social notification relay (Misskey/Pleroma/Matrix → Telegram)
+    social_notif_enabled: str = "false"      # global kill-switch (per-user toggle in User Settings)
+    social_notif_poll_seconds: str = "60"    # poll interval in seconds
     # Remote node management (run OS commands on nodes over SSH, or 'local' on this host)
     node_exec_enabled: str = "false"
     node_exec_nodes: str = ""  # one per line: name|user@host  (host 'local' or empty = run on this host)
@@ -435,6 +438,8 @@ class UserSettingsUpdate(BaseModel):
     matrix_enabled: Optional[bool] = None
     matrix_homeserver: Optional[str] = None
     matrix_dm_bot_user_id: Optional[str] = None
+    # Relay social notifications (Misskey/Pleroma/Matrix) to Telegram
+    social_notif_enabled: Optional[bool] = None
 
 
 class UserSettingsResponse(BaseModel):
@@ -476,6 +481,8 @@ class UserSettingsResponse(BaseModel):
     matrix_user_id: Optional[str] = None
     matrix_has_access_token: bool = False
     matrix_dm_bot_user_id: Optional[str] = None
+    # Relay social notifications (Misskey/Pleroma/Matrix) to Telegram
+    social_notif_enabled: bool = False
 
 
 class TestConnectionRequest(BaseModel):

@@ -528,6 +528,10 @@ class ChatHandler {
                 const telegramNotificationsEl = document.getElementById('telegramNotifications');
                 if (telegramNotificationsEl) settings.telegram_notifications = telegramNotificationsEl.value;
 
+                // Relay social notifications (Misskey/Pleroma/Matrix) to Telegram
+                const socialNotifEnabledEl = document.getElementById('socialNotifEnabled');
+                if (socialNotifEnabledEl) settings.social_notif_enabled = socialNotifEnabledEl.checked;
+
                 // Misskey — only persist the instance URL from the form (token is managed via MiAuth)
                 const misskeyInstanceUrlEl = document.getElementById('misskeyInstanceUrl');
                 if (misskeyInstanceUrlEl) settings.misskey_instance_url = misskeyInstanceUrlEl.value.trim();
@@ -780,6 +784,9 @@ class ChatHandler {
 
                 const telegramNotifications = document.getElementById('telegramNotifications');
                 if (telegramNotifications) telegramNotifications.value = settings.telegram_notifications || 'news,downloads,mentions';
+
+                const socialNotifEnabled = document.getElementById('socialNotifEnabled');
+                if (socialNotifEnabled) socialNotifEnabled.checked = !!settings.social_notif_enabled;
 
                 // Misskey settings
                 const misskeyInstanceUrl = document.getElementById('misskeyInstanceUrl');
