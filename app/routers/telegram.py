@@ -1001,12 +1001,37 @@ async def _send_png_as_document(chat_id: str, image_b64: str, caption: str = Non
 
 async def _send_screenshot(chat_id: str, image_b64: str, caption: str) -> None:
     """Deliver a screenshot document-first (full resolution — Telegram compresses photos
-    to an unreadable size for tall pages), falling back to a photo, then plain text."""
-    if await _send_png_as_document(chat_id, image_b64, caption):
-        return
-    photo_result = await telegram_service.send_photo(chat_id, image_b64, caption)
-    if not photo_result.get("ok"):
-        await telegram_service.send_message(chat_id, f"{caption}\n\n(Screenshot failed to send)")
+    to an unreadable size for tall pages), falling back to a photo, then plain text.
+
+    Then cache the full-res PNG and offer one-tap 🔤 Read text / 🌐 Translate buttons, so
+    the user can OCR/translate the capture WITHOUT re-uploading it (a re-uploaded photo is
+    compressed too small to read)."""
+    sent = await _send_png_as_document(chat_id, image_b64, caption)
+    if not sent:
+        photo_result = await telegram_service.send_photo(chat_id, image_b64, caption)
+        sent = photo_result.get("ok", False)
+        if not sent:
+            await telegram_service.send_message(chat_id, f"{caption}\n\n(Screenshot failed to send)")
+            return
+
+    try:
+        import base64 as _b64, time as _t
+        png = image_b64
+        if isinstance(png, str):
+            if png.startswith("data:image"):
+                png = png.split(",", 1)[1]
+            png = _b64.b64decode(png)
+        _media_action_cache[chat_id] = {"attachments": [("screenshot.png", png, "image/png")], "ts": _t.time()}
+        await telegram_service.send_message(
+            chat_id,
+            "Want the text? Tap below — reads the full-resolution capture (no re-upload needed):",
+            reply_markup={"inline_keyboard": [[
+                {"text": "🔤 Read text", "callback_data": "media:ocr"},
+                {"text": "🌐 Translate", "callback_data": "media:translate"},
+            ]]},
+        )
+    except Exception as _e:
+        logger.warning(f"[screenshot] OCR/translate offer failed: {_e}")
 
 
 async def _send_budget(chat_id: str, user, db, message_id: int = None) -> None:
