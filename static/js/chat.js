@@ -1191,6 +1191,31 @@ class ChatHandler {
             `;
             attachmentsList.appendChild(item);
         });
+
+        // Quick action: translate the OCR'd text of an attached image/PDF.
+        if (this.uploadedImages.length > 0 || this.uploadedPDFs.length > 0) {
+            const action = document.createElement('button');
+            action.type = 'button';
+            action.className = 'attachment-action';
+            action.textContent = '🌐 Translate';
+            action.title = 'OCR the attachment and translate it (edit the language, then Enter)';
+            action.style.cssText = 'align-self:center;padding:4px 10px;border-radius:14px;border:1px solid var(--border-color,#ccc);background:transparent;color:inherit;cursor:pointer;font-size:0.85em;white-space:nowrap;';
+            action.onclick = () => window.chatHandler.translateAttachment();
+            attachmentsList.appendChild(action);
+        }
+    }
+
+    // Prefill the composer with a translate command (keeping the attachment) so the
+    // user can pick a language and send. Routes through the `translate` command, which
+    // OCRs the upload and translates the full text.
+    translateAttachment() {
+        if (this.messageInput) {
+            this.messageInput.value = 'translate to english';
+            this.messageInput.focus();
+            // Select "english" so the user can type another language and hit Enter.
+            const v = this.messageInput.value;
+            this.messageInput.setSelectionRange(v.length - 'english'.length, v.length);
+        }
     }
 
     removeAttachment(type, index) {

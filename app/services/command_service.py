@@ -319,7 +319,7 @@ class CommandService:
         elif command == "todo":
             return await self._todo_command(arg)
         elif command == "translate":
-            return await self._translate_command(arg)
+            return await self._translate_command(arg, attachments=attachments)
         elif command == "4chan":
             return await self._4chan_command(arg)
         elif command == "compress":
@@ -2586,10 +2586,14 @@ Files are saved to your Storage.""",
         """Todo command - DISABLED (CalDAV removed)"""
         return {"type": "text", "content": "⚠️ The todo feature is temporarily unavailable."}
 
-    async def _translate_command(self, arg: str) -> dict:
-        """Translate last response or email to specified language."""
+    async def _translate_command(self, arg: str, attachments: Optional[list] = None) -> dict:
+        """Translate an uploaded image/PDF (OCR), or the last response, or an email."""
         if not self.user:
             return {"type": "text", "content": "Please log in to use translate."}
+
+        # Uploaded image/PDF wins: OCR it and translate the whole thing.
+        if attachments:
+            return await self._translate_attachments(arg, attachments)
 
         parts = arg.strip().split()
         if not parts:
@@ -2656,6 +2660,55 @@ Files are saved to your Storage.""",
         except Exception as e:
             logger.error(f"Translation error: {e}")
             return {"type": "text", "content": f"Translation failed: {str(e)}"}
+
+    async def _translate_attachments(self, arg: str, attachments: list) -> dict:
+        """OCR uploaded image(s)/PDF(s) and translate the FULL extracted text.
+
+        Shared by the web UI, Telegram and Matrix (`translate <lang>` + an upload).
+        """
+        import base64 as _b64
+        from app.services.document_service import extract_image_text, extract_pdf_text
+        from app.services.media_service import is_image, is_pdf
+
+        # Language: accept "spanish", "to spanish", or empty (default English).
+        lang = arg.strip()
+        if lang.lower().startswith("to "):
+            lang = lang[3:].strip()
+        language = (lang or "English").title()
+
+        parts = []
+        for fn, data, ct in attachments:
+            try:
+                b64 = _b64.b64encode(data).decode()
+            except Exception:
+                continue
+            if is_pdf(fn, ct):
+                parts.append(extract_pdf_text(b64) or "")
+            elif is_image(fn, ct):
+                parts.append(extract_image_text(b64) or "")
+        src = "\n\n".join(p for p in parts if p).strip()
+        if not src:
+            return {"type": "text", "content": "Couldn't extract any text to translate from the upload."}
+
+        messages = [
+            {"role": "system", "content": (
+                f"Translate the following text to {language}. Translate ALL of it — every "
+                "line and list item — do not summarize, omit, or stop early. Preserve the "
+                "original line breaks and formatting. Output only the translation.")},
+            {"role": "user", "content": src[:24000]},
+        ]
+        # A translation is about as long as its input; raise the output cap so long pages
+        # (e.g. a full-page screenshot) aren't cut off mid-way (the default ~2048 stops early).
+        _orig_np = self.chat_service.num_predict
+        self.chat_service.num_predict = max(_orig_np, 8192)
+        try:
+            translation = await self.chat_service.chat(messages)
+            return {"type": "text", "content": f"## Translation ({language})\n\n{translation}"}
+        except Exception as e:
+            logger.error(f"Image translation error: {e}")
+            return {"type": "text", "content": f"Translation failed: {str(e)}"}
+        finally:
+            self.chat_service.num_predict = _orig_np
 
     async def _compress_command(self, attachments: Optional[list]) -> dict:
         """Compress attached image(s) or video(s) and return the smaller files."""
