@@ -70,46 +70,59 @@ def _find_firefox() -> Optional[str]:
     )
 
 
-# Firefox uses its default profile for --screenshot (a fresh `-profile` dir hangs
-# headless), so serialize captures to avoid the profile's single-instance lock.
+# Serialize captures: one headless Firefox/geckodriver session at a time keeps the
+# memory footprint bounded and avoids profile contention.
 _screenshot_lock = threading.Lock()
 
+# Seconds to wait after page load before capturing, so late/JS-rendered content has
+# settled. Firefox's headless `--screenshot` CLI has no wait flag, which is why we
+# drive it via Selenium instead.
+_SCREENSHOT_DELAY = 3.0
 
-def _capture_full_page(url: str, width: int = 1280, timeout: int = 60) -> bytes:
+
+def _capture_full_page(url: str, width: int = 1280, timeout: int = 60,
+                       delay: float = _SCREENSHOT_DELAY) -> bytes:
     """Render `url` in headless Firefox and return a full-page PNG (blocking).
 
-    Uses Firefox's built-in `--screenshot` mode (full-page by default) via a
-    subprocess instead of Selenium/geckodriver: the marionette handshake hangs on
-    some Firefox builds, and a subprocess gives a hard, killable timeout with no
-    orphaned browser processes. Raises RuntimeError/TimeoutExpired on failure.
+    Drives Firefox through Selenium/geckodriver (rather than the one-shot
+    `--screenshot` CLI) so we can sleep `delay` seconds after navigation before
+    capturing — many pages aren't finished rendering at the `load` event and the
+    CLI offers no way to wait. `driver.get_full_page_screenshot_as_png()` keeps the
+    full-page behaviour. Bounded by `timeout` (page load) and serialized by
+    `_screenshot_lock`. Raises RuntimeError/WebDriverException on failure.
     """
-    import os
-    import shutil
-    import subprocess
-    import tempfile
+    import time
+
+    from selenium import webdriver
+    from selenium.common.exceptions import TimeoutException
+    from selenium.webdriver.firefox.options import Options
 
     firefox = _find_firefox()
     if not firefox:
         raise RuntimeError("Firefox not found on the server")
 
-    tmpdir = tempfile.mkdtemp(prefix="ffshot_")
-    out = os.path.join(tmpdir, "shot.png")
-    try:
-        with _screenshot_lock:
-            # Width only (no height) → Firefox captures the FULL page height at this
-            # width; passing a height (e.g. 1280,1080) crops to just that viewport.
-            proc = subprocess.run(
-                [firefox, "--headless", "--new-instance",
-                 f"--window-size={width}", "--screenshot", out, url],
-                timeout=timeout, capture_output=True,
-            )
-        if not os.path.exists(out) or os.path.getsize(out) == 0:
-            err = (proc.stderr or b"").decode("utf-8", "ignore").strip()
-            raise RuntimeError(f"Firefox produced no screenshot. {err[-300:]}")
-        with open(out, "rb") as f:
-            return f.read()
-    finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)
+    options = Options()
+    options.add_argument("--headless")
+    options.binary_location = firefox
+
+    with _screenshot_lock:
+        driver = webdriver.Firefox(options=options)
+        try:
+            driver.set_page_load_timeout(timeout)
+            driver.set_window_size(width, 1080)
+            try:
+                driver.get(url)
+            except TimeoutException:
+                # Page load exceeded `timeout`; capture whatever has rendered so far.
+                pass
+            if delay > 0:
+                time.sleep(delay)
+            png = driver.get_full_page_screenshot_as_png()
+        finally:
+            driver.quit()
+    if not png:
+        raise RuntimeError("Firefox produced no screenshot.")
+    return png
 
 # Cache for torrent results (per user, per category) - thread-safe with locks
 _torrent_cache: dict[int, dict[str, list[TorrentResult]]] = {}
@@ -634,11 +647,10 @@ class CommandService:
         if not re.match(r"^https?://", url, re.IGNORECASE):
             url = "https://" + url
 
-        import subprocess
         try:
-            # Backstop above the subprocess's own timeout so the handler always replies.
+            # Backstop above the driver's own page-load timeout so the handler always replies.
             png = await asyncio.wait_for(asyncio.to_thread(_capture_full_page, url), timeout=75)
-        except (asyncio.TimeoutError, subprocess.TimeoutExpired):
+        except asyncio.TimeoutError:
             return {"type": "text", "content": f"📸 Timed out capturing {url} — the page took too long to render."}
         except Exception as e:
             logger.error(f"[screenshot] {url}: {e}", exc_info=True)
