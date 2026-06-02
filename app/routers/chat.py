@@ -881,6 +881,17 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                     # Check for commands
                     command, arg = command_service.parse_command(content)
 
+                    # An uploaded image/PDF + a "translate" request (even in natural
+                    # language, e.g. "translate this to spanish") → run the translate
+                    # command so it OCRs and translates the FULL text. Otherwise it falls
+                    # to the chat path, whose summary-style prompt makes the model emit a
+                    # preamble and stop after a couple hundred characters.
+                    if (not command and content and (image_data or images or pdfs or pdf_data)
+                            and re.search(r'\btranslate', content, re.IGNORECASE)):
+                        command = "translate"
+                        _lang_m = re.search(r'\bto\s+([A-Za-z]+)', content)
+                        arg = _lang_m.group(1) if _lang_m else ""
+
                     # Check for YouTube URLs (auto-summarize)
                     if not command:
                         youtube_result = await command_service.check_youtube_url(content)
