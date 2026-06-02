@@ -674,12 +674,12 @@ def _help_main_keyboard() -> dict:
 _HELP_SECTIONS = {
     "finance": (
         "💰 *Finance — Budget Manager*\n\n"
-        "Connect your account in the web UI \\(Settings → Finance\\), then:\n\n"
-        "• `budget` — summary: income, unpaid bills, remaining\\. Tap a bill to pay it\\.\n"
-        "• `bills` — unpaid bills \\(`bills all` / `bills paid` too\\)\n"
-        "• `pay <name>` — pay a bill by name\n"
-        "• `addbill <name> <amount>` — add a bill \\(append `income` for income\\)\n\n"
-        "The budget view has buttons: ✅ pay a bill, ➕ add a bill, 🔄 refresh\\."
+        "Connect your account in the web UI \\(Settings → Finance\\), then send `/finance` "
+        "\\(or tap 💰 Finance above\\)\\. It's all buttons — no commands to remember:\n\n"
+        "• ✅ tap a bill to pay it\n"
+        "• 📋 Unpaid / 📜 Paid / 📂 All — view your bills\n"
+        "• ➕ Add Bill / 💵 Add Income — then reply with `name amount`\n"
+        "• 🔄 Refresh — update the totals"
     ),
     "files": (
         "📎 *Files — compress & convert*\n\n"
@@ -973,6 +973,10 @@ _link_action_cache: dict = {}
 # view, so a `fin:pay:<id>` callback can resolve the exact bill name to pay.
 _finance_bills_cache: dict = {}
 
+# ForceReply prompt for the "💵 Add Income" button. A reply to a message with this
+# exact text is routed to `addbill <reply> income` (see the ForceReply router below).
+_FIN_INCOME_PROMPT = "💵 Add income — reply: name amount"
+
 
 async def _send_budget(chat_id: str, user, db, message_id: int = None) -> None:
     """Render the interactive budget view (summary + a Pay button per unpaid bill).
@@ -1000,10 +1004,43 @@ async def _send_budget(chat_id: str, user, db, message_id: int = None) -> None:
         for b in payable[:20]
     ]
     rows.append([
+        {"text": "📋 Unpaid", "callback_data": "fin:bills:unpaid"},
+        {"text": "📜 Paid", "callback_data": "fin:bills:paid"},
+        {"text": "📂 All", "callback_data": "fin:bills:all"},
+    ])
+    rows.append([
         {"text": "➕ Add Bill", "callback_data": "fin:add"},
+        {"text": "💵 Add Income", "callback_data": "fin:addincome"},
+    ])
+    rows.append([
         {"text": "🔄 Refresh", "callback_data": "fin:refresh"},
     ])
     markup = {"inline_keyboard": rows}
+    if message_id:
+        await telegram_service.edit_message_text(chat_id, message_id, text, parse_mode="", reply_markup=markup)
+    else:
+        await telegram_service.send_message(chat_id, text, parse_mode="", reply_markup=markup)
+
+
+async def _send_bills_list(chat_id: str, user, db, status: str, message_id: int = None) -> None:
+    """Render a bills list (unpaid / paid / all) with a Back-to-Budget button.
+
+    Driven by the `fin:bills:<status>` buttons on the budget view so the user never
+    has to type the `bills` command. Edits in place when message_id is given.
+    """
+    from app.services import finance_service
+    # The finance API filters with ?status=paid|unpaid; "all" means no filter.
+    api_status = None if status == "all" else status
+    header = {"paid": "Paid bills", "unpaid": "Unpaid bills", "all": "All bills"}.get(status, "Bills")
+    try:
+        base, key = finance_service.get_config(db, user)
+        bills = await finance_service.get_bills(base, key, status=api_status)
+    except finance_service.FinanceError as e:
+        await telegram_service.send_message(chat_id, f"💰 {e}")
+        return
+
+    text = finance_service.format_bills(bills, header=header)
+    markup = {"inline_keyboard": [[{"text": "⬅️ Back to Budget", "callback_data": "fin:refresh"}]]}
     if message_id:
         await telegram_service.edit_message_text(chat_id, message_id, text, parse_mode="", reply_markup=markup)
     else:
@@ -1303,6 +1340,12 @@ async def _handle_telegram_update(update: dict, db: Session):
                 route = _FORCE_REPLY_ROUTES.get(reply_text.strip())
                 if route:
                     text = f"{route} {text.strip()}"
+                    text_lower = text.lower()
+                    reply_to = {}
+                    reply_text = ""
+                elif reply_text.strip() == _FIN_INCOME_PROMPT:
+                    # "💵 Add Income" button → reuse addbill with the income flag appended.
+                    text = f"addbill {text.strip()} income"
                     text_lower = text.lower()
                     reply_to = {}
                     reply_text = ""
@@ -3224,6 +3267,7 @@ async def _handle_telegram_update(update: dict, db: Session):
 
             elif data.startswith("fin:"):
                 # Finance buttons: fin:pay:<bill_id> | fin:refresh | fin:add
+                # | fin:addincome | fin:bills:<unpaid|paid|all>
                 parts = data.split(":")
                 action = parts[1] if len(parts) > 1 else ""
                 message_id = (callback_query.get("message") or {}).get("message_id")
@@ -3240,6 +3284,15 @@ async def _handle_telegram_update(update: dict, db: Session):
                         reply_markup={"force_reply": True, "selective": True,
                                       "input_field_placeholder": "e.g. Rent 1200"},
                     )
+                elif action == "addincome":
+                    await telegram_service.send_message(
+                        chat_id,
+                        _FIN_INCOME_PROMPT,
+                        reply_markup={"force_reply": True, "selective": True,
+                                      "input_field_placeholder": "e.g. Paycheck 3000"},
+                    )
+                elif action == "bills" and len(parts) > 2:
+                    await _send_bills_list(chat_id, cb_user, db, parts[2], message_id=message_id)
                 elif action == "refresh":
                     await _send_budget(chat_id, cb_user, db, message_id=message_id)
                 elif action == "pay" and len(parts) > 2:
@@ -3289,6 +3342,21 @@ async def _handle_telegram_update(update: dict, db: Session):
                         parse_mode="MarkdownV2",
                         reply_markup=_help_main_keyboard(),
                     )
+                elif section == "finance":
+                    # Open the interactive budget directly instead of showing help text,
+                    # so finance is fully button-driven from the help menu.
+                    cb_user = db.query(User).filter(
+                        User.telegram_chat_id == chat_id,
+                        User.telegram_enabled == True
+                    ).first()
+                    if cb_user:
+                        await _send_budget(chat_id, cb_user, db)
+                    else:
+                        await telegram_service.send_message(
+                            chat_id,
+                            "Your Telegram account is not linked.",
+                            reply_markup=back_button,
+                        )
                 elif section == "logs":
                     # Execute the logs command directly instead of showing help text
                     cb_user = db.query(User).filter(

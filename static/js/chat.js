@@ -540,10 +540,13 @@ class ChatHandler {
                 const matrixDmBotUserIdEl = document.getElementById('matrixDmBotUserId');
                 if (matrixDmBotUserIdEl) settings.matrix_dm_bot_user_id = matrixDmBotUserIdEl.value.trim();
 
-                // Finance (Budget Manager) API key — only send when the field was edited,
-                // so a blank field (key already saved, never echoed back) doesn't clear it.
+                // Finance (Budget Manager) API key — the field is blanked on load and the
+                // saved key is never echoed back, so any non-empty value means the user just
+                // typed a new key. Send it whenever it's non-empty (a blank field leaves the
+                // existing key untouched). Don't gate on a dirty flag: a settings refresh
+                // between typing and saving resets that flag and silently drops the key.
                 const financeApiKeyEl = document.getElementById('financeApiKey');
-                if (financeApiKeyEl && financeApiKeyEl.dataset.dirty === '1') {
+                if (financeApiKeyEl && financeApiKeyEl.value.trim()) {
                     settings.finance_api_key = financeApiKeyEl.value.trim();
                 }
 
@@ -862,19 +865,15 @@ class ChatHandler {
                 const matrixDmBotUserIdEl = document.getElementById('matrixDmBotUserId');
                 if (matrixDmBotUserIdEl) matrixDmBotUserIdEl.value = settings.matrix_dm_bot_user_id || '';
 
-                // Finance — never echo the key; show connection status and reset dirty flag.
+                // Finance — never echo the key; just clear the field and show status. On save,
+                // any non-empty value is treated as a new key (see the save handler above).
                 const financeApiKeyEl = document.getElementById('financeApiKey');
                 const financeKeyStatus = document.getElementById('financeKeyStatus');
                 if (financeApiKeyEl) {
                     financeApiKeyEl.value = '';
-                    financeApiKeyEl.dataset.dirty = '0';
                     financeApiKeyEl.placeholder = settings.finance_has_api_key
                         ? '•••••••• (key saved — type to replace)'
                         : 'Paste your Budget Manager API key';
-                    if (!financeApiKeyEl.dataset.bound) {
-                        financeApiKeyEl.addEventListener('input', () => { financeApiKeyEl.dataset.dirty = '1'; });
-                        financeApiKeyEl.dataset.bound = '1';
-                    }
                 }
                 if (financeKeyStatus) {
                     financeKeyStatus.textContent = settings.finance_has_api_key

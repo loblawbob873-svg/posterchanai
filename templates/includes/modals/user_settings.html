@@ -12,9 +12,7 @@
                 <button class="user-tab-btn" data-tab="ai">AI Services</button>
                 <button class="user-tab-btn" data-tab="mail">Mail</button>
                 <button class="user-tab-btn" data-tab="telegram">Telegram</button>
-                <button class="user-tab-btn" data-tab="misskey">Misskey</button>
-                <button class="user-tab-btn" data-tab="pleroma">Pleroma</button>
-                <button class="user-tab-btn" data-tab="matrix">Matrix</button>
+                <button class="user-tab-btn" data-tab="social">Social</button>
                 <button class="user-tab-btn" data-tab="finance">Finance</button>
                 <button class="user-tab-btn" data-tab="apikeys">API Keys</button>
             </div>
@@ -247,62 +245,8 @@ My name: John Smith"></textarea>
                     </fieldset>
                 </div>
 
-                <!-- Misskey Tab -->
-                <div class="user-tab-content" id="user-tab-misskey">
-                    <fieldset>
-                        <legend>Misskey Integration</legend>
-                        <p class="fieldset-info">Connect to a Misskey server to post notes directly from the Telegram bot's <code>post</code> command.</p>
-
-                        <div class="form-group">
-                            <label for="misskeyInstanceUrl">Instance URL</label>
-                            <input type="url" id="misskeyInstanceUrl" placeholder="https://misskey.example.com">
-                            <small>The full URL of your Misskey instance</small>
-                        </div>
-
-                        <div class="form-group" id="misskeyAuthSection">
-                            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-                                <button type="button" class="btn-primary" id="misskeyConnectBtn">Connect with MiAuth</button>
-                                <button type="button" class="btn-danger" id="misskeyDisconnectBtn" style="display: none;">Disconnect</button>
-                            </div>
-                            <div id="misskeyStatus" class="test-result" style="margin-top: 8px;"></div>
-                            <small>MiAuth opens a new tab on your Misskey instance to authorize PosterChanAI. No password is shared.</small>
-                        </div>
-
-                        <div class="form-group" id="misskeyConnectedInfo" style="display: none;">
-                            <div class="settings-status success" id="misskeyConnectedMsg"></div>
-                        </div>
-                    </fieldset>
-                </div>
-
-                <!-- Pleroma Tab -->
-                <div class="user-tab-content" id="user-tab-pleroma">
-                    <fieldset>
-                        <legend>Pleroma Integration</legend>
-                        <p class="fieldset-info">Connect to a Pleroma (or Mastodon-compatible) server to post statuses directly from the Telegram bot's <code>post</code> command.</p>
-
-                        <div class="form-group">
-                            <label for="pleromaInstanceUrl">Instance URL</label>
-                            <input type="url" id="pleromaInstanceUrl" placeholder="https://poster.place">
-                            <small>The full URL of your Pleroma/Mastodon instance</small>
-                        </div>
-
-                        <div class="form-group" id="pleromaAuthSection">
-                            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-                                <button type="button" class="btn-primary" id="pleromaConnectBtn">Connect with OAuth</button>
-                                <button type="button" class="btn-danger" id="pleromaDisconnectBtn" style="display: none;">Disconnect</button>
-                            </div>
-                            <div id="pleromaStatus" class="test-result" style="margin-top: 8px;"></div>
-                            <small>Opens your Pleroma instance in a new tab to authorize PosterChanAI. No password is shared with this server.</small>
-                        </div>
-
-                        <div class="form-group" id="pleromaConnectedInfo" style="display: none;">
-                            <div class="settings-status success" id="pleromaConnectedMsg"></div>
-                        </div>
-                    </fieldset>
-                </div>
-
-                <!-- Matrix Tab -->
-                <div class="user-tab-content" id="user-tab-matrix">
+                <!-- Social Tab (Matrix + Pleroma + Misskey) -->
+                <div class="user-tab-content" id="user-tab-social">
                     <fieldset>
                         <legend>Matrix Integration</legend>
                         <p class="fieldset-info">Connect to a Matrix homeserver to post messages directly from the Telegram bot's <code>post</code> command. You will be prompted to choose a room when posting.</p>
@@ -351,6 +295,54 @@ My name: John Smith"></textarea>
                         <div class="form-group">
                             <button type="button" class="btn-secondary" id="matrixTestDmBtn">Send Test DM</button>
                             <span id="matrixDmStatus" class="test-result" style="margin-top: 8px; display: block;"></span>
+                        </div>
+                    </fieldset>
+
+                    <fieldset style="margin-top: 24px;">
+                        <legend>Pleroma Integration</legend>
+                        <p class="fieldset-info">Connect to a Pleroma (or Mastodon-compatible) server to post statuses directly from the Telegram bot's <code>post</code> command.</p>
+
+                        <div class="form-group">
+                            <label for="pleromaInstanceUrl">Instance URL</label>
+                            <input type="url" id="pleromaInstanceUrl" placeholder="https://poster.place">
+                            <small>The full URL of your Pleroma/Mastodon instance</small>
+                        </div>
+
+                        <div class="form-group" id="pleromaAuthSection">
+                            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                                <button type="button" class="btn-primary" id="pleromaConnectBtn">Connect with OAuth</button>
+                                <button type="button" class="btn-danger" id="pleromaDisconnectBtn" style="display: none;">Disconnect</button>
+                            </div>
+                            <div id="pleromaStatus" class="test-result" style="margin-top: 8px;"></div>
+                            <small>Opens your Pleroma instance in a new tab to authorize PosterChanAI. No password is shared with this server.</small>
+                        </div>
+
+                        <div class="form-group" id="pleromaConnectedInfo" style="display: none;">
+                            <div class="settings-status success" id="pleromaConnectedMsg"></div>
+                        </div>
+                    </fieldset>
+
+                    <fieldset style="margin-top: 24px;">
+                        <legend>Misskey Integration</legend>
+                        <p class="fieldset-info">Connect to a Misskey server to post notes directly from the Telegram bot's <code>post</code> command.</p>
+
+                        <div class="form-group">
+                            <label for="misskeyInstanceUrl">Instance URL</label>
+                            <input type="url" id="misskeyInstanceUrl" placeholder="https://misskey.example.com">
+                            <small>The full URL of your Misskey instance</small>
+                        </div>
+
+                        <div class="form-group" id="misskeyAuthSection">
+                            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                                <button type="button" class="btn-primary" id="misskeyConnectBtn">Connect with MiAuth</button>
+                                <button type="button" class="btn-danger" id="misskeyDisconnectBtn" style="display: none;">Disconnect</button>
+                            </div>
+                            <div id="misskeyStatus" class="test-result" style="margin-top: 8px;"></div>
+                            <small>MiAuth opens a new tab on your Misskey instance to authorize PosterChanAI. No password is shared.</small>
+                        </div>
+
+                        <div class="form-group" id="misskeyConnectedInfo" style="display: none;">
+                            <div class="settings-status success" id="misskeyConnectedMsg"></div>
                         </div>
                     </fieldset>
                 </div>

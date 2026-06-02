@@ -443,9 +443,9 @@ async def execute_matrix_command(
             "• or `post <url or text>` / `post raw <text>` directly.\n"
             "• then `share` — post to your connected platforms.\n\n"
             "💰 *Finance*\n"
-            "• `budget` — your budget summary (income, unpaid bills, remaining).\n"
-            "• `bills` — list unpaid bills (`bills all` / `bills paid`).\n"
-            "• `pay <name>` — pay a bill by name; `addbill <name> <amount> [income]` — add one.\n"
+            "• `budget` — your summary plus a menu of finance actions.\n"
+            "• 📋 `bills` (`bills paid` / `bills all`) · ✅ `pay <name>`\n"
+            "• ➕ `addbill <name> <amount>` · 💵 `addbill <name> <amount> income`\n"
             "  Connect your account first in the web UI (Settings → Finance).\n\n"
             "🛠 *Misc*\n"
             "• `logs` — system logs.\n"
@@ -649,6 +649,16 @@ async def execute_matrix_command(
                 hint = "\n\n---\n`nyaa download <number>` to download"
         elif command == "news":
             hint = "\n\n---\nTo post an article: `post <article url>`"
+        elif command in ("budget", "finance"):
+            # Matrix has no inline buttons, so mirror Telegram's finance menu as
+            # tap-to-type command shortcuts under the summary.
+            hint = ("\n\n---\n"
+                    "📋 `bills` · 📜 `bills paid` · 📂 `bills all`\n"
+                    "✅ `pay <name>` · ➕ `addbill <name> <amount>` · 💵 `addbill <name> <amount> income`")
+        elif command == "bills":
+            hint = "\n\n---\n✅ `pay <name>` to pay a bill · `budget` for the summary"
+        elif command in ("pay", "addbill"):
+            hint = "\n\n---\n`budget` for the updated summary"
         return {"result": content + hint}
     except Exception as e:
         logger.error(f"Matrix command execution error: {e}", exc_info=True)
