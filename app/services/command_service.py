@@ -403,12 +403,19 @@ class CommandService:
         if not query:
             return {"type": "text", "content": "Please provide a search query. Example: `search latest AI news`"}
 
-        results = await self.search_service.web_search(query, limit=5)
+        clean_query, categories, time_range = self.search_service.detect_search_intent(query)
+        results = await self.search_service.web_search(
+            clean_query, limit=5, categories=categories, time_range=time_range
+        )
+        # Fall back to a plain general search if a category search came up empty.
+        if not results and (categories or time_range):
+            results = await self.search_service.web_search(clean_query, limit=5)
         if not results:
             return {"type": "text", "content": f"No results found for: {query}"}
 
+        scope = f" ({categories})" if categories else ""
         # Format results for AI summarization
-        context = f"Search results for '{query}':\n\n"
+        context = f"Search results for '{clean_query}'{scope}:\n\n"
         for i, r in enumerate(results, 1):
             context += f"{i}. **{r['title']}**\n{r['url']}\n{r['content']}\n\n"
 

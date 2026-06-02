@@ -95,20 +95,36 @@ class SearchService:
         settings = {s.key: s.value for s in self.db.query(Setting).all()}
         self.searxng_url = settings.get("searxng_url", "https://search.poster.place")
 
-    async def web_search(self, query: str, limit: int = 5) -> list[dict]:
-        """Search the web using SearXNG"""
+    async def web_search(
+        self,
+        query: str,
+        limit: int = 5,
+        categories: Optional[str] = None,
+        time_range: Optional[str] = None,
+    ) -> list[dict]:
+        """Search the web using SearXNG.
+
+        categories: optional SearXNG category (e.g. "news", "videos", "science").
+        time_range: optional SearXNG time filter ("day", "week", "month", "year").
+        """
         if not self.searxng_url:
             return []
+
+        params = {
+            "q": query,
+            "format": "json",
+            "language": "en",
+        }
+        if categories:
+            params["categories"] = categories
+        if time_range:
+            params["time_range"] = time_range
 
         async with httpx.AsyncClient(timeout=30) as client:
             try:
                 response = await client.get(
                     f"{self.searxng_url}/search",
-                    params={
-                        "q": query,
-                        "format": "json",
-                        "language": "en"
-                    }
+                    params=params,
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -165,6 +181,55 @@ class SearchService:
             except Exception as e:
                 logger.error(f"Image search error: {e}")
                 return []
+
+    # Maps a SearXNG category to the trigger words that imply it.
+    # Order matters: earlier categories win when multiple match.
+    _CATEGORY_KEYWORDS = {
+        "news": ("news", "headline", "headlines", "breaking", "latest on",
+                 "press release", "current events"),
+        "videos": ("video", "videos", "clip", "clips", "footage", "trailer"),
+        "music": ("song", "songs", "lyrics", "album", "music"),
+        "science": ("paper", "papers", "study", "studies", "research",
+                    "journal", "publication", "preprint"),
+        "it": ("github", "stackoverflow", "stack overflow", "source code",
+               "repository", "pip package", "npm package", "man page"),
+        "map": ("map", "directions", "near me", "nearby", "route to"),
+        "social media": ("reddit", "subreddit", "tweet", "tweets", "mastodon",
+                         "lemmy", "hacker news"),
+    }
+
+    # Time-range trigger words -> SearXNG time_range value.
+    _TIME_KEYWORDS = {
+        "day": ("today", "past 24 hours", "last 24 hours", "past day"),
+        "week": ("this week", "past week", "last week"),
+        "month": ("this month", "past month", "last month"),
+        "year": ("this year", "past year", "last year"),
+    }
+
+    @classmethod
+    def detect_search_intent(cls, query: str) -> tuple[str, Optional[str], Optional[str]]:
+        """Heuristically infer the SearXNG category and time range from a natural
+        query. Returns (clean_query, categories, time_range).
+
+        The category trigger word is kept in the query (SearXNG ranks fine with
+        it, and stripping risks dropping meaningful terms like "music" in a band
+        name) — only the category/time filters are derived from it.
+        """
+        lowered = f" {query.lower()} "
+
+        categories = None
+        for category, keywords in cls._CATEGORY_KEYWORDS.items():
+            if any(f" {kw} " in lowered for kw in keywords):
+                categories = category
+                break
+
+        time_range = None
+        for tr, keywords in cls._TIME_KEYWORDS.items():
+            if any(kw in lowered for kw in keywords):
+                time_range = tr
+                break
+
+        return query.strip(), categories, time_range
 
     @staticmethod
     def extract_urls(text: str) -> list[str]:
