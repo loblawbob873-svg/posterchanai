@@ -240,9 +240,9 @@ def _capture_full_page_firefox(firefox: str, url: str, width: int, timeout: int)
 def _capture_full_page(url: str, width: int = 1280, timeout: int = 60) -> bytes:
     """Render `url` and return a full-page PNG (blocking).
 
-    Prefers headless Chrome via Selenium (waits for JS so SPAs aren't blank, true
-    full-page via CDP); falls back to Firefox's `--screenshot` if Chrome is absent.
-    Raises RuntimeError if neither browser is available or capture fails.
+    Prefers headless Chrome driven over the DevTools protocol (waits for JS so SPAs
+    aren't blank, true full-page via CDP); falls back to Firefox's `--screenshot` if
+    Chrome is absent. Raises RuntimeError if neither browser is available or capture fails.
     """
     chrome = _find_chrome()
     if chrome:
@@ -792,8 +792,8 @@ class CommandService:
 
         import subprocess
         try:
-            # Backstop above the browser's own timeout (+ settle, + first-run driver
-            # fetch) so the handler always replies.
+            # Backstop above the browser's own timeout (+ settle) so the handler
+            # always replies even if the page render stalls.
             png = await asyncio.wait_for(asyncio.to_thread(_capture_full_page, url), timeout=100)
         except (asyncio.TimeoutError, subprocess.TimeoutExpired):
             return {"type": "text", "content": f"📸 Timed out capturing {url} — the page took too long to render."}
