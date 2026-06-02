@@ -450,6 +450,7 @@ async def execute_matrix_command(
             "• ➕ `addbill <name> <amount>` · 💵 `addbill <name> <amount> income`\n"
             "  Connect your account first in the web UI (Settings → Finance).\n\n"
             "🛡️ *Admin* (DM only)\n"
+            "• I only auto-accept room invites from admins; invites from anyone else are declined. To add me elsewhere, an admin invites me or uses `join`.\n"
             "• `join <!roomid:server>` or `join <#alias:server>` — I join that room (add `via <server>` to help me find a federated room; for private rooms, invite me).\n"
             "• `leave <!roomid:server>` — I leave that room.\n"
             "• `block <@user:server>` — ignore that user (or a whole server with `:server.org`).\n"
