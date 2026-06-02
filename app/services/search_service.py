@@ -187,6 +187,8 @@ class SearchService:
     _CATEGORY_KEYWORDS = {
         "news": ("news", "headline", "headlines", "breaking", "latest on",
                  "press release", "current events"),
+        "files": ("torrent", "torrents", "magnet", "iso", "download",
+                  "downloads", "files"),
         "videos": ("video", "videos", "clip", "clips", "footage", "trailer"),
         "music": ("song", "songs", "lyrics", "album", "music"),
         "science": ("paper", "papers", "study", "studies", "research",
