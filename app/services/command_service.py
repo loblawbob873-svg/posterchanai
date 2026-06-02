@@ -343,12 +343,17 @@ def _render_post_card_png(display_name: str, handle: str, text: str,
     ts = _html.escape(timestamp or "")
     # Avatar: prefer the real (pre-fetched) profile picture; otherwise a letter
     # initial. The letter fallback needs no emoji font, so it never tofu-boxes.
+    # Escape the data: URIs too — their content-type segment originates from a remote
+    # server's Content-Type header (passed through by the bot), so an unescaped value
+    # like image/png"><img src=file:///… could otherwise break out of the attribute
+    # and inject markup into this headless render.
     if avatar_data_uri:
-        avatar_block = f'<img class="avatar" src="{avatar_data_uri}" alt="">'
+        avatar_block = f'<img class="avatar" src="{_html.escape(avatar_data_uri)}" alt="">'
     else:
         initial = _html.escape(((display_name or handle or "?").strip()[:1] or "?").upper())
         avatar_block = f'<div class="avatar">{initial}</div>'
-    media_block = f'<img class="media" src="{media_data_uri}" alt="">' if media_data_uri else ""
+    media_block = (f'<img class="media" src="{_html.escape(media_data_uri)}" alt="">'
+                   if media_data_uri else "")
     ts_block = f'<div class="ts">{ts}</div>' if ts else ""
 
     doc = f"""<!doctype html><html><head><meta charset="utf-8"><style>
