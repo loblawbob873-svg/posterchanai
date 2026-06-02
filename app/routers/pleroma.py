@@ -137,6 +137,9 @@ async def oauth_callback(code: str = None, state: str = None, error: str = None,
     db.commit()
 
     instance_url = pending["instance_url"]
+    # Escape values that came from user input / the remote instance before putting them in HTML.
+    safe_display = html.escape(display)
+    safe_instance = html.escape(instance_url)
     return HTMLResponse(
         "<html><head><style>"
         "body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;"
@@ -144,7 +147,7 @@ async def oauth_callback(code: str = None, state: str = None, error: str = None,
         "div{text-align:center;} h2{color:#4caf50;}"
         "</style></head><body><div>"
         "<h2>✓ Pleroma connected!</h2>"
-        f"<p>Logged in as <strong>@{display}</strong> on <strong>{instance_url}</strong>.</p>"
+        f"<p>Logged in as <strong>@{safe_display}</strong> on <strong>{safe_instance}</strong>.</p>"
         "<p>You can close this tab and return to PosterChanAI.</p>"
         "<script>if(window.opener){{window.opener.postMessage('pleroma_connected','*');}}"
         "setTimeout(()=>window.close(),3000);</script>"

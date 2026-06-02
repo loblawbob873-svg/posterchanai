@@ -1,5 +1,6 @@
 """Misskey integration endpoints — MiAuth flow and note posting."""
 
+import html
 import uuid
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -75,7 +76,7 @@ async def miauth_callback(session: str, db: Session = Depends(get_db)):
         logger.error(f"MiAuth check failed: {e}")
         return HTMLResponse(
             "<html><body><h2>Authorization check failed.</h2>"
-            f"<p>{e}</p><p>Please go back and try again.</p></body></html>",
+            f"<p>{html.escape(str(e))}</p><p>Please go back and try again.</p></body></html>",
             status_code=502,
         )
 
@@ -114,7 +115,7 @@ async def miauth_callback(session: str, db: Session = Depends(get_db)):
         "</style></head><body><div>"
         "<h2>✓ Misskey connected!</h2>"
         "<p>Your account has been linked to <strong>"
-        + instance_url
+        + html.escape(instance_url)
         + "</strong>.</p>"
         "<p>You can close this tab and return to PosterChanAI.</p>"
         "<script>if(window.opener){window.opener.postMessage('misskey_connected','*');}"

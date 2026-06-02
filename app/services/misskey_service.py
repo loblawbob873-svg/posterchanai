@@ -90,12 +90,17 @@ async def fetch_notifications(instance_url: str, token: str, since_id: str | Non
 
 
 def build_miauth_url(instance_url: str, session_id: str, callback_url: str, app_name: str = "PosterChanAI") -> str:
-    """Build the MiAuth authorization URL to redirect the user to."""
+    """Build the MiAuth authorization URL to redirect the user to.
+
+    Note: `callback` is intentionally NOT percent-encoded — Misskey's MiAuth expects the
+    raw callback URL here, and ours is a fixed internal path (no special chars). `name`
+    encoded for safety; `permission` must stay literal (Misskey parses it unencoded).
+    """
+    from urllib.parse import quote
     base = instance_url.rstrip("/")
-    callback_encoded = httpx.URL(callback_url).__str__()
     return (
         f"{base}/miauth/{session_id}"
-        f"?name={app_name}"
-        f"&callback={callback_encoded}"
+        f"?name={quote(app_name)}"
+        f"&callback={callback_url}"
         f"&permission=read:notifications,write:notes"
     )
