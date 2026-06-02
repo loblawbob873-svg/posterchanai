@@ -39,6 +39,10 @@ VIDEO_PRESET = 'fast'
 VIDEO_MAX_RESOLUTION = (1280, 720)
 VIDEO_AUDIO_BITRATE = '96k'
 
+# Clip keeps the source resolution (it's a trim, not a shrink) so use a higher
+# quality target than the compression path.
+CLIP_CRF = 23
+
 # Cap how many PDF pages we rasterize at once to bound memory and output count.
 PDF_MAX_PAGES = 50
 
@@ -75,6 +79,42 @@ def _human_size(size_bytes: int) -> str:
             return f"{size:.1f} {unit}"
         size /= 1024
     return f"{size:.1f} TB"
+
+
+def parse_timecode(value: str) -> Optional[float]:
+    """Parse a user-supplied time into seconds, or None if unparseable.
+
+    Accepts plain seconds ("90", "12.5"), "M:SS", or "H:MM:SS" (each part may
+    carry a fractional component, e.g. "1:30.5"). Negative values are rejected.
+    """
+    s = (value or "").strip()
+    if not s:
+        return None
+    try:
+        if ":" in s:
+            parts = s.split(":")
+            if len(parts) > 3:
+                return None
+            seconds = 0.0
+            for part in parts:
+                seconds = seconds * 60 + float(part)
+        else:
+            seconds = float(s)
+    except ValueError:
+        return None
+    return seconds if seconds >= 0 else None
+
+
+def _fmt_time(seconds: Optional[float]) -> str:
+    """Render seconds as H:MM:SS / M:SS for summaries ('end' if None)."""
+    if seconds is None:
+        return "end"
+    total = int(round(seconds))
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
 
 
 _FFMPEG_BIN = None  # cached resolved ffmpeg path
@@ -289,6 +329,129 @@ def compress_video(
         raise RuntimeError(f"video compression failed (tried {candidates}): {last_err}")
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# Video clipping (trim a [start, end] span — same ffmpeg/HW-accel path as compress)
+# ---------------------------------------------------------------------------
+
+def _clip_encode_cmd(ffmpeg, encoder, in_path, out_path, start, duration, crf):
+    """Build an ffmpeg command that trims [start, start+duration] and re-encodes.
+
+    Re-encodes (rather than stream-copying) so the cut is frame-accurate and the
+    output is always a clean, faststart MP4. Resolution is preserved — this is a
+    trim, not a downscale. Uses the same GPU encoders as compression when present.
+    `-ss` is placed before `-i` for a fast keyframe seek; `-t` bounds the length.
+    """
+    seek = ['-ss', f'{start}']
+    pre, vf = [], None
+    if encoder == "h264_nvenc":
+        venc = ['-c:v', 'h264_nvenc', '-preset', 'p5', '-cq', str(crf)]
+    elif encoder == "h264_vaapi":
+        pre = ['-vaapi_device', _render_node()]
+        vf = 'format=nv12,hwupload'                       # CPU decode → upload to GPU surface
+        venc = ['-c:v', 'h264_vaapi', '-qp', str(crf)]
+    elif encoder == "h264_amf":
+        venc = ['-c:v', 'h264_amf', '-rc', 'cqp', '-qp_i', str(crf), '-qp_p', str(crf)]
+    else:  # libx264
+        venc = ['-c:v', 'libx264', '-preset', VIDEO_PRESET, '-crf', str(crf)]
+    cmd = [ffmpeg] + pre + seek + ['-i', in_path]
+    if duration is not None:
+        cmd += ['-t', f'{duration}']
+    if vf:
+        cmd += ['-vf', vf]
+    cmd += venc + ['-c:a', 'aac', '-b:a', VIDEO_AUDIO_BITRATE, '-movflags', '+faststart', '-y', out_path]
+    return cmd
+
+
+def clip_video(
+    data: bytes,
+    source_filename: str,
+    start: float,
+    end: Optional[float] = None,
+    crf: int = CLIP_CRF,
+) -> bytes:
+    """Trim a video to the [start, end] span and return MP4 bytes.
+
+    `start`/`end` are seconds (end=None clips to the end of the video). Uses GPU
+    acceleration when available (NVENC / VAAPI), falling back to libx264 (CPU),
+    exactly like compress_video. Raises on bad times or if every encoder fails.
+    """
+    global _video_encoder_cache
+    ffmpeg = resolve_ffmpeg()
+    if not ffmpeg_available():
+        raise RuntimeError("ffmpeg is not installed on the server")
+    if start is None or start < 0:
+        raise ValueError("start time is required")
+    if end is not None and end <= start:
+        raise ValueError("end time must be after the start time")
+    duration = None if end is None else (end - start)
+
+    tmp_dir = tempfile.mkdtemp(prefix="media_clip_")
+    in_suffix = _ext(source_filename) or ".mp4"
+    in_path = os.path.join(tmp_dir, f"input{in_suffix}")
+    out_path = os.path.join(tmp_dir, "output.mp4")
+    try:
+        with open(in_path, "wb") as f:
+            f.write(data)
+
+        candidates = _video_encoder_candidates(ffmpeg)
+        # Reuse the encoder that worked last time to skip re-probing dead GPUs.
+        if _video_encoder_cache and _video_encoder_cache in candidates:
+            candidates = [_video_encoder_cache] + [c for c in candidates if c != _video_encoder_cache]
+
+        last_err = ""
+        for encoder in candidates:
+            cmd = _clip_encode_cmd(ffmpeg, encoder, in_path, out_path, start, duration, crf)
+            result = subprocess.run(cmd, capture_output=True, timeout=3600, text=True)
+            if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+                if encoder != "libx264":
+                    logger.info(f"Video clipped with GPU encoder: {encoder}")
+                _video_encoder_cache = encoder
+                with open(out_path, "rb") as f:
+                    return f.read()
+            last_err = (result.stderr or "")[-300:]
+            logger.warning(f"Clip encoder {encoder} failed, trying next: {last_err}")
+            if os.path.exists(out_path):
+                os.unlink(out_path)
+
+        raise RuntimeError(f"video clip failed (tried {candidates}): {last_err}")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def clip_attachment(
+    attachments: List[Tuple[str, bytes, str]],
+    start: float,
+    end: Optional[float] = None,
+) -> Tuple[List[OutputFile], str]:
+    """Clip the first video attachment to [start, end].
+
+    Returns (output_files, summary_text). Mirrors compress_attachments so the
+    web UI, Telegram and Matrix all share one delivery path.
+    """
+    videos = [(fn, data, ct) for fn, data, ct in (attachments or []) if is_video(fn, ct)]
+    if not videos:
+        return [], "No video to clip — attach a video file first."
+
+    filename, data, content_type = videos[0]
+    stem = Path(filename).stem or "video"
+    try:
+        clipped = clip_video(data, filename, start, end)
+        out: OutputFile = {
+            "filename": f"{stem}_clip.mp4",
+            "data": clipped,
+            "content_type": "video/mp4",
+        }
+        span = f"{_fmt_time(start)}–{_fmt_time(end)}"
+        summary = (
+            f"## ✂️ Clip\n\n"
+            f"🎬 {filename}: {span} → {_human_size(len(clipped))}"
+        )
+        return [out], summary
+    except Exception as e:
+        logger.error(f"clip failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
 
 
 # ---------------------------------------------------------------------------

@@ -198,6 +198,7 @@ class CommandService:
         "translate": "Translate: translate <text> to <lang>",
         "4chan": "4chan browser: 4chan [g|pol|h] - view catalog",
         "compress": "Compress attached image(s) or video(s)",
+        "clip": "Clip an attached video: clip <start> <end> (e.g. clip 0:10 0:30)",
         "convert": "Convert image(s) to PDF or a PDF to images",
         "node": "Remote node mgmt: node <name> <cmd> | node all <cmd> | node agent <name> <goal> | node list | node jobs | node log <id> | node kill <id>",
         "budget": "Show your budget summary (income, unpaid bills, remaining)",
@@ -324,6 +325,8 @@ class CommandService:
             return await self._4chan_command(arg)
         elif command == "compress":
             return await self._compress_command(attachments)
+        elif command == "clip":
+            return await self._clip_command(arg, attachments)
         elif command == "convert":
             return await self._convert_command(arg, attachments)
         elif command == "node":
@@ -2734,6 +2737,45 @@ Files are saved to your Storage.""",
 
         # ffmpeg transcodes can block; run off the event loop.
         outputs, summary = await asyncio.to_thread(compress_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _clip_command(self, arg: str, attachments: Optional[list]) -> dict:
+        """Trim an attached video to a [start, end] span: `clip <start> <end>`.
+
+        Times accept seconds or M:SS / H:MM:SS. Telegram drives an interactive
+        flow; the web UI and Matrix pass both times in the command argument.
+        """
+        from app.services.media_service import clip_attachment, parse_timecode, is_video
+
+        if not attachments:
+            return {
+                "type": "text",
+                "content": "Attach a video, then send `clip <start> <end>` — e.g. `clip 0:10 0:30`.",
+            }
+        if not any(is_video(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "No video attachment found to clip."}
+
+        parts = (arg or "").split()
+        if len(parts) < 2:
+            return {
+                "type": "text",
+                "content": "Usage: `clip <start> <end>` — e.g. `clip 0:10 0:30` or `clip 90 120`.",
+            }
+        start = parse_timecode(parts[0])
+        end = parse_timecode(parts[1])
+        if start is None or end is None:
+            return {
+                "type": "text",
+                "content": "Couldn't read those times. Use seconds or M:SS / H:MM:SS, e.g. `clip 0:10 1:30`.",
+            }
+        if end <= start:
+            return {"type": "text", "content": "The end time must be after the start time."}
+
+        import asyncio
+        # ffmpeg clipping can block; run it off the event loop.
+        outputs, summary = await asyncio.to_thread(clip_attachment, attachments, start, end)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}

@@ -691,13 +691,14 @@ _HELP_SECTIONS = {
         "• 🔤 Read text — OCR the text out of the image\n"
         "• 📣 Post to social — share it to your connected platforms\n\n"
         "*Video:*\n"
-        "• 🗜 Compress — re-encode smaller (H.264, 720p)\n\n"
+        "• 🗜 Compress — re-encode smaller (H.264, 720p)\n"
+        "• ✂️ Clip — trim to a start/end time (I'll ask for both)\n\n"
         "*PDF:*\n"
         "• 🖼 To images — one PNG per page\n"
         "• 📝 Summarize — AI summary of the document\n\n"
         "Tips:\n"
         "• Send several images, then tap *To PDF*, to merge them into one PDF.\n"
-        "• You can also skip the buttons: send the file with `compress` or `convert` as the caption.\n"
+        "• You can also skip the buttons: send the file with `compress`, `clip 0:10 0:30` or `convert` as the caption.\n"
         "• Telegram limits bot downloads to 20 MB — use the web UI for bigger files."
     ),
     "youtube": (
@@ -1197,6 +1198,14 @@ _youtube_action_cache: dict = {}
 _media_action_cache: dict = {}
 _MEDIA_ACTION_TTL = 600  # seconds
 
+# Interactive "✂️ Clip video" flow: after the user taps Clip we ForceReply for a
+# start time, then an end time. State for the two-step prompt lives here, keyed by
+# chat_id → {"start": float, "ts": float}; the source video stays in the media cache.
+_clip_pending: dict = {}
+# ForceReply prompt texts — matched verbatim to route the user's replies.
+_CLIP_START_PROMPT = "✂️ Clip — reply with the START time (e.g. 0:10 or 90):"
+_CLIP_END_PROMPT = "✂️ Clip — reply with the END time (e.g. 0:30 or 1:30):"
+
 
 def _media_action_keyboard(attachments: list, user=None) -> Optional[dict]:
     """Build an inline keyboard offering actions for uploaded files.
@@ -1213,7 +1222,10 @@ def _media_action_keyboard(attachments: list, user=None) -> Optional[dict]:
     _social = bool(user and (_has_misskey(user) or _has_pleroma(user) or _has_matrix(user)))
     rows = []
     if has_video:
-        rows.append([{"text": "🗜 Compress video", "callback_data": "media:compress"}])
+        rows.append([
+            {"text": "🗜 Compress video", "callback_data": "media:compress"},
+            {"text": "✂️ Clip video", "callback_data": "media:clip"},
+        ])
     if has_image:
         rows.append([
             {"text": "🗜 Compress", "callback_data": "media:compress"},
@@ -1407,6 +1419,73 @@ async def _handle_telegram_update(update: dict, db: Session):
                     reply_to = {}
                     reply_text = ""
 
+            # Interactive video-clip flow: replies to the start/end ForceReply prompts.
+            # Handled here (before social-reply/command routing) since it spans two
+            # steps and pulls the source video from the media-action cache.
+            if reply_from.get("is_bot") and reply_text.strip() in (_CLIP_START_PROMPT, _CLIP_END_PROMPT):
+                from app.services.media_service import parse_timecode, clip_attachment, is_video
+                _val = parse_timecode(text.strip())
+                if reply_text.strip() == _CLIP_START_PROMPT:
+                    if _val is None:
+                        await telegram_service.send_message(
+                            chat_id, "⚠️ Couldn't read that time. " + _CLIP_START_PROMPT,
+                            reply_markup={"force_reply": True, "selective": True,
+                                          "input_field_placeholder": "0:10"},
+                        )
+                        return {"ok": True}
+                    _clip_pending[chat_id] = {"start": _val, "ts": time.time()}
+                    await telegram_service.send_message(
+                        chat_id, _CLIP_END_PROMPT,
+                        reply_markup={"force_reply": True, "selective": True,
+                                      "input_field_placeholder": "0:30"},
+                    )
+                    return {"ok": True}
+
+                # End-time reply → validate against the stored start, then clip.
+                if _val is None:
+                    await telegram_service.send_message(
+                        chat_id, "⚠️ Couldn't read that time. " + _CLIP_END_PROMPT,
+                        reply_markup={"force_reply": True, "selective": True,
+                                      "input_field_placeholder": "0:30"},
+                    )
+                    return {"ok": True}
+                _pending = _clip_pending.get(chat_id)
+                if not _pending or (time.time() - _pending.get("ts", 0)) > _MEDIA_ACTION_TTL:
+                    _clip_pending.pop(chat_id, None)
+                    await telegram_service.send_message(chat_id, "⏳ That clip request expired — tap ✂️ Clip video again.")
+                    return {"ok": True}
+                _entry = _media_action_cache.get(chat_id)
+                if not _entry or (time.time() - _entry.get("ts", 0)) > _MEDIA_ACTION_TTL:
+                    _media_action_cache.pop(chat_id, None)
+                    _clip_pending.pop(chat_id, None)
+                    await telegram_service.send_message(chat_id, "⏳ That upload expired — please send the video again.")
+                    return {"ok": True}
+                _start = _pending["start"]
+                if _val <= _start:
+                    await telegram_service.send_message(
+                        chat_id, "⚠️ The end time must be after the start. " + _CLIP_END_PROMPT,
+                        reply_markup={"force_reply": True, "selective": True,
+                                      "input_field_placeholder": "0:30"},
+                    )
+                    return {"ok": True}
+                _clip_pending.pop(chat_id, None)
+                _atts = [a for a in _entry["attachments"] if is_video(a[0], a[2])]
+                await telegram_service.send_message(chat_id, "✂️ Clipping…")
+                try:
+                    _outs, _summary = await asyncio.to_thread(clip_attachment, _atts, _start, _val)
+                    if not _outs:
+                        await telegram_service.send_message(chat_id, _summary)
+                    else:
+                        await telegram_service.send_message(chat_id, _summary)
+                        for _f in _outs:
+                            if _f.get("data"):
+                                await telegram_service.send_document_bytes(chat_id, _f["data"], _f.get("filename", "clip.mp4"))
+                                await asyncio.sleep(0.15)
+                except Exception as _clip_err:
+                    logger.error(f"Clip failed: {_clip_err}", exc_info=True)
+                    await telegram_service.send_message(chat_id, f"❌ Clip failed: {_clip_err}")
+                return {"ok": True}
+
             # Reply to a forwarded social notification → post it back to that platform.
             # Checked before command/intent handling so the freeform reply isn't misread.
             _reply_msg_id = (reply_to or {}).get("message_id")
@@ -1518,7 +1597,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "convert", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -1742,7 +1821,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "convert", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -1947,7 +2026,7 @@ async def _handle_telegram_update(update: dict, db: Session):
 
             # If we have images, always run OCR for later use
             # (skip for compress/convert — they operate on the raw file, not its text)
-            if has_images and attachments and command not in ("compress", "convert"):
+            if has_images and attachments and command not in ("compress", "clip", "convert"):
                 for filename, file_data, content_type in attachments:
                     if content_type.startswith("image/"):
                         import base64
@@ -1994,7 +2073,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Attachment too large for Telegram to hand to the bot (20 MB cap).
             # Handle here so it works whether or not a command caption was given,
             # instead of falling through to the chat model.
-            if oversized_attachment and command in ("compress", "convert", None):
+            if oversized_attachment and command in ("compress", "clip", "convert", None):
                 _ov_name, _ov_size = oversized_attachment
                 _cap_mb = TELEGRAM_MAX_DOWNLOAD_BYTES / (1024 * 1024)
                 if telegram_service.is_local_api:
@@ -2963,6 +3042,18 @@ async def _handle_telegram_update(update: dict, db: Session):
                     if _action == "compress":
                         await telegram_service.send_message(chat_id, "🗜 Compressing…")
                         await _send_files_result(await cb_command_service.execute_command("compress", "", attachments=_atts))
+                    elif _action == "clip":
+                        # Kick off the interactive trim: ask for the start time. The end
+                        # time is requested after the user replies (see ForceReply routing).
+                        if not any(is_video(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to clip — that upload has no video.")
+                        else:
+                            _clip_pending.pop(chat_id, None)
+                            await telegram_service.send_message(
+                                chat_id, _CLIP_START_PROMPT,
+                                reply_markup={"force_reply": True, "selective": True,
+                                              "input_field_placeholder": "0:10"},
+                            )
                     elif _action == "topdf":
                         _imgs = [a for a in _atts if is_image(a[0], a[2])]
                         await _send_files_result(await cb_command_service.execute_command("convert", "pdf", attachments=_imgs))
