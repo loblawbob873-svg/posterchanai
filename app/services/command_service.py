@@ -96,9 +96,11 @@ def _capture_full_page(url: str, width: int = 1280, timeout: int = 60) -> bytes:
     out = os.path.join(tmpdir, "shot.png")
     try:
         with _screenshot_lock:
+            # Width only (no height) → Firefox captures the FULL page height at this
+            # width; passing a height (e.g. 1280,1080) crops to just that viewport.
             proc = subprocess.run(
                 [firefox, "--headless", "--new-instance",
-                 f"--window-size={width},1080", "--screenshot", out, url],
+                 f"--window-size={width}", "--screenshot", out, url],
                 timeout=timeout, capture_output=True,
             )
         if not os.path.exists(out) or os.path.getsize(out) == 0:
