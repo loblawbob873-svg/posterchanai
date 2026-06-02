@@ -3086,6 +3086,15 @@ async def _handle_telegram_update(update: dict, db: Session):
                 parts = data.split(":")
                 action = parts[1] if len(parts) > 1 else ""
 
+                # 4chan buttons carry numeric offsets / thread ids in parts[3:]. A stale or
+                # tampered button with a non-numeric value would raise ValueError on int() —
+                # bail gracefully instead.
+                if any(p and not p.lstrip("-").isdigit() for p in parts[3:]):
+                    await telegram_service.answer_callback_query(
+                        callback_query_id, text="That button is no longer valid — reopen the menu.",
+                        show_alert=True)
+                    return {"ok": True}
+
                 if action == "select":
                     # Show board selector
                     await telegram_service.send_message(
