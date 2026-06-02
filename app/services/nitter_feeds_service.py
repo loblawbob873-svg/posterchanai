@@ -22,6 +22,7 @@ from lxml import etree, html as lxml_html
 from sqlalchemy.orm import Session
 
 from app.models import User, Setting, UserSetting
+from app.services.proxy_utils import get_proxy_config
 from app.services.telegram_service import TelegramService
 
 logger = logging.getLogger(__name__)
@@ -262,7 +263,14 @@ async def poll_once(db: Session) -> None:
     users = db.query(User).filter(User.telegram_chat_id.isnot(None)).all()
     if not users:
         return
-    async with httpx.AsyncClient(follow_redirects=True) as client:
+    # Route all Nitter requests (RSS fetches + media/avatar downloads) through the
+    # built-in proxy, matching 4chan/searx. The client is shared across users below.
+    client_kw = {"follow_redirects": True}
+    proxy_config = get_proxy_config()
+    if proxy_config:
+        client_kw["proxy"] = proxy_config
+        logger.debug("[nitter] requests via proxy: %s", proxy_config)
+    async with httpx.AsyncClient(**client_kw) as client:
         for user in users:
             try:
                 await _poll_user(db, tg, user, client)
