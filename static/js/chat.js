@@ -532,6 +532,10 @@ class ChatHandler {
                 const socialNotifEnabledEl = document.getElementById('socialNotifEnabled');
                 if (socialNotifEnabledEl) settings.social_notif_enabled = socialNotifEnabledEl.checked;
 
+                // Nitter RSS feeds → image cards → Telegram
+                const nitterFeedsEl = document.getElementById('nitterFeeds');
+                if (nitterFeedsEl) settings.nitter_feeds = nitterFeedsEl.value;
+
                 // Misskey — only persist the instance URL from the form (token is managed via MiAuth)
                 const misskeyInstanceUrlEl = document.getElementById('misskeyInstanceUrl');
                 if (misskeyInstanceUrlEl) settings.misskey_instance_url = misskeyInstanceUrlEl.value.trim();
@@ -797,6 +801,9 @@ class ChatHandler {
 
                 const socialNotifEnabled = document.getElementById('socialNotifEnabled');
                 if (socialNotifEnabled) socialNotifEnabled.checked = !!settings.social_notif_enabled;
+
+                const nitterFeeds = document.getElementById('nitterFeeds');
+                if (nitterFeeds) nitterFeeds.value = settings.nitter_feeds || '';
 
                 // Misskey settings
                 const misskeyInstanceUrl = document.getElementById('misskeyInstanceUrl');

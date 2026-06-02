@@ -227,6 +227,13 @@ async def startup():
             except Exception as e:
                 logging.error(f"Error starting social notifications scheduler: {e}", exc_info=True)
 
+            try:
+                # Start Nitter feeds poller (per-user RSS → image cards → Telegram)
+                from app.services.nitter_feeds_service import start_nitter_feeds_scheduler
+                start_nitter_feeds_scheduler()
+            except Exception as e:
+                logging.error(f"Error starting nitter feeds scheduler: {e}", exc_info=True)
+
         else:
             logging.info(f"Schedulers disabled on port {app_port} (only run on port 3051)")
 
@@ -369,6 +376,13 @@ async def shutdown():
         # Stop Logs scheduler
         from app.services.logs_scheduler import stop_logs_scheduler
         stop_logs_scheduler()
+
+        # Stop Nitter feeds poller
+        try:
+            from app.services.nitter_feeds_service import stop_nitter_feeds_scheduler
+            stop_nitter_feeds_scheduler()
+        except Exception:
+            pass
 
     # Stop MCP server
     from app.services.mcp_service import stop_mcp_server

@@ -444,6 +444,8 @@ class UserSettingsUpdate(BaseModel):
     finance_api_key: Optional[str] = None
     # Relay social notifications (Misskey/Pleroma/Matrix) to Telegram
     social_notif_enabled: Optional[bool] = None
+    # Nitter RSS feeds (newline-separated URLs) posted as image cards to Telegram
+    nitter_feeds: Optional[str] = None
 
 
 class UserSettingsResponse(BaseModel):
@@ -489,6 +491,8 @@ class UserSettingsResponse(BaseModel):
     finance_has_api_key: bool = False
     # Relay social notifications (Misskey/Pleroma/Matrix) to Telegram
     social_notif_enabled: bool = False
+    # Nitter RSS feeds (newline-separated URLs) posted as image cards to Telegram
+    nitter_feeds: str = ""
 
 
 class TestConnectionRequest(BaseModel):

@@ -108,8 +108,12 @@ class TelegramService:
             logger.error(f"Failed to send Telegram message: {e}")
             return {"ok": False, "error": str(e)}
     
-    async def send_photo(self, chat_id: str, photo_data: str, caption: str = None, reply_markup: dict = None) -> dict:
-        """Send a photo to a Telegram chat. Can accept URL or base64 data."""
+    async def send_photo(self, chat_id: str, photo_data: str, caption: str = None, reply_markup: dict = None, parse_mode: str = "Markdown") -> dict:
+        """Send a photo to a Telegram chat. Can accept URL or base64 data.
+
+        `parse_mode` defaults to Markdown for backward compatibility; pass "" to send the
+        caption as plain text (e.g. when it contains a bare URL whose `_` would otherwise
+        be mangled by Markdown — Telegram still auto-links bare URLs in plain mode)."""
         import base64
         import tempfile
         import os
@@ -158,7 +162,8 @@ class TelegramService:
                     data = {"chat_id": chat_id}
                     if caption:
                         data["caption"] = caption
-                        data["parse_mode"] = "Markdown"
+                        if parse_mode:
+                            data["parse_mode"] = parse_mode
                     if reply_markup:
                         data["reply_markup"] = json.dumps(reply_markup)
                     response = await client.post(url, data=data, files=files)
@@ -170,7 +175,8 @@ class TelegramService:
                     }
                     if caption:
                         payload["caption"] = caption
-                        payload["parse_mode"] = "Markdown"
+                        if parse_mode:
+                            payload["parse_mode"] = parse_mode
                     if reply_markup:
                         payload["reply_markup"] = reply_markup
                     response = await client.post(url, json=payload)

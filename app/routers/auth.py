@@ -406,6 +406,13 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         except json.JSONDecodeError:
             pass
 
+    # Nitter feeds (newline-separated RSS URLs) for the Telegram post-card poller
+    nitter_setting = db.query(UserSetting).filter(
+        UserSetting.user_id == current_user.id,
+        UserSetting.key == "nitter_feeds"
+    ).first()
+    nitter_feeds = nitter_setting.value if nitter_setting and nitter_setting.value else ""
+
     return UserSettingsResponse(
         notification_email=current_user.notification_email,
         avatar=avatar_url,
@@ -447,6 +454,7 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         matrix_dm_bot_user_id=current_user.matrix_dm_bot_user_id if hasattr(current_user, 'matrix_dm_bot_user_id') else None,
         finance_has_api_key=bool(current_user.finance_api_key) if hasattr(current_user, 'finance_api_key') else False,
         social_notif_enabled=current_user.social_notif_enabled if hasattr(current_user, 'social_notif_enabled') else False,
+        nitter_feeds=nitter_feeds,
     )
 
 
@@ -520,6 +528,10 @@ def update_user_settings(
             setting.value = value
         else:
             db.add(UserSetting(user_id=current_user.id, key=key, value=value))
+
+    # Save Nitter feeds (newline-separated RSS URLs) for the Telegram post-card poller
+    if settings.nitter_feeds is not None:
+        save_user_setting("nitter_feeds", settings.nitter_feeds.strip())
 
     # Save mail account settings
     if settings.mail_accounts is not None:
