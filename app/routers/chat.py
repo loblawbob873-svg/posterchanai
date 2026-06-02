@@ -411,7 +411,7 @@ def get_messages(
         if msg.image_path:
             filename = Path(msg.image_path).name
             from urllib.parse import quote
-            msg_dict["image_path"] = f"/api/files/{quote(current_user.username, safe='')}/{conversation_id}/{filename}"
+            msg_dict["image_path"] = f"/api/files/{quote(current_user.username, safe='')}/{conversation_id}/{quote(filename)}"
         result.append(msg_dict)
     return result
 
