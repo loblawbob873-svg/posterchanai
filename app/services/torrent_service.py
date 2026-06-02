@@ -45,6 +45,44 @@ def get_torrent_base_url(db: Session) -> str:
     return DEFAULT_TORRENT_URL
 
 
+# Public trackers added to magnets built from a bare infohash (the JSON API only
+# returns the hash, not a full magnet URI).
+_MAGNET_TRACKERS = (
+    "udp://tracker.opentrackr.org:1337/announce",
+    "udp://open.tracker.cl:1337/announce",
+    "udp://tracker.openbittorrent.com:6969/announce",
+    "udp://exodus.desync.com:6969/announce",
+    "udp://tracker.torrent.eu.org:451/announce",
+)
+
+
+def _format_size(num_bytes) -> str:
+    """Human-readable size from a byte count (TorrentGalaxy JSON gives raw bytes)."""
+    try:
+        size = float(num_bytes)
+    except (TypeError, ValueError):
+        return "N/A"
+    for unit in ("B", "KB", "MB", "GB", "TB", "PB"):
+        if size < 1024 or unit == "PB":
+            return f"{size:.0f} {unit}" if unit in ("B", "KB") else f"{size:.2f} {unit}"
+        size /= 1024
+    return "N/A"
+
+
+def _build_magnet(infohash: str, name: str) -> str:
+    """Construct a magnet URI from a SHA1 infohash + display name + public trackers."""
+    from urllib.parse import quote
+    h = (infohash or "").strip()
+    if not h:
+        return ""
+    magnet = f"magnet:?xt=urn:btih:{h}"
+    if name:
+        magnet += f"&dn={quote(name)}"
+    for tr in _MAGNET_TRACKERS:
+        magnet += f"&tr={quote(tr)}"
+    return magnet
+
+
 async def scrape_torrents(db: Session, category: str = "movies", limit: int = 15) -> list[TorrentResult]:
     """
     Scrape torrents from the configured torrent site homepage sections.
@@ -268,27 +306,28 @@ async def search_torrents(db: Session, query: str, limit: int = 15) -> list[Torr
     if not query.strip():
         return []
 
-    from urllib.parse import quote_plus
+    from urllib.parse import quote
     base_url = get_torrent_base_url(db)
-    # TorrentGalaxy uses /get-posts/keywords: endpoint
-    search_url = f"{base_url}/get-posts/keywords:{quote_plus(query)}"
+    # TorrentGalaxy renders results client-side from a JSON endpoint; appending
+    # ":format:json" to the keywords search returns the post list directly (each
+    # item carries the infohash, so we build magnets without per-detail fetches).
+    search_url = f"{base_url}/get-posts/keywords:{quote(query)}:format:json/"
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept": "application/json",
         "Accept-Language": "en-US,en;q=0.5",
-        "Accept-Encoding": "gzip, deflate",
     }
 
     # Proxy is REQUIRED for torrent searches (privacy/security)
     from app.services.proxy_utils import require_proxy
     proxy_config = require_proxy("Torrent search")
-    
+
     # Validate proxy config
     if not proxy_config or not isinstance(proxy_config, str):
         logger.error(f"Invalid proxy config for torrent search: {proxy_config}")
         raise ValueError(f"Invalid proxy configuration: {proxy_config}")
-    
+
     results = []
 
     try:
@@ -297,105 +336,32 @@ async def search_torrents(db: Session, query: str, limit: int = 15) -> list[Torr
             logger.info(f"Searching torrents: {search_url}")
             response = await client.get(search_url, headers=headers)
             response.raise_for_status()
+            data = response.json()
 
-            soup = BeautifulSoup(response.text, "lxml")
+        posts = data.get("results", []) if isinstance(data, dict) else []
+        logger.info(f"Found {len(posts)} torrent results (total {data.get('total') if isinstance(data, dict) else '?'})")
 
-            # Find all torrent rows (may have multiple classes like "tgxtablerow txlight")
-            torrent_rows = soup.find_all("div", class_=lambda c: c and "tgxtablerow" in c.split())
-            logger.info(f"Found {len(torrent_rows)} torrent rows")
-
-            # Collect detail URLs first
-            detail_urls = []
-            for row in torrent_rows[:limit]:
-                try:
-                    # Find title link - search uses /post-detail/ links
-                    title_link = row.find("a", href=re.compile(r"/post-detail/"))
-                    if not title_link:
-                        continue
-
-                    title = title_link.get_text(strip=True)
-                    detail_path = title_link.get("href", "")
-                    detail_url = base_url + detail_path if detail_path.startswith("/") else detail_path
-
-                    detail_urls.append((title, detail_url, row))
-                except Exception as e:
-                    logger.debug(f"Error parsing search row: {e}")
+        for post in posts[:limit]:
+            try:
+                infohash = (post.get("h") or "").strip()
+                if not infohash:
                     continue
-
-            logger.info(f"Found {len(detail_urls)} detail URLs from search results")
-
-            # Fetch detail pages to get magnet links (in parallel for speed)
-            import asyncio
-
-            async def fetch_magnet(title, detail_url, row):
-                try:
-                    # Proxy is required - use same proxy config for detail requests
-                    logger.debug(f"Fetching magnet via proxy {proxy_config} for: {detail_url}")
-                    async with httpx.AsyncClient(timeout=10, proxy=proxy_config) as detail_client:
-                        detail_resp = await detail_client.get(detail_url, headers=headers)
-                        detail_soup = BeautifulSoup(detail_resp.text, "lxml")
-                        
-                        # Find magnet link on detail page
-                        magnet_link = detail_soup.find("a", href=re.compile(r"^magnet:\?"))
-                        if not magnet_link:
-                            return None
-
-                        magnet = magnet_link.get("href", "")
-                        if not magnet.startswith("magnet:"):
-                            return None
-
-                        return (title, detail_url, row, magnet)
-                except Exception as e:
-                    logger.debug(f"Error fetching magnet for {title}: {e}")
-                    return None
-
-            # Fetch magnets in parallel
-            logger.info(f"Fetching magnet links for {len(detail_urls)} torrents...")
-            magnet_tasks = [fetch_magnet(title, url, row) for title, url, row in detail_urls]
-            magnet_results = await asyncio.gather(*magnet_tasks)
-
-            successful_magnets = [r for r in magnet_results if r is not None]
-            logger.info(f"Successfully fetched {len(successful_magnets)} magnet links")
-
-            for result in magnet_results:
-                if not result:
-                    continue
-
-                title, detail_url, row, magnet = result
-                try:
-
-                    # Find size
-                    size = "N/A"
-                    row_text = row.get_text()
-                    size_match = re.search(r'(\d+(?:\.\d+)?\s*(?:GB|MB|KB|TB|GiB|MiB))', row_text, re.IGNORECASE)
-                    if size_match:
-                        size = size_match.group(1)
-
-                    # Find seeders/leechers
-                    seeders = 0
-                    leechers = 0
-                    stats_spans = row.find_all("span", class_="badge")
-                    for span in stats_spans:
-                        text = span.get_text(strip=True)
-                        if text.isdigit():
-                            if span.get("title", "").lower() == "seeders":
-                                seeders = int(text)
-                            elif span.get("title", "").lower() == "leechers":
-                                leechers = int(text)
-
-                    results.append(TorrentResult(
-                        title=title,
-                        magnet=magnet,
-                        size=size,
-                        seeders=seeders,
-                        leechers=leechers,
-                        category="search",
-                        url=detail_url
-                    ))
-
-                except Exception as e:
-                    logger.debug(f"Error parsing torrent row: {e}")
-                    continue
+                title = (post.get("n") or "").strip() or infohash
+                magnet = _build_magnet(infohash, title)
+                pk = (post.get("pk") or "").strip()
+                detail_url = f"{base_url}/post-detail/{pk}/" if pk else ""
+                results.append(TorrentResult(
+                    title=title,
+                    magnet=magnet,
+                    size=_format_size(post.get("s")),
+                    seeders=int(post.get("se") or 0),
+                    leechers=int(post.get("le") or 0),
+                    category=(post.get("c") or "search"),
+                    url=detail_url,
+                ))
+            except Exception as e:
+                logger.debug(f"Error parsing search result: {e}")
+                continue
 
     except httpx.HTTPStatusError as e:
         logger.error(f"HTTP error searching torrents: {e.response.status_code} from {search_url}")
