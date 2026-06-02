@@ -70,71 +70,192 @@ def _find_firefox() -> Optional[str]:
     )
 
 
+def _find_chrome() -> Optional[str]:
+    """Locate a Chrome/Chromium binary, or None. Prefers PATH, then common dirs."""
+    import os
+    import shutil
+    return (
+        shutil.which("google-chrome-stable")
+        or shutil.which("google-chrome")
+        or shutil.which("chromium")
+        or shutil.which("chromium-browser")
+        or shutil.which("chrome")
+        or next((c for c in ("/opt/google/chrome/google-chrome",
+                             "/opt/google/chrome/chrome",
+                             "/usr/bin/google-chrome-stable",
+                             "/usr/bin/chromium") if os.path.exists(c)), None)
+    )
+
+
 # Firefox uses its default profile for --screenshot (a fresh `-profile` dir hangs
 # headless), so serialize captures to avoid the profile's single-instance lock.
 _screenshot_lock = threading.Lock()
 
 
-# Firefox `--screenshot` captures at the page `load` event, which is often before a
-# JS-heavy/slow site has painted — producing a blank white page. There's no Firefox
-# CLI "wait" flag, so we capture a few times (keeping the LARGEST PNG) with a short
-# settle between: a blank page compresses to a tiny PNG, and retries run against a
-# warm HTTP/disk cache so the page renders further before the next capture.
-_SCREENSHOT_ATTEMPTS = 3
-_SCREENSHOT_GOOD_BYTES = 50_000  # a capture this big is almost certainly real content
+# A blank/unmounted page compresses to a tiny PNG; this many real seconds of settle
+# after load lets JS-heavy SPAs (Pleroma/Mastodon/Misskey timelines, etc.) hydrate
+# before we capture. Overridable via SCREENSHOT_SETTLE_SECONDS.
+def _screenshot_settle() -> float:
+    import os
+    try:
+        return max(0.0, float(os.environ.get("SCREENSHOT_SETTLE_SECONDS", "5")))
+    except ValueError:
+        return 5.0
 
 
-def _capture_full_page(url: str, width: int = 1280, timeout: int = 60) -> bytes:
-    """Render `url` in headless Firefox and return a full-page PNG (blocking).
+def _capture_full_page_chrome(chrome: str, url: str, width: int, timeout: int) -> bytes:
+    """Render `url` in headless Chrome (driven over CDP) and return a full-page PNG.
 
-    Uses Firefox's built-in `--screenshot` mode (full-page by default) via a
-    subprocess instead of Selenium/geckodriver: the marionette handshake hangs on
-    some Firefox builds, and a subprocess gives a hard, killable timeout with no
-    orphaned browser processes. Captures up to `_SCREENSHOT_ATTEMPTS` times and keeps
-    the largest result to avoid blank/half-loaded pages. Raises RuntimeError/
-    TimeoutExpired on failure.
+    Launches Chrome with a remote-debugging port and talks the DevTools protocol
+    directly (websocket-client) instead of using Selenium/chromedriver — chromedriver's
+    launch handshake stalls ~120s on this host, while Chrome's own DevTools endpoint is
+    ready in ~1s. Navigates, waits a real settle for JS/SPA hydration, then captures
+    with `captureBeyondViewport` for the FULL page height (not just the viewport).
+    """
+    import base64
+    import json
+    import os
+    import shutil
+    import signal
+    import subprocess
+    import tempfile
+    import time
+    import urllib.request
+
+    import websocket  # websocket-client (sync)
+
+    tmp_profile = tempfile.mkdtemp(prefix="chromeshot_")
+    proc = None
+    try:
+        proc = subprocess.Popen(
+            [chrome, "--headless=new", "--no-sandbox", "--disable-gpu",
+             "--disable-dev-shm-usage", "--hide-scrollbars",
+             "--no-first-run", "--no-default-browser-check",
+             "--disable-background-networking", "--disable-component-update",
+             "--disable-sync", "--metrics-recording-only", "--mute-audio",
+             f"--window-size={width},1200",
+             f"--user-data-dir={tmp_profile}",
+             # Newer Chrome rejects DevTools websocket connections whose Origin isn't
+             # allow-listed; we connect locally so allow all origins.
+             "--remote-allow-origins=*",
+             "--remote-debugging-port=0", "about:blank"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,  # own process group → clean kill of all children
+        )
+
+        # Chrome writes the chosen port to DevToolsActivePort once it's ready (~1s).
+        port_file = os.path.join(tmp_profile, "DevToolsActivePort")
+        port = None
+        for _ in range(150):  # up to ~15s
+            if os.path.exists(port_file):
+                try:
+                    port = int(open(port_file).read().splitlines()[0])
+                    break
+                except (ValueError, IndexError):
+                    pass
+            if proc.poll() is not None:
+                raise RuntimeError("Chrome exited before the DevTools port was ready")
+            time.sleep(0.1)
+        if not port:
+            raise RuntimeError("Chrome did not expose a DevTools port in time")
+
+        # Find the page target's websocket URL.
+        targets = json.load(urllib.request.urlopen(f"http://127.0.0.1:{port}/json", timeout=10))
+        ws_url = next((t["webSocketDebuggerUrl"] for t in targets
+                       if t.get("type") == "page" and t.get("webSocketDebuggerUrl")), None)
+        if not ws_url:
+            raise RuntimeError("No Chrome page target to attach to")
+
+        ws = websocket.create_connection(ws_url, timeout=timeout)
+        try:
+            msg_id = 0
+
+            def cmd(method, params=None):
+                nonlocal msg_id
+                msg_id += 1
+                mid = msg_id
+                ws.send(json.dumps({"id": mid, "method": method, "params": params or {}}))
+                while True:  # skip async events until our command's reply arrives
+                    reply = json.loads(ws.recv())
+                    if reply.get("id") == mid:
+                        return reply
+
+            cmd("Page.enable")
+            cmd("Page.navigate", {"url": url})
+            time.sleep(_screenshot_settle())  # real wall-clock for JS/network to settle
+            shot = cmd("Page.captureScreenshot",
+                       {"format": "png", "captureBeyondViewport": True, "fromSurface": True})
+            data = (shot.get("result") or {}).get("data")
+            if not data:
+                raise RuntimeError(f"Chrome returned no screenshot: {shot.get('error')}")
+            png = base64.b64decode(data)
+            if not png:
+                raise RuntimeError("Chrome returned an empty screenshot")
+            return png
+        finally:
+            ws.close()
+    finally:
+        if proc and proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                proc.wait(timeout=5)
+            except Exception:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except Exception:
+                    pass
+        shutil.rmtree(tmp_profile, ignore_errors=True)
+
+
+def _capture_full_page_firefox(firefox: str, url: str, width: int, timeout: int) -> bytes:
+    """Fallback: full-page PNG via Firefox's built-in `--screenshot` (subprocess).
+
+    Kept for hosts without Chrome. Firefox captures at the page `load` event with no
+    wait flag, so JS-heavy pages may come out blank — Chrome (above) is preferred.
     """
     import os
     import shutil
     import subprocess
     import tempfile
-    import time
-
-    firefox = _find_firefox()
-    if not firefox:
-        raise RuntimeError("Firefox not found on the server")
 
     tmpdir = tempfile.mkdtemp(prefix="ffshot_")
-    last_err = ""
-    best = b""
+    out = os.path.join(tmpdir, "shot.png")
     try:
-        for attempt in range(_SCREENSHOT_ATTEMPTS):
-            out = os.path.join(tmpdir, f"shot{attempt}.png")
-            with _screenshot_lock:
-                # Width only (no height) → Firefox captures the FULL page height at this
-                # width; passing a height (e.g. 1280,1080) crops to just that viewport.
-                proc = subprocess.run(
-                    [firefox, "--headless", "--new-instance",
-                     f"--window-size={width}", "--screenshot", out, url],
-                    timeout=timeout, capture_output=True,
-                )
-            if os.path.exists(out) and os.path.getsize(out) > 0:
-                if os.path.getsize(out) > len(best):
-                    with open(out, "rb") as f:
-                        best = f.read()
-                # Got a substantial render — no need to keep retrying.
-                if len(best) >= _SCREENSHOT_GOOD_BYTES:
-                    break
-            else:
-                last_err = (proc.stderr or b"").decode("utf-8", "ignore").strip()[-300:]
-            if attempt < _SCREENSHOT_ATTEMPTS - 1:
-                time.sleep(2)  # let the cache warm / page settle before recapturing
-
-        if not best:
-            raise RuntimeError(f"Firefox produced no screenshot. {last_err}")
-        return best
+        with _screenshot_lock:
+            # Width only (no height) → Firefox captures the FULL page height at this width.
+            proc = subprocess.run(
+                [firefox, "--headless", "--new-instance",
+                 f"--window-size={width}", "--screenshot", out, url],
+                timeout=timeout, capture_output=True,
+            )
+        if not os.path.exists(out) or os.path.getsize(out) == 0:
+            err = (proc.stderr or b"").decode("utf-8", "ignore").strip()
+            raise RuntimeError(f"Firefox produced no screenshot. {err[-300:]}")
+        with open(out, "rb") as f:
+            return f.read()
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def _capture_full_page(url: str, width: int = 1280, timeout: int = 60) -> bytes:
+    """Render `url` and return a full-page PNG (blocking).
+
+    Prefers headless Chrome via Selenium (waits for JS so SPAs aren't blank, true
+    full-page via CDP); falls back to Firefox's `--screenshot` if Chrome is absent.
+    Raises RuntimeError if neither browser is available or capture fails.
+    """
+    chrome = _find_chrome()
+    if chrome:
+        try:
+            return _capture_full_page_chrome(chrome, url, width, timeout)
+        except Exception as e:
+            logger.warning(f"Chrome screenshot failed ({e}); falling back to Firefox if present")
+            if not _find_firefox():
+                raise
+    firefox = _find_firefox()
+    if firefox:
+        return _capture_full_page_firefox(firefox, url, width, timeout)
+    raise RuntimeError("No headless browser found on the server (install google-chrome-stable)")
 
 # Cache for torrent results (per user, per category) - thread-safe with locks
 _torrent_cache: dict[int, dict[str, list[TorrentResult]]] = {}
@@ -654,7 +775,7 @@ class CommandService:
         }
 
     async def _screenshot_command(self, arg: str) -> dict:
-        """Capture a full-page screenshot of a website via headless Firefox.
+        """Capture a full-page screenshot of a website via headless Chrome.
 
         Returns the shared `generated_image` shape so every channel renders it the
         same way: inline in the web UI (with a save button), a photo/document on
@@ -671,15 +792,16 @@ class CommandService:
 
         import subprocess
         try:
-            # Backstop above the subprocess's own timeout so the handler always replies.
-            png = await asyncio.wait_for(asyncio.to_thread(_capture_full_page, url), timeout=75)
+            # Backstop above the browser's own timeout (+ settle, + first-run driver
+            # fetch) so the handler always replies.
+            png = await asyncio.wait_for(asyncio.to_thread(_capture_full_page, url), timeout=100)
         except (asyncio.TimeoutError, subprocess.TimeoutExpired):
             return {"type": "text", "content": f"📸 Timed out capturing {url} — the page took too long to render."}
         except Exception as e:
             logger.error(f"[screenshot] {url}: {e}", exc_info=True)
             msg = str(e)
-            if "firefox not found" in msg.lower():
-                return {"type": "text", "content": f"📸 Couldn't capture {url}: Firefox isn't installed on the server."}
+            if "no headless browser" in msg.lower():
+                return {"type": "text", "content": f"📸 Couldn't capture {url}: no headless browser installed on the server (install google-chrome-stable)."}
             first_line = next((ln for ln in msg.splitlines() if ln.strip()), "unknown error")
             return {"type": "text", "content": f"📸 Couldn't capture {url}: {first_line}"}
 

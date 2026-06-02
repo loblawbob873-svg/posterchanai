@@ -72,6 +72,19 @@ def is_pdf(filename: str, content_type: Optional[str] = None) -> bool:
     return _ext(filename) == ".pdf"
 
 
+def is_animated_gif(filename: str, data: bytes, content_type: Optional[str] = None) -> bool:
+    """True for a multi-frame GIF. Such 'movie' GIFs must be compressed as video —
+    treating them as still images flattens them to a single frame."""
+    if _ext(filename) != ".gif" and content_type != "image/gif":
+        return False
+    try:
+        from PIL import Image
+        with Image.open(io.BytesIO(data)) as im:
+            return bool(getattr(im, "is_animated", False)) and getattr(im, "n_frames", 1) > 1
+    except Exception:
+        return False
+
+
 def _human_size(size_bytes: int) -> str:
     size = float(size_bytes)
     for unit in ("B", "KB", "MB", "GB"):
@@ -542,7 +555,17 @@ def compress_attachments(attachments: List[Tuple[str, bytes, str]]) -> Tuple[Lis
         stem = Path(filename).stem or "file"
         original = len(data)
         try:
-            if is_image(filename, content_type):
+            if is_animated_gif(filename, data, content_type):
+                # Animated GIF → MP4 (H.264): keeps the animation and shrinks hugely.
+                # Treating it as a still image would flatten it to one frame.
+                compressed = compress_video(data, filename)
+                out = _smaller_output(
+                    filename, data, content_type, compressed,
+                    f"{stem}_compressed.mp4", "video/mp4",
+                )
+                outputs.append(out)
+                notes.append(f"🎬 {filename} (animated GIF → MP4): {_human_size(original)} → {_human_size(len(out['data']))}")
+            elif is_image(filename, content_type):
                 compressed = compress_image(data)
                 out = _smaller_output(
                     filename, data, content_type, compressed,

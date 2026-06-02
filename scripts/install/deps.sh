@@ -57,18 +57,31 @@ check_dependencies() {
         print_success "ffmpeg found (music transcoding + video compression available)"
     fi
 
-    # Firefox - needed for the 'screenshot' command (uses Firefox's native --screenshot)
-    if ! command -v firefox &>/dev/null && ! command -v firefox-bin &>/dev/null; then
-        print_warning "firefox not found - the 'screenshot' command will be unavailable"
+    # Browser for the 'screenshot' command. Chrome/Chromium is preferred (driven over
+    # the DevTools protocol — full-page and JS-aware so SPAs render); Firefox is a
+    # fallback (its --screenshot fires before JS paints, so SPAs come out blank).
+    if command -v google-chrome-stable &>/dev/null || command -v google-chrome &>/dev/null \
+       || command -v chromium &>/dev/null || command -v chromium-browser &>/dev/null; then
+        print_success "Chrome/Chromium found (screenshot command available, JS-aware)"
+    elif command -v firefox &>/dev/null || command -v firefox-bin &>/dev/null; then
+        print_warning "only Firefox found - screenshots work but JS-heavy sites (SPAs) may be blank"
+        echo "  For reliable screenshots install Chrome/Chromium:"
         case "$DISTRO" in
-            gentoo) echo "  Install with: emerge -av www-client/firefox-bin" ;;
-            arch)   echo "  Install with: pacman -S firefox" ;;
-            debian) echo "  Install with: apt install firefox-esr" ;;
-            fedora) echo "  Install with: dnf install firefox" ;;
-            *)      echo "  Install firefox for your distribution" ;;
+            gentoo) echo "    emerge -av www-client/google-chrome  (or www-client/chromium)" ;;
+            arch)   echo "    pacman -S chromium" ;;
+            debian) echo "    apt install chromium  (or install google-chrome-stable)" ;;
+            fedora) echo "    dnf install chromium" ;;
+            *)      echo "    install google-chrome-stable or chromium for your distribution" ;;
         esac
     else
-        print_success "firefox found (screenshot command available)"
+        print_warning "no browser found - the 'screenshot' command will be unavailable"
+        case "$DISTRO" in
+            gentoo) echo "  Install with: emerge -av www-client/google-chrome" ;;
+            arch)   echo "  Install with: pacman -S chromium" ;;
+            debian) echo "  Install with: apt install chromium  (or google-chrome-stable)" ;;
+            fedora) echo "  Install with: dnf install chromium" ;;
+            *)      echo "  Install google-chrome-stable or chromium for your distribution" ;;
+        esac
     fi
 
     # Check for pax-utils (scanelf) - needed for Intel Arc on hardened kernels

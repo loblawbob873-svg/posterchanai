@@ -20,7 +20,7 @@ The backend is **Python 3.10+** and **FastAPI**. You can use cloud APIs (OpenAI-
 
 - **Text-to-speech (TTS)** and **speech-to-text (STT)**; Edge TTS and configurable backends
 - **Image generation**: ComfyUI (external) or native diffusers (SDXL); multiple image servers supported
-- **Website screenshots**: full-page capture with the `screenshot <url>` command (also `shot` / `ss`) — works in the web UI, Telegram, and Matrix. Requires headless Firefox (see [Requirements](#requirements)).
+- **Website screenshots**: full-page capture with the `screenshot <url>` command (also `shot` / `ss`) — works in the web UI, Telegram, and Matrix. Uses headless Chrome (JS-aware, so SPAs render), Firefox fallback (see [Requirements](#requirements)).
 - **YouTube** summarization and thumbnails in chat
 
 ### Knowledge & code
@@ -55,9 +55,9 @@ The backend is **Python 3.10+** and **FastAPI**. You can use cloud APIs (OpenAI-
 
 - **Python 3.10+**
 - (Optional) **GPU** and backends for local LLM (Ollama, llama-cpp-python, IPEX-LLM) and image generation (ComfyUI or native diffusers)
-- (Optional) **Headless Firefox** for the `screenshot` command (uses Firefox's built-in `--screenshot` mode — no Selenium/geckodriver):
-  - Gentoo: `emerge www-client/firefox-bin`
-  - Debian/Ubuntu: `apt install firefox-esr`
+- (Optional) **Headless Chrome/Chromium** for the `screenshot` command (driven over the DevTools protocol — full-page and JS-aware, so SPAs render instead of coming out blank; no Selenium/chromedriver). Firefox is used as a fallback if Chrome is absent:
+  - Gentoo: `emerge www-client/google-chrome` (or `www-client/chromium`)
+  - Debian/Ubuntu: `apt install chromium` (or install `google-chrome-stable`)
 
 ---
 
