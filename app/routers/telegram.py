@@ -985,6 +985,34 @@ _finance_bills_cache: dict = {}
 _FIN_INCOME_PROMPT = "💵 Add income — reply: name amount"
 
 
+async def _send_png_as_document(chat_id: str, image_b64: str, caption: str = None) -> bool:
+    """Send a base64 PNG to a chat as a Telegram document. Returns True on success.
+
+    Used as a fallback when send_photo rejects an image — Telegram caps photo
+    dimensions/size, which full-page screenshots routinely exceed; documents don't.
+    """
+    try:
+        import base64 as _b64
+        png = image_b64
+        if isinstance(png, str):
+            if png.startswith("data:image"):
+                png = png.split(",", 1)[1]
+            png = _b64.b64decode(png)
+        res = await telegram_service.send_document_bytes(chat_id, png, "image.png", caption)
+        return bool(res.get("ok"))
+    except Exception as e:
+        logger.error(f"send_png_as_document failed: {e}")
+        return False
+
+
+async def _send_screenshot(chat_id: str, image_b64: str, caption: str) -> None:
+    """Deliver a screenshot to a chat: try as a photo, fall back to document, then text."""
+    photo_result = await telegram_service.send_photo(chat_id, image_b64, caption)
+    if not photo_result.get("ok"):
+        if not await _send_png_as_document(chat_id, image_b64, caption):
+            await telegram_service.send_message(chat_id, f"{caption}\n\n(Screenshot failed to send)")
+
+
 async def _send_budget(chat_id: str, user, db, message_id: int = None) -> None:
     """Render the interactive budget view (summary + a Pay button per unpaid bill).
 
@@ -2348,11 +2376,16 @@ async def _handle_telegram_update(update: dict, db: Session):
                             chat_id,
                             f"🔗 What would you like to do with this link?\n{_fwd_url}",
                             reply_markup={
-                                "inline_keyboard": [[
-                                    {"text": "📋 Summary", "callback_data": "lnk:summary"},
-                                    {"text": "📣 Post",    "callback_data": "lnk:post"},
-                                    {"text": "❌ Cancel",  "callback_data": "lnk:cancel"},
-                                ]]
+                                "inline_keyboard": [
+                                    [
+                                        {"text": "📋 Summary",    "callback_data": "lnk:summary"},
+                                        {"text": "📸 Screenshot", "callback_data": "lnk:screenshot"},
+                                    ],
+                                    [
+                                        {"text": "📣 Post",   "callback_data": "lnk:post"},
+                                        {"text": "❌ Cancel", "callback_data": "lnk:cancel"},
+                                    ],
+                                ]
                             },
                         )
                         return {"ok": True}
@@ -2542,11 +2575,16 @@ async def _handle_telegram_update(update: dict, db: Session):
                             chat_id,
                             f"🔗 What would you like to do with this link?\n{urls[0]}",
                             reply_markup={
-                                "inline_keyboard": [[
-                                    {"text": "📋 Summary", "callback_data": "lnk:summary"},
-                                    {"text": "📣 Post",    "callback_data": "lnk:post"},
-                                    {"text": "❌ Cancel",  "callback_data": "lnk:cancel"},
-                                ]]
+                                "inline_keyboard": [
+                                    [
+                                        {"text": "📋 Summary",    "callback_data": "lnk:summary"},
+                                        {"text": "📸 Screenshot", "callback_data": "lnk:screenshot"},
+                                    ],
+                                    [
+                                        {"text": "📣 Post",   "callback_data": "lnk:post"},
+                                        {"text": "❌ Cancel", "callback_data": "lnk:cancel"},
+                                    ],
+                                ]
                             },
                         )
                         return {"ok": True}
@@ -2687,21 +2725,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     logger.error(f"Failed to send photo: {photo_result}")
                     # Telegram rejects photos that are too tall/large (common for full-page
                     # screenshots) — retry as a document, which has far looser limits.
-                    _doc_sent = False
-                    try:
-                        import base64 as _ss_b64
-                        _png = image_data
-                        if isinstance(_png, str):
-                            if _png.startswith("data:image"):
-                                _png = _png.split(",", 1)[1]
-                            _png = _ss_b64.b64decode(_png)
-                        _doc_result = await telegram_service.send_document_bytes(
-                            chat_id, _png, "image.png", response_content
-                        )
-                        _doc_sent = _doc_result.get("ok", False)
-                    except Exception as _doc_err:
-                        logger.error(f"Document fallback failed: {_doc_err}")
-                    if not _doc_sent:
+                    if not await _send_png_as_document(chat_id, image_data, response_content):
                         await telegram_service.send_message(chat_id, f"{response_content}\n\n(Image failed to send)")
                 else:
                     # Offer to share the generated image to configured social platforms
@@ -3507,6 +3531,20 @@ async def _handle_telegram_update(update: dict, db: Session):
                     except Exception as lnk_err:
                         logger.error(f"Link post generation error: {lnk_err}", exc_info=True)
                         await telegram_service.send_message(chat_id, f"Error generating post: {lnk_err}")
+
+                elif action == "screenshot":
+                    await telegram_service.send_message(chat_id, "⏳ Capturing screenshot, please wait...")
+                    try:
+                        lnk_cmd_service = CommandService(db, user=lnk_user)
+                        shot_result = await lnk_cmd_service.execute_command("screenshot", cached_url)
+                        if shot_result.get("type") == "generated_image" and shot_result.get("image"):
+                            await _send_screenshot(chat_id, shot_result["image"], shot_result.get("content", cached_url))
+                        else:
+                            # error text from the command (e.g. Firefox missing / capture failed)
+                            await telegram_service.send_message(chat_id, shot_result.get("content", "Screenshot failed."))
+                    except Exception as lnk_err:
+                        logger.error(f"Link screenshot error: {lnk_err}", exc_info=True)
+                        await telegram_service.send_message(chat_id, f"Error capturing screenshot: {lnk_err}")
 
             elif data.startswith("yt:"):
                 action = data.split(":", 1)[1]
