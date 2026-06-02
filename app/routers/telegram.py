@@ -1333,7 +1333,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                 "🔍 What would you like to search for?": "search",
                 "🖼 What images would you like to search for?": "images",
                 "🎨 Describe the image you want to generate:": "geni",
-                "💰 Add a bill — reply: name amount [income]": "addbill",
+                "💰 Add a bill — reply: name amount": "addbill",
             }
             reply_from = (reply_to or {}).get("from", {})
             if reply_from.get("is_bot") and text.strip():
@@ -3280,7 +3280,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                 elif action == "add":
                     await telegram_service.send_message(
                         chat_id,
-                        "💰 Add a bill — reply: name amount [income]",
+                        "💰 Add a bill — reply: name amount",
                         reply_markup={"force_reply": True, "selective": True,
                                       "input_field_placeholder": "e.g. Rent 1200"},
                     )
