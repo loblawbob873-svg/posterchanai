@@ -6,6 +6,26 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# Telegram rejects messages longer than 4096 chars; split with a safety margin.
+_TELEGRAM_MSG_LIMIT = 4000
+
+
+def _split_for_telegram(text: str, limit: int = _TELEGRAM_MSG_LIMIT) -> list[str]:
+    """Split text into <=limit-char pieces, preferring newline/space boundaries."""
+    chunks = []
+    remaining = text
+    while len(remaining) > limit:
+        cut = remaining.rfind("\n", 0, limit)
+        if cut < limit // 2:
+            cut = remaining.rfind(" ", 0, limit)
+        if cut < limit // 2:
+            cut = limit
+        chunks.append(remaining[:cut])
+        remaining = remaining[cut:].lstrip("\n")
+    if remaining:
+        chunks.append(remaining)
+    return chunks
+
 
 class TelegramService:
     DEFAULT_API_ROOT = "https://api.telegram.org"
@@ -34,10 +54,23 @@ class TelegramService:
         return self.api_root != self.DEFAULT_API_ROOT
     
     async def send_message(self, chat_id: str, text: str, parse_mode: str = "Markdown", reply_markup: dict = None) -> dict:
-        """Send a message to a Telegram chat."""
+        """Send a message to a Telegram chat. Long text (e.g. full-page translations)
+        is split into multiple messages, since Telegram rejects >4096 chars."""
         if not self.bot_token:
             logger.warning("Telegram bot token not configured")
             return {"ok": False, "error": "Bot token not configured"}
+
+        if text and len(text) > _TELEGRAM_MSG_LIMIT:
+            parts = _split_for_telegram(text)
+            result = {"ok": True}
+            for i, part in enumerate(parts):
+                # Keep the keyboard only on the final chunk.
+                result = await self.send_message(
+                    chat_id, part, parse_mode=parse_mode,
+                    reply_markup=reply_markup if i == len(parts) - 1 else None,
+                )
+                await asyncio.sleep(0.1)  # avoid Telegram flood limits
+            return result
 
         url = f"{self.api_base}{self.bot_token}/sendMessage"
         payload = {
