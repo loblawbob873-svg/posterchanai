@@ -34,6 +34,7 @@ The backend is **Python 3.10+** and **FastAPI**. You can use cloud APIs (OpenAI-
 - **News**: RSS-style news sources with summaries
 - **Torrents**: built-in torrent client
 - **File storage** per user and per conversation; file manager in the UI
+- **Media tools**: upload a file and `compress` it (image/video — H.264 with GPU acceleration when available), `clip <start> <end>` a video to a time span, or `convert` images↔PDF — all shared across the web UI, Telegram, and Matrix
 
 ### Bots & social
 
@@ -210,8 +211,8 @@ Background jobs keep running server-side; when one finishes you get a Telegram D
 ### Large files on Telegram (optional)
 
 The cloud Telegram Bot API limits the bot to downloading files up to **20 MB**, so
-`compress`/`convert`/`translate` only work on small uploads there (the web UI and
-Matrix have no such limit). To lift this to **~2 GB**, run a local Bot API server:
+`compress`/`clip`/`convert`/`translate` only work on small uploads there (the web UI
+and Matrix have no such limit). To lift this to **~2 GB**, run a local Bot API server:
 
 1. In **Admin → Services → Telegram Bot**, enter your **API ID** and **API Hash**
    (from https://my.telegram.org) and save.

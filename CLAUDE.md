@@ -45,6 +45,22 @@ switch. Reused by the web UI websocket (`app/routers/chat.py`) and Telegram.
 `COMMANDS` and to those Telegram lists, or it works in the web UI but falls through to the LLM
 on Telegram.
 
+**Gotcha (commands that consume uploads):** a command operating on uploaded files
+(`compress`/`clip`/`convert`/`translate`) must be wired into each interface's media path
+separately: `app/routers/chat.py` (`build_media_attachments` is gated by a command allowlist),
+the Telegram media-action keyboard/callbacks in `app/routers/telegram.py`, and the Matrix
+allowlist in `app/routers/matrix.py`. The **Matrix bot client is a SEPARATE repo** at
+`~/posterchan` (`matrixListener.py`, runs as `posterchan.service`) — it caches the upload and
+only forwards it for commands in *its own* hardcoded list, so a new media command must be added
+there too or it silently runs with no attachment. (`sync.sh` here restarts `posterchan` but
+does **not** commit it.)
+
+**Media:** generic ffmpeg/Pillow/PyMuPDF helpers live in `app/services/media_service.py`
+(`compress_*`, `clip_video`/`clip_attachment`, `convert_*`, `parse_timecode`). Video ops share
+one HW-accel encoder autodetect (`_video_encoder_candidates`: NVENC → VAAPI → libx264). Telegram
+makes `clip` interactive (start/end ForceReply prompts); web UI and Matrix pass both times in the
+arg (`clip <start> <end>`).
+
 ### Settings
 
 - **Admin (global):** key/value `Setting` table; typed defaults in
