@@ -15,6 +15,45 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/matrix", tags=["matrix"])
 
 
+async def _matrix_send_image(user: User, room_id: str, image_b64: str, filename: str = "image.png") -> None:
+    """Upload a base64 PNG to the user's homeserver and post it to the room as m.image.
+
+    Used for `generated_image` results (geni, screenshot) so the picture lands in the
+    Matrix room instead of just its text caption. Raises on upload/send failure.
+    """
+    import base64, time
+    import httpx
+    from urllib.parse import quote as _q
+
+    if image_b64.startswith("data:image"):
+        image_b64 = image_b64.split(",", 1)[1]
+    img_bytes = base64.b64decode(image_b64)
+    hs = user.matrix_homeserver.rstrip("/")
+    headers = {"Authorization": f"Bearer {user.matrix_access_token}"}
+    mxc_uri = None
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        for media_url in [
+            f"{hs}/_matrix/client/v1/media/upload?filename={_q(filename)}",
+            f"{hs}/_matrix/media/v3/upload?filename={_q(filename)}",
+        ]:
+            up = await client.post(media_url, content=img_bytes,
+                                   headers={**headers, "Content-Type": "image/png"})
+            if up.status_code in (200, 201):
+                mxc_uri = up.json().get("content_uri")
+                break
+        if not mxc_uri:
+            raise RuntimeError("media upload failed (no content URI returned)")
+        encoded_room = _q(room_id, safe="")
+        txn_id = str(int(time.time() * 1000))
+        payload = {"msgtype": "m.image", "body": filename, "url": mxc_uri,
+                   "info": {"mimetype": "image/png", "size": len(img_bytes)}}
+        send_r = await client.put(
+            f"{hs}/_matrix/client/v3/rooms/{encoded_room}/send/m.room.message/{txn_id}",
+            json=payload, headers=headers)
+        if send_r.status_code not in (200, 201):
+            raise RuntimeError(f"send failed HTTP {send_r.status_code}")
+
+
 class MatrixConnectRequest(BaseModel):
     homeserver: str
     username: str
@@ -427,6 +466,7 @@ async def execute_matrix_command(
             "  Uploads are remembered for 5 minutes while you decide.\n\n"
             "🎨 *Create & fetch*\n"
             "• `geni <prompt>` — generate an image.\n"
+            "• `screenshot <url>` — full-page screenshot of a website (also `shot` / `ss`).\n"
             "• `yt <url>` or paste a YouTube link — choose summary / audio / video / post.\n"
             "• `ytdl <url>` — download audio; `ytdl video <url>` for video. I upload it to the room.\n\n"
             "🔎 *Search & read*\n"
@@ -621,6 +661,18 @@ async def execute_matrix_command(
 
     try:
         result = await cmd_service.execute_command(command, arg)
+
+        # generated_image (geni, screenshot): upload the PNG into the room as m.image.
+        if (result.get("type") == "generated_image" and result.get("image")
+                and data.room_id and user.matrix_enabled and user.matrix_access_token):
+            fname = "screenshot.png" if command == "screenshot" else "image.png"
+            try:
+                await _matrix_send_image(user, data.room_id, result["image"], fname)
+                return {"result": ""}  # image delivered; skip the redundant text caption
+            except Exception as img_err:
+                logger.error(f"Matrix image send failed: {img_err}", exc_info=True)
+                return {"result": f"{result.get('content', '')}\n\n(image upload failed)"}
+
         content = result.get("content", "")
 
         # Strip non-functional cmd: and magnet: links from command output

@@ -666,12 +666,19 @@ def _help_main_keyboard() -> dict:
             ],
             [
                 {"text": "💰 Finance",     "callback_data": "help:finance"},
+                {"text": "📸 Screenshot",  "callback_data": "help:screenshot"},
             ],
         ]
     }
 
 
 _HELP_SECTIONS = {
+    "screenshot": (
+        "📸 *Screenshot*\n\n"
+        "Capture a full\\-page screenshot of any website:\n\n"
+        "`screenshot <url>`  \\(or `shot` / `ss`\\)\n\n"
+        "Example: `screenshot example\\.com`"
+    ),
     "finance": (
         "💰 *Finance — Budget Manager*\n\n"
         "Connect your account in the web UI \\(Settings → Finance\\), then send `/finance` "
@@ -1461,7 +1468,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "convert", "node", "budget", "finance", "bills", "pay", "addbill"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "convert", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -1685,7 +1692,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "convert", "node", "budget", "finance", "bills", "pay", "addbill"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "convert", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -2678,7 +2685,24 @@ async def _handle_telegram_update(update: dict, db: Session):
                 photo_result = await telegram_service.send_photo(chat_id, image_data, response_content)
                 if not photo_result.get("ok"):
                     logger.error(f"Failed to send photo: {photo_result}")
-                    await telegram_service.send_message(chat_id, f"{response_content}\n\n(Image generation failed to send)")
+                    # Telegram rejects photos that are too tall/large (common for full-page
+                    # screenshots) — retry as a document, which has far looser limits.
+                    _doc_sent = False
+                    try:
+                        import base64 as _ss_b64
+                        _png = image_data
+                        if isinstance(_png, str):
+                            if _png.startswith("data:image"):
+                                _png = _png.split(",", 1)[1]
+                            _png = _ss_b64.b64decode(_png)
+                        _doc_result = await telegram_service.send_document_bytes(
+                            chat_id, _png, "image.png", response_content
+                        )
+                        _doc_sent = _doc_result.get("ok", False)
+                    except Exception as _doc_err:
+                        logger.error(f"Document fallback failed: {_doc_err}")
+                    if not _doc_sent:
+                        await telegram_service.send_message(chat_id, f"{response_content}\n\n(Image failed to send)")
                 else:
                     # Offer to share the generated image to configured social platforms
                     _geni_user = db.query(User).filter(

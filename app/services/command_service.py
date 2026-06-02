@@ -57,6 +57,31 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _capture_full_page(url: str, width: int = 1280) -> bytes:
+    """Render `url` in headless Firefox and return a full-page PNG (blocking).
+
+    Called via asyncio.to_thread from _screenshot_command so Selenium's blocking
+    WebDriver calls don't stall the event loop. Uses Firefox's native full-page
+    capture (no Chrome equivalent). Raises ImportError if Selenium isn't installed,
+    or WebDriverException if Firefox/geckodriver are missing on the host.
+    """
+    from selenium import webdriver
+    from selenium.webdriver.firefox.options import Options
+
+    options = Options()
+    options.add_argument("-headless")
+    driver = webdriver.Firefox(options=options)
+    try:
+        driver.set_window_size(width, 1080)
+        driver.set_page_load_timeout(45)
+        driver.get(url)
+        import time
+        time.sleep(2)  # let lazy-loaded / late content settle before capture
+        return driver.get_full_page_screenshot_as_png()
+    finally:
+        driver.quit()
+
 # Cache for torrent results (per user, per category) - thread-safe with locks
 _torrent_cache: dict[int, dict[str, list[TorrentResult]]] = {}
 _nyaa_cache: dict[int, list[NyaaResult]] = {}
@@ -150,6 +175,7 @@ class CommandService:
         "bills": "List your bills: bills (unpaid) | bills all | bills paid",
         "pay": "Pay a bill by name: pay <bill name>",
         "addbill": "Add a bill: addbill <name> <amount> [income]",
+        "screenshot": "Full-page screenshot of a website: screenshot <url>",
     }
     # Command aliases (alias -> canonical command)
     COMMAND_ALIASES = {
@@ -160,6 +186,8 @@ class CommandService:
         "youtube": "yt",
         "nodes": "node",
         "finance": "budget",
+        "shot": "screenshot",
+        "ss": "screenshot",
     }
 
     # Natural language phrases that map directly to commands with arguments
@@ -230,6 +258,9 @@ class CommandService:
             stop_check: Callable to check if execution should stop
             attachments: List of (filename, data_bytes, content_type) tuples for mail
         """
+        # Resolve aliases (e.g. "shot" → "screenshot") centrally so callers that match
+        # commands literally (Telegram) accept them just like the web UI's parse_command.
+        command = self.COMMAND_ALIASES.get(command, command)
         if command == "help":
             return await self._help_command()
         elif command == "search":
@@ -276,6 +307,8 @@ class CommandService:
             return await self._pay_command(arg)
         elif command == "addbill":
             return await self._addbill_command(arg)
+        elif command == "screenshot":
+            return await self._screenshot_command(arg)
         else:
             return {"type": "text", "content": f"Unknown command: {command}"}
 
@@ -554,6 +587,41 @@ class CommandService:
             "content": f"Generated image for: {prompt}",
             "image": image_data,
             "prompt": prompt,
+        }
+
+    async def _screenshot_command(self, arg: str) -> dict:
+        """Capture a full-page screenshot of a website via headless Firefox.
+
+        Returns the shared `generated_image` shape so every channel renders it the
+        same way: inline in the web UI (with a save button), a photo/document on
+        Telegram, and an uploaded image in Matrix.
+        """
+        import asyncio
+        import base64
+
+        url = arg.strip().split()[0] if arg.strip() else ""
+        if not url:
+            return {"type": "text", "content": "Usage: `screenshot <url>` — e.g. `screenshot example.com`"}
+        if not re.match(r"^https?://", url, re.IGNORECASE):
+            url = "https://" + url
+
+        try:
+            png = await asyncio.to_thread(_capture_full_page, url)
+        except ImportError:
+            return {"type": "text", "content": "📸 Screenshot needs Selenium installed on the server (`pip install selenium`)."}
+        except Exception as e:
+            logger.error(f"[screenshot] {url}: {e}", exc_info=True)
+            msg = str(e)
+            if "geckodriver" in msg.lower() or "firefox" in msg.lower():
+                return {"type": "text", "content": f"📸 Couldn't capture {url}: Firefox/geckodriver not available on the server."}
+            first_line = next((ln for ln in msg.splitlines() if ln.strip()), "unknown error")
+            return {"type": "text", "content": f"📸 Couldn't capture {url}: {first_line}"}
+
+        return {
+            "type": "generated_image",
+            "content": f"📸 {url}",
+            "image": base64.b64encode(png).decode("ascii"),
+            "prompt": url,
         }
 
     def _format_size(self, size_bytes: int) -> str:
