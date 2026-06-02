@@ -45,18 +45,6 @@ const VOICE_COMMANDS = [
     { patterns: [/^(search|find)\s+(e-?)?mail\s+(for\s+)?(.+)$/i], command: 'mail search $4' },
     { patterns: [/^folders?$/i], command: 'mail folders' },
 
-    // ==================== CALENDAR ====================
-    { patterns: [/^(check\s+)?(my\s+)?calendar$/i], command: 'cal' },
-    { patterns: [/^(what'?s?\s+)?(my\s+)?schedule(\s+today)?$/i], command: 'cal today' },
-    { patterns: [/^(this\s+)?week('?s)?(\s+schedule)?$/i], command: 'cal week' },
-    { patterns: [/^(add|create|schedule)\s+(event|meeting|appointment)\s+(.+)$/i], command: 'cal add $3' },
-
-    // ==================== CONTACTS ====================
-    { patterns: [/^(my\s+)?contacts$/i], command: 'contacts all' },
-    { patterns: [/^(find|search)\s+contact\s+(.+)$/i], command: 'contacts $2' },
-    { patterns: [/^who\s+is\s+(.+)$/i], command: 'contacts $1' },
-    { patterns: [/^(add|new)\s+contact\s+(.+)$/i], command: 'contacts add $2' },
-
     // ==================== TODO ====================
     // "todo", "my todos", "show my to do list", "to do" (two words)
     { patterns: [/^(show\s+)?(my\s+)?to-?\s?do('?s)?(\s+list)?\.?$/i], command: 'todo' },

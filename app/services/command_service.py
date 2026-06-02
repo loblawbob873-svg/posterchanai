@@ -254,10 +254,6 @@ class CommandService:
             return await self._dailynews_command(arg)
         elif command == "logs":
             return await self._logs_command(arg)
-        elif command == "cal":
-            return await self._schedule_command(arg)
-        elif command == "contacts":
-            return await self._contacts_command(arg)
         elif command == "mail":
             return await self._mail_command(arg, attachments=attachments)
         elif command == "todo":
@@ -1618,14 +1614,6 @@ Files are saved to your Storage.""",
         success, result = await summarize_youtube(urls[0], self.chat_service)
         # Return result whether success or failure (so user sees error messages)
         return {"type": "text", "content": result}
-
-    async def _schedule_command(self, arg: str) -> dict:
-        """Calendar/Schedule commands - DISABLED (CalDAV removed)"""
-        return {"type": "text", "content": "⚠️ The calendar feature is temporarily unavailable."}
-
-    async def _contacts_command(self, arg: str) -> dict:
-        """Contacts command - DISABLED (CardDAV removed)"""
-        return {"type": "text", "content": "⚠️ The contacts feature is temporarily unavailable."}
 
     async def _mail_command(self, arg: str, attachments: Optional[list] = None) -> dict:
         """Email commands - inbox, read, reply, delete, send"""

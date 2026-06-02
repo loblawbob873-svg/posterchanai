@@ -78,17 +78,6 @@ CRITICAL RULE: If user asks to "create", "write", "generate", or "make" TEXT CON
 
 TRAINING - Learn these command formats by example:
 
-CALENDAR:
-"Add meeting tomorrow at 3pm" -> cal add meeting tomorrow at 3pm
-"Team standup every Monday at 9am" -> cal add team standup every Monday at 9am
-"Show my calendar" -> cal
-"agenda for next month" -> cal nextmonth
-"agenda for the month" -> cal month
-
-CONTACTS:
-"Add John Doe 555-1234 john@example.com" -> contacts add John Doe 555-1234 john@example.com
-"Find Sarah" -> contacts Sarah
-
 TODO:
 "Remind me to buy groceries" -> todo add buy groceries
 "Show my todos" -> todo
