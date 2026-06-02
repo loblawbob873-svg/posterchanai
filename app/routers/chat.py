@@ -788,7 +788,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                     from urllib.parse import quote
                                     _saved_rel = storage_service.save_file_bytes(user.username, conversation_id, _merged, "merged.pdf")
                                     _saved_filename = Path(_saved_rel).name
-                                    _dl_url = f"/api/files/{quote(user.username, safe='')}/{conversation_id}/{_saved_filename}"
+                                    _dl_url = f"/api/files/{quote(user.username, safe='')}/{conversation_id}/{quote(_saved_filename)}"
                                     _reply = f"✅ Merged {len(_pdf_bytes_list)} PDFs: {', '.join(_pdf_names)}\n\n[⬇️ Download merged.pdf]({_dl_url})"
                                 except Exception as _save_err:
                                     logger.error(f"[CHAT] Failed to save merged PDF: {_save_err}")
@@ -1148,7 +1148,9 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                         user.username, conversation_id, _fbytes, _fname
                                     )
                                     _saved_name = Path(_rel).name
-                                    _url = f"/api/files/{_q(user.username, safe='')}/{conversation_id}/{_saved_name}"
+                                    # Encode the filename too — spaces/parens (e.g. "image (2).png")
+                                    # otherwise leave a raw ")" that truncates the markdown link.
+                                    _url = f"/api/files/{_q(user.username, safe='')}/{conversation_id}/{_q(_saved_name)}"
                                     _links.append(f"[⬇️ {_fname}]({_url})")
                                 except Exception as _save_err:
                                     logger.error(f"[CHAT] Failed to save output file {_fname}: {_save_err}")
