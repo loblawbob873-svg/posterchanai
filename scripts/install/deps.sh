@@ -57,6 +57,21 @@ check_dependencies() {
         print_success "ffmpeg found (music transcoding + video compression available)"
     fi
 
+    # tesseract OCR binary - pytesseract (in requirements.txt) is only a wrapper and
+    # needs the system `tesseract` command to read text from images/scanned PDFs.
+    if ! command -v tesseract &>/dev/null; then
+        print_warning "tesseract not found - OCR (text from images/scanned PDFs) will be unavailable"
+        case "$DISTRO" in
+            gentoo) echo "  Install with: emerge -av app-text/tesseract" ;;
+            arch)   echo "  Install with: pacman -S tesseract tesseract-data-eng" ;;
+            debian) echo "  Install with: apt install tesseract-ocr" ;;
+            fedora) echo "  Install with: dnf install tesseract" ;;
+            *)      echo "  Install tesseract for your distribution" ;;
+        esac
+    else
+        print_success "tesseract found (OCR available)"
+    fi
+
     # Browser for the 'screenshot' command. Chrome/Chromium is preferred (driven over
     # the DevTools protocol — full-page and JS-aware so SPAs render); Firefox is a
     # fallback (its --screenshot fires before JS paints, so SPAs come out blank).
