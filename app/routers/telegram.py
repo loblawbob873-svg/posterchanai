@@ -3018,14 +3018,15 @@ async def _handle_telegram_update(update: dict, db: Session):
                         # Shared helper: OCRs the upload and translates the FULL text
                         # (raised output budget so long pages don't get cut off).
                         _res = await cb_command_service._translate_command(_lang, attachments=_atts)
-                        _txt = _res.get("content", "Translation failed.")
-                        if "couldn't extract any text" in _txt.lower():
+                        if _res.get("error") == "no_text":
                             # Almost always a Telegram-compressed photo (a tall screenshot
                             # gets shrunk too narrow to read) — point at the File workaround.
                             _txt = ("📸 Couldn't read any text in that image. Telegram compresses photos, "
                                     "so a tall screenshot gets shrunk too small to read.\n\n"
                                     "Send it as a *File* (📎 attach → File) instead of a photo for full "
                                     "resolution, then tap 🌐 Translate.")
+                        else:
+                            _txt = _res.get("content", "Translation failed.")
                         await telegram_service.send_message(chat_id, _txt)
                 except Exception as _media_err:
                     logger.error(f"Media action '{_action}' failed: {_media_err}", exc_info=True)

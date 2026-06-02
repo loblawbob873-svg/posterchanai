@@ -2617,66 +2617,64 @@ Files are saved to your Storage.""",
                 "content": f"To translate an email, use:\n`mail translate <account> <id> {language}`\n\nFirst check your mail with `mail` to get the email ID.",
             }
 
-        # Translate last assistant response
-        language = parts[0]
-
-        # Get the last assistant message from the conversation
+        # Translate the last assistant response.
+        language = self._parse_language(arg)
         from app.models import Conversation, Message
-
-        # Find user's most recent conversation
         conversation = (
             self.db.query(Conversation)
             .filter(Conversation.user_id == self.user.id)
             .order_by(Conversation.updated_at.desc())
             .first()
         )
-
         if not conversation:
             return {"type": "text", "content": "No conversation found to translate."}
-
-        # Get last assistant message
         last_msg = (
             self.db.query(Message)
             .filter(Message.conversation_id == conversation.id, Message.role == "assistant")
             .order_by(Message.created_at.desc())
             .first()
         )
-
         if not last_msg or not last_msg.content:
             return {"type": "text", "content": "No previous response to translate."}
+        return await self._translate_text(last_msg.content, language)
 
-        # Truncate if too long
-        content = last_msg.content
-        if len(content) > 3000:
-            content = content[:3000] + "..."
+    @staticmethod
+    def _parse_language(arg: str) -> str:
+        """'spanish' / 'to spanish' / '' → 'Spanish' / 'Spanish' / 'English'."""
+        lang = (arg or "").strip()
+        if lang.lower().startswith("to "):
+            lang = lang[3:].strip()
+        return (lang or "English").title()
 
-        # Use AI to translate
+    async def _translate_text(self, text: str, language: str, *, kind: str = "text") -> dict:
+        """Translate `text` into `language`, raising the output budget so long content
+        isn't cut off. `kind` labels the prompt ('text' / 'web page text'). Shared by the
+        last-response, URL and attachment translate paths."""
         messages = [
-            {
-                "role": "system",
-                "content": f"Translate the following text to {language}. Preserve formatting, code blocks, and structure. Only output the translation, nothing else.",
-            },
-            {"role": "user", "content": content},
+            {"role": "system", "content": (
+                f"Translate the following {kind} to {language}. Translate ALL of it — every "
+                "line and list item — do not summarize, omit, or stop early. Preserve the "
+                "original line breaks and formatting. Output only the translation.")},
+            {"role": "user", "content": (text or "")[:24000]},
         ]
-
+        # Output is about as long as the input; the default ~2048 cap stops long pages early.
+        _orig_np = self.chat_service.num_predict
+        self.chat_service.num_predict = max(_orig_np, 8192)
         try:
             translation = await self.chat_service.chat(messages)
             return {"type": "text", "content": f"## Translation ({language})\n\n{translation}"}
         except Exception as e:
             logger.error(f"Translation error: {e}")
             return {"type": "text", "content": f"Translation failed: {str(e)}"}
+        finally:
+            self.chat_service.num_predict = _orig_np
 
     async def _translate_url(self, arg: str, url: str) -> dict:
         """Fetch a web page's text and translate the whole thing (no OCR).
 
         `translate <url>` (→ English) or `translate <url> to <language>`.
         """
-        # Language = whatever's left after removing the URL, minus a leading "to".
-        rest = arg.replace(url, "").strip()
-        if rest.lower().startswith("to "):
-            rest = rest[3:].strip()
-        language = (rest or "English").title()
-
+        language = self._parse_language(arg.replace(url, ""))
         try:
             fetched = await self.search_service.fetch_urls([url], max_urls=1)
         except Exception as e:
@@ -2684,42 +2682,22 @@ Files are saved to your Storage.""",
         if not fetched or fetched[0].get("error") or not fetched[0].get("content"):
             err = (fetched[0].get("error") if fetched else None) or "no readable text found"
             return {"type": "text", "content": f"Couldn't fetch text from {url}: {err}"}
-
         title = fetched[0].get("title", "")
-        body = fetched[0]["content"]
-        messages = [
-            {"role": "system", "content": (
-                f"Translate the following web page text to {language}. Translate ALL of it — "
-                "every line and list item — do not summarize, omit, or stop early. Preserve "
-                "the structure and line breaks. Output only the translation.")},
-            {"role": "user", "content": (f"Title: {title}\n\n" if title else "") + body[:24000]},
-        ]
-        _orig_np = self.chat_service.num_predict
-        self.chat_service.num_predict = max(_orig_np, 8192)
-        try:
-            translation = await self.chat_service.chat(messages)
-            return {"type": "text", "content": f"## Translation ({language})\n\n{translation}"}
-        except Exception as e:
-            logger.error(f"URL translation error: {e}")
-            return {"type": "text", "content": f"Translation failed: {str(e)}"}
-        finally:
-            self.chat_service.num_predict = _orig_np
+        body = (f"Title: {title}\n\n" if title else "") + fetched[0]["content"]
+        return await self._translate_text(body, language, kind="web page text")
 
     async def _translate_attachments(self, arg: str, attachments: list) -> dict:
         """OCR uploaded image(s)/PDF(s) and translate the FULL extracted text.
 
         Shared by the web UI, Telegram and Matrix (`translate <lang>` + an upload).
+        Returns an `error: 'no_text'` field when nothing could be extracted (e.g. a
+        Telegram-compressed photo) so callers can show a tailored hint.
         """
         import base64 as _b64
         from app.services.document_service import extract_image_text, extract_pdf_text
         from app.services.media_service import is_image, is_pdf
 
-        # Language: accept "spanish", "to spanish", or empty (default English).
-        lang = arg.strip()
-        if lang.lower().startswith("to "):
-            lang = lang[3:].strip()
-        language = (lang or "English").title()
-
+        language = self._parse_language(arg)
         parts = []
         for fn, data, ct in attachments:
             try:
@@ -2732,27 +2710,9 @@ Files are saved to your Storage.""",
                 parts.append(extract_image_text(b64) or "")
         src = "\n\n".join(p for p in parts if p).strip()
         if not src:
-            return {"type": "text", "content": "Couldn't extract any text to translate from the upload."}
-
-        messages = [
-            {"role": "system", "content": (
-                f"Translate the following text to {language}. Translate ALL of it — every "
-                "line and list item — do not summarize, omit, or stop early. Preserve the "
-                "original line breaks and formatting. Output only the translation.")},
-            {"role": "user", "content": src[:24000]},
-        ]
-        # A translation is about as long as its input; raise the output cap so long pages
-        # (e.g. a full-page screenshot) aren't cut off mid-way (the default ~2048 stops early).
-        _orig_np = self.chat_service.num_predict
-        self.chat_service.num_predict = max(_orig_np, 8192)
-        try:
-            translation = await self.chat_service.chat(messages)
-            return {"type": "text", "content": f"## Translation ({language})\n\n{translation}"}
-        except Exception as e:
-            logger.error(f"Image translation error: {e}")
-            return {"type": "text", "content": f"Translation failed: {str(e)}"}
-        finally:
-            self.chat_service.num_predict = _orig_np
+            return {"type": "text", "error": "no_text",
+                    "content": "Couldn't extract any text to translate from the upload."}
+        return await self._translate_text(src, language)
 
     async def _compress_command(self, attachments: Optional[list]) -> dict:
         """Compress attached image(s) or video(s) and return the smaller files."""

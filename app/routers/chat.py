@@ -889,7 +889,9 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                     if (not command and content and (image_data or images or pdfs or pdf_data)
                             and re.search(r'\btranslate', content, re.IGNORECASE)):
                         command = "translate"
-                        _lang_m = re.search(r'\bto\s+([A-Za-z]+)', content)
+                        # Capture the language after "to" (1-2 words at the end, so
+                        # "brazilian portuguese" / "simplified chinese" survive).
+                        _lang_m = re.search(r'\bto\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)\s*$', content, re.IGNORECASE)
                         arg = _lang_m.group(1) if _lang_m else ""
 
                     # Check for YouTube URLs (auto-summarize)
