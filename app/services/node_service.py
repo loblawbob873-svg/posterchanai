@@ -268,8 +268,15 @@ async def run_to_completion(db: Session, node: str, target: str, command: str,
     return job
 
 
-def get_job(job_id: int) -> Optional[Job]:
-    return _jobs.get(job_id)
+def get_job(job_id: int, user_id: Optional[int] = None) -> Optional[Job]:
+    """Fetch a job. If user_id is given, only return it when that user owns it
+    (defense-in-depth so callers can't accidentally expose another user's job)."""
+    job = _jobs.get(job_id)
+    if job is None:
+        return None
+    if user_id is not None and job.user_id != user_id:
+        return None
+    return job
 
 
 def list_jobs(user_id: Optional[int] = None, limit: int = 20) -> list[Job]:
@@ -281,10 +288,12 @@ def list_jobs(user_id: Optional[int] = None, limit: int = 20) -> list[Job]:
     return jobs[:limit]
 
 
-def kill_job(job_id: int) -> bool:
+def kill_job(job_id: int, user_id: Optional[int] = None) -> bool:
     job = _jobs.get(job_id)
     if not job or job.done:
         return False
+    if user_id is not None and job.user_id != user_id:
+        return False  # can't kill another user's job
     job.status = "killed"
     if job._proc:
         _terminate(job._proc)

@@ -1620,18 +1620,19 @@ Files are saved to your Storage.""",
         if sub == "log":
             if len(parts) < 2 or not parts[1].isdigit():
                 return {"type": "text", "content": "Usage: `node log <id>`"}
-            job = node_service.get_job(int(parts[1]))
-            if not job or (self.user and job.user_id != self.user.id):
+            job = node_service.get_job(int(parts[1]), user_id=self.user.id if self.user else None)
+            if not job:
                 return {"type": "text", "content": f"Job #{parts[1]} not found."}
             return _result_for(job, f"**Job #{job.id}** `{job.node}` — {job.status} (exit {job.exit_code})\n`{job.command}`")
 
         if sub == "kill":
             if len(parts) < 2 or not parts[1].isdigit():
                 return {"type": "text", "content": "Usage: `node kill <id>`"}
-            job = node_service.get_job(int(parts[1]))
-            if not job or (self.user and job.user_id != self.user.id):
+            _uid = self.user.id if self.user else None
+            job = node_service.get_job(int(parts[1]), user_id=_uid)
+            if not job:
                 return {"type": "text", "content": f"Job #{parts[1]} not found."}
-            ok = node_service.kill_job(int(parts[1]))
+            ok = node_service.kill_job(int(parts[1]), user_id=_uid)
             return {"type": "text", "content": f"{'🛑 Killed' if ok else 'Could not kill (already finished?)'} job #{parts[1]}."}
 
         # --- fan-out: run the same command on every node ---
