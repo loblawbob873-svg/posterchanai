@@ -109,7 +109,13 @@ def _resolve_pic(url: str) -> str:
     if not url or "/pic/" not in url:
         return url or ""
     tail = unquote(url.split("/pic/", 1)[1])
-    return tail if tail.startswith("http") else "https://pbs.twimg.com/" + tail
+    if tail.startswith("http"):
+        return tail
+    # Nitter encodes the full CDN host in the tail for profile pics
+    # ("pbs.twimg.com/..."); media tails may be a bare path ("media/...").
+    if tail.startswith("pbs.twimg.com/"):
+        return "https://" + tail
+    return "https://pbs.twimg.com/" + tail
 
 
 def _parse_feed(content: bytes):
