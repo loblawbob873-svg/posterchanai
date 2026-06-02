@@ -75,39 +75,64 @@ def _find_firefox() -> Optional[str]:
 _screenshot_lock = threading.Lock()
 
 
+# Firefox `--screenshot` captures at the page `load` event, which is often before a
+# JS-heavy/slow site has painted — producing a blank white page. There's no Firefox
+# CLI "wait" flag, so we capture a few times (keeping the LARGEST PNG) with a short
+# settle between: a blank page compresses to a tiny PNG, and retries run against a
+# warm HTTP/disk cache so the page renders further before the next capture.
+_SCREENSHOT_ATTEMPTS = 3
+_SCREENSHOT_GOOD_BYTES = 50_000  # a capture this big is almost certainly real content
+
+
 def _capture_full_page(url: str, width: int = 1280, timeout: int = 60) -> bytes:
     """Render `url` in headless Firefox and return a full-page PNG (blocking).
 
     Uses Firefox's built-in `--screenshot` mode (full-page by default) via a
     subprocess instead of Selenium/geckodriver: the marionette handshake hangs on
     some Firefox builds, and a subprocess gives a hard, killable timeout with no
-    orphaned browser processes. Raises RuntimeError/TimeoutExpired on failure.
+    orphaned browser processes. Captures up to `_SCREENSHOT_ATTEMPTS` times and keeps
+    the largest result to avoid blank/half-loaded pages. Raises RuntimeError/
+    TimeoutExpired on failure.
     """
     import os
     import shutil
     import subprocess
     import tempfile
+    import time
 
     firefox = _find_firefox()
     if not firefox:
         raise RuntimeError("Firefox not found on the server")
 
     tmpdir = tempfile.mkdtemp(prefix="ffshot_")
-    out = os.path.join(tmpdir, "shot.png")
+    last_err = ""
+    best = b""
     try:
-        with _screenshot_lock:
-            # Width only (no height) → Firefox captures the FULL page height at this
-            # width; passing a height (e.g. 1280,1080) crops to just that viewport.
-            proc = subprocess.run(
-                [firefox, "--headless", "--new-instance",
-                 f"--window-size={width}", "--screenshot", out, url],
-                timeout=timeout, capture_output=True,
-            )
-        if not os.path.exists(out) or os.path.getsize(out) == 0:
-            err = (proc.stderr or b"").decode("utf-8", "ignore").strip()
-            raise RuntimeError(f"Firefox produced no screenshot. {err[-300:]}")
-        with open(out, "rb") as f:
-            return f.read()
+        for attempt in range(_SCREENSHOT_ATTEMPTS):
+            out = os.path.join(tmpdir, f"shot{attempt}.png")
+            with _screenshot_lock:
+                # Width only (no height) → Firefox captures the FULL page height at this
+                # width; passing a height (e.g. 1280,1080) crops to just that viewport.
+                proc = subprocess.run(
+                    [firefox, "--headless", "--new-instance",
+                     f"--window-size={width}", "--screenshot", out, url],
+                    timeout=timeout, capture_output=True,
+                )
+            if os.path.exists(out) and os.path.getsize(out) > 0:
+                if os.path.getsize(out) > len(best):
+                    with open(out, "rb") as f:
+                        best = f.read()
+                # Got a substantial render — no need to keep retrying.
+                if len(best) >= _SCREENSHOT_GOOD_BYTES:
+                    break
+            else:
+                last_err = (proc.stderr or b"").decode("utf-8", "ignore").strip()[-300:]
+            if attempt < _SCREENSHOT_ATTEMPTS - 1:
+                time.sleep(2)  # let the cache warm / page settle before recapturing
+
+        if not best:
+            raise RuntimeError(f"Firefox produced no screenshot. {last_err}")
+        return best
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
