@@ -57,18 +57,18 @@ check_dependencies() {
         print_success "ffmpeg found (music transcoding + video compression available)"
     fi
 
-    # Firefox + geckodriver - needed for the 'screenshot' command (Selenium drives them)
-    if ! command -v firefox &>/dev/null || ! command -v geckodriver &>/dev/null; then
-        print_warning "firefox/geckodriver not found - the 'screenshot' command will be unavailable"
+    # Firefox - needed for the 'screenshot' command (uses Firefox's native --screenshot)
+    if ! command -v firefox &>/dev/null && ! command -v firefox-bin &>/dev/null; then
+        print_warning "firefox not found - the 'screenshot' command will be unavailable"
         case "$DISTRO" in
-            gentoo) echo "  Install with: emerge -av www-client/firefox-bin dev-util/geckodriver" ;;
-            arch)   echo "  Install with: pacman -S firefox geckodriver" ;;
-            debian) echo "  Install with: apt install firefox-esr firefox-geckodriver" ;;
-            fedora) echo "  Install with: dnf install firefox; and install geckodriver from Mozilla releases" ;;
-            *)      echo "  Install firefox + geckodriver for your distribution" ;;
+            gentoo) echo "  Install with: emerge -av www-client/firefox-bin" ;;
+            arch)   echo "  Install with: pacman -S firefox" ;;
+            debian) echo "  Install with: apt install firefox-esr" ;;
+            fedora) echo "  Install with: dnf install firefox" ;;
+            *)      echo "  Install firefox for your distribution" ;;
         esac
     else
-        print_success "firefox + geckodriver found (screenshot command available)"
+        print_success "firefox found (screenshot command available)"
     fi
 
     # Check for pax-utils (scanelf) - needed for Intel Arc on hardened kernels

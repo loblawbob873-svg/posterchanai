@@ -20,7 +20,7 @@ The backend is **Python 3.10+** and **FastAPI**. You can use cloud APIs (OpenAI-
 
 - **Text-to-speech (TTS)** and **speech-to-text (STT)**; Edge TTS and configurable backends
 - **Image generation**: ComfyUI (external) or native diffusers (SDXL); multiple image servers supported
-- **Website screenshots**: full-page capture with the `screenshot <url>` command (also `shot` / `ss`) — works in the web UI, Telegram, and Matrix. Requires headless Firefox + geckodriver (see [Requirements](#requirements)).
+- **Website screenshots**: full-page capture with the `screenshot <url>` command (also `shot` / `ss`) — works in the web UI, Telegram, and Matrix. Requires headless Firefox (see [Requirements](#requirements)).
 - **YouTube** summarization and thumbnails in chat
 
 ### Knowledge & code
@@ -54,10 +54,9 @@ The backend is **Python 3.10+** and **FastAPI**. You can use cloud APIs (OpenAI-
 
 - **Python 3.10+**
 - (Optional) **GPU** and backends for local LLM (Ollama, llama-cpp-python, IPEX-LLM) and image generation (ComfyUI or native diffusers)
-- (Optional) **Headless Firefox + geckodriver** for the `screenshot` command:
-  - Gentoo: `emerge www-client/firefox-bin dev-util/geckodriver`
-  - Debian/Ubuntu: `apt install firefox-esr firefox-geckodriver`
-  - The Python `selenium` dep is installed automatically from `requirements.txt`; geckodriver is also auto-fetched by Selenium Manager if not in `PATH`.
+- (Optional) **Headless Firefox** for the `screenshot` command (uses Firefox's built-in `--screenshot` mode — no Selenium/geckodriver):
+  - Gentoo: `emerge www-client/firefox-bin`
+  - Debian/Ubuntu: `apt install firefox-esr`
 
 ---
 

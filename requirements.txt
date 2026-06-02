@@ -68,11 +68,10 @@ cheroot>=10.0.0,<12.0.0
 # Speech-to-text (Whisper) for voice input
 faster-whisper>=1.0.0
 
-# Website screenshots (screenshot/shot/ss command) via headless Firefox.
-# Requires system Firefox + geckodriver:
-#   Gentoo: emerge www-client/firefox-bin dev-util/geckodriver
-#   Debian/Ubuntu: apt install firefox-esr firefox-geckodriver
-selenium>=4.10.0
+# Website screenshots (screenshot/shot/ss command) use headless Firefox's built-in
+# `--screenshot` mode directly (no Python dep, no Selenium/geckodriver). Install Firefox:
+#   Gentoo: emerge www-client/firefox-bin
+#   Debian/Ubuntu: apt install firefox-esr
 
 # Built-in torrent client (optional - requires system libtorrent-rasterbar)
 # Install system package first:
