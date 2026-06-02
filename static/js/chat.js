@@ -64,7 +64,7 @@ class ChatHandler {
         this.historyIndex = -1;
 
         // Available commands for tab autocomplete
-        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'ytdl', 'torrents', 'nyaa', 'budget', 'firewall', 'news', 'dailynews', 'logs', 'dailynews', 'cal', 'contacts', 'mail', 'todo', 'files', '4chan', 'compress', 'convert'];
+        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'ytdl', 'torrents', 'nyaa', 'budget', 'bills', 'pay', 'addbill', 'firewall', 'news', 'dailynews', 'logs', 'cal', 'contacts', 'mail', 'todo', 'files', '4chan', 'compress', 'convert'];
         
 
         // Load mail accounts for autocomplete
@@ -3798,7 +3798,7 @@ class ChatHandler {
         'torrents': ['download', 'list', 'add', 'start', 'stop', 'delete', 'movies', 'tv', 'anime'],
         'torrents download': ['movies', 'tv', 'anime'],
         'nyaa': ['download'],
-        'budget': ['bills', 'add', 'pay'],
+        'bills': ['all', 'paid'],
         'firewall': ['search', 'analyze'],
         'news': ['refresh'],
         'cal': ['today', 'week', 'add'],
