@@ -42,6 +42,14 @@ class ScreenshotRequest(BaseModel):
     url: str
 
 
+class PostCardRequest(BaseModel):
+    handle: str
+    text: Optional[str] = ""
+    display_name: Optional[str] = ""
+    timestamp: Optional[str] = ""
+    media: Optional[MediaItem] = None  # pre-fetched media, embedded as a data: URI
+
+
 @router.post("/process")
 async def process_media(
     req: MediaProcessRequest,
@@ -139,3 +147,44 @@ async def capture_screenshot(
         "data": img_b64,
         "content_type": "image/png",
     }
+
+
+@router.post("/render-post-card")
+async def render_post_card(
+    req: PostCardRequest,
+    http_request: Request,
+    db: Session = Depends(get_db),
+    _auth: bool = Depends(get_image_auth),
+):
+    """Render a tweet-style "post card" (author + text + media) as a PNG.
+
+    Identity-agnostic like /process and /screenshot. The card is built from the
+    structured fields supplied by the caller and screenshotted via the shared
+    headless-browser path — so it renders correctly even when the original source
+    page is empty (dead Nitter instances), where link previews fail. The bot
+    pre-fetches any media and passes the bytes so the server does no outbound
+    network (no SSRF surface here).
+
+    Response: {"data": b64 PNG, "content_type": "image/png"} or {"error": str}.
+    """
+    from app.services.command_service import _render_post_card_png
+
+    if not (req.handle or "").strip() and not (req.text or "").strip():
+        return {"error": "nothing to render (handle and text both empty)"}
+
+    media_uri = ""
+    if req.media and req.media.data:
+        ct = req.media.content_type or "image/jpeg"
+        media_uri = f"data:{ct};base64,{req.media.data}"
+
+    try:
+        png = await asyncio.to_thread(
+            _render_post_card_png,
+            req.display_name or req.handle, req.handle, req.text or "",
+            req.timestamp or "", media_uri,
+        )
+    except Exception as e:
+        logger.error(f"[MEDIA-API] render-post-card failed: {e}", exc_info=True)
+        return {"error": str(e)}
+
+    return {"data": base64.b64encode(png).decode("ascii"), "content_type": "image/png"}

@@ -142,7 +142,7 @@ def _url_is_safe_to_fetch(url: str) -> bool:
     return True
 
 
-def _capture_full_page_chrome(chrome: str, url: str, width: int, timeout: int) -> bytes:
+def _capture_full_page_chrome(chrome: str, url: str, width: int, timeout: int, tight: bool = False) -> bytes:
     """Render `url` in headless Chrome (driven over CDP) and return a full-page PNG.
 
     Launches Chrome with a remote-debugging port and talks the DevTools protocol
@@ -222,8 +222,21 @@ def _capture_full_page_chrome(chrome: str, url: str, width: int, timeout: int) -
             cmd("Page.enable")
             cmd("Page.navigate", {"url": url})
             time.sleep(_screenshot_settle())  # real wall-clock for JS/network to settle
-            shot = cmd("Page.captureScreenshot",
-                       {"format": "png", "captureBeyondViewport": True, "fromSurface": True})
+            params = {"format": "png", "captureBeyondViewport": True, "fromSurface": True}
+            if tight:
+                # Opt-in tight capture (used only for self-rendered cards, NOT the
+                # screenshot command): clip to the <body> content box so a short card
+                # isn't padded out to the viewport height — otherwise the <html>
+                # element stretches to the viewport and the image downscales to an
+                # unreadable strip. The default path (tight=False) is unchanged.
+                ev = cmd("Runtime.evaluate", {
+                    "expression": "(()=>{const b=document.body;return [Math.ceil(b.scrollWidth),Math.ceil(b.scrollHeight)];})()",
+                    "returnByValue": True,
+                })
+                dims = ((ev.get("result") or {}).get("result") or {}).get("value")
+                if dims and dims[0] and dims[1]:
+                    params["clip"] = {"x": 0, "y": 0, "width": dims[0], "height": dims[1], "scale": 1}
+            shot = cmd("Page.captureScreenshot", params)
             data = (shot.get("result") or {}).get("data")
             if not data:
                 raise RuntimeError(f"Chrome returned no screenshot: {shot.get('error')}")
@@ -276,17 +289,20 @@ def _capture_full_page_firefox(firefox: str, url: str, width: int, timeout: int)
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def _capture_full_page(url: str, width: int = 1280, timeout: int = 60) -> bytes:
+def _capture_full_page(url: str, width: int = 1280, timeout: int = 60, tight: bool = False) -> bytes:
     """Render `url` and return a full-page PNG (blocking).
 
     Prefers headless Chrome driven over the DevTools protocol (waits for JS so SPAs
     aren't blank, true full-page via CDP); falls back to Firefox's `--screenshot` if
     Chrome is absent. Raises RuntimeError if neither browser is available or capture fails.
+
+    `tight=True` (Chrome only) clips the capture to the <body> content box instead of
+    padding short pages to the viewport height — used for self-rendered cards.
     """
     chrome = _find_chrome()
     if chrome:
         try:
-            return _capture_full_page_chrome(chrome, url, width, timeout)
+            return _capture_full_page_chrome(chrome, url, width, timeout, tight=tight)
         except Exception as e:
             logger.warning(f"Chrome screenshot failed ({e}); falling back to Firefox if present")
             if not _find_firefox():
@@ -295,6 +311,74 @@ def _capture_full_page(url: str, width: int = 1280, timeout: int = 60) -> bytes:
     if firefox:
         return _capture_full_page_firefox(firefox, url, width, timeout)
     raise RuntimeError("No headless browser found on the server (install google-chrome-stable)")
+
+
+def _render_post_card_png(display_name: str, handle: str, text: str,
+                          timestamp: str = "", media_data_uri: str = "",
+                          width: int = 600) -> bytes:
+    """Render a tweet-style "post card" as HTML and screenshot it via the existing
+    headless-browser path (`_capture_full_page`).
+
+    Built entirely from data we control (author/text/media passed in), so it works
+    even when the source page serves nothing — e.g. Nitter instances whose RSS still
+    works but whose status pages return an empty body, defeating link previews. The
+    media (if any) is passed pre-fetched as a data: URI so the render needs no network
+    and is deterministic. Returns PNG bytes; raises if no browser is installed.
+    """
+    import html as _html
+    import os
+    import tempfile
+
+    # Keep cards readable: clients downscale the attached image to fit their column,
+    # so an over-long tweet (premium long-form, quote chains) would shrink the text to
+    # an illegible size. Cap the text length, and cap media height in CSS below, so the
+    # card stays a sane aspect ratio (~600px wide, bounded height).
+    text = text or ""
+    if len(text) > 600:
+        text = text[:597].rstrip() + "…"
+
+    name = _html.escape(display_name or handle or "")
+    handle_esc = _html.escape(handle or "")
+    body_text = _html.escape(text).replace("\n", "<br>")
+    ts = _html.escape(timestamp or "")
+    media_block = f'<img class="media" src="{media_data_uri}" alt="">' if media_data_uri else ""
+    ts_block = f'<div class="ts">{ts}</div>' if ts else ""
+
+    doc = f"""<!doctype html><html><head><meta charset="utf-8"><style>
+  * {{ margin:0; padding:0; box-sizing:border-box; }}
+  body {{ width:{width}px; background:#15202b;
+    font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,'Noto Color Emoji',sans-serif; }}
+  .card {{ padding:20px 22px; color:#f7f9f9; }}
+  .head {{ display:flex; align-items:center; margin-bottom:12px; }}
+  .avatar {{ width:48px; height:48px; border-radius:50%; background:#38444d;
+    margin-right:12px; flex:0 0 auto; display:flex; align-items:center;
+    justify-content:center; font-size:24px; }}
+  .name {{ font-weight:700; font-size:16px; line-height:1.25; }}
+  .handle {{ color:#8899a6; font-size:15px; }}
+  .text {{ font-size:19px; line-height:1.45; word-wrap:break-word; white-space:pre-wrap; }}
+  .media {{ display:block; max-width:100%; max-height:520px; width:auto; height:auto;
+    object-fit:contain; border-radius:14px; margin-top:14px; border:1px solid #38444d; }}
+  .ts {{ color:#8899a6; font-size:14px; margin-top:14px; }}
+</style></head><body><div class="card">
+  <div class="head"><div class="avatar">🐦</div>
+    <div><div class="name">{name}</div><div class="handle">@{handle_esc}</div></div></div>
+  <div class="text">{body_text}</div>
+  {media_block}
+  {ts_block}
+</div></body></html>"""
+
+    tmp = tempfile.NamedTemporaryFile(prefix="postcard_", suffix=".html",
+                                      delete=False, mode="w", encoding="utf-8")
+    try:
+        tmp.write(doc)
+        tmp.close()
+        return _capture_full_page(f"file://{tmp.name}", width=width, tight=True)
+    finally:
+        try:
+            os.remove(tmp.name)
+        except OSError:
+            pass
+
 
 # Cache for torrent results (per user, per category) - thread-safe with locks
 _torrent_cache: dict[int, dict[str, list[TorrentResult]]] = {}
