@@ -1042,9 +1042,10 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                 if not mail_attachments:
                                     mail_attachments = None
 
-                            # compress/convert operate on raw file bytes
+                            # compress/convert/translate operate on raw file bytes
+                            # (translate OCRs an uploaded image/PDF and translates the text)
                             media_attachments = None
-                            if command in ("compress", "convert"):
+                            if command in ("compress", "convert", "translate"):
                                 media_attachments = build_media_attachments(
                                     images, image_data, pdfs, pdf_data,
                                     documents, document_data, videos
