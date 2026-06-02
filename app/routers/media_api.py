@@ -47,7 +47,8 @@ class PostCardRequest(BaseModel):
     text: Optional[str] = ""
     display_name: Optional[str] = ""
     timestamp: Optional[str] = ""
-    media: Optional[MediaItem] = None  # pre-fetched media, embedded as a data: URI
+    media: Optional[MediaItem] = None   # pre-fetched tweet media, embedded as a data: URI
+    avatar: Optional[MediaItem] = None  # pre-fetched profile picture, embedded as a data: URI
 
 
 @router.post("/process")
@@ -176,12 +177,16 @@ async def render_post_card(
     if req.media and req.media.data:
         ct = req.media.content_type or "image/jpeg"
         media_uri = f"data:{ct};base64,{req.media.data}"
+    avatar_uri = ""
+    if req.avatar and req.avatar.data:
+        act = req.avatar.content_type or "image/jpeg"
+        avatar_uri = f"data:{act};base64,{req.avatar.data}"
 
     try:
         png = await asyncio.to_thread(
             _render_post_card_png,
             req.display_name or req.handle, req.handle, req.text or "",
-            req.timestamp or "", media_uri,
+            req.timestamp or "", media_uri, avatar_uri,
         )
     except Exception as e:
         logger.error(f"[MEDIA-API] render-post-card failed: {e}", exc_info=True)

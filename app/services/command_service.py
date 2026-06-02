@@ -315,7 +315,7 @@ def _capture_full_page(url: str, width: int = 1280, timeout: int = 60, tight: bo
 
 def _render_post_card_png(display_name: str, handle: str, text: str,
                           timestamp: str = "", media_data_uri: str = "",
-                          width: int = 600) -> bytes:
+                          avatar_data_uri: str = "", width: int = 600) -> bytes:
     """Render a tweet-style "post card" as HTML and screenshot it via the existing
     headless-browser path (`_capture_full_page`).
 
@@ -341,9 +341,13 @@ def _render_post_card_png(display_name: str, handle: str, text: str,
     handle_esc = _html.escape(handle or "")
     body_text = _html.escape(text).replace("\n", "<br>")
     ts = _html.escape(timestamp or "")
-    # Letter avatar (first initial) rather than an emoji — servers often lack an emoji
-    # font, which would render a 🐦 glyph as a tofu box ("no avatar").
-    initial = _html.escape(((display_name or handle or "?").strip()[:1] or "?").upper())
+    # Avatar: prefer the real (pre-fetched) profile picture; otherwise a letter
+    # initial. The letter fallback needs no emoji font, so it never tofu-boxes.
+    if avatar_data_uri:
+        avatar_block = f'<img class="avatar" src="{avatar_data_uri}" alt="">'
+    else:
+        initial = _html.escape(((display_name or handle or "?").strip()[:1] or "?").upper())
+        avatar_block = f'<div class="avatar">{initial}</div>'
     media_block = f'<img class="media" src="{media_data_uri}" alt="">' if media_data_uri else ""
     ts_block = f'<div class="ts">{ts}</div>' if ts else ""
 
@@ -353,9 +357,10 @@ def _render_post_card_png(display_name: str, handle: str, text: str,
     font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,'Noto Color Emoji',sans-serif; }}
   .card {{ padding:20px 22px; color:#f7f9f9; }}
   .head {{ display:flex; align-items:center; margin-bottom:12px; }}
-  .avatar {{ width:48px; height:48px; border-radius:50%; background:#1d9bf0;
-    margin-right:12px; flex:0 0 auto; display:flex; align-items:center;
+  .avatar {{ width:48px; height:48px; border-radius:50%; margin-right:12px; flex:0 0 auto; }}
+  div.avatar {{ background:#1d9bf0; display:flex; align-items:center;
     justify-content:center; font-size:22px; font-weight:700; color:#fff; }}
+  img.avatar {{ object-fit:cover; }}
   .name {{ font-weight:700; font-size:16px; line-height:1.25; }}
   .handle {{ color:#8899a6; font-size:15px; }}
   .text {{ font-size:19px; line-height:1.45; word-wrap:break-word; white-space:pre-wrap; }}
@@ -363,7 +368,7 @@ def _render_post_card_png(display_name: str, handle: str, text: str,
     object-fit:contain; border-radius:14px; margin-top:14px; border:1px solid #38444d; }}
   .ts {{ color:#8899a6; font-size:14px; margin-top:14px; }}
 </style></head><body><div class="card">
-  <div class="head"><div class="avatar">{initial}</div>
+  <div class="head">{avatar_block}
     <div><div class="name">{name}</div><div class="handle">@{handle_esc}</div></div></div>
   <div class="text">{body_text}</div>
   {media_block}
