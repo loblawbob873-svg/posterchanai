@@ -606,7 +606,11 @@ class CommandService:
             url = "https://" + url
 
         try:
-            png = await asyncio.to_thread(_capture_full_page, url)
+            # Hard cap so a missing/hung Firefox or a slow page can't wedge the handler
+            # (which would leave the user with no reply at all).
+            png = await asyncio.wait_for(asyncio.to_thread(_capture_full_page, url), timeout=75)
+        except asyncio.TimeoutError:
+            return {"type": "text", "content": f"📸 Timed out capturing {url} — the page was too slow or Firefox isn't responding."}
         except ImportError:
             return {"type": "text", "content": "📸 Screenshot needs Selenium installed on the server (`pip install selenium`)."}
         except Exception as e:
@@ -622,6 +626,9 @@ class CommandService:
             "content": f"📸 {url}",
             "image": base64.b64encode(png).decode("ascii"),
             "prompt": url,
+            # Telegram compresses photos (tiny/unreadable for tall pages) — deliver as a
+            # full-resolution document instead. Ignored by the web UI / Matrix renderers.
+            "prefer_document": True,
         }
 
     def _format_size(self, size_bytes: int) -> str:

@@ -175,8 +175,13 @@ class TelegramService:
             logger.error(f"Failed to send Telegram document: {e}")
             return {"ok": False, "error": str(e)}
     
-    async def send_document_bytes(self, chat_id: str, file_bytes, filename: str, caption: str = None) -> dict:
-        """Send a document from raw bytes to a Telegram chat (multipart upload)."""
+    async def send_document_bytes(self, chat_id: str, file_bytes, filename: str, caption: str = None,
+                                  content_type: str = "application/pdf") -> dict:
+        """Send a document from raw bytes to a Telegram chat (multipart upload).
+
+        content_type defaults to PDF for back-compat; pass image/png for screenshots so
+        Telegram shows an inline image preview (and full-resolution tap-to-open).
+        """
         if not self.bot_token:
             return {"ok": False, "error": "Bot token not configured"}
         url = f"{self.api_base}{self.bot_token}/sendDocument"
@@ -189,7 +194,7 @@ class TelegramService:
             file_content = bytes(file_bytes)
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(url, data=data, files={"document": (filename, file_content, "application/pdf")})
+                response = await client.post(url, data=data, files={"document": (filename, file_content, content_type)})
                 result = response.json()
                 if not result.get("ok"):
                     logger.error(f"Telegram sendDocument error: {result}")

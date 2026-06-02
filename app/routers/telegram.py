@@ -666,19 +666,13 @@ def _help_main_keyboard() -> dict:
             ],
             [
                 {"text": "💰 Finance",     "callback_data": "help:finance"},
-                {"text": "📸 Screenshot",  "callback_data": "help:screenshot"},
+                {"text": "📸 Screenshot",  "callback_data": "prompt:screenshot"},
             ],
         ]
     }
 
 
 _HELP_SECTIONS = {
-    "screenshot": (
-        "📸 *Screenshot*\n\n"
-        "Capture a full\\-page screenshot of any website:\n\n"
-        "`screenshot <url>`  \\(or `shot` / `ss`\\)\n\n"
-        "Example: `screenshot example\\.com`"
-    ),
     "finance": (
         "💰 *Finance — Budget Manager*\n\n"
         "Connect your account in the web UI \\(Settings → Finance\\), then send `/finance` "
@@ -998,7 +992,7 @@ async def _send_png_as_document(chat_id: str, image_b64: str, caption: str = Non
             if png.startswith("data:image"):
                 png = png.split(",", 1)[1]
             png = _b64.b64decode(png)
-        res = await telegram_service.send_document_bytes(chat_id, png, "image.png", caption)
+        res = await telegram_service.send_document_bytes(chat_id, png, "image.png", caption, content_type="image/png")
         return bool(res.get("ok"))
     except Exception as e:
         logger.error(f"send_png_as_document failed: {e}")
@@ -1006,11 +1000,13 @@ async def _send_png_as_document(chat_id: str, image_b64: str, caption: str = Non
 
 
 async def _send_screenshot(chat_id: str, image_b64: str, caption: str) -> None:
-    """Deliver a screenshot to a chat: try as a photo, fall back to document, then text."""
+    """Deliver a screenshot document-first (full resolution — Telegram compresses photos
+    to an unreadable size for tall pages), falling back to a photo, then plain text."""
+    if await _send_png_as_document(chat_id, image_b64, caption):
+        return
     photo_result = await telegram_service.send_photo(chat_id, image_b64, caption)
     if not photo_result.get("ok"):
-        if not await _send_png_as_document(chat_id, image_b64, caption):
-            await telegram_service.send_message(chat_id, f"{caption}\n\n(Screenshot failed to send)")
+        await telegram_service.send_message(chat_id, f"{caption}\n\n(Screenshot failed to send)")
 
 
 async def _send_budget(chat_id: str, user, db, message_id: int = None) -> None:
@@ -1368,6 +1364,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                 "🔍 What would you like to search for?": "search",
                 "🖼 What images would you like to search for?": "images",
                 "🎨 Describe the image you want to generate:": "geni",
+                "📸 Send the URL to screenshot:": "screenshot",
                 "💰 Add a bill — reply: name amount": "addbill",
             }
             reply_from = (reply_to or {}).get("from", {})
@@ -2718,7 +2715,12 @@ async def _handle_telegram_update(update: dict, db: Session):
             
             logger.info(f"Result type: {response_type}, has image: {bool(image_data)}")
             
-            if response_type == "generated_image" and image_data:
+            if response_type == "generated_image" and image_data and result.get("prefer_document"):
+                # Screenshots: deliver document-first (full resolution) and skip the
+                # photo/social-share path, which compresses the image too small to read.
+                logger.info(f"Screenshot detected, sending as document, image length: {len(image_data)}")
+                await _send_screenshot(chat_id, image_data, response_content)
+            elif response_type == "generated_image" and image_data:
                 logger.info(f"Generated image detected, sending via Telegram, image length: {len(image_data)}")
                 photo_result = await telegram_service.send_photo(chat_id, image_data, response_content)
                 if not photo_result.get("ok"):
@@ -3369,6 +3371,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     "nyaa":     ("🔎 Type your anime search:", "e.g. one piece 1080p"),
                     "torrents": ("🔍 Type your torrent search:", "e.g. dark knight 1080p"),
                     "4chan":    ("🍀 Which board? (g, pol, a, or h)", "e.g. g"),
+                    "screenshot": ("📸 Send the URL to screenshot:", "e.g. example.com"),
                 }
                 cfg = _PROMPT_CONFIGS.get(action)
                 if cfg:
