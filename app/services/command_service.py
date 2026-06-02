@@ -2595,6 +2595,11 @@ Files are saved to your Storage.""",
         if attachments:
             return await self._translate_attachments(arg, attachments)
 
+        # A URL → fetch the page's real text and translate it (reliable; no OCR).
+        _url_match = re.search(r'https?://\S+', arg)
+        if _url_match:
+            return await self._translate_url(arg, _url_match.group(0).rstrip('.,)>'))
+
         parts = arg.strip().split()
         if not parts:
             return {
@@ -2660,6 +2665,45 @@ Files are saved to your Storage.""",
         except Exception as e:
             logger.error(f"Translation error: {e}")
             return {"type": "text", "content": f"Translation failed: {str(e)}"}
+
+    async def _translate_url(self, arg: str, url: str) -> dict:
+        """Fetch a web page's text and translate the whole thing (no OCR).
+
+        `translate <url>` (→ English) or `translate <url> to <language>`.
+        """
+        # Language = whatever's left after removing the URL, minus a leading "to".
+        rest = arg.replace(url, "").strip()
+        if rest.lower().startswith("to "):
+            rest = rest[3:].strip()
+        language = (rest or "English").title()
+
+        try:
+            fetched = await self.search_service.fetch_urls([url], max_urls=1)
+        except Exception as e:
+            return {"type": "text", "content": f"Couldn't fetch {url}: {e}"}
+        if not fetched or fetched[0].get("error") or not fetched[0].get("content"):
+            err = (fetched[0].get("error") if fetched else None) or "no readable text found"
+            return {"type": "text", "content": f"Couldn't fetch text from {url}: {err}"}
+
+        title = fetched[0].get("title", "")
+        body = fetched[0]["content"]
+        messages = [
+            {"role": "system", "content": (
+                f"Translate the following web page text to {language}. Translate ALL of it — "
+                "every line and list item — do not summarize, omit, or stop early. Preserve "
+                "the structure and line breaks. Output only the translation.")},
+            {"role": "user", "content": (f"Title: {title}\n\n" if title else "") + body[:24000]},
+        ]
+        _orig_np = self.chat_service.num_predict
+        self.chat_service.num_predict = max(_orig_np, 8192)
+        try:
+            translation = await self.chat_service.chat(messages)
+            return {"type": "text", "content": f"## Translation ({language})\n\n{translation}"}
+        except Exception as e:
+            logger.error(f"URL translation error: {e}")
+            return {"type": "text", "content": f"Translation failed: {str(e)}"}
+        finally:
+            self.chat_service.num_predict = _orig_np
 
     async def _translate_attachments(self, arg: str, attachments: list) -> dict:
         """OCR uploaded image(s)/PDF(s) and translate the FULL extracted text.
