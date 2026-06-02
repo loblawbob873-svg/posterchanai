@@ -68,14 +68,22 @@ def _capture_full_page(url: str, width: int = 1280) -> bytes:
     """
     from selenium import webdriver
     from selenium.webdriver.firefox.options import Options
+    from selenium.common.exceptions import TimeoutException
 
     options = Options()
     options.add_argument("-headless")
+    # "eager" returns at DOMContentLoaded instead of waiting for every ad/tracker/late
+    # subresource — heavy pages otherwise blow the page-load timeout and capture nothing.
+    options.page_load_strategy = "eager"
     driver = webdriver.Firefox(options=options)
     try:
         driver.set_window_size(width, 1080)
-        driver.set_page_load_timeout(45)
-        driver.get(url)
+        driver.set_page_load_timeout(30)
+        try:
+            driver.get(url)
+        except TimeoutException:
+            # Slow page hit the budget — screenshot whatever rendered rather than fail.
+            pass
         import time
         time.sleep(2)  # let lazy-loaded / late content settle before capture
         return driver.get_full_page_screenshot_as_png()
