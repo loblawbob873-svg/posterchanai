@@ -17,6 +17,13 @@ _wait_gpu_free() {
 _wait_gpu_free "arc" /tmp/posterchanai_locks/gpu.lock
 sudo systemctl restart posterchanai-ipex.service posterchanai-xpu-image.service
 
+# The local node also runs the posterchan bot manager (e.g. --pleroma --nitter);
+# restart it so it picks up freshly-committed ~/posterchan code, mirroring nas.lan
+# below. (~/posterchan is committed/pushed manually before running sync.sh.)
+if systemctl list-unit-files posterchan.service >/dev/null 2>&1; then
+    sudo systemctl restart posterchan.service
+fi
+
 ssh nas.lan "
 _wait_gpu_free() {
     local label=\$1
