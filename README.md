@@ -21,7 +21,7 @@ The backend is **Python 3.10+** and **FastAPI**. You can use cloud APIs (OpenAI-
 - **Text-to-speech (TTS)** and **speech-to-text (STT)**; Edge TTS and configurable backends
 - **Image generation**: ComfyUI (external) or native diffusers (SDXL); multiple image servers supported
 - **Website screenshots**: full-page capture with the `screenshot <url>` command (also `shot` / `ss`) — works in the web UI, Telegram, and Matrix. Uses headless Chrome (JS-aware, so SPAs render), Firefox fallback (see [Requirements](#requirements)).
-- **YouTube** summarization and thumbnails in chat
+- **YouTube / X**: summarize a video, grab thumbnails, or **download** audio (MP3) / video with the `ytdl` command — in the web UI, Telegram, Matrix, Misskey, and Pleroma
 
 ### Knowledge & code
 
@@ -31,8 +31,10 @@ The backend is **Python 3.10+** and **FastAPI**. You can use cloud APIs (OpenAI-
 ### PIM & productivity
 
 - **Email**: read and send mail via IMAP/SMTP
-- **News**: RSS-style news sources with summaries
-- **Torrents**: built-in torrent client
+- **News**: RSS-style news sources with summaries (`news` / `dailynews`)
+- **Finance (Budget Manager)**: per-user budget summary, bills, and payments from chat (`budget`, `bills`, `pay`, `addbill`) against a self-hosted Budget Manager app
+- **To-do**: quick personal task list from chat (`todo`)
+- **Torrents**: built-in torrent client plus **TorrentGalaxy** search and **nyaa.si** anime search (`torrents`, `nyaa`)
 - **File storage** per user and per conversation; file manager in the UI
 - **Media tools**: upload a file and `compress` it (image/video — H.264 with GPU acceleration when available), `clip <start> <end>` a video to a time span, or `convert` images↔PDF — all shared across the web UI, Telegram, and Matrix
 
@@ -41,6 +43,8 @@ The backend is **Python 3.10+** and **FastAPI**. You can use cloud APIs (OpenAI-
 - **Telegram and Matrix bots** drive chat, commands, and media from your phone
 - **Social posting** to **Misskey**, **Pleroma/Mastodon**, and **Matrix**: turn any reply, link, or topic into a post with the `post` command (rewrite, verbatim, or with your own instructions). See [Social posting from the bots](#social-posting-from-the-bots).
 - **Social notification relay**: forward mentions/replies/DMs from Misskey/Pleroma/Matrix to Telegram and reply right from the chat. See [Social notifications to Telegram](#social-notifications-to-telegram).
+- **Nitter post-cards**: per-user Nitter (X/Twitter) RSS feeds rendered as image "post cards" and delivered to your linked Telegram chat.
+- **Translate**: translate text or a replied-to message to any language (`translate`), shared across the web UI, Telegram, and Matrix.
 
 ### Extensibility & admin
 
