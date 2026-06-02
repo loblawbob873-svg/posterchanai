@@ -103,6 +103,45 @@ def _screenshot_settle() -> float:
         return 5.0
 
 
+def _url_is_safe_to_fetch(url: str) -> bool:
+    """SSRF guard for the screenshot command (reachable by untrusted Misskey/Pleroma
+    users, not just trusted Matrix/web users).
+
+    Resolves the URL's host and refuses any that maps to a private, loopback,
+    link-local, reserved, multicast or unspecified address — including the cloud
+    metadata endpoint 169.254.169.254 (covered by link-local). All resolved
+    addresses are checked so a host that returns both a public and an internal IP
+    is still rejected. Mirrors `mail_service.validate_mail_server`'s approach.
+
+    Note: this is resolve-then-check, so it does not fully close a DNS-rebinding
+    race where the browser later re-resolves to a different IP — matching the
+    existing guard's threat model. Returns True only if every resolved IP is public.
+    """
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+
+    host = (urlparse(url).hostname or "").strip()
+    if not host:
+        return False
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except (socket.gaierror, UnicodeError, OSError):
+        return False  # unresolvable → refuse rather than hand a raw host to the browser
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return False
+        # Normalize IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1) so the IPv4 checks apply.
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            return False
+    return True
+
+
 def _capture_full_page_chrome(chrome: str, url: str, width: int, timeout: int) -> bytes:
     """Render `url` in headless Chrome (driven over CDP) and return a full-page PNG.
 
@@ -789,6 +828,11 @@ class CommandService:
             return {"type": "text", "content": "Usage: `screenshot <url>` — e.g. `screenshot example.com`"}
         if not re.match(r"^https?://", url, re.IGNORECASE):
             url = "https://" + url
+
+        # SSRF guard: refuse internal/private targets before handing the URL to the
+        # browser. Resolved off the event loop since it does a blocking DNS lookup.
+        if not await asyncio.to_thread(_url_is_safe_to_fetch, url):
+            return {"type": "text", "content": f"🚫 Refusing to capture {url} — it resolves to a private or internal address."}
 
         import subprocess
         try:
