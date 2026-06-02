@@ -341,6 +341,9 @@ def _render_post_card_png(display_name: str, handle: str, text: str,
     handle_esc = _html.escape(handle or "")
     body_text = _html.escape(text).replace("\n", "<br>")
     ts = _html.escape(timestamp or "")
+    # Letter avatar (first initial) rather than an emoji — servers often lack an emoji
+    # font, which would render a 🐦 glyph as a tofu box ("no avatar").
+    initial = _html.escape(((display_name or handle or "?").strip()[:1] or "?").upper())
     media_block = f'<img class="media" src="{media_data_uri}" alt="">' if media_data_uri else ""
     ts_block = f'<div class="ts">{ts}</div>' if ts else ""
 
@@ -350,9 +353,9 @@ def _render_post_card_png(display_name: str, handle: str, text: str,
     font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,'Noto Color Emoji',sans-serif; }}
   .card {{ padding:20px 22px; color:#f7f9f9; }}
   .head {{ display:flex; align-items:center; margin-bottom:12px; }}
-  .avatar {{ width:48px; height:48px; border-radius:50%; background:#38444d;
+  .avatar {{ width:48px; height:48px; border-radius:50%; background:#1d9bf0;
     margin-right:12px; flex:0 0 auto; display:flex; align-items:center;
-    justify-content:center; font-size:24px; }}
+    justify-content:center; font-size:22px; font-weight:700; color:#fff; }}
   .name {{ font-weight:700; font-size:16px; line-height:1.25; }}
   .handle {{ color:#8899a6; font-size:15px; }}
   .text {{ font-size:19px; line-height:1.45; word-wrap:break-word; white-space:pre-wrap; }}
@@ -360,7 +363,7 @@ def _render_post_card_png(display_name: str, handle: str, text: str,
     object-fit:contain; border-radius:14px; margin-top:14px; border:1px solid #38444d; }}
   .ts {{ color:#8899a6; font-size:14px; margin-top:14px; }}
 </style></head><body><div class="card">
-  <div class="head"><div class="avatar">🐦</div>
+  <div class="head"><div class="avatar">{initial}</div>
     <div><div class="name">{name}</div><div class="handle">@{handle_esc}</div></div></div>
   <div class="text">{body_text}</div>
   {media_block}

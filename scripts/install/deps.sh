@@ -99,6 +99,22 @@ check_dependencies() {
         esac
     fi
 
+    # Color emoji font. Without one, the browser renders emoji as tofu boxes (□) in
+    # screenshots and in the Nitter post-card images (emoji in tweet text). Checked via
+    # fontconfig (fc-list), so it needs fontconfig present too.
+    if command -v fc-list &>/dev/null && fc-list 2>/dev/null | grep -qi emoji; then
+        print_success "color emoji font found (emoji render in screenshots/post-cards)"
+    else
+        print_warning "no color emoji font - emoji show as boxes in screenshots/Nitter cards"
+        case "$DISTRO" in
+            gentoo) echo "  Install with: emerge -av media-fonts/noto-emoji && fc-cache -f" ;;
+            arch)   echo "  Install with: pacman -S noto-fonts-emoji && fc-cache -f" ;;
+            debian) echo "  Install with: apt install fonts-noto-color-emoji && fc-cache -f" ;;
+            fedora) echo "  Install with: dnf install google-noto-emoji-color-fonts && fc-cache -f" ;;
+            *)      echo "  Install a color emoji font (e.g. Noto Color Emoji) for your distribution" ;;
+        esac
+    fi
+
     # Check for pax-utils (scanelf) - needed for Intel Arc on hardened kernels
     if [ "$BACKEND" = "intel" ]; then
         if ! command -v scanelf &>/dev/null; then
