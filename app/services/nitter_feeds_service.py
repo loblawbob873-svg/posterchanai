@@ -264,13 +264,14 @@ async def poll_once(db: Session) -> None:
     if not users:
         return
     # Route all Nitter requests (RSS fetches + media/avatar downloads) through the
-    # built-in proxy, matching 4chan/searx. The client is shared across users below.
-    client_kw = {"follow_redirects": True}
+    # built-in proxy, matching 4chan/searx. The proxy is MANDATORY — never make
+    # direct Nitter requests. If it's not configured, skip the poll entirely.
     proxy_config = get_proxy_config()
-    if proxy_config:
-        client_kw["proxy"] = proxy_config
-        logger.debug("[nitter] requests via proxy: %s", proxy_config)
-    async with httpx.AsyncClient(**client_kw) as client:
+    if not proxy_config:
+        logger.warning("[nitter] no proxy configured; skipping poll (direct requests are not allowed)")
+        return
+    logger.debug("[nitter] requests via proxy: %s", proxy_config)
+    async with httpx.AsyncClient(follow_redirects=True, proxy=proxy_config) as client:
         for user in users:
             try:
                 await _poll_user(db, tg, user, client)
