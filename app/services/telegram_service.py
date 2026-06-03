@@ -350,11 +350,16 @@ class TelegramService:
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(url, json=payload)
-                return response.json()
+                data = response.json()
+                # Editing a message to identical content is a no-op, not a failure —
+                # Telegram returns 400 "message is not modified". Treat it as success.
+                if not data.get("ok") and "not modified" in str(data.get("description", "")).lower():
+                    return {"ok": True, "not_modified": True}
+                return data
         except Exception as e:
             logger.error(f"Failed to edit message: {e}")
             return {"ok": False, "error": str(e)}
-    
+
     async def get_file(self, file_id: str) -> dict:
         """Get file information from Telegram."""
         if not self.bot_token:
