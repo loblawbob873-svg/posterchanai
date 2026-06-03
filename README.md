@@ -21,7 +21,7 @@ The backend is **Python 3.10+** and **FastAPI**. You can use cloud APIs (OpenAI-
 - **Text-to-speech (TTS)** and **speech-to-text (STT)**; Edge TTS and configurable backends
 - **Image generation**: ComfyUI (external) or native diffusers (SDXL); multiple image servers supported
 - **Website screenshots**: full-page capture with the `screenshot <url>` command (also `shot` / `ss`) — works in the web UI, Telegram, and Matrix. Uses headless Chrome (JS-aware, so SPAs render), Firefox fallback (see [Requirements](#requirements)).
-- **YouTube / X**: summarize a video, grab thumbnails, or **download** audio (MP3) / video with the `ytdl` command — in the web UI, Telegram, Matrix, Misskey, and Pleroma
+- **YouTube / X**: summarize a video, grab thumbnails, or **download** audio (MP3) / video with the `ytdl` command — in the web UI, Telegram, Matrix, Misskey, and Pleroma. A video download can be trimmed and/or shrunk in one command (`ytdl video <url> clip 0:10 0:30 compress`); Telegram also offers these as buttons after the download
 
 ### Knowledge & code
 

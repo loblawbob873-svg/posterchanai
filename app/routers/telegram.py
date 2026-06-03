@@ -2349,8 +2349,9 @@ async def _handle_telegram_update(update: dict, db: Session):
                                     )
                                     return {"ok": True}
 
-                                # Send the video
-                                duration_int = int(dl_result.duration) if dl_result.duration else None
+                                # Send the video. After a clip the source duration no
+                                # longer matches, so let Telegram infer it from the file.
+                                duration_int = None if _clip_arg else (int(dl_result.duration) if dl_result.duration else None)
                                 caption = f"🎬 **{dl_result.title}**" if dl_result.title else "🎬 Video"
                                 if dl_result.artist:
                                     caption += f"\n👤 {dl_result.artist}"
