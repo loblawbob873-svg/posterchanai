@@ -87,8 +87,11 @@ def _find_chrome() -> Optional[str]:
     )
 
 
-# Firefox uses its default profile for --screenshot (a fresh `-profile` dir hangs
-# headless), so serialize captures to avoid the profile's single-instance lock.
+# Serializes browser captures across the whole process: Firefox needs it because it
+# uses its default profile for --screenshot (a fresh `-profile` dir hangs headless,
+# and the default profile has a single-instance lock); Chrome needs it because each
+# headless instance is ~350MB and concurrent captures (user screenshots + the
+# nitter/social pollers' card renders) otherwise spike memory and crash launches.
 _screenshot_lock = threading.Lock()
 
 
@@ -220,8 +223,42 @@ def _capture_full_page_chrome(chrome: str, url: str, width: int, timeout: int, t
                         return reply
 
             cmd("Page.enable")
+            # Many sites (CNN, Fox, …) serve a blank/"Unknown Error" body to the
+            # default headless UA, which then screenshots as a white page. Strip the
+            # "Headless" marker from Chrome's OWN UA string (so it auto-tracks the
+            # installed version instead of a hardcoded one that goes stale) and apply
+            # it before navigating.
+            try:
+                ua = ((cmd("Browser.getVersion").get("result") or {}).get("userAgent") or "")
+                ua = ua.replace("HeadlessChrome", "Chrome")
+                if ua:
+                    cmd("Emulation.setUserAgentOverride", {"userAgent": ua})
+            except Exception:
+                pass  # non-fatal: fall back to the default UA
             cmd("Page.navigate", {"url": url})
             time.sleep(_screenshot_settle())  # real wall-clock for JS/network to settle
+            # Force lazy-loaded content to actually load before capturing: news
+            # homepages (Fox, etc.) only fetch below-the-fold images once they enter
+            # the viewport, so a full-page capture otherwise comes out as a tall
+            # skeleton of blank gaps. Step-scroll to the bottom (each section loads as
+            # it's reached), then return to top. Bounded by step count AND a height
+            # ceiling so an infinite-scroll page can't run away.
+            try:
+                last_h = 0
+                for _ in range(25):
+                    ev = cmd("Runtime.evaluate", {
+                        "expression": "window.scrollBy(0, innerHeight);"
+                                      "Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)",
+                        "returnByValue": True})
+                    h = ((ev.get("result") or {}).get("result") or {}).get("value") or 0
+                    time.sleep(0.25)  # let the just-revealed images fire their requests
+                    if h <= last_h or h > 40000:  # bottom reached, or runaway page
+                        break
+                    last_h = h
+                cmd("Runtime.evaluate", {"expression": "window.scrollTo(0, 0)"})
+                time.sleep(0.4)
+            except Exception:
+                pass  # non-fatal: capture whatever rendered
             params = {"format": "png", "captureBeyondViewport": True, "fromSurface": True}
             if tight:
                 # Opt-in tight capture (used only for self-rendered cards, NOT the
@@ -247,15 +284,24 @@ def _capture_full_page_chrome(chrome: str, url: str, width: int, timeout: int, t
         finally:
             ws.close()
     finally:
-        if proc and proc.poll() is None:
+        if proc:
+            # start_new_session=True made `proc` the leader of its own process
+            # group, so its pid IS the group id — valid even after the leader has
+            # exited, as long as any child survives. ALWAYS SIGKILL the whole group:
+            # a Chrome crash on a heavy/JS-heavy page (cnn.com et al.) exits the main
+            # process while leaving orphaned zygote/gpu/crashpad children behind. The
+            # old `if proc.poll() is None` guard skipped cleanup in exactly that case,
+            # so those orphans piled up until the host ran out of memory/PIDs and every
+            # later capture failed with an opaque error. No graceful SIGTERM first —
+            # it's headless with a throwaway profile, nothing to flush.
             try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                pass
+            try:
                 proc.wait(timeout=5)
             except Exception:
-                try:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-                except Exception:
-                    pass
+                pass
         shutil.rmtree(tmp_profile, ignore_errors=True)
 
 
@@ -302,7 +348,13 @@ def _capture_full_page(url: str, width: int = 1280, timeout: int = 60, tight: bo
     chrome = _find_chrome()
     if chrome:
         try:
-            return _capture_full_page_chrome(chrome, url, width, timeout, tight=tight)
+            # Serialize captures: each headless Chrome is ~350MB, and user
+            # screenshots can coincide with the nitter/social pollers' card
+            # renders (same path). Unbounded concurrency spiked memory and made
+            # launches crash — which, combined with crash-time process leaks,
+            # snowballed the box into failing every capture.
+            with _screenshot_lock:
+                return _capture_full_page_chrome(chrome, url, width, timeout, tight=tight)
         except Exception as e:
             logger.warning(f"Chrome screenshot failed ({e}); falling back to Firefox if present")
             if not _find_firefox():
