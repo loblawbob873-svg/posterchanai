@@ -237,28 +237,31 @@ def _capture_full_page_chrome(chrome: str, url: str, width: int, timeout: int, t
                 pass  # non-fatal: fall back to the default UA
             cmd("Page.navigate", {"url": url})
             time.sleep(_screenshot_settle())  # real wall-clock for JS/network to settle
-            # Force lazy-loaded content to actually load before capturing: news
-            # homepages (Fox, etc.) only fetch below-the-fold images once they enter
-            # the viewport, so a full-page capture otherwise comes out as a tall
-            # skeleton of blank gaps. Step-scroll to the bottom (each section loads as
-            # it's reached), then return to top. Bounded by step count AND a height
-            # ceiling so an infinite-scroll page can't run away.
-            try:
-                last_h = 0
-                for _ in range(25):
+            # Full-page (non-tight) capture: size the viewport to the WHOLE page so
+            # every section — including lazy-loaded, below-the-fold images — renders in
+            # place. We deliberately do NOT scroll: virtualized pages (CNN) drop
+            # off-screen content when scrolled back and collapse their height at capture
+            # time, and `captureBeyondViewport` alone under-captures them. Height is
+            # driven by scrollHeight, NOT getLayoutMetrics/cssContentSize, which
+            # under-reports for pages (CNN) whose content overflows a short <body>.
+            full_h = 0
+            if not tight:
+                def _page_height():
                     ev = cmd("Runtime.evaluate", {
-                        "expression": "window.scrollBy(0, innerHeight);"
-                                      "Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)",
+                        "expression": "Math.max(document.body.scrollHeight, document.documentElement.scrollHeight,"
+                                      "document.body.offsetHeight, document.documentElement.offsetHeight)",
                         "returnByValue": True})
-                    h = ((ev.get("result") or {}).get("result") or {}).get("value") or 0
-                    time.sleep(0.25)  # let the just-revealed images fire their requests
-                    if h <= last_h or h > 40000:  # bottom reached, or runaway page
-                        break
-                    last_h = h
-                cmd("Runtime.evaluate", {"expression": "window.scrollTo(0, 0)"})
-                time.sleep(0.4)
-            except Exception:
-                pass  # non-fatal: capture whatever rendered
+                    return int(((ev.get("result") or {}).get("result") or {}).get("value") or 0)
+                try:
+                    # Cap the height: GPU surfaces have a max dimension and a runaway
+                    # (infinite-scroll) page would otherwise produce an unusable image.
+                    full_h = min(max(_page_height(), 1200), 25000)
+                    cmd("Emulation.setDeviceMetricsOverride",
+                        {"width": width, "height": full_h, "deviceScaleFactor": 1, "mobile": False})
+                    time.sleep(2.0)  # let the now-visible lazy images fire + load
+                    full_h = min(max(_page_height(), full_h), 25000)  # may have grown
+                except Exception:
+                    full_h = 0
             params = {"format": "png", "captureBeyondViewport": True, "fromSurface": True}
             if tight:
                 # Opt-in tight capture (used only for self-rendered cards, NOT the
@@ -273,6 +276,8 @@ def _capture_full_page_chrome(chrome: str, url: str, width: int, timeout: int, t
                 dims = ((ev.get("result") or {}).get("result") or {}).get("value")
                 if dims and dims[0] and dims[1]:
                     params["clip"] = {"x": 0, "y": 0, "width": dims[0], "height": dims[1], "scale": 1}
+            elif full_h:
+                params["clip"] = {"x": 0, "y": 0, "width": width, "height": full_h, "scale": 1}
             shot = cmd("Page.captureScreenshot", params)
             data = (shot.get("result") or {}).get("data")
             if not data:
