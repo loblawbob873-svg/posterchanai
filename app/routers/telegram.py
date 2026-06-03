@@ -4252,8 +4252,9 @@ async def _handle_telegram_update(update: dict, db: Session):
 
                 if action == "post":
                     pending_post = _matrix_post_cache.get(chat_id)
-                    # Cache miss (e.g. after service restart) — recover from message text
-                    if not pending_post:
+                    # Cache miss (e.g. after service restart) — recover from message text.
+                    # "" is a valid caption-less media post, so only recover when truly absent.
+                    if pending_post is None:
                         _msg_text = (callback_query.get("message") or {}).get("text", "")
                         if _msg_text:
                             # Strip the prompt suffix appended by _offer_social_post
@@ -4265,7 +4266,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                         if pending_post:
                             _matrix_post_cache[chat_id] = pending_post
                             logger.info(f"mtx:post — recovered post text from message ({len(pending_post)} chars)")
-                    if not pending_post:
+                    if pending_post is None:
                         await telegram_service.send_message(chat_id, "No pending Matrix post found. Please generate a new post.")
                         return {"ok": True}
 
@@ -4318,7 +4319,8 @@ async def _handle_telegram_update(update: dict, db: Session):
                     pending_post = _matrix_post_cache.pop(chat_id, None)
                     rooms = _matrix_room_cache.pop(chat_id, [])
 
-                    if not pending_post:
+                    # "" is a valid caption-less media post; only bail when truly absent.
+                    if pending_post is None:
                         await telegram_service.send_message(chat_id, "No pending Matrix post found.")
                         return {"ok": True}
 
@@ -4385,9 +4387,9 @@ async def _handle_telegram_update(update: dict, db: Session):
 
                 _all_image = _geni_image_cache.get(chat_id)  # leave in cache for Matrix room-picker step
 
-                # Misskey
+                # Misskey — post when there's text OR a media attachment (caption-less post).
                 mk_post = _misskey_post_cache.pop(chat_id, None) or _recover_post_text()
-                if mk_post and all_user and _has_misskey(all_user):
+                if (mk_post or _all_image) and all_user and _has_misskey(all_user):
                     try:
                         from app.services.misskey_service import post_note as _mk_note
                         await _mk_note(all_user.misskey_instance_url, all_user.misskey_api_token, mk_post,
@@ -4401,7 +4403,7 @@ async def _handle_telegram_update(update: dict, db: Session):
 
                 # Pleroma
                 plr_post = _pleroma_post_cache.pop(chat_id, None) or _recover_post_text()
-                if plr_post and all_user and _has_pleroma(all_user):
+                if (plr_post or _all_image) and all_user and _has_pleroma(all_user):
                     try:
                         from app.services.pleroma_service import post_status as _plr_status
                         await _plr_status(all_user.pleroma_instance_url, all_user.pleroma_access_token, plr_post,
@@ -4418,7 +4420,7 @@ async def _handle_telegram_update(update: dict, db: Session):
 
                 # Matrix — needs room selection; show picker if configured
                 mtx_post = _matrix_post_cache.get(chat_id) or _recover_post_text()
-                if mtx_post and mtx_post != _CONSUMED and all_user and _has_matrix(all_user):
+                if (mtx_post or _all_image) and mtx_post != _CONSUMED and all_user and _has_matrix(all_user):
                     matrix_attempted = True
                     try:
                         from app.services.matrix_service import get_joined_rooms as _mtx_rooms
