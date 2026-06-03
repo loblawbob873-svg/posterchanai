@@ -158,6 +158,8 @@ class MatrixCommandRequest(BaseModel):
 class MatrixYtdlRequest(BaseModel):
     url: str
     video: bool = False
+    clip: Optional[str] = None      # "start end" (e.g. "0:10 0:30"); video only
+    compress: Optional[bool] = False  # compress the (clipped) video; video only
 
 
 @router.post("/command")
@@ -719,15 +721,8 @@ async def matrix_ytdl_fetch(
     if not url:
         raise HTTPException(status_code=400, detail="url is required")
 
-    from app.services.youtube_service import (
-        check_ytdlp_available, download_as_mp3, download_as_video, extract_download_urls
-    )
-    import tempfile, os as _os, asyncio as _aio, base64 as _b64, shutil as _shutil
-    if not check_ytdlp_available():
-        return {"ok": False, "error": "yt-dlp not installed on the server."}
-    urls = extract_download_urls(url)
-    if not urls:
-        return {"ok": False, "error": "Could not find a valid YouTube URL."}
+    from app.services.youtube_service import download_ytdl_bytes
+    import os as _os, asyncio as _aio, base64 as _b64
 
     from app.models import Setting as _Setting
     _cookies_s = db.query(_Setting).filter(_Setting.key == "ytdl_cookies_path").first()
@@ -737,41 +732,21 @@ async def matrix_ytdl_fetch(
     _ssl_s = db.query(_Setting).filter(_Setting.key == "ytdl_no_ssl_verify").first()
     _no_ssl = str(_ssl_s.value).strip().lower() in ("true", "1", "yes") if _ssl_s and _ssl_s.value else False
 
-    # Cap video at 720p so files stay within upload limits, and reject anything
-    # still too large rather than OOM the worker or fail silently downstream.
-    # 95 MB leaves headroom under Cloudflare's 100 MB request-body cap (the real
-    # bottleneck — nginx/Synapse allow much more).
-    MAX_BYTES = 95 * 1024 * 1024  # 95 MB (Cloudflare-safe)
-
-    def _read_b64(path):
-        with open(path, "rb") as f:
-            return _b64.b64encode(f.read()).decode("ascii")
-
-    tmp = tempfile.mkdtemp(prefix="matrix_ytdl_fetch_")
-    try:
-        if data.video:
-            dl = await _aio.to_thread(download_as_video, urls[0], tmp, "720p", _cookies_path, _no_ssl)
-        else:
-            dl = await _aio.to_thread(download_as_mp3, urls[0], tmp, _cookies_path, _no_ssl)
-        if not dl.success:
-            return {"ok": False, "error": f"Download failed: {dl.error}"}
-        size = _os.path.getsize(dl.local_path)
-        if size > MAX_BYTES:
-            return {
-                "ok": False,
-                "error": (f"Media too large ({size // (1024 * 1024)} MB, max "
-                          f"{MAX_BYTES // (1024 * 1024)} MB). Try audio (`ytdl <url>`) "
-                          f"or a shorter clip."),
-            }
-        # Read + base64 off the event loop — these touch the whole file.
-        return {
-            "ok": True,
-            "filename": _os.path.basename(dl.local_path),
-            "mime": "video/mp4" if data.video else "audio/mpeg",
-            "data": await _aio.to_thread(_read_b64, dl.local_path),
-        }
-    except Exception as e:
-        logger.error(f"Matrix ytdl-fetch error: {e}", exc_info=True)
-        return {"ok": False, "error": str(e)}
-    finally:
-        _shutil.rmtree(tmp, ignore_errors=True)
+    # Cap video at 720p so files stay within upload limits. 95 MB leaves headroom
+    # under Cloudflare's 100 MB request-body cap (the real bottleneck — nginx/Synapse
+    # allow much more). Optional clip/compress post-process server-side (clip →
+    # compress) and the cap is enforced on the final bytes.
+    result = await _aio.to_thread(
+        download_ytdl_bytes, url,
+        video=bool(data.video), clip=data.clip, compress=bool(data.compress),
+        cookies_path=_cookies_path, no_ssl_verify=_no_ssl,
+        max_bytes=95 * 1024 * 1024, quality="720p",
+    )
+    if not result.get("ok"):
+        return result
+    return {
+        "ok": True,
+        "filename": result["filename"],
+        "mime": result["mime"],
+        "data": _b64.b64encode(result["data"]).decode("ascii"),
+    }

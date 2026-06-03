@@ -708,7 +708,8 @@ _HELP_SECTIONS = {
         "• 🎵 MP3 — download the audio\n"
         "• 🎬 Movie — download the video\n"
         "• 📣 Post — generate & share a social post\n\n"
-        "Or use `ytdl <url>` for audio, `ytdl video <url>` for video."
+        "Or use `ytdl <url>` for audio, `ytdl video <url>` for video.\n"
+        "Trim and/or shrink a video in one go: `ytdl video <url> clip 0:10 0:30 compress`"
     ),
     "4chan": (
         "🍀 *4chan Browser*\n\n"
@@ -1247,6 +1248,20 @@ def _media_action_keyboard(attachments: list, user=None) -> Optional[dict]:
     return {"inline_keyboard": rows} if rows else None
 
 
+def _ytdl_video_keyboard() -> dict:
+    """Action buttons shown after `ytdl video <url>` downloads a video: send it
+    as-is, or trim/shrink it first. Compress/Clip reuse the standard media-action
+    callbacks; 'Clip + Compress' runs the clip flow then compresses the result."""
+    return {"inline_keyboard": [
+        [{"text": "📤 Send as-is", "callback_data": "ytdlv:send"}],
+        [
+            {"text": "🗜 Compress", "callback_data": "media:compress"},
+            {"text": "✂️ Clip", "callback_data": "media:clip"},
+        ],
+        [{"text": "🗜✂️ Clip + Compress", "callback_data": "media:clipcompress"}],
+    ]}
+
+
 # Languages offered when translating an uploaded image/PDF.
 _TRANSLATE_LANGS = [
     "English", "Spanish", "French",
@@ -1469,13 +1484,22 @@ async def _handle_telegram_update(update: dict, db: Session):
                     )
                     return {"ok": True}
                 _clip_pending.pop(chat_id, None)
+                _compress_after = bool(_entry.get("compress_after"))
+                _entry.pop("compress_after", None)
                 _atts = [a for a in _entry["attachments"] if is_video(a[0], a[2])]
-                await telegram_service.send_message(chat_id, "✂️ Clipping…")
+                await telegram_service.send_message(chat_id, "✂️ Clipping…" + (" then compressing…" if _compress_after else ""))
                 try:
                     _outs, _summary = await asyncio.to_thread(clip_attachment, _atts, _start, _val)
                     if not _outs:
                         await telegram_service.send_message(chat_id, _summary)
                     else:
+                        # Optionally compress the clipped result (the "Clip + Compress" action).
+                        if _compress_after:
+                            from app.services.media_service import compress_attachments
+                            _catts = [(f["filename"], f["data"], f["content_type"]) for f in _outs if f.get("data")]
+                            _couts, _csummary = await asyncio.to_thread(compress_attachments, _catts)
+                            if _couts:
+                                _outs, _summary = _couts, f"{_summary}\n{_csummary}"
                         await telegram_service.send_message(chat_id, _summary)
                         for _f in _outs:
                             if _f.get("data"):
@@ -2182,6 +2206,24 @@ async def _handle_telegram_update(update: dict, db: Session):
                             as_video = False
                             url_arg = arg
 
+                        # Optional post-processing modifiers on `ytdl video`:
+                        #   clip <start> <end>   — trim the downloaded video
+                        #   compress             — shrink it (applied after clip)
+                        _clip_arg = None
+                        _compress = False
+                        if as_video:
+                            _toks = url_arg.split()
+                            _low = [t.lower() for t in _toks]
+                            if "compress" in _low:
+                                _compress = True
+                            if "clip" in _low:
+                                _ci = _low.index("clip")
+                                if _ci + 2 < len(_toks):
+                                    _clip_arg = f"{_toks[_ci + 1]} {_toks[_ci + 2]}"
+                                else:
+                                    await telegram_service.send_message(chat_id, "❌ `clip` needs a start and end, e.g. `ytdl video <url> clip 0:10 0:30`.")
+                                    return {"ok": True}
+
                         urls = extract_download_urls(url_arg)
                         if not urls:
                             await telegram_service.send_message(chat_id, "❌ Could not find a valid YouTube URL in your message.")
@@ -2210,10 +2252,84 @@ async def _handle_telegram_update(update: dict, db: Session):
                                     await telegram_service.send_message(chat_id, f"❌ Download failed: {dl_result.error}")
                                     return {"ok": True}
 
-                                file_size = _os.path.getsize(dl_result.local_path)
+                                # No inline clip/compress given → offer the actions
+                                # interactively (Telegram-native): cache the video and
+                                # show Send / Compress / Clip / Both buttons. The temp dir
+                                # is cleaned by `finally`, so read the bytes into the cache.
+                                # Guard against caching a huge "best"-quality file in RAM:
+                                # above the cap, fall back to storage (clip/compress on a
+                                # file that large isn't worth the memory).
+                                _raw_size = _os.path.getsize(dl_result.local_path)
+                                if not (_clip_arg or _compress) and _raw_size > 250 * 1024 * 1024:
+                                    save_result = await download_video_and_save_to_storage(
+                                        url=urls[0], user_id=user_obj.id, db=db, subfolder="YouTube Videos",
+                                    )
+                                    from app.services.youtube_service import format_download_result
+                                    await telegram_service.send_message(
+                                        chat_id,
+                                        f"❌ Video is too large to process here ({_raw_size // (1024*1024)} MB).\n\n{format_download_result(save_result)}"
+                                    )
+                                    return {"ok": True}
+                                if not (_clip_arg or _compress):
+                                    _fn = _os.path.basename(dl_result.local_path)
+                                    with open(dl_result.local_path, "rb") as _vf:
+                                        _vbytes = _vf.read()
+                                    _cap = f"🎬 {dl_result.title}" if dl_result.title else "🎬 Video"
+                                    _media_action_cache[chat_id] = {
+                                        "attachments": [(_fn, _vbytes, "video/mp4")],
+                                        "ts": time.time(),
+                                        "ytdl": {
+                                            "caption": _cap,
+                                            "duration": int(dl_result.duration) if dl_result.duration else None,
+                                        },
+                                    }
+                                    await telegram_service.send_message(
+                                        chat_id,
+                                        f"✅ Downloaded ({_os.path.getsize(dl_result.local_path) // (1024*1024)} MB). "
+                                        "Send it as-is, or trim/shrink it first?",
+                                        reply_markup=_ytdl_video_keyboard(),
+                                    )
+                                    return {"ok": True}
+
+                                # Optional post-processing: clip then compress, reusing the
+                                # standalone-command transforms so results are identical.
+                                send_path = dl_result.local_path
+                                if _clip_arg or _compress:
+                                    from app.services.media_service import (
+                                        parse_timecode, clip_attachment, compress_attachments,
+                                    )
+                                    await telegram_service.send_message(chat_id, "⏳ Processing video…")
+                                    _fn = _os.path.basename(dl_result.local_path)
+                                    with open(dl_result.local_path, "rb") as _vf:
+                                        _vbytes = _vf.read()
+                                    _mime = "video/mp4"
+                                    if _clip_arg:
+                                        _p = _clip_arg.split()
+                                        _s, _e = parse_timecode(_p[0]), parse_timecode(_p[1])
+                                        if _s is None or _e is None or _e <= _s:
+                                            await telegram_service.send_message(chat_id, "❌ Invalid clip times — use `clip 0:10 0:30` (end after start).")
+                                            return {"ok": True}
+                                        _outs, _ = await _asyncio.to_thread(clip_attachment, [(_fn, _vbytes, _mime)], _s, _e)
+                                        if not _outs:
+                                            await telegram_service.send_message(chat_id, "❌ Clip failed.")
+                                            return {"ok": True}
+                                        _fn, _vbytes, _mime = _outs[0]["filename"], _outs[0]["data"], _outs[0]["content_type"]
+                                    if _compress:
+                                        _outs, _ = await _asyncio.to_thread(compress_attachments, [(_fn, _vbytes, _mime)])
+                                        if not _outs:
+                                            await telegram_service.send_message(chat_id, "❌ Compress failed.")
+                                            return {"ok": True}
+                                        _fn, _vbytes, _mime = _outs[0]["filename"], _outs[0]["data"], _outs[0]["content_type"]
+                                    send_path = _os.path.join(temp_dir, _fn)
+                                    with open(send_path, "wb") as _of:
+                                        _of.write(_vbytes)
+
+                                file_size = _os.path.getsize(send_path)
                                 # Telegram bot limit is 50 MB for videos
                                 if file_size > 50 * 1024 * 1024:
-                                    # File too large - save to storage and notify
+                                    # File too large - save to storage and notify. (For a
+                                    # clipped/compressed result this re-downloads the full
+                                    # source to storage; the trimmed copy can't be stored.)
                                     save_result = await download_video_and_save_to_storage(
                                         url=urls[0],
                                         user_id=user_obj.id,
@@ -2235,7 +2351,7 @@ async def _handle_telegram_update(update: dict, db: Session):
 
                                 video_result = await telegram_service.send_video(
                                     chat_id=chat_id,
-                                    file_path=dl_result.local_path,
+                                    file_path=send_path,
                                     caption=caption,
                                     duration=duration_int,
                                 )
@@ -3003,6 +3119,41 @@ async def _handle_telegram_update(update: dict, db: Session):
                     logger.error(f"Torrent callback error: {cb_err}", exc_info=True)
                     await telegram_service.send_message(chat_id, f"Error: {cb_err}")
 
+            elif data == "ytdlv:send":
+                # "Send as-is" after `ytdl video` — deliver the cached download as a video.
+                import os as _os, tempfile, shutil
+                _entry = _media_action_cache.get(chat_id)
+                if not _entry or (time.time() - _entry.get("ts", 0)) > _MEDIA_ACTION_TTL:
+                    _media_action_cache.pop(chat_id, None)
+                    await telegram_service.send_message(chat_id, "⏳ That download expired — run `ytdl video <url>` again.")
+                    return {"ok": True}
+                _vid = next((a for a in _entry["attachments"] if (a[2] or "").startswith("video/")), None)
+                if not _vid:
+                    await telegram_service.send_message(chat_id, "Nothing to send.")
+                    return {"ok": True}
+                _fn, _vbytes, _ = _vid
+                if len(_vbytes) > 50 * 1024 * 1024:
+                    await telegram_service.send_message(
+                        chat_id,
+                        f"❌ Too large to send as-is ({len(_vbytes) // (1024*1024)} MB). "
+                        "Tap 🗜 Compress or ✂️ Clip to shrink it under Telegram's 50 MB limit.")
+                    return {"ok": True}
+                _ymeta = _entry.get("ytdl", {})
+                _tmpdir = tempfile.mkdtemp(prefix="tg_ytdlv_send_")
+                try:
+                    _sp = _os.path.join(_tmpdir, _fn)
+                    with open(_sp, "wb") as _of:
+                        _of.write(_vbytes)
+                    _r = await telegram_service.send_video(
+                        chat_id=chat_id, file_path=_sp,
+                        caption=_ymeta.get("caption"), duration=_ymeta.get("duration"),
+                    )
+                    if not _r.get("ok"):
+                        await telegram_service.send_message(chat_id, f"❌ Failed to send video: {_r.get('description', _r.get('error', 'Unknown error'))}")
+                finally:
+                    shutil.rmtree(_tmpdir, ignore_errors=True)
+                return {"ok": True}
+
             elif data.startswith("media:"):
                 # Uploaded-file action buttons (compress / convert / read text / summarize)
                 cb_user = db.query(User).filter(
@@ -3042,13 +3193,16 @@ async def _handle_telegram_update(update: dict, db: Session):
                     if _action == "compress":
                         await telegram_service.send_message(chat_id, "🗜 Compressing…")
                         await _send_files_result(await cb_command_service.execute_command("compress", "", attachments=_atts))
-                    elif _action == "clip":
+                    elif _action in ("clip", "clipcompress"):
                         # Kick off the interactive trim: ask for the start time. The end
                         # time is requested after the user replies (see ForceReply routing).
+                        # "clipcompress" also compresses the clipped result; that intent is
+                        # stashed on the cache entry so it survives the two-step prompt.
                         if not any(is_video(fn, ct) for fn, _, ct in _atts):
                             await telegram_service.send_message(chat_id, "Nothing to clip — that upload has no video.")
                         else:
                             _clip_pending.pop(chat_id, None)
+                            _entry["compress_after"] = (_action == "clipcompress")
                             await telegram_service.send_message(
                                 chat_id, _CLIP_START_PROMPT,
                                 reply_markup={"force_reply": True, "selective": True,

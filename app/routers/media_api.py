@@ -45,6 +45,8 @@ class ScreenshotRequest(BaseModel):
 class YtdlRequest(BaseModel):
     url: str
     video: Optional[bool] = False
+    clip: Optional[str] = None      # "start end" (e.g. "0:10 0:30"); video only
+    compress: Optional[bool] = False  # compress the (clipped) video; video only
 
 
 class PostCardRequest(BaseModel):
@@ -212,24 +214,16 @@ async def fetch_ytdl(
     Identity-agnostic like /process and /screenshot — a pure URL→media transform
     authenticated by the bot API key (not a linked user), so the Matrix, Misskey
     and Pleroma listeners share one yt-dlp path. Audio (MP3) by default; video=true
-    fetches MP4 (capped at 720p). Cookies/SSL come from the global ytdl_* settings.
+    fetches MP4 (capped at 720p). The optional `clip` ("start end") and `compress`
+    modifiers post-process the video server-side (clip → compress) so the bot gets
+    the trimmed/shrunk result in one round-trip. Cookies/SSL come from the global
+    ytdl_* settings.
 
     Response: {"ok": True, "filename", "mime", "data"(b64)} or {"ok": False, "error"}.
     """
     from app.models import Setting
-    from app.services.youtube_service import (
-        check_ytdlp_available, download_as_mp3, download_as_video, extract_download_urls
-    )
-    import os as _os, tempfile, shutil as _shutil
-
-    url = (req.url or "").strip()
-    if not url:
-        return {"ok": False, "error": "url is required"}
-    if not check_ytdlp_available():
-        return {"ok": False, "error": "yt-dlp not installed on the server."}
-    urls = extract_download_urls(url)
-    if not urls:
-        return {"ok": False, "error": "Could not find a valid YouTube/X URL."}
+    from app.services.youtube_service import download_ytdl_bytes
+    import os as _os
 
     _cookies_s = db.query(Setting).filter(Setting.key == "ytdl_cookies_path").first()
     _cookies_path = str(_cookies_s.value).strip() if _cookies_s and _cookies_s.value else None
@@ -240,32 +234,17 @@ async def fetch_ytdl(
 
     # 95 MB keeps files under Cloudflare's 100 MB request-body cap (the real
     # bottleneck for fediverse uploads); reject larger rather than fail downstream.
-    MAX_BYTES = 95 * 1024 * 1024
-
-    def _read_b64(path):
-        with open(path, "rb") as f:
-            return base64.b64encode(f.read()).decode("ascii")
-
-    tmp = tempfile.mkdtemp(prefix="media_ytdl_")
-    try:
-        if req.video:
-            dl = await asyncio.to_thread(download_as_video, urls[0], tmp, "720p", _cookies_path, _no_ssl)
-        else:
-            dl = await asyncio.to_thread(download_as_mp3, urls[0], tmp, _cookies_path, _no_ssl)
-        if not dl.success:
-            return {"ok": False, "error": f"Download failed: {dl.error}"}
-        size = _os.path.getsize(dl.local_path)
-        if size > MAX_BYTES:
-            return {"ok": False, "error": (f"Media too large ({size // (1024 * 1024)} MB, max "
-                    f"{MAX_BYTES // (1024 * 1024)} MB). Try audio (ytdl <url>) or a shorter clip.")}
-        return {
-            "ok": True,
-            "filename": _os.path.basename(dl.local_path),
-            "mime": "video/mp4" if req.video else "audio/mpeg",
-            "data": await asyncio.to_thread(_read_b64, dl.local_path),
-        }
-    except Exception as e:
-        logger.error(f"[MEDIA-API] ytdl failed: {e}", exc_info=True)
-        return {"ok": False, "error": str(e)}
-    finally:
-        _shutil.rmtree(tmp, ignore_errors=True)
+    result = await asyncio.to_thread(
+        download_ytdl_bytes, req.url,
+        video=bool(req.video), clip=req.clip, compress=bool(req.compress),
+        cookies_path=_cookies_path, no_ssl_verify=_no_ssl,
+        max_bytes=95 * 1024 * 1024, quality="720p",
+    )
+    if not result.get("ok"):
+        return result
+    return {
+        "ok": True,
+        "filename": result["filename"],
+        "mime": result["mime"],
+        "data": base64.b64encode(result["data"]).decode("ascii"),
+    }

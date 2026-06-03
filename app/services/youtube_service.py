@@ -874,3 +874,104 @@ async def fetch_video_info(url: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error fetching video info for {url}: {e}")
         return {}
+
+
+# ---------------------------------------------------------------------------
+# Bot ytdl path: download → optional clip/compress → bytes
+# ---------------------------------------------------------------------------
+
+def download_ytdl_bytes(
+    url: str,
+    *,
+    video: bool = False,
+    clip: Optional[str] = None,
+    compress: bool = False,
+    cookies_path: Optional[str] = None,
+    no_ssl_verify: bool = False,
+    max_bytes: int = 95 * 1024 * 1024,
+    quality: str = "720p",
+) -> Dict[str, Any]:
+    """Download a YouTube/X URL and return the media bytes, optionally clipped
+    and/or compressed first.
+
+    Shared by the bot-facing ytdl endpoints (/api/media/ytdl and
+    /api/matrix/ytdl) so they don't each reimplement the download + size-check.
+    The optional post-processing reuses the SAME ffmpeg path as the standalone
+    `clip`/`compress` commands (`media_service.clip_attachment` /
+    `compress_attachments`), so results are identical. `clip`/`compress` apply
+    only to video — they're rejected for audio (mp3).
+
+    Pipeline order is fixed: clip first (trim), then compress the trimmed result.
+    The size cap is enforced on the FINAL bytes, so trimming/compressing can
+    bring an over-limit source under the limit.
+
+    Runs synchronously (callers should wrap in asyncio.to_thread). Returns
+    {"ok": True, "filename", "mime", "data": <raw bytes>} or
+    {"ok": False, "error": <str>}.
+    """
+    url = (url or "").strip()
+    if not url:
+        return {"ok": False, "error": "url is required"}
+    if not check_ytdlp_available():
+        return {"ok": False, "error": "yt-dlp not installed on the server."}
+
+    want_clip = bool((clip or "").strip())
+    if (want_clip or compress) and not video:
+        return {"ok": False, "error": "clip/compress only apply to video downloads — use `ytdl video <url> …`."}
+
+    urls = extract_download_urls(url)
+    if not urls:
+        return {"ok": False, "error": "Could not find a valid YouTube/X URL."}
+
+    tmp = tempfile.mkdtemp(prefix="ytdl_bytes_")
+    try:
+        if video:
+            dl = download_as_video(urls[0], tmp, quality, cookies_path, no_ssl_verify)
+        else:
+            dl = download_as_mp3(urls[0], tmp, cookies_path, no_ssl_verify)
+        if not dl.success:
+            return {"ok": False, "error": f"Download failed: {dl.error}"}
+
+        filename = os.path.basename(dl.local_path)
+        mime = "video/mp4" if video else "audio/mpeg"
+        with open(dl.local_path, "rb") as f:
+            data = f.read()
+
+        # Optional post-processing (video only). clip → compress, reusing the
+        # standalone-command transforms so behavior is identical.
+        if video and (want_clip or compress):
+            from app.services import media_service
+
+            if want_clip:
+                parts = clip.split()
+                if len(parts) < 2:
+                    return {"ok": False, "error": "clip needs <start> <end>, e.g. `clip 0:10 0:30`"}
+                start = media_service.parse_timecode(parts[0])
+                end = media_service.parse_timecode(parts[1])
+                if start is None or end is None:
+                    return {"ok": False, "error": "could not parse clip start/end (use seconds or M:SS / H:MM:SS)"}
+                if end <= start:
+                    return {"ok": False, "error": "clip end time must be after start time"}
+                outputs, _summary = media_service.clip_attachment([(filename, data, mime)], start, end)
+                if not outputs:
+                    return {"ok": False, "error": _summary or "clip failed"}
+                filename, data, mime = outputs[0]["filename"], outputs[0]["data"], outputs[0]["content_type"]
+
+            if compress:
+                outputs, _summary = media_service.compress_attachments([(filename, data, mime)])
+                if not outputs:
+                    return {"ok": False, "error": _summary or "compress failed"}
+                filename, data, mime = outputs[0]["filename"], outputs[0]["data"], outputs[0]["content_type"]
+
+        if len(data) > max_bytes:
+            return {"ok": False, "error": (
+                f"Media too large ({len(data) // (1024 * 1024)} MB, max "
+                f"{max_bytes // (1024 * 1024)} MB). Try audio (`ytdl <url>`), a shorter "
+                f"`clip`, or add `compress`.")}
+
+        return {"ok": True, "filename": filename, "mime": mime, "data": data}
+    except Exception as e:
+        logger.error(f"[ytdl] download_ytdl_bytes failed: {e}", exc_info=True)
+        return {"ok": False, "error": str(e)}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)

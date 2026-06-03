@@ -471,7 +471,7 @@ class CommandService:
         "images": "Image search: images <query>",
         "geni": "Generate image: geni <prompt>",
         "yt": "YouTube search: yt <query>",
-        "ytdl": "Download YouTube or X: ytdl <url> (MP3 default), ytdl mp3/video <url>",
+        "ytdl": "Download YouTube or X: ytdl <url> (MP3 default), ytdl mp3/video <url>. For video, add clip <start> <end> and/or compress, e.g. ytdl video <url> clip 0:10 0:30 compress",
         "torrents": "Torrent search: torrents <query>",
         "nyaa": "Anime torrents: nyaa <query>",
         "dailynews": "Web news: dailynews <source>",
