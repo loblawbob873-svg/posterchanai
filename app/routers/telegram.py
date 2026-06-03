@@ -2245,23 +2245,25 @@ async def _handle_telegram_update(update: dict, db: Session):
                             as_video = False
                             url_arg = arg
 
-                        # Optional post-processing modifiers on `ytdl video`:
+                        # Optional post-processing modifiers:
                         #   clip <start> <end>   — trim the downloaded video
                         #   compress             — shrink it (applied after clip)
+                        # These only apply to video, so their presence implies `video`
+                        # even without the keyword (you can't trim/shrink an MP3).
                         _clip_arg = None
-                        _compress = False
-                        if as_video:
-                            _toks = url_arg.split()
-                            _low = [t.lower() for t in _toks]
-                            if "compress" in _low:
-                                _compress = True
-                            if "clip" in _low:
-                                _ci = _low.index("clip")
-                                if _ci + 2 < len(_toks):
-                                    _clip_arg = f"{_toks[_ci + 1]} {_toks[_ci + 2]}"
-                                else:
-                                    await telegram_service.send_message(chat_id, "❌ `clip` needs a start and end, e.g. `ytdl video <url> clip 0:10 0:30`.")
-                                    return {"ok": True}
+                        _toks = url_arg.split()
+                        _low = [t.lower() for t in _toks]
+                        _compress = "compress" in _low
+                        if "clip" in _low:
+                            _ci = _low.index("clip")
+                            _rest = [t for t in _toks[_ci + 1:_ci + 3] if t.lower() != "compress"]
+                            if len(_rest) == 2:
+                                _clip_arg = f"{_rest[0]} {_rest[1]}"
+                            else:
+                                await telegram_service.send_message(chat_id, "❌ `clip` needs a start and end, e.g. `ytdl video <url> clip 0:10 0:30`.")
+                                return {"ok": True}
+                        if _clip_arg or _compress:
+                            as_video = True
 
                         urls = extract_download_urls(url_arg)
                         if not urls:

@@ -915,9 +915,11 @@ def download_ytdl_bytes(
     if not check_ytdlp_available():
         return {"ok": False, "error": "yt-dlp not installed on the server."}
 
+    # clip/compress only make sense for video, so their presence implies a video
+    # download even if the caller didn't say `video` (you can't trim/shrink an MP3).
     want_clip = bool((clip or "").strip())
-    if (want_clip or compress) and not video:
-        return {"ok": False, "error": "clip/compress only apply to video downloads — use `ytdl video <url> …`."}
+    if want_clip or compress:
+        video = True
 
     urls = extract_download_urls(url)
     if not urls:
