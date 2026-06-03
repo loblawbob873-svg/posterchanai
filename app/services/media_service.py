@@ -36,7 +36,7 @@ IMAGE_JPEG_QUALITY = 70
 # Video compression defaults (more aggressive than the web-playback transcode)
 VIDEO_CRF = 28
 VIDEO_PRESET = 'fast'
-VIDEO_MAX_RESOLUTION = (1280, 720)
+VIDEO_MAX_RESOLUTION = (1920, 1080)
 VIDEO_AUDIO_BITRATE = '96k'
 
 # Clip keeps the source resolution (it's a trim, not a shrink) so use a higher

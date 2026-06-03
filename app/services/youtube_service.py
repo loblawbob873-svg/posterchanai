@@ -889,7 +889,7 @@ def download_ytdl_bytes(
     cookies_path: Optional[str] = None,
     no_ssl_verify: bool = False,
     max_bytes: int = 95 * 1024 * 1024,
-    quality: str = "720p",
+    quality: str = "1080p",
 ) -> Dict[str, Any]:
     """Download a YouTube/X URL and return the media bytes, optionally clipped
     and/or compressed first.

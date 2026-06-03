@@ -214,7 +214,7 @@ async def fetch_ytdl(
     Identity-agnostic like /process and /screenshot — a pure URL→media transform
     authenticated by the bot API key (not a linked user), so the Matrix, Misskey
     and Pleroma listeners share one yt-dlp path. Audio (MP3) by default; video=true
-    fetches MP4 (capped at 720p). The optional `clip` ("start end") and `compress`
+    fetches MP4 (capped at 1080p). The optional `clip` ("start end") and `compress`
     modifiers post-process the video server-side (clip → compress) so the bot gets
     the trimmed/shrunk result in one round-trip. Cookies/SSL come from the global
     ytdl_* settings.
@@ -238,7 +238,7 @@ async def fetch_ytdl(
         download_ytdl_bytes, req.url,
         video=bool(req.video), clip=req.clip, compress=bool(req.compress),
         cookies_path=_cookies_path, no_ssl_verify=_no_ssl,
-        max_bytes=95 * 1024 * 1024, quality="720p",
+        max_bytes=95 * 1024 * 1024, quality="1080p",
     )
     if not result.get("ok"):
         return result

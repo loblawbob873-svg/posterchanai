@@ -247,16 +247,23 @@ def _detect_mime(image_bytes: bytes) -> tuple[str, str]:
         return "image/gif", "image.gif"
     if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
         return "image/webp", "image.webp"
+    if image_bytes[4:8] == b"ftyp":
+        return "video/mp4", "video.mp4"
+    if image_bytes[:4] == b"\x1a\x45\xdf\xa3":
+        return "video/webm", "video.webm"
     return "image/jpeg", "image.jpg"
 
 
 async def send_image(homeserver: str, access_token: str, room_id: str,
                      image_bytes: bytes, caption: str = "", mime: str = "") -> None:
-    """Upload image bytes to Matrix media and send as m.image in a room."""
+    """Upload image/video bytes to Matrix media and send it in a room (m.image, or
+    m.video when the bytes are a video)."""
     hs = homeserver.rstrip("/")
     from urllib.parse import quote
     detected_mime, filename = _detect_mime(image_bytes)
-    mime = mime or detected_mime
+    # Trust the byte sniff for video (callers may pass an image/* default mime).
+    mime = detected_mime if detected_mime.startswith("video/") else (mime or detected_mime)
+    is_video = mime.startswith("video/")
     headers_auth = {"Authorization": f"Bearer {access_token}"}
 
     async with httpx.AsyncClient(timeout=60.0) as client:
@@ -283,17 +290,19 @@ async def send_image(homeserver: str, access_token: str, room_id: str,
         txn_id = str(int(time.time() * 1000))
         send_url = f"{hs}/_matrix/client/v3/rooms/{encoded_room}/send/m.room.message/{txn_id}"
         _info = {"mimetype": mime, "size": len(image_bytes)}
-        # Pixel dimensions — Matrix clients (Element) need w/h to render inline
-        # instead of showing a download attachment.
-        try:
-            from PIL import Image as _PILImage
-            from io import BytesIO as _BytesIO
-            with _PILImage.open(_BytesIO(image_bytes)) as _im:
-                _info["w"], _info["h"] = _im.width, _im.height
-        except Exception as _dim_err:
-            logger.debug(f"Could not read image dimensions: {_dim_err}")
+        # Pixel dimensions — Matrix clients (Element) need w/h to render an image
+        # inline instead of showing a download attachment. Skip for video (PIL can't
+        # open it; clients handle videos without w/h).
+        if not is_video:
+            try:
+                from PIL import Image as _PILImage
+                from io import BytesIO as _BytesIO
+                with _PILImage.open(_BytesIO(image_bytes)) as _im:
+                    _info["w"], _info["h"] = _im.width, _im.height
+            except Exception as _dim_err:
+                logger.debug(f"Could not read image dimensions: {_dim_err}")
         payload = {
-            "msgtype": "m.image",
+            "msgtype": "m.video" if is_video else "m.image",
             "body": filename,
             "url": mxc_uri,
             "info": _info,

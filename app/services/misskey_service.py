@@ -25,13 +25,19 @@ def _detect_mime(image_bytes: bytes) -> tuple[str, str]:
         return "image/gif", "image.gif"
     if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
         return "image/webp", "image.webp"
+    if image_bytes[4:8] == b"ftyp":
+        return "video/mp4", "video.mp4"
+    if image_bytes[:4] == b"\x1a\x45\xdf\xa3":
+        return "video/webm", "video.webm"
     return "image/jpeg", "image.jpg"
 
 
 async def upload_file(instance_url: str, token: str, image_bytes: bytes, mime: str = "") -> str:
     """Upload a file to Misskey Drive and return the file ID."""
     detected_mime, filename = _detect_mime(image_bytes)
-    mime = mime or detected_mime
+    # Trust the byte sniff for video — callers default image_mime to an image/*
+    # type, which would otherwise upload an MP4 mislabeled as image.jpg.
+    mime = detected_mime if detected_mime.startswith("video/") else (mime or detected_mime)
     url = instance_url.rstrip("/") + "/api/drive/files/create"
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(

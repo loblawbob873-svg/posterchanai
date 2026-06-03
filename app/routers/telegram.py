@@ -691,7 +691,7 @@ _HELP_SECTIONS = {
         "• 🔤 Read text — OCR the text out of the image\n"
         "• 📣 Post to social — share it to your connected platforms\n\n"
         "*Video:*\n"
-        "• 🗜 Compress — re-encode smaller (H.264, 720p)\n"
+        "• 🗜 Compress — re-encode smaller (H.264, up to 1080p)\n"
         "• ✂️ Clip — trim to a start/end time (I'll ask for both)\n\n"
         "*PDF:*\n"
         "• 🖼 To images — one PNG per page\n"
@@ -1301,6 +1301,29 @@ async def _offer_ytdl_video_actions(chat_id: str, dl_result, source_url: str, us
     )
 
 
+async def _offer_ytdl_share(chat_id: str, filename: str, video_bytes: bytes, db) -> None:
+    """After a ytdl video is delivered (as-is or trimmed/compressed), offer to post
+    it to the user's connected social platforms. No-op if none are connected.
+
+    Points the media-action cache at the *delivered* bytes so 'Post to social'
+    shares exactly what the user just received (e.g. the trimmed clip), then reuses
+    the standard `media:post` flow.
+    """
+    user = db.query(User).filter(
+        User.telegram_chat_id == chat_id, User.telegram_enabled == True
+    ).first()
+    if not (user and (_has_misskey(user) or _has_pleroma(user) or _has_matrix(user))):
+        return
+    _media_action_cache[chat_id] = {
+        "attachments": [(filename or "video.mp4", video_bytes, "video/mp4")],
+        "ts": time.time(),
+    }
+    await telegram_service.send_message(
+        chat_id, "📣 Post this to your timeline?",
+        reply_markup={"inline_keyboard": [[{"text": "📣 Post to social", "callback_data": "media:post"}]]},
+    )
+
+
 # Languages offered when translating an uploaded image/PDF.
 _TRANSLATE_LANGS = [
     "English", "Spanish", "French",
@@ -1524,6 +1547,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     return {"ok": True}
                 _clip_pending.pop(chat_id, None)
                 _compress_after = bool(_entry.get("compress_after"))
+                _is_ytdl = bool(_entry.get("ytdl"))  # offer a share prompt afterwards
                 _entry.pop("compress_after", None)
                 _atts = [a for a in _entry["attachments"] if is_video(a[0], a[2])]
                 await telegram_service.send_message(chat_id, "✂️ Clipping…" + (" then compressing…" if _compress_after else ""))
@@ -1544,6 +1568,9 @@ async def _handle_telegram_update(update: dict, db: Session):
                             if _f.get("data"):
                                 await telegram_service.send_document_bytes(chat_id, _f["data"], _f.get("filename", "clip.mp4"))
                                 await asyncio.sleep(0.15)
+                        # For a ytdl download, offer to post the trimmed/compressed result.
+                        if _is_ytdl and _outs[0].get("data"):
+                            await _offer_ytdl_share(chat_id, _outs[0].get("filename", "clip.mp4"), _outs[0]["data"], db)
                 except Exception as _clip_err:
                     logger.error(f"Clip failed: {_clip_err}", exc_info=True)
                     await telegram_service.send_message(chat_id, f"❌ Clip failed: {_clip_err}")
@@ -3159,6 +3186,8 @@ async def _handle_telegram_update(update: dict, db: Session):
                     )
                     if not _r.get("ok"):
                         await telegram_service.send_message(chat_id, f"❌ Failed to send video: {_r.get('description', _r.get('error', 'Unknown error'))}")
+                    else:
+                        await _offer_ytdl_share(chat_id, _fn, _vbytes, db)
                 finally:
                     shutil.rmtree(_tmpdir, ignore_errors=True)
                 return {"ok": True}
@@ -3201,7 +3230,12 @@ async def _handle_telegram_update(update: dict, db: Session):
                 try:
                     if _action == "compress":
                         await telegram_service.send_message(chat_id, "🗜 Compressing…")
-                        await _send_files_result(await cb_command_service.execute_command("compress", "", attachments=_atts))
+                        _cres = await cb_command_service.execute_command("compress", "", attachments=_atts)
+                        await _send_files_result(_cres)
+                        # For a ytdl download, offer to post the compressed result.
+                        if _entry.get("ytdl") and _cres.get("files") and _cres["files"][0].get("data"):
+                            _cf = _cres["files"][0]
+                            await _offer_ytdl_share(chat_id, _cf.get("filename", "video.mp4"), _cf["data"], db)
                     elif _action in ("clip", "clipcompress"):
                         # Kick off the interactive trim: ask for the start time. The end
                         # time is requested after the user replies (see ForceReply routing).

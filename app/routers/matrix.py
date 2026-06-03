@@ -734,7 +734,7 @@ async def matrix_ytdl_fetch(
     _ssl_s = db.query(_Setting).filter(_Setting.key == "ytdl_no_ssl_verify").first()
     _no_ssl = str(_ssl_s.value).strip().lower() in ("true", "1", "yes") if _ssl_s and _ssl_s.value else False
 
-    # Cap video at 720p so files stay within upload limits. 95 MB leaves headroom
+    # Cap video at 1080p so files stay within upload limits. 95 MB leaves headroom
     # under Cloudflare's 100 MB request-body cap (the real bottleneck — nginx/Synapse
     # allow much more). Optional clip/compress post-process server-side (clip →
     # compress) and the cap is enforced on the final bytes.
@@ -742,7 +742,7 @@ async def matrix_ytdl_fetch(
         download_ytdl_bytes, url,
         video=bool(data.video), clip=data.clip, compress=bool(data.compress),
         cookies_path=_cookies_path, no_ssl_verify=_no_ssl,
-        max_bytes=95 * 1024 * 1024, quality="720p",
+        max_bytes=95 * 1024 * 1024, quality="1080p",
     )
     if not result.get("ok"):
         return result

@@ -73,6 +73,10 @@ def _detect_mime(image_bytes: bytes) -> tuple[str, str]:
         return "image/gif", "image.gif"
     if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
         return "image/webp", "image.webp"
+    if image_bytes[4:8] == b"ftyp":
+        return "video/mp4", "video.mp4"
+    if image_bytes[:4] == b"\x1a\x45\xdf\xa3":
+        return "video/webm", "video.webm"
     return "image/jpeg", "image.jpg"  # sensible default
 
 
@@ -81,7 +85,9 @@ async def upload_media(instance_url: str, access_token: str, image_bytes: bytes,
     base = instance_url.rstrip("/")
     headers = {"Authorization": f"Bearer {access_token}"}
     detected_mime, filename = _detect_mime(image_bytes)
-    mime = mime or detected_mime
+    # Trust the byte sniff for video — callers default image_mime to an image/*
+    # type, which would otherwise upload an MP4 mislabeled as image.jpg.
+    mime = detected_mime if detected_mime.startswith("video/") else (mime or detected_mime)
     # Try v1 first (works on Pleroma and all Mastodon), v2 is Mastodon 3.1.4+
     for endpoint in (f"{base}/api/v1/media", f"{base}/api/v2/media"):
         async with httpx.AsyncClient(timeout=60) as client:
