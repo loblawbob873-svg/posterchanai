@@ -76,9 +76,11 @@ def _handle_from_rss(rss_url: str) -> str:
 
 def _should_skip(item) -> bool:
     """Keep only the account's own original, text-bearing tweets: drop retweets
-    ('RT by '), replies ('R to ') and image-only posts (empty title)."""
+    (native 'RT by @user:' and classic 'RT @handle:'), replies ('R to ') and
+    image-only posts (empty title)."""
     title = (item.findtext("title") or "").strip()
-    return (not title) or title.startswith("RT by ") or title.startswith("R to ")
+    return ((not title) or title.startswith("RT by ") or title.startswith("RT @")
+            or title.startswith("R to "))
 
 
 def _parse_description(desc: str):
