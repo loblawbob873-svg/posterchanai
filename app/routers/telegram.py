@@ -1262,6 +1262,45 @@ def _ytdl_video_keyboard() -> dict:
     ]}
 
 
+async def _offer_ytdl_video_actions(chat_id: str, dl_result, source_url: str, user, db) -> None:
+    """After a video download, cache it and offer Send / Compress / Clip / Clip+Compress.
+
+    Shared by the `ytdl video` command and the pasted-link 🎬 Movie button so both
+    let the user trim/shrink before sending (a 100-min video need not be sent whole).
+    Above a sane in-RAM cap the file is saved to storage instead (clip/compress on a
+    file that large isn't worth holding in memory). The temp dir is the caller's to
+    clean — we read the bytes into the cache here so it survives that cleanup.
+    """
+    import os as _os
+    _raw = _os.path.getsize(dl_result.local_path)
+    if _raw > 250 * 1024 * 1024:
+        from app.services.youtube_service import (
+            download_video_and_save_to_storage, format_download_result,
+        )
+        save_result = await download_video_and_save_to_storage(
+            url=source_url, user_id=user.id, db=db, subfolder="YouTube Videos",
+        )
+        await telegram_service.send_message(
+            chat_id,
+            f"❌ Video is too large to process here ({_raw // (1024*1024)} MB).\n\n{format_download_result(save_result)}"
+        )
+        return
+    _fn = _os.path.basename(dl_result.local_path)
+    with open(dl_result.local_path, "rb") as _vf:
+        _vbytes = _vf.read()
+    _cap = f"🎬 {dl_result.title}" if dl_result.title else "🎬 Video"
+    _media_action_cache[chat_id] = {
+        "attachments": [(_fn, _vbytes, "video/mp4")],
+        "ts": time.time(),
+        "ytdl": {"caption": _cap, "duration": int(dl_result.duration) if dl_result.duration else None},
+    }
+    await telegram_service.send_message(
+        chat_id,
+        f"✅ Downloaded ({_raw // (1024*1024)} MB). Send it as-is, or trim/shrink it first?",
+        reply_markup=_ytdl_video_keyboard(),
+    )
+
+
 # Languages offered when translating an uploaded image/PDF.
 _TRANSLATE_LANGS = [
     "English", "Spanish", "French",
@@ -2253,42 +2292,9 @@ async def _handle_telegram_update(update: dict, db: Session):
                                     return {"ok": True}
 
                                 # No inline clip/compress given → offer the actions
-                                # interactively (Telegram-native): cache the video and
-                                # show Send / Compress / Clip / Both buttons. The temp dir
-                                # is cleaned by `finally`, so read the bytes into the cache.
-                                # Guard against caching a huge "best"-quality file in RAM:
-                                # above the cap, fall back to storage (clip/compress on a
-                                # file that large isn't worth the memory).
-                                _raw_size = _os.path.getsize(dl_result.local_path)
-                                if not (_clip_arg or _compress) and _raw_size > 250 * 1024 * 1024:
-                                    save_result = await download_video_and_save_to_storage(
-                                        url=urls[0], user_id=user_obj.id, db=db, subfolder="YouTube Videos",
-                                    )
-                                    from app.services.youtube_service import format_download_result
-                                    await telegram_service.send_message(
-                                        chat_id,
-                                        f"❌ Video is too large to process here ({_raw_size // (1024*1024)} MB).\n\n{format_download_result(save_result)}"
-                                    )
-                                    return {"ok": True}
+                                # interactively (Send / Compress / Clip / Clip+Compress).
                                 if not (_clip_arg or _compress):
-                                    _fn = _os.path.basename(dl_result.local_path)
-                                    with open(dl_result.local_path, "rb") as _vf:
-                                        _vbytes = _vf.read()
-                                    _cap = f"🎬 {dl_result.title}" if dl_result.title else "🎬 Video"
-                                    _media_action_cache[chat_id] = {
-                                        "attachments": [(_fn, _vbytes, "video/mp4")],
-                                        "ts": time.time(),
-                                        "ytdl": {
-                                            "caption": _cap,
-                                            "duration": int(dl_result.duration) if dl_result.duration else None,
-                                        },
-                                    }
-                                    await telegram_service.send_message(
-                                        chat_id,
-                                        f"✅ Downloaded ({_os.path.getsize(dl_result.local_path) // (1024*1024)} MB). "
-                                        "Send it as-is, or trim/shrink it first?",
-                                        reply_markup=_ytdl_video_keyboard(),
-                                    )
+                                    await _offer_ytdl_video_actions(chat_id, dl_result, urls[0], user_obj, db)
                                     return {"ok": True}
 
                                 # Optional post-processing: clip then compress, reusing the
@@ -3898,7 +3904,6 @@ async def _handle_telegram_update(update: dict, db: Session):
                     from app.services.youtube_service import (
                         check_ytdlp_available,
                         download_as_mp3,
-                        download_video_and_save_to_storage,
                     )
                     import tempfile, shutil, os as _os, asyncio as _asyncio
 
@@ -3974,39 +3979,10 @@ async def _handle_telegram_update(update: dict, db: Session):
                                 await telegram_service.send_message(chat_id, f"❌ Download failed: {dl_result.error}")
                                 return {"ok": True}
 
-                            file_size = _os.path.getsize(dl_result.local_path)
-                            # Telegram bot limit is 50 MB for videos
-                            if file_size > 50 * 1024 * 1024:
-                                # File too large - save to storage and notify
-                                save_result = await download_video_and_save_to_storage(
-                                    url=yt_url,
-                                    user_id=yt_user.id,
-                                    db=db,
-                                    subfolder="YouTube Videos",
-                                )
-                                from app.services.youtube_service import format_download_result
-                                await telegram_service.send_message(
-                                    chat_id,
-                                    f"❌ Video is too large to send via Telegram ({file_size // (1024*1024)} MB).\n\n{format_download_result(save_result)}"
-                                )
-                                return {"ok": True}
-
-                            # Send the video
-                            duration_int = int(dl_result.duration) if dl_result.duration else None
-                            caption = f"🎬 **{dl_result.title}**" if dl_result.title else "🎬 Video"
-                            if dl_result.artist:
-                                caption += f"\n👤 {dl_result.artist}"
-
-                            video_result = await telegram_service.send_video(
-                                chat_id=chat_id,
-                                file_path=dl_result.local_path,
-                                caption=caption,
-                                duration=duration_int,
-                            )
-                            if not video_result.get("ok"):
-                                error_desc = video_result.get('description', video_result.get('error', 'Unknown error'))
-                                logger.error(f"Failed to send video: {video_result}")
-                                await telegram_service.send_message(chat_id, f"❌ Failed to send video: {error_desc}")
+                            # Offer Send / Compress / Clip / Clip+Compress (same as the
+                            # `ytdl video` command), so a long video can be trimmed/shrunk
+                            # instead of bouncing off Telegram's 50 MB send limit.
+                            await _offer_ytdl_video_actions(chat_id, dl_result, yt_url, yt_user, db)
                         except Exception as yt_err:
                             logger.error(f"YouTube video callback error: {yt_err}", exc_info=True)
                             await telegram_service.send_message(chat_id, f"❌ Error: {yt_err}")

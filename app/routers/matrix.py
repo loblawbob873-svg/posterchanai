@@ -432,7 +432,8 @@ async def execute_matrix_command(
             "• `geni <prompt>` — generate an image.\n"
             "• `screenshot <url>` — full-page screenshot of a website (also `shot` / `ss`).\n"
             "• `yt <url>` or paste a YouTube link — choose summary / audio / video / post.\n"
-            "• `ytdl <url>` — download audio; `ytdl video <url>` for video. I upload it to the room.\n\n"
+            "• `ytdl <url>` — download audio; `ytdl video <url>` for video. I upload it to the room.\n"
+            "  For video, add `clip <start> <end>` and/or `compress`, e.g. `ytdl video <url> clip 0:10 0:30 compress`.\n\n"
             "🔎 *Search & read*\n"
             "• `search <query>` — web search.\n"
             "• `images <query>` — image search.\n"
@@ -458,6 +459,7 @@ async def execute_matrix_command(
             "• `block <@user:server>` — ignore that user (or a whole server with `:server.org`).\n"
             "• `unblock [<@user:server>]` — un-ignore; with no name, lists who's blocked.\n\n"
             "🛠 *Misc*\n"
+            "• `poll <question> | <option 1> | <option 2>` — create a poll (2–20 options, `|`-separated).\n"
             "• `logs` — system logs.\n"
             "• `help` — this message."
         )}
