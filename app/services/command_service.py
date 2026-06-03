@@ -178,6 +178,7 @@ def _capture_full_page_chrome(chrome: str, url: str, width: int, timeout: int, t
 
     tmp_profile = tempfile.mkdtemp(prefix="chromeshot_")
     proc = None
+    reaped_early = False  # True once proc.poll() below reaps the leader → its pid is freed
     try:
         proc = subprocess.Popen(
             [chrome, "--headless=new", "--no-sandbox", "--disable-gpu",
@@ -206,6 +207,7 @@ def _capture_full_page_chrome(chrome: str, url: str, width: int, timeout: int, t
                 except (ValueError, IndexError):
                     pass
             if proc.poll() is not None:
+                reaped_early = True  # poll() just reaped the leader; pid no longer ours
                 raise RuntimeError("Chrome exited before the DevTools port was ready")
             time.sleep(0.1)
         if not port:
@@ -263,9 +265,11 @@ def _capture_full_page_chrome(chrome: str, url: str, width: int, timeout: int, t
                         "returnByValue": True})
                     return int(((ev.get("result") or {}).get("result") or {}).get("value") or 0)
                 try:
-                    # Cap the height: GPU surfaces have a max dimension and a runaway
-                    # (infinite-scroll) page would otherwise produce an unusable image.
-                    full_h = min(max(_page_height(), 1200), 25000)
+                    # Use the real content height (no viewport-padding of short pages),
+                    # with a small floor to avoid a degenerate clip if the measurement
+                    # comes back ~0, and a cap because GPU surfaces have a max dimension
+                    # and a runaway (infinite-scroll) page would produce an unusable image.
+                    full_h = min(max(_page_height(), 600), 25000)
                     cmd("Emulation.setDeviceMetricsOverride",
                         {"width": width, "height": full_h, "deviceScaleFactor": 1, "mobile": False})
                     time.sleep(2.0)  # let the now-visible lazy images fire + load
@@ -299,22 +303,31 @@ def _capture_full_page_chrome(chrome: str, url: str, width: int, timeout: int, t
         finally:
             ws.close()
     finally:
-        if proc:
-            # start_new_session=True made `proc` the leader of its own process
-            # group, so its pid IS the group id — valid even after the leader has
-            # exited, as long as any child survives. ALWAYS SIGKILL the whole group:
+        if proc and not reaped_early:
+            # start_new_session=True made `proc` the leader of its own process group,
+            # so its pid IS the group id. We have NOT reaped it here (reaped_early is
+            # only set on the pre-port early-exit path), so the pid is still ours —
+            # killing the group by pid is safe from PID-reuse. SIGKILL the whole group:
             # a Chrome crash on a heavy/JS-heavy page (cnn.com et al.) exits the main
-            # process while leaving orphaned zygote/gpu/crashpad children behind. The
-            # old `if proc.poll() is None` guard skipped cleanup in exactly that case,
-            # so those orphans piled up until the host ran out of memory/PIDs and every
-            # later capture failed with an opaque error. No graceful SIGTERM first —
-            # it's headless with a throwaway profile, nothing to flush.
+            # process while leaving orphaned zygote/gpu/crashpad children behind; the
+            # original `if proc.poll() is None` guard skipped cleanup in exactly that
+            # case, so orphans piled up until the host ran out of memory/PIDs and every
+            # later capture failed opaquely. No graceful SIGTERM — headless, throwaway
+            # profile, nothing to flush.
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
             except (ProcessLookupError, OSError):
                 pass
             try:
                 proc.wait(timeout=5)
+            except Exception:
+                pass
+        elif proc:
+            # Leader already reaped during launch (Chrome never reached the DevTools
+            # port). Its pid may have been recycled, so do NOT killpg it — a failed
+            # launch leaves no live render/gpu children to clean up anyway.
+            try:
+                proc.wait(timeout=1)
             except Exception:
                 pass
         shutil.rmtree(tmp_profile, ignore_errors=True)
@@ -362,18 +375,21 @@ def _capture_full_page(url: str, width: int = 1280, timeout: int = 60, tight: bo
     """
     chrome = _find_chrome()
     if chrome:
+        # Serialize captures: each headless Chrome is ~350MB, and user screenshots can
+        # coincide with the nitter/social pollers' card renders (same path). Unbounded
+        # concurrency spiked memory and crashed launches. Acquire with a timeout so a
+        # wedged capture (whose worker thread an asyncio wait_for cancellation can't
+        # kill) can't stall the queue forever — callers get a clear "busy" instead.
+        if not _screenshot_lock.acquire(timeout=90):
+            raise RuntimeError("Screenshot busy — another capture is still running; try again shortly.")
         try:
-            # Serialize captures: each headless Chrome is ~350MB, and user
-            # screenshots can coincide with the nitter/social pollers' card
-            # renders (same path). Unbounded concurrency spiked memory and made
-            # launches crash — which, combined with crash-time process leaks,
-            # snowballed the box into failing every capture.
-            with _screenshot_lock:
-                return _capture_full_page_chrome(chrome, url, width, timeout, tight=tight)
+            return _capture_full_page_chrome(chrome, url, width, timeout, tight=tight)
         except Exception as e:
             logger.warning(f"Chrome screenshot failed ({e}); falling back to Firefox if present")
             if not _find_firefox():
                 raise
+        finally:
+            _screenshot_lock.release()
     firefox = _find_firefox()
     if firefox:
         return _capture_full_page_firefox(firefox, url, width, timeout)
