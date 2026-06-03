@@ -1209,6 +1209,9 @@ _clip_pending: dict = {}
 # ForceReply prompt texts — matched verbatim to route the user's replies.
 _CLIP_START_PROMPT = "✂️ Clip — reply with the START time (e.g. 0:10 or 90):"
 _CLIP_END_PROMPT = "✂️ Clip — reply with the END time (e.g. 0:30 or 1:30):"
+# After tapping "📣 Post to social" on an upload, ask for optional caption text
+# before showing the platform buttons. Reply with "-" (or "skip") to post media only.
+_SOCIAL_CAPTION_PROMPT = "✍️ Add a caption for your post? Reply with text, or send - to post without any."
 
 
 def _media_action_keyboard(attachments: list, user=None) -> Optional[dict]:
@@ -1498,6 +1501,37 @@ async def _handle_telegram_update(update: dict, db: Session):
                     text_lower = text.lower()
                     reply_to = {}
                     reply_text = ""
+
+            # Reply to the "Post to social" caption prompt → attach the cached media
+            # and show the platform buttons with the user's caption (or none if "-").
+            if reply_from.get("is_bot") and reply_text.strip() == _SOCIAL_CAPTION_PROMPT:
+                from app.services.media_service import is_image, is_video
+                _entry = _media_action_cache.get(chat_id)
+                if not _entry or (time.time() - _entry.get("ts", 0)) > _MEDIA_ACTION_TTL:
+                    _media_action_cache.pop(chat_id, None)
+                    await telegram_service.send_message(chat_id, "⏳ That upload expired — please send the file again.")
+                    return {"ok": True}
+                _atts = _entry["attachments"]
+                _media = next((fd for fn, fd, ct in _atts if is_image(fn, ct)), None) \
+                    or next((fd for fn, fd, ct in _atts if is_video(fn, ct)), None)
+                if not _media:
+                    await telegram_service.send_message(chat_id, "Nothing to post.")
+                    return {"ok": True}
+                _cap_user = db.query(User).filter(
+                    User.telegram_chat_id == chat_id,
+                    User.telegram_enabled == True
+                ).first()
+                if not _cap_user:
+                    await telegram_service.send_message(chat_id, "Your Telegram account is not linked.")
+                    return {"ok": True}
+                _caption = text.strip()
+                if _caption in ("-", "skip"):
+                    _caption = ""
+                await _offer_social_post(
+                    chat_id, _caption, _cap_user, telegram_service,
+                    prompt="📣 *Post this?*", image_bytes=_media,
+                )
+                return {"ok": True}
 
             # Interactive video-clip flow: replies to the start/end ForceReply prompts.
             # Handled here (before social-reply/command routing) since it spans two
@@ -3272,15 +3306,18 @@ async def _handle_telegram_update(update: dict, db: Session):
                                     _texts.append(_t)
                         await telegram_service.send_message(chat_id, ("🔤 *Extracted text:*\n\n" + "\n\n".join(_texts)) if _texts else "No text found in the image(s).")
                     elif _action == "post":
-                        # Offer to post the uploaded image/video to connected social platforms.
+                        # Prompt for an optional caption before showing the platform
+                        # buttons. The reply is routed (see _SOCIAL_CAPTION_PROMPT) back
+                        # into _offer_social_post with the media pulled from the cache.
                         _media = next((fd for fn, fd, ct in _atts if is_image(fn, ct)), None) \
                             or next((fd for fn, fd, ct in _atts if is_video(fn, ct)), None)
                         if not _media:
                             await telegram_service.send_message(chat_id, "Nothing to post.")
                         else:
-                            await _offer_social_post(
-                                chat_id, "", cb_user, telegram_service,
-                                prompt="📣 *Post this?*", image_bytes=_media,
+                            await telegram_service.send_message(
+                                chat_id, _SOCIAL_CAPTION_PROMPT,
+                                reply_markup={"force_reply": True, "selective": True,
+                                              "input_field_placeholder": "Caption (optional)"},
                             )
                     elif _action == "summarize":
                         import base64 as _sum_b64
