@@ -82,16 +82,22 @@ def _should_skip(item) -> bool:
 
 
 def _parse_description(desc: str):
-    """(text, media_url) from an item's CDATA-HTML <description>. Drops any quote-tweet
-    <blockquote> first so text + chosen image come from THIS tweet."""
+    """(text, media_url) from an item's CDATA-HTML <description>. Text is THIS tweet's
+    only (the quote-tweet <blockquote> is dropped). For media, prefer this tweet's own
+    <img>, then its <video poster> thumbnail (video/GIF tweets), then fall back to the
+    quoted tweet's media — otherwise video and quote-tweets render with no embed."""
     if not desc or not desc.strip():
         return "", ""
     try:
         frag = lxml_html.fromstring(desc)
+        # Quoted tweet's media, captured before the blockquote is dropped (last-resort).
+        quoted = frag.xpath("//blockquote//img/@src") + frag.xpath("//blockquote//video/@poster")
         for bq in frag.xpath("//blockquote"):
             bq.getparent().remove(bq)
-        media = frag.xpath("//img/@src")
-        return frag.text_content().strip(), (media[0].strip() if media else "")
+        text = frag.text_content().strip()
+        own = frag.xpath("//img/@src") + frag.xpath("//video/@poster")
+        media = own or quoted
+        return text, (media[0].strip() if media else "")
     except Exception:
         return "", ""
 
