@@ -106,7 +106,7 @@ def _screenshot_settle() -> float:
         return 5.0
 
 
-def _url_is_safe_to_fetch(url: str) -> bool:
+def _url_is_safe_to_fetch(url: str, allowed_hosts: Optional[list] = None) -> bool:
     """SSRF guard for the screenshot command (reachable by untrusted Misskey/Pleroma
     users, not just trusted Matrix/web users).
 
@@ -116,6 +116,12 @@ def _url_is_safe_to_fetch(url: str) -> bool:
     addresses are checked so a host that returns both a public and an internal IP
     is still rejected. Mirrors `mail_service.validate_mail_server`'s approach.
 
+    `allowed_hosts` is the admin-configured allowlist (`screenshot_allowed_hosts`
+    setting): the operator's own domains that legitimately resolve to a LAN/private IP
+    via split-horizon DNS (e.g. poster.place → 192.168.x.x) and so would otherwise be
+    refused. Matched by exact host OR as a parent domain (so `poster.place` also allows
+    `www.poster.place`). An allowlisted host bypasses the private-IP check.
+
     Note: this is resolve-then-check, so it does not fully close a DNS-rebinding
     race where the browser later re-resolves to a different IP — matching the
     existing guard's threat model. Returns True only if every resolved IP is public.
@@ -124,9 +130,13 @@ def _url_is_safe_to_fetch(url: str) -> bool:
     import socket
     from urllib.parse import urlparse
 
-    host = (urlparse(url).hostname or "").strip()
+    host = (urlparse(url).hostname or "").strip().lower().rstrip(".")
     if not host:
         return False
+    for allowed in (allowed_hosts or []):
+        a = (allowed or "").strip().lower().lstrip("*").lstrip(".").rstrip(".")
+        if a and (host == a or host.endswith("." + a)):
+            return True  # operator's own domain — trusted despite a private IP
     try:
         infos = socket.getaddrinfo(host, None)
     except (socket.gaierror, UnicodeError, OSError):
@@ -986,7 +996,12 @@ class CommandService:
 
         # SSRF guard: refuse internal/private targets before handing the URL to the
         # browser. Resolved off the event loop since it does a blocking DNS lookup.
-        if not await asyncio.to_thread(_url_is_safe_to_fetch, url):
+        # `screenshot_allowed_hosts` (admin setting) lets the operator's own domains
+        # that resolve to a LAN IP via split-horizon DNS (e.g. poster.place) through.
+        from app.models import Setting
+        allow_setting = self.db.query(Setting).filter(Setting.key == "screenshot_allowed_hosts").first()
+        allowed_hosts = re.split(r"[\s,]+", allow_setting.value.strip()) if (allow_setting and allow_setting.value) else []
+        if not await asyncio.to_thread(_url_is_safe_to_fetch, url, allowed_hosts):
             return {"type": "text", "content": f"🚫 Refusing to capture {url} — it resolves to a private or internal address."}
 
         import subprocess

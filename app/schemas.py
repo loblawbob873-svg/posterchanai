@@ -231,6 +231,10 @@ class SettingsResponse(BaseModel):
     node_exec_job_timeout: str = "0"  # per-job timeout in seconds (0 = no timeout)
     # Finance (Budget Manager) integration — per-user API keys live on User; this is the shared base URL
     finance_api_base: str = "http://localhost:5001"
+    # Screenshot: hosts allowed to bypass the SSRF private-IP guard (the operator's own
+    # domains that resolve to a LAN IP via split-horizon DNS). Comma/space/newline-separated;
+    # a parent domain also covers its subdomains (e.g. poster.place allows www.poster.place).
+    screenshot_allowed_hosts: str = ""
     # Built-in torrent client settings
     bt_enabled: str = "false"
     bt_server_url: str = ""  # Remote torrent server URL (empty = local)

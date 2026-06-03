@@ -76,6 +76,15 @@
     </fieldset>
 
     <fieldset>
+        <legend>Screenshot</legend>
+        <div class="form-group">
+            <label for="screenshot_allowed_hosts">Allowed Hosts (SSRF bypass)</label>
+            <input type="text" id="screenshot_allowed_hosts" name="screenshot_allowed_hosts" placeholder="poster.place, example.com">
+            <small>Hosts the <code>screenshot</code> command may capture even if they resolve to a private/LAN IP — for your own domains that use split-horizon DNS (e.g. <code>poster.place</code> → a LAN address). Comma/space/newline-separated; a parent domain also covers its subdomains. Everything else is still blocked by the SSRF guard.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
         <legend>Social Notification Relay</legend>
         <div class="form-group">
             <label for="social_notif_enabled">
