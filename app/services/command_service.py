@@ -488,6 +488,7 @@ class CommandService:
         "pay": "Pay a bill by name: pay <bill name>",
         "addbill": "Add a bill: addbill <name> <amount> [income]",
         "screenshot": "Full-page screenshot of a website: screenshot <url>",
+        "poll": "Create a poll (Matrix): poll <question> | <option 1> | <option 2> — 2 to 20 options, separated by |",
     }
     # Command aliases (alias -> canonical command)
     COMMAND_ALIASES = {
