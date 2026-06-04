@@ -219,6 +219,11 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
             toks = model.tokenize(r.prompt.encode("utf-8"), add_bos=False, special=True)
             _p = dict(params); _p["stop"] = stops
             text = (model.create_completion(prompt=toks, **_p).get("choices") or [{}])[0].get("text") or ""
+            # The embedded template pre-fills "<think>" in the assistant turn, so generation
+            # starts INSIDE the think block - only the closing </think> appears. Drop everything
+            # up to it (otherwise the reasoning leaks into the visible content).
+            if "</think>" in text and "<think>" not in text:
+                text = text.split("</think>", 1)[-1]
             if strip_thinking:
                 text = strip_thinking(text)
             content, tool_calls = parse_tool_calls(text)
