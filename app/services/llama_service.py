@@ -371,9 +371,12 @@ class LlamaService:
         mutable state (self._model_path is written only here, serialized by the GPU lock).
         """
         target_path = target_path or self.model_path
-        # Check if configured context differs from what model was loaded with
+        # Check if configured context differs from what model was loaded with.
+        # llama.cpp rounds n_ctx up (e.g. 32024 -> 32256), so only reload when the loaded
+        # context is SMALLER than configured (can't serve the request). A rounded-up larger
+        # ctx is fine - comparing != caused a needless 13GB reload on every request.
         actual_model_ctx = self._model.n_ctx() if self._model is not None else 0
-        configured_changed = self._model is not None and (self._configured_num_ctx != self.num_ctx or actual_model_ctx != self.num_ctx)
+        configured_changed = self._model is not None and (self._configured_num_ctx != self.num_ctx or actual_model_ctx < self.num_ctx)
         if self._model is not None and self._model_path == target_path and not configured_changed:
             return
 
