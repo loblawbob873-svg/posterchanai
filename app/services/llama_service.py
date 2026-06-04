@@ -948,17 +948,21 @@ class LlamaService:
                     token_timeout = self.token_timeout
                     last_token_time = time.time()
                     _mlower = _os.path.basename(self.model_path).lower()
-                    _use_pf = self.disable_thinking and "qwen3" in _mlower
+                    # Tools can't go through the raw-prompt prefill path - use the chat path.
+                    _use_pf = self.disable_thinking and "qwen3" in _mlower and not params.get("tools")
 
                     with _get_inference_semaphore(self.max_concurrent):
                         try:
                             if _use_pf:
                                 _prompt = self._build_no_think_prompt(messages)
                                 _iter = self._model.create_completion(prompt=_prompt, stream=True, **params)
-                                def _get_content(c): return c.get("choices", [{}])[0].get("text", "")
+                                def _get_delta(c):
+                                    t = c.get("choices", [{}])[0].get("text", "")
+                                    return {"content": t} if t else None
                             else:
                                 _iter = self._model.create_chat_completion(messages=messages, stream=True, **params)
-                                def _get_content(c): return c.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                                def _get_delta(c):
+                                    return c.get("choices", [{}])[0].get("delta") or None
                             for chunk in _iter:
                                 # Check for timeout between tokens
                                 current_time = time.time()
@@ -971,9 +975,9 @@ class LlamaService:
                                     return
                                 last_token_time = current_time
 
-                                content = _get_content(chunk)
-
-                                if content:
+                                # Forward content and/or tool_calls deltas (function calling).
+                                delta = _get_delta(chunk)
+                                if delta and (delta.get("content") or delta.get("tool_calls")):
                                     sse_chunk = {
                                         "id": completion_id,
                                         "object": "chat.completion.chunk",
@@ -981,7 +985,7 @@ class LlamaService:
                                         "model": model_name,
                                         "choices": [{
                                             "index": 0,
-                                            "delta": {"content": content},
+                                            "delta": delta,
                                             "finish_reason": None
                                         }]
                                     }
@@ -994,6 +998,14 @@ class LlamaService:
                                 if "choices" in chunk and len(chunk["choices"]) > 0:
                                     finish_reason = chunk["choices"][0].get("finish_reason")
                                     if finish_reason:
+                                        # Emit a terminal chunk carrying finish_reason so clients
+                                        # can close a tool call (e.g. 'tool_calls'). Gated behind
+                                        # the opt-in flag to leave production streaming unchanged.
+                                        if self.function_calling:
+                                            loop.call_soon_threadsafe(
+                                                queue.put_nowait,
+                                                f"data: {json.dumps({'id': completion_id, 'object': 'chat.completion.chunk', 'created': created, 'model': model_name, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': finish_reason}]})}\n\n"
+                                            )
                                         break
 
                             loop.call_soon_threadsafe(queue.put_nowait, "data: [DONE]\n\n")
