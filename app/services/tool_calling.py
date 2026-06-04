@@ -233,15 +233,17 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
             tool_calls = _normalize_tool_names(tool_calls, tools)
             # The model sometimes closes </think> then ends the turn WITHOUT emitting the answer /
             # tool_call (lazy end-of-turn) -> empty message -> the LB reads the node as dead and
-            # aborts the already-streamed SSE -> opencode stops. If it closed </think> but gave us
-            # nothing usable, continue once from its own output to force the answer it skipped.
+            # aborts the already-streamed SSE -> opencode stops. Continuing from its own reasoning
+            # just makes it quit again (emits EOS). Instead retry with an EMPTY think block forced
+            # onto the prompt (the /no_think behavior) so it answers DIRECTLY without thinking.
             if not tool_calls and not content and "</think>" in raw:
-                cont = model.tokenize((r.prompt + raw).encode("utf-8"), add_bos=False, special=True)
-                raw2 = (model.create_completion(prompt=cont, **_p).get("choices") or [{}])[0].get("text") or ""
-                content, tool_calls = parse_tool_calls(raw2)
+                forced = model.tokenize((r.prompt + "</think>\n\n").encode("utf-8"), add_bos=False, special=True)
+                raw2 = (model.create_completion(prompt=forced, **_p).get("choices") or [{}])[0].get("text") or ""
+                body2 = raw2.split("</think>", 1)[1].strip() if "</think>" in raw2 else raw2
+                content, tool_calls = parse_tool_calls(body2)
                 tool_calls = _normalize_tool_names(tool_calls, tools)
                 if not tool_calls and not content:
-                    logger.warning("empty after continuation; raw[:160]=%r raw2[:160]=%r", raw[:160], raw2[:160])
+                    logger.warning("empty after no-think retry; raw[:120]=%r raw2[:120]=%r", raw[:120], raw2[:120])
             elif not tool_calls and not content:
                 logger.warning("empty tool generation (think never closed, len=%d); raw[:300]=%r",
                                len(raw), raw[:300])
