@@ -228,9 +228,20 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
             tool_calls = _normalize_tool_names(tool_calls, tools)
             after = raw.split("</think>", 1)[1].strip() if "</think>" in raw else ""
             content = parse_tool_calls(after)[0] if after else None
-            if not tool_calls and not content:
-                logger.warning("empty tool generation (think_closed=%s, len=%d); raw[:300]=%r",
-                               "</think>" in raw, len(raw), raw[:300])
+            # The model sometimes closes </think> then ends the turn WITHOUT emitting the answer /
+            # tool_call (lazy end-of-turn) -> empty message -> the LB reads the node as dead and
+            # aborts the already-streamed SSE -> opencode stops. If it closed </think> but gave us
+            # nothing usable, continue once from its own output to force the answer it skipped.
+            if not tool_calls and not content and "</think>" in raw:
+                cont = model.tokenize((r.prompt + raw).encode("utf-8"), add_bos=False, special=True)
+                raw2 = (model.create_completion(prompt=cont, **_p).get("choices") or [{}])[0].get("text") or ""
+                content, tool_calls = parse_tool_calls(raw2)
+                tool_calls = _normalize_tool_names(tool_calls, tools)
+                if not tool_calls and not content:
+                    logger.warning("empty after continuation; raw[:160]=%r raw2[:160]=%r", raw[:160], raw2[:160])
+            elif not tool_calls and not content:
+                logger.warning("empty tool generation (think never closed, len=%d); raw[:300]=%r",
+                               len(raw), raw[:300])
             msg: Dict[str, Any] = {"role": "assistant", "content": content}
             return (({**msg, "tool_calls": tool_calls}, "tool_calls") if tool_calls else (msg, "stop"))
         except Exception as e:
