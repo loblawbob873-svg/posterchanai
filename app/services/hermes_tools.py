@@ -86,7 +86,13 @@ def inject_tools(messages: List[Dict[str, Any]], tools: List[Dict[str, Any]]) ->
                 parts.append("<tool_call>\n" + json.dumps({"name": fn.get("name"), "arguments": args}, ensure_ascii=False) + "\n</tool_call>")
             converted.append({"role": "assistant", "content": "\n".join(parts)})
         else:
-            converted.append(dict(m))
+            mm = dict(m)
+            # Safety net: strip the Qwen /no_think control token so it never reaches the
+            # model as literal text (plain chatml doesn't strip it like Qwen's own template).
+            c = mm.get("content")
+            if isinstance(c, str) and "/no_think" in c:
+                mm["content"] = c.replace(" /no_think", "").replace("\n/no_think", "").replace("/no_think", "").strip()
+            converted.append(mm)
 
     tools_text = _tools_system_text(tools)
     if converted and converted[0].get("role") == "system":

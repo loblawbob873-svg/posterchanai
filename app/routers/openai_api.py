@@ -442,8 +442,11 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     # with skip_load_balancer=True so they are excluded. External bots (e.g. Posterchan bot)
     # call this endpoint directly with skip_load_balancer=False and need thinking suppressed:
     # without /no_think the model reasons about extreme personality prompts and refuses to engage.
+    # NOTE: never inject /no_think for tool/agentic requests - coding agents (opencode) need
+    # the model to reason about which tools to call, and our plain-chatml/Hermes path doesn't
+    # strip the token, so it would leak as literal text (the model created /tmp/no_think).
     _llm_path = settings.get("llm_model_path", "").lower()
-    if "qwen3" in _llm_path and not skip_load_balancer:
+    if "qwen3" in _llm_path and not skip_load_balancer and not request.tools:
         from app.services.text_utils import inject_no_think
         messages = inject_no_think(messages)
 
