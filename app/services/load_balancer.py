@@ -395,10 +395,13 @@ class LoadBalancer:
                                     if data.get("choices") and len(data["choices"]) > 0:
                                         delta = data["choices"][0].get("delta", {})
                                         content = delta.get("content", "")
-                                        if content:
+                                        # A tool-call response has no text content - count tool_calls
+                                        # too, otherwise a valid function call is misread as "empty"
+                                        # and the stream is aborted (opencode just stops).
+                                        if content or delta.get("tool_calls"):
                                             content_chunk_count += 1
                                             if content_chunk_count == 1:
-                                                logger.info(f"[LOAD BALANCER] First content chunk from {server}: {repr(content[:50])}")
+                                                logger.info(f"[LOAD BALANCER] First content chunk from {server}: {repr((content or 'tool_call')[:50])}")
                                     # Log errors from remote server and raise exception to trigger fallback
                                     if "error" in data:
                                         error_msg = data.get('error', {})
