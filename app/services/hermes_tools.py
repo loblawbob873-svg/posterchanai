@@ -29,6 +29,18 @@ def _tools_system_text(tools: List[Dict[str, Any]]) -> str:
         "within <tool_call></tool_call> XML tags:\n"
         "<tool_call>\n"
         '{"name": <function-name>, "arguments": <args-json-object>}\n'
+        "</tool_call>\n\n"
+        "Rules for the arguments field (follow exactly):\n"
+        '- "arguments" MUST be a JSON object whose keys are exactly the parameter names '
+        "from the function's signature above.\n"
+        "- Include every required parameter. Never put a bare value, string, or command "
+        'in place of the object — always wrap it, e.g. {"command": "python3 fib.py"}, '
+        'not "python3 fib.py".\n'
+        "- Emit strict JSON: double-quoted keys and strings, proper escaping, no trailing "
+        "commas, no comments, no extra text inside the tags.\n\n"
+        "Example of a correct call:\n"
+        "<tool_call>\n"
+        '{"name": "bash", "arguments": {"command": "python3 fib.py"}}\n'
         "</tool_call>"
     )
 
