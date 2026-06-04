@@ -10,12 +10,29 @@ IPEX-LLM provides optimized LLM inference for Intel Arc GPUs. This guide covers 
 
 ## Version Requirements
 
+These are the **actual versions running on the A770 box (server1)** as of 2026-06-04.
+
 | Component | Version | Notes |
 |-----------|---------|-------|
-| Intel oneAPI Base Toolkit | **2025.0.0** or newer | Required for SYCL syclcompat::dp4a |
+| Intel oneAPI Base Toolkit | **2025.0** (pin — do NOT use 2025.1+) | 2025.1+ breaks `ipex 2.5.10`; only needed for llama-cpp ≥0.3.23 which we can't use anyway |
 | Python | 3.11.x | 3.12+ not supported |
-| llama-cpp-python | **0.3.16** | Built with SYCL for Intel GPU |
-| ipex-llm | 2.2.0+ | Optional, for HuggingFace models |
+| llama-cpp-python | **0.3.22** | Built with SYCL. `>=0.3.23` needs oneAPI 2025.1+ (`work_group_static.hpp`) → won't build here |
+| torch | **2.5.1+cxx11.abi** | Do NOT upgrade without testing |
+| intel-extension-for-pytorch | **2.5.10+xpu** | Built for oneAPI 2025.0 |
+| ipex-llm | **2.3.0b20251110** | Optional, for HuggingFace models |
+
+### OS-level Intel GPU runtime (Gentoo `emerge`, not pip)
+This layer is **separate from Python** and is what fixes long-context empty/garbage on the A770:
+
+| Package | Version | Notes |
+|---------|---------|-------|
+| dev-util/intel-graphics-compiler | **2.35.2** | ⭐ the fix — older 2.23.0 produced empty output on long-context steps |
+| dev-libs/intel-compute-runtime | **25.40.35563.4** | Keep on 25.40 — **26.x will not build** (gmmlib→IGC `__spirv_ocl_vloadn` skew) |
+| dev-libs/level-zero | **1.28.6** | |
+| media-libs/gmmlib | **22.10.0** | |
+
+All four are `~amd64`; pin them in `/etc/portage/package.accept_keywords` or `@world` will downgrade.
+Arc DB settings: `llm_flash_attn=false` (flash-attn is broken on Arc SYCL even with IGC 2.35.2), `llm_n_batch=1024`.
 
 ---
 
@@ -54,18 +71,18 @@ source /opt/intel/oneapi/2025.0/oneapi-vars.sh
 
 # Install llama-cpp-python with SYCL support
 CMAKE_ARGS="-DGGML_SYCL=on -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx" \
-    pip install llama-cpp-python==0.3.16 --no-cache-dir
+    pip install llama-cpp-python==0.3.22 --no-cache-dir
 
 # Install app dependencies
 pip install -r requirements.txt
 pip install pytz websockets uvicorn[standard]
 
 # Optional: Install IPEX-LLM for HuggingFace models
-pip install torch==2.1.0a0 \
-    intel-extension-for-pytorch==2.1.30+xpu \
-    oneccl_bind_pt==2.1.300+xpu \
+# (versions below are what's actually running on server1; verify the index URL has them)
+pip install torch==2.5.1+cxx11.abi \
+    intel-extension-for-pytorch==2.5.10+xpu \
     --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/
-pip install ipex-llm[xpu]==2.2.0 transformers>=4.37.0
+pip install ipex-llm[xpu]==2.3.0b20251110 transformers>=4.37.0
 ```
 
 ### 5. Create VTune stub library
@@ -141,7 +158,7 @@ source /opt/intel/oneapi/2025.0/oneapi-vars.sh
 
 # Install llama-cpp-python with SYCL support
 CMAKE_ARGS="-DGGML_SYCL=on -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx" \
-    pip install llama-cpp-python==0.3.16 --no-cache-dir
+    pip install llama-cpp-python==0.3.22 --no-cache-dir
 
 # Install app dependencies
 pip install -r requirements.txt
@@ -218,7 +235,7 @@ source /opt/intel/oneapi/2025.0/oneapi-vars.sh
 
 # Install llama-cpp-python with SYCL support
 CMAKE_ARGS="-DGGML_SYCL=on -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx" \
-    pip install llama-cpp-python==0.3.16 --no-cache-dir
+    pip install llama-cpp-python==0.3.22 --no-cache-dir
 
 # Install app dependencies
 pip install -r requirements.txt
@@ -291,11 +308,12 @@ This error affects IPEX-LLM's PyTorch extension on kernels with `CONFIG_X86_USER
 **The llama-cpp-python SYCL backend does NOT require executable stack** - it should work fine. If you see this error, the service is falling back to llama-cpp-python automatically.
 
 ### "unknown model architecture: qwen3"
-You need **llama-cpp-python 0.3.16 or newer** for Qwen3 support. Rebuild with:
+You need **llama-cpp-python 0.3.16 or newer** for Qwen3 support (server1 runs 0.3.22). Rebuild with:
 ```bash
 source /opt/intel/oneapi/2025.0/oneapi-vars.sh
 CMAKE_ARGS="-DGGML_SYCL=on -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx" \
-    pip install llama-cpp-python==0.3.16 --force-reinstall --no-cache-dir
+    pip install llama-cpp-python==0.3.22 --force-reinstall --no-cache-dir
+# Do NOT use >=0.3.23: needs oneAPI 2025.1+ (work_group_static.hpp), which breaks IPEX 2.5.10.
 ```
 
 ### "dp4a" or "syclcompat" build errors

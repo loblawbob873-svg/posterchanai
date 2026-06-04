@@ -13,9 +13,12 @@ Notes for future readers:
   model rambles past the stop and blows its token budget -> empty response.
 """
 import json
+import logging
 import re
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger("hermes_tools")
 
 # JSON-Hermes form: <tool_call>{"name":...,"arguments":...}</tool_call>
 _TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
@@ -214,13 +217,20 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
             _sc = _eos_stopping_criteria(model)
             if _sc is not None:
                 _p["stopping_criteria"] = _sc
-            text = (model.create_completion(prompt=toks, **_p).get("choices") or [{}])[0].get("text") or ""
-            # The template pre-fills "<think>" in the assistant turn, so generation starts inside
-            # the think block. Take everything after </think>; if it never closed, the model ran
-            # out of budget mid-reasoning -> no usable answer (return empty, don't leak reasoning).
-            text = text.split("</think>", 1)[1].strip() if "</think>" in text else ""
-            content, tool_calls = parse_tool_calls(text)
+            raw = (model.create_completion(prompt=toks, **_p).get("choices") or [{}])[0].get("text") or ""
+            # The template pre-fills "<think>", so generation starts inside the think block.
+            # Parse tool calls from the FULL raw output, NOT just the slice after </think>: the model
+            # sometimes emits the <tool_call> before it closes </think> (or never closes it), and
+            # slicing first would discard a valid call -> empty message. The LB reads an empty tool
+            # response as a dead node and aborts the already-streamed SSE -> opencode just stops.
+            # Visible content is still only the post-</think> text, so raw reasoning is never leaked.
+            _, tool_calls = parse_tool_calls(raw)
             tool_calls = _normalize_tool_names(tool_calls, tools)
+            after = raw.split("</think>", 1)[1].strip() if "</think>" in raw else ""
+            content = parse_tool_calls(after)[0] if after else None
+            if not tool_calls and not content:
+                logger.warning("empty tool generation (think_closed=%s, len=%d); raw[:300]=%r",
+                               "</think>" in raw, len(raw), raw[:300])
             msg: Dict[str, Any] = {"role": "assistant", "content": content}
             return (({**msg, "tool_calls": tool_calls}, "tool_calls") if tool_calls else (msg, "stop"))
         except Exception as e:

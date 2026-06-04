@@ -40,13 +40,22 @@ onnxruntime>=1.16.0
 # Native LLM inference (requires compilation with GPU flags - see README)
 # llama-cpp-python>=0.2.90
 
-# IPEX-LLM for Intel Arc GPU (requires separate Python 3.11 venv - see README)
+# IPEX-LLM for Intel Arc GPU (requires separate Python 3.11 venv - see docs/IPEX-LLM-SETUP.md)
 # CRITICAL: Do NOT upgrade these without testing - they will break IPEX compatibility!
-# torch==2.1.0a0 (Intel custom build from pip.intel.com)
-# intel-extension-for-pytorch==2.1.30+xpu
-# ipex-llm[xpu]==2.2.0
+# These are the ACTUAL working versions on the A770 box (server1, venv-ipex), oneAPI 2025.0:
+# torch==2.5.1+cxx11.abi
+# intel-extension-for-pytorch==2.5.10+xpu
+# ipex-llm[xpu]==2.3.0b20251110
+# llama-cpp-python==0.3.22  (SYCL build: CMAKE_ARGS="-DGGML_SYCL=on -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx")
+#   NOTE: >=0.3.23 needs oneAPI 2025.1+ (work_group_static.hpp); can't upgrade without breaking IPEX 2.5.10.
 # transformers>=4.37.0
 # numpy<2  # REQUIRED: IPEX/PyTorch compiled with numpy 1.x, will break with numpy 2.x
+#
+# OS-level Intel GPU runtime (Gentoo emerge, NOT pip) - the layer that fixes long-context garbage:
+#   intel-compute-runtime 25.40.35563.4  (NEO; do NOT go to 26.x - won't build, see docs)
+#   intel-graphics-compiler 2.35.2  <-- the fix for long-context empty/garbage on the A770
+#   level-zero 1.28.6, gmmlib 22.10.0  (pinned ~amd64 in /etc/portage/package.accept_keywords)
+# Arc DB settings: llm_flash_attn=false (FA broken on Arc SYCL), llm_n_batch=1024
 
 # RAG (Retrieval-Augmented Generation) support
 chromadb>=0.4.0
