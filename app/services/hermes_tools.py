@@ -23,6 +23,10 @@ def _tools_system_text(tools: List[Dict[str, Any]]) -> str:
     return (
         "# Tools\n\n"
         "You may call one or more functions to assist with the user query.\n\n"
+        "When the user asks you to create, edit, run, or inspect files or commands, you "
+        "MUST accomplish it by calling the tools — actually perform each action. Do NOT "
+        "just describe the steps or print code/commands in your reply; emit a <tool_call> "
+        "for each action and wait for its result before continuing.\n\n"
         "You are provided with function signatures within <tools></tools> XML tags:\n"
         f"<tools>\n{sig}\n</tools>\n\n"
         "For each function call, return a json object with function name and arguments "
