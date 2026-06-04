@@ -911,24 +911,15 @@ class IPEXService:
                             if self._is_gguf and self.function_calling and kwargs.get("tools"):
                                 # Qwen/Hermes tool-calling: generate (plain chatml) + parse,
                                 # then synthesize SSE (tool_calls can't be streamed live).
-                                from app.services.hermes_tools import generate_message
+                                from app.services.hermes_tools import generate_message, tool_sse_chunks
                                 _p = {
                                     "max_tokens": kwargs.get("max_tokens", self.num_predict),
                                     "temperature": kwargs.get("temperature", self.temperature),
                                     "top_p": kwargs.get("top_p", self.top_p),
                                 }
                                 _msg, _finish = generate_message(self._model, messages_to_use, kwargs["tools"], _p, self.strip_thinking_tags)
-                                _delta = {"role": "assistant"}
-                                if _msg.get("content"):
-                                    _delta["content"] = _msg["content"]
-                                if _msg.get("tool_calls"):
-                                    _delta["tool_calls"] = _msg["tool_calls"]
-                                for _pl in (
-                                    {"id": completion_id, "object": "chat.completion.chunk", "created": created, "model": model_name, "choices": [{"index": 0, "delta": _delta, "finish_reason": None}]},
-                                    {"id": completion_id, "object": "chat.completion.chunk", "created": created, "model": model_name, "choices": [{"index": 0, "delta": {}, "finish_reason": _finish}]},
-                                ):
-                                    loop.call_soon_threadsafe(queue.put_nowait, f"data: {json.dumps(_pl)}\n\n")
-                                loop.call_soon_threadsafe(queue.put_nowait, "data: [DONE]\n\n")
+                                for _line in tool_sse_chunks(completion_id, created, model_name, _msg, _finish):
+                                    loop.call_soon_threadsafe(queue.put_nowait, _line)
                                 return
                             if self._is_gguf:
                                 # stopping_criteria: Python-level EOS check as belt-and-suspenders

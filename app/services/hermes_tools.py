@@ -27,6 +27,10 @@ def _tools_system_text(tools: List[Dict[str, Any]]) -> str:
         "MUST accomplish it by calling the tools — actually perform each action. Do NOT "
         "just describe the steps or print code/commands in your reply; emit a <tool_call> "
         "for each action and wait for its result before continuing.\n\n"
+        "Once a tool returns a <tool_response>, that action is DONE. Do NOT call the same "
+        "tool with the same arguments again — an empty or success response means it worked. "
+        "Read the responses you already have, then move to the next step or give your final "
+        "answer. Never repeat a completed step.\n\n"
         "You are provided with function signatures within <tools></tools> XML tags:\n"
         f"<tools>\n{sig}\n</tools>\n\n"
         "For each function call, return a json object with function name and arguments "
@@ -64,6 +68,9 @@ def inject_tools(messages: List[Dict[str, Any]], tools: List[Dict[str, Any]]) ->
             content = m.get("content")
             if isinstance(content, list):
                 content = " ".join(p.get("text", "") for p in content if isinstance(p, dict))
+            # A silent success (e.g. mkdir) returns empty output; make it explicit so the
+            # model doesn't read a blank response as failure and retry the same call.
+            content = (content or "").strip() or "(command completed successfully, no output)"
             converted.append({"role": "user", "content": f"<tool_response>\n{content}\n</tool_response>"})
         elif role == "assistant" and m.get("tool_calls"):
             parts = []
@@ -116,6 +123,24 @@ def parse_tool_calls(text: str) -> Tuple[Optional[str], List[Dict[str, Any]]]:
         return text, []
     content = _TOOL_CALL_RE.sub("", text).strip()
     return (content or None), tool_calls
+
+
+def tool_sse_chunks(completion_id: str, created: int, model_name: str,
+                    msg: Dict[str, Any], finish: str) -> list:
+    """Synthesized SSE lines for a (non-streamable) tool/content response: one delta chunk
+    (content and/or tool_calls), a terminal finish_reason chunk, then [DONE]. Shared by both
+    backends so the stream-synthesis format stays identical."""
+    delta: Dict[str, Any] = {"role": "assistant"}
+    if msg.get("content"):
+        delta["content"] = msg["content"]
+    if msg.get("tool_calls"):
+        delta["tool_calls"] = msg["tool_calls"]
+    base = {"id": completion_id, "object": "chat.completion.chunk", "created": created, "model": model_name}
+    return [
+        "data: " + json.dumps({**base, "choices": [{"index": 0, "delta": delta, "finish_reason": None}]}) + "\n\n",
+        "data: " + json.dumps({**base, "choices": [{"index": 0, "delta": {}, "finish_reason": finish}]}) + "\n\n",
+        "data: [DONE]\n\n",
+    ]
 
 
 def generate_message(model, messages, tools, params, strip_thinking=None) -> Tuple[Dict[str, Any], str]:

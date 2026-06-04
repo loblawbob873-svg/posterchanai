@@ -1008,22 +1008,11 @@ class LlamaService:
                             if params.get("tools"):
                                 # Qwen/Hermes tool-calling: generate (plain chatml) + parse,
                                 # then synthesize SSE chunks (tool_calls can't be streamed live).
-                                from app.services.hermes_tools import generate_message
+                                from app.services.hermes_tools import generate_message, tool_sse_chunks
                                 _tools = params.pop("tools"); params.pop("tool_choice", None)
                                 msg, finish = generate_message(self._model, messages, _tools, params, self.strip_thinking_tags)
-                                delta = {"role": "assistant"}
-                                if msg.get("content"):
-                                    delta["content"] = msg["content"]
-                                if msg.get("tool_calls"):
-                                    delta["tool_calls"] = msg["tool_calls"]
-                                for _payload in (
-                                    {"id": completion_id, "object": "chat.completion.chunk", "created": created,
-                                     "model": model_name, "choices": [{"index": 0, "delta": delta, "finish_reason": None}]},
-                                    {"id": completion_id, "object": "chat.completion.chunk", "created": created,
-                                     "model": model_name, "choices": [{"index": 0, "delta": {}, "finish_reason": finish}]},
-                                ):
-                                    loop.call_soon_threadsafe(queue.put_nowait, f"data: {json.dumps(_payload)}\n\n")
-                                loop.call_soon_threadsafe(queue.put_nowait, "data: [DONE]\n\n")
+                                for _line in tool_sse_chunks(completion_id, created, model_name, msg, finish):
+                                    loop.call_soon_threadsafe(queue.put_nowait, _line)
                                 return
                             if _use_pf:
                                 _prompt = self._build_no_think_prompt(messages)
