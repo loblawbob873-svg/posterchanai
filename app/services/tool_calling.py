@@ -204,6 +204,23 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
     Returns (openai_message_dict, finish_reason). ``params`` must NOT contain tools/tool_choice.
     Falls back to a plain chat completion only if the model has no embedded template.
     """
+    # TEMP loop-debug: dump the conversation shape + tool-result content the model actually receives,
+    # so we can tell whether tool results are conveyed (vs the model re-doing steps blindly).
+    try:
+        _dbg = []
+        for _m in messages:
+            _r = _m.get("role")
+            if _r == "assistant" and _m.get("tool_calls"):
+                _dbg.append("asst[" + ",".join((tc.get("function") or {}).get("name", "?") for tc in _m["tool_calls"]) + "]")
+            elif _r == "tool":
+                _c = _m.get("content")
+                _c = _c if isinstance(_c, str) else str(_c)
+                _dbg.append("toolresult=" + repr((_c or "")[:90]))
+            else:
+                _dbg.append(_r)
+        logger.warning("TOOLDBG n=%d seq=%s", len(messages), " | ".join(_dbg[-8:]))
+    except Exception:
+        pass
     template = (getattr(model, "metadata", None) or {}).get("tokenizer.chat_template")
     if template:
         try:
