@@ -77,6 +77,20 @@ def parse_tool_calls(text: str) -> Tuple[Optional[str], List[Dict[str, Any]]]:
             tool_calls.append(_mk_call(fm.group(1).strip(), args, len(tool_calls)))
     if not tool_calls:
         return text, []
+    # Small models sometimes degenerate into repeating the same call many times (e.g. 296
+    # identical 'question' calls in one response). Dedup identical (name+args) calls and cap
+    # the total so a runaway can't reach the client. Legitimate multi-tool turns are 1-3 calls.
+    seen = set()
+    deduped = []
+    for tc in tool_calls:
+        key = (tc["function"]["name"], tc["function"]["arguments"])
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(tc)
+    tool_calls = deduped[:8]
+    for i, tc in enumerate(tool_calls):
+        tc["index"] = i
     # Strip any tool-call block (both forms) from the visible content.
     content = _ANY_TOOL_CALL_RE.sub("", text)
     content = _FUNC_RE.sub("", content).strip()
