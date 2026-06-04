@@ -405,8 +405,20 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     # Parse server URLs from admin UI - use all servers for round-robin (including self if configured)
     servers = parse_server_urls(chat_server_urls, exclude_self=False) if not skip_load_balancer and chat_server_urls else []
 
-    # Convert messages to dict format
-    messages = [{"role": m.role, "content": m.content} for m in request.messages]
+    # Convert messages to dict format. Preserve the tool-calling fields: tool_calls on assistant
+    # turns and tool_call_id/name on tool turns. Dropping them blinds the model to its OWN prior
+    # tool calls, so an agent (opencode) never sees that it already wrote/read a file and re-issues
+    # the same call every turn -> infinite write->read->write loop.
+    messages = []
+    for m in request.messages:
+        md = {"role": m.role, "content": m.content}
+        if getattr(m, "tool_calls", None):
+            md["tool_calls"] = m.tool_calls
+        if getattr(m, "tool_call_id", None):
+            md["tool_call_id"] = m.tool_call_id
+        if getattr(m, "name", None):
+            md["name"] = m.name
+        messages.append(md)
 
     # Inject the admin system prompt only when the caller did NOT supply one.
     # If the caller already has a system message they have set the context intentionally
