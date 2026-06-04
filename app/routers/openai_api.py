@@ -637,6 +637,12 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
         kwargs["max_tokens"] = max(request.max_tokens, server_num_predict)
     if request.stop is not None:
         kwargs["stop"] = request.stop
+    # Forward OpenAI tool definitions to the backend (generic function-calling support;
+    # the backend decides how to surface them to the model). Task-agnostic pass-through.
+    if request.tools:
+        kwargs["tools"] = request.tools
+    if request.tool_choice is not None:
+        kwargs["tool_choice"] = request.tool_choice
 
     # Handle streaming vs non-streaming
     if request.stream:

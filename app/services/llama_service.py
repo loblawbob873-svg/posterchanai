@@ -300,6 +300,10 @@ class LlamaService:
         self.use_mlock = get_setting("llm_use_mlock", "true").lower() == "true"
         self.flash_attn = get_setting("llm_flash_attn", "false").lower() == "true"
         self.disable_thinking = get_setting("llm_disable_thinking", "false").lower() == "true"
+        # Opt-in OpenAI function-calling: loads a function-calling chat handler so `tools`
+        # are surfaced to the model and tool_calls are parsed back. Off by default so the
+        # production chat path is unchanged unless explicitly enabled.
+        self.function_calling = get_setting("llm_function_calling", "false").lower() == "true"
 
         # Sampling settings
         self.temperature = float(get_setting("ollama_temperature", "0.7"))
@@ -484,8 +488,10 @@ class LlamaService:
                             logger.warning(f"  Could not load mistral chat handler: {e}")
                         _chat_format = None
                     elif "qwen3" in _model_lower:
-                        # Bypass the embedded Jinja2 template which prepends <think> blocks
-                        _chat_format = "chatml"
+                        # Bypass the embedded Jinja2 template which prepends <think> blocks.
+                        # With function-calling enabled, use the function-calling variant so
+                        # OpenAI `tools` are surfaced to the model and parsed into tool_calls.
+                        _chat_format = "chatml-function-calling" if self.function_calling else "chatml"
                     else:
                         _chat_format = None
 
@@ -662,6 +668,13 @@ class LlamaService:
             "max_tokens": overrides.get("max_tokens", self.num_predict),
         }
 
+        # Pass through OpenAI function-calling args when present (handled by the
+        # function-calling chat handler the model was loaded with).
+        if overrides.get("tools"):
+            params["tools"] = overrides["tools"]
+        if overrides.get("tool_choice") is not None:
+            params["tool_choice"] = overrides["tool_choice"]
+
         # Add mirostat if enabled
         if self.mirostat > 0:
             params["mirostat_mode"] = self.mirostat
@@ -812,7 +825,9 @@ class LlamaService:
         messages = self._embed_system_for_mistral(messages)
 
         _model_lower = _os.path.basename(self.model_path).lower()
-        use_prefill = self.disable_thinking and "qwen3" in _model_lower
+        # The raw-prompt prefill path can't carry tools, so fall back to the chat path
+        # (function-calling handler) whenever tool definitions are present.
+        use_prefill = self.disable_thinking and "qwen3" in _model_lower and not kwargs.get("tools")
         with _get_inference_semaphore(self.max_concurrent):
             try:
                 if use_prefill:
@@ -826,9 +841,10 @@ class LlamaService:
                     }
                 else:
                     result = self._model.create_chat_completion(messages=messages, **params)
-                    content = result["choices"][0]["message"]["content"]
-                    content = self.strip_thinking_tags(content)
-                    result["choices"][0]["message"]["content"] = content
+                    # content is None when the model returns tool_calls - only strip text.
+                    _msg = result["choices"][0]["message"]
+                    if _msg.get("content"):
+                        _msg["content"] = self.strip_thinking_tags(_msg["content"])
 
                 # Update last used time for idle timeout
                 global _last_used
