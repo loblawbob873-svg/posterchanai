@@ -387,8 +387,8 @@ class IPEXService:
                     if "mistral" in _model_name_lower:
                         _chat_format = "mistral-instruct"
                     elif "qwen3" in _model_name_lower:
-                        # Function-calling variant surfaces `tools` and parses tool_calls.
-                        _chat_format = "chatml-function-calling" if self.function_calling else "chatml"
+                        # Always plain chatml; tool-calling handled by the Hermes layer.
+                        _chat_format = "chatml"
                     else:
                         _chat_format = None
 
@@ -601,22 +601,17 @@ class IPEXService:
 
         messages = self._embed_system_for_mistral(messages)
 
-        # Function-calling: bypass the text-only path and return the full message
-        # (with tool_calls) so the wrapper can emit a proper OpenAI response.
+        # Function-calling via Qwen/Hermes: inject tools, plain-chatml generate, parse.
+        # Returns the full message dict (with tool_calls); the wrapper detects the dict.
         if self._is_gguf and self.function_calling and kwargs.get("tools"):
+            from app.services.hermes_tools import generate_message
             params = {
                 "max_tokens": kwargs.get("max_tokens", self.num_predict),
                 "temperature": kwargs.get("temperature", self.temperature),
                 "top_p": kwargs.get("top_p", self.top_p),
-                "tools": kwargs["tools"],
             }
-            if kwargs.get("tool_choice") is not None:
-                params["tool_choice"] = kwargs["tool_choice"]
-            result = self._model.create_chat_completion(messages=messages, **params)
-            msg = result["choices"][0]["message"]
-            if msg.get("content"):
-                msg["content"] = self.strip_thinking_tags(msg["content"])
-            return msg  # dict, not str - caller detects and handles
+            msg, _finish = generate_message(self._model, messages, kwargs["tools"], params, self.strip_thinking_tags)
+            return msg
 
         if self._is_gguf:
             # Use llama.cpp API for GGUF models with retry for transient errors
@@ -912,28 +907,20 @@ class IPEXService:
                     with _get_inference_semaphore(self.max_concurrent):
                         try:
                             if self._is_gguf and self.function_calling and kwargs.get("tools"):
-                                # llama-cpp can't stream automatic tool choice; run non-streaming
-                                # and synthesize SSE so tool_calls/finish_reason reach the client.
+                                # Qwen/Hermes tool-calling: generate (plain chatml) + parse,
+                                # then synthesize SSE (tool_calls can't be streamed live).
+                                from app.services.hermes_tools import generate_message
                                 _p = {
                                     "max_tokens": kwargs.get("max_tokens", self.num_predict),
                                     "temperature": kwargs.get("temperature", self.temperature),
                                     "top_p": kwargs.get("top_p", self.top_p),
-                                    "tools": kwargs["tools"],
                                 }
-                                if kwargs.get("tool_choice") is not None:
-                                    _p["tool_choice"] = kwargs["tool_choice"]
-                                _res = self._model.create_chat_completion(messages=messages_to_use, **_p)
-                                _ch = _res.get("choices", [{}])[0]
-                                _msg = _ch.get("message", {})
-                                _finish = _ch.get("finish_reason") or "stop"
+                                _msg, _finish = generate_message(self._model, messages_to_use, kwargs["tools"], _p, self.strip_thinking_tags)
                                 _delta = {"role": "assistant"}
                                 if _msg.get("content"):
-                                    _delta["content"] = self.strip_thinking_tags(_msg["content"])
-                                _tcs = _msg.get("tool_calls") or []
-                                for _i, _tc in enumerate(_tcs):
-                                    _tc.setdefault("index", _i)
-                                if _tcs:
-                                    _delta["tool_calls"] = _tcs
+                                    _delta["content"] = _msg["content"]
+                                if _msg.get("tool_calls"):
+                                    _delta["tool_calls"] = _msg["tool_calls"]
                                 for _pl in (
                                     {"id": completion_id, "object": "chat.completion.chunk", "created": created, "model": model_name, "choices": [{"index": 0, "delta": _delta, "finish_reason": None}]},
                                     {"id": completion_id, "object": "chat.completion.chunk", "created": created, "model": model_name, "choices": [{"index": 0, "delta": {}, "finish_reason": _finish}]},

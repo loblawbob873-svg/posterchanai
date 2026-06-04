@@ -517,10 +517,10 @@ class LlamaService:
                             logger.warning(f"  Could not load mistral chat handler: {e}")
                         _chat_format = None
                     elif "qwen3" in _model_lower:
-                        # Bypass the embedded Jinja2 template which prepends <think> blocks.
-                        # With function-calling enabled, use the function-calling variant so
-                        # OpenAI `tools` are surfaced to the model and parsed into tool_calls.
-                        _chat_format = "chatml-function-calling" if self.function_calling else "chatml"
+                        # Always plain chatml. Tool-calling is handled by the Hermes layer
+                        # (app/services/hermes_tools.py) - llama-cpp's chatml-function-calling
+                        # handler mismatches Qwen's native <tool_call> format.
+                        _chat_format = "chatml"
                     else:
                         _chat_format = None
 
@@ -868,6 +868,15 @@ class LlamaService:
                         "choices": [{"message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
                         "object": "chat.completion",
                     }
+                elif params.get("tools"):
+                    # Qwen/Hermes tool-calling: inject tools, plain-chatml generate, parse.
+                    from app.services.hermes_tools import generate_message
+                    _tools = params.pop("tools"); params.pop("tool_choice", None)
+                    _m, _finish = generate_message(self._model, messages, _tools, params, self.strip_thinking_tags)
+                    result = {
+                        "choices": [{"message": _m, "finish_reason": _finish}],
+                        "object": "chat.completion",
+                    }
                 else:
                     result = self._model.create_chat_completion(messages=messages, **params)
                     # content is None when the model returns tool_calls - only strip text.
@@ -991,21 +1000,16 @@ class LlamaService:
                     with _get_inference_semaphore(self.max_concurrent):
                         try:
                             if params.get("tools"):
-                                # llama-cpp-python can't stream automatic tool choice, so run
-                                # non-streaming and synthesize SSE chunks - clients still get a
-                                # stream, and tool_calls/finish_reason are delivered correctly.
-                                result = self._model.create_chat_completion(messages=messages, **params)
-                                choice = result.get("choices", [{}])[0]
-                                msg = choice.get("message", {})
-                                finish = choice.get("finish_reason") or "stop"
+                                # Qwen/Hermes tool-calling: generate (plain chatml) + parse,
+                                # then synthesize SSE chunks (tool_calls can't be streamed live).
+                                from app.services.hermes_tools import generate_message
+                                _tools = params.pop("tools"); params.pop("tool_choice", None)
+                                msg, finish = generate_message(self._model, messages, _tools, params, self.strip_thinking_tags)
                                 delta = {"role": "assistant"}
                                 if msg.get("content"):
-                                    delta["content"] = self.strip_thinking_tags(msg["content"])
-                                tcs = msg.get("tool_calls") or []
-                                for i, tc in enumerate(tcs):
-                                    tc.setdefault("index", i)
-                                if tcs:
-                                    delta["tool_calls"] = tcs
+                                    delta["content"] = msg["content"]
+                                if msg.get("tool_calls"):
+                                    delta["tool_calls"] = msg["tool_calls"]
                                 for _payload in (
                                     {"id": completion_id, "object": "chat.completion.chunk", "created": created,
                                      "model": model_name, "choices": [{"index": 0, "delta": delta, "finish_reason": None}]},
