@@ -536,10 +536,11 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     temperature = request.temperature if request.temperature is not None else float(settings.get("ollama_temperature", "0.7"))
     top_p = request.top_p if request.top_p is not None else float(settings.get("ollama_top_p", "0.9"))
     server_num_predict = int(settings.get("ollama_num_predict", "2048"))
-    # Respect the client's max_tokens when provided. Flooring it at server_num_predict
-    # forced every generation to run up to ~32k tokens, making slow/large models unusable
-    # in an agent loop (100s+ per step). Fall back to the server default only when omitted.
-    max_tokens = request.max_tokens if request.max_tokens is not None else server_num_predict
+    # CAP the client's max_tokens at the server limit (don't floor it - the old max() forced
+    # every generation to ~32k). opencode sends max_tokens=32000, which makes a slow model
+    # ramble for 100s+ and blow past opencode's ~125s request timeout -> retries. Capping at
+    # server_num_predict (e.g. 4096) keeps each step bounded and under the client timeout.
+    max_tokens = min(request.max_tokens, server_num_predict) if request.max_tokens is not None else server_num_predict
 
     # Use load balancer if configured - picks server round-robin, uses local inference for "self" URLs
     # Skip if explicitly requested (to prevent loops when called from another posterchanai instance)
@@ -649,7 +650,7 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     if request.top_p is not None:
         kwargs["top_p"] = request.top_p
     if request.max_tokens is not None:
-        kwargs["max_tokens"] = request.max_tokens  # respect client's limit, don't floor at 32k
+        kwargs["max_tokens"] = min(request.max_tokens, server_num_predict)  # cap, don't floor
     if request.stop is not None:
         kwargs["stop"] = request.stop
     # Forward OpenAI tool definitions to the backend (generic function-calling support;
