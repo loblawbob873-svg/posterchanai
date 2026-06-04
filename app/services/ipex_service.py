@@ -283,12 +283,18 @@ class IPEXService:
         # Opt-in OpenAI function-calling (shares the native backend's semantics).
         self.function_calling = get_setting("llm_function_calling", "false").lower() == "true"
 
-    def _ensure_model_loaded(self):
-        """Load model if not already loaded, path changed, or configured context size changed"""
+    def _ensure_model_loaded(self, target_path: Optional[str] = None):
+        """Load model if not already loaded, path changed, or configured context size changed.
+
+        target_path (resolved from the API `model` field) is threaded in as a local so
+        concurrent mixed-model requests can't clobber the load target via shared state;
+        self._model_path (the loaded model) is written only here under _model_load_lock.
+        """
+        target_path = target_path or self.model_path
         configured_changed = self._model is not None and self._configured_num_ctx != self.num_ctx
-        
+
         # Quick check without lock
-        if self._model is not None and self._model_path == self.model_path and not configured_changed:
+        if self._model is not None and self._model_path == target_path and not configured_changed:
             return
 
         # Reload if configured context size changed
@@ -299,7 +305,7 @@ class IPEXService:
         with _model_load_lock:
             # Double-check after acquiring lock
             configured_changed = self._model is not None and self._configured_num_ctx != self.num_ctx
-            if self._model is not None and self._model_path == self.model_path and not configured_changed:
+            if self._model is not None and self._model_path == target_path and not configured_changed:
                 return
             
             # Check and setup oneAPI environment before loading
@@ -327,18 +333,18 @@ class IPEXService:
             # -1 ("all"), only offload to CPU if the model + KV cache (at the configured
             # context) won't fit this node's VRAM. Runtime-only override - the saved config
             # is never changed, and the context size is preserved.
-            if self.model_path.endswith('.gguf') and not self.cpu_mode and self.n_gpu_layers == -1:
+            if target_path.endswith('.gguf') and not self.cpu_mode and self.n_gpu_layers == -1:
                 try:
                     from app.services.llama_service import _compute_autofit_gpu_layers
-                    _fsz = os.path.getsize(self.model_path)
+                    _fsz = os.path.getsize(target_path)
                     autofit_layers, autofit_reason = _compute_autofit_gpu_layers(
-                        self.model_path, _fsz, self.num_ctx)
+                        target_path, _fsz, self.num_ctx)
                     logger.info(f"  [autofit] {autofit_reason}")
                     gpu_layers = autofit_layers
                 except Exception as _e:
                     logger.warning(f"  [autofit] skipped ({_e}); keeping gpu_layers={gpu_layers}")
 
-            logger.info(f"Loading model with IPEX-LLM: {self.model_path}")
+            logger.info(f"Loading model with IPEX-LLM: {target_path}")
             logger.info(f"  ctx: {self.num_ctx}, batch: {self.n_batch}, gpu_layers: {gpu_layers}, threads: {self.n_threads}")
             logger.info(f"  CPU mode: {self.cpu_mode}, mmap: {self.use_mmap}, mlock: {self.use_mlock}, flash_attn: {self.flash_attn}")
 
@@ -346,7 +352,7 @@ class IPEXService:
                 # Check if GGUF model - use llama-cpp-python
                 # Note: llama-cpp-python needs to be compiled with SYCL for Intel Arc GPU
                 # Install with: CMAKE_ARGS="-DGGML_SYCL=ON" pip install llama-cpp-python
-                if self.model_path.endswith('.gguf'):
+                if target_path.endswith('.gguf'):
                     try:
                         from llama_cpp import Llama
                         import llama_cpp
@@ -377,7 +383,7 @@ class IPEXService:
                     
                     last_error = None
                     model_loaded = False
-                    _model_name_lower = os.path.basename(self.model_path).lower()
+                    _model_name_lower = os.path.basename(target_path).lower()
                     if "mistral" in _model_name_lower:
                         _chat_format = "mistral-instruct"
                     elif "qwen3" in _model_name_lower:
@@ -390,7 +396,7 @@ class IPEXService:
                         try:
                             logger.info(f"[IPEX] Attempting to load with n_ctx={attempt_ctx}")
                             self._model = Llama(
-                                model_path=self.model_path,
+                                model_path=target_path,
                                 n_ctx=attempt_ctx,
                                 n_gpu_layers=gpu_layers if not self.cpu_mode else 0,
                                 n_batch=self.n_batch,
@@ -439,7 +445,7 @@ class IPEXService:
                     from transformers import AutoTokenizer
 
                     self._model = AutoModelForCausalLM.from_pretrained(
-                        self.model_path,
+                        target_path,
                         load_in_4bit=True,
                         trust_remote_code=True,
                         optimize_model=True,
@@ -447,13 +453,13 @@ class IPEXService:
                     )
                     self._model = self._model.to('xpu')
                     self._tokenizer = AutoTokenizer.from_pretrained(
-                        self.model_path,
+                        target_path,
                         trust_remote_code=True
                     )
                     self._is_gguf = False
                     logger.info("HuggingFace model loaded with IPEX-LLM")
 
-                self._model_path = self.model_path
+                self._model_path = target_path
 
             except Exception as e:
                 error_msg = str(e)
@@ -584,10 +590,11 @@ class IPEXService:
         parts.append("<|im_start|>assistant\n<think>\n\n</think>\n\n")
         return "\n".join(parts)
 
-    def _generate_response(self, messages: List[Dict[str, Any]], **kwargs) -> str:
+    def _generate_response(self, messages: List[Dict[str, Any]], target_path: Optional[str] = None, **kwargs) -> str:
         """Generate a response synchronously with retry for transient errors"""
+        target_path = target_path or self.model_path
         try:
-            self._ensure_model_loaded()
+            self._ensure_model_loaded(target_path)
         except Exception as e:
             logger.error(f"Model loading failed: {e}")
             raise
@@ -619,14 +626,14 @@ class IPEXService:
             # Bare "INST" or "/INST" match substrings ("instructions", etc.) and
             # cut off Mistral responses before any content is generated.
             stop = list(kwargs.get("stop", []) or [])
-            model_name_lower = os.path.basename(self.model_path).lower()
+            model_name_lower = os.path.basename(target_path).lower()
             if "mistral" in model_name_lower:
                 stop.extend(["[INST]", "[/INST]", "</s>"])
             else:
                 stop.extend(["[INST]", "[/INST]", "<|im_end|>", "<|im_start|>"])
 
             # Handle thinking mode for Qwen3-style models
-            is_qwen3_thinker = "qwen3" in os.path.basename(self.model_path).lower()
+            is_qwen3_thinker = "qwen3" in os.path.basename(target_path).lower()
             if (self.disable_thinking or self._has_no_think_in_messages(messages)) and is_qwen3_thinker:
                 # Prefill the assistant turn past an empty <think></think> block so the model
                 # generates the answer directly without a reasoning phase.
@@ -754,10 +761,10 @@ class IPEXService:
     ) -> Dict[str, Any]:
         """Non-streaming chat completion with timeout."""
         global _request_counter, _pending_requests, _current_request
-        # Honor a client-requested model for this request (falls back to admin default);
-        # _ensure_model_loaded reloads if it differs from what's loaded.
+        # Resolve a client-requested model to a per-request local (not shared state) so
+        # concurrent mixed-model requests can't clobber the load target.
         from app.services.llama_service import resolve_model_path
-        self.model_path = resolve_model_path(model, self.model_path)
+        target_path = resolve_model_path(model, self.model_path)
         loop = asyncio.get_running_loop()
 
         # Generate request ID and track
@@ -781,7 +788,7 @@ class IPEXService:
                         _current_request = f"REQ-{request_id}"
                         logger.info(f"[REQ-{request_id}] Processing started")
                         try:
-                            return self._generate_response(messages, **kwargs)
+                            return self._generate_response(messages, target_path=target_path, **kwargs)
                         finally:
                             _current_request = None
 
@@ -859,10 +866,10 @@ class IPEXService:
     ) -> AsyncGenerator[str, None]:
         """Streaming chat completion using async queue."""
         global _request_counter, _pending_requests
-        # Honor a client-requested model for this request (falls back to admin default).
+        # Resolve a client-requested model to a per-request local (not shared state).
         from app.services.llama_service import resolve_model_path
-        self.model_path = resolve_model_path(model, self.model_path)
-        self._ensure_model_loaded()
+        target_path = resolve_model_path(model, self.model_path)
+        self._ensure_model_loaded(target_path)
 
         # Generate request ID and track
         with _request_counter_lock:
@@ -879,14 +886,14 @@ class IPEXService:
 
         # Build stop sequences using full tokens only (bare "INST" cuts off Mistral responses).
         stop = list(kwargs.get("stop", []) or [])
-        _model_lower = os.path.basename(self.model_path).lower()
+        _model_lower = os.path.basename(target_path).lower()
         if "mistral" in _model_lower:
             stop.extend(["[INST]", "[/INST]", "</s>"])
         else:
             stop.extend(["[INST]", "[/INST]", "<|im_end|>", "<|im_start|>"])
 
         # Handle thinking mode for Qwen3-style models (same as non-streaming)
-        is_qwen3_thinker = "qwen3" in os.path.basename(self.model_path).lower()
+        is_qwen3_thinker = "qwen3" in os.path.basename(target_path).lower()
         use_no_think_prefill = (self.disable_thinking or self._has_no_think_in_messages(messages)) and is_qwen3_thinker
         if use_no_think_prefill:
             raw_prompt_for_stream = self._build_no_think_prompt(messages)

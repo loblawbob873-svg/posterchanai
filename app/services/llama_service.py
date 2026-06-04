@@ -362,14 +362,21 @@ class LlamaService:
         # System prompt
         self.system_prompt = get_setting("ollama_system_prompt", "You are a helpful, friendly AI assistant.")
 
-    def _ensure_model_loaded(self):
-        """Load model if not already loaded, path changed, or configured context size changed"""
+    def _ensure_model_loaded(self, target_path: Optional[str] = None):
+        """Load model if not already loaded, path changed, or configured context size changed.
+
+        target_path is the per-request model to load (resolved from the API `model` field).
+        Using a passed-in local instead of the shared self.model_path makes concurrent
+        mixed-model requests race-free: the load decision and target never depend on shared
+        mutable state (self._model_path is written only here, serialized by the GPU lock).
+        """
+        target_path = target_path or self.model_path
         # Check if configured context differs from what model was loaded with
         actual_model_ctx = self._model.n_ctx() if self._model is not None else 0
         configured_changed = self._model is not None and (self._configured_num_ctx != self.num_ctx or actual_model_ctx != self.num_ctx)
-        if self._model is not None and self._model_path == self.model_path and not configured_changed:
+        if self._model is not None and self._model_path == target_path and not configured_changed:
             return
-        
+
         if configured_changed:
             logger.info(f"Configured context size changed from {self._configured_num_ctx} to {self.num_ctx}, reloading model...")
 
@@ -379,7 +386,7 @@ class LlamaService:
             _close_llama_safe(self._model)
             self._model = None
 
-        logger.info(f"Loading model: {self.model_path}")
+        logger.info(f"Loading model: {target_path}")
         logger.info(f"  Context size: {self.num_ctx}")
         logger.info(f"  GPU layers: {self.n_gpu_layers}")
         logger.info(f"  CPU threads: {self.n_threads}")
@@ -387,8 +394,8 @@ class LlamaService:
         # Validate model file before attempting to load
         import os
         from pathlib import Path
-        
-        model_path_obj = Path(self.model_path)
+
+        model_path_obj = Path(target_path)
         if not model_path_obj.exists():
             error_msg = f"Model file does not exist: {self.model_path}"
             logger.error(error_msg)
@@ -612,7 +619,7 @@ class LlamaService:
                         logger.error(f"  - Checking file: ls -lh {resolved_path}")
                         logger.error(f"  - Testing file: file {resolved_path}")
                         raise
-            self._model_path = self.model_path
+            self._model_path = target_path
             # Initialize last_used time when model loads
             global _last_used
             _last_used = time.time()
@@ -838,15 +845,15 @@ class LlamaService:
         parts.append("<|im_start|>assistant\n<think>\n\n</think>\n\n")
         return "\n".join(parts)
 
-    def _sync_chat_completion_no_unload(self, messages: List[Dict[str, Any]], **kwargs) -> Dict[str, Any]:
+    def _sync_chat_completion_no_unload(self, messages: List[Dict[str, Any]], target_path: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """Synchronous chat completion without unloading (caller handles unload)"""
-        self._ensure_model_loaded()
+        self._ensure_model_loaded(target_path)
         params = self._get_sampling_params(**kwargs)
         # Embed system message into first user message for Mistral (chat_handler ignores system role).
         # The handler then applies [INST]...[/INST] — we do NOT call format_messages() to avoid double-templating.
         messages = self._embed_system_for_mistral(messages)
 
-        _model_lower = _os.path.basename(self.model_path).lower()
+        _model_lower = _os.path.basename(target_path or self.model_path).lower()
         # The raw-prompt prefill path can't carry tools, so fall back to the chat path
         # (function-calling handler) whenever tool definitions are present.
         use_prefill = self.disable_thinking and "qwen3" in _model_lower and not kwargs.get("tools")
@@ -902,14 +909,15 @@ class LlamaService:
         """
         global _pending_requests
 
-        # Honor a client-requested model (e.g. opencode) for this request; falls back to
-        # the admin-configured default. _ensure_model_loaded reloads if it differs.
-        self.model_path = resolve_model_path(model, self.model_path)
+        # Resolve the client-requested model (e.g. opencode) to a per-request local; falls
+        # back to the admin-configured default. Threaded through as a parameter (not via
+        # shared self.model_path) so concurrent mixed-model requests can't clobber it.
+        target_path = resolve_model_path(model, self.model_path)
 
         # Track pending requests
         with _request_counter_lock:
             _pending_requests += 1
-        
+
         try:
             # Acquire shared GPU lock to prevent LLM and image from running simultaneously
             from app.services.locks import GPUResourceLock
@@ -920,7 +928,7 @@ class LlamaService:
                 # Run synchronous inference in thread pool (without unloading)
                 result = await loop.run_in_executor(
                     _executor,
-                    lambda: self._sync_chat_completion_no_unload(messages, **kwargs)
+                    lambda: self._sync_chat_completion_no_unload(messages, target_path=target_path, **kwargs)
                 )
 
                 return result
@@ -948,14 +956,14 @@ class LlamaService:
         """
         global _pending_requests
 
-        # Honor a client-requested model for this request (falls back to admin default).
-        self.model_path = resolve_model_path(model, self.model_path)
+        # Resolve the client-requested model to a per-request local (not shared state).
+        target_path = resolve_model_path(model, self.model_path)
 
         # Track pending requests
         with _request_counter_lock:
             _pending_requests += 1
 
-        self._ensure_model_loaded()
+        self._ensure_model_loaded(target_path)
         params = self._get_sampling_params(**kwargs)
         # Embed system message into first user message for Mistral (chat_handler ignores system role).
         messages = self._embed_system_for_mistral(messages)
@@ -976,7 +984,7 @@ class LlamaService:
                     """Run synchronous generation in thread, put SSE chunks in queue"""
                     token_timeout = self.token_timeout
                     last_token_time = time.time()
-                    _mlower = _os.path.basename(self.model_path).lower()
+                    _mlower = _os.path.basename(target_path).lower()
                     # Tools can't go through the raw-prompt prefill path - use the chat path.
                     _use_pf = self.disable_thinking and "qwen3" in _mlower and not params.get("tools")
 
