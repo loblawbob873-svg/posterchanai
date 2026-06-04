@@ -319,6 +319,25 @@ CMAKE_ARGS="-DGGML_SYCL=on -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx" \
 ### "dp4a" or "syclcompat" build errors
 You need **oneAPI 2025.0 or newer**. The syclcompat::dp4a function was added in 2025.0.
 
+### `__spirv_GroupBroadcast` / `__spirv_ocl_vloadn` "undefined reference" — IGC 2.35.2 kernel-compile gap
+The newer `intel-graphics-compiler 2.35.2` (pinned because it fixes the A770 long-context
+empty/garbage — see GPU-runtime table above) has **SPIR-V builtin gaps**: it fails to JIT-compile
+*some* llama.cpp SYCL kernels at runtime, e.g.:
+```
+error: __spirv_GroupBroadcast ... undefined reference   (OP RMS_NORM_back)
+error: __spirv_ocl_vloadn      ... undefined reference   (copy kernels)
+```
+**Inference still works in production** — the *forward* kernels the chat path needs DO compile and
+are cached in `~/.cache/neo_compiler_cache`. The failures are on kernels the inference path doesn't
+use (e.g. `rms_norm_back`, a training op). Practical consequences:
+- Don't be alarmed by these `__spirv_*` errors in logs for unused kernels.
+- A **fresh standalone llama-cpp load outside the service may fail to init** (it can trip an
+  uncompilable kernel) even though the systemd service runs fine.
+- **Do not delete `~/.cache/neo_compiler_cache`** casually — it holds the working compiled kernels.
+- The fully-clean fix is the coordinated upgrade (oneAPI 2025.1+ / matching IPEX / llama-cpp ≥0.3.23),
+  which is deferred because it breaks `ipex 2.5.10`. Until then, IGC 2.35.2 is the accepted trade-off:
+  correct long-context output, with these builtin gaps on unused kernels.
+
 ### "undefined symbol: iJIT_NotifyEvent"
 The VTune stub library wasn't created or isn't being loaded. Verify:
 ```bash

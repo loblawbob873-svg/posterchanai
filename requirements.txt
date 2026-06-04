@@ -54,6 +54,9 @@ onnxruntime>=1.16.0
 # OS-level Intel GPU runtime (Gentoo emerge, NOT pip) - the layer that fixes long-context garbage:
 #   intel-compute-runtime 25.40.35563.4  (NEO; do NOT go to 26.x - won't build, see docs)
 #   intel-graphics-compiler 2.35.2  <-- the fix for long-context empty/garbage on the A770
+#     CAVEAT: 2.35.2 has SPIR-V builtin gaps (__spirv_GroupBroadcast/__spirv_ocl_vloadn) - some
+#     SYCL kernels won't JIT (rms_norm_back, copy). Inference works (forward kernels compile + cache
+#     in ~/.cache/neo_compiler_cache); a standalone llama-cpp load may fail. Don't wipe that cache.
 #   level-zero 1.28.6, gmmlib 22.10.0  (pinned ~amd64 in /etc/portage/package.accept_keywords)
 # Arc DB settings: llm_flash_attn=false (FA broken on Arc SYCL), llm_n_batch=1024
 

@@ -233,17 +233,26 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
             tool_calls = _normalize_tool_names(tool_calls, tools)
             # The model sometimes closes </think> then ends the turn WITHOUT emitting the answer /
             # tool_call (lazy end-of-turn) -> empty message -> the LB reads the node as dead and
-            # aborts the already-streamed SSE -> opencode stops. Continuing from its own reasoning
-            # just makes it quit again (emits EOS). Instead retry with an EMPTY think block forced
-            # onto the prompt (the /no_think behavior) so it answers DIRECTLY without thinking.
+            # aborts the already-streamed SSE -> opencode stops. Retry by RE-RENDERING with /no_think
+            # injected into the system turn: that makes the template signal no-think mode, so the
+            # model answers directly instead of thinking-then-quitting. (Prompt surgery to close the
+            # think block alone does NOT work - without the /no_think signal the model still quits.)
             if not tool_calls and not content and "</think>" in raw:
-                forced = model.tokenize((r.prompt + "</think>\n\n").encode("utf-8"), add_bos=False, special=True)
-                raw2 = (model.create_completion(prompt=forced, **_p).get("choices") or [{}])[0].get("text") or ""
-                body2 = raw2.split("</think>", 1)[1].strip() if "</think>" in raw2 else raw2
+                nt = [dict(m) for m in _prep_for_template(messages)]
+                for _m in nt:
+                    if _m.get("role") == "system":
+                        _m["content"] = ((_m.get("content") or "") + " /no_think").strip()
+                        break
+                else:
+                    nt.insert(0, {"role": "system", "content": "/no_think"})
+                r2 = _get_formatter(template)(messages=nt, tools=tools)
+                toks2 = model.tokenize(r2.prompt.encode("utf-8"), add_bos=False, special=True)
+                raw2 = (model.create_completion(prompt=toks2, **_p).get("choices") or [{}])[0].get("text") or ""
+                body2 = raw2.split("</think>", 1)[1].strip() if "</think>" in raw2 else raw2.strip()
                 content, tool_calls = parse_tool_calls(body2)
                 tool_calls = _normalize_tool_names(tool_calls, tools)
                 if not tool_calls and not content:
-                    logger.warning("empty after no-think retry; raw[:120]=%r raw2[:120]=%r", raw[:120], raw2[:120])
+                    logger.warning("empty after /no_think retry; raw2[:160]=%r", raw2[:160])
             elif not tool_calls and not content:
                 logger.warning("empty tool generation (think never closed, len=%d); raw[:300]=%r",
                                len(raw), raw[:300])
