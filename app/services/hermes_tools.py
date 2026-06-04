@@ -179,6 +179,15 @@ def _prep_for_template(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     out = []
     for m in messages:
         mm = dict(m)
+        # Tool results: make empty/silent output explicit (mkdir etc.) so the model doesn't
+        # read a blank <tool_response> as failure and re-call the same tool (the mkdir loop).
+        if mm.get("role") == "tool":
+            c = mm.get("content")
+            if isinstance(c, list):
+                c = " ".join(p.get("text", "") for p in c if isinstance(p, dict))
+            mm["content"] = (c or "").strip() or "(command completed successfully, no output)"
+            out.append(mm)
+            continue
         c = mm.get("content")
         if isinstance(c, str) and "/no_think" in c:
             mm["content"] = c.replace(" /no_think", "").replace("/no_think", "").strip()
