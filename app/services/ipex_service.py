@@ -321,6 +321,21 @@ class IPEXService:
             # Determine GPU layers - force 0 if CPU mode enabled
             gpu_layers = 0 if self.cpu_mode else self.n_gpu_layers
 
+            # Auto-tune (shared with the native backend): when admin leaves gpu_layers at
+            # -1 ("all"), only offload to CPU if the model + KV cache (at the configured
+            # context) won't fit this node's VRAM. Runtime-only override - the saved config
+            # is never changed, and the context size is preserved.
+            if self.model_path.endswith('.gguf') and not self.cpu_mode and self.n_gpu_layers == -1:
+                try:
+                    from app.services.llama_service import _compute_autofit_gpu_layers
+                    _fsz = os.path.getsize(self.model_path)
+                    autofit_layers, autofit_reason = _compute_autofit_gpu_layers(
+                        self.model_path, _fsz, self.num_ctx)
+                    logger.info(f"  [autofit] {autofit_reason}")
+                    gpu_layers = autofit_layers
+                except Exception as _e:
+                    logger.warning(f"  [autofit] skipped ({_e}); keeping gpu_layers={gpu_layers}")
+
             logger.info(f"Loading model with IPEX-LLM: {self.model_path}")
             logger.info(f"  ctx: {self.num_ctx}, batch: {self.n_batch}, gpu_layers: {gpu_layers}, threads: {self.n_threads}")
             logger.info(f"  CPU mode: {self.cpu_mode}, mmap: {self.use_mmap}, mlock: {self.use_mlock}, flash_attn: {self.flash_attn}")

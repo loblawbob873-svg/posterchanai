@@ -166,8 +166,16 @@ def _detect_free_vram_mb() -> Optional[int]:
     try:
         import torch
         if hasattr(torch, 'xpu') and torch.xpu.is_available():
-            free, _total = torch.xpu.mem_get_info()
-            return int(free / (1024 * 1024))
+            # Newer runtimes expose true free VRAM; older IPEX torch does not, so fall
+            # back to total device memory (the GPU may be shared with the image service,
+            # so this is an upper bound - the load retry loop covers any shortfall).
+            if hasattr(torch.xpu, 'mem_get_info'):
+                free, _total = torch.xpu.mem_get_info()
+                return int(free / (1024 * 1024))
+            props = torch.xpu.get_device_properties(0)
+            total = getattr(props, 'total_memory', 0)
+            if total:
+                return int(total / (1024 * 1024))
     except Exception:
         pass
     return None
