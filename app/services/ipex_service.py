@@ -799,11 +799,13 @@ class IPEXService:
                     # Update last used time for idle timeout
                     global _last_used
                     _last_used = time.time()
-                    # Only unload model if no other requests are waiting
-                    if pending_after == 0:
+                    # Warm-keep: with an idle timeout configured, keep the model loaded between
+                    # requests (idle thread unloads after real inactivity) to avoid a reload on
+                    # every agent step. idle_timeout 0 keeps the old free-VRAM-now behavior.
+                    if pending_after == 0 and self._idle_timeout == 0:
                         self.unload_model()
                     else:
-                        logger.info(f"[REQ-{request_id}] Keeping model loaded for {pending_after} pending request(s)")
+                        logger.info(f"[REQ-{request_id}] Keeping model loaded (pending={pending_after}, idle_timeout={self._idle_timeout})")
                 except asyncio.TimeoutError:
                     elapsed = time.time() - start_time
                     logger.error(f"[REQ-{request_id}] Timed out after {elapsed:.1f}s")
@@ -1071,7 +1073,14 @@ class IPEXService:
 
                 try:
                     while True:
-                        chunk = await queue.get()
+                        # Keepalive: emit SSE comments if generation goes quiet (slow model
+                        # before the synthesized tool-call chunk) so the client's idle timeout
+                        # doesn't abort the stream.
+                        try:
+                            chunk = await asyncio.wait_for(queue.get(), timeout=10.0)
+                        except asyncio.TimeoutError:
+                            yield ": keepalive\n\n"
+                            continue
                         if chunk is None:
                             break
                         yield chunk
@@ -1269,11 +1278,12 @@ class IPEXService:
                 # Update last used time for idle timeout
                 global _last_used
                 _last_used = time.time()
-                # Only unload model if no other requests are waiting
-                if pending_after == 0:
+                # Warm-keep: keep the model loaded between requests when an idle timeout is
+                # set (idle thread unloads after real inactivity); avoids per-step reloads.
+                if pending_after == 0 and self._idle_timeout == 0:
                     self.unload_model()
                 else:
-                    logger.info(f"[STREAM-{request_id}] Keeping model loaded for {pending_after} pending request(s)")
+                    logger.info(f"[STREAM-{request_id}] Keeping model loaded (pending={pending_after}, idle_timeout={self._idle_timeout})")
 
     async def list_models(self) -> List[Dict[str, Any]]:
         """List available models"""

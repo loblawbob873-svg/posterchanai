@@ -945,12 +945,15 @@ class LlamaService:
             with _request_counter_lock:
                 _pending_requests -= 1
                 pending_after = _pending_requests
-            
-            # Only unload if no other requests waiting
-            if pending_after == 0:
+
+            # Warm-keep: when an idle timeout is configured, leave the model loaded between
+            # requests (the idle-check thread unloads after real inactivity). This avoids a
+            # full reload on every agent step - essential for slow/large models in a loop.
+            # With idle timeout 0, keep the old behavior (unload immediately to free VRAM).
+            if pending_after == 0 and self._idle_timeout == 0:
                 self.unload_model()
             else:
-                logger.info(f"[{request_id}] Keeping model loaded for {pending_after} pending request(s)")
+                logger.info(f"[{request_id}] Keeping model loaded (pending={pending_after}, idle_timeout={self._idle_timeout})")
 
     async def chat_completion_stream(
         self,
@@ -1097,9 +1100,15 @@ class LlamaService:
                 # Start streaming in background thread
                 _executor.submit(run_streaming)
 
-                # Yield from queue as chunks arrive
+                # Yield from queue as chunks arrive. If generation goes quiet (a slow model
+                # generating before the synthesized tool-call chunk), emit SSE keepalive
+                # comments so the client's stream-idle timeout doesn't fire and abort.
                 while True:
-                    chunk = await queue.get()
+                    try:
+                        chunk = await asyncio.wait_for(queue.get(), timeout=10.0)
+                    except asyncio.TimeoutError:
+                        yield ": keepalive\n\n"
+                        continue
                     if chunk is None:
                         break
                     yield chunk
@@ -1111,12 +1120,15 @@ class LlamaService:
             with _request_counter_lock:
                 _pending_requests -= 1
                 pending_after = _pending_requests
-            
-            # Only unload if no other requests waiting
-            if pending_after == 0:
+
+            # Warm-keep: when an idle timeout is configured, leave the model loaded between
+            # requests (the idle-check thread unloads after real inactivity). This avoids a
+            # full reload on every agent step - essential for slow/large models in a loop.
+            # With idle timeout 0, keep the old behavior (unload immediately to free VRAM).
+            if pending_after == 0 and self._idle_timeout == 0:
                 self.unload_model()
             else:
-                logger.info(f"[{request_id}] Keeping model loaded for {pending_after} pending request(s)")
+                logger.info(f"[{request_id}] Keeping model loaded (pending={pending_after}, idle_timeout={self._idle_timeout})")
 
     def stream_chat_content(
         self,
