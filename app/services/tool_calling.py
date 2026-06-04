@@ -25,8 +25,50 @@ _TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
 # Qwen native form: <function=NAME><parameter=KEY>VALUE</parameter>...</function>
 _FUNC_RE = re.compile(r"<function=([^>\s]+)\s*>(.*?)</function>", re.DOTALL)
 _PARAM_RE = re.compile(r"<parameter=([^>\s]+)\s*>\s*(.*?)\s*</parameter>", re.DOTALL)
+# Alternate JSON wrapper that Qwen2.5-Coder emits: <function-calls>{...JSON...}</function-calls>
+# (also tolerates singular / underscore variants). Inner is one or more {"name","arguments"} objects.
+_FUNC_CALLS_RE = re.compile(r"<function[-_]calls?>\s*(.*?)\s*</function[-_]calls?>", re.DOTALL)
 # Any <tool_call>...</tool_call> block (either form) - for stripping from content.
 _ANY_TOOL_CALL_RE = re.compile(r"<tool_call>.*?</tool_call>", re.DOTALL)
+
+
+def _iter_json_objects(s: str) -> List[Any]:
+    """Yield JSON objects from a string that is either a single object, a JSON array, or several
+    concatenated objects (some models emit multiple calls back-to-back inside one wrapper)."""
+    s = (s or "").strip()
+    if not s:
+        return []
+    try:
+        v = json.loads(s)
+        return v if isinstance(v, list) else [v]
+    except Exception:
+        pass
+    objs, depth, start, instr, esc = [], 0, None, False, False
+    for i, ch in enumerate(s):
+        if instr:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                instr = False
+            continue
+        if ch == '"':
+            instr = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start is not None:
+                    try:
+                        objs.append(json.loads(s[start:i + 1]))
+                    except Exception:
+                        pass
+                    start = None
+    return objs
 
 
 def _mk_call(name, args, idx):
@@ -78,6 +120,14 @@ def parse_tool_calls(text: str) -> Tuple[Optional[str], List[Dict[str, Any]]]:
         for fm in _FUNC_RE.finditer(text):
             args = {k.strip(): v for k, v in _PARAM_RE.findall(fm.group(2))}
             tool_calls.append(_mk_call(fm.group(1).strip(), args, len(tool_calls)))
+    # 3) <function-calls>{"name":..,"arguments":..}</function-calls> wrapper (Qwen2.5-Coder).
+    if not tool_calls:
+        for fm in _FUNC_CALLS_RE.finditer(text):
+            for obj in _iter_json_objects(fm.group(1)):
+                if isinstance(obj, dict) and obj.get("name"):
+                    tool_calls.append(_mk_call(obj.get("name"),
+                                               obj.get("arguments", obj.get("parameters", {})),
+                                               len(tool_calls)))
     if not tool_calls:
         return text, []
     # Small models sometimes degenerate into repeating the same call many times (e.g. 296
@@ -94,9 +144,10 @@ def parse_tool_calls(text: str) -> Tuple[Optional[str], List[Dict[str, Any]]]:
     tool_calls = deduped[:8]
     for i, tc in enumerate(tool_calls):
         tc["index"] = i
-    # Strip any tool-call block (both forms) from the visible content.
+    # Strip any tool-call block (all forms) from the visible content.
     content = _ANY_TOOL_CALL_RE.sub("", text)
-    content = _FUNC_RE.sub("", content).strip()
+    content = _FUNC_RE.sub("", content)
+    content = _FUNC_CALLS_RE.sub("", content).strip()
     return (content or None), tool_calls
 
 
