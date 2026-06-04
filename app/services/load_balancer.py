@@ -315,7 +315,9 @@ class LoadBalancer:
         temperature: float = 0.7,
         top_p: float = 0.9,
         max_tokens: int = 2048,
-        stop: List[str] = None
+        stop: List[str] = None,
+        tools: List[dict] = None,
+        tool_choice=None
     ) -> AsyncGenerator[str, None]:
         """
         Stream chat completion from a load-balanced server.
@@ -344,6 +346,11 @@ class LoadBalancer:
         }
         if stop:
             request_body["stop"] = stop
+        # Forward tool definitions so the remote node can do function-calling locally.
+        if tools:
+            request_body["tools"] = tools
+        if tool_choice is not None:
+            request_body["tool_choice"] = tool_choice
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
@@ -466,7 +473,9 @@ class LoadBalancer:
         temperature: float = 0.7,
         top_p: float = 0.9,
         max_tokens: int = 2048,
-        stop: List[str] = None
+        stop: List[str] = None,
+        tools: List[dict] = None,
+        tool_choice=None
     ) -> dict:
         """
         Non-streaming chat completion from a load-balanced server.
@@ -493,6 +502,10 @@ class LoadBalancer:
         }
         if stop:
             request_json["stop"] = stop
+        if tools:
+            request_json["tools"] = tools
+        if tool_choice is not None:
+            request_json["tool_choice"] = tool_choice
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:

@@ -565,15 +565,19 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
                         messages=messages,
                         temperature=temperature,
                         top_p=top_p,
-                        max_tokens=max_tokens
+                        max_tokens=max_tokens,
+                        tools=request.tools,
+                        tool_choice=request.tool_choice
                     )
-                    
+
                     # Wrap generator - if NoHealthyServersError is raised, stop silently
                     # The outer exception handler will catch it when StreamingResponse fails
-                    # and fall back to local inference
+                    # and fall back to local inference. Bypass the think-tag filter for tool
+                    # requests (it buffers/reorders content and corrupts tool_call streams).
                     async def safe_stream():
                         try:
-                            async for chunk in filter_thinking_stream(lb_stream):
+                            _src = lb_stream if request.tools else filter_thinking_stream(lb_stream)
+                            async for chunk in _src:
                                 yield chunk
                         except NoHealthyServersError:
                             # Remote server unavailable - stop generator silently
@@ -596,7 +600,9 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
                         messages=messages,
                         temperature=temperature,
                         top_p=top_p,
-                        max_tokens=max_tokens
+                        max_tokens=max_tokens,
+                        tools=request.tools,
+                        tool_choice=request.tool_choice
                     )
                     if "error" in result:
                         logger.warning(f"Load balancer returned error, falling back to local: {result.get('error')}")
