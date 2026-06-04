@@ -177,6 +177,7 @@ setup_xpu_image_instance() {
 
     print_success "venv-xpu configured with PyTorch 2.8 XPU + diffusers (modern, no IPEX)"
     echo ""
-    print_warning "Image gen at >=768 needs Intel Graphics Compiler 2.35.5 (older IGC fails oneDNN)."
-    echo "  If not already installed: sudo ./scripts/install-igc.sh --download"
+    # Image gen at >=768 needs IGC 2.35.5 (older IGC fails oneDNN "could not create a primitive").
+    # Shared helper; idempotent, so this is a no-op if the LLM path already installed it.
+    ensure_igc_235
 }

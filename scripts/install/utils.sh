@@ -171,3 +171,32 @@ show_help() {
     echo "  ComfyUI          External ComfyUI service"
     echo ""
 }
+
+# Ensure Intel Graphics Compiler 2.35.5 is installed system-wide (idempotent). It is NOT in any
+# distro repo and is required by BOTH Arc services - the 14B/long-context LLM (__spirv_GroupBroadcast)
+# and image gen >=768 (oneDNN conv). Called from the Intel LLM and image paths; skips if present.
+ensure_igc_235() {
+    if find /usr/lib64 /usr/lib -maxdepth 2 -name 'libigc.so.2.35.5*' 2>/dev/null | grep -q .; then
+        print_success "Intel Graphics Compiler 2.35.5 present"
+        return 0
+    fi
+    print_warning "Intel Graphics Compiler 2.35.5 not detected."
+    echo "  It unblocks the 14B/long-context LLM and image gen >=768, and is in no distro repo."
+    local igc_script="$SCRIPT_DIR/scripts/install-igc.sh"
+    if [ ! -x "$igc_script" ]; then
+        echo "  Install with: sudo ./scripts/install-igc.sh --download"
+        return 0
+    fi
+    # install-igc.sh (no flag) uses a staged /opt/igc-2.35.5 if present, else downloads.
+    local run_igc
+    read -p "  Install IGC 2.35.5 now? (backs up existing IGC; needs sudo) [Y/n]: " run_igc
+    if [[ "$run_igc" =~ ^[Nn] ]]; then
+        echo "  Skipped. Install later with: sudo $igc_script --download"
+        return 0
+    fi
+    if sudo "$igc_script"; then
+        print_success "IGC 2.35.5 installed"
+    else
+        print_warning "IGC install failed - run manually later: sudo $igc_script --download"
+    fi
+}

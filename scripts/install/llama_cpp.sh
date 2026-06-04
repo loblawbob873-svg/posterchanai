@@ -153,13 +153,9 @@ setup_llama_cpp_intel() {
         print_warning "SYCL build failed, installing pre-built (may be CPU-only)..."
         pip install llama-cpp-python==0.3.22 -q
     }
-    # The Arc also needs IGC 2.35.5 system-wide (distro IGC is too old). Remind, don't auto-run.
-    # find (not multi-glob ls, which fails if any pattern is unmatched) across the common lib dirs
-    # incl. Debian/Ubuntu multiarch (/usr/lib/<triplet>/) where install-igc.sh puts it.
-    if ! find /usr/lib64 /usr/lib -maxdepth 2 -name 'libigc.so.2.35.5*' 2>/dev/null | grep -q .; then
-        print_warning "Intel Graphics Compiler 2.35.5 not detected - the 14B/long-context LLM and"
-        echo "  image gen >=768 need it. Install with: sudo ./scripts/install-igc.sh --download"
-    fi
+    # The Arc also needs IGC 2.35.5 system-wide (distro IGC is too old, and it's in NO repo).
+    # Shared idempotent helper offers to run scripts/install-igc.sh (also called from the image path).
+    ensure_igc_235
 
     # Verify SYCL support (need LD_LIBRARY_PATH for runtime libs like libsvml.so)
     export LD_LIBRARY_PATH="$ONEAPI_ROOT/lib:${LD_LIBRARY_PATH:-}"
