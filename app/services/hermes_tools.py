@@ -233,12 +233,11 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
             _p = dict(params); _p["stop"] = stops
             text = (model.create_completion(prompt=toks, **_p).get("choices") or [{}])[0].get("text") or ""
             # The embedded template pre-fills "<think>" in the assistant turn, so generation
-            # starts INSIDE the think block - only the closing </think> appears. Drop everything
-            # up to it (otherwise the reasoning leaks into the visible content).
-            if "</think>" in text and "<think>" not in text:
-                text = text.split("</think>", 1)[-1]
-            if strip_thinking:
-                text = strip_thinking(text)
+            # ALWAYS starts inside the think block. Take everything after </think>. If it never
+            # closed, the model ran out of budget mid-reasoning -> no usable answer; return empty
+            # (do NOT leak the raw reasoning, and do NOT use strip_thinking_tags, which would
+            # substitute an "I apologize" message that pollutes the conversation history).
+            text = text.split("</think>", 1)[1].strip() if "</think>" in text else ""
             content, tool_calls = parse_tool_calls(text)
             msg: Dict[str, Any] = {"role": "assistant", "content": content}
             return (({**msg, "tool_calls": tool_calls}, "tool_calls") if tool_calls else (msg, "stop"))
