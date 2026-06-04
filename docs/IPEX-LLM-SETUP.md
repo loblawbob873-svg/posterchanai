@@ -21,18 +21,38 @@ These are the **actual versions running on the A770 box (server1)** as of 2026-0
 | intel-extension-for-pytorch | **2.5.10+xpu** | Built for oneAPI 2025.0 |
 | ipex-llm | **2.3.0b20251110** | Optional, for HuggingFace models |
 
-### OS-level Intel GPU runtime (Gentoo `emerge`, not pip)
-This layer is **separate from Python** and is what fixes long-context empty/garbage on the A770:
+### OS-level Intel GPU runtime (system libs, not pip)
+This layer is **separate from Python** and is shared by BOTH GPU services (LLM + image). The
+**Intel Graphics Compiler (IGC) version is the single most important knob** on the A770:
 
 | Package | Version | Notes |
 |---------|---------|-------|
-| dev-util/intel-graphics-compiler | **2.35.2** | ⭐ the fix — older 2.23.0 produced empty output on long-context steps |
+| Intel Graphics Compiler (IGC) | **2.35.5** | ⭐ the fix. Unblocks LLM long-context/14B (`__spirv_GroupBroadcast`) AND image gen at ≥768 (oneDNN conv). See below. |
 | dev-libs/intel-compute-runtime | **25.40.35563.4** | Keep on 25.40 — **26.x will not build** (gmmlib→IGC `__spirv_ocl_vloadn` skew) |
 | dev-libs/level-zero | **1.28.6** | |
 | media-libs/gmmlib | **22.10.0** | |
 
-All four are `~amd64`; pin them in `/etc/portage/package.accept_keywords` or `@world` will downgrade.
-Arc DB settings: `llm_flash_attn=false` (flash-attn is broken on Arc SYCL even with IGC 2.35.2), `llm_n_batch=1024`.
+**IGC 2.35.5 install:** Gentoo/most distros only ship up to 2.35.2 (which is *not enough* — it
+lacks `__spirv_GroupBroadcast` and breaks image gen ≥768). Install the upstream 2.35.5 libs
+system-wide with the bundled, distro-agnostic helper:
+
+```bash
+sudo ./scripts/install-igc.sh            # uses staged /opt/igc-2.35.5 if present, else downloads
+sudo ./scripts/install-igc.sh --download # force fetch the v2.35.5 debs from GitHub
+```
+
+It installs **four** libs — `libigc`, `libigdfcl`, `libiga64`, **and `libopencl-clang2.so.17`**
+(the last is easy to miss; without it image gen later dies with `CL_OUT_OF_HOST_MEMORY` at the
+text encoder) — backing up any existing IGC to `/opt/igc-backup-*`.
+
+> History: earlier we believed image gen (needed IGC 2.23.0) and the LLM 14B (needed IGC 2.35.x)
+> were **mutually exclusive** on the shared system IGC. That is **resolved** — with the image
+> service on the modern **torch 2.8 XPU** stack (see [Image generation](#image-generation-xpu)),
+> IGC **2.35.5** serves both. Do not downgrade IGC to 2.23.0 anymore.
+
+Pin the `emerge`'d runtime packages as `~amd64` in `/etc/portage/package.accept_keywords` (or
+`@world` will downgrade them); IGC itself is installed by the script above, outside portage.
+Arc DB settings: `llm_flash_attn=false` (flash-attn is broken on Arc SYCL even with new IGC), `llm_n_batch=1024`.
 
 ---
 
@@ -319,24 +339,19 @@ CMAKE_ARGS="-DGGML_SYCL=on -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx" \
 ### "dp4a" or "syclcompat" build errors
 You need **oneAPI 2025.0 or newer**. The syclcompat::dp4a function was added in 2025.0.
 
-### `__spirv_GroupBroadcast` / `__spirv_ocl_vloadn` "undefined reference" — IGC 2.35.2 kernel-compile gap
-The newer `intel-graphics-compiler 2.35.2` (pinned because it fixes the A770 long-context
-empty/garbage — see GPU-runtime table above) has **SPIR-V builtin gaps**: it fails to JIT-compile
-*some* llama.cpp SYCL kernels at runtime, e.g.:
+### `__spirv_GroupBroadcast` / `__spirv_ocl_vloadn` "undefined reference"
+These are SPIR-V builtin gaps in **older IGC (2.23.0 / 2.35.2)** — it fails to JIT some llama.cpp
+SYCL kernels, which blocks the 14B and surfaces as `Error OP MUL_MAT` / `RMS_NORM`:
 ```
-error: __spirv_GroupBroadcast ... undefined reference   (OP RMS_NORM_back)
-error: __spirv_ocl_vloadn      ... undefined reference   (copy kernels)
+error: __spirv_GroupBroadcast ... undefined reference
+error: __spirv_ocl_vloadn      ... undefined reference
 ```
-**Inference still works in production** — the *forward* kernels the chat path needs DO compile and
-are cached in `~/.cache/neo_compiler_cache`. The failures are on kernels the inference path doesn't
-use (e.g. `rms_norm_back`, a training op). Practical consequences:
-- Don't be alarmed by these `__spirv_*` errors in logs for unused kernels.
-- A **fresh standalone llama-cpp load outside the service may fail to init** (it can trip an
-  uncompilable kernel) even though the systemd service runs fine.
-- **Do not delete `~/.cache/neo_compiler_cache`** casually — it holds the working compiled kernels.
-- The fully-clean fix is the coordinated upgrade (oneAPI 2025.1+ / matching IPEX / llama-cpp ≥0.3.23),
-  which is deferred because it breaks `ipex 2.5.10`. Until then, IGC 2.35.2 is the accepted trade-off:
-  correct long-context output, with these builtin gaps on unused kernels.
+**Fix: install IGC 2.35.5** (`sudo ./scripts/install-igc.sh`) — see the GPU-runtime table above.
+2.35.5 adds these builtins, so both the 14B/long-context LLM and image gen ≥768 work on one IGC.
+
+Note: with the LLM service still on `llama-cpp-python 0.3.22` + oneAPI 2025.0, the 9B runs fine on
+2.35.5. The 14B additionally needs `llama-cpp-python >=0.3.25` built against oneAPI 2025.2 (in its
+own venv) — that build is staged but not the default; see the version table / repo history.
 
 ### "undefined symbol: iJIT_NotifyEvent"
 The VTune stub library wasn't created or isn't being loaded. Verify:
@@ -358,6 +373,33 @@ export LD_PRELOAD=/usr/local/lib/libittnotify.so
 export ZES_ENABLE_SYSMAN=1
 python run.py
 ```
+
+## Image generation (XPU)
+
+Image gen (SDXL via `diffusers`) runs as a **separate service** (`posterchanai-xpu-image.service`,
+port 3052) in its **own venv**, on a **modern torch 2.8 XPU** stack — no IPEX, no oneAPI sourcing
+(torch 2.8 bundles its own oneAPI 2025.1 runtime via pip). It runs the actual generation in a
+subprocess (`scripts/generate_image_subprocess.py`).
+
+**Setup:**
+```bash
+sudo ./scripts/install-igc.sh        # IGC >=2.35.5 — REQUIRED for SDXL at >=768x768
+./scripts/setup-image-instance.sh    # creates venv-xpu-new (torch 2.8 + diffusers), seeds image DB
+```
+`setup-image-instance.sh` creates **`venv-xpu-new`** and installs `torch==2.8.0` from
+`https://download.pytorch.org/whl/xpu` first, then `requirements.txt` + `requirements-image.txt`.
+Launcher: `run-xpu-image.sh` (prefers `venv-xpu-new`, sets `LD_LIBRARY_PATH` to the venv libs +
+system, does **not** source oneAPI).
+
+**Key constraints (all enforced in `requirements-image.txt`):**
+- **IGC ≥ 2.35.5** — at 768/1024 older IGC fails with oneDNN `could not create a primitive`
+  (512 still works on old IGC). This is the *same* IGC the LLM 14B needs; one install, both services.
+- **`transformers < 5`** — transformers 5.x changed `CLIPTextModel` → diffusers SDXL fails with
+  `'CLIPTextModel' object has no attribute 'text_model'`.
+- `diffusers >= 0.38`, `accelerate`, `safetensors`, `pillow`.
+
+Proven working: 1024×1024 SDXL ≈ 38s, ~1.7 MB PNG, on IGC 2.35.5 + torch 2.8.0+xpu + diffusers 0.38
++ transformers 4.57.x.
 
 ## Supported Models
 

@@ -1,0 +1,29 @@
+#!/bin/bash
+# PyTorch XPU image-gen wrapper for Intel Arc.
+# Modern stack: venv-xpu-new = torch 2.8 XPU, which BUNDLES its own oneAPI runtime (pip:
+# intel-sycl-rt/dpcpp-cpp-rt/mkl/umf). Do NOT source a system oneAPI here - it conflicts with
+# the bundled runtime. SDXL at >=768 needs system IGC >= 2.35.5 (2.35.2/2.23 fail with oneDNN
+# "could not create a primitive" on the larger conv).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ -d "$SCRIPT_DIR/venv-xpu-new" ]; then
+    VENV="$SCRIPT_DIR/venv-xpu-new"
+    # torch 2.8 finds its bundled runtime; just expose the venv libs + system IGC (/usr/lib64).
+    export LD_LIBRARY_PATH="$VENV/lib:/usr/lib64:${LD_LIBRARY_PATH:-/usr/local/lib}"
+    echo "[XPU-Image] venv=venv-xpu-new (torch 2.8 XPU, bundled oneAPI), system IGC"
+else
+    # Legacy: torch 2.5 + system oneAPI 2025.0
+    VENV="$SCRIPT_DIR/venv-xpu"
+    ONEAPI_ROOT="/opt/intel/oneapi/2025.0"; [ -d "$ONEAPI_ROOT" ] || ONEAPI_ROOT="/opt/intel/oneapi"
+    export ONEAPI_ROOT
+    export LD_LIBRARY_PATH="$VENV/lib:/opt/intel/oneapi/compiler/2025.0/lib:/opt/intel/oneapi/2025.0/lib:/opt/intel/oneapi/compiler/2024.2/lib:/opt/intel/oneapi/2024.2/lib:${LD_LIBRARY_PATH:-/usr/local/lib}"
+    export PATH="$ONEAPI_ROOT/bin:$PATH"
+    [ -f "$ONEAPI_ROOT/oneapi-vars.sh" ] && source "$ONEAPI_ROOT/oneapi-vars.sh" --force 2>/dev/null || true
+    echo "[XPU-Image] venv=venv-xpu (legacy torch 2.5 + oneAPI 2025.0)"
+fi
+
+export SYCL_CACHE_PERSISTENT=1
+export ZES_ENABLE_SYSMAN=1
+echo "[XPU-Image] Starting image service on port 3052"
+cd "$SCRIPT_DIR"
+exec "$VENV/bin/python" run.py --port 3052 "$@"

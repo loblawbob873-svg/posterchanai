@@ -173,9 +173,11 @@ async def generate_image_with_load_balancing(
         logger.info("Using local backend for image generation (serialized with GPU/CPU lock)")
         result = None
         try:
-            # Determine CPU vs GPU mode for lock
-            from app.services.diffusers_service import detect_device
-            image_device = detect_device()
+            # Determine CPU vs GPU mode for the lock WITHOUT initializing a GPU here: this is the
+            # parent process that forks the image subprocess, and a GPU (CUDA/XPU) context
+            # initialized in the parent corrupts the child's GPU state (generation crashes at the
+            # first compute step). Use the configured device instead of detect_device().
+            image_device = settings.get("image_gpu_device", "auto")
             image_cpu_mode = image_device == "cpu"
             
             # Use shared GPU/CPU lock to prevent LLM and image from running simultaneously

@@ -51,14 +51,17 @@ onnxruntime>=1.16.0
 # transformers>=4.37.0
 # numpy<2  # REQUIRED: IPEX/PyTorch compiled with numpy 1.x, will break with numpy 2.x
 #
-# OS-level Intel GPU runtime (Gentoo emerge, NOT pip) - the layer that fixes long-context garbage:
+# OS-level Intel GPU runtime (system libs, NOT pip) - shared by BOTH GPU services (LLM + image):
+#   intel-graphics-compiler 2.35.5  <-- THE fix. Install with scripts/install-igc.sh (Gentoo/distros
+#     only ship up to 2.35.2, which is NOT enough). 2.35.5 fixes long-context/14B (__spirv_GroupBroadcast)
+#     AND image gen at >=768 (oneDNN conv). One IGC now serves both services (old 2.23-vs-2.35 conflict gone).
 #   intel-compute-runtime 25.40.35563.4  (NEO; do NOT go to 26.x - won't build, see docs)
-#   intel-graphics-compiler 2.35.2  <-- the fix for long-context empty/garbage on the A770
-#     CAVEAT: 2.35.2 has SPIR-V builtin gaps (__spirv_GroupBroadcast/__spirv_ocl_vloadn) - some
-#     SYCL kernels won't JIT (rms_norm_back, copy). Inference works (forward kernels compile + cache
-#     in ~/.cache/neo_compiler_cache); a standalone llama-cpp load may fail. Don't wipe that cache.
 #   level-zero 1.28.6, gmmlib 22.10.0  (pinned ~amd64 in /etc/portage/package.accept_keywords)
 # Arc DB settings: llm_flash_attn=false (FA broken on Arc SYCL), llm_n_batch=1024
+#
+# IMAGE GEN (separate venv-xpu-new, MODERN stack - no IPEX): torch 2.8 XPU + diffusers + transformers<5.
+#   See requirements-image.txt + docs/IPEX-LLM-SETUP.md (#image-generation-xpu). Setup:
+#   scripts/setup-image-instance.sh.
 
 # RAG (Retrieval-Augmented Generation) support
 chromadb>=0.4.0

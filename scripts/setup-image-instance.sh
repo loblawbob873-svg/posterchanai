@@ -5,18 +5,35 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 POSTERCHANAI_DIR="$(dirname "$SCRIPT_DIR")"
 IMAGE_DB="$POSTERCHANAI_DIR/posterchanai-image.db"
-VENV_XPU="$POSTERCHANAI_DIR/venv-xpu"
+# Modern image venv (torch 2.8 XPU, no IPEX). Falls back to legacy venv-xpu if that's all there is.
+VENV_XPU="$POSTERCHANAI_DIR/venv-xpu-new"
+[ -d "$VENV_XPU" ] || [ -d "$POSTERCHANAI_DIR/venv-xpu" ] && [ ! -d "$VENV_XPU" ] && VENV_XPU="$POSTERCHANAI_DIR/venv-xpu"
 
 echo "Setting up image-only instance..."
 
-# Check/create venv-xpu and install dependencies
-if [ -d "$VENV_XPU" ]; then
-    echo "Installing posterchanai requirements in venv-xpu..."
-    "$VENV_XPU/bin/pip" install -r "$POSTERCHANAI_DIR/requirements.txt" -q 2>/dev/null || true
-    echo "Installing image generation requirements..."
-    "$VENV_XPU/bin/pip" install -r "$POSTERCHANAI_DIR/requirements-image.txt" -q 2>/dev/null || true
-else
-    echo "WARNING: venv-xpu not found. Run the installer first or create venv-xpu manually."
+# IGC >=2.35.5 is required for SDXL at >=768x768 (older IGC fails oneDNN "could not create a
+# primitive"). Same IGC also unblocks the LLM 14B - install it once for both GPU services.
+echo "NOTE: ensure Intel Graphics Compiler >=2.35.5 is installed (sudo $SCRIPT_DIR/install-igc.sh)"
+
+# Create/populate the modern image venv (torch 2.8 XPU + diffusers). torch must be installed
+# FIRST from the XPU index; it bundles its own oneAPI runtime so no IPEX is needed for diffusers.
+if [ ! -d "$VENV_XPU" ]; then
+    echo "Creating image venv at $VENV_XPU (torch 2.8 XPU)..."
+    python3 -m venv "$VENV_XPU"
+    "$VENV_XPU/bin/pip" install -q --upgrade pip
+    "$VENV_XPU/bin/pip" install -q torch==2.8.0 --index-url https://download.pytorch.org/whl/xpu || true
+fi
+echo "Installing posterchanai requirements in $(basename "$VENV_XPU")..."
+"$VENV_XPU/bin/pip" install -r "$POSTERCHANAI_DIR/requirements.txt" -q 2>/dev/null || true
+echo "Installing image generation requirements..."
+"$VENV_XPU/bin/pip" install -r "$POSTERCHANAI_DIR/requirements-image.txt" -q 2>/dev/null || true
+
+# The launcher (run-xpu-image.sh) is machine-local (gitignored: run-*.sh); seed it from the
+# committed template on first setup.
+if [ ! -f "$POSTERCHANAI_DIR/run-xpu-image.sh" ] && [ -f "$POSTERCHANAI_DIR/run-xpu-image.sh.example" ]; then
+    cp "$POSTERCHANAI_DIR/run-xpu-image.sh.example" "$POSTERCHANAI_DIR/run-xpu-image.sh"
+    chmod +x "$POSTERCHANAI_DIR/run-xpu-image.sh"
+    echo "Created run-xpu-image.sh from template."
 fi
 
 echo "Setting up image-only instance database..."

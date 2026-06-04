@@ -72,6 +72,24 @@ def detect_device() -> str:
         return "cpu"
 
 
+def _detect_device_isolated() -> str:
+    """Detect the device WITHOUT initializing any GPU in this process. Runs detect_device() in a
+    throwaway subprocess so the parent never holds a CUDA/XPU context (which would corrupt the
+    image subprocess it later forks). Used only in subprocess mode with image_gpu_device=auto."""
+    import subprocess, sys, os
+    try:
+        repo = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        r = subprocess.run(
+            [sys.executable, "-c",
+             "from app.services.diffusers_service import detect_device; print(detect_device())"],
+            capture_output=True, text=True, timeout=60, cwd=repo)
+        out = (r.stdout or "").strip().splitlines()
+        d = out[-1].strip() if out else "cpu"
+        return d if d in ("cuda", "xpu", "cpu") else "cpu"
+    except Exception:
+        return "cpu"
+
+
 def is_rocm() -> bool:
     """Check if running on AMD ROCm (vs NVIDIA CUDA)"""
     try:
@@ -246,9 +264,21 @@ class DiffusersService:
         self.default_width = int(settings.get("image_default_width", "1024"))
         self.default_height = int(settings.get("image_default_height", "1024"))
 
+        # Subprocess mode - run each image in separate process for guaranteed VRAM release.
+        # Read FIRST: when on, the parent must NOT initialize any GPU (CUDA/XPU). It forks the image
+        # subprocess, and a GPU context initialized in the parent corrupts the child's GPU state -
+        # generation then crashes at the first compute step. (Recommended for Intel XPU sharing the
+        # GPU with the LLM.)
+        self._subprocess_mode = settings.get("image_subprocess_mode", "false").lower() == "true"
+
         # Device settings
         device_setting = settings.get("image_gpu_device", "auto")
-        if device_setting == "auto":
+        if self._subprocess_mode:
+            # Do NOT touch torch.cuda/torch.xpu here - that would init a GPU context in the parent
+            # before it forks the subprocess. Trust the explicit setting; for 'auto', detect in an
+            # isolated subprocess so this process never holds a GPU context.
+            self._device = device_setting if device_setting != "auto" else _detect_device_isolated()
+        elif device_setting == "auto":
             self._device = detect_device()
         else:
             self._device = device_setting
@@ -263,10 +293,6 @@ class DiffusersService:
 
         # Backend setting
         self.backend = settings.get("image_backend", "comfyui")  # "native" or "comfyui"
-
-        # Subprocess mode - run each image in separate process for guaranteed VRAM release
-        # Recommended for Intel XPU when sharing GPU with LLM
-        self._subprocess_mode = settings.get("image_subprocess_mode", "false").lower() == "true"
 
     def _is_anime_prompt(self, prompt: str) -> bool:
         """Check if prompt is for anime-style image"""
@@ -479,10 +505,13 @@ class DiffusersService:
 
             try:
                 import torch
-                logger.info(f"Cleanup check: cuda={torch.cuda.is_available()}, xpu={hasattr(torch, 'xpu') and torch.xpu.is_available()}, device={self._device}")
-
+                # In subprocess mode the parent owns no GPU memory (the subprocess does and frees it
+                # on exit). Touching torch.cuda/torch.xpu here would initialize a GPU context in the
+                # parent and corrupt the next forked subprocess - so skip all GPU cleanup.
+                if self._subprocess_mode:
+                    logger.debug("Subprocess mode: parent skips GPU cleanup (subprocess frees its own VRAM)")
                 # Check XPU first since that's what we're using
-                if hasattr(torch, "xpu") and torch.xpu.is_available():
+                elif hasattr(torch, "xpu") and torch.xpu.is_available():
                     logger.info("Clearing Intel XPU memory...")
                     torch.xpu.synchronize()
                     torch.xpu.empty_cache()
@@ -772,13 +801,18 @@ class DiffusersService:
             "device": self._device,
         }
 
-        script_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "scripts", "generate_image_subprocess.py")
-        python_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "venv-xpu", "bin", "python")
-
-        # Fall back to current Python if venv-xpu doesn't exist
-        if not os.path.exists(python_path):
-            import sys
-            python_path = sys.executable
+        _repo = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        script_path = os.path.join(_repo, "scripts", "generate_image_subprocess.py")
+        # Pick the image venv's python. Prefer the modern torch-2.8 venv (venv-xpu-new); fall back to
+        # the legacy venv-xpu, then the current interpreter. NEVER mix venvs - loading one venv's
+        # torch/libsycl with another's libur_loader fails with a LIBUR_LOADER version mismatch.
+        import sys
+        python_path = sys.executable
+        for _v in ("venv-xpu-new", "venv-xpu"):
+            _p = os.path.join(_repo, _v, "bin", "python")
+            if os.path.exists(_p):
+                python_path = _p
+                break
 
         logger.info(f"Subprocess generation: {prompt[:50]}... (device={self._device})")
 
