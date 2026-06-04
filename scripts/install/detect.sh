@@ -8,16 +8,26 @@ GPU_TYPE="cpu"
 GPU_NAME="CPU Only"
 
 detect_distro() {
-    if [ -f /etc/gentoo-release ]; then
-        DISTRO="gentoo"
-    elif [ -f /etc/arch-release ]; then
-        DISTRO="arch"
-    elif [ -f /etc/debian_version ]; then
-        DISTRO="debian"
-    elif [ -f /etc/fedora-release ]; then
-        DISTRO="fedora"
-    else
-        DISTRO="unknown"
+    # Prefer /etc/os-release (works for derivatives via ID + ID_LIKE), fall back to release files.
+    DISTRO="unknown"
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        local ids="$ID $ID_LIKE"
+        case " $ids " in
+            *gentoo*)                         DISTRO="gentoo" ;;
+            *arch*|*manjaro*)                 DISTRO="arch" ;;
+            *suse*|*opensuse*)                DISTRO="suse" ;;   # openSUSE Leap/Tumbleweed, SLES
+            *fedora*|*rhel*|*centos*)         DISTRO="fedora" ;; # dnf/rpm family
+            *debian*|*ubuntu*)                DISTRO="debian" ;;
+        esac
+    fi
+    if [ "$DISTRO" = "unknown" ]; then
+        if   [ -f /etc/gentoo-release ];  then DISTRO="gentoo"
+        elif [ -f /etc/arch-release ];    then DISTRO="arch"
+        elif [ -f /etc/SUSE-brand ] || [ -f /etc/SuSE-release ]; then DISTRO="suse"
+        elif [ -f /etc/fedora-release ]; then DISTRO="fedora"
+        elif [ -f /etc/debian_version ]; then DISTRO="debian"
+        fi
     fi
 }
 

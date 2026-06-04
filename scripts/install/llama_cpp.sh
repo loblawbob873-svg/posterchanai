@@ -53,7 +53,9 @@ setup_llama_cpp_intel() {
         case "$DISTRO" in
             gentoo) echo "  Install with: sudo emerge -av dev-libs/level-zero" ;;
             arch) echo "  Install with: sudo pacman -S level-zero-loader" ;;
-            debian) echo "  Install with: sudo apt install level-zero" ;;
+            debian) echo "  Install with: sudo apt install level-zero  (or libze1/libze-intel-gpu1)" ;;
+            fedora) echo "  Install with: sudo dnf install oneapi-level-zero level-zero" ;;
+            suse) echo "  Install with: sudo zypper install level-zero libze1" ;;
             *) echo "  Please install the level-zero package for your distribution." ;;
         esac
         echo ""
@@ -72,6 +74,8 @@ setup_llama_cpp_intel() {
             gentoo) echo "  Install with: sudo emerge -av dev-util/patchelf" ;;
             arch) echo "  Install with: sudo pacman -S patchelf" ;;
             debian) echo "  Install with: sudo apt install patchelf" ;;
+            fedora) echo "  Install with: sudo dnf install patchelf" ;;
+            suse) echo "  Install with: sudo zypper install patchelf" ;;
             *) echo "  Please install patchelf for your distribution." ;;
         esac
         echo ""
@@ -138,14 +142,24 @@ setup_llama_cpp_intel() {
     # This is the primary backend for GGUF models on Intel Arc
     # IMPORTANT: Must use icx/icpx compilers from oneAPI for SYCL support
     # Use full paths to compilers to ensure they're found during pip build
-    echo "  Building llama-cpp-python with SYCL backend for Intel Arc..."
+    echo "  Building llama-cpp-python 0.3.22 with SYCL backend for Intel Arc..."
     echo "  Using Intel compilers (icx/icpx) for SYCL support..."
     echo "  This compiles with GPU support - may take 5-10 minutes..."
+    # PIN 0.3.22: >=0.3.23 needs oneAPI 2025.1+ headers (work_group_static.hpp) which break the
+    # 2025.0 / ipex 2.5.10 stack, AND eagerly JIT kernels that abort on older IGC. 0.3.22 + IGC
+    # 2.35.5 is the proven-working Arc combo (runs 9B and the 14B). See docs/IPEX-LLM-SETUP.md.
     CMAKE_ARGS="-DGGML_SYCL=ON -DCMAKE_C_COMPILER=$ONEAPI_ROOT/bin/icx -DCMAKE_CXX_COMPILER=$ONEAPI_ROOT/bin/icpx" \
-        pip install llama-cpp-python --force-reinstall --no-cache-dir -q || {
+        pip install llama-cpp-python==0.3.22 --force-reinstall --no-cache-dir -q || {
         print_warning "SYCL build failed, installing pre-built (may be CPU-only)..."
-        pip install llama-cpp-python -q
+        pip install llama-cpp-python==0.3.22 -q
     }
+    # The Arc also needs IGC 2.35.5 system-wide (distro IGC is too old). Remind, don't auto-run.
+    # find (not multi-glob ls, which fails if any pattern is unmatched) across the common lib dirs
+    # incl. Debian/Ubuntu multiarch (/usr/lib/<triplet>/) where install-igc.sh puts it.
+    if ! find /usr/lib64 /usr/lib -maxdepth 2 -name 'libigc.so.2.35.5*' 2>/dev/null | grep -q .; then
+        print_warning "Intel Graphics Compiler 2.35.5 not detected - the 14B/long-context LLM and"
+        echo "  image gen >=768 need it. Install with: sudo ./scripts/install-igc.sh --download"
+    fi
 
     # Verify SYCL support (need LD_LIBRARY_PATH for runtime libs like libsvml.so)
     export LD_LIBRARY_PATH="$ONEAPI_ROOT/lib:${LD_LIBRARY_PATH:-}"

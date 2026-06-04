@@ -153,37 +153,30 @@ setup_xpu_image_instance() {
         print_success "venv-xpu already exists"
     fi
 
-    # Install PyTorch XPU and dependencies
-    # NOTE: venv-xpu uses standard numpy (not numpy<2 like venv-ipex)
-    # This avoids version conflicts between IPEX-LLM and PyTorch XPU
-    echo "  Installing PyTorch XPU..."
+    # MODERN stack: native PyTorch 2.8 XPU - NO IPEX needed for diffusers. torch 2.8 bundles its
+    # own oneAPI 2025.1 runtime via pip, so the launcher does NOT source a system oneAPI (that
+    # would clash). This is the proven-working image stack (SDXL 1024 OK on IGC 2.35.5).
+    echo "  Installing PyTorch 2.8 XPU (native, no IPEX)..."
     source "$SCRIPT_DIR/venv-xpu/bin/activate"
     pip install --upgrade pip -q
 
-    # Install PyTorch XPU with Intel Extension for PyTorch
-    # Use the official Intel PyTorch extension index for best compatibility
-    echo "  Installing Intel XPU PyTorch packages..."
-    pip install torch==2.5.1+cxx11.abi torchvision==0.20.1+cxx11.abi torchaudio==2.5.1+cxx11.abi \
-        intel-extension-for-pytorch==2.5.10+xpu oneccl_bind_pt==2.5.0+xpu \
-        --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/ -q
+    # torch FIRST from the XPU index, then the image deps (pinned in requirements-image.txt:
+    # diffusers>=0.38, transformers<5, accelerate, safetensors, pillow).
+    pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/xpu -q || \
+        pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/test/xpu -q
+    pip install -r "$SCRIPT_DIR/requirements-image.txt" -q
 
-    # Fix executable stack issue on hardened kernels (Gentoo, etc.)
-    fix_ipex_execstack
-
-    # Install image generation libraries
-    pip install diffusers transformers accelerate safetensors -q
-
-    # Install base app requirements (for the web server)
+    # Base app requirements (the image instance also serves the web app on port 3052)
     pip install -r "$SCRIPT_DIR/requirements.txt" -q
 
-    # Install face detection dependencies
-    pip install onnxruntime huggingface_hub insightface opencv-python-headless mkl -q
+    # Face detection / restore extras (optional features)
+    pip install onnxruntime huggingface_hub insightface opencv-python-headless -q 2>/dev/null || \
+        print_warning "optional face-detection deps failed (non-fatal)"
 
     deactivate
 
-    print_success "venv-xpu configured with PyTorch XPU and diffusers"
+    print_success "venv-xpu configured with PyTorch 2.8 XPU + diffusers (modern, no IPEX)"
     echo ""
-    echo "  Version isolation:"
-    echo "    venv-ipex: IPEX-LLM with numpy<2 (chat/LLM)"
-    echo "    venv-xpu:  PyTorch XPU with standard numpy (image gen)"
+    print_warning "Image gen at >=768 needs Intel Graphics Compiler 2.35.5 (older IGC fails oneDNN)."
+    echo "  If not already installed: sudo ./scripts/install-igc.sh --download"
 }

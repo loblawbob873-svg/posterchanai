@@ -66,6 +66,7 @@ check_dependencies() {
             arch)   echo "  Install with: pacman -S tesseract tesseract-data-eng" ;;
             debian) echo "  Install with: apt install tesseract-ocr" ;;
             fedora) echo "  Install with: dnf install tesseract" ;;
+            suse)   echo "  Install with: zypper install tesseract-ocr tesseract-ocr-traineddata-english" ;;
             *)      echo "  Install tesseract for your distribution" ;;
         esac
     else
@@ -86,6 +87,7 @@ check_dependencies() {
             arch)   echo "    pacman -S chromium" ;;
             debian) echo "    apt install chromium  (or install google-chrome-stable)" ;;
             fedora) echo "    dnf install chromium" ;;
+            suse)   echo "    zypper install chromium" ;;
             *)      echo "    install google-chrome-stable or chromium for your distribution" ;;
         esac
     else
@@ -95,6 +97,7 @@ check_dependencies() {
             arch)   echo "  Install with: pacman -S chromium" ;;
             debian) echo "  Install with: apt install chromium  (or google-chrome-stable)" ;;
             fedora) echo "  Install with: dnf install chromium" ;;
+            suse)   echo "  Install with: zypper install chromium" ;;
             *)      echo "  Install google-chrome-stable or chromium for your distribution" ;;
         esac
     fi
@@ -111,6 +114,7 @@ check_dependencies() {
             arch)   echo "  Install with: pacman -S noto-fonts-emoji && fc-cache -f" ;;
             debian) echo "  Install with: apt install fonts-noto-color-emoji && fc-cache -f" ;;
             fedora) echo "  Install with: dnf install google-noto-emoji-color-fonts && fc-cache -f" ;;
+            suse)   echo "  Install with: zypper install noto-coloremoji-fonts && fc-cache -f" ;;
             *)      echo "  Install a color emoji font (e.g. Noto Color Emoji) for your distribution" ;;
         esac
     fi
@@ -124,6 +128,8 @@ check_dependencies() {
                 gentoo) echo "  Install with: emerge -av app-misc/pax-utils" ;;
                 arch) echo "  Install with: pacman -S pax-utils" ;;
                 debian) echo "  Install with: apt install pax-utils" ;;
+                fedora) echo "  Install with: dnf install pax-utils" ;;
+                suse) echo "  Install with: zypper install pax-utils" ;;
                 *) echo "  Install pax-utils for your distribution" ;;
             esac
         else
@@ -151,6 +157,9 @@ show_install_instructions() {
         fedora)
             show_fedora_instructions
             ;;
+        suse)
+            show_suse_instructions
+            ;;
         *)
             echo "  Please install: python3, pip, cmake, gcc, git"
             echo ""
@@ -171,10 +180,16 @@ show_gentoo_instructions() {
     echo "  echo -e 'dev-build/rocm-cmake\ndev-util/hipcc\ndev-libs/rocm-core\ndev-libs/roct-thunk-interface\ndev-libs/rocm-device-libs\ndev-libs/rocr-runtime\ndev-libs/rocm-comgr\ndev-util/rocminfo\ndev-util/rocm-smi\ndev-libs/rocm-opencl-runtime\ndev-util/hip\nsci-libs/hipBLAS\nsci-libs/hipBLAS-common\nsci-libs/rocBLAS\nsci-libs/rocSOLVER\ndev-util/Tensile' | sudo tee /etc/portage/package.accept_keywords/rocm"
     echo "  emerge -av dev-libs/rocm-opencl-runtime dev-util/hip dev-libs/rocr-runtime sci-libs/hipBLAS"
     echo ""
-    echo "  # For Intel Arc GPU:"
+    echo "  # For Intel Arc GPU - OS GPU runtime (portage):"
     echo "  echo 'dev-util/intel-graphics-compiler no-distcc.conf' | sudo tee -a /etc/portage/package.env/intel-graphics-compiler"
-    echo "  emerge -av dev-libs/intel-compute-runtime dev-libs/level-zero app-misc/pax-utils"
-    echo "  # pax-utils provides scanelf to fix IPEX library permissions on hardened kernels"
+    echo "  emerge -av dev-libs/intel-compute-runtime dev-libs/level-zero media-libs/gmmlib \\"
+    echo "             dev-util/patchelf app-misc/pax-utils"
+    echo "  # pax-utils=scanelf (fix IPEX perms on hardened kernels); patchelf for glibc 2.41+"
+    echo "  # Pin the runtime ~amd64 so @world won't downgrade it (see docs/IPEX-LLM-SETUP.md)."
+    echo "  # oneAPI Base Toolkit 2025.0 is needed to BUILD the SYCL llama-cpp (LLM):"
+    echo "  #   https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit-download.html"
+    echo "  # CRITICAL: portage's IGC (<=2.35.2) is NOT enough. After emerge, install IGC 2.35.5:"
+    echo "  #   sudo ./scripts/install-igc.sh        # unblocks LLM 14B/long-ctx AND image gen >=768"
     echo ""
     echo "  # For NVIDIA GPU:"
     echo "  emerge -av x11-drivers/nvidia-drivers dev-util/nvidia-cuda-toolkit"
@@ -187,13 +202,25 @@ show_arch_instructions() {
     echo "  # For AMD GPU (ROCm):"
     echo "  pacman -S rocm-hip-sdk rocm-opencl-sdk"
     echo ""
-    echo "  # For Intel Arc GPU: Install intel-oneapi-basekit from AUR"
+    echo ""
+    echo "  # For Intel Arc GPU - OS GPU runtime:"
+    echo "  pacman -S intel-compute-runtime level-zero-loader intel-graphics-compiler \\"
+    echo "            patchelf pax-utils"
+    echo "  # oneAPI Base Toolkit 2025.0 (AUR: intel-oneapi-basekit) to build the SYCL llama-cpp."
+    echo "  # CRITICAL: install IGC 2.35.5 on top (distro IGC is older): sudo ./scripts/install-igc.sh"
     echo "  # For NVIDIA GPU: pacman -S nvidia cuda"
 }
 
 show_debian_instructions() {
     echo -e "${BOLD}Debian/Ubuntu:${NC}"
-    echo "  apt install python3 python3-pip python3-venv cmake build-essential git"
+    echo "  apt install python3 python3-pip python3-venv cmake build-essential git patchelf pax-utils"
+    echo ""
+    echo "  # For Intel Arc GPU - OS GPU runtime (Intel's apt repo gives current NEO/L0/gmmlib):"
+    echo "  #   https://dgpu-docs.intel.com/driver/installation.html  (adds intel-opencl-icd,"
+    echo "  #   libze1/libze-intel-gpu1, intel-level-zero-gpu, libigdgmm12)"
+    echo "  # oneAPI Base Toolkit 2025.0 (apt: intel-basekit) to build the SYCL llama-cpp (LLM)."
+    echo "  # CRITICAL: distro/Intel-repo IGC is too old - install IGC 2.35.5 on top:"
+    echo "  #   sudo ./scripts/install-igc.sh --download   # fetches the v2.35.5 debs from GitHub"
     echo ""
     echo "  # For AMD GPU (ROCm):"
     echo "  wget https://repo.radeon.com/amdgpu-install/latest/ubuntu/\$(lsb_release -cs)/amdgpu-install_6.0.60002-1_all.deb"
@@ -205,11 +232,32 @@ show_debian_instructions() {
 
 show_fedora_instructions() {
     echo -e "${BOLD}Fedora:${NC}"
-    echo "  dnf install python3 python3-pip cmake gcc-c++ git"
+    echo "  dnf install python3 python3-pip cmake gcc-c++ git patchelf pax-utils"
+    echo ""
+    echo "  # For Intel Arc GPU - OS GPU runtime:"
+    echo "  dnf install intel-compute-runtime level-zero oneapi-level-zero intel-gmmlib"
+    echo "  # (Fedora ships these; on RHEL use Intel's dnf repo per dgpu-docs.intel.com)"
+    echo "  # oneAPI Base Toolkit 2025.0 (dnf: intel-basekit) to build the SYCL llama-cpp."
+    echo "  # CRITICAL: install IGC 2.35.5 on top: sudo ./scripts/install-igc.sh --download"
     echo ""
     echo "  # For AMD GPU (ROCm):"
     echo "  dnf install https://repo.radeon.com/amdgpu-install/latest/rhel/\$(rpm -E %rhel)/amdgpu-install-*.noarch.rpm"
     echo "  amdgpu-install --usecase=rocm"
     echo ""
     echo "  # For NVIDIA GPU: dnf install nvidia-driver cuda"
+}
+
+show_suse_instructions() {
+    echo -e "${BOLD}openSUSE (Leap / Tumbleweed):${NC}"
+    echo "  zypper install python311 python311-pip cmake gcc-c++ git patchelf pax-utils"
+    echo ""
+    echo "  # For Intel Arc GPU - OS GPU runtime:"
+    echo "  zypper install intel-compute-runtime level-zero libze1 libigdgmm12"
+    echo "  # (Tumbleweed has current packages; Leap may need Intel's repo per dgpu-docs.intel.com)"
+    echo "  # oneAPI Base Toolkit 2025.0 to build the SYCL llama-cpp (LLM):"
+    echo "  #   add Intel's oneAPI zypper repo, then: zypper install intel-basekit"
+    echo "  # CRITICAL: distro IGC is too old - install IGC 2.35.5 on top:"
+    echo "  #   sudo ./scripts/install-igc.sh --download   # fetches v2.35.5 .debs, extracts to libdir"
+    echo ""
+    echo "  # For NVIDIA GPU: zypper install nvidia-video-G06 nvidia-compute-utils-G06 (+ CUDA repo)"
 }

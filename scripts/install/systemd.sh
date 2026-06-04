@@ -365,60 +365,38 @@ create_xpu_image_run_script() {
 
     cat > "$RUN_SCRIPT" << 'SCRIPT'
 #!/bin/bash
-# PyTorch XPU Image Generation wrapper script for Intel Arc GPU
-# This uses native PyTorch XPU (not IPEX-LLM) for Stable Diffusion
-
+# PyTorch XPU image-gen wrapper for Intel Arc.
+# Modern stack: torch 2.8 XPU, which BUNDLES its own oneAPI runtime (pip: intel-sycl-rt/
+# dpcpp-cpp-rt/mkl/umf). Do NOT source a system oneAPI here - it conflicts with the bundled
+# runtime. SDXL at >=768 needs system IGC >= 2.35.5 (older IGC fails oneDNN "could not create a
+# primitive"). Prefer venv-xpu-new (modern); fall back to legacy venv-xpu + oneAPI 2025.0.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Detect oneAPI installation paths - need both 2024.2 and 2025.0 for compatibility
-# IMPORTANT: Must include compiler/VERSION/lib for libsycl.so runtime
-ONEAPI_ROOT=""
-ONEAPI_LIB_PATHS=""
-
-if [ -d /opt/intel/oneapi/2025.0 ]; then
-    ONEAPI_ROOT="/opt/intel/oneapi/2025.0"
-    # Include compiler lib path for libsycl.so.8
-    ONEAPI_LIB_PATHS="/opt/intel/oneapi/compiler/2025.0/lib:/opt/intel/oneapi/2025.0/lib"
+if [ -d "$SCRIPT_DIR/venv-xpu-new" ]; then
+    VENV="$SCRIPT_DIR/venv-xpu-new"
+    export LD_LIBRARY_PATH="$VENV/lib:/usr/lib64:${LD_LIBRARY_PATH:-/usr/local/lib}"
+    echo "[XPU-Image] venv=venv-xpu-new (torch 2.8 XPU, bundled oneAPI), system IGC"
+elif "$SCRIPT_DIR/venv-xpu/bin/python" -c 'import torch,sys; v=tuple(int(x) for x in torch.__version__.split("+")[0].split(".")[:2]); sys.exit(0 if v>=(2,8) else 1)' 2>/dev/null; then
+    # venv-xpu already holds torch >=2.8 (fresh modern install): no oneAPI sourcing.
+    VENV="$SCRIPT_DIR/venv-xpu"
+    export LD_LIBRARY_PATH="$VENV/lib:/usr/lib64:${LD_LIBRARY_PATH:-/usr/local/lib}"
+    echo "[XPU-Image] venv=venv-xpu (torch 2.8 XPU, bundled oneAPI), system IGC"
+else
+    # Legacy fallback: torch 2.5 + system oneAPI 2025.0
+    VENV="$SCRIPT_DIR/venv-xpu"
+    ONEAPI_ROOT="/opt/intel/oneapi/2025.0"; [ -d "$ONEAPI_ROOT" ] || ONEAPI_ROOT="/opt/intel/oneapi"
+    export ONEAPI_ROOT
+    export LD_LIBRARY_PATH="$VENV/lib:$ONEAPI_ROOT/lib:$ONEAPI_ROOT/../compiler/2025.0/lib:${LD_LIBRARY_PATH:-/usr/local/lib}"
+    export PATH="$ONEAPI_ROOT/bin:$PATH"
+    [ -f "$ONEAPI_ROOT/oneapi-vars.sh" ] && source "$ONEAPI_ROOT/oneapi-vars.sh" --force 2>/dev/null || true
+    echo "[XPU-Image] venv=venv-xpu (legacy torch 2.5 + oneAPI 2025.0)"
 fi
 
-# Add 2024.2 libs for compatibility
-if [ -d /opt/intel/oneapi/2024.2 ]; then
-    [ -z "$ONEAPI_ROOT" ] && ONEAPI_ROOT="/opt/intel/oneapi/2024.2"
-    # Include both compiler and unified lib paths
-    ONEAPI_LIB_PATHS="${ONEAPI_LIB_PATHS:+$ONEAPI_LIB_PATHS:}/opt/intel/oneapi/compiler/2024.2/lib:/opt/intel/oneapi/2024.2/lib"
-fi
-
-if [ -z "$ONEAPI_ROOT" ] && [ -d /opt/intel/oneapi ]; then
-    ONEAPI_ROOT="/opt/intel/oneapi"
-    ONEAPI_LIB_PATHS="/opt/intel/oneapi/compiler/latest/lib:/opt/intel/oneapi/lib"
-fi
-
-if [ -z "$ONEAPI_ROOT" ]; then
-    echo "ERROR: Intel oneAPI not found in /opt/intel/oneapi" >&2
-    exit 1
-fi
-
-export ONEAPI_ROOT
-export LD_LIBRARY_PATH="$SCRIPT_DIR/venv-xpu/lib:$ONEAPI_LIB_PATHS:${LD_LIBRARY_PATH:-/usr/local/lib}"
-export PATH="$ONEAPI_ROOT/bin:$PATH"
-
-# Source oneAPI vars
-if [ -f "$ONEAPI_ROOT/oneapi-vars.sh" ]; then
-    source "$ONEAPI_ROOT/oneapi-vars.sh" --force 2>/dev/null || true
-elif [ -f "$ONEAPI_ROOT/setvars.sh" ]; then
-    source "$ONEAPI_ROOT/setvars.sh" --force 2>/dev/null || true
-fi
-
-# XPU optimizations for image generation
 export SYCL_CACHE_PERSISTENT=1
 export ZES_ENABLE_SYSMAN=1
-
-# Log startup info
-echo "[XPU-Image] ONEAPI_ROOT=$ONEAPI_ROOT"
 echo "[XPU-Image] Starting image service on port 3052"
-
 cd "$SCRIPT_DIR"
-exec "$SCRIPT_DIR/venv-xpu/bin/python" run.py --port 3052 "$@"
+exec "$VENV/bin/python" run.py --port 3052 "$@"
 SCRIPT
 
     chmod +x "$RUN_SCRIPT"

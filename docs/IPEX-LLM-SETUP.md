@@ -56,6 +56,36 @@ Arc DB settings: `llm_flash_attn=false` (flash-attn is broken on Arc SYCL even w
 
 ---
 
+## Install responsibilities: what the OS provides vs what the installer handles
+
+For an Intel Arc box, three layers must be in place. **You** install the first via your distro;
+**`install.sh`** (and the helper scripts) handle the rest.
+
+| Layer | Who | What |
+|------|-----|------|
+| **1. OS GPU runtime** (distro pkgs) | **You** (distro pkg manager) | `intel-compute-runtime` (NEO), `level-zero`/`libze1`, `gmmlib`/`libigdgmm`, plus build tools `python3.11`, `cmake`, `gcc`/`gcc-c++`, `git`, `patchelf`, `pax-utils`. Pin these so updates don't downgrade them. |
+| **1b. oneAPI Base Toolkit 2025.0** | **You** | Needed only to *build* the SYCL `llama-cpp-python` (the LLM venv). Image gen does **not** need it. Install from Intel's repo/toolkit. |
+| **1c. IGC 2.35.5** | **`scripts/install-igc.sh`** | Distro IGC is too old (≤2.35.2). Run `sudo ./scripts/install-igc.sh [--download]` once — distro-agnostic, installs the 4 libs (incl. `libopencl-clang2.so.17`) with a backup. Unblocks the 14B/long-context **and** image gen ≥768. |
+| **2. LLM venv** (`venv-ipex`) | **`install.sh`** | Python 3.11, `llama-cpp-python==0.3.22` built with SYCL (icx/icpx), ipex-llm, `requirements.txt`. |
+| **3. Image venv** (`venv-xpu`) | **`install.sh`** | `torch==2.8.0` XPU (bundles its own oneAPI — no IPEX), `requirements-image.txt` (diffusers≥0.38, transformers<5), `requirements.txt`. |
+
+### Per-distro: the OS GPU-runtime packages you install (layer 1)
+
+| Distro | Command |
+|--------|---------|
+| **Gentoo** | `emerge -av dev-libs/intel-compute-runtime dev-libs/level-zero media-libs/gmmlib dev-util/patchelf app-misc/pax-utils` (pin `~amd64`; add `dev-util/intel-graphics-compiler no-distcc.conf` to `package.env`) |
+| **Debian/Ubuntu** | Intel GPU apt repo (see [dgpu-docs](https://dgpu-docs.intel.com/driver/installation.html)): `apt install intel-opencl-icd libze-intel-gpu1 libze1 intel-level-zero-gpu libigdgmm12 patchelf pax-utils` |
+| **Fedora** | `dnf install intel-compute-runtime oneapi-level-zero level-zero intel-gmmlib patchelf pax-utils` |
+| **openSUSE** | `zypper install intel-compute-runtime level-zero libze1 libigdgmm12 patchelf pax-utils` (Tumbleweed; Leap may need Intel's repo) |
+| **Arch** | `pacman -S intel-compute-runtime level-zero-loader intel-graphics-compiler patchelf pax-utils` (oneAPI from AUR `intel-oneapi-basekit`) |
+
+After layer 1 + oneAPI + `install-igc.sh`, run `./install.sh` and it builds the two venvs and the
+two systemd services (`posterchanai-ipex` :3051, `posterchanai-xpu-image` :3052). The installer
+auto-detects the distro (`/etc/os-release`, incl. `ID_LIKE` for derivatives) and prints the exact
+package commands for anything still missing.
+
+---
+
 ## Gentoo Linux
 
 ### 1. Install Intel oneAPI Base Toolkit 2025.0
@@ -300,6 +330,37 @@ sudo systemctl daemon-reload
 sudo systemctl enable posterchanai-ipex
 sudo systemctl start posterchanai-ipex
 ```
+
+---
+
+## openSUSE (Leap / Tumbleweed)
+
+openSUSE follows the same flow as Fedora/Debian — only the package manager differs. The installer
+detects it via `/etc/os-release` (`ID=opensuse*` / `ID_LIKE=suse`) and uses `zypper`.
+
+### 1. OS GPU runtime + build tools
+```bash
+sudo zypper install python311 python311-pip cmake gcc-c++ git patchelf pax-utils \
+    intel-compute-runtime level-zero libze1 libigdgmm12
+# Tumbleweed ships current packages; Leap may need Intel's GPU repo (dgpu-docs.intel.com).
+```
+
+### 2. oneAPI Base Toolkit 2025.0 (to build the SYCL llama-cpp)
+Add Intel's oneAPI zypper repo, then `sudo zypper install intel-basekit` (installs to
+`/opt/intel/oneapi`). Image gen does not need this.
+
+### 3. IGC 2.35.5 (required — distro IGC is too old)
+```bash
+sudo ./scripts/install-igc.sh --download
+```
+
+### 4. Run the installer
+```bash
+./install.sh    # builds venv-ipex (LLM) + venv-xpu (image, torch 2.8) + both systemd services
+```
+Steps 4–6 (VTune stub, venvs, systemd) are identical to the Fedora section — the installer handles
+them. The VTune stub (`libittnotify.so`) is created automatically; if you do it by hand, drop it in
+`/usr/local/lib` and `ldconfig`.
 
 ---
 
