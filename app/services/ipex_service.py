@@ -280,6 +280,8 @@ class IPEXService:
 
         # Thinking mode control
         self.disable_thinking = get_setting("llm_disable_thinking", "false").lower() == "true"
+        # Opt-in OpenAI function-calling (shares the native backend's semantics).
+        self.function_calling = get_setting("llm_function_calling", "false").lower() == "true"
 
     def _ensure_model_loaded(self):
         """Load model if not already loaded, path changed, or configured context size changed"""
@@ -379,7 +381,8 @@ class IPEXService:
                     if "mistral" in _model_name_lower:
                         _chat_format = "mistral-instruct"
                     elif "qwen3" in _model_name_lower:
-                        _chat_format = "chatml"
+                        # Function-calling variant surfaces `tools` and parses tool_calls.
+                        _chat_format = "chatml-function-calling" if self.function_calling else "chatml"
                     else:
                         _chat_format = None
 
@@ -591,6 +594,23 @@ class IPEXService:
 
         messages = self._embed_system_for_mistral(messages)
 
+        # Function-calling: bypass the text-only path and return the full message
+        # (with tool_calls) so the wrapper can emit a proper OpenAI response.
+        if self._is_gguf and self.function_calling and kwargs.get("tools"):
+            params = {
+                "max_tokens": kwargs.get("max_tokens", self.num_predict),
+                "temperature": kwargs.get("temperature", self.temperature),
+                "top_p": kwargs.get("top_p", self.top_p),
+                "tools": kwargs["tools"],
+            }
+            if kwargs.get("tool_choice") is not None:
+                params["tool_choice"] = kwargs["tool_choice"]
+            result = self._model.create_chat_completion(messages=messages, **params)
+            msg = result["choices"][0]["message"]
+            if msg.get("content"):
+                msg["content"] = self.strip_thinking_tags(msg["content"])
+            return msg  # dict, not str - caller detects and handles
+
         if self._is_gguf:
             # Use llama.cpp API for GGUF models with retry for transient errors
             max_retries = 2
@@ -799,6 +819,13 @@ class IPEXService:
             with _request_counter_lock:
                 _pending_requests -= 1
 
+            # response is a dict (full message with tool_calls) for function-calling, else text.
+            if isinstance(response, dict):
+                _message = response
+                _finish = "tool_calls" if response.get("tool_calls") else "stop"
+            else:
+                _message = {"role": "assistant", "content": response}
+                _finish = "stop"
             return {
                 "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
                 "object": "chat.completion",
@@ -806,8 +833,8 @@ class IPEXService:
                 "model": model or self.default_model,
                 "choices": [{
                     "index": 0,
-                    "message": {"role": "assistant", "content": response},
-                    "finish_reason": "stop"
+                    "message": _message,
+                    "finish_reason": _finish
                 }],
                 "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
             }
@@ -870,6 +897,36 @@ class IPEXService:
                     """Run generation in thread, put tokens in queue"""
                     with _get_inference_semaphore(self.max_concurrent):
                         try:
+                            if self._is_gguf and self.function_calling and kwargs.get("tools"):
+                                # llama-cpp can't stream automatic tool choice; run non-streaming
+                                # and synthesize SSE so tool_calls/finish_reason reach the client.
+                                _p = {
+                                    "max_tokens": kwargs.get("max_tokens", self.num_predict),
+                                    "temperature": kwargs.get("temperature", self.temperature),
+                                    "top_p": kwargs.get("top_p", self.top_p),
+                                    "tools": kwargs["tools"],
+                                }
+                                if kwargs.get("tool_choice") is not None:
+                                    _p["tool_choice"] = kwargs["tool_choice"]
+                                _res = self._model.create_chat_completion(messages=messages_to_use, **_p)
+                                _ch = _res.get("choices", [{}])[0]
+                                _msg = _ch.get("message", {})
+                                _finish = _ch.get("finish_reason") or "stop"
+                                _delta = {"role": "assistant"}
+                                if _msg.get("content"):
+                                    _delta["content"] = self.strip_thinking_tags(_msg["content"])
+                                _tcs = _msg.get("tool_calls") or []
+                                for _i, _tc in enumerate(_tcs):
+                                    _tc.setdefault("index", _i)
+                                if _tcs:
+                                    _delta["tool_calls"] = _tcs
+                                for _pl in (
+                                    {"id": completion_id, "object": "chat.completion.chunk", "created": created, "model": model_name, "choices": [{"index": 0, "delta": _delta, "finish_reason": None}]},
+                                    {"id": completion_id, "object": "chat.completion.chunk", "created": created, "model": model_name, "choices": [{"index": 0, "delta": {}, "finish_reason": _finish}]},
+                                ):
+                                    loop.call_soon_threadsafe(queue.put_nowait, f"data: {json.dumps(_pl)}\n\n")
+                                loop.call_soon_threadsafe(queue.put_nowait, "data: [DONE]\n\n")
+                                return
                             if self._is_gguf:
                                 # stopping_criteria: Python-level EOS check as belt-and-suspenders
                                 # alongside the C++ stop list.
