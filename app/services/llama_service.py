@@ -953,6 +953,31 @@ class LlamaService:
 
                     with _get_inference_semaphore(self.max_concurrent):
                         try:
+                            if params.get("tools"):
+                                # llama-cpp-python can't stream automatic tool choice, so run
+                                # non-streaming and synthesize SSE chunks - clients still get a
+                                # stream, and tool_calls/finish_reason are delivered correctly.
+                                result = self._model.create_chat_completion(messages=messages, **params)
+                                choice = result.get("choices", [{}])[0]
+                                msg = choice.get("message", {})
+                                finish = choice.get("finish_reason") or "stop"
+                                delta = {"role": "assistant"}
+                                if msg.get("content"):
+                                    delta["content"] = self.strip_thinking_tags(msg["content"])
+                                tcs = msg.get("tool_calls") or []
+                                for i, tc in enumerate(tcs):
+                                    tc.setdefault("index", i)
+                                if tcs:
+                                    delta["tool_calls"] = tcs
+                                for _payload in (
+                                    {"id": completion_id, "object": "chat.completion.chunk", "created": created,
+                                     "model": model_name, "choices": [{"index": 0, "delta": delta, "finish_reason": None}]},
+                                    {"id": completion_id, "object": "chat.completion.chunk", "created": created,
+                                     "model": model_name, "choices": [{"index": 0, "delta": {}, "finish_reason": finish}]},
+                                ):
+                                    loop.call_soon_threadsafe(queue.put_nowait, f"data: {json.dumps(_payload)}\n\n")
+                                loop.call_soon_threadsafe(queue.put_nowait, "data: [DONE]\n\n")
+                                return
                             if _use_pf:
                                 _prompt = self._build_no_think_prompt(messages)
                                 _iter = self._model.create_completion(prompt=_prompt, stream=True, **params)
