@@ -24,7 +24,15 @@ echo "Setting up image-only instance database..."
 # Copy main database if it exists, otherwise start fresh
 if [ -f "$POSTERCHANAI_DIR/posterchanai.db" ]; then
     echo "Copying settings from main database..."
-    cp "$POSTERCHANAI_DIR/posterchanai.db" "$IMAGE_DB"
+    # The main DB runs in WAL mode, so recent writes may live in the -wal file. Use sqlite3's
+    # online backup (WAL-aware) instead of a bare cp, which could copy a stale DB. Fall back to
+    # checkpoint+cp if sqlite3 is unavailable.
+    if command -v sqlite3 >/dev/null 2>&1; then
+        sqlite3 "$POSTERCHANAI_DIR/posterchanai.db" ".backup '$IMAGE_DB'"
+    else
+        sqlite3 "$POSTERCHANAI_DIR/posterchanai.db" "PRAGMA wal_checkpoint(TRUNCATE);" 2>/dev/null || true
+        cp "$POSTERCHANAI_DIR/posterchanai.db" "$IMAGE_DB"
+    fi
 else
     echo "No main database found, will create fresh database on first run"
     # Touch the file so we can update settings

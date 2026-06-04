@@ -387,7 +387,7 @@ class IPEXService:
                     if "mistral" in _model_name_lower:
                         _chat_format = "mistral-instruct"
                     elif "qwen3" in _model_name_lower:
-                        # Always plain chatml; tool-calling handled by the Hermes layer.
+                        # Always plain chatml; tool-calling handled by the tool_calling layer.
                         _chat_format = "chatml"
                     else:
                         _chat_format = None
@@ -604,7 +604,7 @@ class IPEXService:
         # Function-calling via Qwen/Hermes: inject tools, plain-chatml generate, parse.
         # Returns the full message dict (with tool_calls); the wrapper detects the dict.
         if self._is_gguf and self.function_calling and kwargs.get("tools"):
-            from app.services.hermes_tools import generate_message
+            from app.services.tool_calling import generate_message
             params = {
                 "max_tokens": kwargs.get("max_tokens", self.num_predict),
                 "temperature": kwargs.get("temperature", self.temperature),
@@ -911,7 +911,7 @@ class IPEXService:
                             if self._is_gguf and self.function_calling and kwargs.get("tools"):
                                 # Qwen/Hermes tool-calling: generate (plain chatml) + parse,
                                 # then synthesize SSE (tool_calls can't be streamed live).
-                                from app.services.hermes_tools import generate_message, tool_sse_chunks
+                                from app.services.tool_calling import generate_message, tool_sse_chunks
                                 _p = {
                                     "max_tokens": kwargs.get("max_tokens", self.num_predict),
                                     "temperature": kwargs.get("temperature", self.temperature),

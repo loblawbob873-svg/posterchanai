@@ -67,23 +67,39 @@ def reload_sqlite_settings():
 
 # Connection pool configuration
 if "sqlite" in DATABASE_URL:
-    # SQLite: use StaticPool for better concurrency with check_same_thread=False
+    # SQLite with WAL + a real connection pool. The old setup used StaticPool (a SINGLE shared
+    # connection), so EVERY query - the background pollers (social/nitter) AND each request -
+    # serialized through one connection: a poller mid-query stalled LLM request DB access.
+    # QueuePool gives each request its own connection, and WAL lets readers run concurrently with
+    # the (single) writer, so writes no longer block reads. busy_timeout waits out the brief
+    # write-lock instead of erroring with "database is locked".
+    # In-memory SQLite MUST keep one shared connection (StaticPool) - a pool would give each
+    # connection its own empty DB. File-based SQLite uses QueuePool for real concurrency.
+    if ":memory:" in DATABASE_URL:
+        _pool_kwargs = {"poolclass": StaticPool}
+    else:
+        _pool_kwargs = {"poolclass": QueuePool, "pool_size": 5, "max_overflow": 10, "pool_recycle": 3600}
     engine = create_engine(
         DATABASE_URL,
         connect_args={
             "check_same_thread": False,
-            "timeout": 30.0  # Add timeout for locked database
+            "timeout": 30.0  # sqlite busy timeout: wait for a locked DB instead of erroring
         },
-        poolclass=StaticPool,  # Reuse single connection
-        pool_pre_ping=True,    # Verify connection health
+        pool_pre_ping=True,    # verify connection health
+        **_pool_kwargs,
     )
-    
+
     # Enable foreign key constraints and configure cache for SQLite
     @event.listens_for(engine, "connect")
     def set_sqlite_pragma(dbapi_conn, connection_record):
         cursor = dbapi_conn.cursor()
         cursor.execute("PRAGMA foreign_keys = ON")
-        
+        # WAL: readers don't block the writer (fixes poller-vs-request DB serialization).
+        # synchronous=NORMAL is the safe+fast pairing for WAL. busy_timeout waits out a lock.
+        cursor.execute("PRAGMA journal_mode = WAL")
+        cursor.execute("PRAGMA synchronous = NORMAL")
+        cursor.execute("PRAGMA busy_timeout = 30000")
+
         # Don't load settings during connection event to avoid circular dependencies
         # Settings will be loaded during init_db() after tables are created
         # Just use the cached values (defaults if not loaded yet)

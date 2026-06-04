@@ -520,8 +520,8 @@ class LlamaService:
                             logger.warning(f"  Could not load mistral chat handler: {e}")
                         _chat_format = None
                     elif "qwen3" in _model_lower:
-                        # Always plain chatml. Tool-calling is handled by the Hermes layer
-                        # (app/services/hermes_tools.py) - llama-cpp's chatml-function-calling
+                        # Always plain chatml. Tool-calling is handled by the tool_calling layer
+                        # (app/services/tool_calling.py) - llama-cpp's chatml-function-calling
                         # handler mismatches Qwen's native <tool_call> format.
                         _chat_format = "chatml"
                     else:
@@ -873,7 +873,7 @@ class LlamaService:
                     }
                 elif params.get("tools"):
                     # Qwen/Hermes tool-calling: inject tools, plain-chatml generate, parse.
-                    from app.services.hermes_tools import generate_message
+                    from app.services.tool_calling import generate_message
                     _tools = params.pop("tools"); params.pop("tool_choice", None)
                     _m, _finish = generate_message(self._model, messages, _tools, params, self.strip_thinking_tags)
                     result = {
@@ -1008,7 +1008,7 @@ class LlamaService:
                             if params.get("tools"):
                                 # Qwen/Hermes tool-calling: generate (plain chatml) + parse,
                                 # then synthesize SSE chunks (tool_calls can't be streamed live).
-                                from app.services.hermes_tools import generate_message, tool_sse_chunks
+                                from app.services.tool_calling import generate_message, tool_sse_chunks
                                 _tools = params.pop("tools"); params.pop("tool_choice", None)
                                 msg, finish = generate_message(self._model, messages, _tools, params, self.strip_thinking_tags)
                                 for _line in tool_sse_chunks(completion_id, created, model_name, msg, finish):

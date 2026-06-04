@@ -18,7 +18,7 @@ import re
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
-logger = logging.getLogger("hermes_tools")
+logger = logging.getLogger("tool_calling")
 
 # JSON-Hermes form: <tool_call>{"name":...,"arguments":...}</tool_call>
 _TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
@@ -218,16 +218,19 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
             if _sc is not None:
                 _p["stopping_criteria"] = _sc
             raw = (model.create_completion(prompt=toks, **_p).get("choices") or [{}])[0].get("text") or ""
-            # The template pre-fills "<think>", so generation starts inside the think block.
-            # Parse tool calls from the FULL raw output, NOT just the slice after </think>: the model
-            # sometimes emits the <tool_call> before it closes </think> (or never closes it), and
-            # slicing first would discard a valid call -> empty message. The LB reads an empty tool
-            # response as a dead node and aborts the already-streamed SSE -> opencode just stops.
-            # Visible content is still only the post-</think> text, so raw reasoning is never leaked.
-            _, tool_calls = parse_tool_calls(raw)
+            # Generation starts inside the template's pre-filled "<think>" block.
+            if "</think>" in raw:
+                # Think closed: the real answer/tool_call is AFTER it. Parse only there, so a
+                # <tool_call> the model writes inside its REASONING (a plan/example) is never
+                # mistaken for a real call, and unclosed reasoning is never surfaced as content.
+                content, tool_calls = parse_tool_calls(raw.split("</think>", 1)[1].strip())
+            else:
+                # Think never closed: the model emitted the <tool_call> before closing </think> (or
+                # ran out). Parse the full raw so a valid call isn't discarded -> empty message ->
+                # the LB reads the node as dead and aborts the streamed SSE -> opencode just stops.
+                _, tool_calls = parse_tool_calls(raw)
+                content = None
             tool_calls = _normalize_tool_names(tool_calls, tools)
-            after = raw.split("</think>", 1)[1].strip() if "</think>" in raw else ""
-            content = parse_tool_calls(after)[0] if after else None
             # The model sometimes closes </think> then ends the turn WITHOUT emitting the answer /
             # tool_call (lazy end-of-turn) -> empty message -> the LB reads the node as dead and
             # aborts the already-streamed SSE -> opencode stops. If it closed </think> but gave us
@@ -246,7 +249,7 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
             return (({**msg, "tool_calls": tool_calls}, "tool_calls") if tool_calls else (msg, "stop"))
         except Exception as e:
             import logging
-            logging.getLogger("hermes_tools").warning("native-template tool path failed (%s); using fallback", e)
+            logging.getLogger("tool_calling").warning("native-template tool path failed (%s); using fallback", e)
 
     # Fallback (no embedded template): plain chat completion; still parse any native tool calls.
     result = model.create_chat_completion(messages=messages, **params)
