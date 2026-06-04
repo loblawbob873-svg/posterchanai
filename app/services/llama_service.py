@@ -87,6 +87,149 @@ def _close_llama_safe(model: Any) -> None:
         logger.debug("Model close() raised (ignored): %s", e)
 
 
+def _read_gguf_metadata(path: str) -> Dict[str, Any]:
+    """Minimal, dependency-free GGUF metadata reader.
+
+    Returns a dict of scalar/string metadata key-values (arrays are skipped but
+    the file pointer is advanced correctly). Only the metadata section at the
+    head of the file is read - never the tensor data. Returns {} on any problem.
+    """
+    import struct
+    # gguf value type -> (struct format, byte size)
+    _scalar = {0: ('<B', 1), 1: ('<b', 1), 2: ('<H', 2), 3: ('<h', 2),
+               4: ('<I', 4), 5: ('<i', 4), 6: ('<f', 4), 7: ('<?', 1),
+               10: ('<Q', 8), 11: ('<q', 8), 12: ('<d', 8)}
+    meta: Dict[str, Any] = {}
+    try:
+        with open(path, 'rb') as f:
+            if f.read(4) != b'GGUF':
+                return meta
+            struct.unpack('<I', f.read(4))[0]              # version
+            struct.unpack('<Q', f.read(8))[0]              # tensor_count
+            kv_count = struct.unpack('<Q', f.read(8))[0]
+
+            def read_str() -> str:
+                n = struct.unpack('<Q', f.read(8))[0]
+                return f.read(n).decode('utf-8', 'replace')
+
+            def skip(t: int) -> None:
+                if t == 8:                                  # string
+                    n = struct.unpack('<Q', f.read(8))[0]
+                    f.seek(n, 1)
+                elif t == 9:                                # array
+                    sub = struct.unpack('<I', f.read(4))[0]
+                    cnt = struct.unpack('<Q', f.read(8))[0]
+                    if sub in _scalar:
+                        f.seek(_scalar[sub][1] * cnt, 1)
+                    else:
+                        for _ in range(cnt):
+                            skip(sub)
+                elif t in _scalar:
+                    f.seek(_scalar[t][1], 1)
+                else:
+                    raise ValueError(f"unknown gguf type {t}")
+
+            for _ in range(kv_count):
+                key = read_str()
+                vtype = struct.unpack('<I', f.read(4))[0]
+                if vtype == 8:
+                    meta[key] = read_str()
+                elif vtype == 9:
+                    skip(9)
+                elif vtype in _scalar:
+                    meta[key] = struct.unpack(_scalar[vtype][0], f.read(_scalar[vtype][1]))[0]
+                else:
+                    break  # unknown type, cannot safely continue
+    except Exception as e:
+        logger.debug("GGUF metadata read failed for %s: %s", path, e)
+        return {}
+    return meta
+
+
+def _detect_free_vram_mb() -> Optional[int]:
+    """Best-effort free-VRAM detection for the active backend.
+
+    NVIDIA (CUDA/nas) via nvidia-smi; Intel Arc (SYCL) via torch.xpu. Returns the
+    most-constrained GPU's free MB, or None if it can't be determined.
+    """
+    try:
+        import subprocess
+        r = subprocess.run(
+            ['nvidia-smi', '--query-gpu=memory.free', '--format=csv,noheader,nounits'],
+            capture_output=True, text=True, timeout=5)
+        if r.returncode == 0:
+            vals = [int(x) for x in r.stdout.strip().split('\n') if x.strip()]
+            if vals:
+                return min(vals)
+    except Exception:
+        pass
+    try:
+        import torch
+        if hasattr(torch, 'xpu') and torch.xpu.is_available():
+            free, _total = torch.xpu.mem_get_info()
+            return int(free / (1024 * 1024))
+    except Exception:
+        pass
+    return None
+
+
+def _compute_autofit_gpu_layers(model_path: str, file_size: int, n_ctx: int):
+    """Decide GPU layers for a model when admin left llm_gpu_layers at -1 ("all").
+
+    Returns (gpu_layers, reason). gpu_layers == -1 means "fits, keep all on GPU /
+    obey admin"; a non-negative int means the model+KV won't fit at the configured
+    context, so offload to that many GPU layers for THIS load only (context kept).
+    """
+    free_mb = _detect_free_vram_mb()
+    if not free_mb:
+        return -1, "VRAM unknown; keeping admin setting (-1)"
+
+    meta = _read_gguf_metadata(model_path)
+
+    def find(suffix: str):
+        for k, v in meta.items():
+            if k.endswith('.' + suffix):
+                return v
+        return None
+
+    n_layer = find('block_count')
+    n_head_kv = find('attention.head_count_kv')
+    n_head = find('attention.head_count')
+    n_embd = find('embedding_length')
+
+    # Per-head K/V dims: prefer the explicit key_length/value_length (some archs,
+    # e.g. Qwen3.5-MoE, set head_dim != embedding_length/head_count). Fall back to
+    # embedding_length/head_count only when the explicit values are absent.
+    head_dim_fallback = (n_embd / n_head) if (n_embd and n_head) else None
+    k_len = find('attention.key_length') or head_dim_fallback
+    v_len = find('attention.value_length') or k_len
+
+    weights_mb = file_size / (1024 * 1024)
+    buffer_mb = 700.0                 # CUDA/compute context + fragmentation headroom
+    usable_mb = free_mb * 0.94        # safety margin
+
+    kv_mb = None
+    if n_layer and n_head_kv and k_len and v_len:
+        kv_bytes = n_layer * n_ctx * n_head_kv * (k_len + v_len) * 2  # K+V cache, f16
+        kv_mb = kv_bytes / (1024 * 1024)
+
+    if kv_mb is None or not n_layer:
+        # Insufficient metadata for a precise split; only the load fallback can help.
+        return -1, (f"metadata incomplete (weights {weights_mb:.0f}MB, free {free_mb}MB); "
+                    f"keeping -1, relying on load fallback")
+
+    total_need = weights_mb + kv_mb + buffer_mb
+    if total_need <= usable_mb:
+        return -1, (f"fits: ~{total_need:.0f}MB (w{weights_mb:.0f}+kv{kv_mb:.0f}+buf{buffer_mb:.0f}) "
+                    f"<= {usable_mb:.0f}MB (free {free_mb}MB) -> full GPU")
+
+    denom = weights_mb + kv_mb
+    frac = max(0.0, (usable_mb - buffer_mb) / denom)
+    fit = max(0, min(int(n_layer), int(frac * n_layer)))
+    return fit, (f"AUTO-TUNE: need ~{total_need:.0f}MB > {usable_mb:.0f}MB (free {free_mb}MB) -> "
+                 f"{fit}/{int(n_layer)} GPU layers, ctx {n_ctx} preserved (config unchanged)")
+
+
 class LlamaService:
     """
     Native LLM inference service using llama-cpp-python.
@@ -255,6 +398,16 @@ class LlamaService:
 
             # Determine GPU layers - force 0 if CPU mode enabled
             gpu_layers = 0 if self.cpu_mode else self.n_gpu_layers
+            # Auto-tune: when admin leaves gpu_layers at -1 ("all"), check whether the
+            # model + KV cache (at the configured context) actually fits this node's VRAM.
+            # If it fits -> keep -1 (obey admin / full GPU). If too big -> override the
+            # GPU/CPU split for THIS load only (saved config is never changed), keeping
+            # the configured context size fixed.
+            if not self.cpu_mode and self.n_gpu_layers == -1:
+                autofit_layers, autofit_reason = _compute_autofit_gpu_layers(
+                    resolved_path, file_size, self.num_ctx)
+                logger.info(f"  [autofit] {autofit_reason}")
+                gpu_layers = autofit_layers
             logger.info(f"  GPU layers: {gpu_layers} (CPU mode: {self.cpu_mode})")
             logger.info(f"  Batch size: {self.n_batch}, mmap: {self.use_mmap}, mlock: {self.use_mlock}, flash_attn: {self.flash_attn}")
 
