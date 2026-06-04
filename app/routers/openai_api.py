@@ -654,8 +654,12 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
                 **kwargs
             )
             logger.info("Stream generator created, returning StreamingResponse")
+            # The think-tag filter buffers content to detect <think> blocks, which reorders
+            # and mangles tool-call streams. Bypass it for tool requests so tool_calls and
+            # finish_reason reach the client in order.
+            out_stream = stream if request.tools else filter_thinking_stream(stream)
             return StreamingResponse(
-                filter_thinking_stream(stream),
+                out_stream,
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
