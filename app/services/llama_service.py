@@ -181,12 +181,19 @@ def _detect_free_vram_mb() -> Optional[int]:
     return None
 
 
-def _compute_autofit_gpu_layers(model_path: str, file_size: int, n_ctx: int):
+def _compute_autofit_gpu_layers(model_path: str, file_size: int, n_ctx: int, n_batch: int = 512):
     """Decide GPU layers for a model when admin left llm_gpu_layers at -1 ("all").
 
     Returns (gpu_layers, reason). gpu_layers == -1 means "fits, keep all on GPU /
     obey admin"; a non-negative int means the model+KV won't fit at the configured
     context, so offload to that many GPU layers for THIS load only (context kept).
+
+    ``n_batch`` matters: the SYCL/CUDA compute graph allocates per-op temp buffers
+    (e.g. the matmul "reorder" buffer) that scale with batch size and model width and
+    live in VRAM ON TOP of weights+KV. Under-reserving for them lets autofit fill VRAM
+    so full that the FIRST MUL_MAT can't allocate its temp buffer -> the backend aborts
+    and the whole process dies (observed: a 14B at batch 1024 needed ~640MB+ just for
+    one reorder buffer, but only ~6% headroom was left). So scale the reserve with batch.
     """
     free_mb = _detect_free_vram_mb()
     if not free_mb:
@@ -213,7 +220,14 @@ def _compute_autofit_gpu_layers(model_path: str, file_size: int, n_ctx: int):
     v_len = find('attention.value_length') or k_len
 
     weights_mb = file_size / (1024 * 1024)
-    buffer_mb = 700.0                 # CUDA/compute context + fragmentation headroom
+    # Compute-graph headroom. Base context + fragmentation, PLUS a term that scales with the
+    # actual VRAM the per-op temp buffers need: ~batch * width * fp16, times a fudge factor that
+    # covers the largest intermediate (FFN/reorder) plus the rest of the graph. Without this a big
+    # model at a large batch fills VRAM and the first matmul's temp alloc fails -> backend abort.
+    compute_mb = 0.0
+    if n_embd:
+        compute_mb = (n_batch * n_embd * 2 / (1024 * 1024)) * 96.0
+    buffer_mb = 700.0 + compute_mb
     usable_mb = free_mb * 0.94        # safety margin
 
     kv_mb = None

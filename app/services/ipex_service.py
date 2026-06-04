@@ -338,7 +338,7 @@ class IPEXService:
                     from app.services.llama_service import _compute_autofit_gpu_layers
                     _fsz = os.path.getsize(target_path)
                     autofit_layers, autofit_reason = _compute_autofit_gpu_layers(
-                        target_path, _fsz, self.num_ctx)
+                        target_path, _fsz, self.num_ctx, self.n_batch)
                     logger.info(f"  [autofit] {autofit_reason}")
                     gpu_layers = autofit_layers
                 except Exception as _e:
