@@ -1,13 +1,16 @@
-"""Qwen/Hermes-style tool-calling.
+"""Native tool-calling for Qwen GGUFs.
 
-llama-cpp-python's generic ``chatml-function-calling`` handler uses a ``functions.NAME:``
-convention that Qwen3.x was NOT trained on, so tool calls intermittently leak as plain
-text (``functions.write:``) and never parse. Qwen is trained on the Hermes format:
-tools are described in a ``<tools>`` block in the system prompt and the model emits
-``<tool_call>{"name":...,"arguments":...}</tool_call>``.
+Tool calls are rendered with the model's OWN embedded chat template (Jinja2ChatFormatter),
+which formats tool_call/tool_response history in the exact form the model was trained on, and
+the output is parsed back into OpenAI ``tool_calls``. This replaced an earlier manual
+JSON-Hermes injection that the model didn't recognize (it looped on multi-step tasks).
 
-This module injects tools in that format and parses the model's output back into OpenAI
-``tool_calls`` — independent of llama-cpp's handler. The model is run with plain ``chatml``.
+Notes for future readers:
+- Qwen's native tool format is ``<tool_call><function=NAME><parameter=KEY>VALUE</parameter>
+  </function></tool_call>`` (NOT the JSON ``<tool_call>{...}</tool_call>`` Hermes form);
+  ``parse_tool_calls`` handles both.
+- SYCL (Arc) string-stop is unreliable, so generation gets a Python-level EOS stop or the
+  model rambles past the stop and blows its token budget -> empty response.
 """
 import json
 import re
@@ -23,95 +26,6 @@ _PARAM_RE = re.compile(r"<parameter=([^>\s]+)\s*>\s*(.*?)\s*</parameter>", re.DO
 _ANY_TOOL_CALL_RE = re.compile(r"<tool_call>.*?</tool_call>", re.DOTALL)
 
 
-def _tools_system_text(tools: List[Dict[str, Any]]) -> str:
-    sig = "\n".join(json.dumps(t, ensure_ascii=False) for t in tools)
-    return (
-        "# Tools\n\n"
-        "You may call one or more functions to assist with the user query.\n\n"
-        "When the user asks you to create, edit, run, or inspect files or commands, you "
-        "MUST accomplish it by calling the tools — actually perform each action. Do NOT "
-        "just describe the steps or print code/commands in your reply; emit a <tool_call> "
-        "for each action and wait for its result before continuing.\n\n"
-        "Once a tool returns a <tool_response>, that action is DONE. Do NOT call the same "
-        "tool with the same arguments again — an empty or success response means it worked. "
-        "Read the responses you already have, then move to the next step or give your final "
-        "answer. Never repeat a completed step.\n\n"
-        "To create or modify a file you MUST call the file-writing tool (e.g. write) with the "
-        "path and the COMPLETE file contents in its arguments. NEVER put a file's code in a "
-        "```code block``` in your message — a code block does NOT create the file; only a tool "
-        "call does. Write the file via the tool, then continue.\n\n"
-        "You are provided with function signatures within <tools></tools> XML tags:\n"
-        f"<tools>\n{sig}\n</tools>\n\n"
-        "For each function call, return a json object with function name and arguments "
-        "within <tool_call></tool_call> XML tags:\n"
-        "<tool_call>\n"
-        '{"name": <function-name>, "arguments": <args-json-object>}\n'
-        "</tool_call>\n\n"
-        "Rules for the arguments field (follow exactly):\n"
-        '- "arguments" MUST be a JSON object whose keys are exactly the parameter names '
-        "from the function's signature above.\n"
-        "- Include every required parameter. Never put a bare value, string, or command "
-        'in place of the object — always wrap it, e.g. {"command": "python3 fib.py"}, '
-        'not "python3 fib.py".\n'
-        "- Emit strict JSON: double-quoted keys and strings, proper escaping, no trailing "
-        "commas, no comments, no extra text inside the tags.\n\n"
-        "Example of a correct call:\n"
-        "<tool_call>\n"
-        '{"name": "bash", "arguments": {"command": "python3 fib.py"}}\n'
-        "</tool_call>"
-    )
-
-
-def inject_tools(messages: List[Dict[str, Any]], tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Return a copy of messages adapted to the Hermes format:
-
-    - the tools block is merged into (or prepended as) the system message;
-    - prior ``role=tool`` results become ``<tool_response>`` user turns;
-    - prior assistant ``tool_calls`` become textual ``<tool_call>`` turns,
-    so multi-step conversations round-trip in the format the model understands.
-    """
-    converted: List[Dict[str, Any]] = []
-    for m in messages:
-        role = m.get("role")
-        if role == "tool":
-            content = m.get("content")
-            if isinstance(content, list):
-                content = " ".join(p.get("text", "") for p in content if isinstance(p, dict))
-            # A silent success (e.g. mkdir) returns empty output; make it explicit so the
-            # model doesn't read a blank response as failure and retry the same call.
-            content = (content or "").strip() or "(command completed successfully, no output)"
-            converted.append({"role": "user", "content": f"<tool_response>\n{content}\n</tool_response>"})
-        elif role == "assistant" and m.get("tool_calls"):
-            parts = []
-            if m.get("content"):
-                parts.append(m["content"])
-            for tc in (m.get("tool_calls") or []):
-                fn = tc.get("function", {}) or {}
-                args = fn.get("arguments", "{}")
-                try:
-                    args = json.loads(args) if isinstance(args, str) else args
-                except Exception:
-                    pass
-                parts.append("<tool_call>\n" + json.dumps({"name": fn.get("name"), "arguments": args}, ensure_ascii=False) + "\n</tool_call>")
-            converted.append({"role": "assistant", "content": "\n".join(parts)})
-        else:
-            mm = dict(m)
-            # Safety net: strip the Qwen /no_think control token so it never reaches the
-            # model as literal text (plain chatml doesn't strip it like Qwen's own template).
-            c = mm.get("content")
-            if isinstance(c, str) and "/no_think" in c:
-                mm["content"] = c.replace(" /no_think", "").replace("\n/no_think", "").replace("/no_think", "").strip()
-            converted.append(mm)
-
-    tools_text = _tools_system_text(tools)
-    if converted and converted[0].get("role") == "system":
-        base = converted[0].get("content", "")
-        converted[0] = {"role": "system", "content": (base.rstrip() + "\n\n" + tools_text) if base else tools_text}
-    else:
-        converted.insert(0, {"role": "system", "content": tools_text})
-    return converted
-
-
 def _mk_call(name, args, idx):
     if not isinstance(args, str):
         args = json.dumps(args, ensure_ascii=False)
@@ -119,10 +33,33 @@ def _mk_call(name, args, idx):
             "index": idx, "function": {"name": name, "arguments": args}}
 
 
+# Models trained on other agent toolsets emit these names; map them to the equivalent the
+# client actually provided (only applied when the target IS in the provided tools, so it can
+# only rescue a call the client would otherwise reject - never breaks a valid one).
+_TOOL_ALIASES = {
+    "run_shell_command": "bash", "run_command": "bash", "shell": "bash", "exec": "bash",
+    "execute": "bash", "execute_command": "bash", "run": "bash", "terminal": "bash",
+    "create_file": "write", "write_file": "write", "writefile": "write", "save_file": "write",
+    "edit_file": "edit", "read_file": "read", "view_file": "read", "list_files": "glob",
+}
+
+
+def _normalize_tool_names(tool_calls, tools):
+    """Rename a tool call whose name the client doesn't provide to a known-equivalent that it
+    does (e.g. run_shell_command -> bash). No-op when the name is already valid."""
+    avail = {(t.get("function") or {}).get("name") for t in (tools or []) if t.get("function")}
+    for tc in tool_calls:
+        n = tc["function"]["name"]
+        if n not in avail:
+            alias = _TOOL_ALIASES.get(n)
+            if alias and alias in avail:
+                tc["function"]["name"] = alias
+    return tool_calls
+
+
 def parse_tool_calls(text: str) -> Tuple[Optional[str], List[Dict[str, Any]]]:
-    """Extract tool calls -> (content_or_None, openai_tool_calls). Handles BOTH the
-    JSON-Hermes form and Qwen's native <function=..><parameter=..> form so whichever the
-    model emits is caught."""
+    """Extract tool calls -> (content_or_None, openai_tool_calls). Handles BOTH the JSON-Hermes
+    form and Qwen's native <function=..><parameter=..> form so whichever the model emits is caught."""
     if not text:
         return text, []
     tool_calls = []
@@ -177,14 +114,45 @@ def _get_formatter(template: str):
     return fmt
 
 
+def _eos_stopping_criteria(model):
+    """Python-level stop on the EOS / <|im_end|> token ids. The C++ string-stop is unreliable on
+    Intel SYCL (Arc): the model rambles past the stop and blows its token budget -> empty response.
+    Stopping on the token id fixes that. Harmless on CUDA (belt-and-suspenders). Returns None if
+    unavailable."""
+    try:
+        from llama_cpp import StoppingCriteriaList
+    except Exception:
+        return None
+    ids = set()
+    try:
+        e = model.token_eos()
+        if e is not None and e >= 0:
+            ids.add(e)
+    except Exception:
+        pass
+    try:
+        t = model.tokenize(b"<|im_end|>", add_bos=False, special=True)
+        if len(t) == 1:
+            ids.add(t[0])
+    except Exception:
+        pass
+    if not ids:
+        return None
+
+    def _stop(tokens, logits, _ids=ids):
+        return len(tokens) > 0 and tokens[-1] in _ids
+    return StoppingCriteriaList([_stop])
+
+
 def _prep_for_template(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Parse assistant tool_call arguments (str -> dict; the native template iterates them
-    with ``| items``) and strip the /no_think control token from content."""
+    """Adapt messages for the native template:
+    - tool results: render empty/silent output explicitly (mkdir etc.) so the model doesn't read
+      a blank <tool_response> as failure and re-call the same tool (the mkdir loop);
+    - assistant tool_call arguments: parse str -> dict (the template iterates them with ``| items``);
+    - strip the /no_think control token from content (plain generation doesn't strip it)."""
     out = []
     for m in messages:
         mm = dict(m)
-        # Tool results: make empty/silent output explicit (mkdir etc.) so the model doesn't
-        # read a blank <tool_response> as failure and re-call the same tool (the mkdir loop).
         if mm.get("role") == "tool":
             c = mm.get("content")
             if isinstance(c, list):
@@ -214,13 +182,10 @@ def _prep_for_template(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def generate_message(model, messages, tools, params, strip_thinking=None) -> Tuple[Dict[str, Any], str]:
-    """Generate + parse a tool-aware response.
+    """Generate + parse a tool-aware response using the model's embedded chat template.
 
-    Prefers the model's OWN embedded chat template — it renders tool_call/tool_response
-    history in the exact format the model was trained on, so the model recognizes completed
-    steps (manual JSON-Hermes did not, causing multi-step tool loops). Falls back to a manual
-    chatml + JSON-Hermes prompt if the embedded template is unavailable or errors.
-    ``params`` must NOT contain tools/tool_choice.
+    Returns (openai_message_dict, finish_reason). ``params`` must NOT contain tools/tool_choice.
+    Falls back to a plain chat completion only if the model has no embedded template.
     """
     template = (getattr(model, "metadata", None) or {}).get("tokenizer.chat_template")
     if template:
@@ -230,26 +195,30 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
             if "<|im_end|>" not in stops:
                 stops.append("<|im_end|>")
             toks = model.tokenize(r.prompt.encode("utf-8"), add_bos=False, special=True)
-            _p = dict(params); _p["stop"] = stops
+            _p = dict(params)
+            _p["stop"] = stops
+            _sc = _eos_stopping_criteria(model)
+            if _sc is not None:
+                _p["stopping_criteria"] = _sc
             text = (model.create_completion(prompt=toks, **_p).get("choices") or [{}])[0].get("text") or ""
-            # The embedded template pre-fills "<think>" in the assistant turn, so generation
-            # ALWAYS starts inside the think block. Take everything after </think>. If it never
-            # closed, the model ran out of budget mid-reasoning -> no usable answer; return empty
-            # (do NOT leak the raw reasoning, and do NOT use strip_thinking_tags, which would
-            # substitute an "I apologize" message that pollutes the conversation history).
+            # The template pre-fills "<think>" in the assistant turn, so generation starts inside
+            # the think block. Take everything after </think>; if it never closed, the model ran
+            # out of budget mid-reasoning -> no usable answer (return empty, don't leak reasoning).
             text = text.split("</think>", 1)[1].strip() if "</think>" in text else ""
             content, tool_calls = parse_tool_calls(text)
+            tool_calls = _normalize_tool_names(tool_calls, tools)
             msg: Dict[str, Any] = {"role": "assistant", "content": content}
             return (({**msg, "tool_calls": tool_calls}, "tool_calls") if tool_calls else (msg, "stop"))
         except Exception as e:
             import logging
             logging.getLogger("hermes_tools").warning("native-template tool path failed (%s); using fallback", e)
 
-    # Fallback: manual chatml + JSON-Hermes injection.
-    result = model.create_chat_completion(messages=inject_tools(messages, tools), **params)
+    # Fallback (no embedded template): plain chat completion; still parse any native tool calls.
+    result = model.create_chat_completion(messages=messages, **params)
     text = (result.get("choices") or [{}])[0].get("message", {}).get("content") or ""
     if strip_thinking:
         text = strip_thinking(text)
     content, tool_calls = parse_tool_calls(text)
+    tool_calls = _normalize_tool_names(tool_calls, tools)
     msg = {"role": "assistant", "content": content}
     return (({**msg, "tool_calls": tool_calls}, "tool_calls") if tool_calls else (msg, "stop"))
