@@ -256,6 +256,16 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
             elif not tool_calls and not content:
                 logger.warning("empty tool generation (think never closed, len=%d); raw[:300]=%r",
                                len(raw), raw[:300])
+            # Last-resort band-aid: NEVER return an empty message. An empty tool response makes the
+            # LB read the node as dead and abort the already-streamed SSE -> opencode HARD-stops.
+            # If retries still produced nothing usable, surface the model's own reasoning as content
+            # so the stream stays non-empty (degraded: text, not an action - but the agent doesn't
+            # dead-stop and can continue on the next turn).
+            if not tool_calls and not content:
+                reasoning = (raw.split("</think>", 1)[0] if "</think>" in raw else raw).replace("<think>", "").strip()
+                content = reasoning or None
+                if content:
+                    logger.warning("returning reasoning-as-content to avoid hard-stop (len=%d)", len(content))
             msg: Dict[str, Any] = {"role": "assistant", "content": content}
             return (({**msg, "tool_calls": tool_calls}, "tool_calls") if tool_calls else (msg, "stop"))
         except Exception as e:
