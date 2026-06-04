@@ -548,13 +548,19 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
             # Pass full server list to LoadBalancer - it will handle round-robin internally
             # This ensures proper load balancing across all servers
             timeout = int(settings.get("ollama_timeout", "300000")) / 1000
-            # Use llm_model_path like the IPEX service does (extract filename from full path)
+            # Forward the client-requested model when it names a real local .gguf, so the
+            # remote node loads it; otherwise use the admin-configured default. This lets an
+            # API client (opencode) pick a model per call while the web UI stays on default.
             llm_path = settings.get("llm_model_path", "")
-            if llm_path:
-                model = os.path.basename(llm_path)
+            default_model = os.path.basename(llm_path) if llm_path else "default"
+            req_model = (request.model or "").strip()
+            models_dir = os.path.dirname(llm_path) if llm_path else ""
+            if req_model and req_model.lower() not in ("native", "default") and models_dir \
+                    and os.path.isfile(os.path.join(models_dir, os.path.basename(req_model))):
+                model = os.path.basename(req_model)
             else:
-                model = "default"
-            logger.info(f"[OPENAI API] LoadBalancer model={model!r} (from llm_model_path setting)")
+                model = default_model
+            logger.info(f"[OPENAI API] LoadBalancer model={model!r} (requested={request.model!r})")
             load_balancer = LoadBalancer(servers, timeout=timeout, model=model)
 
             try:

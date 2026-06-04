@@ -754,6 +754,10 @@ class IPEXService:
     ) -> Dict[str, Any]:
         """Non-streaming chat completion with timeout."""
         global _request_counter, _pending_requests, _current_request
+        # Honor a client-requested model for this request (falls back to admin default);
+        # _ensure_model_loaded reloads if it differs from what's loaded.
+        from app.services.llama_service import resolve_model_path
+        self.model_path = resolve_model_path(model, self.model_path)
         loop = asyncio.get_running_loop()
 
         # Generate request ID and track
@@ -855,6 +859,9 @@ class IPEXService:
     ) -> AsyncGenerator[str, None]:
         """Streaming chat completion using async queue."""
         global _request_counter, _pending_requests
+        # Honor a client-requested model for this request (falls back to admin default).
+        from app.services.llama_service import resolve_model_path
+        self.model_path = resolve_model_path(model, self.model_path)
         self._ensure_model_loaded()
 
         # Generate request ID and track

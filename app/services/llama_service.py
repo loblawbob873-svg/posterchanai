@@ -238,6 +238,28 @@ def _compute_autofit_gpu_layers(model_path: str, file_size: int, n_ctx: int):
                  f"{fit}/{int(n_layer)} GPU layers, ctx {n_ctx} preserved (config unchanged)")
 
 
+def resolve_model_path(requested: Optional[str], default_path: str) -> str:
+    """Map a client-requested model name to a local .gguf path.
+
+    Returns default_path when no specific model is requested (web UI / Telegram send
+    'native'/'default'/empty), or when the requested name isn't a real model file
+    (accept-any: never error, just fall back to the configured default). An exact
+    .gguf basename in the same models dir - or an absolute .gguf path - selects that
+    model, so an API client like opencode can request a different model per call.
+    """
+    if not requested:
+        return default_path
+    req = requested.strip()
+    if not req or req.lower() in ("native", "default"):
+        return default_path
+    if _os.path.isabs(req) and req.endswith(".gguf") and _os.path.isfile(req):
+        return req
+    cand = _os.path.join(_os.path.dirname(default_path), _os.path.basename(req))
+    if cand.endswith(".gguf") and _os.path.isfile(cand):
+        return cand
+    return default_path
+
+
 class LlamaService:
     """
     Native LLM inference service using llama-cpp-python.
@@ -879,7 +901,11 @@ class LlamaService:
         Returns OpenAI-compatible response format.
         """
         global _pending_requests
-        
+
+        # Honor a client-requested model (e.g. opencode) for this request; falls back to
+        # the admin-configured default. _ensure_model_loaded reloads if it differs.
+        self.model_path = resolve_model_path(model, self.model_path)
+
         # Track pending requests
         with _request_counter_lock:
             _pending_requests += 1
@@ -921,11 +947,14 @@ class LlamaService:
         Uses async queue to avoid blocking the event loop.
         """
         global _pending_requests
-        
+
+        # Honor a client-requested model for this request (falls back to admin default).
+        self.model_path = resolve_model_path(model, self.model_path)
+
         # Track pending requests
         with _request_counter_lock:
             _pending_requests += 1
-        
+
         self._ensure_model_loaded()
         params = self._get_sampling_params(**kwargs)
         # Embed system message into first user message for Mistral (chat_handler ignores system role).
