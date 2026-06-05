@@ -279,13 +279,9 @@ def _body_html(avatar_mxc: str | None, post: dict, profile_url: str | None, inst
     a = post["author"]
     name = _apply_emojis(html.escape(a.get("display") or a.get("acct") or ""), a.get("emoji_mxc"))
     avatar = f'<img src="{html.escape(avatar_mxc)}" width="20" height="20" /> ' if avatar_mxc else ""
-    # Compact header: avatar + name only (the @handle suffix is bloat on every post). The name
-    # still links to the author's profile; a trailing 🔗 opens the full thread on the instance.
-    label = f"{avatar}<strong>{name}</strong>"
-    header = f'<a href="{html.escape(profile_url)}">{label}</a>' if profile_url else label
-    post_url = _post_url(instance_url, post)
-    if post_url:
-        header += f' <a href="{html.escape(post_url)}">🔗</a>'
+    # Minimal header: avatar + name only. No @handle, no profile link, no per-post link — those
+    # were bloat on every post.
+    header = f"{avatar}<strong>{name}</strong>"
     segments = [header]
     if post["text"]:
         segments.append(post["html"] if post.get("html")     # Pleroma already renders mentions
