@@ -2058,7 +2058,7 @@ Files are saved to your Storage.""",
             if name not in nodes:
                 return {"type": "text", "content": f"Unknown node `{name}`.\n\n{_fmt_nodes()}"}
             try:
-                summary = await node_service.run_agent(self.db, self.user, name, nodes[name], goal, self.chat_service)
+                summary = await node_service.run_agent(self.db, self.user, name, nodes[name], goal, self.chat_service, notify=notify)
                 return {"type": "text", "content": summary}
             except Exception as e:
                 logger.error(f"[node] agent error: {e}", exc_info=True)

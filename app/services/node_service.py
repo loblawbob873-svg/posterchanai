@@ -306,61 +306,135 @@ def kill_job(job_id: int, user_id: Optional[int] = None) -> bool:
 # Agentic loop
 # ---------------------------------------------------------------------------
 
-_AGENT_SYSTEM = """You are a systems administrator managing the host "{node}" by running shell commands.
+_AGENT_SYSTEM = """You are a systems administrator managing the host "{node}".
 
-To run a command, reply with EXACTLY one line and nothing else:
-CMD: <single shell command>
-
-The command's output will be sent back to you so you can decide the next step.
-When the goal is achieved (or cannot be), reply with:
-DONE: <short summary of what you found or did>
+Accomplish the user's goal by calling the run_command tool to execute non-interactive shell
+commands; each command's output (and exit code) is returned to you so you can decide the next step.
 
 Rules:
-- One command per turn. No explanations around the CMD line.
-- Prefer read-only/diagnostic commands first. Be concise.
-- Never wait for interactive input; commands run non-interactively."""
+- Prefer read-only / diagnostic commands first; make changes only when the goal requires it.
+- Run one logical command per step and wait for its output before the next.
+- Never run interactive commands that wait for input (use flags like -y, --noninteractive).
+- When the goal is achieved, or cannot be, call the finish tool with a short summary."""
 
-
-def _parse_agent_reply(text: str) -> tuple[str, str]:
-    """Return ('cmd'|'done'|'none', payload)."""
-    for line in text.splitlines():
-        s = line.strip()
-        if s.upper().startswith("CMD:"):
-            return "cmd", s[4:].strip()
-        if s.upper().startswith("DONE:"):
-            return "done", s[5:].strip()
-    return "none", text.strip()
+# OpenAI-style tool schema for the agent. Driven through the same tool-calling path as opencode
+# (chat_completion with tools -> generate_message), so it benefits from the native tool template
+# and the <function-calls>/<tool_call> parsers.
+_NODE_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "run_command",
+            "description": "Run a non-interactive shell command on the managed host and return its combined stdout/stderr and exit code.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "The shell command to run."}
+                },
+                "required": ["command"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "finish",
+            "description": "Call when the goal is achieved or cannot be, with a short summary of what was found or done.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary": {"type": "string", "description": "Short summary of the outcome."}
+                },
+                "required": ["summary"],
+            },
+        },
+    },
+]
 
 
 async def run_agent(db: Session, user: "User", node: str, target: str, goal: str,
-                    chat_service: "ChatService") -> str:
-    """Let the LLM drive commands on `node` toward `goal`. Returns a markdown transcript."""
+                    chat_service: "ChatService", notify: Optional[Callable] = None) -> str:
+    """Drive commands on `node` toward `goal` via native tool-calling. Returns a markdown transcript.
+
+    Uses the same tool-calling backend as opencode (chat_completion with tools -> generate_message),
+    so the model emits structured run_command/finish calls instead of a fragile CMD:/DONE: text
+    protocol. Defaults to the agentic-tuned Claude-Code model; falls back to the configured default
+    when that gguf isn't present (resolve_model_path handles the fallback). `notify`, when given,
+    streams each step to the originating channel (Telegram/web)."""
+    import json as _json
+    from app.services.inference_factory import get_inference_service
+
     max_steps = _max_steps(db)
+    # Agentic model: tuned for the tool-call loop. Override via the node_exec_agent_model setting;
+    # empty/missing gguf -> backend falls back to the default model.
+    model = _get(db, "node_exec_agent_model", "Qwen3.5-9B-Claude-Code-Q4_K_M.gguf").strip() or None
+    service = get_inference_service(db)
+
     messages = [
         {"role": "system", "content": _AGENT_SYSTEM.format(node=node)},
         {"role": "user", "content": f"Goal: {goal}"},
     ]
     transcript = [f"## Agent on `{node}` — goal: {goal}\n"]
 
+    async def _say(text: str):
+        if notify:
+            try:
+                await notify(text)
+            except Exception:
+                pass
+
     for step in range(1, max_steps + 1):
-        reply = await chat_service.chat(messages)
-        kind, payload = _parse_agent_reply(reply)
-
-        if kind == "done":
-            transcript.append(f"\n**✅ Done:** {payload or '(no summary)'}")
+        try:
+            result = await service.chat_completion(
+                messages=messages, model=model,
+                tools=_NODE_TOOLS, tool_choice="auto", temperature=0.2,
+            )
+        except Exception as e:
+            transcript.append(f"\n**⚠️ Stopped:** inference error: {e}")
             return "\n".join(transcript)
-        if kind != "cmd" or not payload:
-            transcript.append(f"\n**⚠️ Stopped:** model did not issue a command.\n\n{reply.strip()}")
+
+        msg = (result.get("choices") or [{}])[0].get("message", {}) or {}
+        tool_calls = msg.get("tool_calls") or []
+
+        if not tool_calls:
+            # No tool call -> treat any text as the final answer/summary.
+            content = (msg.get("content") or "").strip()
+            transcript.append(f"\n**✅ Done:** {content or '(no summary)'}")
             return "\n".join(transcript)
 
-        transcript.append(f"\n**Step {step}** — `{payload}`")
-        messages.append({"role": "assistant", "content": f"CMD: {payload}"})
+        # Record the assistant turn WITH its tool_calls so the model sees its own history next round.
+        messages.append({"role": "assistant", "content": msg.get("content") or "", "tool_calls": tool_calls})
 
-        job = await run_to_completion(db, node, target, payload, user_id=user.id)
-        out = job.output.strip() or "(no output)"
-        transcript.append(f"```\n{tail(out, 1500)}\n```")
-        # Feed the (tail of the) output back to the model — the result is at the end.
-        messages.append({"role": "user", "content": f"Output (exit {job.exit_code}):\n{tail(out, 4000)}"})
+        for tc in tool_calls:
+            fn = tc.get("function") or {}
+            name = fn.get("name")
+            try:
+                args = _json.loads(fn.get("arguments") or "{}")
+            except Exception:
+                args = {}
+            tcid = tc.get("id") or ""
+
+            if name == "finish":
+                summary = (args.get("summary") or "").strip()
+                transcript.append(f"\n**✅ Done:** {summary or '(no summary)'}")
+                return "\n".join(transcript)
+
+            if name == "run_command":
+                cmd = (args.get("command") or "").strip()
+                if not cmd:
+                    messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
+                                     "content": "(no command provided)"})
+                    continue
+                transcript.append(f"\n**Step {step}** — `{cmd}`")
+                await _say(f"⚙️ `{cmd}`")
+                job = await run_to_completion(db, node, target, cmd, user_id=user.id)
+                out = job.output.strip() or "(no output)"
+                transcript.append(f"```\n{tail(out, 1500)}\n```")
+                messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
+                                 "content": f"exit {job.exit_code}\n{tail(out, 4000)}"})
+            else:
+                messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
+                                 "content": f"(unknown tool: {name})"})
 
     transcript.append(f"\n**⏹️ Stopped:** reached step limit ({max_steps}).")
     return "\n".join(transcript)
