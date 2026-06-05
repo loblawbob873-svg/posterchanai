@@ -186,7 +186,11 @@ open a fresh `SessionLocal` and capture any needed config up front.
   note/status + visibility); replying to that DM message → `POST /api/matrix/notification-reply`,
   which posts a reply (text **or image** — handled before the bot's compress/convert media flow),
   or runs a `boost`/`fav` shortcut, on the user's account (returns `not a notification` so the bot
-  falls through for non-notification replies).
+  falls through for non-notification replies). **Direct messages:** a fedi DM is never in the
+  shared room — it arrives here as a notification (visibility `direct`), and a reply preserves that
+  visibility (`notification-reply` uses `row.visibility`) so it stays a DM. To *start* a DM, the
+  Matrix `/command` endpoint handles `dm @user@host <message>` → a `visibility="direct"` post
+  (Pleroma/Mastodon; Misskey not supported — needs resolved `visibleUserIds`).
 
 ## Conventions / gotchas
 

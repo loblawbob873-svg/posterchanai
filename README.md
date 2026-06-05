@@ -50,7 +50,7 @@ The backend is **Python 3.10+** and **FastAPI**. You can use cloud APIs (OpenAI-
   - **share→boost/quote**: paste a post's matrix.to link (add a comment to quote) to boost/quote the original with the author preserved
 
   Configure under Admin → Services; the matching Matrix-bot handler lives in the separate [`posterchan`](https://git.poster.place/verita84/posterchan) repo. On a high-volume *global* feed, raise the bot's Synapse message rate limit (admin API `override_ratelimit`) so it keeps up.
-- **Fediverse notifications → Matrix DM**: opt-in per user — the bot DMs you your Pleroma/Misskey notifications (mentions, replies, favourites, boosts, follows) in a private room, each with a 🔗 link and the **conversation mirrored into the message's thread** so you read context in Element. **Reply to a notification** to respond on the platform (text or image), or reply `boost`/`fav` to act on it.
+- **Fediverse notifications → Matrix DM**: opt-in per user — the bot DMs you your Pleroma/Misskey notifications (mentions, replies, favourites, boosts, follows) in a private room, each with a 🔗 link and the **conversation mirrored into the message's thread** so you read context in Element. **Reply to a notification** to respond on the platform (text or image), or reply `boost`/`fav` to act on it. **Direct messages** stay private — a received DM shows up here (not the shared room) and replying keeps it direct; send a new one with `dm @user@host <message>` (Pleroma/Mastodon).
 - **Nitter post-cards**: per-user Nitter (X/Twitter) RSS feeds rendered as image "post cards" and delivered to your linked Telegram chat.
 - **Translate**: translate text or a replied-to message to any language (`translate`), shared across the web UI, Telegram, and Matrix.
 
