@@ -289,6 +289,21 @@ async def _download(url: str) -> tuple[bytes | None, str]:
         return None, ""
 
 
+def _img_dims(data: bytes, max_w: int = 480) -> tuple[int | None, int | None]:
+    """Pixel dimensions for an inline <img> (scaled down to max_w so it renders at a sane size)."""
+    try:
+        from PIL import Image as _PILImage
+        from io import BytesIO as _BytesIO
+        with _PILImage.open(_BytesIO(data)) as im:
+            w, h = im.width, im.height
+        if w and w > max_w:
+            h = max(1, int(h * max_w / w))
+            w = max_w
+        return w, h
+    except Exception:
+        return None, None
+
+
 async def _avatar_mxc(db: Session, hs: str, bot_token: str, avatar_url: str | None) -> str | None:
     """Upload an author's avatar to Matrix media (cached by source URL)."""
     if not avatar_url:
@@ -367,28 +382,44 @@ async def _deliver(db: Session, hs: str, bot_token: str, room_id: str, platform:
         ))
         db.commit()
 
-    # Send the header + text FIRST so the avatar/name appears ABOVE the post. (A Matrix media
-    # caption always renders *below* the image, which reads confusingly; so text leads, image
-    # follows right underneath.)
-    event_id = await matrix_service.send_event(
-        hs, bot_token, room_id, body_text, html=body_html,
-        thread_root_event_id=thread_root_event_id, reply_to_event_id=parent_event,
-    )
-    _record(event_id, is_root_event=True)
-    # Media follows: a root post's media is top-level (shows right under the post); a reply's media
-    # goes into its thread. Each media event is recorded so interacting with it resolves to the post.
+    # Inline IMAGES into the post's HTML so it's ONE message with the name on top (Matrix HTML
+    # allows <img src=mxc> but not <video>). Videos can't be inlined → sent as separate m.video
+    # messages after. Download once, sort into inline images vs videos.
+    inline_imgs = []
+    videos = []
     for m in post["media"]:
         data, mime = await _download(m["url"])
         if not data:
             continue
+        sniff, _ = matrix_service._detect_mime(data)
+        eff_mime = sniff if sniff.startswith("video/") else (mime or m.get("mime", "") or sniff)
+        if eff_mime.startswith("video/"):
+            videos.append((data, eff_mime))
+            continue
         try:
-            mid = await matrix_service.send_image(
-                hs, bot_token, room_id, data, mime=mime or m.get("mime", ""),
-                thread_root_event_id=thread_root_event_id)
+            mxc = await matrix_service.upload_media_bytes(hs, bot_token, data, eff_mime or "image/jpeg", "image")
+        except Exception as e:
+            logger.warning(f"[fedi-timeline] inline image upload failed: {e}")
+            continue
+        w, h = _img_dims(data)
+        dim = f' width="{w}" height="{h}"' if w else ""
+        inline_imgs.append(f'<img src="{html.escape(mxc)}"{dim} />')
+
+    full_html = body_html + ("<br>" + "<br>".join(inline_imgs) if inline_imgs else "")
+    event_id = await matrix_service.send_event(
+        hs, bot_token, room_id, body_text, html=full_html,
+        thread_root_event_id=thread_root_event_id, reply_to_event_id=parent_event,
+    )
+    _record(event_id, is_root_event=True)
+    # Videos follow as their own m.video events (recorded so interacting resolves to the post).
+    for data, mime in videos:
+        try:
+            mid = await matrix_service.send_image(hs, bot_token, room_id, data, mime=mime,
+                                                  thread_root_event_id=thread_root_event_id)
             if mid:
                 _record(mid, is_root_event=False)
         except Exception as e:
-            logger.warning(f"[fedi-timeline] media send failed: {e}")
+            logger.warning(f"[fedi-timeline] video send failed: {e}")
     return event_id
 
 
