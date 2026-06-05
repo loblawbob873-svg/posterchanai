@@ -367,38 +367,28 @@ async def _deliver(db: Session, hs: str, bot_token: str, room_id: str, platform:
         ))
         db.commit()
 
-    # Download the post's media up front (skip ones that fail).
-    downloaded = []
-    for m in post["media"]:
-        data, mime = await _download(m["url"])
-        if data:
-            downloaded.append((data, mime or m.get("mime", "")))
-
-    if downloaded:
-        # Put the post text on the FIRST image as its caption → text + image = one message.
-        first_data, first_mime = downloaded[0]
-        event_id = await matrix_service.send_image(
-            hs, bot_token, room_id, first_data, caption=body_text, caption_html=body_html,
-            mime=first_mime, thread_root_event_id=thread_root_event_id, reply_to_event_id=parent_event,
-        )
-        _record(event_id, is_root_event=True)
-        # Any additional images hang off this post's thread.
-        for data, mime in downloaded[1:]:
-            try:
-                mid = await matrix_service.send_image(hs, bot_token, room_id, data, mime=mime,
-                                                      thread_root_event_id=(thread_root_event_id or event_id))
-                if mid:
-                    _record(mid, is_root_event=False)
-            except Exception as e:
-                logger.warning(f"[fedi-timeline] extra media send failed: {e}")
-        return event_id
-
-    # No media: plain text event.
+    # Send the header + text FIRST so the avatar/name appears ABOVE the post. (A Matrix media
+    # caption always renders *below* the image, which reads confusingly; so text leads, image
+    # follows right underneath.)
     event_id = await matrix_service.send_event(
         hs, bot_token, room_id, body_text, html=body_html,
         thread_root_event_id=thread_root_event_id, reply_to_event_id=parent_event,
     )
     _record(event_id, is_root_event=True)
+    # Media follows: a root post's media is top-level (shows right under the post); a reply's media
+    # goes into its thread. Each media event is recorded so interacting with it resolves to the post.
+    for m in post["media"]:
+        data, mime = await _download(m["url"])
+        if not data:
+            continue
+        try:
+            mid = await matrix_service.send_image(
+                hs, bot_token, room_id, data, mime=mime or m.get("mime", ""),
+                thread_root_event_id=thread_root_event_id)
+            if mid:
+                _record(mid, is_root_event=False)
+        except Exception as e:
+            logger.warning(f"[fedi-timeline] media send failed: {e}")
     return event_id
 
 
