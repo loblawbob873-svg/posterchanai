@@ -565,7 +565,7 @@ class CommandService:
         "compress": "Compress attached image(s) or video(s)",
         "clip": "Clip an attached video: clip <start> <end> (e.g. clip 0:10 0:30)",
         "convert": "Convert image(s) to PDF or a PDF to images",
-        "node": "Remote node mgmt: node <name> <cmd> | node all <cmd> | node agent <name> <goal> | node list | node jobs | node log <id> | node kill <id>",
+        "node": "Remote node mgmt: node <name> <cmd> | node all <cmd> | node agent <name> <goal> | node agent all <goal> | node list | node jobs | node log <id> | node kill <id>",
         "budget": "Show your budget summary (income, unpaid bills, remaining)",
         "bills": "List your bills: bills (unpaid) | bills all | bills paid",
         "pay": "Pay a bill by name: pay <bill name>",
@@ -2053,8 +2053,24 @@ Files are saved to your Storage.""",
         # --- agentic mode ---
         if sub == "agent":
             if len(parts) < 3:
-                return {"type": "text", "content": "Usage: `node agent <name> <goal>`"}
+                return {"type": "text", "content": "Usage: `node agent <name> <goal>` (or `node agent all <goal>`)"}
             name, goal = parts[1], parts[2]
+
+            # `node agent all <goal>` — run the agent on every node toward the same goal.
+            # Sequential (not parallel): they share one DB session, and LLM inference serializes
+            # on the GPU lock anyway, so parallelism wouldn't help and risks interleaved state.
+            if name == "all":
+                sections = []
+                for _n, _t in nodes.items():
+                    _nfy = (lambda txt, _p=_n: notify(f"[{_p}] {txt}")) if notify else None
+                    try:
+                        sections.append(await node_service.run_agent(
+                            self.db, self.user, _n, _t, goal, self.chat_service, notify=_nfy))
+                    except Exception as e:
+                        logger.error(f"[node] agent error on {_n}: {e}", exc_info=True)
+                        sections.append(f"## Agent on `{_n}` — goal: {goal}\n\n**⚠️ Error:** {e}")
+                return {"type": "text", "content": "\n\n---\n\n".join(sections)}
+
             if name not in nodes:
                 return {"type": "text", "content": f"Unknown node `{name}`.\n\n{_fmt_nodes()}"}
             try:
