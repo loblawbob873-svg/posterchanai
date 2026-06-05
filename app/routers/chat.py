@@ -1069,7 +1069,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             # (so web-UI results don't leak to Telegram). The callback runs
                             # later, so it must use its own DB session.
                             node_notify = None
-                            if command == "node":
+                            if command in ("node", "logs"):
                                 _uid, _conn, _conv, _uname = user.id, conn_id, conversation_id, user.username
 
                                 async def node_notify(job):

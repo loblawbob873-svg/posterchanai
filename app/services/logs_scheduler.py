@@ -11,7 +11,6 @@ All command execution, SSH, per-command timeouts, job logging and live streaming
 Remote Node Management config (Admin → Services); ``logs_nodes`` optionally narrows it.
 """
 import logging
-import socket
 from datetime import datetime
 from typing import Optional
 
@@ -31,24 +30,40 @@ logs_scheduler: Optional[AsyncIOScheduler] = None
 # Name of the Logs conversation
 LOGS_CHAT_TITLE = "Logs"
 
-# The goal handed to the agent for each node. It steers toward a consistent, scannable layout
-# (status emojis, one item per line) while letting the model discover specifics (drive names,
-# whether RAID/btrfs exist) for itself rather than relying on hardcoded device lists.
+# The goal handed to the agent for each node. It pins down BOTH the emoji semantics and an exact
+# line template so every node's report is formatted identically (the model otherwise drifts on
+# layout and mislabels healthy-empty results as ⚪). The model still discovers specifics (drive
+# names, whether RAID/btrfs/swap exist) for itself rather than relying on hardcoded device lists.
 _HEALTH_GOAL = (
-    "Produce a concise SYSTEM HEALTH REPORT for this host using read-only commands only. "
-    "Investigate and report each of the following, one item per line, each led by a status "
-    "emoji (🟢 ok, 🟡 warning, 🔴 critical, ⚪ not present):\n"
-    "• 💾 Disk usage for /, /boot and /raid — flag 🟡 above 75%, 🔴 above 90%\n"
-    "• 🔧 SMART overall-health of each physical drive (discover them with lsblk; don't assume names)\n"
-    "• 💿 RAID/mdstat status and btrfs scrub status, if present\n"
-    "• ⚙️ Failed systemd services\n"
-    "• 🔄 Swap / zram usage\n"
-    "• 📜 Notable WARN/ERROR lines from the last 6h of journalctl and dmesg (group repeats; "
-    "ignore routine noise)\n"
+    "Produce a SYSTEM HEALTH REPORT for this host using read-only commands only.\n\n"
+    "Investigate: disk usage (/, /boot, /raid); SMART health of every physical drive; RAID/mdstat "
+    "and btrfs scrub status; failed systemd services; swap/zram usage; notable WARN/ERROR lines in "
+    "the last 6h of journalctl and dmesg (group repeats, ignore routine noise).\n\n"
+    "SMART — do this carefully, it must be ACCURATE: list physical drives with "
+    "'lsblk -d -o NAME,TRAN' (don't assume names), then run 'sudo -n smartctl -H /dev/<name>' on "
+    "EACH. If smartctl asks for a device type (common for USB), retry with '-d sat', or '-d nvme' "
+    "for NVMe. Read the literal 'SMART overall-health self-assessment test result' line and report "
+    "it PER DRIVE BY NAME: PASSED → 🟢, FAILED → 🔴. NEVER write 'no SMART data' or 'unavailable' "
+    "when smartctl actually printed PASSED or FAILED — report what it printed.\n\n"
     "Use 'sudo -n' for privileged reads (smartctl, dmesg, journalctl) so they never block on a "
-    "password prompt; if a command is denied, note it and move on. "
-    "Keep it tight — a glanceable status board, not prose. Do NOT include troubleshooting steps. "
-    "When finished, call the finish tool with the full formatted report as the summary."
+    "password prompt; if a command is genuinely denied, say so for that item and move on.\n\n"
+    "STATUS EMOJI — put exactly ONE at the START of each line:\n"
+    "🟢 = healthy/nominal. A CLEAN result is GREEN: 'none', 'no failed services', 'no errors', "
+    "'0 used', 'all PASSED', 'idle' all mean 🟢 — never ⚪.\n"
+    "🟡 = warning (disk 75-90%, recoverable issues, notable warnings).\n"
+    "🔴 = critical (disk >90%, SMART FAILING, array degraded, failed services, errors present).\n"
+    "⚪ = subsystem genuinely NOT PRESENT on this host (no RAID array, no btrfs, no swap device). "
+    "Use ⚪ ONLY when the thing does not exist — never for a healthy/empty result.\n\n"
+    "Call the finish tool with the report formatted EXACTLY like this — same lines, same order, "
+    "same labels, status emoji first, details after:\n"
+    "💾 Disk: <per-mount % and free>\n"
+    "🔧 SMART: <drive: result, …>\n"
+    "💿 RAID: <mdstat/btrfs summary>\n"
+    "⚙️ Services: <failed unit names, or 'none'>\n"
+    "🔄 Swap: <size and used>\n"
+    "📜 Errors (6h): <grouped WARN/ERROR summary, or 'none'>\n"
+    "(Each of the above lines must begin with its 🟢/🟡/🔴/⚪ status. No extra lines, no prose, "
+    "no troubleshooting steps.)"
 )
 
 

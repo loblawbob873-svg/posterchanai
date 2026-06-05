@@ -2604,9 +2604,10 @@ async def _handle_telegram_update(update: dict, db: Session):
                                                   prompt="📣 *Share this?*", image_bytes=_share_img)
                         return {"ok": True}
                     else:
-                        # For `node`, long jobs finish after this handler returns —
-                        # deliver their output back to THIS Telegram chat when done.
-                        node_notify = _make_tg_node_notify(telegram_service, chat_id) if command == "node" else None
+                        # For `node` (long jobs finish after this handler returns) and `logs`
+                        # (multi-minute agentic health report), stream step progress back to THIS
+                        # Telegram chat as it runs.
+                        node_notify = _make_tg_node_notify(telegram_service, chat_id) if command in ("node", "logs") else None
                         # Pass attachments to any command that supports them
                         if attachments:
                             result = await command_service.execute_command(command, arg, attachments=attachments, node_notify=node_notify)
