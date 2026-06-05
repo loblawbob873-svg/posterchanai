@@ -396,7 +396,9 @@ _NODE_TOOLS = [
 
 async def run_agent(db: Session, user: "User", node: str, target: str, goal: str,
                     chat_service: "ChatService", notify: Optional[Callable] = None) -> str:
-    """Drive commands on `node` toward `goal` via native tool-calling. Returns a markdown transcript.
+    """Drive commands on `node` toward `goal` via native tool-calling. Returns a concise summary
+    (header + the model's ✅ Done line); the per-command play-by-play is streamed live via `notify`
+    and recorded in the node job log, not folded into the returned/persisted message.
 
     Uses the same tool-calling backend as opencode (chat_completion with tools -> generate_message),
     so the model emits structured run_command/finish calls instead of a fragile CMD:/DONE: text
@@ -417,6 +419,8 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
         {"role": "user", "content": f"Goal: {goal}"},
     ]
     transcript = [f"## Agent on `{node}` — goal: {goal}\n"]
+    cmds_run: list[str] = []   # for a footer on the stop/error paths so they're never blank
+    last_job_id = None
 
     async def _say(text: str):
         if notify:
@@ -425,6 +429,15 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
             except Exception:
                 pass
 
+    def _footer() -> str:
+        # The happy path returns the model's summary; on stop/error the concise transcript would
+        # otherwise be empty, so point the user at what actually ran and where to find the output.
+        if not cmds_run:
+            return ""
+        cmds = ", ".join(f"`{c}`" for c in cmds_run)
+        tail_ref = f" Full output: `node log {last_job_id}`." if last_job_id is not None else ""
+        return f"\nRan {len(cmds_run)} command(s): {cmds}.{tail_ref}"
+
     for step in range(1, max_steps + 1):
         try:
             result = await service.chat_completion(
@@ -432,7 +445,7 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                 tools=_NODE_TOOLS, tool_choice="auto", temperature=0.2,
             )
         except Exception as e:
-            transcript.append(f"\n**⚠️ Stopped:** inference error: {e}")
+            transcript.append(f"\n**⚠️ Stopped:** inference error: {e}{_footer()}")
             return "\n".join(transcript)
 
         msg = (result.get("choices") or [{}])[0].get("message", {}) or {}
@@ -467,13 +480,17 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                     messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
                                      "content": "(no command provided)"})
                     continue
-                transcript.append(f"\n**Step {step}** — `{cmd}`")
+                # Stream each command as live progress, but DON'T fold the per-step command/
+                # output into the returned transcript — that's the persisted/final message, which
+                # we keep concise (header + the model's ✅ Done summary). The full play-by-play
+                # stays in the live stream and in the node job log (`node log <id>`).
                 await _say(f"⚙️ `{cmd}`")
                 # Bounded per-step: an unbounded command would deadlock the agent + caller.
                 job = await run_to_completion(db, node, target, cmd, user_id=user.id,
                                               timeout=_agent_step_timeout(db))
                 out = job.output.strip() or "(no output)"
-                transcript.append(f"```\n{tail(out, 1500)}\n```")
+                cmds_run.append(cmd)
+                last_job_id = job.id
                 # Tell the model explicitly when a command was killed for running too long, so it
                 # can adapt (e.g. add a count/limit, background it, or finish) instead of retrying.
                 _status = " [killed: timed out]" if job.status == "killed" or "timeout]" in out else ""
@@ -483,5 +500,5 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                 messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
                                  "content": f"(unknown tool: {name})"})
 
-    transcript.append(f"\n**⏹️ Stopped:** reached step limit ({max_steps}).")
+    transcript.append(f"\n**⏹️ Stopped:** reached step limit ({max_steps}).{_footer()}")
     return "\n".join(transcript)
