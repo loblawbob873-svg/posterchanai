@@ -1,0 +1,28 @@
+[project]
+name = "posterchan"
+version = "1.0.0"
+description = "AI-powered social media bot with native image generation"
+requires-python = ">=3.10"
+
+[tool.pyright]
+pythonVersion = "3.10"
+typeCheckingMode = "basic"
+venvPath = "."
+venv = "venv"
+include = ["*.py", "bots/**/*.py"]
+exclude = ["venv", "__pycache__"]
+reportMissingImports = "warning"
+reportMissingTypeStubs = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportUnknownVariableType = false
+reportUnknownParameterType = false
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+exclude = ["venv", "__pycache__"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]

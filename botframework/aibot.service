@@ -1,0 +1,44 @@
+[Unit]
+Description=Poster Chan AI
+After=network.target postgresql.service
+
+[Service]
+# Misskey Configuration
+#Environment="MISSKEY_SERVER=https://my-server"
+#Environment="MISSKEY_USERNAME=@botname"
+#Environment="MISSKEY_ACCESS_TOKEN=my-access-token"
+
+# Matrix Configuration
+#Environment="MATRIX_SERVER=https://my-matrix-server"
+#Environment="MATRIX_USER_ID=@bot:my-matrix-server"
+#Environment="MATRIX_ACCESS_TOKEN=my-access-token"
+#Environment="MATRIX_ROOM_ID=matrix-room-id"
+# Comma-separated admin Matrix IDs allowed to run privileged DM commands like `join`
+#Environment="MATRIX_ADMINS=@me:my-matrix-server,@other:my-matrix-server"
+
+# Pleroma Configuration
+Environment="PLEROMA_ENDPOINT=https://detroitriotcity.com"
+Environment="PLEROMA_USERNAME=@blockbot"
+Environment="PLEROMA_ACCESS_TOKEN=my-access-token"
+
+# Blockbot
+Environment="SQL_USER=root"
+Environment="SQL_PASS=sql"
+Environment="SQL_HOST=127.0.0.1"
+Environment="SQL_DATABASE=pleroma"
+
+# Open AI Configuration
+Environment="OPENAI_API_KEY=xxxxxxxxxxx"
+Environment="OPENAI_ENDPOINT=https://xxxxxxxxxxx/api/chat/completions"
+Environment="PROMPT=Generate a reply to the user. Only send the reply. Do not say who you are. Summarize any links given for a better response but do not provide the link. Do not say who you are or add any notes at the end of the post."
+
+Restart=on-failure
+User=verita84
+ExecStartPre="printenv"
+ExecStart=/home/verita84/posterchan/venv/bin/python /home/verita84/posterchan/main.py --pleroma
+#ExecStart=/home/verita84/posterchan/venv/bin/python /home/verita84/posterchan/main.py --matrix
+#ExecStart=/home/verita84/posterchan/venv/bin/python /home/verita84/posterchan/main.py --misskey
+ExecStop=-kill -9 $(ps aux | grep -i main.py | cut -d ' ' -f3 | head -1)
+SyslogIdentifier=aibot
+[Install]
+WantedBy=multi-user.target

@@ -127,9 +127,11 @@ async def post_status(
     image_mime: str = "image/png",
     in_reply_to_id: str | None = None,
     media: list[tuple[bytes, str]] | None = None,
+    content_type: str | None = None,
 ) -> dict:
     """Post a status to a Pleroma or Mastodon instance. Uploads image_bytes if provided, or
-    every (bytes, mime) in `media` when given. Pass in_reply_to_id to reply to a status."""
+    every (bytes, mime) in `media` when given. Pass in_reply_to_id to reply to a status.
+    `content_type` (e.g. "text/markdown") is a Pleroma extension; omit for the instance default."""
     media_ids = []
     if media:
         for (m_bytes, m_mime) in media:
@@ -145,10 +147,24 @@ async def post_status(
         payload["media_ids"] = media_ids
     if in_reply_to_id:
         payload["in_reply_to_id"] = in_reply_to_id
+    if content_type:
+        payload["content_type"] = content_type
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.post(url, json=payload, headers=headers)
         resp.raise_for_status()
         return resp.json()
+
+
+async def fetch_status(instance_url: str, access_token: str, status_id: str) -> dict | None:
+    """Fetch a single status by id (raw Mastodon/Pleroma object), or None if not found."""
+    url = instance_url.rstrip("/") + f"/api/v1/statuses/{status_id}"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(url, headers=headers)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        return data if isinstance(data, dict) else None
 
 
 async def fetch_notifications(instance_url: str, access_token: str, since_id: str | None = None, limit: int = 20) -> list[dict]:

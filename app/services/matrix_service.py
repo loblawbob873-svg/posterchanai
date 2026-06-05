@@ -35,6 +35,35 @@ async def _with_429_retry(make_request, attempts: int = 4):
     return resp
 
 
+async def request(homeserver: str, access_token: str, method: str, endpoint: str,
+                  data: dict | None = None, params: dict | None = None,
+                  verify_ssl: bool = True, timeout: float = 60.0):
+    """Generic Matrix Client-Server API call against the r0 endpoint:
+    {homeserver}/_matrix/client/r0/{endpoint}. Returns parsed JSON on 200/201, else None.
+
+    Mirrors the standalone bot client's matrix_request so botframework/matrix_shim.py can route
+    every call through this shared service. (timeout defaults to 60s so a /sync long-poll —
+    server-side timeout up to 30s — isn't cut off by the client.)"""
+    url = homeserver.rstrip("/") + f"/_matrix/client/r0/{endpoint}"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    method = method.upper()
+    async with httpx.AsyncClient(timeout=timeout, verify=verify_ssl) as client:
+        if method == "GET":
+            resp = await client.get(url, headers=headers, params=params)
+        elif method == "POST":
+            resp = await client.post(url, headers=headers, json=data, params=params)
+        elif method == "PUT":
+            resp = await client.put(url, headers=headers, json=data, params=params)
+        else:
+            return None
+        if resp.status_code in (200, 201):
+            try:
+                return resp.json()
+            except Exception:
+                return None
+        return None
+
+
 def render_matrix_html(text: str) -> str:
     """Render Markdown/plain text to the limited HTML Matrix (Element) shows.
 

@@ -1,0 +1,410 @@
+"""
+Nitter RSS → Matrix poster.
+
+Polls a list of Nitter RSS feeds and posts new items into a configured Matrix
+room. Feeds are defined in bots_config.py as the `nitter_feeds` array on the
+bot, each entry being {"room": "!id:server", "rss": "https://nitter.../rss"},
+passed to this process as the NITTER_FEEDS env var (JSON).
+
+On the first time a feed is seen, its current items are recorded as "seen"
+WITHOUT posting, so the bot doesn't dump the whole backlog into the room on
+startup — only genuinely new posts after that are sent.
+"""
+import os
+import sys
+import json
+import time
+
+import requests
+from lxml import etree
+
+# Ensure the script directory is in the Python path
+script_dir = os.path.dirname(os.path.abspath(__file__))
+if script_dir not in sys.path:
+    sys.path.insert(0, script_dir)
+
+from config import MISSKEY_SERVER, PLEROMA_ENDPOINT
+from matrix_client import send_message
+
+# Per-bot feeds, set by botctl/the installer from the bot's `nitter_feeds`.
+NITTER_FEEDS = json.loads(os.getenv("NITTER_FEEDS", "[]"))
+NITTER_POLL_SECONDS = int(os.getenv("NITTER_POLL_SECONDS", "300"))
+
+# A feed entry with a "room" posts to that Matrix room; one without posts to the
+# fediverse (Pleroma or Misskey, whichever this bot is configured for).
+_fedi_post = None
+_fedi_post_image = None
+if MISSKEY_SERVER:
+    from misskey import post_to_fediverse as _fedi_post, post_image_to_fediverse as _fedi_post_image
+elif PLEROMA_ENDPOINT:
+    from pleroma import post_to_fediverse as _fedi_post, post_image_to_fediverse as _fedi_post_image
+
+_STATE_FILE = os.path.join(script_dir, ".nitter_seen.json")
+_MAX_SEEN_PER_FEED = 300  # cap stored GUIDs per feed so the state file stays small
+
+
+def _load_state():
+    """Return {feed_url: [seen_guid, ...]} from disk, or {} on first run/error."""
+    try:
+        with open(_STATE_FILE, "r") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+    except Exception as e:
+        print(f"[nitter] Could not read state file: {e}", flush=True)
+        return {}
+
+
+def _save_state(state):
+    """Persist seen-GUID state atomically."""
+    try:
+        tmp = _STATE_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(state, f)
+        os.replace(tmp, _STATE_FILE)
+    except Exception as e:
+        print(f"[nitter] Could not write state file: {e}", flush=True)
+
+
+def _handle_from_rss(rss_url):
+    """Best-effort @handle from a Nitter RSS URL (https://nitter.net/NAME/rss)."""
+    try:
+        parts = [p for p in rss_url.split("/") if p]
+        # .../NAME/rss  -> NAME is the segment before "rss"
+        if parts and parts[-1].lower() == "rss" and len(parts) >= 2:
+            return parts[-2]
+        return parts[-1] if parts else "feed"
+    except Exception:
+        return "feed"
+
+
+def _should_skip(item):
+    """True if a Nitter RSS item should not be posted.
+
+    We keep only an account's own original, text-bearing tweets and drop:
+      - retweets  — Nitter prefixes the title either with "RT by @user:" (a
+        native retweet) or "RT @handle:" (a classic/manual retweet); both are
+        someone else's content and must be dropped.
+      - replies   — Nitter prefixes the title with "R to @user:"
+      - image/media-only tweets — Nitter builds the title from the tweet text,
+        so a tweet with no text of its own has an empty title.
+      - GIF-only tweets — a text-less animated-GIF tweet gets the literal
+        placeholder title "Gif" (Nitter's media label), which slips past the
+        empty-title check; these are low-value/spammy reaction posts.
+
+    Filtering on the title is the reliable signal across Nitter instances.
+    """
+    title = (item.findtext("title") or "").strip()
+    if not title or title.lower() == "gif":
+        return True
+    return (title.startswith("RT by ") or title.startswith("RT @")
+            or title.startswith("R to "))
+
+
+_DC_CREATOR = "{http://purl.org/dc/elements/1.1/}creator"
+
+
+def _parse_description(desc):
+    """Extract (text, media_url) from a Nitter item's HTML <description>.
+
+    The description is CDATA HTML: the tweet text in <p>; media as an <img src> (photos)
+    or a <video poster=...> thumbnail (videos/GIFs); and, for quote-tweets, a <blockquote>
+    holding the quoted post. The TEXT is always this tweet's only (the blockquote is
+    dropped). For the MEDIA we prefer this tweet's own image, then its own video
+    thumbnail, and finally fall back to the quoted tweet's media — otherwise video tweets
+    and quote-tweets (whose only picture lives in the quoted post) render as a bare
+    text card with no embed. Returns ("", "") on any parse failure.
+    """
+    if not desc or not desc.strip():
+        return "", ""
+    try:
+        from lxml import html as _lxml_html
+        frag = _lxml_html.fromstring(desc)
+        # Capture the quoted tweet's media BEFORE dropping the blockquote — used only as
+        # a last resort when this tweet carries no media of its own.
+        quoted = frag.xpath("//blockquote//img/@src") + frag.xpath("//blockquote//video/@poster")
+        for bq in frag.xpath("//blockquote"):
+            bq.getparent().remove(bq)
+        text = frag.text_content().strip()
+        # This tweet's own media: a real image first, else a video's poster thumbnail.
+        own = frag.xpath("//img/@src") + frag.xpath("//video/@poster")
+        media = own or quoted
+        media_url = media[0].strip() if media else ""
+        return text, media_url
+    except Exception:
+        return "", ""
+
+
+def _fmt_pubdate(pubdate):
+    """RFC-822 pubDate → 'May 31, 2026' (best-effort; '' on failure)."""
+    try:
+        from email.utils import parsedate_to_datetime
+        return parsedate_to_datetime(pubdate).strftime("%b %d, %Y")
+    except Exception:
+        return ""
+
+
+def _resolve_nitter_pic(url):
+    """Resolve a Nitter /pic/ proxy URL to the underlying Twitter CDN URL, which is
+    far more reliable than the (often dead) Nitter media proxy.
+
+    Nitter encodes the target after /pic/ in one of three shapes, all of which occur
+    in the wild (sometimes within the same instance):
+      - a full URL:        /pic/https%3A%2F%2Fpbs.twimg.com%2F...   -> use as-is
+      - a host+path:       /pic/pbs.twimg.com%2Fprofile_images%2F.. -> add scheme only
+      - a bare CDN path:   /pic/media%2F...                         -> add pbs.twimg.com
+    The host+path form is what profile pictures usually use; blindly prefixing
+    pbs.twimg.com there produced a doubled host (pbs.twimg.com/pbs.twimg.com/...) that
+    404'd, which is why avatars went missing while tweet media (bare path) worked.
+    Returns the input unchanged if it isn't a /pic/ URL."""
+    if not url or "/pic/" not in url:
+        return url or ""
+    from urllib.parse import unquote
+    tail = unquote(url.split("/pic/", 1)[1]).lstrip("/")
+    if tail.startswith(("http://", "https://")):
+        return tail
+    # A leading "host.tld/..." segment (contains a dot) is already host-qualified, so
+    # just prepend the scheme; otherwise it's a bare CDN path under pbs.twimg.com.
+    first = tail.split("/", 1)[0]
+    return ("https://" + tail) if "." in first else ("https://pbs.twimg.com/" + tail)
+
+
+def _download(url, max_bytes=20_000_000):
+    """Fetch an image URL → (bytes, content_type) or (None, None) on any failure.
+
+    Streams with a size cap so a malicious/huge response can't exhaust memory in the
+    long-running poller (images are well under the cap)."""
+    if not url:
+        return None, None
+    try:
+        with requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30, stream=True) as r:
+            if not r.ok:
+                return None, None
+            ct = (r.headers.get("Content-Type") or "image/jpeg").split(";")[0].strip()
+            data = bytearray()
+            for chunk in r.iter_content(65536):
+                data += chunk
+                if len(data) > max_bytes:
+                    print(f"[nitter] media exceeds {max_bytes}B, skipping {url[:60]}", flush=True)
+                    return None, None
+            return (bytes(data), ct) if data else (None, None)
+    except Exception as e:
+        print(f"[nitter] download failed for {url[:60]} ({e})", flush=True)
+    return None, None
+
+
+def _fetch_items(rss_url):
+    """Fetch and parse a Nitter RSS feed. Returns a list of dicts (newest first).
+
+    Retweets, replies, and image-only (text-less) posts are skipped — only the
+    account's own original tweets that carry text are kept. Each item also carries
+    the tweet text, first media URL, author handle and date used to render the
+    post-card image.
+    """
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; posterchan-nitter/1.0)"}
+    resp = requests.get(rss_url, headers=headers, timeout=30)
+    resp.raise_for_status()
+    root = etree.fromstring(resp.content, parser=etree.XMLParser(recover=True))
+    if root is None:
+        return []
+
+    # Channel-level <image> carries the account's profile picture and display name
+    # ("Display Name / @handle"), reused for every item's card.
+    avatar_url, channel_name = "", ""
+    chan = root.find(".//channel")
+    img = chan.find("image") if chan is not None else None
+    if img is not None:
+        avatar_url = (img.findtext("url") or "").strip()
+        ctitle = (img.findtext("title") or "").strip()
+        channel_name = ctitle.split(" / ", 1)[0].strip() if " / " in ctitle else ctitle
+
+    items = []
+    for item in root.findall(".//item"):
+        guid = (item.findtext("guid") or item.findtext("link") or "").strip()
+        if not guid:
+            continue
+        if _should_skip(item):
+            continue
+        title = (item.findtext("title") or "").strip()
+        text, media_url = _parse_description(item.findtext("description") or "")
+        author = (item.findtext(_DC_CREATOR) or "").strip().lstrip("@")
+        items.append({
+            "guid": guid,
+            "title": title,
+            "link": (item.findtext("link") or "").strip(),
+            # Prefer the full description text; fall back to the (often truncated) title.
+            "text": text or title,
+            "media_url": media_url,
+            "author": author,
+            "display_name": channel_name or author,
+            "avatar_url": avatar_url,
+            "timestamp": _fmt_pubdate(item.findtext("pubDate") or ""),
+        })
+    return items
+
+
+def _format_post(handle, item):
+    """Build the message text for a single feed item.
+
+    The link is left bare (not wrapped in backticks) so it renders as a
+    clickable link on both Matrix (Element auto-linkifies bare URLs) and the
+    fediverse. Backtick-wrapping suppresses Matrix's tweet embed but turns the
+    link into a non-clickable <code> span, so it is not used here.
+    """
+    title = item["title"]
+    link = item["link"]
+    text = f"🐦 **@{handle}**\n\n{title}"
+    if link:
+        text += f"\n\n{link}"
+    return text
+
+
+def _format_caption(handle, item):
+    """Short caption posted beneath the card image: the handle and a clickable
+    link to the source post (left bare so it stays clickable everywhere)."""
+    link = item.get("link", "")
+    cap = f"🐦 @{handle}"
+    if link:
+        cap += f"\n\n{link}"
+    return cap
+
+
+def _render_card(handle, item):
+    """Render the tweet as a post-card PNG via the posterchanai backend (which
+    screenshots HTML we build). Downloads any media here so the server does no
+    outbound fetch. Returns PNG bytes, or None to signal a text+link fallback.
+    """
+    try:
+        from posterchanai_api import render_post_card
+    except Exception as e:
+        print(f"[nitter] post-card unavailable ({e}); using text+link", flush=True)
+        return None
+
+    # Tweet media and the author's profile picture (resolved to the Twitter CDN, which
+    # outlives the Nitter proxy). Either may fail; the card renders without them.
+    media_bytes, media_ct = _download(item.get("media_url"))
+    avatar_bytes, avatar_ct = _download(_resolve_nitter_pic(item.get("avatar_url")))
+
+    png, err = render_post_card(
+        handle, item.get("text") or item.get("title") or "",
+        display_name=item.get("display_name") or item.get("author") or handle,
+        timestamp=item.get("timestamp") or "",
+        media_bytes=media_bytes, media_ct=media_ct,
+        avatar_bytes=avatar_bytes, avatar_ct=avatar_ct,
+    )
+    if err:
+        print(f"[nitter] card render failed ({err}); falling back to text+link", flush=True)
+        return None
+    return png
+
+
+def _post_item(feed, handle, item):
+    """Post one item to its destination (Matrix room or the fediverse).
+
+    Posts the tweet rendered as an image (a "screenshot" of a card we build from the
+    RSS data) with the source link beneath it; Nitter's own status pages are empty so
+    link previews never render. Falls back to the original text+link post if the card
+    can't be produced (e.g. no browser on the backend).
+    """
+    room = (feed.get("room") or "").strip()
+    card = _render_card(handle, item)
+    caption = _format_caption(handle, item)
+
+    if room:
+        if card:
+            # Caption the image itself (link at the bottom) so the card and its
+            # source link land as a single Matrix post, not two separate messages.
+            ok = send_message(room, "", image_bytes=card, image_caption=caption)
+        else:
+            ok = send_message(room, _format_post(handle, item))
+        if not ok:
+            print(f"[nitter] WARNING: failed to post to {room} — bot may have been kicked. Re-invite the bot to restore posting.", flush=True)
+        return ok
+
+    # No room → post to the fediverse (Pleroma/Misskey).
+    if _fedi_post is None:
+        print("[nitter] Feed has no 'room' and no fediverse is configured; skipping post", flush=True)
+        return False
+    # Fire-and-forget (no return value); treat as sent.
+    if card and _fedi_post_image is not None:
+        _fedi_post_image(caption, image_bytes=card)
+    else:
+        _fedi_post(_format_post(handle, item))
+    return True
+
+
+def _process_feed(feed, state):
+    """Check one feed config dict and post any new items. Mutates `state`."""
+    rss_url = (feed.get("rss") or "").strip()
+    if not rss_url:
+        print(f"[nitter] Skipping malformed feed entry: {feed}", flush=True)
+        return
+
+    try:
+        items = _fetch_items(rss_url)
+    except Exception as e:
+        print(f"[nitter] Failed to fetch {rss_url}: {e}", flush=True)
+        return
+
+    if not items:
+        return
+
+    seen = state.get(rss_url)
+    handle = _handle_from_rss(rss_url)
+
+    # First time we've seen this feed: seed silently, don't post the backlog.
+    if seen is None:
+        state[rss_url] = [it["guid"] for it in items][:_MAX_SEEN_PER_FEED]
+        print(f"[nitter] Seeded @{handle} ({len(items)} existing items, none posted)", flush=True)
+        return
+
+    seen_set = set(seen)
+    # Post oldest-first so the timeline reads chronologically.
+    new_items = [it for it in reversed(items) if it["guid"] not in seen_set]
+    if not new_items:
+        return
+
+    dest = feed.get("room") or "fediverse"
+    print(f"[nitter] @{handle}: {len(new_items)} new item(s) → {dest}", flush=True)
+    for it in new_items:
+        try:
+            ok = _post_item(feed, handle, it)
+        except Exception as e:
+            # A render/format error is specific to THIS item — mark it seen so a
+            # single malformed item doesn't wedge the feed forever.
+            print(f"[nitter] Error posting {it['guid']}: {e}", flush=True)
+            seen.append(it["guid"])
+            continue
+        if ok:
+            seen.append(it["guid"])
+        else:
+            # Destination temporarily unavailable (e.g. a room send 403 during a
+            # membership/federation blip). Leave the item UNSEEN so it retries on
+            # the next poll instead of being silently dropped — this was why tweets
+            # went to Telegram but never reached Matrix.
+            print(f"[nitter] @{handle}: post not confirmed, will retry next poll", flush=True)
+
+    # Trim and persist
+    state[rss_url] = seen[-_MAX_SEEN_PER_FEED:]
+
+
+def nitter_poster():
+    """Main loop: poll all configured Nitter feeds forever."""
+    if not NITTER_FEEDS:
+        print("[nitter] No feeds configured (NITTER_FEEDS empty); idling.", flush=True)
+    else:
+        print(f"[nitter] Starting with {len(NITTER_FEEDS)} feed(s), "
+              f"poll every {NITTER_POLL_SECONDS}s", flush=True)
+
+    while True:
+        if NITTER_FEEDS:
+            state = _load_state()
+            for feed in NITTER_FEEDS:
+                _process_feed(feed, state)
+            _save_state(state)
+        time.sleep(max(60, NITTER_POLL_SECONDS))
+
+
+if __name__ == "__main__":
+    nitter_poster()

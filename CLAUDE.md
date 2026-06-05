@@ -25,6 +25,46 @@ resets/restarts `nas.lan`. **`git commit -a` does NOT stage new untracked files*
 any new file before running it, or it ships a broken (ImportError) tree to every node.
 `sync.sh` deploys **code only**, not Python deps (use `install.sh` option 6 for deps).
 
+## Bot framework (merged from `~/posterchan` → `botframework/`)
+
+The standalone `~/posterchan` bot framework now lives **in this repo** under `botframework/`
+(co-located, imports kept root-relative; spawned as a subprocess with `cwd=botframework/`).
+The bots are managed from **Admin → Bots** (`templates/admin/tabs/bots.html` +
+`static/js/admin-bots.js`), backed by the `Bot` model and the `bot_manager_service`.
+
+- **Manager:** `app/services/bot_manager_service.py` (the in-app replacement for `botctl.py`).
+  Reads `Bot` rows for this host, builds per-bot env from the global `bots_*` settings + the
+  bot's JSON `config` (a faithful port of `botctl.build_env`), and spawns
+  `botframework/main.py <modes>`. A reconcile loop keeps enabled bots running (rate-limited
+  restarts) and stops disabled/deleted ones. Wired into the **port-3051** startup/shutdown guard.
+- **Config is DB-backed, not `bots_config.py`.** `bots_config.py` is gone at runtime;
+  `botframework/config.py` reads its old globals from env (manager-injected). The `Bot` model is
+  identity/filter columns + a JSON `config` blob (mirrors the old per-bot dict). Global settings
+  are the `bots_*` keys in `SettingsResponse`.
+- **Master kill-switch:** `bots_manager_enabled` (default **off**). The manager runs NO bots
+  until it's on — so deploying the merged code is safe while the legacy `posterchan.service`
+  still owns the bots. **Cutover per node:** retire `posterchan.service` (stop+disable), then flip
+  "Run bots on this server" on in Admin → Bots. Doing both avoids double-posting.
+- **Migration seed:** on first start, if the `bots` table is empty and a (gitignored, local-only)
+  `botframework/bots_config_export.json` exists, the manager seeds bots + globals from it once.
+  Fresh nodes start empty — add bots via the UI. (`nas.lan`'s Matrix bot is not yet seeded;
+  migrate it before retiring its `posterchan.service`.)
+- **Dedup is incremental** (Phase 4+). Per platform there's now a **parity shim** that routes the
+  bot's network calls through the app's shared service while reusing the bot's higher-level logic
+  verbatim (so behavior can't drift): `botframework/{pleroma,misskey,matrix}_shim.py` →
+  `app/services/{pleroma,misskey,matrix}_service.py`. They're **opt-in** (per-bot
+  `use_app_service:true` in Admin → Bots, which sets `PLEROMA_/MISSKEY_/MATRIX_USE_APP_SERVICE`)
+  and **off by default**; each listener picks shim-vs-legacy at import. Validate a shim offline
+  with `botframework/test_{pleroma,misskey,matrix}_parity.py` (A/B's the constructed HTTP). The
+  Misskey/Matrix shims swap only the transport primitive (`misskey_post`/`matrix_request` +
+  upload) and re-export the unchanged functions; Pleroma's reimplements the thin wrappers. Once a
+  shim is confirmed in prod, delete the duplicated **network** code from the bot's client (keeping
+  the pure helpers the shim reuses) — that's the actual line-count reduction, taken safely.
+  TTS/search/news are **intentionally not shimmed**: the bot's TTS is mostly local ffmpeg/video
+  work and the app's search/news are `db`-coupled class/router code — different tools, not
+  duplicated network clients. The bot half of the fedi-timeline bridge (`matrixListener.py`) is now
+  in `botframework/` too — no longer a separate repo to commit, but still its own listener.
+
 ## Architecture
 
 | Area | Where |

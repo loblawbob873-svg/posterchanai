@@ -1,0 +1,22 @@
+# Posterchan Bot Requirements
+
+# HTTP requests
+requests>=2.28.0
+
+# Timezone handling
+pytz>=2023.0
+
+# PostgreSQL database (for blockbot, welcome, report, engagement features)
+psycopg2-binary>=2.9.0
+
+# Text-to-speech (for /narrate command).
+# NOTE: this also requires the system `ffmpeg`/`ffprobe` binaries on PATH
+# (installed by install.sh, not via pip).
+edge-tts>=6.1.0
+
+# Image processing (for GIF conversion, image manipulation)
+Pillow>=10.0.0
+
+# HTML parsing (for news command)
+beautifulsoup4>=4.12.0
+lxml>=4.9.0

@@ -53,6 +53,22 @@ async def upload_file(instance_url: str, token: str, image_bytes: bytes, mime: s
     return file_id
 
 
+async def call(instance_url: str, token: str, method: str, params: dict | None = None):
+    """Generic Misskey API call: POST /api/<method> with {"i": token, **params}.
+
+    Returns the parsed JSON (or {} for an empty 200 body); raises on non-2xx. This mirrors the
+    standalone bot client's misskey_post so the botframework Misskey shim can route every call
+    through this shared service. Used by botframework/misskey_shim.py."""
+    url = instance_url.rstrip("/") + f"/api/{method}"
+    body = {"i": token}
+    if params:
+        body.update(params)
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(url, json=body)
+        resp.raise_for_status()
+        return resp.json() if resp.text else {}
+
+
 async def post_note(
     instance_url: str,
     token: str,

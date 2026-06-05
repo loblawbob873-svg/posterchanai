@@ -285,6 +285,30 @@ class SettingsResponse(BaseModel):
     telegram_bot_token: str = ""  # Bot token from @BotFather
     telegram_webhook_url: str = ""  # Webhook URL for receiving updates
     telegram_enabled: str = "false"  # Enable Telegram bot
+    # Bot framework (merged from ~/posterchan; managed in Admin → Bots). These are the
+    # GLOBAL settings shared by every managed bot; per-bot config lives on the Bot model.
+    # bot_manager_service maps these into the env vars botframework/config.py expects when it
+    # spawns each listener (OPENAI_ENDPOINT/KEY, AI_MODEL, SQL_*, SEARXNG_URL, TIMEZONE, …).
+    # Master kill-switch (default off): the manager runs NO bots until this is on. Lets a node
+    # deploy the merged code safely while the legacy posterchan.service still owns the bots —
+    # flip on only after retiring the old service to avoid double-posting.
+    bots_manager_enabled: str = "false"
+    bots_ai_api_url: str = ""                 # OpenAI-compatible chat endpoint the bots call
+    bots_ai_api_key: str = ""
+    bots_ai_model: str = ""
+    bots_searxng_url: str = ""                # SearXNG instance for the bots' web search
+    bots_timezone: str = "MST"
+    bots_sql_user: str = ""                   # Pleroma Postgres creds (blockbot/welcome/report/engagement)
+    bots_sql_pass: str = ""
+    bots_sql_host: str = ""
+    # Image backend the bots use for image posts
+    bots_use_posterchanai: str = "true"       # true = use this app's image API; false = ComfyUI/SD direct
+    bots_posterchanai_api_endpoint: str = ""  # base URL of this app (for the bots' image/API calls)
+    bots_posterchanai_username: str = ""
+    bots_posterchanai_password: str = ""
+    bots_posterchanai_api_key: str = ""
+    bots_comfyui_api_endpoint: str = ""
+    bots_stable_diffusion_endpoint: str = ""
 
     class Config:
         extra = "allow"  # Allow arbitrary extra settings

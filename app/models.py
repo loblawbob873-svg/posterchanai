@@ -336,3 +336,29 @@ class MatrixNotifyMap(Base):
     target_id = Column(String(255), nullable=False)  # note/status id to reply to
     visibility = Column(String(20), nullable=True)   # inherit the parent's visibility
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Bot(Base):
+    """A managed bot from the merged ~/posterchan framework (now botframework/).
+
+    Replaces the hand-edited bots_config.py: bot_manager_service reads these rows, builds
+    per-bot env, and spawns botframework/main.py <modes> as a child process (one row → one
+    long-running listener, or a scheduled image poster). Editable from Admin → Bots.
+
+    Identity/filter fields are first-class columns (for listing + per-host filtering); the
+    remaining per-bot fields (server, username, access_token, prompt, nitter_feeds, tts_voice,
+    welcome_*/block_*/report_* etc.) live in `config` as a JSON object, mirroring the original
+    bots_config dict shape so new bot types don't need schema changes."""
+    __tablename__ = "bots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), unique=True, nullable=False, index=True)
+    enabled = Column(Boolean, default=True)              # should the manager keep it running / scheduled
+    bot_type = Column(String(20), default="text")        # "text" (long-running) | "image" (scheduled)
+    platform = Column(String(20), default="misskey")     # "misskey" | "pleroma" | "matrix"
+    host = Column(String(100), nullable=True)            # node hostname that runs it; empty = any node
+    modes = Column(Text, default="")                     # comma-separated main.py flags, e.g. "--pleroma,--matrix"
+    config = Column(Text, default="{}")                  # JSON: all other per-bot fields (creds, prompt, feature opts)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+

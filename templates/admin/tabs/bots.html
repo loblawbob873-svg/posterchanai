@@ -1,0 +1,217 @@
+<!-- Bots Tab (merged ~/posterchan bot framework; see app/services/bot_manager_service.py) -->
+<div class="tab-content" id="tab-bots">
+    <div class="admin-section">
+        <div class="form-group bots-master">
+            <label for="bots_manager_enabled">
+                <input type="checkbox" id="bots_manager_enabled" name="bots_manager_enabled">
+                <b>Run bots on this server</b>
+            </label>
+            <p class="bots-hint">Master switch. When off, no bots run here regardless of their
+                individual On/Off. Turn on only after retiring the old <code>posterchan.service</code>
+                on this node (otherwise bots double-post). Takes effect within a few seconds of
+                <b>Save Settings</b>.</p>
+        </div>
+        <div class="bots-header">
+            <h3>Bots</h3>
+            <button type="button" class="btn-primary" onclick="openBotModal()">+ Add bot</button>
+        </div>
+        <p class="bots-hint">Add a bot, flip it <b>On</b>, and it runs on this server. Edit or
+            remove any bot at any time.</p>
+        <div id="botList" class="bot-list">
+            <!-- bot cards injected by admin-bots.js -->
+        </div>
+    </div>
+
+    <!-- Global settings shared by every bot. These ARE saved by the main "Save Settings"
+         button (named inputs picked up by the generic settings handler in admin.js). -->
+    <details class="admin-section bots-advanced">
+        <summary><h3 style="display:inline">Global bot settings (advanced)</h3></summary>
+        <p class="bots-hint">Shared by all bots. Set once.</p>
+        <div class="form-group">
+            <label for="bots_ai_api_url">AI endpoint (OpenAI-compatible chat URL)</label>
+            <input type="text" id="bots_ai_api_url" name="bots_ai_api_url" placeholder="https://ai.example/api/chat/completions">
+        </div>
+        <div class="form-group">
+            <label for="bots_ai_api_key">AI API key</label>
+            <input type="password" id="bots_ai_api_key" name="bots_ai_api_key">
+        </div>
+        <div class="form-group">
+            <label for="bots_ai_model">AI model</label>
+            <input type="text" id="bots_ai_model" name="bots_ai_model">
+        </div>
+        <div class="form-group">
+            <label for="bots_searxng_url">SearXNG URL (web search)</label>
+            <input type="text" id="bots_searxng_url" name="bots_searxng_url">
+        </div>
+        <div class="form-group">
+            <label for="bots_timezone">Timezone</label>
+            <input type="text" id="bots_timezone" name="bots_timezone" placeholder="MST">
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="bots_sql_user">Pleroma DB user</label>
+                <input type="text" id="bots_sql_user" name="bots_sql_user">
+            </div>
+            <div class="form-group">
+                <label for="bots_sql_pass">Pleroma DB password</label>
+                <input type="password" id="bots_sql_pass" name="bots_sql_pass">
+            </div>
+            <div class="form-group">
+                <label for="bots_sql_host">Pleroma DB host</label>
+                <input type="text" id="bots_sql_host" name="bots_sql_host">
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="bots_use_posterchanai">
+                <input type="checkbox" id="bots_use_posterchanai" name="bots_use_posterchanai"> Use this app for image generation
+            </label>
+        </div>
+        <div class="form-group">
+            <label for="bots_posterchanai_api_endpoint">This app's base URL (for the bots' API calls)</label>
+            <input type="text" id="bots_posterchanai_api_endpoint" name="bots_posterchanai_api_endpoint">
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="bots_posterchanai_username">App username</label>
+                <input type="text" id="bots_posterchanai_username" name="bots_posterchanai_username">
+            </div>
+            <div class="form-group">
+                <label for="bots_posterchanai_password">App password</label>
+                <input type="password" id="bots_posterchanai_password" name="bots_posterchanai_password">
+            </div>
+            <div class="form-group">
+                <label for="bots_posterchanai_api_key">App API key</label>
+                <input type="password" id="bots_posterchanai_api_key" name="bots_posterchanai_api_key">
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="bots_comfyui_api_endpoint">ComfyUI endpoint (if not using this app)</label>
+            <input type="text" id="bots_comfyui_api_endpoint" name="bots_comfyui_api_endpoint">
+        </div>
+        <div class="form-group">
+            <label for="bots_stable_diffusion_endpoint">Stable Diffusion endpoint (optional)</label>
+            <input type="text" id="bots_stable_diffusion_endpoint" name="bots_stable_diffusion_endpoint">
+        </div>
+    </details>
+</div>
+
+<!-- Add/Edit modal. NOTE: inputs use id only (no name=) so the global settings save skips
+     them. Not a <form> to avoid nesting inside #settingsForm. -->
+<div id="botModal" class="bot-modal-overlay" style="display:none">
+    <div class="bot-modal">
+        <div class="bot-modal-head">
+            <h3 id="botModalTitle">Add bot</h3>
+            <button type="button" class="bot-modal-close" onclick="closeBotModal()">&times;</button>
+        </div>
+        <div class="bot-modal-body">
+            <input type="hidden" id="bot_f_id">
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="bot_f_name">Name</label>
+                    <input type="text" id="bot_f_name" placeholder="my-bot">
+                </div>
+                <div class="form-group">
+                    <label for="bot_f_type">Type</label>
+                    <select id="bot_f_type" onchange="onBotFormChange()">
+                        <option value="text">Text bot</option>
+                        <option value="image">Image bot</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="bot_f_platform">Platform</label>
+                    <select id="bot_f_platform" onchange="onBotFormChange()">
+                        <option value="misskey">Misskey</option>
+                        <option value="pleroma">Pleroma</option>
+                        <option value="matrix">Matrix</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="bot_f_host">Run on host <span class="bots-dim">(blank = any)</span></label>
+                    <input type="text" id="bot_f_host" placeholder="">
+                </div>
+            </div>
+
+            <!-- Misskey / Pleroma credentials -->
+            <div id="bot_grp_fedi">
+                <div class="form-group">
+                    <label for="bot_f_server">Server URL</label>
+                    <input type="text" id="bot_f_server" placeholder="https://instance.example">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="bot_f_username">Bot username</label>
+                        <input type="text" id="bot_f_username" placeholder="@bot">
+                    </div>
+                    <div class="form-group">
+                        <label for="bot_f_access_token">Access token</label>
+                        <input type="password" id="bot_f_access_token">
+                    </div>
+                </div>
+                <div class="form-group" id="bot_grp_pleroma_admin">
+                    <label for="bot_f_pleroma_admin_token">Pleroma admin token <span class="bots-dim">(report bot)</span></label>
+                    <input type="password" id="bot_f_pleroma_admin_token">
+                </div>
+            </div>
+
+            <!-- Matrix credentials -->
+            <div id="bot_grp_matrix" style="display:none">
+                <div class="form-group">
+                    <label for="bot_f_matrix_server">Matrix server</label>
+                    <input type="text" id="bot_f_matrix_server" placeholder="https://matrix.example">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="bot_f_matrix_user_id">User ID</label>
+                        <input type="text" id="bot_f_matrix_user_id" placeholder="@bot:matrix.example">
+                    </div>
+                    <div class="form-group">
+                        <label for="bot_f_matrix_access_token">Access token</label>
+                        <input type="password" id="bot_f_matrix_access_token">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="bot_f_matrix_room_id">Default room ID</label>
+                        <input type="text" id="bot_f_matrix_room_id">
+                    </div>
+                    <div class="form-group">
+                        <label for="bot_f_matrix_admins">Admins <span class="bots-dim">(comma-separated)</span></label>
+                        <input type="text" id="bot_f_matrix_admins">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Features → main.py modes (text bots only) -->
+            <div id="bot_grp_features" class="form-group">
+                <label>Features</label>
+                <div class="bot-features">
+                    <label><input type="checkbox" id="bot_ft_reply"> Reply to mentions</label>
+                    <label><input type="checkbox" id="bot_ft_nitter"> Nitter feeds</label>
+                    <label><input type="checkbox" id="bot_ft_welcome"> Welcome new users</label>
+                    <label><input type="checkbox" id="bot_ft_block"> Block bot</label>
+                    <label><input type="checkbox" id="bot_ft_report"> Report bot</label>
+                    <label><input type="checkbox" id="bot_ft_hashtag"> Hashtag bot</label>
+                    <label><input type="checkbox" id="bot_ft_unfollow"> Unfollow bot</label>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="bot_f_prompt">Personality prompt</label>
+                <textarea id="bot_f_prompt" rows="4"></textarea>
+            </div>
+
+            <details class="bots-advanced">
+                <summary>Advanced config (JSON)</summary>
+                <p class="bots-hint">Extra per-bot keys not shown above (e.g. <code>welcome_prompt</code>,
+                    <code>block_image</code>, <code>tts_voice</code>, <code>sql_database</code>,
+                    <code>nitter_feeds</code>). Merged into the bot's config.</p>
+                <textarea id="bot_f_advanced" rows="6" placeholder="{}"></textarea>
+            </details>
+        </div>
+        <div class="bot-modal-foot">
+            <span id="botModalError" class="bot-modal-error"></span>
+            <button type="button" class="btn-secondary" onclick="closeBotModal()">Cancel</button>
+            <button type="button" class="btn-primary" onclick="saveBot()">Save bot</button>
+        </div>
+    </div>
+</div>

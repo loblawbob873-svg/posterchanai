@@ -20,7 +20,7 @@ from app.database import init_db, get_db
 from app.auth import get_current_user_optional, get_current_user, create_access_token
 from app.models import User, VerificationToken, Setting
 from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, media_api, news, rag, mail, torrent, storage, files
-from app.routers import fourchan, youtube_thumb
+from app.routers import fourchan, youtube_thumb, bots
 from app.routers.telegram import router as telegram_router
 from app.routers.misskey import router as misskey_router
 from app.routers.pleroma import router as pleroma_router
@@ -151,6 +151,7 @@ app.include_router(mail.router)
 app.include_router(torrent.router)
 app.include_router(fourchan.router)
 app.include_router(youtube_thumb.router)
+app.include_router(bots.router)
 app.include_router(storage.router)
 app.include_router(telegram_router)
 app.include_router(misskey_router)
@@ -247,6 +248,13 @@ async def startup():
                 start_matrix_notifications_scheduler()
             except Exception as e:
                 logging.error(f"Error starting matrix notifications scheduler: {e}", exc_info=True)
+
+            try:
+                # Start the bot manager (merged ~/posterchan framework; Admin → Bots)
+                from app.services.bot_manager_service import start_bot_manager
+                start_bot_manager()
+            except Exception as e:
+                logging.error(f"Error starting bot manager: {e}", exc_info=True)
 
         else:
             logging.info(f"Schedulers disabled on port {app_port} (only run on port 3051)")
@@ -409,6 +417,13 @@ async def shutdown():
         try:
             from app.services.matrix_notifications_service import stop_matrix_notifications_scheduler
             stop_matrix_notifications_scheduler()
+        except Exception:
+            pass
+
+        # Stop the bot manager (terminates all managed bot child processes)
+        try:
+            from app.services.bot_manager_service import stop_bot_manager
+            stop_bot_manager()
         except Exception:
             pass
 

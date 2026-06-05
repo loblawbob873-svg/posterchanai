@@ -17,6 +17,7 @@
         <button class="tab-btn" data-tab="image">Image Generation</button>
         <button class="tab-btn" data-tab="rag">RAG</button>
         <button class="tab-btn" data-tab="services">Services</button>
+        <button class="tab-btn" data-tab="bots">Bots</button>
         <button class="tab-btn" data-tab="site">Site Settings</button>
         <button class="tab-btn" data-tab="users">Users</button>
     </div>
@@ -27,6 +28,7 @@
             {% include 'admin/tabs/rag.html' %}
             {% include 'admin/tabs/image_generation.html' %}
             {% include 'admin/tabs/services.html' %}
+            {% include 'admin/tabs/bots.html' %}
             {% include 'admin/tabs/site_settings.html' %}
 
             <button type="submit" class="btn-primary save-btn">Save Settings</button>
@@ -43,4 +45,5 @@
 window.isAdmin = {{ 'true' if user.is_admin else 'false' }};
 </script>
 <script src="/static/js/admin.js?v={{ cache_bust }}"></script>
+<script src="/static/js/admin-bots.js?v={{ cache_bust }}"></script>
 {% endblock %}
