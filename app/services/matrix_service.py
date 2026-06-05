@@ -344,10 +344,13 @@ async def upload_media_bytes(homeserver: str, access_token: str, data: bytes,
 
 async def send_image(homeserver: str, access_token: str, room_id: str,
                      image_bytes: bytes, caption: str = "", mime: str = "",
-                     thread_root_event_id: str | None = None) -> str:
-    """Upload image/video bytes to Matrix media and send it in a room (m.image, or
-    m.video when the bytes are a video). Threads under thread_root_event_id when given.
-    Returns the media event's event_id."""
+                     thread_root_event_id: str | None = None, caption_html: str | None = None,
+                     reply_to_event_id: str | None = None) -> str:
+    """Upload image/video bytes to Matrix media and send it in a room (m.image, or m.video when
+    the bytes are a video). When `caption` is given it's embedded in the media event as a media
+    caption (MSC2530: body=caption, filename=real name, optional formatted_body=caption_html), so
+    text+image render as ONE message. Threads under thread_root_event_id (with reply_to_event_id
+    as the actual parent). Returns the media event's event_id."""
     hs = homeserver.rstrip("/")
     from urllib.parse import quote
     detected_mime, filename = _detect_mime(image_bytes)
@@ -375,26 +378,30 @@ async def send_image(homeserver: str, access_token: str, room_id: str,
                 logger.debug(f"Could not read image dimensions: {_dim_err}")
         payload: dict = {
             "msgtype": "m.video" if is_video else "m.image",
-            "body": filename,
             "url": mxc_uri,
             "info": _info,
         }
+        if caption:
+            # Media caption (MSC2530): body is the caption, filename is the real file name.
+            payload["body"] = caption
+            payload["filename"] = filename
+            if caption_html:
+                payload["format"] = "org.matrix.custom.html"
+                payload["formatted_body"] = caption_html
+        else:
+            payload["body"] = filename
         if thread_root_event_id:
+            in_reply = reply_to_event_id or thread_root_event_id
             payload["m.relates_to"] = {
                 "rel_type": "m.thread",
                 "event_id": thread_root_event_id,
-                "is_falling_back": True,
-                "m.in_reply_to": {"event_id": thread_root_event_id},
+                "is_falling_back": reply_to_event_id is None,
+                "m.in_reply_to": {"event_id": in_reply},
             }
         resp = await _with_429_retry(lambda: client.put(send_url, json=payload, headers=headers_auth))
         if resp.status_code not in (200, 201):
             raise ValueError(f"Failed to send Matrix image: HTTP {resp.status_code} — {resp.text[:200]}")
         event_id = resp.json().get("event_id", "")
-
-        # Send caption as a follow-up text message if provided
-        if caption:
-            send_url2 = f"{hs}/_matrix/client/v3/rooms/{encoded_room}/send/m.room.message/{_txn_id()}"
-            await client.put(send_url2, json={"msgtype": "m.text", "body": caption}, headers=headers_auth)
     return event_id
 
 

@@ -345,41 +345,51 @@ async def _deliver(db: Session, hs: str, bot_token: str, room_id: str, platform:
         if prow:
             parent_event = prow.event_id
     body_text = _body_text(post)
-    event_id = await matrix_service.send_event(
-        hs, bot_token, room_id, body_text,
-        html=_body_html(avatar_mxc, post),
-        thread_root_event_id=thread_root_event_id, reply_to_event_id=parent_event,
-    )
-    db.add(TimelinePost(
-        room_id=room_id, event_id=event_id, thread_root_event_id=thread_root_event_id,
-        platform=platform, instance_url=instance_url, note_id=post["id"],
-        note_uri=uri, author_acct=post["author"].get("acct"), body=body_text,
-    ))
-    db.commit()
-    # Attachments: a root post's own media goes inline (no thread relation) so it shows WITH the
-    # post; a reply's media goes into the reply's thread. This keeps threads = actual replies only,
-    # so Element renders them cleanly.
-    media_root = thread_root_event_id
+    body_html = _body_html(avatar_mxc, post)
+
+    def _record(ev_id: str, is_root_event: bool):
+        db.add(TimelinePost(
+            room_id=room_id, event_id=ev_id,
+            # The post event keeps the caller's thread relation; extra media events hang off it.
+            thread_root_event_id=thread_root_event_id if is_root_event else (thread_root_event_id or event_id),
+            platform=platform, instance_url=instance_url, note_id=post["id"],
+            note_uri=uri, author_acct=post["author"].get("acct"),
+            body=body_text if is_root_event else None,
+        ))
+        db.commit()
+
+    # Download the post's media up front (skip ones that fail).
+    downloaded = []
     for m in post["media"]:
         data, mime = await _download(m["url"])
-        if not data:
-            continue
-        try:
-            media_event_id = await matrix_service.send_image(
-                hs, bot_token, room_id, data, mime=mime or m.get("mime", ""),
-                thread_root_event_id=media_root)
-            # Record the media event too (pointing at the same note) so interacting with the
-            # image — boost/reply/quote — resolves to the post just like the text event does.
-            # thread_root marks it as not-a-root so the reply poller ignores it.
-            if media_event_id:
-                db.add(TimelinePost(
-                    room_id=room_id, event_id=media_event_id, thread_root_event_id=(thread_root_event_id or event_id),
-                    platform=platform, instance_url=instance_url, note_id=post["id"],
-                    note_uri=uri, author_acct=post["author"].get("acct"),
-                ))
-                db.commit()
-        except Exception as e:
-            logger.warning(f"[fedi-timeline] media send failed: {e}")
+        if data:
+            downloaded.append((data, mime or m.get("mime", "")))
+
+    if downloaded:
+        # Put the post text on the FIRST image as its caption → text + image = one message.
+        first_data, first_mime = downloaded[0]
+        event_id = await matrix_service.send_image(
+            hs, bot_token, room_id, first_data, caption=body_text, caption_html=body_html,
+            mime=first_mime, thread_root_event_id=thread_root_event_id, reply_to_event_id=parent_event,
+        )
+        _record(event_id, is_root_event=True)
+        # Any additional images hang off this post's thread.
+        for data, mime in downloaded[1:]:
+            try:
+                mid = await matrix_service.send_image(hs, bot_token, room_id, data, mime=mime,
+                                                      thread_root_event_id=(thread_root_event_id or event_id))
+                if mid:
+                    _record(mid, is_root_event=False)
+            except Exception as e:
+                logger.warning(f"[fedi-timeline] extra media send failed: {e}")
+        return event_id
+
+    # No media: plain text event.
+    event_id = await matrix_service.send_event(
+        hs, bot_token, room_id, body_text, html=body_html,
+        thread_root_event_id=thread_root_event_id, reply_to_event_id=parent_event,
+    )
+    _record(event_id, is_root_event=True)
     return event_id
 
 
