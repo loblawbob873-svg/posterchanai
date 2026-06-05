@@ -15,6 +15,8 @@ device (servers, routers, switches) - the target never runs posterchanai code.
 """
 import asyncio
 import logging
+import os
+import signal
 import threading
 import time
 from dataclasses import dataclass, field
@@ -106,6 +108,23 @@ def _max_steps(db: Session) -> int:
         return 8
 
 
+# Sentinel: start_job/run_to_completion fall back to the global job timeout when no override given.
+_USE_JOB_TIMEOUT = object()
+
+
+def _agent_step_timeout(db: Session) -> Optional[float]:
+    """Per-command bound for the AGENT loop. Unlike fire-and-forget jobs (which return after ~8s
+    and notify on completion), the agent AWAITS each command, so an unbounded command would
+    deadlock the whole loop and the caller. Default 600s; 0 -> fall back to the global job timeout
+    (which may itself be unbounded - an explicit admin choice). Truly long fire-and-forget tasks
+    should use the non-agentic `node <name> <cmd>` instead."""
+    try:
+        secs = float(_get(db, "node_exec_agent_step_timeout", "600"))
+    except ValueError:
+        secs = 600.0
+    return secs if secs > 0 else _job_timeout(db)
+
+
 # ---------------------------------------------------------------------------
 # Jobs
 # ---------------------------------------------------------------------------
@@ -140,17 +159,25 @@ def _ssh_argv(target: str, command: str) -> list[str]:
 async def _run(job: Job, timeout: Optional[float]) -> None:
     """Spawn the process, stream merged output into job.output, and finalize status."""
     try:
+        # start_new_session=True puts each job in its OWN process group/session, so on
+        # timeout/kill we can signal the whole group (the shell AND its children, e.g. a `sleep`
+        # in `cmd && sleep 10`) instead of orphaning grandchildren. Also makes getpgid(pid)==pid,
+        # so _terminate's killpg can only ever hit this job's group, never the service.
         if job.target == "local":
             proc = await asyncio.create_subprocess_shell(
                 job.command,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
+                start_new_session=True,
             )
         else:
             proc = await asyncio.create_subprocess_exec(
                 *_ssh_argv(job.target, job.command),
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
+                start_new_session=True,
             )
         job._proc = proc
 
@@ -172,7 +199,7 @@ async def _run(job: Job, timeout: Optional[float]) -> None:
             try:
                 await asyncio.wait_for(proc.wait(), timeout=5)  # reap so we don't leak the child
             except asyncio.TimeoutError:
-                proc.kill()
+                _signal_group(proc, signal.SIGKILL)
             if not job.done:  # don't clobber a kill that raced in
                 job.status = "failed"
                 job.output += f"\n[killed: exceeded {timeout:.0f}s timeout]"
@@ -205,20 +232,35 @@ async def _run(job: Job, timeout: Optional[float]) -> None:
                 logger.warning(f"[node] on_complete for job #{job.id} failed: {e}")
 
 
-def _terminate(proc: asyncio.subprocess.Process) -> None:
+def _signal_group(proc: asyncio.subprocess.Process, sig: int) -> None:
+    """Signal the job's whole process group (jobs start their own session), so a shell's children
+    die too instead of orphaning. Falls back to signalling just the process if the group lookup
+    fails. Safe: each job is its own session leader, so the group only contains that job's tree."""
+    if proc.returncode is not None:
+        return
     try:
-        proc.terminate()
-    except ProcessLookupError:
-        pass
-    except Exception as e:
-        logger.debug(f"[node] terminate failed: {e}")
+        os.killpg(os.getpgid(proc.pid), sig)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            proc.send_signal(sig)
+        except (ProcessLookupError, Exception):
+            pass
+
+
+def _terminate(proc: asyncio.subprocess.Process) -> None:
+    _signal_group(proc, signal.SIGTERM)
 
 
 def start_job(db: Session, node: str, target: str, command: str,
               user_id: Optional[int] = None,
-              on_complete: Optional[Callable[["Job"], Awaitable[None]]] = None) -> Job:
-    """Create a job and launch it as a background task. Returns immediately."""
+              on_complete: Optional[Callable[["Job"], Awaitable[None]]] = None,
+              timeout=_USE_JOB_TIMEOUT) -> Job:
+    """Create a job and launch it as a background task. Returns immediately.
+
+    `timeout` overrides the per-job kill timeout (seconds; None = unbounded). Defaults to the
+    global node_exec_job_timeout; the agent passes its own bound so a command can't hang the loop."""
     global _next_id
+    _timeout = _job_timeout(db) if timeout is _USE_JOB_TIMEOUT else timeout
     with _lock:
         job = Job(id=_next_id, node=node, target=target, command=command, user_id=user_id)
         job._on_complete = on_complete
@@ -228,7 +270,7 @@ def start_job(db: Session, node: str, target: str, command: str,
         if len(_jobs) > _MAX_JOBS:
             for jid in sorted(j.id for j in _jobs.values() if j.done)[: len(_jobs) - _MAX_JOBS]:
                 del _jobs[jid]
-    job._task = asyncio.create_task(_run(job, _job_timeout(db)))
+    job._task = asyncio.create_task(_run(job, _timeout))
     return job
 
 
@@ -257,9 +299,9 @@ async def await_job(job: Job, wait: float = 8.0) -> Job:
 
 
 async def run_to_completion(db: Session, node: str, target: str, command: str,
-                            user_id: Optional[int] = None) -> Job:
-    """Start a job and wait for it to fully finish (respecting the configured timeout)."""
-    job = start_job(db, node, target, command, user_id=user_id)
+                            user_id: Optional[int] = None, timeout=_USE_JOB_TIMEOUT) -> Job:
+    """Start a job and wait for it to fully finish (respecting the configured/overridden timeout)."""
+    job = start_job(db, node, target, command, user_id=user_id, timeout=timeout)
     if job._task is not None:
         try:
             await asyncio.shield(job._task)
@@ -427,11 +469,16 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                     continue
                 transcript.append(f"\n**Step {step}** — `{cmd}`")
                 await _say(f"⚙️ `{cmd}`")
-                job = await run_to_completion(db, node, target, cmd, user_id=user.id)
+                # Bounded per-step: an unbounded command would deadlock the agent + caller.
+                job = await run_to_completion(db, node, target, cmd, user_id=user.id,
+                                              timeout=_agent_step_timeout(db))
                 out = job.output.strip() or "(no output)"
                 transcript.append(f"```\n{tail(out, 1500)}\n```")
+                # Tell the model explicitly when a command was killed for running too long, so it
+                # can adapt (e.g. add a count/limit, background it, or finish) instead of retrying.
+                _status = " [killed: timed out]" if job.status == "killed" or "timeout]" in out else ""
                 messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
-                                 "content": f"exit {job.exit_code}\n{tail(out, 4000)}"})
+                                 "content": f"exit {job.exit_code}{_status}\n{tail(out, 4000)}"})
             else:
                 messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
                                  "content": f"(unknown tool: {name})"})
