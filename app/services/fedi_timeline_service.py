@@ -39,9 +39,12 @@ _REPLY_POLL_BUDGET = 30       # max wall-clock seconds spent re-checking roots p
                               # 150-root catch-up can't drag a single poll out to minutes (it runs
                               # every cycle anyway — deferred roots are picked up next time)
 _MAX_ANCESTORS = 12           # cap ancestors backfilled to anchor an orphan reply's conversation
-_POLL_TIMEOUT = 240           # hard cap on one poll_once. APScheduler runs us with max_instances=1,
+_POLL_TIMEOUT = 90            # hard cap on one poll_once. APScheduler runs us with max_instances=1,
                               # so a single wedged poll would otherwise freeze the whole bridge
                               # indefinitely; cancelling it frees the slot and the next cycle retries.
+                              # Kept low so a wedge costs a ~90s gap, not minutes. Normal polls finish
+                              # in seconds; a cancelled catch-up just resumes (TimelinePost dedup).
+_DOWNLOAD_TIMEOUT = 25       # hard total wall-clock cap on a single remote media/avatar download
 _last_reply_poll = 0.0        # monotonic ts of the last reply re-check (per-process)
 _TAG_RE = re.compile(r"<[^>]+>")
 _BREAK_RE = re.compile(r"<\s*br\s*/?\s*>|</\s*p\s*>", re.IGNORECASE)
@@ -284,15 +287,20 @@ def _body_html(avatar_mxc: str | None, post: dict) -> str:
 # --- media / avatars --------------------------------------------------------
 
 async def _download(url: str) -> tuple[bytes | None, str]:
-    """Download bytes (with a size cap). Returns (data, mime) or (None, '')."""
+    """Download bytes (with a size cap) from an arbitrary remote host. Returns (data, mime)
+    or (None, '').
+
+    httpx's read timeout only bounds the gap *between* bytes, so a remote host that trickles
+    data a byte at a time can stall the request indefinitely and wedge the whole poll. The
+    asyncio.wait_for caps total wall-clock time regardless of how the bytes arrive."""
     try:
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-            resp = await client.get(url, headers=_UA)
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            resp = await asyncio.wait_for(client.get(url, headers=_UA), timeout=_DOWNLOAD_TIMEOUT)
             if resp.status_code != 200 or len(resp.content) > _MAX_DL:
                 return None, ""
             return resp.content, (resp.headers.get("content-type", "").split(";")[0].strip())
     except Exception as e:
-        logger.warning(f"[fedi-timeline] download failed for {url}: {e}")
+        logger.warning(f"[fedi-timeline] download failed/timeout for {url}: {e}")
         return None, ""
 
 
