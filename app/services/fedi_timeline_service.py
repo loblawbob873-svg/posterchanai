@@ -83,6 +83,7 @@ def _norm_misskey(n: dict) -> dict:
             "text": rn.get("text") or "",
             "html": None,
             "emojis": _emoji_url_map(ru.get("emojis")),
+            "content_emojis": _emoji_url_map(rn.get("emojis")),
         }
     return {
         "id": n.get("id"),
@@ -98,6 +99,7 @@ def _norm_misskey(n: dict) -> dict:
         "html": None,                          # Misskey text is MFM/plain → render to HTML
         "media": media,
         "quote": quote,
+        "content_emojis": _emoji_url_map(n.get("emojis")),   # custom emoji used in the note text
         "url": n.get("url"),                   # human URL to the post (remote notes only)
         "in_reply_to_id": n.get("replyId"),    # parent note id (for proper thread reply chains)
         "replies_count": n.get("repliesCount") or 0,
@@ -119,6 +121,7 @@ def _norm_pleroma(s: dict) -> dict:
             "text": _strip_html(sub.get("content", "")),
             "html": sub.get("content"),
             "emojis": _emoji_url_map(sub_acct.get("emojis")),
+            "content_emojis": _emoji_url_map(sub.get("emojis")),
         }
     return {
         "id": s.get("id"),
@@ -134,6 +137,7 @@ def _norm_pleroma(s: dict) -> dict:
         "html": s.get("content"),              # Pleroma content is already HTML
         "media": media,
         "quote": quote,
+        "content_emojis": _emoji_url_map(s.get("emojis")),   # custom emoji used in the content
         "url": s.get("url") or s.get("uri"),   # human URL to the post/thread
         "in_reply_to_id": s.get("in_reply_to_id"),  # parent status id (for thread reply chains)
         "replies_count": s.get("replies_count") or 0,
@@ -252,8 +256,8 @@ def _body_html(avatar_mxc: str | None, post: dict) -> str:
     segments = [header]
     if post["text"]:
         # Pleroma content is HTML (strip profile links so no preview card); Misskey is plain text.
-        segments.append(_strip_profile_links(post["html"]) if post.get("html")
-                        else render_matrix_html(post["text"]))
+        body = _strip_profile_links(post["html"]) if post.get("html") else render_matrix_html(post["text"])
+        segments.append(_apply_emojis(body, post.get("content_emoji_mxc")))   # custom emoji → <img>
     q = post.get("quote")
     if q:
         qname = _apply_emojis(html.escape(q.get('display') or q.get('acct') or ''), q.get('emoji_mxc'))
@@ -264,6 +268,7 @@ def _body_html(avatar_mxc: str | None, post: dict) -> str:
             qbody = render_matrix_html(q["text"])
         else:
             qbody = ""
+        qbody = _apply_emojis(qbody, q.get("content_emoji_mxc"))
         block = f"<blockquote>{html.escape(_quote_label(post))} {qhead}" + (f"<br>{qbody}" if qbody else "") + "</blockquote>"
         segments.append(block)
     return "<br><br>".join(segments)
@@ -330,9 +335,13 @@ async def _deliver(db: Session, hs: str, bot_token: str, room_id: str, platform:
     # Resolve custom-emoji shortcodes in the display names to inline Matrix images.
     post["author"]["emoji_mxc"] = await _resolve_name_emojis(
         db, hs, bot_token, post["author"].get("display") or "", post["author"].get("emojis") or {})
+    post["content_emoji_mxc"] = await _resolve_name_emojis(
+        db, hs, bot_token, post.get("text") or "", post.get("content_emojis") or {})
     if post.get("quote"):
         post["quote"]["emoji_mxc"] = await _resolve_name_emojis(
             db, hs, bot_token, post["quote"].get("display") or "", post["quote"].get("emojis") or {})
+        post["quote"]["content_emoji_mxc"] = await _resolve_name_emojis(
+            db, hs, bot_token, post["quote"].get("text") or "", post["quote"].get("content_emojis") or {})
     # For a thread reply, point m.in_reply_to at the actual parent message (if we delivered it)
     # so Element renders the real reply chain instead of every reply hanging off the root.
     parent_event = None
