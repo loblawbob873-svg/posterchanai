@@ -76,7 +76,9 @@ arg (`clip <start> <end>`).
 ### Schedulers
 
 APScheduler `AsyncIOScheduler`, started in `app/main.py` startup **only on port 3051** (guard
-against duplicate runs): `logs_scheduler` and `social_notifications_service`.
+against duplicate runs): `logs_scheduler`, `social_notifications_service`, `nitter_feeds_service`,
+`fedi_timeline_service`, and `matrix_notifications_service`. Each exposes idempotent
+`start_*`/`stop_*` helpers and is wired into the port-3051 startup/shutdown blocks.
 
 `logs_scheduler` (`app/services/logs_scheduler.py`) is the **agentic system-health report**, not a
 hardcoded log collector anymore. For each selected node it drives `node_service.run_agent`
@@ -128,6 +130,42 @@ open a fresh `SessionLocal` and capture any needed config up front.
     rooms** are collapsed into a single **"open Element" notice per room per poll** (no content,
     no `SocialReplyMap` row since there's nothing to reply to); encrypted group events are
     ignored. E2EE-by-default means this is the common DM case.
+- **Fediverse timeline → Matrix bridge** (`app/services/fedi_timeline_service.py`): mirrors ONE
+  Misskey/Pleroma timeline (home/global/local) into ONE admin-configured Matrix room, posting via
+  the fedi-timeline bot account. Each note is a thread root; its attachments and federated replies
+  are thread children. Author avatar/name links to the profile; `@user@host` handles are linkified.
+  Dedup + action routing go through the **`TimelinePost`** table (`(room_id, event_id)` →
+  `note_uri`); **`note_uri` (canonical AP URI) is the cross-instance dedup key**, with `note_id` as
+  a same-instance fallback. Avatars are uploaded once and cached in **`MatrixAvatarCache`**. First
+  poll just sets the `fedi_timeline_since` cursor (no backfill); the reply re-check is throttled
+  (`_REPLY_POLL_INTERVAL`, 6h window, capped roots) so a busy feed can't hammer the source.
+  Quote-posts/boosts in the feed render the quoted original in a `<blockquote>` (Misskey
+  `renote`, Pleroma `quote`/`reblog`) so it isn't lost. Members act from Element — handled by
+  `POST /api/matrix/timeline-action` (Bearer API key, like `/command`): a top-level message →
+  new post, a thread reply → reply (resolved to the **thread root**, with auto-mention of the
+  author), ❤/any emoji → reaction (Misskey keeps the exact emoji; Pleroma emoji-react→favourite),
+  🔁 → boost. Reply shortcuts: a one-word reply of `boost`/`rt`/🔁 boosts, `fav`/`like`/❤ favourites.
+  **Share→boost/quote:** forwarding a delivered post back into the room is matched against the
+  stored `TimelinePost.body` and becomes a real boost (author preserved); add a comment (Element
+  "Quote", `>`-prefixed) and it becomes a quote-post (Misskey quote-renote; Pleroma comment+link).
+  Matrix sends ride out rate limits via a 429-retry honouring `retry_after_ms`. The acting account is the member's own (same-instance
+  → same-platform → any linked), resolving cross-instance via the canonical AP URI. Replies/posts
+  made this way are recorded (synthetic `event_id`) so the descendants poller won't echo them back.
+  **The Matrix bot half lives in the SEPARATE `~/posterchan` repo** (`matrixListener.py` →
+  `_handle_timeline_event`, gated on `FEDI_TIMELINE_ROOM_ID`); a change to the action contract must
+  be made there too (commit that repo separately — `sync.sh` restarts but doesn't commit it).
+- **Personal fedi notifications → Matrix DM** (`app/services/matrix_notifications_service.py`):
+  the Matrix counterpart of the social relay — DMs each user (via the fedi-timeline bot, in a
+  per-user room persisted in `UserSetting matrix_notif_dm_room`) their Pleroma/Misskey
+  notifications. Reuses the social relay's `_norm_*`/`_format`; keeps **its own** per-user cursors
+  (`UserSetting matrix_notif_{platform}_since`) so it doesn't consume the Telegram relay's. Gated
+  on global `matrix_notif_enabled` (admin kill-switch, default off) + the user's existing
+  `social_notif_enabled` opt-in + a linked Matrix account. First poll sets cursors (no backfill).
+  Messages are rendered Matrix-native (hand-built HTML so handles like `@a_b_c` aren't markdown-
+  mangled). **Reply-back:** each delivered notification with a post records a **`MatrixNotifyMap`**
+  row (`(room_id, event_id)` → target note/status + visibility); when the user replies to that DM
+  message, the bot calls `POST /api/matrix/notification-reply`, which posts the reply on their
+  account (returns `not a notification` so the bot falls through for non-notification replies).
 
 ## Conventions / gotchas
 

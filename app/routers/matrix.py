@@ -162,6 +162,17 @@ class MatrixYtdlRequest(BaseModel):
     compress: Optional[bool] = False  # compress the (clipped) video; video only
 
 
+class MatrixTimelineActionRequest(BaseModel):
+    matrix_user_id: str          # the acting member's mxid → their linked fedi account
+    room_id: str
+    action: str                  # "like" | "boost" | "reply" | "post"
+    target_event_id: Optional[str] = None  # the timeline post being acted on (not for "post")
+    thread_root_event_id: Optional[str] = None  # fallback target when target_event_id is an untracked thread child
+    text: Optional[str] = None   # body for "reply" / "post"
+    emoji: Optional[str] = None  # reaction emoji for "like" (Misskey keeps it; default ❤️)
+    media: Optional[list[MatrixMediaItem]] = None  # attachments (base64) for "reply"/"post"
+
+
 @router.post("/command")
 async def execute_matrix_command(
     data: MatrixCommandRequest,
@@ -758,3 +769,416 @@ async def matrix_ytdl_fetch(
         "mime": result["mime"],
         "data": _b64.b64encode(result["data"]).decode("ascii"),
     }
+
+
+def _linked_fedi_accounts(user: User) -> list[tuple[str, str, str]]:
+    """A user's linked fediverse accounts as (platform, instance_url, token)."""
+    accounts: list[tuple[str, str, str]] = []
+    if user.misskey_enabled and user.misskey_instance_url and user.misskey_api_token:
+        accounts.append(("misskey", user.misskey_instance_url, user.misskey_api_token))
+    if user.pleroma_enabled and user.pleroma_instance_url and user.pleroma_access_token:
+        accounts.append(("pleroma", user.pleroma_instance_url, user.pleroma_access_token))
+    return accounts
+
+
+def _get_setting(db: Session, key: str, default: str = "") -> str:
+    from app.models import Setting
+    s = db.query(Setting).filter(Setting.key == key).first()
+    return s.value if s and s.value else default
+
+
+def _full_handle(post) -> str:
+    """The post author's full @user@host handle (host filled in from the source instance for
+    local authors) so a reply mention resolves cross-instance."""
+    acct = (post.author_acct or "").lstrip("@")
+    if not acct:
+        return ""
+    if "@" not in acct:
+        host = (post.instance_url or "").split("://", 1)[-1].rstrip("/")
+        acct = f"{acct}@{host}" if host else acct
+    return f"@{acct}"
+
+
+def _collapse_ws(s: str) -> str:
+    return " ".join((s or "").split())
+
+
+def _split_shared(text: str) -> tuple[str, str]:
+    """Split a shared/quoted message into (quoted_text, comment). Element's "Quote" prefixes the
+    quoted lines with '>'; the rest is the member's comment. A plain forward has no '>' lines, so
+    the whole message is the quoted text with no comment."""
+    lines = text.splitlines()
+    quote_lines = [ln.lstrip()[1:].lstrip() for ln in lines if ln.lstrip().startswith(">")]
+    if quote_lines:
+        comment = "\n".join(ln for ln in lines if not ln.lstrip().startswith(">")).strip()
+        return "\n".join(quote_lines).strip(), comment
+    return text.strip(), ""
+
+
+import re as _re_mod
+_MATRIX_TO_RE = _re_mod.compile(r'https?://matrix\.to/#/[^\s)>\]]+', _re_mod.IGNORECASE)
+
+
+def _parse_matrix_to(text: str) -> tuple:
+    """If text contains a matrix.to message link (Element's Share → Copy link), return
+    (event_id, comment) where comment is the text with the link removed; else (None, text).
+    The event id is the last segment of the matrix.to fragment (a `$...` id)."""
+    from urllib.parse import unquote
+    m = _MATRIX_TO_RE.search(text or "")
+    if not m:
+        return None, text
+    url = m.group(0)
+    frag = url.split("#/", 1)[1] if "#/" in url else ""
+    frag = frag.split("?", 1)[0]
+    last = unquote(frag.split("/")[-1]) if frag else ""
+    if not last.startswith("$"):
+        return None, text
+    comment = (text[:m.start()] + text[m.end():]).strip()
+    return last, comment
+
+
+def _match_delivered_post(db, room_id: str, quoted_text: str):
+    """Find a post we delivered to this room whose body matches quoted_text (so sharing it back
+    boosts/quotes the ORIGINAL instead of reposting the text as new content)."""
+    from app.models import TimelinePost
+    target = _collapse_ws(quoted_text)
+    if len(target) < 8:            # too short to match confidently
+        return None
+    rows = (
+        db.query(TimelinePost)
+        .filter(TimelinePost.room_id == room_id, TimelinePost.body.isnot(None))
+        .order_by(TimelinePost.id.desc())
+        .limit(300)
+        .all()
+    )
+    for r in rows:
+        if _collapse_ws(r.body) == target:
+            return r
+    return None
+
+
+def _decode_media(items) -> list:
+    """Decode [MatrixMediaItem] → [(bytes, mime)] for posting as fediverse attachments."""
+    import base64 as _b64
+    out = []
+    for it in (items or []):
+        try:
+            out.append((_b64.b64decode(it.data), it.content_type or ""))
+        except Exception as e:
+            logger.warning(f"[timeline-action] bad media item {getattr(it, 'filename', '?')}: {e}")
+    return out
+
+
+def _pick_post_account(accounts: list, feed_platform: str) -> tuple:
+    """Account for a brand-new post (no source post to match): prefer the platform the room's
+    feed comes from, else the first linked account."""
+    prefer = [a for a in accounts if a[0] == feed_platform]
+    return prefer[0] if prefer else accounts[0]
+
+
+def _pick_account(accounts: list, post) -> Optional[tuple]:
+    """Choose which linked account performs the action: prefer the same instance the post
+    was read from, else the same platform, else any linked account (cross-platform resolves
+    by canonical AP URI)."""
+    src = (post.instance_url or "").rstrip("/")
+    same_instance = [a for a in accounts if a[0] == post.platform and a[1].rstrip("/") == src]
+    if same_instance:
+        return same_instance[0]
+    same_platform = [a for a in accounts if a[0] == post.platform]
+    if same_platform:
+        return same_platform[0]
+    return accounts[0] if accounts else None
+
+
+async def _resolve_target_id(platform: str, instance_url: str, token: str, post) -> Optional[str]:
+    """The post's id on the acting account's instance. Same-instance → the stored note_id;
+    otherwise resolve by canonical AP URI."""
+    from app.services import misskey_service, pleroma_service
+    if platform == post.platform and instance_url.rstrip("/") == (post.instance_url or "").rstrip("/"):
+        return post.note_id
+    if not post.note_uri:
+        return None
+    if platform == "misskey":
+        obj = await misskey_service.resolve_note(instance_url, token, post.note_uri)
+        return (obj or {}).get("id")
+    status = await pleroma_service.resolve_status(instance_url, token, post.note_uri)
+    return (status or {}).get("id")
+
+
+@router.post("/timeline-action")
+async def timeline_action(
+    data: MatrixTimelineActionRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Perform a fediverse-timeline interaction (❤ like / 🔁 boost / ↩ reply) on behalf of a
+    Matrix member, under that member's own linked Misskey/Pleroma account.
+
+    Called by the posterchan Matrix bot for events in the configured timeline room.
+    Authenticated by the bot's Bearer API key (same as /command); the action then runs as
+    whichever linked member sent it."""
+    from app.models import APIKey, TimelinePost
+    from app.services import misskey_service, pleroma_service
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="API key required")
+    token = auth_header[7:].strip()
+    api_key_obj = db.query(APIKey).filter(APIKey.key == token, APIKey.is_active == True).first()
+    if not api_key_obj:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    mxid = data.matrix_user_id.strip()
+    user = db.query(User).filter(User.matrix_enabled == True, User.matrix_user_id == mxid).first()
+    if not user:
+        return {"ok": False, "result": "Matrix user is not linked to any account."}
+
+    action = (data.action or "").lower().strip()
+    accounts = _linked_fedi_accounts(user)
+    if not accounts:
+        return {"ok": False, "result": "Connect a Misskey or Pleroma account in User Settings → Social first."}
+
+    # A plain top-level message → a brand-new post under the member's own account. No target
+    # post to resolve; the account defaults to the platform the room's feed comes from.
+    if action == "post":
+        text = (data.text or "").strip()
+        media = _decode_media(data.media)
+        if not text and not media:
+            return {"ok": False, "result": "Nothing to post (empty message)."}
+        # Share→boost / share→quote: if the message points at a post we delivered, act on the
+        # ORIGINAL (author preserved) instead of reposting the text as fresh content. We detect
+        # it two ways: a matrix.to message link (Element Share → Copy link), or the forwarded/
+        # quoted text matching a stored post body. Comment present → quote; absent → boost.
+        if text and not media:
+            from app.models import TimelinePost as _TP
+            ev, comment = _parse_matrix_to(text)
+            matched = None
+            if ev:
+                matched = db.query(_TP).filter(_TP.room_id == data.room_id, _TP.event_id == ev).first()
+                if not matched:
+                    # Link points at something we don't track (a media child, an old event). Do
+                    # NOT post the raw matrix.to link to the fediverse — guide the user instead.
+                    return {"ok": False, "result": "Couldn't find that post to boost/quote. Reply to the post with `boost` or `quote <comment>` instead."}
+            if not matched:
+                quoted, comment = _split_shared(text)
+                matched = _match_delivered_post(db, data.room_id, quoted)
+            if matched:
+                mplatform, minstance, mtoken = _pick_account(accounts, matched)
+                try:
+                    mtarget = await _resolve_target_id(mplatform, minstance, mtoken, matched)
+                    if not mtarget:
+                        return {"ok": False, "result": "Couldn't find that post on your instance."}
+                    who = f"@{matched.author_acct}" if matched.author_acct else ""
+                    if comment:
+                        if mplatform == "misskey":
+                            await misskey_service.post_note(minstance, mtoken, comment, renote_id=mtarget)
+                        else:
+                            # Pleroma/Mastodon have no native quote → comment + link to the original.
+                            link = matched.note_uri or ""
+                            await pleroma_service.post_status(minstance, mtoken, f"{comment}\n\n{link}".strip())
+                        return {"ok": True, "result": f"🗣️ quote-posted {who}".strip()}
+                    if mplatform == "misskey":
+                        await misskey_service.renote(minstance, mtoken, mtarget)
+                    else:
+                        await pleroma_service.reblog_status(minstance, mtoken, mtarget)
+                    return {"ok": True, "result": f"🔁 boosted {who}".strip()}
+                except Exception as e:
+                    logger.warning(f"[timeline-action] share→boost/quote failed for {mxid}: {e}")
+                    return {"ok": False, "result": f"Couldn't boost/quote: {e}"}
+        # Safety net: never federate an internal matrix.to link as post content.
+        if text:
+            text = _MATRIX_TO_RE.sub("", text).strip()
+            if not text and not media:
+                return {"ok": False, "result": "Nothing to post."}
+        feed_platform = _get_setting(db, "fedi_timeline_platform", "misskey")
+        platform, instance_url, acct_token = _pick_post_account(accounts, feed_platform)
+        try:
+            if platform == "misskey":
+                note = (await misskey_service.post_note(instance_url, acct_token, text, media=media or None)) or {}
+                created = note.get("createdNote") or {}
+                new_id, new_uri = created.get("id"), created.get("uri")
+                if new_id and not new_uri:
+                    new_uri = f"{instance_url.rstrip('/')}/notes/{new_id}"
+            else:
+                status = (await pleroma_service.post_status(instance_url, acct_token, text, media=media or None)) or {}
+                new_id, new_uri = status.get("id"), status.get("uri")
+            # Record it so the poller doesn't echo the member's own post back into the room
+            # when it shows up in the feed (dedup keys on note_uri/note_id).
+            if new_id:
+                db.add(TimelinePost(
+                    room_id=data.room_id, event_id=f"fedi-post:{new_id}",
+                    thread_root_event_id="self",  # not a thread child; just a non-null marker
+                    platform=platform, instance_url=instance_url, note_id=new_id,
+                    note_uri=new_uri, author_acct=user.matrix_user_id,
+                ))
+                db.commit()
+            return {"ok": True, "result": "✅ posted"}
+        except Exception as e:
+            logger.warning(f"[timeline-action] post failed for {mxid}: {e}")
+            return {"ok": False, "result": f"Post failed: {e}"}
+
+    post = db.query(TimelinePost).filter(
+        TimelinePost.room_id == data.room_id,
+        TimelinePost.event_id == data.target_event_id,
+    ).first()
+    if not post and data.thread_root_event_id:
+        # target was an untracked thread child (e.g. a media event); fall back to the root.
+        post = db.query(TimelinePost).filter(
+            TimelinePost.room_id == data.room_id,
+            TimelinePost.event_id == data.thread_root_event_id,
+        ).first()
+    if not post:
+        return {"ok": False, "result": "That message isn't a tracked timeline post."}
+
+    platform, instance_url, acct_token = _pick_account(accounts, post)
+
+    try:
+        target_id = await _resolve_target_id(platform, instance_url, acct_token, post)
+        if not target_id:
+            return {"ok": False, "result": "Couldn't find that post on your instance."}
+
+        if action == "like":
+            emoji = (data.emoji or "").strip()
+            if platform == "misskey":
+                # Misskey reactions are per-emoji (incl. custom). Pass the member's emoji
+                # through; if the instance rejects it (unknown custom emoji) fall back to ❤️.
+                try:
+                    await misskey_service.create_reaction(instance_url, acct_token, target_id, reaction=emoji or "❤️")
+                except Exception:
+                    if not emoji:
+                        raise
+                    await misskey_service.create_reaction(instance_url, acct_token, target_id, reaction="❤️")
+                return {"ok": True, "result": f"{emoji or '❤'} reacted"}
+            # Pleroma: try an emoji reaction when a non-heart emoji was used (Pleroma-only
+            # endpoint), otherwise/ on failure (e.g. vanilla Mastodon) a plain favourite.
+            if emoji and emoji not in ("❤", "❤️", "♥", "♥️"):
+                try:
+                    await pleroma_service.emoji_react(instance_url, acct_token, target_id, emoji)
+                    return {"ok": True, "result": f"{emoji} reacted"}
+                except Exception:
+                    pass
+            await pleroma_service.favourite_status(instance_url, acct_token, target_id)
+            return {"ok": True, "result": "❤ favourited"}
+
+        if action == "boost":
+            if platform == "misskey":
+                await misskey_service.renote(instance_url, acct_token, target_id)
+            else:
+                await pleroma_service.reblog_status(instance_url, acct_token, target_id)
+            return {"ok": True, "result": "🔁 boosted"}
+
+        if action == "reply":
+            text = (data.text or "").strip()
+            media = _decode_media(data.media)
+            if not text and not media:
+                return {"ok": False, "result": "No reply text provided."}
+            # Auto-mention the author so the reply notifies them (fedi convention), unless the
+            # member already @-mentioned them. (in_reply_to also notifies, but the visible
+            # mention is what users expect from a reply.)
+            mention = _full_handle(post)
+            if mention and text and mention.lower() not in text.lower():
+                text = f"{mention} {text}"
+            if platform == "misskey":
+                note = (await misskey_service.post_note(instance_url, acct_token, text, reply_id=target_id, media=media or None)) or {}
+                created = note.get("createdNote") or {}
+                new_id, new_uri = created.get("id"), created.get("uri")
+                if new_id and not new_uri:
+                    new_uri = f"{instance_url.rstrip('/')}/notes/{new_id}"
+            else:
+                status = (await pleroma_service.post_status(instance_url, acct_token, text, in_reply_to_id=target_id, media=media or None)) or {}
+                new_id, new_uri = status.get("id"), status.get("uri")
+            # Record the reply so the descendants poller won't re-post it when it federates
+            # back to the source instance (dedup keys on note_uri/note_id). The synthetic
+            # event_id keeps the row distinct without a real Matrix event (the member's reply
+            # is already visible in the room as their own message).
+            if new_id:
+                db.add(TimelinePost(
+                    room_id=post.room_id, event_id=f"fedi-reply:{new_id}",
+                    thread_root_event_id=post.thread_root_event_id or post.event_id,
+                    platform=platform, instance_url=instance_url, note_id=new_id,
+                    note_uri=new_uri, author_acct=user.matrix_user_id,
+                ))
+                db.commit()
+            return {"ok": True, "result": "↩ reply posted"}
+
+        if action == "quote":
+            comment = (data.text or "").strip()
+            if not comment:
+                return {"ok": False, "result": "Add a comment to quote-post."}
+            if platform == "misskey":
+                await misskey_service.post_note(instance_url, acct_token, comment, renote_id=target_id)
+            else:
+                # Pleroma/Mastodon have no native quote → comment + link to the original.
+                link = post.note_uri or ""
+                await pleroma_service.post_status(instance_url, acct_token, f"{comment}\n\n{link}".strip())
+            who = f"@{post.author_acct}" if post.author_acct else ""
+            return {"ok": True, "result": f"🗣️ quote-posted {who}".strip()}
+
+        return {"ok": False, "result": f"Unknown action: {action}"}
+    except Exception as e:
+        logger.warning(f"[timeline-action] {action} failed for {mxid}: {e}")
+        return {"ok": False, "result": f"Action failed: {e}"}
+
+
+class MatrixNotificationReplyRequest(BaseModel):
+    matrix_user_id: str
+    room_id: str
+    target_event_id: str   # the notification DM message being replied to
+    text: str
+
+
+@router.post("/notification-reply")
+async def notification_reply(
+    data: MatrixNotificationReplyRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Post a reply back to the fediverse when a user replies, in their Matrix notification DM,
+    to a forwarded notification (mention/reply/favourite/…). Returns {ok:false,"not a
+    notification"} when the replied-to message isn't a tracked notification, so the bot can fall
+    through to normal handling. Authenticated by the bot's Bearer API key (like /command)."""
+    from app.models import APIKey, MatrixNotifyMap
+    from app.services import misskey_service, pleroma_service
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="API key required")
+    token = auth_header[7:].strip()
+    if not db.query(APIKey).filter(APIKey.key == token, APIKey.is_active == True).first():
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    mxid = data.matrix_user_id.strip()
+    user = db.query(User).filter(User.matrix_enabled == True, User.matrix_user_id == mxid).first()
+    if not user:
+        return {"ok": False, "result": "not a notification"}
+
+    row = db.query(MatrixNotifyMap).filter(
+        MatrixNotifyMap.room_id == data.room_id,
+        MatrixNotifyMap.event_id == data.target_event_id,
+        MatrixNotifyMap.user_id == user.id,
+    ).order_by(MatrixNotifyMap.id.desc()).first()
+    if not row:
+        return {"ok": False, "result": "not a notification"}
+
+    text = (data.text or "").strip()
+    if not text:
+        return {"ok": False, "result": "Empty reply."}
+    try:
+        if row.platform == "misskey":
+            if not (user.misskey_instance_url and user.misskey_api_token):
+                return {"ok": False, "result": "Your Misskey account isn't connected."}
+            await misskey_service.post_note(
+                user.misskey_instance_url, user.misskey_api_token, text,
+                visibility=row.visibility or "public", reply_id=row.target_id,
+            )
+        else:
+            if not (user.pleroma_instance_url and user.pleroma_access_token):
+                return {"ok": False, "result": "Your Pleroma account isn't connected."}
+            await pleroma_service.post_status(
+                user.pleroma_instance_url, user.pleroma_access_token, text,
+                visibility=row.visibility or "public", in_reply_to_id=row.target_id,
+            )
+        return {"ok": True, "result": f"↩ replied on {row.platform.title()}"}
+    except Exception as e:
+        logger.warning(f"[notification-reply] failed for {mxid}: {e}")
+        return {"ok": False, "result": f"Reply failed: {e}"}

@@ -126,11 +126,15 @@ async def post_status(
     image_bytes: bytes | None = None,
     image_mime: str = "image/png",
     in_reply_to_id: str | None = None,
+    media: list[tuple[bytes, str]] | None = None,
 ) -> dict:
-    """Post a status to a Pleroma or Mastodon instance. Uploads image_bytes if provided.
-    Pass in_reply_to_id to post the status as a reply to an existing status."""
+    """Post a status to a Pleroma or Mastodon instance. Uploads image_bytes if provided, or
+    every (bytes, mime) in `media` when given. Pass in_reply_to_id to reply to a status."""
     media_ids = []
-    if image_bytes:
+    if media:
+        for (m_bytes, m_mime) in media:
+            media_ids.append(await upload_media(instance_url, access_token, m_bytes, m_mime))
+    elif image_bytes:
         media_id = await upload_media(instance_url, access_token, image_bytes, image_mime)
         media_ids.append(media_id)
 
@@ -160,6 +164,88 @@ async def fetch_notifications(instance_url: str, access_token: str, since_id: st
         resp.raise_for_status()
         data = resp.json()
         return data if isinstance(data, list) else []
+
+
+async def fetch_timeline(instance_url: str, access_token: str, timeline_type: str = "home",
+                         since_id: str | None = None, limit: int = 20) -> list[dict]:
+    """Fetch recent statuses from the home/public timeline (raw Mastodon/Pleroma statuses,
+    newest-first). 'global' → public; 'local' → public?local=true. When since_id is given,
+    only newer statuses are returned."""
+    base = instance_url.rstrip("/")
+    if timeline_type == "home":
+        url = f"{base}/api/v1/timelines/home"
+    else:
+        url = f"{base}/api/v1/timelines/public"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    params: dict = {"limit": limit}
+    if timeline_type == "local":
+        params["local"] = "true"
+    if since_id:
+        params["since_id"] = since_id
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(url, headers=headers, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+        return data if isinstance(data, list) else []
+
+
+async def fetch_context(instance_url: str, access_token: str, status_id: str) -> dict:
+    """Fetch a status's thread context ({"ancestors": [...], "descendants": [...]})."""
+    url = instance_url.rstrip("/") + f"/api/v1/statuses/{status_id}/context"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(url, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+        return data if isinstance(data, dict) else {}
+
+
+async def favourite_status(instance_url: str, access_token: str, status_id: str) -> dict:
+    """Favourite (like) a status."""
+    url = instance_url.rstrip("/") + f"/api/v1/statuses/{status_id}/favourite"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(url, headers=headers)
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def reblog_status(instance_url: str, access_token: str, status_id: str) -> dict:
+    """Reblog (boost) a status."""
+    url = instance_url.rstrip("/") + f"/api/v1/statuses/{status_id}/reblog"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(url, headers=headers)
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def emoji_react(instance_url: str, access_token: str, status_id: str, emoji: str) -> dict:
+    """Add an emoji reaction to a status (Pleroma extension; not on vanilla Mastodon).
+    `emoji` is a unicode emoji or a `:shortcode:`. Raises on non-2xx (caller may fall back
+    to a plain favourite)."""
+    from urllib.parse import quote
+    url = instance_url.rstrip("/") + f"/api/v1/pleroma/statuses/{status_id}/reactions/{quote(emoji, safe='')}"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.put(url, headers=headers)
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def resolve_status(instance_url: str, access_token: str, uri: str) -> dict | None:
+    """Resolve a remote post by its canonical AP URI to the local status on this instance
+    (so a member can act on it from their own instance). Returns the status dict or None."""
+    url = instance_url.rstrip("/") + "/api/v2/search"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    params = {"q": uri, "resolve": "true", "type": "statuses", "limit": 1}
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.get(url, headers=headers, params=params)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+    statuses = (data or {}).get("statuses") or []
+    return statuses[0] if statuses else None
 
 
 async def verify_credentials(instance_url: str, access_token: str) -> dict:

@@ -273,6 +273,18 @@ def _run_migrations():
         except Exception as e:
             logger.error(f"[MIGRATE] Failed to create unique index on telegram_chat_id: {e}")
 
+    # Add body column to timeline_posts (share→boost/quote content matching) if missing
+    if inspector.has_table('timeline_posts'):
+        tl_cols = {col['name'] for col in inspector.get_columns('timeline_posts')}
+        if 'body' not in tl_cols:
+            with engine.connect() as conn:
+                try:
+                    conn.execute(text("ALTER TABLE timeline_posts ADD COLUMN body TEXT"))
+                    conn.commit()
+                    logger.info("[MIGRATE] Added timeline_posts.body")
+                except Exception as e:
+                    logger.warning(f"[MIGRATE] Failed to add timeline_posts.body: {e}")
+
     # Create proxy_image_cache table if missing (used for image search thumb IDs across workers)
     if not inspector.has_table('proxy_image_cache'):
         with engine.connect() as conn:

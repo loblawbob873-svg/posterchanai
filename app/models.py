@@ -272,3 +272,64 @@ class SocialReplyMap(Base):
     event_id = Column(String(255), nullable=True)    # matrix event id being replied to
     visibility = Column(String(20), nullable=True)   # inherit parent visibility on reply
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class TimelinePost(Base):
+    """Maps a Matrix event in the timeline bridge room ↔ a fediverse post.
+
+    The fedi-timeline bridge (app/services/fedi_timeline_service.py) mirrors one Misskey/
+    Pleroma timeline into a single Matrix room. Each posted note records a row here, which
+    drives two things:
+      - dedup — skip a note we've already posted (matched on note_uri, the cross-instance
+        canonical AP URI, falling back to note_id for same-instance lookups);
+      - action routing — a member's ❤/🔁/reply on a Matrix event resolves back to the
+        underlying post via (room_id, event_id) → note_uri.
+    A reply made from Element also gets a row (with the federated note's canonical URI) so the
+    descendants poller won't re-post it once it federates back to the source instance."""
+    __tablename__ = "timeline_posts"
+    __table_args__ = (
+        Index('ix_timeline_event', 'room_id', 'event_id'),
+        Index('ix_timeline_note', 'room_id', 'note_id'),
+        Index('ix_timeline_uri', 'room_id', 'note_uri'),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    room_id = Column(String(255), nullable=False)
+    event_id = Column(String(255), nullable=False)
+    thread_root_event_id = Column(String(255), nullable=True)  # null = this row is a thread root
+    platform = Column(String(20), nullable=False)              # "misskey" | "pleroma"
+    instance_url = Column(String(255), nullable=False)         # source instance the note was read from
+    note_id = Column(String(255), nullable=False)              # note/status id on instance_url
+    note_uri = Column(String(512), nullable=True)              # canonical AP URI (cross-instance key)
+    author_acct = Column(String(255), nullable=True)
+    body = Column(Text, nullable=True)                         # plain text we posted (for share→boost matching)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class MatrixAvatarCache(Base):
+    """Caches the Matrix mxc URI an author's avatar was uploaded to, keyed by its source URL,
+    so the fedi-timeline bridge doesn't re-upload the same avatar on every post."""
+    __tablename__ = "matrix_avatar_cache"
+
+    author_avatar_url = Column(String(512), primary_key=True)
+    mxc = Column(String(255), nullable=False)
+    fetched_at = Column(DateTime, default=datetime.utcnow)
+
+
+class MatrixNotifyMap(Base):
+    """Maps a notification DMed into Matrix (matrix_notifications_service) → the fedi post it
+    concerns, so a user replying to that DM message can post the reply back to their account.
+
+    The Matrix-DM analogue of SocialReplyMap (which does this for Telegram)."""
+    __tablename__ = "matrix_notify_map"
+    __table_args__ = (Index('ix_matrix_notify_event', 'room_id', 'event_id'),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    room_id = Column(String(255), nullable=False)
+    event_id = Column(String(255), nullable=False)   # the notification's Matrix event
+    platform = Column(String(20), nullable=False)    # "misskey" | "pleroma"
+    instance_url = Column(String(255), nullable=False)
+    target_id = Column(String(255), nullable=False)  # note/status id to reply to
+    visibility = Column(String(20), nullable=True)   # inherit the parent's visibility
+    created_at = Column(DateTime, default=datetime.utcnow)

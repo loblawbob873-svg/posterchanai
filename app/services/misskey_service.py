@@ -61,11 +61,17 @@ async def post_note(
     image_bytes: bytes | None = None,
     image_mime: str = "image/png",
     reply_id: str | None = None,
+    media: list[tuple[bytes, str]] | None = None,
+    renote_id: str | None = None,
 ) -> dict:
-    """Create a note on the configured Misskey instance. Uploads image_bytes if provided.
-    Pass reply_id to post the note as a reply to an existing note."""
+    """Create a note on the configured Misskey instance. Uploads image_bytes if provided, or
+    every (bytes, mime) in `media` when given. Pass reply_id to reply to an existing note, or
+    renote_id (with text) to quote-renote one."""
     file_ids = []
-    if image_bytes:
+    if media:
+        for (m_bytes, m_mime) in media:
+            file_ids.append(await upload_file(instance_url, token, m_bytes, m_mime))
+    elif image_bytes:
         file_id = await upload_file(instance_url, token, image_bytes, image_mime)
         file_ids.append(file_id)
 
@@ -75,6 +81,8 @@ async def post_note(
         payload["fileIds"] = file_ids
     if reply_id:
         payload["replyId"] = reply_id
+    if renote_id:
+        payload["renoteId"] = renote_id   # with text → quote-renote; without → plain renote
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.post(url, json=payload)
         resp.raise_for_status()
@@ -95,6 +103,76 @@ async def fetch_notifications(instance_url: str, token: str, since_id: str | Non
         return data if isinstance(data, list) else []
 
 
+_TIMELINE_ENDPOINTS = {
+    "home": "/api/notes/timeline",
+    "global": "/api/notes/global-timeline",
+    "local": "/api/notes/local-timeline",
+}
+
+
+async def fetch_timeline(instance_url: str, token: str, timeline_type: str = "home",
+                         since_id: str | None = None, limit: int = 20) -> list[dict]:
+    """Fetch recent notes from the home/global/local timeline (raw Misskey notes,
+    newest-first). When since_id is given, only newer notes are returned."""
+    endpoint = _TIMELINE_ENDPOINTS.get(timeline_type, _TIMELINE_ENDPOINTS["home"])
+    url = instance_url.rstrip("/") + endpoint
+    payload: dict = {"i": token, "limit": limit}
+    if since_id:
+        payload["sinceId"] = since_id
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(url, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        return data if isinstance(data, list) else []
+
+
+async def fetch_children(instance_url: str, token: str, note_id: str, limit: int = 30) -> list[dict]:
+    """Fetch replies (descendants) of a note, raw Misskey notes."""
+    url = instance_url.rstrip("/") + "/api/notes/children"
+    payload = {"i": token, "noteId": note_id, "limit": limit, "depth": 5}
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(url, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        return data if isinstance(data, list) else []
+
+
+async def create_reaction(instance_url: str, token: str, note_id: str, reaction: str = "❤️") -> None:
+    """React to a note (the Misskey equivalent of a favourite). Returns 204 on success."""
+    url = instance_url.rstrip("/") + "/api/notes/reactions/create"
+    payload = {"i": token, "noteId": note_id, "reaction": reaction}
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(url, json=payload)
+        resp.raise_for_status()
+
+
+async def renote(instance_url: str, token: str, note_id: str) -> dict:
+    """Renote (boost) an existing note."""
+    url = instance_url.rstrip("/") + "/api/notes/create"
+    payload = {"i": token, "renoteId": note_id}
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(url, json=payload)
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def resolve_note(instance_url: str, token: str, uri: str) -> dict | None:
+    """Resolve a remote post by its canonical AP URI to the local note object on this
+    instance (so a member can act on it from their own instance). Returns the note dict
+    or None if it can't be resolved."""
+    url = instance_url.rstrip("/") + "/api/ap/show"
+    payload = {"i": token, "uri": uri}
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(url, json=payload)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+    # /api/ap/show returns {"type": "Note"|"User", "object": {...}}
+    if isinstance(data, dict) and data.get("type") == "Note":
+        return data.get("object")
+    return None
+
+
 def build_miauth_url(instance_url: str, session_id: str, callback_url: str, app_name: str = "PosterChanAI") -> str:
     """Build the MiAuth authorization URL to redirect the user to.
 
@@ -108,5 +186,7 @@ def build_miauth_url(instance_url: str, session_id: str, callback_url: str, app_
         f"{base}/miauth/{session_id}"
         f"?name={quote(app_name)}"
         f"&callback={callback_url}"
-        f"&permission=read:notifications,write:notes"
+        # write:reactions is needed for the timeline bridge's ❤ favourite (a Misskey reaction);
+        # write:notes covers posting notes, renotes (boost) and replies.
+        f"&permission=read:notifications,write:notes,write:reactions"
     )

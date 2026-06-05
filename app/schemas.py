@@ -222,6 +222,23 @@ class SettingsResponse(BaseModel):
     # Social notification relay (Misskey/Pleroma/Matrix → Telegram)
     social_notif_enabled: str = "true"       # global kill-switch (on by default; per-user toggle in User Settings is the real control)
     social_notif_poll_seconds: str = "60"    # poll interval in seconds
+    # Fediverse timeline → Matrix room bridge (see app/services/fedi_timeline_service.py).
+    # Shared feed: one source instance mirrored into one Matrix room; members act under their
+    # own linked accounts. Cursor is kept in a separate Setting row (fedi_timeline_since).
+    fedi_timeline_enabled: str = "false"
+    fedi_timeline_platform: str = "misskey"          # misskey | pleroma
+    fedi_timeline_instance_url: str = ""
+    fedi_timeline_token: str = ""                     # service token used to READ the source feed
+    fedi_timeline_type: str = "home"                  # home | global | local
+    fedi_timeline_matrix_homeserver: str = ""
+    fedi_timeline_matrix_bot_token: str = ""          # token used to POST into the room
+    fedi_timeline_room_id: str = ""
+    fedi_timeline_poll_seconds: str = "90"
+    fedi_timeline_include_replies: str = "true"
+    # Personal fedi notifications → private Matrix DM (uses the fedi-timeline bot account).
+    # Admin kill-switch (default off); per-user opt-in reuses social_notif_enabled.
+    matrix_notif_enabled: str = "false"
+    matrix_notif_poll_seconds: str = "60"
     # Remote node management (run OS commands on nodes over SSH, or 'local' on this host)
     node_exec_enabled: str = "false"
     node_exec_nodes: str = ""  # one per line: name|user@host  (host 'local' or empty = run on this host)

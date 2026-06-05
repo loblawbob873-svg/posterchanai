@@ -2,11 +2,37 @@
 
 import logging
 import time
+import uuid
 import httpx
 
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = 15.0
+
+
+def _txn_id() -> str:
+    """Unique transaction id. uuid (not the millisecond clock) so a burst of sends in the
+    same loop iteration can't collide and get deduplicated by the homeserver."""
+    return uuid.uuid4().hex
+
+
+async def _with_429_retry(make_request, attempts: int = 4):
+    """Call make_request() (an async fn returning a Response); on HTTP 429 honour the
+    homeserver's retry_after_ms and retry. Retrying the same txn id is idempotent on Matrix,
+    so this safely rides out the rate limits a busy feed bridge hits."""
+    import asyncio
+    resp = None
+    for _ in range(attempts):
+        resp = await make_request()
+        if resp.status_code != 429:
+            return resp
+        retry_ms = 1000
+        try:
+            retry_ms = int(resp.json().get("retry_after_ms", 1000))
+        except Exception:
+            pass
+        await asyncio.sleep(min(max(retry_ms, 100), 5000) / 1000.0)
+    return resp
 
 
 def render_matrix_html(text: str) -> str:
@@ -233,9 +259,42 @@ async def send_message(homeserver: str, access_token: str, room_id: str, text: s
         payload["format"] = "org.matrix.custom.html"
         payload["formatted_body"] = formatted
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        resp = await client.put(url, json=payload, headers=headers)
+        resp = await _with_429_retry(lambda: client.put(url, json=payload, headers=headers))
         if resp.status_code not in (200, 201):
             raise ValueError(f"Failed to send Matrix message: HTTP {resp.status_code} — {resp.text[:200]}")
+
+
+async def send_event(homeserver: str, access_token: str, room_id: str, body: str,
+                     html: str | None = None, thread_root_event_id: str | None = None) -> str:
+    """Send a text message and return its event_id.
+
+    Like send_message but: returns the new event_id (needed to thread replies under it),
+    accepts pre-rendered `html` (falls back to render_matrix_html(body)), and threads the
+    message under thread_root_event_id when given (m.thread relation, with an
+    m.in_reply_to fallback so non-threaded clients still show the relationship)."""
+    hs = homeserver.rstrip("/")
+    from urllib.parse import quote
+    import html as _html
+    encoded_room = quote(room_id, safe="")
+    url = f"{hs}/_matrix/client/v3/rooms/{encoded_room}/send/m.room.message/{_txn_id()}"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    formatted = html if html is not None else render_matrix_html(body)
+    payload: dict = {"msgtype": "m.text", "body": body}
+    if formatted != _html.escape(body, quote=False):
+        payload["format"] = "org.matrix.custom.html"
+        payload["formatted_body"] = formatted
+    if thread_root_event_id:
+        payload["m.relates_to"] = {
+            "rel_type": "m.thread",
+            "event_id": thread_root_event_id,
+            "is_falling_back": True,
+            "m.in_reply_to": {"event_id": thread_root_event_id},
+        }
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        resp = await _with_429_retry(lambda: client.put(url, json=payload, headers=headers))
+        if resp.status_code not in (200, 201):
+            raise ValueError(f"Failed to send Matrix event: HTTP {resp.status_code} — {resp.text[:200]}")
+        return resp.json().get("event_id", "")
 
 
 def _detect_mime(image_bytes: bytes) -> tuple[str, str]:
@@ -254,10 +313,36 @@ def _detect_mime(image_bytes: bytes) -> tuple[str, str]:
     return "image/jpeg", "image.jpg"
 
 
+async def upload_media_bytes(homeserver: str, access_token: str, data: bytes,
+                             mime: str, filename: str = "file") -> str:
+    """Upload raw bytes to the Matrix media repo and return the mxc:// URI.
+
+    Tries the v1 endpoint first, falling back to the legacy v3 path."""
+    hs = homeserver.rstrip("/")
+    from urllib.parse import quote
+    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": mime}
+    fname = quote(filename, safe="")
+    last_status, last_text = 0, ""
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        for media_url in [
+            f"{hs}/_matrix/client/v1/media/upload?filename={fname}",
+            f"{hs}/_matrix/media/v3/upload?filename={fname}",
+        ]:
+            resp = await _with_429_retry(lambda: client.post(media_url, content=data, headers=headers))
+            if resp.status_code in (200, 201):
+                mxc = resp.json().get("content_uri")
+                if mxc:
+                    return mxc
+            last_status, last_text = resp.status_code, resp.text[:200]
+    raise ValueError(f"Media upload failed: HTTP {last_status} — {last_text}")
+
+
 async def send_image(homeserver: str, access_token: str, room_id: str,
-                     image_bytes: bytes, caption: str = "", mime: str = "") -> None:
+                     image_bytes: bytes, caption: str = "", mime: str = "",
+                     thread_root_event_id: str | None = None) -> str:
     """Upload image/video bytes to Matrix media and send it in a room (m.image, or
-    m.video when the bytes are a video)."""
+    m.video when the bytes are a video). Threads under thread_root_event_id when given.
+    Returns the media event's event_id."""
     hs = homeserver.rstrip("/")
     from urllib.parse import quote
     detected_mime, filename = _detect_mime(image_bytes)
@@ -266,29 +351,11 @@ async def send_image(homeserver: str, access_token: str, room_id: str,
     is_video = mime.startswith("video/")
     headers_auth = {"Authorization": f"Bearer {access_token}"}
 
+    mxc_uri = await upload_media_bytes(homeserver, access_token, image_bytes, mime, filename)
+
     async with httpx.AsyncClient(timeout=60.0) as client:
-        # Upload media — try v1 endpoint first, fall back to legacy
-        for media_url in [
-            f"{hs}/_matrix/client/v1/media/upload?filename={filename}",
-            f"{hs}/_matrix/media/v3/upload?filename={filename}",
-        ]:
-            upload_resp = await client.post(
-                media_url,
-                content=image_bytes,
-                headers={**headers_auth, "Content-Type": mime},
-            )
-            if upload_resp.status_code in (200, 201):
-                mxc_uri = upload_resp.json().get("content_uri")
-                break
-        else:
-            raise ValueError(f"Media upload failed: HTTP {upload_resp.status_code} — {upload_resp.text[:200]}")
-
-        if not mxc_uri:
-            raise ValueError("Media upload returned no content_uri")
-
         encoded_room = quote(room_id, safe="")
-        txn_id = str(int(time.time() * 1000))
-        send_url = f"{hs}/_matrix/client/v3/rooms/{encoded_room}/send/m.room.message/{txn_id}"
+        send_url = f"{hs}/_matrix/client/v3/rooms/{encoded_room}/send/m.room.message/{_txn_id()}"
         _info = {"mimetype": mime, "size": len(image_bytes)}
         # Pixel dimensions — Matrix clients (Element) need w/h to render an image
         # inline instead of showing a download attachment. Skip for video (PIL can't
@@ -301,22 +368,29 @@ async def send_image(homeserver: str, access_token: str, room_id: str,
                     _info["w"], _info["h"] = _im.width, _im.height
             except Exception as _dim_err:
                 logger.debug(f"Could not read image dimensions: {_dim_err}")
-        payload = {
+        payload: dict = {
             "msgtype": "m.video" if is_video else "m.image",
             "body": filename,
             "url": mxc_uri,
             "info": _info,
         }
-        # If there's a caption send it as a separate text message after the image
-        resp = await client.put(send_url, json=payload, headers=headers_auth)
+        if thread_root_event_id:
+            payload["m.relates_to"] = {
+                "rel_type": "m.thread",
+                "event_id": thread_root_event_id,
+                "is_falling_back": True,
+                "m.in_reply_to": {"event_id": thread_root_event_id},
+            }
+        resp = await _with_429_retry(lambda: client.put(send_url, json=payload, headers=headers_auth))
         if resp.status_code not in (200, 201):
             raise ValueError(f"Failed to send Matrix image: HTTP {resp.status_code} — {resp.text[:200]}")
+        event_id = resp.json().get("event_id", "")
 
         # Send caption as a follow-up text message if provided
         if caption:
-            txn_id2 = str(int(time.time() * 1000) + 1)
-            send_url2 = f"{hs}/_matrix/client/v3/rooms/{encoded_room}/send/m.room.message/{txn_id2}"
+            send_url2 = f"{hs}/_matrix/client/v3/rooms/{encoded_room}/send/m.room.message/{_txn_id()}"
             await client.put(send_url2, json={"msgtype": "m.text", "body": caption}, headers=headers_auth)
+    return event_id
 
 
 async def _ensure_joined(client: httpx.AsyncClient, hs: str, room_id: str, headers: dict) -> bool:
@@ -341,6 +415,24 @@ async def _is_encrypted(client: httpx.AsyncClient, hs: str, room_id: str, header
         headers=headers,
     )
     return r.status_code == 200
+
+
+async def create_dm_room_with(homeserver: str, access_token: str, invite_mxid: str,
+                              name: str = "Fediverse Notifications") -> str:
+    """Create an unencrypted private room owned by the token's account and invite invite_mxid,
+    returning the room id. Used by the bot to open a per-user notification DM. No is_direct /
+    encryption so the bot's plain messages stay readable (mirrors create_or_get_dm_room)."""
+    hs = homeserver.rstrip("/")
+    headers = {"Authorization": f"Bearer {access_token}"}
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        resp = await client.post(
+            f"{hs}/_matrix/client/v3/createRoom",
+            json={"name": name, "preset": "private_chat", "invite": [invite_mxid]},
+            headers=headers,
+        )
+        if resp.status_code not in (200, 201):
+            raise ValueError(f"Failed to create DM room: HTTP {resp.status_code} — {resp.text[:200]}")
+        return resp.json()["room_id"]
 
 
 async def create_or_get_dm_room(homeserver: str, access_token: str, bot_user_id: str) -> str:

@@ -234,6 +234,20 @@ async def startup():
             except Exception as e:
                 logging.error(f"Error starting nitter feeds scheduler: {e}", exc_info=True)
 
+            try:
+                # Start Fediverse timeline → Matrix room bridge poller
+                from app.services.fedi_timeline_service import start_fedi_timeline_scheduler
+                start_fedi_timeline_scheduler()
+            except Exception as e:
+                logging.error(f"Error starting fedi timeline scheduler: {e}", exc_info=True)
+
+            try:
+                # Start personal fedi-notification → Matrix DM poller
+                from app.services.matrix_notifications_service import start_matrix_notifications_scheduler
+                start_matrix_notifications_scheduler()
+            except Exception as e:
+                logging.error(f"Error starting matrix notifications scheduler: {e}", exc_info=True)
+
         else:
             logging.info(f"Schedulers disabled on port {app_port} (only run on port 3051)")
 
@@ -381,6 +395,20 @@ async def shutdown():
         try:
             from app.services.nitter_feeds_service import stop_nitter_feeds_scheduler
             stop_nitter_feeds_scheduler()
+        except Exception:
+            pass
+
+        # Stop Fediverse timeline → Matrix bridge poller
+        try:
+            from app.services.fedi_timeline_service import stop_fedi_timeline_scheduler
+            stop_fedi_timeline_scheduler()
+        except Exception:
+            pass
+
+        # Stop personal fedi-notification → Matrix DM poller
+        try:
+            from app.services.matrix_notifications_service import stop_matrix_notifications_scheduler
+            stop_matrix_notifications_scheduler()
         except Exception:
             pass
 
