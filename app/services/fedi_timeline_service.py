@@ -97,6 +97,7 @@ def _norm_misskey(n: dict) -> dict:
         "html": None,                          # Misskey text is MFM/plain → render to HTML
         "media": media,
         "quote": quote,
+        "url": n.get("url"),                   # human URL (remote); local synthesized in _post_url
         "in_reply_to_id": n.get("replyId"),    # parent note id (for proper thread reply chains)
         "created_at": n.get("createdAt"),
     }
@@ -131,6 +132,7 @@ def _norm_pleroma(s: dict) -> dict:
         "html": s.get("content"),              # Pleroma content is already HTML
         "media": media,
         "quote": quote,
+        "url": s.get("url") or s.get("uri"),   # human URL to the post/thread
         "in_reply_to_id": s.get("in_reply_to_id"),  # parent status id (for thread reply chains)
         "created_at": s.get("created_at"),
     }
@@ -176,6 +178,18 @@ def _profile_url(instance_url: str, post: dict) -> str | None:
 
 def _host_of(instance_url: str) -> str:
     return instance_url.split("://", 1)[-1].rstrip("/")
+
+
+def _post_url(instance_url: str, post: dict) -> str | None:
+    """A clickable URL to the post (and thus its full thread) on the source instance."""
+    if post.get("url"):
+        return post["url"]
+    uri = post.get("uri")
+    if uri and uri.startswith("http"):
+        return uri
+    if post.get("id"):
+        return f"{instance_url.rstrip('/')}/notes/{post['id']}"   # Misskey local note
+    return None
 
 
 def _linkify_mentions(body_html: str, instance_url: str) -> str:
@@ -266,9 +280,12 @@ def _body_html(avatar_mxc: str | None, post: dict, profile_url: str | None, inst
     name = _apply_emojis(html.escape(a.get("display") or a.get("acct") or ""), a.get("emoji_mxc"))
     avatar = f'<img src="{html.escape(avatar_mxc)}" width="20" height="20" /> ' if avatar_mxc else ""
     # Compact header: avatar + name only (the @handle suffix is bloat on every post). The name
-    # still links to the author's profile (tap to view/follow/interact).
+    # still links to the author's profile; a trailing 🔗 opens the full thread on the instance.
     label = f"{avatar}<strong>{name}</strong>"
     header = f'<a href="{html.escape(profile_url)}">{label}</a>' if profile_url else label
+    post_url = _post_url(instance_url, post)
+    if post_url:
+        header += f' <a href="{html.escape(post_url)}">🔗</a>'
     segments = [header]
     if post["text"]:
         segments.append(post["html"] if post.get("html")     # Pleroma already renders mentions
