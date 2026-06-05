@@ -1124,7 +1124,8 @@ class MatrixNotificationReplyRequest(BaseModel):
     matrix_user_id: str
     room_id: str
     target_event_id: str   # the notification DM message being replied to
-    text: str
+    text: Optional[str] = None
+    media: Optional[list[MatrixMediaItem]] = None   # image/video reply attachments
 
 
 @router.post("/notification-reply")
@@ -1161,23 +1162,39 @@ async def notification_reply(
         return {"ok": False, "result": "not a notification"}
 
     text = (data.text or "").strip()
-    if not text:
+    media = _decode_media(data.media)
+    if not text and not media:
         return {"ok": False, "result": "Empty reply."}
+    if row.platform == "misskey":
+        if not (user.misskey_instance_url and user.misskey_api_token):
+            return {"ok": False, "result": "Your Misskey account isn't connected."}
+        inst, tok = user.misskey_instance_url, user.misskey_api_token
+    else:
+        if not (user.pleroma_instance_url and user.pleroma_access_token):
+            return {"ok": False, "result": "Your Pleroma account isn't connected."}
+        inst, tok = user.pleroma_instance_url, user.pleroma_access_token
+    low = text.lower()
     try:
+        # Word shortcuts (no media): act on the notified post instead of replying with the word.
+        if not media and low in ("boost", "rt", "repost", "renote", "reblog"):
+            if row.platform == "misskey":
+                await misskey_service.renote(inst, tok, row.target_id)
+            else:
+                await pleroma_service.reblog_status(inst, tok, row.target_id)
+            return {"ok": True, "result": "🔁 boosted"}
+        if not media and low in ("fav", "favourite", "favorite", "like", "+1"):
+            if row.platform == "misskey":
+                await misskey_service.create_reaction(inst, tok, row.target_id, reaction="❤️")
+            else:
+                await pleroma_service.favourite_status(inst, tok, row.target_id)
+            return {"ok": True, "result": "❤ favourited"}
+        # Otherwise post the text and/or image as a reply.
         if row.platform == "misskey":
-            if not (user.misskey_instance_url and user.misskey_api_token):
-                return {"ok": False, "result": "Your Misskey account isn't connected."}
-            await misskey_service.post_note(
-                user.misskey_instance_url, user.misskey_api_token, text,
-                visibility=row.visibility or "public", reply_id=row.target_id,
-            )
+            await misskey_service.post_note(inst, tok, text, visibility=row.visibility or "public",
+                                            reply_id=row.target_id, media=media or None)
         else:
-            if not (user.pleroma_instance_url and user.pleroma_access_token):
-                return {"ok": False, "result": "Your Pleroma account isn't connected."}
-            await pleroma_service.post_status(
-                user.pleroma_instance_url, user.pleroma_access_token, text,
-                visibility=row.visibility or "public", in_reply_to_id=row.target_id,
-            )
+            await pleroma_service.post_status(inst, tok, text, visibility=row.visibility or "public",
+                                              in_reply_to_id=row.target_id, media=media or None)
         return {"ok": True, "result": f"↩ replied on {row.platform.title()}"}
     except Exception as e:
         logger.warning(f"[notification-reply] failed for {mxid}: {e}")
