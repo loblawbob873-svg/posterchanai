@@ -78,6 +78,26 @@ def _mk_call(name, args, idx):
             "index": idx, "function": {"name": name, "arguments": args}}
 
 
+def _coerce_param_value(v: str) -> Any:
+    """Decode a Qwen-native ``<parameter=KEY>VALUE</parameter>`` value.
+
+    The regex captures every VALUE as a raw string, but array/object/number/bool params are
+    emitted as their JSON literal (e.g. ``questions=[{...}]``, ``timeout=5000``). Left as strings
+    they reach the client as the WRONG type — an array param arrives as a JSON-encoded string and
+    fails the client's schema (``Expected array, got "[{\\""``), a number arrives as ``"5000"``
+    (``Expected number``). Decode the literal so the forwarded ``arguments`` carries real types.
+    Only upgrade when ``json.loads`` yields a non-string: plain text (commands, paths, prose) isn't
+    valid JSON and stays a string, so string params are untouched."""
+    s = (v or "").strip()
+    if not s:
+        return v
+    try:
+        parsed = json.loads(s)
+    except Exception:
+        return v
+    return v if isinstance(parsed, str) else parsed
+
+
 # Models trained on other agent toolsets emit these names; map them to the equivalent the
 # client actually provided (only applied when the target IS in the provided tools, so it can
 # only rescue a call the client would otherwise reject - never breaks a valid one).
@@ -118,7 +138,7 @@ def parse_tool_calls(text: str) -> Tuple[Optional[str], List[Dict[str, Any]]]:
     # 2) Qwen native: <function=NAME><parameter=KEY>VALUE</parameter>...</function>
     if not tool_calls:
         for fm in _FUNC_RE.finditer(text):
-            args = {k.strip(): v for k, v in _PARAM_RE.findall(fm.group(2))}
+            args = {k.strip(): _coerce_param_value(v) for k, v in _PARAM_RE.findall(fm.group(2))}
             tool_calls.append(_mk_call(fm.group(1).strip(), args, len(tool_calls)))
     # 3) <function-calls>{"name":..,"arguments":..}</function-calls> wrapper (Qwen2.5-Coder).
     if not tool_calls:
