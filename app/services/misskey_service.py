@@ -137,6 +137,18 @@ async def fetch_children(instance_url: str, token: str, note_id: str, limit: int
         return data if isinstance(data, list) else []
 
 
+async def fetch_conversation(instance_url: str, token: str, note_id: str, limit: int = 20) -> list[dict]:
+    """Fetch a note's ancestors (the reply chain up to the root), raw Misskey notes.
+    /api/notes/conversation returns them, typically nearest-first."""
+    url = instance_url.rstrip("/") + "/api/notes/conversation"
+    payload = {"i": token, "noteId": note_id, "limit": limit}
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(url, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        return data if isinstance(data, list) else []
+
+
 async def create_reaction(instance_url: str, token: str, note_id: str, reaction: str = "❤️") -> None:
     """React to a note (the Misskey equivalent of a favourite). Returns 204 on success."""
     url = instance_url.rstrip("/") + "/api/notes/reactions/create"

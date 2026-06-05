@@ -34,6 +34,7 @@ _REPLY_WINDOW_HOURS = 12      # how far back to keep re-checking roots for new f
 _REPLY_POLL_INTERVAL = 120    # min seconds between reply re-checks (decoupled from the post poll
                               # so a busy feed's growing root set doesn't hammer the source instance)
 _REPLY_MAX_ROOTS = 150        # cap roots re-checked per cycle (newest first)
+_MAX_ANCESTORS = 12           # cap ancestors backfilled to anchor an orphan reply's conversation
 _last_reply_poll = 0.0        # monotonic ts of the last reply re-check (per-process)
 _TAG_RE = re.compile(r"<[^>]+>")
 _BREAK_RE = re.compile(r"<\s*br\s*/?\s*>|</\s*p\s*>", re.IGNORECASE)
@@ -406,6 +407,42 @@ async def _deliver_descendants(db: Session, hs: str, bot_token: str, room_id: st
             logger.warning(f"[fedi-timeline] reply deliver failed: {e}")
 
 
+def _find_parent(db: Session, room_id: str, note_id: str):
+    return db.query(TimelinePost).filter(
+        TimelinePost.room_id == room_id, TimelinePost.note_id == note_id
+    ).order_by(TimelinePost.id.desc()).first()
+
+
+async def _backfill_ancestors(db: Session, hs: str, bot_token: str, room_id: str, platform: str,
+                              instance_url: str, token: str, post: dict) -> None:
+    """Deliver a reply's ancestors (the chain toward the conversation root) so it threads under
+    the true root instead of fragmenting when the original post isn't in the feed. Ancestors are
+    ordered root-first; each one threads under the previous, so the chain becomes one thread."""
+    try:
+        if platform == "pleroma":
+            ctx = await pleroma_service.fetch_context(instance_url, token, post["id"])
+            ancestors = ctx.get("ancestors") or []
+        else:
+            ancestors = list(reversed(await misskey_service.fetch_conversation(instance_url, token, post["id"])))
+    except Exception as e:
+        logger.warning(f"[fedi-timeline] ancestor backfill failed for {post.get('id')}: {e}")
+        return
+    for raw in ancestors[-_MAX_ANCESTORS:]:        # closest N (always includes the immediate parent)
+        anc = _norm(platform, raw)
+        uri = _canonical_uri(platform, instance_url, anc)
+        if not anc.get("id") or _seen(db, room_id, anc["id"], uri):
+            continue
+        a_root = None
+        if anc.get("in_reply_to_id"):
+            p = _find_parent(db, room_id, anc["in_reply_to_id"])
+            if p:
+                a_root = p.thread_root_event_id or p.event_id
+        try:
+            await _deliver(db, hs, bot_token, room_id, platform, instance_url, anc, thread_root_event_id=a_root)
+        except Exception as e:
+            logger.warning(f"[fedi-timeline] ancestor deliver failed: {e}")
+
+
 async def _poll_replies(db: Session, hs: str, bot_token: str, room_id: str, platform: str,
                         token: str) -> None:
     """Re-check recent roots for new federated replies (they arrive after the root is posted)."""
@@ -463,9 +500,12 @@ async def poll_once(db: Session) -> None:
                     # of posting a new root — so a whole conversation shows as one Element thread.
                     thread_root = None
                     if include_replies and post.get("in_reply_to_id"):
-                        parent = db.query(TimelinePost).filter(
-                            TimelinePost.room_id == room_id, TimelinePost.note_id == post["in_reply_to_id"]
-                        ).order_by(TimelinePost.id.desc()).first()
+                        parent = _find_parent(db, room_id, post["in_reply_to_id"])
+                        if not parent:
+                            # Orphan reply (its parent/root isn't in the room yet) → backfill the
+                            # ancestor chain so the whole conversation threads under one real root.
+                            await _backfill_ancestors(db, hs, bot_token, room_id, platform, instance_url, token, post)
+                            parent = _find_parent(db, room_id, post["in_reply_to_id"])
                         if parent:
                             thread_root = parent.thread_root_event_id or parent.event_id
                     event_id = await _deliver(db, hs, bot_token, room_id, platform, instance_url, post,
