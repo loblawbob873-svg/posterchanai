@@ -99,6 +99,7 @@ def _norm_misskey(n: dict) -> dict:
         "quote": quote,
         "url": n.get("url"),                   # human URL (remote); local synthesized in _post_url
         "in_reply_to_id": n.get("replyId"),    # parent note id (for proper thread reply chains)
+        "replies_count": n.get("repliesCount") or 0,
         "created_at": n.get("createdAt"),
     }
 
@@ -134,6 +135,7 @@ def _norm_pleroma(s: dict) -> dict:
         "quote": quote,
         "url": s.get("url") or s.get("uri"),   # human URL to the post/thread
         "in_reply_to_id": s.get("in_reply_to_id"),  # parent status id (for thread reply chains)
+        "replies_count": s.get("replies_count") or 0,
         "created_at": s.get("created_at"),
     }
 
@@ -420,6 +422,26 @@ async def _fetch_descendants(platform: str, instance_url: str, token: str, note_
     return ctx.get("descendants") or []
 
 
+async def _deliver_descendants(db: Session, hs: str, bot_token: str, room_id: str, platform: str,
+                               instance_url: str, token: str, note_id: str, root_event_id: str) -> None:
+    """Fetch a post's fediverse replies and deliver any not-yet-mirrored ones as thread children
+    of root_event_id, so the Matrix thread shows the conversation."""
+    try:
+        children = await _fetch_descendants(platform, instance_url, token, note_id)
+    except Exception as e:
+        logger.warning(f"[fedi-timeline] descendants fetch failed for {note_id}: {e}")
+        return
+    for child in sorted((_norm(platform, c) for c in children), key=lambda p: p.get("created_at") or ""):
+        uri = _canonical_uri(platform, instance_url, child)
+        if not child["id"] or _seen(db, room_id, child["id"], uri):
+            continue
+        try:
+            await _deliver(db, hs, bot_token, room_id, platform, instance_url, child,
+                           thread_root_event_id=root_event_id)
+        except Exception as e:
+            logger.warning(f"[fedi-timeline] reply deliver failed: {e}")
+
+
 async def _poll_replies(db: Session, hs: str, bot_token: str, room_id: str, platform: str,
                         token: str) -> None:
     """Re-check recent roots for new federated replies (they arrive after the root is posted)."""
@@ -430,20 +452,8 @@ async def _poll_replies(db: Session, hs: str, bot_token: str, room_id: str, plat
         TimelinePost.created_at >= cutoff,
     ).order_by(TimelinePost.id.desc()).limit(_REPLY_MAX_ROOTS).all()
     for root in roots:
-        try:
-            children = await _fetch_descendants(platform, root.instance_url, token, root.note_id)
-        except Exception as e:
-            logger.warning(f"[fedi-timeline] descendants fetch failed for {root.note_id}: {e}")
-            continue
-        for child in sorted((_norm(platform, c) for c in children), key=lambda p: p.get("created_at") or ""):
-            uri = _canonical_uri(platform, root.instance_url, child)
-            if not child["id"] or _seen(db, room_id, child["id"], uri):
-                continue
-            try:
-                await _deliver(db, hs, bot_token, room_id, platform, root.instance_url, child,
-                               thread_root_event_id=root.event_id)
-            except Exception as e:
-                logger.warning(f"[fedi-timeline] reply deliver failed: {e}")
+        await _deliver_descendants(db, hs, bot_token, room_id, platform, root.instance_url,
+                                   token, root.note_id, root.event_id)
 
 
 # --- poll loop --------------------------------------------------------------
@@ -484,7 +494,13 @@ async def poll_once(db: Session) -> None:
                 if not post["id"] or _seen(db, room_id, post["id"], uri):
                     continue
                 try:
-                    await _deliver(db, hs, bot_token, room_id, platform, instance_url, post)
+                    root_event_id = await _deliver(db, hs, bot_token, room_id, platform, instance_url, post)
+                    # If the post already has replies on the fediverse, backfill them into the
+                    # thread now so "Reply in thread" shows the conversation immediately (the
+                    # periodic poller only covers the most recent roots).
+                    if include_replies and root_event_id and post.get("replies_count", 0) > 0:
+                        await _deliver_descendants(db, hs, bot_token, room_id, platform, instance_url,
+                                                   token, post["id"], root_event_id)
                 except Exception as e:
                     logger.warning(f"[fedi-timeline] post deliver failed: {e}")
             _set_setting(db, "fedi_timeline_since", newest_id)
