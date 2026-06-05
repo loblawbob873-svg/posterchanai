@@ -337,20 +337,23 @@ async def _deliver(db: Session, hs: str, bot_token: str, room_id: str, platform:
     # so Element renders the real reply chain instead of every reply hanging off the root.
     parent_event = None
     if thread_root_event_id and post.get("in_reply_to_id"):
+        # Prefer the parent's TEXT event (delivered first → lowest id) over its media events,
+        # so the reply quotes the parent message, not the parent's image.
         prow = db.query(TimelinePost).filter(
             TimelinePost.room_id == room_id, TimelinePost.note_id == post["in_reply_to_id"]
-        ).order_by(TimelinePost.id.desc()).first()
+        ).order_by(TimelinePost.id.asc()).first()
         if prow:
             parent_event = prow.event_id
+    body_text = _body_text(post)
     event_id = await matrix_service.send_event(
-        hs, bot_token, room_id, _body_text(post),
+        hs, bot_token, room_id, body_text,
         html=_body_html(avatar_mxc, post),
         thread_root_event_id=thread_root_event_id, reply_to_event_id=parent_event,
     )
     db.add(TimelinePost(
         room_id=room_id, event_id=event_id, thread_root_event_id=thread_root_event_id,
         platform=platform, instance_url=instance_url, note_id=post["id"],
-        note_uri=uri, author_acct=post["author"].get("acct"), body=_body_text(post),
+        note_uri=uri, author_acct=post["author"].get("acct"), body=body_text,
     ))
     db.commit()
     # Attachments: a root post's own media goes inline (no thread relation) so it shows WITH the
