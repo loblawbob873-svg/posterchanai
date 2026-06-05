@@ -9,9 +9,10 @@ Config lives in admin Settings:
   node_exec_agent_max_steps    max LLM iterations in agentic mode
   node_exec_job_timeout        per-job timeout in seconds (0 = no timeout)
 
-Remote nodes need nothing installed: we just SSH in with key-based BatchMode auth, the
-same mechanism used by logs_scheduler.run_ssh_command. This works for any SSH-reachable
-device (servers, routers, switches) - the target never runs posterchanai code.
+Remote nodes need nothing installed: we just SSH in with key-based BatchMode auth. This
+works for any SSH-reachable device (servers, routers, switches) - the target never runs
+posterchanai code. The system health report (logs_scheduler) drives run_agent over this
+same path, so SSH/local execution lives here only.
 """
 import asyncio
 import logging
@@ -151,8 +152,8 @@ class Job:
 
 
 def _ssh_argv(target: str, command: str) -> list[str]:
-    # List form (exec, no shell) so the command reaches the remote as a single argument;
-    # mirrors logs_scheduler.run_ssh_command so awk/grep quoting survives transit.
+    # List form (exec, no shell) so the command reaches the remote as a single argument,
+    # which keeps awk/grep quoting intact in transit.
     return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", target, command]
 
 
@@ -395,10 +396,15 @@ _NODE_TOOLS = [
 
 
 async def run_agent(db: Session, user: "User", node: str, target: str, goal: str,
-                    chat_service: "ChatService", notify: Optional[Callable] = None) -> str:
+                    chat_service: "ChatService", notify: Optional[Callable] = None,
+                    report_mode: bool = False) -> str:
     """Drive commands on `node` toward `goal` via native tool-calling. Returns a concise summary
     (header + the model's ✅ Done line); the per-command play-by-play is streamed live via `notify`
     and recorded in the node job log, not folded into the returned/persisted message.
+
+    `report_mode` returns ONLY the model's final summary (no `## Agent on…` header, no `**✅ Done:**`
+    prefix, no commands footer) so the caller can compose it into its own document — used by the
+    agentic system-health report (logs_scheduler), where the model's finish summary IS the report.
 
     Uses the same tool-calling backend as opencode (chat_completion with tools -> generate_message),
     so the model emits structured run_command/finish calls instead of a fragile CMD:/DONE: text
@@ -418,7 +424,7 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
         {"role": "system", "content": _AGENT_SYSTEM.format(node=node)},
         {"role": "user", "content": f"Goal: {goal}"},
     ]
-    transcript = [f"## Agent on `{node}` — goal: {goal}\n"]
+    transcript = [] if report_mode else [f"## Agent on `{node}` — goal: {goal}\n"]
     cmds_run: list[str] = []   # for a footer on the stop/error paths so they're never blank
     last_job_id = None
 
@@ -445,6 +451,8 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                 tools=_NODE_TOOLS, tool_choice="auto", temperature=0.2,
             )
         except Exception as e:
+            if report_mode:
+                return f"⚠️ inference error: {e}"
             transcript.append(f"\n**⚠️ Stopped:** inference error: {e}{_footer()}")
             return "\n".join(transcript)
 
@@ -454,6 +462,8 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
         if not tool_calls:
             # No tool call -> treat any text as the final answer/summary.
             content = (msg.get("content") or "").strip()
+            if report_mode:
+                return content or "(no summary)"
             transcript.append(f"\n**✅ Done:** {content or '(no summary)'}")
             return "\n".join(transcript)
 
@@ -471,6 +481,8 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
 
             if name == "finish":
                 summary = (args.get("summary") or "").strip()
+                if report_mode:
+                    return summary or "(no summary)"
                 transcript.append(f"\n**✅ Done:** {summary or '(no summary)'}")
                 return "\n".join(transcript)
 
@@ -500,5 +512,7 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                 messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
                                  "content": f"(unknown tool: {name})"})
 
+    if report_mode:
+        return "⏹️ reached the step limit before finishing the health check."
     transcript.append(f"\n**⏹️ Stopped:** reached step limit ({max_steps}).{_footer()}")
     return "\n".join(transcript)

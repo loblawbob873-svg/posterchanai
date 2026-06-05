@@ -214,12 +214,11 @@ class SettingsResponse(BaseModel):
     # Intelligent Intent Detection settings
     intent_detection_enabled: str = "true"  # Enable AI-powered intent detection for natural language actions (only triggers on action keywords)
     intent_confidence_threshold: str = "0.7"  # Minimum confidence to execute detected actions (0.0-1.0)
-    # Logs scheduler settings
+    # System health report (agentic): drives node_service.run_agent across the Remote Node
+    # Management nodes; see app/services/logs_scheduler.py
     logs_scheduler_enabled: str = "false"
     logs_schedule: str = "1,12,18"
-    logs_drives: str = "sda,sdb,nvme0n1"
-    logs_exclude_patterns: str = ""
-    logs_hosts: str = ""  # Comma-separated hostnames for remote log collection via SSH
+    logs_nodes: str = ""  # comma-separated node names to include (empty = all configured nodes + local)
     # Social notification relay (Misskey/Pleroma/Matrix → Telegram)
     social_notif_enabled: str = "true"       # global kill-switch (on by default; per-user toggle in User Settings is the real control)
     social_notif_poll_seconds: str = "60"    # poll interval in seconds

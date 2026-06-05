@@ -680,7 +680,7 @@ class CommandService:
         elif command == "dailynews":
             return await self._dailynews_command(arg)
         elif command == "logs":
-            return await self._logs_command(arg)
+            return await self._logs_command(arg, notify=node_notify)
         elif command == "mail":
             return await self._mail_command(arg, attachments=attachments)
         elif command == "todo":
@@ -1876,8 +1876,12 @@ Files are saved to your Storage.""",
             logger.error(f"Daily news command error: {e}")
             return {"type": "text", "content": f"Error fetching daily news: {str(e)}"}
 
-    async def _logs_command(self, arg: str) -> dict:
-        """Collect system logs and generate AI summary (admin only)"""
+    async def _logs_command(self, arg: str, notify: Optional[Callable] = None) -> dict:
+        """Run the agentic system health report and store it in the Logs chat (admin only).
+
+        Delegates entirely to logs_scheduler.run_logs_for_admin (shared by the scheduler), which
+        drives node_service.run_agent across the configured nodes. `notify`, when given, streams
+        the per-command play-by-play to the originating channel (web UI / Telegram)."""
         if not self.user:
             return {"type": "text", "content": "Please log in to use the logs command."}
 
@@ -1886,58 +1890,12 @@ Files are saved to your Storage.""",
             return {"type": "text", "content": "The logs command is only available to administrators."}
 
         try:
-            import socket
-            from datetime import datetime
-
-            from app.models import Message
-            from app.services.logs_scheduler import (
-                collect_remote_logs,
-                collect_system_logs,
-                generate_log_summary,
-                get_logs_settings,
-                get_or_create_logs_chat,
-            )
-
-            # Get settings for remote hosts
-            settings = get_logs_settings(self.db)
-
-            # Collect local logs
-            log_data = collect_system_logs(self.db)
-
-            # Collect logs from remote hosts (same as scheduled task)
-            remote_hosts = settings.get("hosts", [])
-            for host in remote_hosts:
-                if host:
-                    logger.info(f"Collecting logs from remote host: {host}")
-                    remote_log_data = collect_remote_logs(host, settings)
-                    if remote_log_data:
-                        log_data += " " + remote_log_data
-
-            if not log_data:
-                return {"type": "text", "content": "No log data collected."}
-
-            # Generate AI summary
-            summary = await generate_log_summary(self.db, self.user, log_data)
-
-            # Store in Logs conversation
-            logs_chat = get_or_create_logs_chat(self.db, self.user.id)
-
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-            hostname = socket.gethostname()
-            all_hosts = [hostname] + [h for h in remote_hosts if h]
-            hosts_str = ", ".join(all_hosts) if len(all_hosts) > 1 else hostname
-            message_text = f"## System Log Report - {hosts_str}\n*{timestamp}*\n\n{summary}"
-
-            log_msg = Message(conversation_id=logs_chat.id, role="assistant", content=message_text)
-            self.db.add(log_msg)
-            logs_chat.updated_at = datetime.utcnow()
-            self.db.commit()
-
-            return {"type": "text", "content": message_text}
-
+            from app.services.logs_scheduler import run_logs_for_admin
+            text = await run_logs_for_admin(return_text=True, notify=notify, deliver_telegram=False)
+            return {"type": "text", "content": text or "No report generated."}
         except Exception as e:
             logger.error(f"Logs command error: {e}")
-            return {"type": "text", "content": f"Error collecting logs: {str(e)}"}
+            return {"type": "text", "content": f"Error generating health report: {str(e)}"}
 
     async def _node_command(self, arg: str, notify: Optional[Callable] = None) -> dict:
         """Run OS commands on configured nodes (SSH or local) as background jobs, with an
