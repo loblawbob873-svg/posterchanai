@@ -30,10 +30,10 @@ logger = logging.getLogger(__name__)
 
 _UA = {"User-Agent": "Mozilla/5.0 (compatible; posterchanai-fedi-timeline/1.0)"}
 _MAX_DL = 50_000_000          # cap media/avatar download size to bound memory
-_REPLY_WINDOW_HOURS = 6       # how far back to keep re-checking roots for new federated replies
+_REPLY_WINDOW_HOURS = 12      # how far back to keep re-checking roots for new federated replies
 _REPLY_POLL_INTERVAL = 120    # min seconds between reply re-checks (decoupled from the post poll
                               # so a busy feed's growing root set doesn't hammer the source instance)
-_REPLY_MAX_ROOTS = 60         # cap roots re-checked per cycle (newest first)
+_REPLY_MAX_ROOTS = 150        # cap roots re-checked per cycle (newest first)
 _last_reply_poll = 0.0        # monotonic ts of the last reply re-check (per-process)
 _TAG_RE = re.compile(r"<[^>]+>")
 _BREAK_RE = re.compile(r"<\s*br\s*/?\s*>|</\s*p\s*>", re.IGNORECASE)
