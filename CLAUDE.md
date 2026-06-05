@@ -132,28 +132,44 @@ open a fresh `SessionLocal` and capture any needed config up front.
     ignored. E2EE-by-default means this is the common DM case.
 - **Fediverse timeline → Matrix bridge** (`app/services/fedi_timeline_service.py`): mirrors ONE
   Misskey/Pleroma timeline (home/global/local) into ONE admin-configured Matrix room, posting via
-  the fedi-timeline bot account. Each note is a thread root; its attachments and federated replies
-  are thread children. Author avatar/name links to the profile; `@user@host` handles are linkified.
-  Dedup + action routing go through the **`TimelinePost`** table (`(room_id, event_id)` →
-  `note_uri`); **`note_uri` (canonical AP URI) is the cross-instance dedup key**, with `note_id` as
-  a same-instance fallback. Avatars are uploaded once and cached in **`MatrixAvatarCache`**. First
-  poll just sets the `fedi_timeline_since` cursor (no backfill); the reply re-check is throttled
-  (`_REPLY_POLL_INTERVAL`, 6h window, capped roots) so a busy feed can't hammer the source.
-  Quote-posts/boosts in the feed render the quoted original in a `<blockquote>` (Misskey
-  `renote`, Pleroma `quote`/`reblog`) so it isn't lost. Members act from Element — handled by
-  `POST /api/matrix/timeline-action` (Bearer API key, like `/command`): a top-level message →
-  new post, a thread reply → reply (resolved to the **thread root**, with auto-mention of the
-  author), ❤/any emoji → reaction (Misskey keeps the exact emoji; Pleroma emoji-react→favourite),
-  🔁 → boost. Reply shortcuts: a one-word reply of `boost`/`rt`/🔁 boosts, `fav`/`like`/❤ favourites.
-  **Share→boost/quote:** forwarding a delivered post back into the room is matched against the
-  stored `TimelinePost.body` and becomes a real boost (author preserved); add a comment (Element
-  "Quote", `>`-prefixed) and it becomes a quote-post (Misskey quote-renote; Pleroma comment+link).
-  Matrix sends ride out rate limits via a 429-retry honouring `retry_after_ms`. The acting account is the member's own (same-instance
-  → same-platform → any linked), resolving cross-instance via the canonical AP URI. Replies/posts
-  made this way are recorded (synthetic `event_id`) so the descendants poller won't echo them back.
-  **The Matrix bot half lives in the SEPARATE `~/posterchan` repo** (`matrixListener.py` →
-  `_handle_timeline_event`, gated on `FEDI_TIMELINE_ROOM_ID`); a change to the action contract must
-  be made there too (commit that repo separately — `sync.sh` restarts but doesn't commit it).
+  the fedi-timeline bot account. State/dedup/action-routing go through the **`TimelinePost`** table;
+  **`note_uri` (canonical AP URI) is the cross-instance dedup key**, `note_id` the same-instance
+  fallback. A row is recorded for **every delivered event** (text + each media), so interacting
+  with an image resolves to its post. Avatars + custom emoji are uploaded once and cached in
+  **`MatrixAvatarCache`** (a generic URL→mxc cache). First poll just sets `fedi_timeline_since`
+  (no backfill).
+  - **Rendering** (`_body_html`): compact header = avatar + bold name only (no @handle / no
+    profile link — those make Element render a profile-preview card with bio). Mention/profile
+    `<a>` links are **stripped to plain text** (`_strip_profile_links`) for the same reason. Custom
+    emoji shortcodes in names → inline `<img data-mx-emoticon>`. Quote-posts/boosts render the
+    quoted original in a `<blockquote>`. A post **with media** is sent as ONE message: the first
+    image carries the text as an **MSC2530 caption** (`send_image(caption=, caption_html=)`); extra
+    images hang in its thread. (Matrix caption renders *below* the media — known layout limit.)
+  - **Threading**: the feed delivers replies as flat items, so on delivery a reply is threaded
+    under its parent if that parent is already in the room; if not, **ancestors are backfilled**
+    (`_backfill_ancestors`, capped `_MAX_ANCESTORS`) to anchor the whole conversation to its real
+    root. `send_event`/`send_image` take `thread_root_event_id` + `reply_to_event_id` (the real
+    parent, preferring the parent's text event) so Element shows the true reply chain. A periodic
+    `_poll_replies` re-checks the newest `_REPLY_MAX_ROOTS` roots over `_REPLY_WINDOW_HOURS`
+    (throttled by `_REPLY_POLL_INTERVAL`); a brand-new post with `replies_count>0` is backfilled at
+    delivery. All Matrix sends ride out rate limits via `_with_429_retry` (honours `retry_after_ms`).
+  - **Member actions** → `POST /api/matrix/timeline-action` (Bearer API key, like `/command`),
+    performed under the member's own account (same-instance → same-platform → any linked; resolves
+    cross-instance via `note_uri`): top-level message → new post; thread reply → reply (resolved to
+    the thread root, auto-mentioning the author); ❤/any emoji react → favourite/reaction (Misskey
+    keeps the exact emoji; Pleroma emoji-react→favourite); 🔁 react → boost. **Reply shortcuts**:
+    `boost`/`rt`/🔁 → boost, `fav`/`like` → favourite, `quote <comment>` → quote-post.
+    **Share→boost/quote**: a message containing a `matrix.to` link (or matching a delivered post's
+    body) acts on the ORIGINAL (boost, or quote with a comment) — and a `matrix.to` link is never
+    federated raw. Actions are recorded (synthetic `event_id`) so the poller won't echo them back.
+  - **The Matrix bot half is the SEPARATE `~/posterchan` repo** (`matrixListener.py`, gated on
+    `FEDI_TIMELINE_ROOM_ID`): `_handle_timeline_event` for the timeline room and the
+    notification-reply interception for DMs. A change to either contract must be made there too
+    (commit that repo separately — `sync.sh` restarts but doesn't commit it).
+  - **Per-user fedi rate limit**: a busy *global* feed bridged into one room can exceed Synapse's
+    per-user message limit for the bot (symptom: HTTP 429 storms, posts trickle). Raise it with the
+    Synapse admin API: `POST /_synapse/admin/v1/users/<bot>/override_ratelimit`
+    `{"messages_per_second":50,"burst_count":500}` (needs a homeserver-admin token).
 - **Personal fedi notifications → Matrix DM** (`app/services/matrix_notifications_service.py`):
   the Matrix counterpart of the social relay — DMs each user (via the fedi-timeline bot, in a
   per-user room persisted in `UserSetting matrix_notif_dm_room`) their Pleroma/Misskey
@@ -162,10 +178,15 @@ open a fresh `SessionLocal` and capture any needed config up front.
   on global `matrix_notif_enabled` (admin kill-switch, default off) + the user's existing
   `social_notif_enabled` opt-in + a linked Matrix account. First poll sets cursors (no backfill).
   Messages are rendered Matrix-native (hand-built HTML so handles like `@a_b_c` aren't markdown-
-  mangled). **Reply-back:** each delivered notification with a post records a **`MatrixNotifyMap`**
-  row (`(room_id, event_id)` → target note/status + visibility); when the user replies to that DM
-  message, the bot calls `POST /api/matrix/notification-reply`, which posts the reply on their
-  account (returns `not a notification` so the bot falls through for non-notification replies).
+  mangled), include a 🔗 "open thread" link, and **mirror the conversation into the notification's
+  Matrix thread** (`_thread_context` reuses the timeline bridge's `_deliver`) so it's readable in
+  Element without the web. The cursor advances **per delivered notification** (not once at the end)
+  so a mid-batch send failure can't cause the duplicate-flood class of bug. **Reply-back:** each
+  notification with a post records a **`MatrixNotifyMap`** row (`(room_id, event_id)` → target
+  note/status + visibility); replying to that DM message → `POST /api/matrix/notification-reply`,
+  which posts a reply (text **or image** — handled before the bot's compress/convert media flow),
+  or runs a `boost`/`fav` shortcut, on the user's account (returns `not a notification` so the bot
+  falls through for non-notification replies).
 
 ## Conventions / gotchas
 

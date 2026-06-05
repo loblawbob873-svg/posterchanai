@@ -43,8 +43,14 @@ The backend is **Python 3.10+** and **FastAPI**. You can use cloud APIs (OpenAI-
 - **Telegram and Matrix bots** drive chat, commands, and media from your phone
 - **Social posting** to **Misskey**, **Pleroma/Mastodon**, and **Matrix**: turn any reply, link, or topic into a post with the `post` command (rewrite, verbatim, or with your own instructions). See [Social posting from the bots](#social-posting-from-the-bots).
 - **Social notification relay**: forward mentions/replies/DMs from Misskey/Pleroma/Matrix to Telegram and reply right from the chat. See [Social notifications to Telegram](#social-notifications-to-telegram).
-- **Fediverse timeline → Matrix room**: mirror one Misskey/Pleroma timeline (home/global/local) into a single Matrix room. Author avatars/names link to profiles and `@user@host` handles are clickable. Members can ❤ favourite, 🔁 boost, reply-in-thread, or post a new status straight from Element — each action runs under that member's **own** linked fediverse account (resolved cross-instance by canonical AP URI). Images/videos posted in the room are attached to the status. Configure under Admin → Services; the matching Matrix-bot handler lives in the separate [`posterchan`](https://git.poster.place/verita84/posterchan) repo.
-- **Fediverse notifications → Matrix DM**: opt-in per user — the bot DMs you your Pleroma/Misskey notifications (mentions, replies, favourites, boosts, follows) in a private room, and you can **reply to a notification** to post your response back to that platform.
+- **Fediverse timeline → Matrix room**: mirror one Misskey/Pleroma timeline (home/global/local) into a single Matrix room, with avatar + name, custom emoji, inline images (as captions), quote-posts, and **conversations grouped into Matrix threads** (replies thread under their parent; missing ancestors are backfilled). Members act straight from Element, each under their **own** linked fediverse account (resolved cross-instance by canonical AP URI):
+  - **react** ❤/any emoji → favourite (Misskey keeps the exact emoji) · **🔁** → boost
+  - **post** a top-level message → new status (with image) · **reply in a thread** → reply (auto-mentions the author)
+  - **reply shortcuts**: `boost` / `fav` / `quote <comment>`
+  - **share→boost/quote**: paste a post's matrix.to link (add a comment to quote) to boost/quote the original with the author preserved
+
+  Configure under Admin → Services; the matching Matrix-bot handler lives in the separate [`posterchan`](https://git.poster.place/verita84/posterchan) repo. On a high-volume *global* feed, raise the bot's Synapse message rate limit (admin API `override_ratelimit`) so it keeps up.
+- **Fediverse notifications → Matrix DM**: opt-in per user — the bot DMs you your Pleroma/Misskey notifications (mentions, replies, favourites, boosts, follows) in a private room, each with a 🔗 link and the **conversation mirrored into the message's thread** so you read context in Element. **Reply to a notification** to respond on the platform (text or image), or reply `boost`/`fav` to act on it.
 - **Nitter post-cards**: per-user Nitter (X/Twitter) RSS feeds rendered as image "post cards" and delivered to your linked Telegram chat.
 - **Translate**: translate text or a replied-to message to any language (`translate`), shared across the web UI, Telegram, and Matrix.
 
