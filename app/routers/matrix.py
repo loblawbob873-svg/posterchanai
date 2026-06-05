@@ -807,6 +807,14 @@ def _get_setting(db: Session, key: str, default: str = "") -> str:
     return s.value if s and s.value else default
 
 
+def _unresolved_msg(post) -> str:
+    """Explain why a (cross-instance) member's instance couldn't resolve a post to act on."""
+    src = (getattr(post, "note_uri", None) or getattr(post, "instance_url", "")) or ""
+    host = src.split("://", 1)[-1].split("/", 1)[0] if src else "that server"
+    return (f"Your instance couldn't find that post — it may not federate with {host}, "
+            "or the post isn't public/visible to you.")
+
+
 def _full_handle(post) -> str:
     """The post author's full @user@host handle (host filled in from the source instance for
     local authors) so a reply mention resolves cross-instance."""
@@ -987,7 +995,7 @@ async def timeline_action(
                 try:
                     mtarget = await _resolve_target_id(mplatform, minstance, mtoken, matched)
                     if not mtarget:
-                        return {"ok": False, "result": "Couldn't find that post on your instance."}
+                        return {"ok": False, "result": _unresolved_msg(matched)}
                     who = f"@{matched.author_acct}" if matched.author_acct else ""
                     if comment:
                         if mplatform == "misskey":
@@ -1055,7 +1063,7 @@ async def timeline_action(
     try:
         target_id = await _resolve_target_id(platform, instance_url, acct_token, post)
         if not target_id:
-            return {"ok": False, "result": "Couldn't find that post on your instance."}
+            return {"ok": False, "result": _unresolved_msg(post)}
 
         if action == "like":
             emoji = (data.emoji or "").strip()
