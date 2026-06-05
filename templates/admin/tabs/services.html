@@ -16,8 +16,8 @@
         </div>
         <div class="form-group">
             <label for="logs_nodes">Nodes to Check</label>
-            <input type="text" id="logs_nodes" name="logs_nodes" placeholder="local,nas.lan,server1.lan">
-            <small>Comma-separated node names from <strong>Remote Node Management</strong> (plus <code>local</code> for this host). Empty = all configured nodes + local.</small>
+            <input type="text" id="logs_nodes" name="logs_nodes" placeholder="empty = ALL nodes + local (or narrow, e.g. local,nas.lan)">
+            <small><strong>Leave empty to check every node</strong> (all <strong>Remote Node Management</strong> nodes + <code>local</code>). Only fill this in to <em>narrow</em> the report to specific node names.</small>
         </div>
         <div class="form-group" style="margin-top: 10px;">
             <small><strong>Note:</strong> Restart the service after changing scheduler settings.</small>

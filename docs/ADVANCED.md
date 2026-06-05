@@ -984,7 +984,7 @@ Type these commands in the chat (or use the mode buttons):
 | `notes` | Notes: browse, search, create, edit notes with folders and tags |
 | `news` | Fetch and summarize RSS feeds (alias for rss sync) |
 | `rss` | Native RSS: list feeds, sync, add/remove (plugin) |
-| `logs` | System logs analysis (admin only) |
+| `logs` | Agentic system-health report across all nodes — disks, SMART, RAID, failed services, recent errors → emoji status board, filed to the "Logs" chat + Telegram (admin only) |
 
 ### YouTube Download (ytdl)
 

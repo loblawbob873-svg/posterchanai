@@ -78,6 +78,16 @@ arg (`clip <start> <end>`).
 APScheduler `AsyncIOScheduler`, started in `app/main.py` startup **only on port 3051** (guard
 against duplicate runs): `logs_scheduler` and `social_notifications_service`.
 
+`logs_scheduler` (`app/services/logs_scheduler.py`) is the **agentic system-health report**, not a
+hardcoded log collector anymore. For each selected node it drives `node_service.run_agent`
+(read-only diagnostics → plain-text summary), then a **deterministic** Python pass (`_render_board`)
+renders the fixed emoji status board — Python owns the icons/layout/status, never the model (the
+agent model gathers reliably but won't honour a strict format). Files the report in the admin's
+"Logs" conversation + Telegram. One entry point, `run_logs_for_admin`, is shared by the cron job,
+the admin **Run Logs** button, and the `/logs` command; the interactive call passes
+`deliver_telegram=False` so its return value isn't also pushed (double-send). Nodes come from
+Remote Node Management (+ a synthetic `local`); the `logs_nodes` setting narrows the set.
+
 ### Telegram delivery
 
 Module-level singleton `telegram_service` (`app/services/telegram_service.py`); optional local
@@ -101,7 +111,9 @@ open a fresh `SessionLocal` and capture any needed config up front.
   on SSH-reachable nodes (or `local`), agentic mode, long-running **background jobs**
   (start → job id → result posted back to the originating channel). Config in Admin → Services
   (`node_exec_*`). Output: tail inline, full output (≤1 MB) as a `.txt`. **Intentionally
-  unrestricted RCE** — gated by enable flag + user allowlist + admins, fully logged.
+  unrestricted RCE** — gated by enable flag + user allowlist + admins, fully logged. The
+  **system-health report** (`logs_scheduler`, see Schedulers) reuses `run_agent` over these same
+  nodes, so it needs `node_exec_enabled`.
 - **Social notification relay** (`app/services/social_notifications_service.py`): poller
   forwards Misskey/Pleroma/Matrix notifications to a user's Telegram; replying to a forwarded
   message posts back to the platform (`SocialReplyMap` maps Telegram msg → target). Per-user
