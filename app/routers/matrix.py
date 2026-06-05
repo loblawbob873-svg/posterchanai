@@ -1092,11 +1092,12 @@ async def timeline_action(
             media = _decode_media(data.media)
             if not text and not media:
                 return {"ok": False, "result": "No reply text provided."}
-            # Auto-mention the author so the reply notifies them (fedi convention), unless the
-            # member already @-mentioned them. (in_reply_to also notifies, but the visible
-            # mention is what users expect from a reply.)
+            # Auto-mention the author so the reply notifies them (fedi convention) — but NOT if the
+            # member's reply already starts with an @mention (they're explicitly addressing someone,
+            # e.g. a bot that must be the FIRST mention to trigger), nor if the author's already in.
             mention = _full_handle(post)
-            if mention and text and mention.lower() not in text.lower():
+            if (mention and text and not text.lstrip().startswith("@")
+                    and mention.lower() not in text.lower()):
                 text = f"{mention} {text}"
             if platform == "misskey":
                 note = (await misskey_service.post_note(instance_url, acct_token, text, reply_id=target_id, media=media or None)) or {}
