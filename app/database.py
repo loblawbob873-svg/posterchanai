@@ -246,6 +246,8 @@ def _run_migrations():
         ("misskey_notif_since", "TEXT"),
         ("pleroma_notif_since", "TEXT"),
         ("matrix_notif_since", "TEXT"),
+        # Fediverse notifications → Matrix DM (independent per-user toggle)
+        ("matrix_notif_enabled", "BOOLEAN DEFAULT 0"),
     ]
 
     # Add missing columns to users table

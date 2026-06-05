@@ -532,6 +532,10 @@ class ChatHandler {
                 const socialNotifEnabledEl = document.getElementById('socialNotifEnabled');
                 if (socialNotifEnabledEl) settings.social_notif_enabled = socialNotifEnabledEl.checked;
 
+                // Relay fediverse notifications to Matrix DM (independent of the Telegram toggle)
+                const matrixNotifEnabledEl = document.getElementById('matrixNotifEnabled');
+                if (matrixNotifEnabledEl) settings.matrix_notif_enabled = matrixNotifEnabledEl.checked;
+
                 // Nitter RSS feeds → image cards → Telegram
                 const nitterFeedsEl = document.getElementById('nitterFeeds');
                 if (nitterFeedsEl) settings.nitter_feeds = nitterFeedsEl.value;
@@ -801,6 +805,9 @@ class ChatHandler {
 
                 const socialNotifEnabled = document.getElementById('socialNotifEnabled');
                 if (socialNotifEnabled) socialNotifEnabled.checked = !!settings.social_notif_enabled;
+
+                const matrixNotifEnabled = document.getElementById('matrixNotifEnabled');
+                if (matrixNotifEnabled) matrixNotifEnabled.checked = !!settings.matrix_notif_enabled;
 
                 const nitterFeeds = document.getElementById('nitterFeeds');
                 if (nitterFeeds) nitterFeeds.value = settings.nitter_feeds || '';

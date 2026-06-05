@@ -72,6 +72,9 @@ class User(Base):
     pleroma_notif_since = Column(Text, nullable=True)   # last-seen Pleroma notification id
     matrix_notif_since = Column(Text, nullable=True)    # Matrix /sync next_batch cursor
 
+    # Fediverse notifications → Matrix DM (independent per-user toggle, separate from Telegram above)
+    matrix_notif_enabled = Column(Boolean, default=False)
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")

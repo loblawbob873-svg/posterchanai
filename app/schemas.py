@@ -236,7 +236,7 @@ class SettingsResponse(BaseModel):
     fedi_timeline_poll_seconds: str = "90"
     fedi_timeline_include_replies: str = "true"
     # Personal fedi notifications → private Matrix DM (uses the fedi-timeline bot account).
-    # Admin kill-switch (default off); per-user opt-in reuses social_notif_enabled.
+    # Admin kill-switch (default off); per-user opt-in is the User.matrix_notif_enabled column.
     matrix_notif_enabled: str = "false"
     matrix_notif_poll_seconds: str = "60"
     # Remote node management (run OS commands on nodes over SSH, or 'local' on this host)
@@ -466,6 +466,8 @@ class UserSettingsUpdate(BaseModel):
     finance_api_key: Optional[str] = None
     # Relay social notifications (Misskey/Pleroma/Matrix) to Telegram
     social_notif_enabled: Optional[bool] = None
+    # Relay fediverse notifications to Matrix DM (independent of the Telegram toggle above)
+    matrix_notif_enabled: Optional[bool] = None
     # Nitter RSS feeds (newline-separated URLs) posted as image cards to Telegram
     nitter_feeds: Optional[str] = None
 
@@ -513,6 +515,8 @@ class UserSettingsResponse(BaseModel):
     finance_has_api_key: bool = False
     # Relay social notifications (Misskey/Pleroma/Matrix) to Telegram
     social_notif_enabled: bool = False
+    # Relay fediverse notifications to Matrix DM (independent of the Telegram toggle above)
+    matrix_notif_enabled: bool = False
     # Nitter RSS feeds (newline-separated URLs) posted as image cards to Telegram
     nitter_feeds: str = ""
 

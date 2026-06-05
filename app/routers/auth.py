@@ -454,6 +454,7 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         matrix_dm_bot_user_id=current_user.matrix_dm_bot_user_id if hasattr(current_user, 'matrix_dm_bot_user_id') else None,
         finance_has_api_key=bool(current_user.finance_api_key) if hasattr(current_user, 'finance_api_key') else False,
         social_notif_enabled=current_user.social_notif_enabled if hasattr(current_user, 'social_notif_enabled') else False,
+        matrix_notif_enabled=current_user.matrix_notif_enabled if hasattr(current_user, 'matrix_notif_enabled') else False,
         nitter_feeds=nitter_feeds,
     )
 
@@ -595,6 +596,10 @@ def update_user_settings(
     # Relay social notifications to Telegram (master per-user toggle)
     if settings.social_notif_enabled is not None:
         current_user.social_notif_enabled = settings.social_notif_enabled
+
+    # Relay fediverse notifications to Matrix DM (independent per-user toggle)
+    if settings.matrix_notif_enabled is not None:
+        current_user.matrix_notif_enabled = settings.matrix_notif_enabled
 
     try:
         # Flush changes to database before commit

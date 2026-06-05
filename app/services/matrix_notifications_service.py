@@ -7,8 +7,9 @@ normalization and the platform fetch clients, but renders a Matrix-native messag
 no Telegram "reply to respond" hint) and keeps its OWN per-user cursors so the two relays don't
 consume each other's notifications.
 
-Gating: global `matrix_notif_enabled` (admin kill-switch, default off) + the user's existing
-`social_notif_enabled` opt-in + a linked Matrix account (matrix_user_id) + a linked fedi account.
+Gating: global `matrix_notif_enabled` Setting (admin kill-switch, default off) + the user's own
+per-user `matrix_notif_enabled` opt-in (independent of the Telegram relay's `social_notif_enabled`)
++ a linked Matrix account (matrix_user_id) + a linked fedi account.
 State is per-user in UserSetting (cursor + DM room id); the poller is per-process (port 3051).
 """
 import html
@@ -214,7 +215,7 @@ async def poll_once(db: Session) -> None:
         return
     users = (
         db.query(User)
-        .filter(User.social_notif_enabled == True, User.matrix_user_id.isnot(None))  # noqa: E712
+        .filter(User.matrix_notif_enabled == True, User.matrix_user_id.isnot(None))  # noqa: E712
         .all()
     )
     for user in users:

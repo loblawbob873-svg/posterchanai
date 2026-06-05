@@ -175,8 +175,10 @@ open a fresh `SessionLocal` and capture any needed config up front.
   per-user room persisted in `UserSetting matrix_notif_dm_room`) their Pleroma/Misskey
   notifications. Reuses the social relay's `_norm_*`/`_format`; keeps **its own** per-user cursors
   (`UserSetting matrix_notif_{platform}_since`) so it doesn't consume the Telegram relay's. Gated
-  on global `matrix_notif_enabled` (admin kill-switch, default off) + the user's existing
-  `social_notif_enabled` opt-in + a linked Matrix account. First poll sets cursors (no backfill).
+  on global `matrix_notif_enabled` setting (admin kill-switch, default off) + the user's **own**
+  per-user `User.matrix_notif_enabled` opt-in (independent of the Telegram relay's
+  `social_notif_enabled` — separate toggle in User Settings → Matrix) + a linked Matrix account.
+  First poll sets cursors (no backfill).
   Messages are rendered Matrix-native (hand-built HTML so handles like `@a_b_c` aren't markdown-
   mangled), include a 🔗 "open thread" link, and **mirror the conversation into the notification's
   Matrix thread** (`_thread_context` reuses the timeline bridge's `_deliver`) so it's readable in
