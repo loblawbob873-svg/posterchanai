@@ -434,23 +434,6 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
         if system_prompt:
             messages.insert(0, {"role": "system", "content": system_prompt})
 
-    # When the caller supplies tools (agentic/shell path, e.g. opencode), the model tends to
-    # self-censor literal values it reads as "sensitive" — most often replacing a hostname/IP
-    # with a [redacted] placeholder inside ssh/scp args, which then fails DNS ("Could not resolve
-    # hostname redacted") and the agent loops on the same broken command. The caller's own system
-    # prompt wins (so we never reach the ollama_system_prompt above on this path); append a short,
-    # task-agnostic rule to whatever system message exists. Primary-only (not skip_load_balancer)
-    # so it forwards to LB nodes once without double-appending.
-    if request.tools and not skip_load_balancer:
-        shell_rule = ("Always use real hostnames, IPs, and paths verbatim in shell commands "
-                      "(ssh, scp, rsync, curl, etc.). Never replace them with placeholders like "
-                      "[redacted], <host>, or example.com — the command runs literally as written, "
-                      "so a placeholder fails to resolve. Use the exact value the user gave.")
-        if messages and messages[0].get("role") == "system":
-            messages[0]["content"] = f"{messages[0].get('content', '').rstrip()}\n\n{shell_rule}"
-        else:
-            messages.insert(0, {"role": "system", "content": shell_rule})
-
     # Inject RAG context only when the caller did NOT supply its own system prompt.
     # External bots (e.g. Posterchan bot) send their own persona as a system message;
     # injecting code RAG from user-1's document store into those calls contaminates the
