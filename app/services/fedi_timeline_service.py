@@ -97,6 +97,7 @@ def _norm_misskey(n: dict) -> dict:
         "html": None,                          # Misskey text is MFM/plain → render to HTML
         "media": media,
         "quote": quote,
+        "in_reply_to_id": n.get("replyId"),    # parent note id (for proper thread reply chains)
         "created_at": n.get("createdAt"),
     }
 
@@ -130,6 +131,7 @@ def _norm_pleroma(s: dict) -> dict:
         "html": s.get("content"),              # Pleroma content is already HTML
         "media": media,
         "quote": quote,
+        "in_reply_to_id": s.get("in_reply_to_id"),  # parent status id (for thread reply chains)
         "created_at": s.get("created_at"),
     }
 
@@ -351,10 +353,19 @@ async def _deliver(db: Session, hs: str, bot_token: str, room_id: str, platform:
     if post.get("quote"):
         post["quote"]["emoji_mxc"] = await _resolve_name_emojis(
             db, hs, bot_token, post["quote"].get("display") or "", post["quote"].get("emojis") or {})
+    # For a thread reply, point m.in_reply_to at the actual parent message (if we delivered it)
+    # so Element renders the real reply chain instead of every reply hanging off the root.
+    parent_event = None
+    if thread_root_event_id and post.get("in_reply_to_id"):
+        prow = db.query(TimelinePost).filter(
+            TimelinePost.room_id == room_id, TimelinePost.note_id == post["in_reply_to_id"]
+        ).order_by(TimelinePost.id.desc()).first()
+        if prow:
+            parent_event = prow.event_id
     event_id = await matrix_service.send_event(
         hs, bot_token, room_id, _body_text(post),
         html=_body_html(avatar_mxc, post, profile_url, instance_url),
-        thread_root_event_id=thread_root_event_id,
+        thread_root_event_id=thread_root_event_id, reply_to_event_id=parent_event,
     )
     db.add(TimelinePost(
         room_id=room_id, event_id=event_id, thread_root_event_id=thread_root_event_id,
@@ -371,8 +382,19 @@ async def _deliver(db: Session, hs: str, bot_token: str, room_id: str, platform:
         if not data:
             continue
         try:
-            await matrix_service.send_image(hs, bot_token, room_id, data, mime=mime or m.get("mime", ""),
-                                            thread_root_event_id=media_root)
+            media_event_id = await matrix_service.send_image(
+                hs, bot_token, room_id, data, mime=mime or m.get("mime", ""),
+                thread_root_event_id=media_root)
+            # Record the media event too (pointing at the same note) so interacting with the
+            # image — boost/reply/quote — resolves to the post just like the text event does.
+            # thread_root marks it as not-a-root so the reply poller ignores it.
+            if media_event_id:
+                db.add(TimelinePost(
+                    room_id=room_id, event_id=media_event_id, thread_root_event_id=(thread_root_event_id or event_id),
+                    platform=platform, instance_url=instance_url, note_id=post["id"],
+                    note_uri=uri, author_acct=post["author"].get("acct"),
+                ))
+                db.commit()
         except Exception as e:
             logger.warning(f"[fedi-timeline] media send failed: {e}")
     return event_id

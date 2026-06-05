@@ -265,13 +265,15 @@ async def send_message(homeserver: str, access_token: str, room_id: str, text: s
 
 
 async def send_event(homeserver: str, access_token: str, room_id: str, body: str,
-                     html: str | None = None, thread_root_event_id: str | None = None) -> str:
+                     html: str | None = None, thread_root_event_id: str | None = None,
+                     reply_to_event_id: str | None = None) -> str:
     """Send a text message and return its event_id.
 
     Like send_message but: returns the new event_id (needed to thread replies under it),
     accepts pre-rendered `html` (falls back to render_matrix_html(body)), and threads the
-    message under thread_root_event_id when given (m.thread relation, with an
-    m.in_reply_to fallback so non-threaded clients still show the relationship)."""
+    message under thread_root_event_id when given. `reply_to_event_id`, when provided, is the
+    actual parent event the message replies to (so Element shows the real reply chain inside the
+    thread); otherwise the thread root is used as the fallback in-reply-to."""
     hs = homeserver.rstrip("/")
     from urllib.parse import quote
     import html as _html
@@ -284,11 +286,14 @@ async def send_event(homeserver: str, access_token: str, room_id: str, body: str
         payload["format"] = "org.matrix.custom.html"
         payload["formatted_body"] = formatted
     if thread_root_event_id:
+        # A real parent → a genuine threaded reply (is_falling_back False); otherwise the root
+        # is just the thread's fallback in-reply-to.
+        in_reply = reply_to_event_id or thread_root_event_id
         payload["m.relates_to"] = {
             "rel_type": "m.thread",
             "event_id": thread_root_event_id,
-            "is_falling_back": True,
-            "m.in_reply_to": {"event_id": thread_root_event_id},
+            "is_falling_back": reply_to_event_id is None,
+            "m.in_reply_to": {"event_id": in_reply},
         }
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         resp = await _with_429_retry(lambda: client.put(url, json=payload, headers=headers))

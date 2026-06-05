@@ -126,8 +126,11 @@ async def _relay(db: Session, hs: str, bot_token: str, user: User, room_id: str,
         try:
             event_id = await matrix_service.send_event(hs, bot_token, room_id, plain, html=html_body)
         except Exception as e:
+            # Stop here, but the cursor is already advanced past everything sent so far (each
+            # success commits below), so we never re-send delivered notifications — only the
+            # unsent tail is retried next poll. This is what prevents the duplicate flood.
             logger.warning(f"[matrix-notif] send failed for user {user.id}: {e}")
-            return          # stop early; keep cursor so we retry these next poll
+            return
         # Record the reply target (mentions/replies → the other person's post) so a reply to
         # this DM message posts back. Skip types with nothing to reply to (e.g. follows).
         if event_id and norm.get("reply_target"):
@@ -136,9 +139,11 @@ async def _relay(db: Session, hs: str, bot_token: str, user: User, room_id: str,
                 instance_url=instance_url, target_id=norm["reply_target"],
                 visibility=norm.get("visibility"),
             ))
-            db.commit()
-    _set_user_setting(db, user.id, cursor_key, newest_id)
-    db.commit()
+        # Advance the cursor per delivered notification (not once at the end) so a mid-batch
+        # failure can't cause already-sent ones to be redelivered.
+        if n.get("id"):
+            _set_user_setting(db, user.id, cursor_key, n["id"])
+        db.commit()
 
 
 async def _poll_user(db: Session, hs: str, bot_token: str, user: User) -> None:
