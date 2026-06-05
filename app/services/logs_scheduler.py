@@ -34,31 +34,84 @@ LOGS_CHAT_TITLE = "Logs"
 # line template so every node's report is formatted identically (the model otherwise drifts on
 # layout and mislabels healthy-empty results as ⚪). The model still discovers specifics (drive
 # names, whether RAID/btrfs/swap exist) for itself rather than relying on hardcoded device lists.
+# What the AGENT does: gather accurate data and summarise it in plain text. It is deliberately NOT
+# asked to format/emoji anything — this model reliably gathers but won't honour a strict layout at
+# the finish step, so presentation is handled deterministically afterwards (see _to_status_board).
 _HEALTH_GOAL = (
     "You are auditing this host. Use read-only commands only.\n\n"
-    "Gather: disk usage (/, /boot, /raid); SMART health of every physical drive; RAID/mdstat "
-    "status; failed systemd services; swap; WARN/ERROR lines from the last 6h of journalctl and "
-    "dmesg (group repeats, ignore routine noise).\n\n"
+    "Check each of these six subsystems: (1) disk usage of /, /boot and /raid; (2) SMART health of "
+    "every physical drive; (3) RAID/mdstat; (4) failed systemd services; (5) swap; (6) WARN/ERROR "
+    "lines in the last 6h of journalctl and dmesg (group repeats, ignore routine noise).\n\n"
     "SMART must be ACCURATE: run 'lsblk -d -o NAME,TRAN' to get the real drive names, then "
     "'sudo -n smartctl -H /dev/<name>' on EACH (retry with '-d sat' for USB drives or '-d nvme' "
     "for NVMe if it asks for a device type). Report the literal 'overall-health ... result' per "
-    "drive — PASSED → 🟢, FAILED → 🔴 — and NEVER say 'no data' when it printed PASSED/FAILED. "
-    "Use 'sudo -n' for smartctl/dmesg/journalctl so they never block on a password prompt.\n\n"
-    "Status emoji meaning: 🟢 healthy — this INCLUDES 'none', 'no errors', '0 used', 'all PASSED'; "
-    "🟡 warning (disk 75-90%, notable warnings); 🔴 critical (disk >90%, SMART FAILED, degraded "
-    "array, failed service, errors present); ⚪ subsystem genuinely NOT present (no RAID, no swap). "
-    "A clean/empty result is 🟢, never ⚪.\n\n"
-    "When done, call the finish tool with the report formatted as EXACTLY these 6 lines — mimic "
-    "this example precisely (subsystem icon leading, a 🟢/🟡/🔴/⚪ status right after the colon), "
-    "with the REAL values for this host:\n\n"
-    "💾 Disk: 🟢 / 33%, /boot 34%, /raid 63%\n"
-    "🔧 SMART: 🟢 sda PASSED, sdb PASSED, nvme0n1 PASSED\n"
-    "💿 RAID: 🟢 md0 raid5 [UUU] active\n"
-    "⚙️ Services: 🟢 none failed\n"
-    "🔄 Swap: ⚪ none configured\n"
-    "📜 Errors (6h): 🟢 none\n\n"
-    "Output ONLY those 6 lines — no preamble, no prose, no troubleshooting steps."
+    "drive (PASSED/FAILED) and NEVER say 'no data' when it printed PASSED/FAILED. Use 'sudo -n' for "
+    "smartctl/dmesg/journalctl so they never block on a password prompt.\n\n"
+    "When done, call the finish tool with a brief plain-text summary that, for EACH of the six "
+    "subsystems, states the finding and whether it is healthy, a warning, critical, or not present "
+    "on this host."
 )
+
+# Deterministic status board — Python owns the emojis + layout so they're identical on every node.
+# The model only supplies a status word + short detail per subsystem (an easy single-shot task);
+# the icons and ordering below are never the model's job.
+_BOARD_ICON = {"disk": "💾", "smart": "🔧", "raid": "💿", "services": "⚙️", "swap": "🔄", "errors": "📜"}
+_BOARD_LABEL = {"disk": "Disk", "smart": "SMART", "raid": "RAID", "services": "Services",
+                "swap": "Swap", "errors": "Errors (6h)"}
+_BOARD_ORDER = ["disk", "smart", "raid", "services", "swap", "errors"]
+_STATUS_EMOJI = {"green": "🟢", "yellow": "🟡", "red": "🔴", "none": "⚪"}
+
+_BOARD_SYS = (
+    "You convert a server health summary into a status board. Output EXACTLY six lines, in this "
+    "order, and NOTHING else. Each line is 'subsystem|status|detail':\n"
+    "disk|<status>|<detail>\nsmart|<status>|<detail>\nraid|<status>|<detail>\n"
+    "services|<status>|<detail>\nswap|<status>|<detail>\nerrors|<status>|<detail>\n"
+    "<status> is exactly one of: green yellow red none. "
+    "green = healthy / passed / none / zero-used; yellow = warning (e.g. disk 75-90%); "
+    "red = critical / failed / degraded / errors present; none = subsystem not present on this host "
+    "(e.g. no RAID array, no swap). A clean or empty result is green, never none. "
+    "<detail> is a terse phrase, e.g. '/ 33%, /raid 63%' or 'sda,sdb,nvme PASSED' or 'none failed'."
+)
+
+
+def _render_board(raw: str) -> Optional[str]:
+    """Parse the model's 'subsystem|status|detail' lines into the fixed emoji board. Returns None if
+    too few rows parsed (caller falls back to the plain summary)."""
+    rows: dict[str, tuple[str, str]] = {}
+    for line in (raw or "").splitlines():
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) < 3:
+            continue
+        key = parts[0].lower()
+        key = next((k for k in _BOARD_ICON if k in key), None)
+        if not key:
+            continue
+        status = parts[1].lower()
+        status = next((s for s in _STATUS_EMOJI if s in status), "green")
+        rows[key] = (status, parts[2])
+    if len(rows) < 4:  # model didn't produce a usable board
+        return None
+    lines = []
+    for key in _BOARD_ORDER:
+        if key in rows:
+            status, detail = rows[key]
+            lines.append(f"{_BOARD_ICON[key]} {_BOARD_LABEL[key]}: {_STATUS_EMOJI[status]} {detail}")
+    return "\n".join(lines)
+
+
+async def _to_status_board(chat_service, summary: str) -> str:
+    """Turn the agent's plain-text summary into the deterministic emoji board. On any failure, fall
+    back to the raw summary so a node is never blank."""
+    try:
+        raw = await chat_service.chat([
+            {"role": "system", "content": _BOARD_SYS},
+            {"role": "user", "content": summary},
+        ])
+        board = _render_board(raw)
+        return board or summary.strip()
+    except Exception as e:
+        logger.warning(f"status-board formatting failed: {e}")
+        return summary.strip()
 
 
 def get_logs_settings(db=None) -> dict:
@@ -157,10 +210,13 @@ async def build_health_report(db, admin: User, notify=None) -> str:
                 db, admin, name, target, _HEALTH_GOAL, chat_service,
                 notify=notify, report_mode=True,
             )
+            # Presentation is deterministic (Python owns emojis/layout) so the agent model's
+            # formatting drift never reaches the report.
+            body = await _to_status_board(chat_service, summary or "")
         except Exception as e:
             logger.error(f"Health check failed for node {name}: {e}")
-            summary = f"⚠️ agent error: {e}"
-        sections.append(f"━━━━━━━━━━━━━━\n🖥️ *{name}*  ·  `{where}`\n\n{(summary or '').strip()}")
+            body = f"⚠️ agent error: {e}"
+        sections.append(f"━━━━━━━━━━━━━━\n🖥️ *{name}*  ·  `{where}`\n\n{(body or '').strip()}")
 
     body = "\n\n".join(sections)
     return f"## 🩺 System Health Report\n🕒 {timestamp}\n\n{body}"

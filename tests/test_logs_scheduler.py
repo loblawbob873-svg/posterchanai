@@ -30,6 +30,38 @@ class TestTelegramMarkdown(unittest.TestCase):
         self.assertEqual(out, "indented line")
 
 
+class TestRenderBoard(unittest.TestCase):
+    def test_renders_six_emoji_lines_in_canonical_order(self):
+        raw = ("smart|green|sda,sdb PASSED\n"
+               "disk|green|/ 33%, /raid 63%\n"
+               "raid|green|md0 [UUU]\n"
+               "services|green|none failed\n"
+               "swap|none|no swap\n"
+               "errors|green|none")
+        board = L._render_board(raw)
+        lines = board.splitlines()
+        # canonical order regardless of input order, deterministic icons + status emojis
+        self.assertEqual(lines[0], "💾 Disk: 🟢 / 33%, /raid 63%")
+        self.assertEqual(lines[1], "🔧 SMART: 🟢 sda,sdb PASSED")
+        self.assertEqual(lines[2], "💿 RAID: 🟢 md0 [UUU]")
+        self.assertEqual(lines[3], "⚙️ Services: 🟢 none failed")
+        self.assertEqual(lines[4], "🔄 Swap: ⚪ no swap")
+        self.assertEqual(lines[5], "📜 Errors (6h): 🟢 none")
+
+    def test_status_and_key_fuzzy_match(self):
+        # model embellishes the status word / key; we still map it
+        raw = ("Disk usage|GREEN|ok\nSMART|red|sdb FAILED\nraid array|none|no md\n"
+               "services|yellow|1 degraded\nswap|green|0 used\nerrors (6h)|red|3 oom")
+        board = L._render_board(raw)
+        self.assertIn("🔧 SMART: 🔴 sdb FAILED", board)
+        self.assertIn("⚙️ Services: 🟡 1 degraded", board)
+        self.assertIn("📜 Errors (6h): 🔴 3 oom", board)
+
+    def test_too_few_rows_returns_none_for_fallback(self):
+        self.assertIsNone(L._render_board("disk|green|ok\nnonsense line"))
+        self.assertIsNone(L._render_board(""))
+
+
 class TestSelectedNodes(unittest.TestCase):
     def test_default_includes_local_plus_all_configured(self):
         with mock.patch.object(L.node_service, "get_nodes", return_value={"nas": "u@nas"}), \
