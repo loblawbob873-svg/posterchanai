@@ -156,29 +156,20 @@ def _canonical_uri(platform: str, instance_url: str, post: dict) -> str | None:
 
 # --- rendering --------------------------------------------------------------
 
-# A fedi handle in plain text: @user or @user@host. The lookbehind keeps it from matching
-# inside a URL (preceded by /) , an href value (preceded by "), an email/word (preceded by a
-# word char), or a doubled @. A preceding ">" (end of a <br>/tag) is allowed so mentions at
-# the start of a line still linkify.
-_MENTION_RE = re.compile(r'(?<![\w@/"])@([A-Za-z0-9_]+)(?:@([A-Za-z0-9.\-]+))?')
+# Mention/profile anchors in post HTML. We strip these to plain text: a Matrix client renders a
+# URL preview for a fediverse profile link (`/users/x` or `/@x`), which shows the user's whole
+# profile card + bio below every post — unwanted bloat. Removing the <a> (keeping the @name text)
+# leaves the mention readable without a previewable link.
+_MENTION_ANCHOR_RE = re.compile(r'<a\b[^>]*class="[^"]*\bmention\b[^"]*"[^>]*>(.*?)</a>', re.S | re.I)
+_PROFILE_ANCHOR_RE = re.compile(r'<a\b[^>]*href="https?://[^"]*?/(?:users/|@)[^"]*"[^>]*>(.*?)</a>', re.S | re.I)
 
 
-def _host_of(instance_url: str) -> str:
-    return instance_url.split("://", 1)[-1].rstrip("/")
-
-
-def _linkify_mentions(body_html: str, instance_url: str) -> str:
-    """Turn @user@host / @user handles in already-rendered HTML into clickable profile links
-    (so a mentioned user is clickable too, mirroring Matrix mention pills)."""
-    default_host = _host_of(instance_url)
-
-    def repl(m: "re.Match") -> str:
-        user, host = m.group(1), m.group(2)
-        url = f"https://{host or default_host}/@{user}"
-        shown = f"@{user}@{host}" if host else f"@{user}"
-        return f'<a href="{url}">{shown}</a>'
-
-    return _MENTION_RE.sub(repl, body_html)
+def _strip_profile_links(html_str: str) -> str:
+    """Replace mention/profile <a> links with their visible text so clients don't render a
+    profile preview card (with bio) below the post."""
+    html_str = _MENTION_ANCHOR_RE.sub(r"\1", html_str or "")
+    html_str = _PROFILE_ANCHOR_RE.sub(r"\1", html_str)
+    return html_str
 
 
 def _quote_label(post: dict) -> str:
@@ -250,7 +241,7 @@ def _body_text(post: dict) -> str:
     return "\n\n".join(parts)
 
 
-def _body_html(avatar_mxc: str | None, post: dict, instance_url: str) -> str:
+def _body_html(avatar_mxc: str | None, post: dict) -> str:
     a = post["author"]
     name = _apply_emojis(html.escape(a.get("display") or a.get("acct") or ""), a.get("emoji_mxc"))
     avatar = f'<img src="{html.escape(avatar_mxc)}" width="20" height="20" /> ' if avatar_mxc else ""
@@ -259,16 +250,17 @@ def _body_html(avatar_mxc: str | None, post: dict, instance_url: str) -> str:
     header = f"{avatar}<strong>{name}</strong>"
     segments = [header]
     if post["text"]:
-        segments.append(post["html"] if post.get("html")     # Pleroma already renders mentions
-                        else _linkify_mentions(render_matrix_html(post["text"]), instance_url))
+        # Pleroma content is HTML (strip profile links so no preview card); Misskey is plain text.
+        segments.append(_strip_profile_links(post["html"]) if post.get("html")
+                        else render_matrix_html(post["text"]))
     q = post.get("quote")
     if q:
         qname = _apply_emojis(html.escape(q.get('display') or q.get('acct') or ''), q.get('emoji_mxc'))
         qhead = f"<strong>{qname}</strong> (@{html.escape(q.get('acct') or '')})"
         if q.get("html"):
-            qbody = q["html"]
+            qbody = _strip_profile_links(q["html"])
         elif (q.get("text") or "").strip():
-            qbody = _linkify_mentions(render_matrix_html(q["text"]), instance_url)
+            qbody = render_matrix_html(q["text"])
         else:
             qbody = ""
         block = f"<blockquote>{html.escape(_quote_label(post))} {qhead}" + (f"<br>{qbody}" if qbody else "") + "</blockquote>"
@@ -351,7 +343,7 @@ async def _deliver(db: Session, hs: str, bot_token: str, room_id: str, platform:
             parent_event = prow.event_id
     event_id = await matrix_service.send_event(
         hs, bot_token, room_id, _body_text(post),
-        html=_body_html(avatar_mxc, post, instance_url),
+        html=_body_html(avatar_mxc, post),
         thread_root_event_id=thread_root_event_id, reply_to_event_id=parent_event,
     )
     db.add(TimelinePost(
@@ -466,13 +458,23 @@ async def poll_once(db: Session) -> None:
                 if not post["id"] or _seen(db, room_id, post["id"], uri):
                     continue
                 try:
-                    root_event_id = await _deliver(db, hs, bot_token, room_id, platform, instance_url, post)
-                    # If the post already has replies on the fediverse, backfill them into the
-                    # thread now so "Reply in thread" shows the conversation immediately (the
-                    # periodic poller only covers the most recent roots).
-                    if include_replies and root_event_id and post.get("replies_count", 0) > 0:
+                    # The timeline delivers replies as flat standalone items. If this post is a
+                    # reply to one already in the room, thread it under that conversation instead
+                    # of posting a new root — so a whole conversation shows as one Element thread.
+                    thread_root = None
+                    if include_replies and post.get("in_reply_to_id"):
+                        parent = db.query(TimelinePost).filter(
+                            TimelinePost.room_id == room_id, TimelinePost.note_id == post["in_reply_to_id"]
+                        ).order_by(TimelinePost.id.desc()).first()
+                        if parent:
+                            thread_root = parent.thread_root_event_id or parent.event_id
+                    event_id = await _deliver(db, hs, bot_token, room_id, platform, instance_url, post,
+                                              thread_root_event_id=thread_root)
+                    # For a brand-new root that already has replies on the fediverse, backfill them
+                    # into its thread now so "Reply in thread" shows the conversation immediately.
+                    if include_replies and event_id and thread_root is None and post.get("replies_count", 0) > 0:
                         await _deliver_descendants(db, hs, bot_token, room_id, platform, instance_url,
-                                                   token, post["id"], root_event_id)
+                                                   token, post["id"], event_id)
                 except Exception as e:
                     logger.warning(f"[fedi-timeline] post deliver failed: {e}")
             _set_setting(db, "fedi_timeline_since", newest_id)
