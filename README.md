@@ -11,7 +11,7 @@ The backend is **Python 3.10+** and **FastAPI**. You can use cloud APIs (OpenAI-
 ### Chat & AI
 
 - **Streaming chat** with multiple conversations, history, and optional markdown/formatting
-- **OpenAI-compatible API** at `/v1/` for compatible clients and tools
+- **OpenAI-compatible API** at `/v1/` for compatible clients and tools, including **function/tool calling** so agentic coding clients (e.g. opencode) can drive your local models
 - **Local or remote LLM**: Ollama, llama-cpp-python (CPU/CUDA/HIP), or IPEX-LLM (Intel Arc)
 - **Load balancing**: round-robin across multiple chat servers
 - **Intent detection** and slash-style **commands** (e.g. `/mail`, `/image`, `/search`)
@@ -21,7 +21,7 @@ The backend is **Python 3.10+** and **FastAPI**. You can use cloud APIs (OpenAI-
 - **Text-to-speech (TTS)** and **speech-to-text (STT)**; Edge TTS and configurable backends
 - **Image generation**: ComfyUI (external) or native diffusers (SDXL); multiple image servers supported
 - **Website screenshots**: full-page capture with the `screenshot <url>` command (also `shot` / `ss`) — works in the web UI, Telegram, and Matrix. Uses headless Chrome (JS-aware, so SPAs render), Firefox fallback (see [Requirements](#requirements)).
-- **YouTube / X**: summarize a video, grab thumbnails, or **download** audio (MP3) / video with the `ytdl` command — in the web UI, Telegram, Matrix, Misskey, and Pleroma. A video download can be trimmed and/or shrunk in one command (`ytdl video <url> clip 0:10 0:30 compress`); Telegram also offers these as buttons after the download
+- **YouTube / X**: summarize a video **from its transcript** (so summaries and link-posts reflect the actual content, not the page), grab thumbnails, or **download** audio (MP3) / video with the `ytdl` command — in the web UI, Telegram, Matrix, Misskey, and Pleroma. A video download can be trimmed and/or shrunk in one command (`ytdl video <url> clip 0:10 0:30 compress`); Telegram also offers these as buttons after the download
 
 ### Knowledge & code
 
@@ -49,7 +49,7 @@ The backend is **Python 3.10+** and **FastAPI**. You can use cloud APIs (OpenAI-
 ### Extensibility & admin
 
 - **4chan** integration (optional)
-- **Remote node management**: run OS commands (and an agentic mode) across SSH-reachable machines from chat or Telegram, with long-running background jobs. See [Remote node management](#remote-node-management).
+- **Remote node management**: run OS commands across SSH-reachable machines from chat or Telegram, with long-running background jobs and a **tool-calling agentic mode** (one node or all nodes) that streams each step live. See [Remote node management](#remote-node-management).
 - **Admin panel**: users, API keys, LLM/image/RAG/email settings, systemd service setup
 - **Multi-user** with registration (optional), email verification, and quotas
 
@@ -199,18 +199,23 @@ This works for any SSH-reachable device: servers, routers, switches, etc.
 | --- | --- |
 | `node <name> <command>` | Runs a shell command on the node. Fast commands return inline; long-running ones become a background job |
 | `node all <command>` | Runs the command on **every** configured node in parallel and shows each result (`all` is reserved as a node name) |
-| `node agent <name> <goal>` | Agentic mode — the AI runs commands, reads output, and iterates toward your goal |
+| `node agent <name> <goal>` | Agentic mode — the AI calls a `run_command` tool, reads each result, and iterates toward your goal. Uses native tool-calling and an agentic-tuned model; each step streams live to your chat |
+| `node agent all <goal>` | Run the agent on **every** configured node toward the same goal (sequential; per-node labelled output) |
 | `node list` | Show configured nodes |
 | `node jobs` | List your recent jobs |
 | `node log <id>` | Show a job's output |
 | `node kill <id>` | Stop a running job |
 
 Background jobs keep running server-side; when one finishes you get a Telegram DM
-(if your account is linked) with the result, or check it with `node log <id>`.
+(if your account is linked) with the result, or check it with `node log <id>`. In
+agentic mode each command is bounded by a per-step timeout (kills and reports
+runaway/hung commands so the loop can't deadlock) and runs in its own process
+group so nothing is left orphaned.
 
 > ⚠️ **This is unrestricted command execution by design** — there is no confirmation
 > step or command allowlist. Only enable it on a trusted, private deployment, and keep
-> the allowed-users list tight. Set a **Job Timeout** if you want a hard kill switch.
+> the allowed-users list tight. Set a **Job Timeout** (and **Agent Step Timeout**) if you
+> want a hard kill switch.
 
 ### Large files on Telegram (optional)
 
