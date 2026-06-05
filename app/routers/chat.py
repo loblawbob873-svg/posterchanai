@@ -1077,6 +1077,15 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                     from app.database import SessionLocal
                                     from app.models import Message as _Msg, Conversation as _Conv
                                     from app.services.node_service import tail as _tail, INLINE_LIMIT as _IL
+                                    # Agent step-streaming passes a plain string; stream it as live
+                                    # progress over the websocket only (the final transcript that
+                                    # execute_command returns is what gets persisted).
+                                    if isinstance(job, str):
+                                        try:
+                                            await manager.send_json(_uid, {"type": "response", "data": {"type": "text", "content": job}}, _conn, _conv)
+                                        except Exception as _e:
+                                            logger.warning(f"[node] webui step notify failed: {_e}")
+                                        return
                                     _icon = {"done": "✅", "failed": "❌", "killed": "🛑"}.get(job.status, "ℹ️")
                                     _out = (job.output or "(no output)").strip()
                                     _text = f"{_icon} Job #{job.id} on `{job.node}` {job.status} (exit {job.exit_code})\n\n```\n{_tail(_out, _IL)}\n```"

@@ -62,6 +62,13 @@ def _make_tg_node_notify(telegram_service, chat_id):
     """Build an async callback that DMs a finished `node` job's output to this chat.
     Used so long-running node jobs started from Telegram report back here when done."""
     async def _notify(job):
+        # Agent step-streaming passes a plain string (e.g. "⚙️ `cmd`"); job-completion passes a Job.
+        if isinstance(job, str):
+            try:
+                await telegram_service.send_message(str(chat_id), job)
+            except Exception as e:
+                logger.warning(f"[node] telegram step notify failed: {e}")
+            return
         from app.services.node_service import tail, INLINE_LIMIT
         icon = {"done": "✅", "failed": "❌", "killed": "🛑"}.get(job.status, "ℹ️")
         out = (job.output or "(no output)").strip()
