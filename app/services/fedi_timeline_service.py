@@ -97,7 +97,7 @@ def _norm_misskey(n: dict) -> dict:
         "html": None,                          # Misskey text is MFM/plain → render to HTML
         "media": media,
         "quote": quote,
-        "url": n.get("url"),                   # human URL (remote); local synthesized in _post_url
+        "url": n.get("url"),                   # human URL to the post (remote notes only)
         "in_reply_to_id": n.get("replyId"),    # parent note id (for proper thread reply chains)
         "replies_count": n.get("repliesCount") or 0,
         "created_at": n.get("createdAt"),
@@ -163,35 +163,8 @@ def _canonical_uri(platform: str, instance_url: str, post: dict) -> str | None:
 _MENTION_RE = re.compile(r'(?<![\w@/"])@([A-Za-z0-9_]+)(?:@([A-Za-z0-9.\-]+))?')
 
 
-def _profile_url(instance_url: str, post: dict) -> str | None:
-    """The author's profile page: their `url` if the platform gave one, else derived from the
-    handle (`@user@host` → https://host/@user; local `@user` → on the source instance)."""
-    a = post["author"]
-    if a.get("url"):
-        return a["url"]
-    acct = a.get("acct") or ""
-    if not acct:
-        return None
-    if "@" in acct:
-        user, _, host = acct.partition("@")
-        return f"https://{host}/@{user}"
-    return f"{instance_url.rstrip('/')}/@{acct}"
-
-
 def _host_of(instance_url: str) -> str:
     return instance_url.split("://", 1)[-1].rstrip("/")
-
-
-def _post_url(instance_url: str, post: dict) -> str | None:
-    """A clickable URL to the post (and thus its full thread) on the source instance."""
-    if post.get("url"):
-        return post["url"]
-    uri = post.get("uri")
-    if uri and uri.startswith("http"):
-        return uri
-    if post.get("id"):
-        return f"{instance_url.rstrip('/')}/notes/{post['id']}"   # Misskey local note
-    return None
 
 
 def _linkify_mentions(body_html: str, instance_url: str) -> str:
@@ -277,7 +250,7 @@ def _body_text(post: dict) -> str:
     return "\n\n".join(parts)
 
 
-def _body_html(avatar_mxc: str | None, post: dict, profile_url: str | None, instance_url: str) -> str:
+def _body_html(avatar_mxc: str | None, post: dict, instance_url: str) -> str:
     a = post["author"]
     name = _apply_emojis(html.escape(a.get("display") or a.get("acct") or ""), a.get("emoji_mxc"))
     avatar = f'<img src="{html.escape(avatar_mxc)}" width="20" height="20" /> ' if avatar_mxc else ""
@@ -361,7 +334,6 @@ async def _deliver(db: Session, hs: str, bot_token: str, room_id: str, platform:
     record it, and post its media as thread children. Returns the new root event_id."""
     uri = _canonical_uri(platform, instance_url, post)
     avatar_mxc = await _avatar_mxc(db, hs, bot_token, post["author"].get("avatar_url"))
-    profile_url = _profile_url(instance_url, post)
     # Resolve custom-emoji shortcodes in the display names to inline Matrix images.
     post["author"]["emoji_mxc"] = await _resolve_name_emojis(
         db, hs, bot_token, post["author"].get("display") or "", post["author"].get("emojis") or {})
@@ -379,7 +351,7 @@ async def _deliver(db: Session, hs: str, bot_token: str, room_id: str, platform:
             parent_event = prow.event_id
     event_id = await matrix_service.send_event(
         hs, bot_token, room_id, _body_text(post),
-        html=_body_html(avatar_mxc, post, profile_url, instance_url),
+        html=_body_html(avatar_mxc, post, instance_url),
         thread_root_event_id=thread_root_event_id, reply_to_event_id=parent_event,
     )
     db.add(TimelinePost(
