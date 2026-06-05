@@ -972,6 +972,24 @@ _geni_image_cache: dict = {}
 # Pending link actions: chat_id → url (cleared once action is chosen)
 _link_action_cache: dict = {}
 
+
+async def _link_content_for_llm(db, url: str):
+    """Fetch (title, content_or_None, error) for the summary/post LLM prompts.
+
+    Goes through SearchService.fetch_urls, which already substitutes the transcript for YouTube
+    links (so the model never summarizes contentless watch-page HTML). Callers must NOT generate
+    from None content - that's how the hallucinated summaries/posts happened.
+    """
+    import asyncio as _asyncio
+    from app.services.search_service import SearchService as _SS
+    try:
+        f = await _asyncio.wait_for(_SS(db).fetch_urls([url], max_urls=1), timeout=25)
+    except _asyncio.TimeoutError:
+        return "", None, "timed out fetching the URL"
+    if f and f[0].get("content") and not f[0].get("error"):
+        return f[0].get("title", ""), f[0]["content"], None
+    return (f[0].get("title", "") if f else ""), None, (f[0].get("error") if f else "") or "could not fetch content"
+
 # Finance: chat_id → {str(bill_id): bill_dict} for the bills shown in the last budget
 # view, so a `fin:pay:<id>` callback can resolve the exact bill name to pay.
 _finance_bills_cache: dict = {}
@@ -3828,13 +3846,10 @@ async def _handle_telegram_update(update: dict, db: Session):
                 if action == "summary":
                     await telegram_service.send_message(chat_id, "⏳ Fetching and summarizing link, please wait...")
                     try:
-                        from app.services.search_service import SearchService as _SS
                         import asyncio as _asyncio
-                        _ss = _SS(db)
-                        fetched = await _asyncio.wait_for(_ss.fetch_urls([cached_url], max_urls=1), timeout=15)
-                        if fetched and fetched[0].get("content") and not fetched[0].get("error"):
-                            content = fetched[0]["content"][:4000]
-                            title = fetched[0].get("title", "")
+                        title, content, err = await _link_content_for_llm(db, cached_url)
+                        if content:
+                            content = content[:4000]
                             lnk_chat = ChatService(db, user=lnk_user)
                             summary_msgs = [
                                 {"role": "system", "content": "You are a thorough summarizer. Output only the summary, nothing else. No introductions or meta-commentary."},
@@ -3843,11 +3858,8 @@ async def _handle_telegram_update(update: dict, db: Session):
                             summary = await _asyncio.wait_for(lnk_chat.chat(summary_msgs), timeout=120)
                             await telegram_service.send_message(chat_id, summary)
                         else:
-                            error_detail = fetched[0].get("error", "") if fetched else "Could not reach URL"
-                            msg = "Could not fetch content from the URL."
-                            if error_detail:
-                                msg += f" ({error_detail})"
-                            await telegram_service.send_message(chat_id, msg)
+                            # No real content -> do NOT let the model invent a summary.
+                            await telegram_service.send_message(chat_id, f"Could not fetch content from the URL. ({err})")
                     except _asyncio.TimeoutError:
                         await telegram_service.send_message(chat_id, "Timed out fetching or summarizing the link.")
                     except Exception as lnk_err:
@@ -3857,13 +3869,14 @@ async def _handle_telegram_update(update: dict, db: Session):
                 elif action == "post":
                     await telegram_service.send_message(chat_id, "⏳ Generating post, please wait...")
                     try:
-                        from app.services.search_service import SearchService as _SS
                         import asyncio as _asyncio
-                        _ss = _SS(db)
-                        fetched = await _asyncio.wait_for(_ss.fetch_urls([cached_url], max_urls=1), timeout=15)
-                        article_context = cached_url
-                        if fetched and fetched[0].get("content") and not fetched[0].get("error"):
-                            article_context = f"Title: {fetched[0].get('title', '')}\n\n{fetched[0]['content'][:3000]}"
+                        title, content, err = await _link_content_for_llm(db, cached_url)
+                        if not content:
+                            # No real content (e.g. a YouTube video with no captions) -> refuse
+                            # rather than letting the model invent a post from the bare URL.
+                            await telegram_service.send_message(chat_id, f"Couldn't read that link to write a post. ({err})")
+                            return {"ok": True}
+                        article_context = f"Title: {title}\n\n{content[:3000]}"
 
                         post_messages = [
                             {

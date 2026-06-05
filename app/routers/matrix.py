@@ -261,11 +261,17 @@ async def execute_matrix_command(
         if url_arg:
             try:
                 import asyncio as _aio
-                fetched = await _aio.wait_for(_SS(db).fetch_urls([url_arg], max_urls=1), timeout=15)
+                fetched = await _aio.wait_for(_SS(db).fetch_urls([url_arg], max_urls=1), timeout=25)
                 if fetched and fetched[0].get("content") and not fetched[0].get("error"):
                     article_context = f"Title: {fetched[0].get('title','')}\n\n{fetched[0]['content'][:3000]}"
+                else:
+                    # Couldn't read the link (e.g. a YouTube video with no captions). Refuse rather
+                    # than letting the model invent a post from the bare URL (fetch_urls already
+                    # uses the transcript for YouTube, so this only triggers when there's truly none).
+                    _err = (fetched[0].get("error") if fetched else "") or "could not fetch content"
+                    return {"result": f"Couldn't read that link to write a post. ({_err})"}
             except Exception:
-                pass
+                return {"result": "Couldn't read that link to write a post (fetch error)."}
         if not article_context:
             return {"result": "Usage: `post <url or text>` — generate a social media post from a URL or topic. Use `post raw <text>` to share text exactly as written."}
         _cs.num_predict = min(_cs.num_predict, 900)

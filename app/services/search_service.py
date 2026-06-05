@@ -260,8 +260,51 @@ class SearchService:
                 unique_urls.append(url)
         return unique_urls
 
+    async def _fetch_youtube_content(self, url: str, max_length: int = 15000) -> dict:
+        """Return a fetch_url_content-shaped dict for a YouTube link using its TRANSCRIPT.
+
+        The watch-page HTML has no spoken content, so summarizing/posting from it makes the LLM
+        hallucinate. When there is no transcript we return empty content + an error so callers
+        don't invent one. Title is best-effort from the page <title>."""
+        import asyncio as _asyncio
+        from app.services import youtube_service as _yt
+
+        vid = _yt.extract_video_id(url)
+        transcript = await _asyncio.to_thread(_yt.get_transcript, vid) if vid else None
+
+        title = "YouTube video"
+        try:  # best-effort page title (the watch-page <title> is the video title)
+            async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+                r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+                if r.status_code == 200 and r.text:
+                    t = BeautifulSoup(r.text, "lxml").title
+                    if t:
+                        cand = t.get_text(strip=True)
+                        if cand.endswith(" - YouTube"):
+                            cand = cand[: -len(" - YouTube")].strip()
+                        title = cand or title
+        except Exception:
+            pass
+
+        if transcript:
+            return {"url": url, "title": title, "content": transcript[:max_length], "error": None}
+        return {"url": url, "title": title, "content": "",
+                "error": "no transcript/captions available for this video"}
+
     async def fetch_url_content(self, url: str, max_length: int = 15000) -> Optional[dict]:
         """Fetch and extract text content from a URL"""
+        # YouTube *videos* need the transcript, not the watch-page HTML (which is contentless and
+        # makes the LLM hallucinate). Centralised here so EVERY caller - telegram/web/matrix/
+        # pleroma/misskey, the summarize & post commands, and RAG - gets it via fetch_urls()
+        # automatically. Only intercept actual video URLs (watch/shorts/embed/youtu.be); channel,
+        # search and playlist pages have no video id and fall through to normal HTML fetch.
+        try:
+            from app.services import youtube_service as _yt
+            if _yt.extract_video_id(url):
+                return await self._fetch_youtube_content(url, max_length)
+        except Exception as _yt_err:
+            logger.warning(f"YouTube transcript path failed for {url}: {_yt_err}")
+
         # SSRF protection: validate URL before fetching
         is_safe, error_msg = is_safe_url(url)
         if not is_safe:
