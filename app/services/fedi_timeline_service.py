@@ -12,6 +12,7 @@ separate Setting row `fedi_timeline_since`. State (TimelinePost / MatrixAvatarCa
 DB, but the poller itself is per-process — correct only on the single port-3051 instance, like
 the social poller.
 """
+import asyncio
 import html
 import logging
 import re
@@ -34,7 +35,13 @@ _REPLY_WINDOW_HOURS = 12      # how far back to keep re-checking roots for new f
 _REPLY_POLL_INTERVAL = 120    # min seconds between reply re-checks (decoupled from the post poll
                               # so a busy feed's growing root set doesn't hammer the source instance)
 _REPLY_MAX_ROOTS = 150        # cap roots re-checked per cycle (newest first)
+_REPLY_POLL_BUDGET = 30       # max wall-clock seconds spent re-checking roots per cycle, so the
+                              # 150-root catch-up can't drag a single poll out to minutes (it runs
+                              # every cycle anyway — deferred roots are picked up next time)
 _MAX_ANCESTORS = 12           # cap ancestors backfilled to anchor an orphan reply's conversation
+_POLL_TIMEOUT = 240           # hard cap on one poll_once. APScheduler runs us with max_instances=1,
+                              # so a single wedged poll would otherwise freeze the whole bridge
+                              # indefinitely; cancelling it frees the slot and the next cycle retries.
 _last_reply_poll = 0.0        # monotonic ts of the last reply re-check (per-process)
 _TAG_RE = re.compile(r"<[^>]+>")
 _BREAK_RE = re.compile(r"<\s*br\s*/?\s*>|</\s*p\s*>", re.IGNORECASE)
@@ -495,9 +502,17 @@ async def _poll_replies(db: Session, hs: str, bot_token: str, room_id: str, plat
         TimelinePost.thread_root_event_id.is_(None),
         TimelinePost.created_at >= cutoff,
     ).order_by(TimelinePost.id.desc()).limit(_REPLY_MAX_ROOTS).all()
+    deadline = time.monotonic() + _REPLY_POLL_BUDGET
     for root in roots:
-        await _deliver_descendants(db, hs, bot_token, room_id, platform, root.instance_url,
-                                   token, root.note_id, root.event_id)
+        if time.monotonic() > deadline:
+            logger.info("[fedi-timeline] reply re-check budget hit; deferring remaining roots")
+            break
+        # One slow/failing root must not abort the whole re-check (or, via poll_once, the cursor advance).
+        try:
+            await _deliver_descendants(db, hs, bot_token, room_id, platform, root.instance_url,
+                                       token, root.note_id, root.event_id)
+        except Exception as e:
+            logger.warning(f"[fedi-timeline] reply re-check failed for root {root.note_id}: {e}")
 
 
 # --- poll loop --------------------------------------------------------------
@@ -600,7 +615,13 @@ def start_fedi_timeline_scheduler() -> None:
         from app.database import SessionLocal as _SL
         _db = _SL()
         try:
-            await poll_once(_db)
+            await asyncio.wait_for(poll_once(_db), timeout=_POLL_TIMEOUT)
+        except asyncio.TimeoutError:
+            # A wedged poll would pin the max_instances=1 slot forever and freeze the bridge.
+            # Cancelling is safe: the cursor only advances after the delivery loop, and TimelinePost
+            # dedup (_seen) means a re-fetched batch won't double-post.
+            logger.warning(f"[fedi-timeline] poll exceeded {_POLL_TIMEOUT}s and was cancelled; retrying next cycle")
+            _db.rollback()
         except Exception as e:
             logger.warning(f"[fedi-timeline] poll job error: {e}")
             _db.rollback()
