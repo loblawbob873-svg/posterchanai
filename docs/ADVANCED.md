@@ -571,7 +571,7 @@ python run.py
 
 Or use the wrapper script which handles this automatically:
 ```bash
-./run-ipex.sh
+./run-intel.sh
 ```
 
 ## Running
@@ -1993,7 +1993,7 @@ python run.py
 
 **Systemd Service (for IPEX):**
 
-The installer automatically creates a systemd service with the correct environment. If setting up manually, create `/etc/systemd/system/posterchanai-ipex.service`:
+The installer automatically creates a systemd service with the correct environment. If setting up manually, create `/etc/systemd/system/posterchanai.service`:
 
 ```ini
 [Unit]
@@ -2025,7 +2025,7 @@ Environment="TORCH_DEVICE_BACKEND_AUTOLOAD=0"
 # Preload VTune stub to suppress symbol warnings (optional)
 Environment="LD_PRELOAD=/usr/local/lib/libittnotify.so"
 
-ExecStart=/home/verita84/posterchanai/run-ipex.sh
+ExecStart=/home/verita84/posterchanai/run-intel.sh
 Restart=always
 RestartSec=5
 

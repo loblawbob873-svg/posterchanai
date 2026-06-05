@@ -135,7 +135,7 @@ setup_xpu_image_instance() {
     echo "    - venv-xpu:  Images (PyTorch XPU) - uses native PyTorch XPU"
     echo ""
     echo "  Two systemd services will be created:"
-    echo "    - posterchanai-ipex.service (port 3051) - Chat"
+    echo "    - posterchanai.service (port 3051) - Chat"
     echo "    - posterchanai-xpu-image.service (port 3052) - Images"
     echo ""
 

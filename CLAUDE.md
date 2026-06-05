@@ -12,10 +12,10 @@ bots**. Single-admin, multi-user, SQLite-backed.
 ## Run / dev
 
 - Entry point: `python run.py` (uvicorn, **single worker**, port from `POSTERCHANAI_PORT`,
-  default **3051**). On this deployment the Intel Arc box runs `posterchanai-ipex.service`
+  default **3051**). On this deployment the Intel Arc box runs `posterchanai.service`
   (port 3051) + `posterchanai-xpu-image.service`; `nas.lan` runs `posterchanai`.
 - venv at `venv/` (`venv/bin/python`). Quick checks: `venv/bin/python -m py_compile <files>`.
-- Logs: `journalctl -u posterchanai-ipex.service` (the fediverse `[PROXY] CONNECT ... SOCKS5`
+- Logs: `journalctl -u posterchanai.service` (the fediverse `[PROXY] CONNECT ... SOCKS5`
   errors are unrelated federation noise — ignore when debugging features).
 
 ## Deploy — always via `sync.sh`

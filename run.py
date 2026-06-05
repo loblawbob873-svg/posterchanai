@@ -27,7 +27,7 @@ def check_ipex_environment():
                 print("WARNING: IPEX backend selected but oneAPI environment not found!", file=sys.stderr)
                 print("", file=sys.stderr)
                 print("For Intel GPU acceleration, start with:", file=sys.stderr)
-                print("  ./run-ipex.sh --port 3051", file=sys.stderr)
+                print("  ./run-intel.sh --port 3051", file=sys.stderr)
                 print("", file=sys.stderr)
                 print("Or source oneAPI first:", file=sys.stderr)
                 print("  source /opt/intel/oneapi/setvars.sh", file=sys.stderr)

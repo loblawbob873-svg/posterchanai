@@ -89,4 +89,4 @@ done
 
 command -v ldconfig >/dev/null && ldconfig || true
 echo "OK: IGC ${IGC_VER} installed ($installed libs). Restart the GPU services:"
-echo "  sudo systemctl restart posterchanai-xpu-image.service posterchanai-ipex.service"
+echo "  sudo systemctl restart posterchanai-xpu-image.service posterchanai.service"

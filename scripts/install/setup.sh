@@ -123,62 +123,58 @@ configure_database_settings() {
     fi
 }
 
+# Shared file downloader (wget|curl) - single implementation so the multi-model path below
+# isn't duplicated. $1=url $2=dest; returns 0 on success, leaving no partial file behind.
+_download_model_file() {
+    local url="$1" dest="$2" ok=0
+    echo "  -> $(basename "$dest")"
+    if command -v wget &>/dev/null; then
+        wget -q --show-progress -O "$dest" "$url" && ok=1
+    elif command -v curl &>/dev/null; then
+        curl -L --progress-bar -o "$dest" "$url" && ok=1
+    else
+        print_warning "Neither wget nor curl found. Download manually:"
+        echo "    $url"; echo "    -> $dest"; return 1
+    fi
+    if [ "$ok" = "1" ] && [ -s "$dest" ]; then
+        print_success "Downloaded $(basename "$dest")"; return 0
+    fi
+    [ -f "$dest" ] && rm -f "$dest"
+    print_error "Download failed: $url"; return 1
+}
+
 download_model() {
     print_step "Download a model?"
     echo ""
-    echo "  Recommended models for local inference:"
-    echo "  1. Qwen3-1.7B-abliterated (1.4GB) - Lightweight, fast"
-    echo "  2. Qwen3-8B-abliterated (5.9GB) - Fast, good quality (recommended)"
-    echo "  3. Qwen2.5-7B-Instruct (7GB) - Fast, good quality"
+    echo "  Models this project is tuned for (GGUF Q4_K_M, ~5.6GB each):"
+    echo "  1. Qwen3.5-9B-Claude-Code  - agentic coding / opencode (reliable tool calls)"
+    echo "  2. Qwen3.5-9B-abliterated  - general chat (uncensored); the default model"
+    echo "  3. Both (recommended)"
     echo ""
-
-    read -p "Download a starter model? [1/2/3/n]: " DOWNLOAD_MODEL
+    echo "  Image model (SDXL): cyberrealisticXL_v100.safetensors - download from CivitAI"
+    echo "  (search 'CyberRealistic XL') and drop it in the models dir. Not auto-downloaded"
+    echo "  because CivitAI requires an account token."
+    echo ""
+    read -p "Download a starter LLM? [1/2/3/n]: " DOWNLOAD_MODEL
 
     local MODELS_PATH="/var/lib/posterchanai/models"
-    local MODEL_URL=""
-    local MODEL_FILE=""
+    mkdir -p "$MODELS_PATH" 2>/dev/null || true
+    # Verified HF repos with these exact filenames (the ones running in production).
+    local CC_URL="https://huggingface.co/empero-ai/Qwen3.5-9B-Claude-Code-GGUF/resolve/main/Qwen3.5-9B-Claude-Code-Q4_K_M.gguf"
+    local AB_URL="https://huggingface.co/lukey03/Qwen3.5-9B-abliterated-GGUF/resolve/main/Qwen3.5-9B-abliterated-Q4_K_M.gguf"
 
     case "$DOWNLOAD_MODEL" in
-        1)
-            echo "  Downloading Qwen3-1.7B-abliterated Q6_K..."
-            MODEL_URL="https://huggingface.co/mradermacher/Qwen3-1.7B-abliterated-GGUF/resolve/main/Qwen3-1.7B-abliterated.Q6_K.gguf"
-            MODEL_FILE="$MODELS_PATH/Qwen3-1.7B-abliterated.Q6_K.gguf"
+        1)  _download_model_file "$CC_URL" "$MODELS_PATH/Qwen3.5-9B-Claude-Code-Q4_K_M.gguf" ;;
+        2)  _download_model_file "$AB_URL" "$MODELS_PATH/Qwen3.5-9B-abliterated-Q4_K_M.gguf" ;;
+        3|[Yy]|[Yy][Ee][Ss])
+            _download_model_file "$AB_URL" "$MODELS_PATH/Qwen3.5-9B-abliterated-Q4_K_M.gguf"
+            _download_model_file "$CC_URL" "$MODELS_PATH/Qwen3.5-9B-Claude-Code-Q4_K_M.gguf"
             ;;
-        2|[Yy]|[Yy][Ee][Ss])
-            echo "  Downloading Qwen3-8B-abliterated Q5_K_M..."
-            MODEL_URL="https://huggingface.co/DevQuasar/huihui-ai.Qwen3-8B-abliterated-GGUF/resolve/main/huihui-ai.Qwen3-8B-abliterated.Q5_K_M.gguf"
-            MODEL_FILE="$MODELS_PATH/Qwen3-8B-abliterated-Q5_K_M.gguf"
-            ;;
-        3)
-            echo "  Downloading Qwen2.5-7B-Instruct Q5_K_M..."
-            MODEL_URL="https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q5_k_m.gguf"
-            MODEL_FILE="$MODELS_PATH/Qwen2.5-7B-Instruct-Q5_K_M.gguf"
-            ;;
-        *)
-            return
-            ;;
+        *)  return ;;
     esac
-
-    if [ -n "$MODEL_URL" ]; then
-        local DOWNLOAD_OK=0
-        if command -v wget &>/dev/null; then
-            wget -q --show-progress -O "$MODEL_FILE" "$MODEL_URL" && DOWNLOAD_OK=1
-        elif command -v curl &>/dev/null; then
-            curl -L --progress-bar -o "$MODEL_FILE" "$MODEL_URL" && DOWNLOAD_OK=1
-        else
-            print_warning "Neither wget nor curl found. Please download manually."
-            echo "  URL: $MODEL_URL"
-            echo "  Save to: $MODEL_FILE"
-        fi
-
-        if [ "$DOWNLOAD_OK" = "1" ] && [ -f "$MODEL_FILE" ] && [ -s "$MODEL_FILE" ]; then
-            print_success "Model downloaded to $MODEL_FILE"
-            echo "  Configure this model in Admin Settings > LLM Model Path"
-        elif [ -f "$MODEL_FILE" ]; then
-            rm -f "$MODEL_FILE"
-            print_error "Download failed. Please try again manually."
-        fi
-    fi
+    echo ""
+    echo "  Configure in Admin Settings > LLM Model Path (default: the abliterated model)."
+    echo "  Point opencode (its own config) at Qwen3.5-9B-Claude-Code for agentic coding."
 }
 
 setup_mcp_server() {

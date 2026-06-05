@@ -158,12 +158,12 @@ This can happen if:
 
 **Check CalDAV Server Logs**:
 ```bash
-ssh 192.168.0.1 "sudo journalctl -u posterchanai-ipex -n 100 --no-pager | grep -i caldav"
+ssh 192.168.0.1 "sudo journalctl -u posterchanai -n 100 --no-pager | grep -i caldav"
 ```
 
 **Restart Services** (if needed):
 ```bash
-ssh 192.168.0.1 "sudo systemctl restart posterchanai-ipex"
+ssh 192.168.0.1 "sudo systemctl restart posterchanai"
 ```
 Wait 10-15 seconds for the app to fully restart, then test again.
 

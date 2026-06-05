@@ -6,11 +6,11 @@
 SERVICE_NAME="posterchanai"
 
 setup_systemd() {
-    # Set SERVICE_NAME based on backend
+    # Set SERVICE_NAME based on backend. Intel uses the plain "posterchanai" name (its
+    # Intel-specific environment lives entirely in run-intel.sh, not the unit name); only AMD
+    # keeps a suffix to coexist with a ROCm-specific launcher.
     SERVICE_NAME="posterchanai"
-    if [ "$BACKEND" = "intel" ]; then
-        SERVICE_NAME="posterchanai-ipex"
-    elif [ "$BACKEND" = "amd" ]; then
+    if [ "$BACKEND" = "amd" ]; then
         SERVICE_NAME="posterchanai-rocm"
     fi
 
@@ -61,15 +61,15 @@ setup_single_service() {
 setup_intel_dual_services() {
     echo ""
     print_step "Creating Intel Arc dual-service setup..."
-    echo "  Chat service:  posterchanai-ipex.service (port 3051)"
+    echo "  Chat service:  $SERVICE_NAME.service (port 3051)"
     echo "  Image service: posterchanai-xpu-image.service (port 3052)"
     echo ""
 
     # Create chat service (IPEX-LLM)
-    print_step "Creating chat service: posterchanai-ipex"
+    print_step "Creating chat service: $SERVICE_NAME"
     create_run_script
     create_service_file
-    print_success "Created posterchanai-ipex.service"
+    print_success "Created $SERVICE_NAME.service"
 
     # Create image service (XPU)
     print_step "Creating image service: posterchanai-xpu-image"
@@ -85,13 +85,13 @@ setup_intel_dual_services() {
 
     if [[ "$START_NOW" =~ ^[Yy] ]]; then
         # Start chat service
-        sudo systemctl enable posterchanai-ipex
-        sudo systemctl start posterchanai-ipex
+        sudo systemctl enable $SERVICE_NAME
+        sudo systemctl start $SERVICE_NAME
         sleep 3
-        if systemctl is-active --quiet posterchanai-ipex; then
-            print_success "Chat service (posterchanai-ipex) started on port 3051"
+        if systemctl is-active --quiet $SERVICE_NAME; then
+            print_success "Chat service ($SERVICE_NAME) started on port 3051"
         else
-            print_error "Chat service failed. Check: sudo journalctl -u posterchanai-ipex -n 50"
+            print_error "Chat service failed. Check: sudo journalctl -u $SERVICE_NAME -n 50"
         fi
 
         # Start image service

@@ -66,7 +66,7 @@ def _check_and_setup_oneapi():
         logger.warning("=" * 60)
         logger.warning("Intel oneAPI NOT FOUND!")
         logger.warning("IPEX-LLM requires Intel oneAPI for GPU acceleration.")
-        logger.warning("Install oneAPI or start the service with: ./run-ipex.sh")
+        logger.warning("Install oneAPI or start the service with: ./run-intel.sh")
         logger.warning("=" * 60)
         _oneapi_available = False
         return False
@@ -75,7 +75,7 @@ def _check_and_setup_oneapi():
     logger.warning("=" * 60)
     logger.warning("Intel oneAPI found but environment not configured!")
     logger.warning(f"Auto-configuring from: {oneapi_root}")
-    logger.warning("For best results, start with: ./run-ipex.sh")
+    logger.warning("For best results, start with: ./run-intel.sh")
     logger.warning("=" * 60)
 
     # Set LD_LIBRARY_PATH
@@ -133,7 +133,7 @@ def check_xpu_available() -> tuple[bool, str]:
     except ImportError as e:
         error_msg = str(e)
         if "libsvml.so" in error_msg or "cannot open shared object" in error_msg:
-            return False, f"Intel oneAPI libraries not loaded. Start with ./run-ipex.sh or source oneAPI environment first."
+            return False, f"Intel oneAPI libraries not loaded. Start with ./run-intel.sh or source oneAPI environment first."
         elif "intel_extension_for_pytorch" in error_msg:
             return False, f"intel_extension_for_pytorch not installed. Run setup-ipex.sh or use venv-ipex."
         return False, f"IPEX-LLM not available: {e}"

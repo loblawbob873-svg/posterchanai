@@ -186,7 +186,7 @@ async def startup():
                 else:
                     logging.warning("=" * 60)
                     logging.warning(f"IPEX BACKEND WARNING: {xpu_msg}")
-                    logging.warning("GPU acceleration may not work. Start with ./run-ipex.sh")
+                    logging.warning("GPU acceleration may not work. Start with ./run-intel.sh")
                     logging.warning("=" * 60)
         except Exception as e:
             logging.error(f"Error checking LLM backend configuration: {e}", exc_info=True)

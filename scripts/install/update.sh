@@ -80,7 +80,7 @@ run_updates() {
     echo ""
     print_step "Restarting services"
     local restarted=0
-    for svc in posterchanai-ipex posterchanai-xpu-image posterchanai-cpu posterchanai; do
+    for svc in posterchanai-xpu-image posterchanai-cpu posterchanai; do
         if systemctl list-unit-files 2>/dev/null | grep -q "^${svc}\.service"; then
             sudo systemctl restart "${svc}.service" 2>/dev/null && { echo "  ✓ restarted ${svc}"; restarted=1; }
         fi

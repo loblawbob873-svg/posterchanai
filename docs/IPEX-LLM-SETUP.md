@@ -80,7 +80,7 @@ For an Intel Arc box, three layers must be in place. **You** install the first v
 | **Arch** | `pacman -S intel-compute-runtime level-zero-loader intel-graphics-compiler patchelf pax-utils` (oneAPI from AUR `intel-oneapi-basekit`) |
 
 After layer 1 + oneAPI + `install-igc.sh`, run `./install.sh` and it builds the two venvs and the
-two systemd services (`posterchanai-ipex` :3051, `posterchanai-xpu-image` :3052). The installer
+two systemd services (`posterchanai` :3051, `posterchanai-xpu-image` :3052). The installer
 auto-detects the distro (`/etc/os-release`, incl. `ID_LIKE` for derivatives) and prints the exact
 package commands for anything still missing.
 
@@ -163,18 +163,28 @@ sudo ldconfig
 ### 6. Install systemd service
 
 ```bash
-# Copy and edit the example service file
-cp posterchanai-ipex.service.example posterchanai-ipex.service
+# The installer (./install.sh) creates this for you. Manual version below — the unit is generic
+# because all the Intel/oneAPI setup lives in run-intel.sh.
+sudo tee /etc/systemd/system/posterchanai.service >/dev/null <<EOF
+[Unit]
+Description=Posterchan AI (Intel Arc GPU, llama-cpp SYCL)
+After=network.target
 
-# Edit paths in the service file
-sed -i 's|YOUR_USERNAME|'$(whoami)'|g' posterchanai-ipex.service
-sed -i 's|/path/to/posterchanai|'$(pwd)'|g' posterchanai-ipex.service
+[Service]
+Type=simple
+User=$(whoami)
+WorkingDirectory=$(pwd)
+ExecStart=$(pwd)/run-intel.sh
+Restart=always
+RestartSec=3
+TimeoutStartSec=120
+LimitNOFILE=65536
 
-# Install and enable
-sudo cp posterchanai-ipex.service /etc/systemd/system/
+[Install]
+WantedBy=multi-user.target
+EOF
 sudo systemctl daemon-reload
-sudo systemctl enable posterchanai-ipex
-sudo systemctl start posterchanai-ipex
+sudo systemctl enable --now posterchanai
 ```
 
 ---
@@ -241,17 +251,17 @@ sudo ldconfig
 ### 5. Install systemd service
 
 ```bash
-cp posterchanai-ipex.service.example posterchanai-ipex.service
+cp posterchanai.service.example posterchanai.service
 
 # Edit paths
-sed -i 's|YOUR_USERNAME|'$(whoami)'|g' posterchanai-ipex.service
-sed -i 's|/path/to/posterchanai|'$(pwd)'|g' posterchanai-ipex.service
+sed -i 's|YOUR_USERNAME|'$(whoami)'|g' posterchanai.service
+sed -i 's|/path/to/posterchanai|'$(pwd)'|g' posterchanai.service
 
 # Install and enable
-sudo cp posterchanai-ipex.service /etc/systemd/system/
+sudo cp posterchanai.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable posterchanai-ipex
-sudo systemctl start posterchanai-ipex
+sudo systemctl enable posterchanai
+sudo systemctl start posterchanai
 ```
 
 ---
@@ -318,17 +328,17 @@ sudo ldconfig
 ### 5. Install systemd service
 
 ```bash
-cp posterchanai-ipex.service.example posterchanai-ipex.service
+cp posterchanai.service.example posterchanai.service
 
 # Edit paths
-sed -i 's|YOUR_USERNAME|'$(whoami)'|g' posterchanai-ipex.service
-sed -i 's|/path/to/posterchanai|'$(pwd)'|g' posterchanai-ipex.service
+sed -i 's|YOUR_USERNAME|'$(whoami)'|g' posterchanai.service
+sed -i 's|/path/to/posterchanai|'$(pwd)'|g' posterchanai.service
 
 # Install and enable
-sudo cp posterchanai-ipex.service /etc/systemd/system/
+sudo cp posterchanai.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable posterchanai-ipex
-sudo systemctl start posterchanai-ipex
+sudo systemctl enable posterchanai
+sudo systemctl start posterchanai
 ```
 
 ---
@@ -423,7 +433,7 @@ sudo ldconfig -p | grep ittnotify
 
 ### Check service logs
 ```bash
-sudo journalctl -u posterchanai-ipex -f
+sudo journalctl -u posterchanai -f
 ```
 
 ### Manual test run
