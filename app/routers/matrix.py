@@ -433,6 +433,25 @@ async def execute_matrix_command(
             return {"result": "No social platforms configured. Connect Misskey, Pleroma, or Matrix in User Settings."}
         return {"result": "\n".join(results)}
 
+    # Handle `dm @user@host <message>` — send a private (direct-visibility) post to the user(s).
+    if _re.match(r'^dm\s', command_str, _re.IGNORECASE):
+        dm_rest = command_str[3:].strip()
+        _dm_m = _re.match(r'^((?:@\S+\s+)+)(.*)$', dm_rest, _re.DOTALL)
+        dm_msg = (_dm_m.group(2).strip() if _dm_m else "")
+        if not _dm_m or not dm_msg:
+            return {"result": "Usage: `dm @user@host <message>` — send a private direct message."}
+        dm_text = " ".join(_dm_m.group(1).split()) + " " + dm_msg
+        if user.pleroma_enabled and user.pleroma_instance_url and user.pleroma_access_token:
+            try:
+                from app.services.pleroma_service import post_status as _plr_dm
+                await _plr_dm(user.pleroma_instance_url, user.pleroma_access_token, dm_text, visibility="direct")
+                return {"result": f"✅ DM sent ({' '.join(_dm_m.group(1).split())})"}
+            except Exception as e:
+                return {"result": f"❌ DM failed: {e}"}
+        if user.misskey_enabled:
+            return {"result": "DMs are currently supported on Pleroma/Mastodon only (Misskey needs the recipient resolved first)."}
+        return {"result": "Connect a Pleroma account in User Settings → Social to send DMs."}
+
     # Matrix-specific help — explains how to use every feature the bot supports.
     if command_str.lower().strip() == "help":
         return {"result": (
@@ -463,7 +482,8 @@ async def execute_matrix_command(
             "📣 *Social*\n"
             "• reply to a message + `post` — turn it into a post; `post raw` shares it as-is; add instructions like `post professional` or `post no links`.\n"
             "• or `post <url or text>` / `post raw <text>` directly.\n"
-            "• then `share` — post to your connected platforms.\n\n"
+            "• then `share` — post to your connected platforms.\n"
+            "• `dm @user@host <message>` — send a private direct message (Pleroma/Mastodon).\n\n"
             "💰 *Finance*\n"
             "• `budget` — your summary plus a menu of finance actions.\n"
             "• 📋 `bills` (`bills paid` / `bills all`) · ✅ `pay <name>`\n"
