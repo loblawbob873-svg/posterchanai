@@ -102,8 +102,37 @@ async def _dm_room(db: Session, hs: str, bot_token: str, user: User) -> str | No
 
 # --- per-platform relay -----------------------------------------------------
 
+_MAX_CONTEXT = 25   # cap conversation messages mirrored into a notification thread
+
+
+async def _thread_context(db: Session, hs: str, bot_token: str, room_id: str, root_event_id: str,
+                          platform: str, instance_url: str, token: str, status_id: str) -> None:
+    """Mirror the notified post's conversation (ancestors + descendants) into the notification's
+    Matrix thread, so the user reads the full context in Element instead of opening the web."""
+    from app.services import fedi_timeline_service as ftl
+    try:
+        if platform == "pleroma":
+            ctx = await pleroma_service.fetch_context(instance_url, token, status_id)
+            raw_items = (ctx.get("ancestors") or []) + (ctx.get("descendants") or [])
+        else:
+            raw_items = await misskey_service.fetch_children(instance_url, token, status_id)
+    except Exception as e:
+        logger.warning(f"[matrix-notif] context fetch failed: {e}")
+        return
+    for raw in raw_items[:_MAX_CONTEXT]:
+        post = ftl._norm(platform, raw)
+        uri = ftl._canonical_uri(platform, instance_url, post)
+        if not post.get("id") or ftl._seen(db, room_id, post["id"], uri):
+            continue
+        try:
+            await ftl._deliver(db, hs, bot_token, room_id, platform, instance_url, post,
+                               thread_root_event_id=root_event_id)
+        except Exception as e:
+            logger.warning(f"[matrix-notif] context deliver failed: {e}")
+
+
 async def _relay(db: Session, hs: str, bot_token: str, user: User, room_id: str,
-                 platform: str, instance_url: str, raw: list, normalize) -> None:
+                 platform: str, instance_url: str, token: str, raw: list, normalize) -> None:
     """Deliver new notifications oldest-first; first poll only sets the cursor (no backfill).
     For each delivered notification that concerns a post, record a MatrixNotifyMap row so the
     user can reply to the DM message and have it post back to the fediverse."""
@@ -139,6 +168,10 @@ async def _relay(db: Session, hs: str, bot_token: str, user: User, room_id: str,
                 instance_url=instance_url, target_id=norm["reply_target"],
                 visibility=norm.get("visibility"),
             ))
+            db.commit()
+            # Mirror the conversation into this notification's thread (view in Element, not web).
+            await _thread_context(db, hs, bot_token, room_id, event_id, platform,
+                                  instance_url, token, norm["reply_target"])
         # Advance the cursor per delivered notification (not once at the end) so a mid-batch
         # failure can't cause already-sent ones to be redelivered.
         if n.get("id"):
@@ -156,7 +189,8 @@ async def _poll_user(db: Session, hs: str, bot_token: str, user: User) -> None:
                 user.pleroma_instance_url, user.pleroma_access_token,
                 since_id=_get_user_setting(db, user.id, "matrix_notif_pleroma_since") or None,
             )
-            await _relay(db, hs, bot_token, user, room_id, "pleroma", user.pleroma_instance_url, raw, _norm_pleroma)
+            await _relay(db, hs, bot_token, user, room_id, "pleroma", user.pleroma_instance_url,
+                         user.pleroma_access_token, raw, _norm_pleroma)
         except Exception as e:
             logger.warning(f"[matrix-notif] pleroma poll failed for user {user.id}: {e}")
     if user.misskey_enabled and user.misskey_instance_url and user.misskey_api_token:
@@ -165,7 +199,8 @@ async def _poll_user(db: Session, hs: str, bot_token: str, user: User) -> None:
                 user.misskey_instance_url, user.misskey_api_token,
                 since_id=_get_user_setting(db, user.id, "matrix_notif_misskey_since") or None,
             )
-            await _relay(db, hs, bot_token, user, room_id, "misskey", user.misskey_instance_url, raw, _norm_misskey)
+            await _relay(db, hs, bot_token, user, room_id, "misskey", user.misskey_instance_url,
+                         user.misskey_api_token, raw, _norm_misskey)
         except Exception as e:
             logger.warning(f"[matrix-notif] misskey poll failed for user {user.id}: {e}")
 
