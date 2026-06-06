@@ -798,8 +798,21 @@ def process_messages():
             _handle_timeline_event(message)
             continue
 
-        # Reactions only carry meaning in the timeline room; ignore them elsewhere.
+        # Reactions: in the timeline room they're handled above. Elsewhere, a reaction to a
+        # forwarded notification DM acts on the notified post (🔁 → boost, any other emoji → fav)
+        # via the same endpoint the `boost`/`fav` reply shortcuts use. It falls through harmlessly
+        # ({ok:false,"not a notification"}) when the reacted-to event isn't a tracked notification.
         if message.get("event_type") == "reaction":
+            _rt = message.get("reaction_target")
+            _rk = (message.get("reaction_key") or "").strip()
+            if _rt and _rk:
+                _action = "boost" if _rk in _TIMELINE_BOOST_KEYS else "fav"
+                _nr = _call_posterchanai_notification_reply(sender, room_id, _rt, _action)
+                if _nr and _nr.get("ok"):
+                    try:
+                        send_reply(message, f"✅ {_nr.get('result', 'done')}")
+                    except Exception as _e:
+                        print(f"[NOTIF-REACT] confirm failed: {_e}")
             continue
 
         # Notification DM reply-back: if this message replies to a forwarded fedi notification,
