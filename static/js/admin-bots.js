@@ -154,8 +154,10 @@ function openBotModal(id) {
     BOT_KNOWN_KEYS.forEach(k => _setVal('bot_f_' + k, cfg[k]));
     BOT_KNOWN_CHECKS.forEach(k => _setChk('bot_f_' + k, cfg[k]));
 
-    // nitter_feeds: list of {rss: url} <-> one URL per line
-    const feeds = Array.isArray(cfg.nitter_feeds) ? cfg.nitter_feeds.map(f => f && f.rss).filter(Boolean) : [];
+    // nitter_feeds: [{rss, room?}] <-> one per line: "rss [room]" (room optional, preserved)
+    const feeds = Array.isArray(cfg.nitter_feeds)
+        ? cfg.nitter_feeds.filter(f => f && f.rss).map(f => f.room ? `${f.rss} ${f.room}` : f.rss)
+        : [];
     _setVal('bot_f_nitter_feeds', feeds.join('\n'));
 
     // features from modes
@@ -200,9 +202,13 @@ async function saveBot() {
     const config = {};
     BOT_KNOWN_KEYS.forEach(k => { const v = _val('bot_f_' + k); if (v) config[k] = v; });
     BOT_KNOWN_CHECKS.forEach(k => { if (_g('bot_f_' + k) && _g('bot_f_' + k).checked) config[k] = true; });
-    // nitter_feeds: textarea (one URL per line) -> [{rss: url}, ...]
+    // nitter_feeds: textarea (one per line: "rss [room]") -> [{rss, room?}, ...] (room preserved)
     const feedLines = _val('bot_f_nitter_feeds').split('\n').map(s => s.trim()).filter(Boolean);
-    if (feedLines.length) config.nitter_feeds = feedLines.map(rss => ({ rss }));
+    if (feedLines.length) config.nitter_feeds = feedLines.map(line => {
+        const parts = line.split(/\s+/);
+        const room = parts.slice(1).join(' ').trim();
+        return room ? { rss: parts[0], room } : { rss: parts[0] };
+    });
     // escape hatch: only present if the bot had exotic keys (shown group)
     if (_g('bot_grp_advanced').style.display !== 'none') {
         const adv = _val('bot_f_advanced');
