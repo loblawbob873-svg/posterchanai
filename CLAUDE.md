@@ -177,10 +177,16 @@ open a fresh `SessionLocal` and capture any needed config up front.
   fallback. A row is recorded for **every delivered event** (text + each media), so interacting
   with an image resolves to its post. Avatars + custom emoji are uploaded once and cached in
   **`MatrixAvatarCache`** (a generic URL→mxc cache). First poll just sets `fedi_timeline_since`
-  (no backfill).
-  - **Rendering** (`_body_html`): compact header = avatar + bold name only (no @handle / no
-    profile link — those make Element render a profile-preview card with bio). Mention/profile
-    `<a>` links are **stripped to plain text** (`_strip_profile_links`) for the same reason. Custom
+  (no backfill); subsequent polls **drain forward** page-by-page with **`min_id`** (Pleroma) /
+  `sinceId` (Misskey) — a single `since_id` fetch silently drops everything beyond `limit` when a
+  busy feed posts more than a page between polls (the old missing-posts bug). The drain commits the
+  cursor per page and is bounded by `_DRAIN_BUDGET` (under the `_POLL_TIMEOUT` cap), so leftover
+  drains next cycle with no gap.
+  - **Rendering** (`_body_html`): header = avatar + bold display name + the **@handle** (plain text
+    via `<font data-mx-color>`, NOT an `<a>` link — a link would make Element render a
+    profile-preview card with bio; plain text is safe and keeps the sender identifiable even when
+    the display name is blank). Mention/profile `<a>` links in the body are **stripped to plain
+    text** (`_strip_profile_links`) for the same reason. Custom
     emoji shortcodes in names → inline `<img data-mx-emoticon>`. Quote-posts/boosts render the
     quoted original in a `<blockquote>`. A post **with media** is sent as ONE message: the first
     image carries the text as an **MSC2530 caption** (`send_image(caption=, caption_html=)`); extra

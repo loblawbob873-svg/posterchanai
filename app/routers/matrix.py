@@ -1181,17 +1181,19 @@ async def notification_reply(
 
     mxid = data.matrix_user_id.strip()
     user = db.query(User).filter(User.matrix_enabled == True, User.matrix_user_id == mxid).first()
-    if not user:
-        return {"ok": False, "result": "not a notification"}
-
     # Match the replied-to event, OR (for an in-thread reply) the thread root — the notification
     # message is the thread root, while m.in_reply_to points at the last mirrored conversation post.
     event_ids = [e for e in (data.target_event_id, data.thread_root_event_id) if e]
-    row = db.query(MatrixNotifyMap).filter(
-        MatrixNotifyMap.room_id == data.room_id,
-        MatrixNotifyMap.event_id.in_(event_ids),
-        MatrixNotifyMap.user_id == user.id,
-    ).order_by(MatrixNotifyMap.id.desc()).first()
+    row = None
+    if user:
+        row = db.query(MatrixNotifyMap).filter(
+            MatrixNotifyMap.room_id == data.room_id,
+            MatrixNotifyMap.event_id.in_(event_ids),
+            MatrixNotifyMap.user_id == user.id,
+        ).order_by(MatrixNotifyMap.id.desc()).first()
+    logger.info("[matrix-notif-reply] mxid=%s user=%s room=%s target=%s thread_root=%s -> %s",
+                mxid, getattr(user, "id", None), data.room_id, data.target_event_id,
+                data.thread_root_event_id, "MATCH" if row else "no-match")
     if not row:
         return {"ok": False, "result": "not a notification"}
 
