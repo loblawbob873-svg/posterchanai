@@ -44,6 +44,9 @@ _POLL_TIMEOUT = 90            # hard cap on one poll_once. APScheduler runs us w
                               # indefinitely; cancelling it frees the slot and the next cycle retries.
                               # Kept low so a wedge costs a ~90s gap, not minutes. Normal polls finish
                               # in seconds; a cancelled catch-up just resumes (TimelinePost dedup).
+_DRAIN_BUDGET = 70           # stop the catch-up drain after this many seconds (under _POLL_TIMEOUT)
+                              # so the poll finishes cleanly instead of being hard-cancelled; the
+                              # cursor is committed per page, so the rest drains next cycle (no gap).
 _DOWNLOAD_TIMEOUT = 25       # hard total wall-clock cap on a single remote media/avatar download
 _last_reply_poll = 0.0        # monotonic ts of the last reply re-check (per-process)
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -589,10 +592,14 @@ async def poll_once(db: Session) -> None:
                 _set_setting(db, "fedi_timeline_since", posts[-1]["id"])
                 db.commit()
     else:
-        # Drain ALL new posts forward, page by page — a single since_id fetch drops everything
-        # beyond `limit` when more than a page arrives between polls (the missing-posts bug).
+        # Drain new posts forward, page by page — a single since_id fetch drops everything beyond
+        # `limit` when more than a page arrives between polls (the missing-posts bug). Bounded by a
+        # time budget so a busy feed doesn't overrun the poll cap; leftover drains next cycle.
         cursor = since
+        drain_start = time.monotonic()
         for _page in range(MAX_PAGES):
+            if time.monotonic() - drain_start > _DRAIN_BUDGET:
+                break
             raw_posts = await _fetch(cursor, first=False)
             if not raw_posts:
                 break
