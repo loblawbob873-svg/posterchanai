@@ -1,18 +1,15 @@
 // Admin → Bots tab. CRUD + On/Off over /api/admin/bots; runtime status from /status.
 // The bot manager (app/services/bot_manager_service.py) owns the actual processes.
 
-// Config keys that have dedicated text/textarea form fields; everything else → Advanced JSON.
+// Config keys with dedicated form fields. Kept deliberately small — the per-feature
+// prompts/messages/images all have defaults, so they live in the Advanced overrides box.
+// sql_database is the one exception (no default; block/welcome/report need it).
 const BOT_KNOWN_KEYS = [
     'server', 'username', 'access_token', 'pleroma_admin_token',
     'matrix_server', 'matrix_user_id', 'matrix_access_token', 'matrix_room_id', 'matrix_admins',
-    'prompt',
-    // voice / narration + per-feature content (promoted out of the Advanced JSON box)
-    'tts_voice', 'tts_rate', 'tts_pitch', 'sql_database',
-    'welcome_message', 'welcome_prompt', 'welcome_image', 'welcome_lookback_minutes',
-    'block_image', 'block_prompt', 'report_image', 'report_prompt', 'unfollow_image',
+    'prompt', 'sql_database',
 ];
-// Config keys backed by a checkbox (boolean) field.
-const BOT_KNOWN_CHECKS = ['auto_narrate', 'unfollow_silent_mode'];
+const BOT_KNOWN_CHECKS = [];
 // feature checkbox id -> main.py mode flag
 const BOT_FEATURES = {
     bot_ft_nitter: '--nitter', bot_ft_welcome: '--welcome', bot_ft_block: '--blockbot',
@@ -116,15 +113,10 @@ function onBotFormChange() {
     _g('bot_grp_pleroma_admin').style.display = (platform === 'pleroma' && !isImage) ? '' : 'none';
     _g('bot_grp_features').style.display = isImage ? 'none' : '';
 
-    // Voice/DB + per-feature content groups: show only when relevant.
-    const show = (gid, on) => { const e = _g(gid); if (e) e.style.display = on ? '' : 'none'; };
+    // Only the Pleroma DB field is contextual (shown for block/welcome/report).
     const ck = (cid) => { const e = _g(cid); return !!(e && e.checked); };
-    show('bot_grp_voice', !isImage);
-    show('bot_grp_db', !isImage && (ck('bot_ft_block') || ck('bot_ft_welcome') || ck('bot_ft_report')));
-    show('bot_grp_welcome', !isImage && ck('bot_ft_welcome'));
-    show('bot_grp_block', !isImage && ck('bot_ft_block'));
-    show('bot_grp_report', !isImage && ck('bot_ft_report'));
-    show('bot_grp_unfollow', !isImage && ck('bot_ft_unfollow'));
+    const dbEl = _g('bot_grp_db');
+    if (dbEl) dbEl.style.display = (!isImage && (ck('bot_ft_block') || ck('bot_ft_welcome') || ck('bot_ft_report'))) ? '' : 'none';
 }
 
 function openBotModal(id) {
