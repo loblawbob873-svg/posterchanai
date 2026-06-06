@@ -39,6 +39,12 @@ _update_one_venv() {
             print_warning "that conflicts with a frozen pin (e.g. numpy>=2). Nothing was changed;"
             print_warning "the Intel Arc environment is left intact."
         fi
+        # Merged bot framework deps (psycopg2, edge-tts, pytz, …) — also pin-protected.
+        if [ -f botframework/requirements.txt ]; then
+            "$venv/bin/pip" install -r botframework/requirements.txt --upgrade -c "$cf" -q \
+                && print_success "Updated $venv with botframework deps" \
+                || print_warning "Some botframework deps skipped in $venv (pin conflict)"
+        fi
         # Re-assert the numpy<2 requirement just in case.
         "$venv/bin/pip" install "numpy<2" -q 2>/dev/null || true
         rm -f "$cf"
@@ -48,6 +54,11 @@ _update_one_venv() {
             print_success "Updated $venv"
         else
             print_warning "Some deps failed to update in $venv (see output above)."
+        fi
+        # Merged bot framework deps.
+        if [ -f botframework/requirements.txt ]; then
+            "$venv/bin/pip" install -r botframework/requirements.txt --upgrade -q \
+                || print_warning "Some botframework deps failed to update in $venv."
         fi
     fi
 }

@@ -218,9 +218,12 @@ def format_for_matrix(text: str) -> str:
             pass
     
     result = '\n'.join(formatted_lines)
-    # Debug: log if we have very few lines
-    if len([l for l in result.split('\n') if l.strip()]) < 2:
-        logger.warning(f"format_for_matrix produced few lines. Input had {len([l for l in text.split('\n') if l.strip()])} lines, output has {len([l for l in result.split('\n') if l.strip()])} lines")
+    # Debug: log if we have very few lines (computed outside the f-string so it stays
+    # valid on Python 3.11, which forbids backslashes inside f-string expressions).
+    _in_lines = len([l for l in text.split('\n') if l.strip()])
+    _out_lines = len([l for l in result.split('\n') if l.strip()])
+    if _out_lines < 2:
+        logger.warning(f"format_for_matrix produced few lines. Input had {_in_lines} lines, output has {_out_lines} lines")
     return result
 
 

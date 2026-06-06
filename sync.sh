@@ -17,11 +17,11 @@ _wait_gpu_free() {
 _wait_gpu_free "arc" /tmp/posterchanai_locks/gpu.lock
 sudo systemctl restart posterchanai.service posterchanai-xpu-image.service
 
-# Legacy bot manager. The bots are being migrated INTO posterchanai (botframework/ +
-# Admin → Bots), but until the in-app manager's master switch (bots_manager_enabled) is
-# turned on for this node, posterchan.service still owns the bots — keep restarting it so
-# rollback stays clean. Once cut over: stop+disable posterchan.service, then flip the switch.
-if systemctl list-unit-files posterchan.service >/dev/null 2>&1; then
+# server1 is cut over: the bots now run via the in-app manager (botframework/ + Admin → Bots,
+# bots_manager_enabled). The legacy posterchan.service is stopped+disabled here, so do NOT
+# restart it — `systemctl restart` would re-activate a disabled unit and double-run the bots.
+# Only (re)start it if it's still ENABLED (i.e. a node that hasn't been cut over yet).
+if systemctl is-enabled posterchan.service >/dev/null 2>&1; then
     sudo systemctl restart posterchan.service
 fi
 

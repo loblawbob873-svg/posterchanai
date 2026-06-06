@@ -62,6 +62,13 @@ setup_python_env() {
     print_step "Installing Python dependencies..."
     pip install -r requirements.txt -q
 
+    # Merged bot framework (botframework/) has its own deps (psycopg2, edge-tts, pytz, …)
+    # used by the bots spawned via Admin → Bots. Install them into the same chat venv since
+    # bot_manager_service runs the bots with this interpreter.
+    if [ -f botframework/requirements.txt ]; then
+        pip install -r botframework/requirements.txt -q || print_warning "Some botframework deps failed to install"
+    fi
+
     # Ensure numpy<2 for Intel (requirements.txt may have overwritten it)
     if [ "$BACKEND" = "intel" ]; then
         pip install "numpy<2" -q
