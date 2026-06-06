@@ -337,6 +337,67 @@ def _img_dims(data: bytes, max_w: int = 480) -> tuple[int | None, int | None]:
         return None, None
 
 
+_MAX_UPLOAD_DIM = 1280       # longest-edge cap for images uploaded to the homeserver media repo.
+                             # A bridge re-uploading full-res media is what overloads a single-
+                             # process Synapse (HTTP 504 storms); downscaling keeps the inline look
+                             # but stores a fraction of the bytes.
+
+
+def _downscale_image(data: bytes, mime: str) -> tuple[bytes, str]:
+    """Re-encode an oversized raster image down to _MAX_UPLOAD_DIM on its longest edge before
+    upload, so the media repo ingests/stores far fewer bytes. Returns (bytes, mime). On anything
+    we can't/shouldn't touch (video, animated GIF/webp, decode failure, already small) — or if the
+    re-encode wouldn't actually shrink it — returns the input unchanged so behaviour can't regress."""
+    if mime.startswith("video/"):
+        return data, mime
+    try:
+        from PIL import Image as _PILImage, ImageOps as _ImageOps
+        from io import BytesIO as _BytesIO
+        with _PILImage.open(_BytesIO(data)) as im:
+            if getattr(im, "is_animated", False):
+                return data, mime          # re-saving one frame would drop the animation
+            # Bake in EXIF orientation before re-encoding; otherwise the orientation tag is dropped
+            # and the image (e.g. a phone photo) would render rotated.
+            im = _ImageOps.exif_transpose(im) or im
+            w, h = im.width, im.height
+            if max(w, h) <= _MAX_UPLOAD_DIM and len(data) <= 1_000_000:
+                return data, mime          # already small enough to not be worth re-encoding
+            has_alpha = im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info)
+            im = im.convert("RGBA" if has_alpha else "RGB")
+            if max(w, h) > _MAX_UPLOAD_DIM:
+                scale = _MAX_UPLOAD_DIM / max(w, h)
+                im = im.resize((max(1, int(w * scale)), max(1, int(h * scale))), _PILImage.LANCZOS)
+            out = _BytesIO()
+            if has_alpha:
+                im.save(out, format="PNG", optimize=True)
+                new_mime = "image/png"
+            else:
+                im.save(out, format="JPEG", quality=85, optimize=True)
+                new_mime = "image/jpeg"
+            encoded = out.getvalue()
+        return (encoded, new_mime) if len(encoded) < len(data) else (data, mime)
+    except Exception as e:
+        logger.debug(f"[fedi-timeline] image downscale skipped: {e}")
+        return data, mime
+
+
+def _cached_media(db: Session, url: str) -> tuple[str, int | None, int | None] | None:
+    """Look up a previously uploaded media URL in the generic URL→mxc cache. Returns
+    (mxc, width, height) or None. Lets identical media shared across boosts/quotes reuse the
+    existing Synapse blob instead of re-downloading + re-uploading it (and bloating the store)."""
+    row = db.query(MatrixAvatarCache).filter(MatrixAvatarCache.author_avatar_url == url).first()
+    return (row.mxc, row.width, row.height) if row else None
+
+
+def _store_media(db: Session, url: str, mxc: str, w: int | None = None, h: int | None = None) -> None:
+    """Record an uploaded media URL→mxc (+ display dims) so the next post sharing it reuses it."""
+    if db.query(MatrixAvatarCache.author_avatar_url).filter(
+            MatrixAvatarCache.author_avatar_url == url).first():
+        return
+    db.add(MatrixAvatarCache(author_avatar_url=url, mxc=mxc, width=w, height=h))
+    db.commit()
+
+
 async def _avatar_mxc(db: Session, hs: str, bot_token: str, avatar_url: str | None) -> str | None:
     """Upload an author's avatar to Matrix media (cached by source URL)."""
     if not avatar_url:
@@ -419,22 +480,49 @@ async def _deliver(db: Session, hs: str, bot_token: str, room_id: str, platform:
     # allows <img src=mxc> but not <video>). Videos can't be inlined → sent as separate m.video
     # messages after. Download once, sort into inline images vs videos.
     inline_imgs = []
-    videos = []
+    videos = []          # (mxc, mime) — already uploaded (cache hit or this upload), ready to send
     for m in post["media"]:
-        data, mime = await _download(m["url"])
+        url = m["url"]
+        # Reuse the media if it's already in Matrix (same image across boosts/quotes) — skip the
+        # re-download + re-upload, and don't store a duplicate blob in Synapse's media repo.
+        cached = _cached_media(db, url)
+        if cached:
+            mxc, cw, ch = cached
+            if mxc.startswith("video:"):     # videos are tagged so a hit reuses the m.video mxc
+                videos.append((mxc[len("video:"):], m.get("mime", "") or "video/mp4"))
+            else:
+                dim = f' width="{cw}" height="{ch}"' if cw else ""
+                inline_imgs.append(f'<img src="{html.escape(mxc)}"{dim} />')
+            continue
+        data, mime = await _download(url)
         if not data:
             continue
         sniff, _ = matrix_service._detect_mime(data)
         eff_mime = sniff if sniff.startswith("video/") else (mime or m.get("mime", "") or sniff)
         if eff_mime.startswith("video/"):
-            videos.append((data, eff_mime))
+            try:
+                mxc = await matrix_service.upload_media_bytes(hs, bot_token, data, eff_mime, "video")
+            except matrix_service.MatrixServerError:
+                raise                        # bubble so the whole post retries (see image case)
+            except Exception as e:
+                logger.warning(f"[fedi-timeline] video upload failed: {e}")
+                continue
+            _store_media(db, url, f"video:{mxc}")   # tag so a cache hit knows it's a video mxc
+            videos.append((mxc, eff_mime))
             continue
+        # Downscale before upload so an overloaded homeserver isn't fed full-res bytes.
+        up_data, up_mime = _downscale_image(data, eff_mime or "image/jpeg")
+        w, h = _img_dims(up_data)
         try:
-            mxc = await matrix_service.upload_media_bytes(hs, bot_token, data, eff_mime or "image/jpeg", "image")
+            mxc = await matrix_service.upload_media_bytes(hs, bot_token, up_data, up_mime, "image")
+        except matrix_service.MatrixServerError:
+            # Homeserver overloaded → let it bubble so the whole post is retried next cycle
+            # (no TimelinePost row recorded → not lost), rather than dropping just the image.
+            raise
         except Exception as e:
             logger.warning(f"[fedi-timeline] inline image upload failed: {e}")
             continue
-        w, h = _img_dims(data)
+        _store_media(db, url, mxc, w, h)
         dim = f' width="{w}" height="{h}"' if w else ""
         inline_imgs.append(f'<img src="{html.escape(mxc)}"{dim} />')
 
@@ -448,12 +536,12 @@ async def _deliver(db: Session, hs: str, bot_token: str, room_id: str, platform:
     # (recorded so interacting resolves to the post). Carry the author header as the media caption
     # and thread/reply each video under the post's event so it isn't an orphan with no author.
     hdr_text, hdr_html = _author_header(avatar_mxc, post)
-    for data, mime in videos:
+    for mxc, mime in videos:
         try:
-            mid = await matrix_service.send_image(hs, bot_token, room_id, data, mime=mime,
-                                                  caption=hdr_text, caption_html=hdr_html,
-                                                  thread_root_event_id=thread_root_event_id or event_id,
-                                                  reply_to_event_id=event_id)
+            mid = await matrix_service.send_media_event(hs, bot_token, room_id, mxc, mime,
+                                                        caption=hdr_text, caption_html=hdr_html,
+                                                        thread_root_event_id=thread_root_event_id or event_id,
+                                                        reply_to_event_id=event_id)
             if mid:
                 _record(mid, is_root_event=False)
         except Exception as e:
@@ -618,11 +706,21 @@ async def poll_once(db: Session) -> None:
             # oldest-first (ISO8601 sorts lexically) so room order is chronological and replies
             # are posted after their parents.
             posts = sorted((_norm(platform, r) for r in raw_posts), key=lambda p: p.get("created_at") or "")
+            transient = False
             for post in posts:
                 try:
                     await _deliver_post(post)
+                except (matrix_service.MatrixServerError, httpx.TransportError, asyncio.TimeoutError) as e:
+                    # Homeserver overloaded/unreachable: stop here WITHOUT advancing the cursor so
+                    # this page re-drains next cycle (already-delivered posts dedup via _seen). A
+                    # Synapse blip must not punch a permanent hole in the room.
+                    logger.warning(f"[fedi-timeline] transient deliver failure, will retry next cycle: {e}")
+                    transient = True
+                    break
                 except Exception as e:
                     logger.warning(f"[fedi-timeline] post deliver failed: {e}")
+            if transient:
+                break          # leave fedi_timeline_since where it is; resume from here next poll
             newest_id = posts[-1].get("id")
             if not newest_id or newest_id == cursor:
                 break                       # no forward progress → stop

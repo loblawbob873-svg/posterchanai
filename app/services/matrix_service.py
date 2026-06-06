@@ -9,6 +9,19 @@ logger = logging.getLogger(__name__)
 
 _TIMEOUT = 15.0
 
+# 5xx worth backing off and retrying in-request (a brief overload may clear within a few retries).
+_TRANSIENT_STATUSES = (500, 502, 503, 504)
+# A subset that means "the server never processed the request" (overloaded/down / proxy timeout) —
+# infra, not this payload. Surfaced as MatrixServerError so callers retry the work LATER (e.g. hold
+# the timeline cursor). 500 is deliberately excluded: it usually means the server errored on THIS
+# event, so treating it as retry-later would wedge a poller forever on one poison payload.
+_UNAVAILABLE_STATUSES = (502, 503, 504)
+
+
+class MatrixServerError(Exception):
+    """The homeserver was unavailable (502/503/504) after retries. Callers should retry the
+    operation later rather than skipping it permanently."""
+
 
 def _txn_id() -> str:
     """Unique transaction id. uuid (not the millisecond clock) so a burst of sends in the
@@ -18,21 +31,37 @@ def _txn_id() -> str:
 
 async def _with_429_retry(make_request, attempts: int = 4):
     """Call make_request() (an async fn returning a Response); on HTTP 429 honour the
-    homeserver's retry_after_ms and retry. Retrying the same txn id is idempotent on Matrix,
-    so this safely rides out the rate limits a busy feed bridge hits."""
+    homeserver's retry_after_ms and retry. Also backs off + retries on 5xx (_TRANSIENT_STATUSES):
+    a busy feed bridge can overload a single-process homeserver into 502/504s, and hammering it
+    instantly just makes it worse — so we ease off (exponential, capped) instead. Retrying the
+    same txn id is idempotent on Matrix, so this safely rides out both rate limits and overload."""
     import asyncio
     resp = None
-    for _ in range(attempts):
+    for attempt in range(attempts):
         resp = await make_request()
-        if resp.status_code != 429:
-            return resp
-        retry_ms = 1000
-        try:
-            retry_ms = int(resp.json().get("retry_after_ms", 1000))
-        except Exception:
-            pass
-        await asyncio.sleep(min(max(retry_ms, 100), 5000) / 1000.0)
+        if resp.status_code == 429:
+            retry_ms = 1000
+            try:
+                retry_ms = int(resp.json().get("retry_after_ms", 1000))
+            except Exception:
+                pass
+            await asyncio.sleep(min(max(retry_ms, 100), 5000) / 1000.0)
+            continue
+        if resp.status_code in _TRANSIENT_STATUSES:
+            # Exponential backoff (1s, 2s, 4s, …) capped at 8s — give an overloaded homeserver
+            # room to recover instead of piling more requests on.
+            await asyncio.sleep(min(2 ** attempt, 8))
+            continue
+        return resp
     return resp
+
+
+def _send_error(label: str, status: int, text: str) -> Exception:
+    """Pick the right exception for a non-2xx Matrix response: server-unavailable (502/503/504) →
+    MatrixServerError so callers retry later; everything else (incl. 500 — likely payload-specific)
+    → ValueError, which callers log and skip rather than retrying forever."""
+    msg = f"{label}: HTTP {status} — {text}"
+    return MatrixServerError(msg) if status in _UNAVAILABLE_STATUSES else ValueError(msg)
 
 
 async def request(homeserver: str, access_token: str, method: str, endpoint: str,
@@ -290,7 +319,7 @@ async def send_message(homeserver: str, access_token: str, room_id: str, text: s
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         resp = await _with_429_retry(lambda: client.put(url, json=payload, headers=headers))
         if resp.status_code not in (200, 201):
-            raise ValueError(f"Failed to send Matrix message: HTTP {resp.status_code} — {resp.text[:200]}")
+            raise _send_error("Failed to send Matrix message", resp.status_code, resp.text[:200])
 
 
 async def send_event(homeserver: str, access_token: str, room_id: str, body: str,
@@ -327,7 +356,7 @@ async def send_event(homeserver: str, access_token: str, room_id: str, body: str
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         resp = await _with_429_retry(lambda: client.put(url, json=payload, headers=headers))
         if resp.status_code not in (200, 201):
-            raise ValueError(f"Failed to send Matrix event: HTTP {resp.status_code} — {resp.text[:200]}")
+            raise _send_error("Failed to send Matrix event", resp.status_code, resp.text[:200])
         return resp.json().get("event_id", "")
 
 
@@ -368,7 +397,65 @@ async def upload_media_bytes(homeserver: str, access_token: str, data: bytes,
                 if mxc:
                     return mxc
             last_status, last_text = resp.status_code, resp.text[:200]
-    raise ValueError(f"Media upload failed: HTTP {last_status} — {last_text}")
+            # The v1→v3 fallback is for "endpoint unsupported" (4xx); if the server is unavailable,
+            # the alt endpoint is the same server — don't double the backoff probing it.
+            if resp.status_code in _UNAVAILABLE_STATUSES:
+                break
+    raise _send_error("Media upload failed", last_status, last_text)
+
+
+_MIME_EXT = {"image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "image/webp": "webp",
+             "video/mp4": "mp4", "video/webm": "webm"}
+
+
+async def send_media_event(homeserver: str, access_token: str, room_id: str, mxc_uri: str,
+                           mime: str, caption: str = "", caption_html: str | None = None,
+                           w: int | None = None, h: int | None = None, size: int | None = None,
+                           filename: str | None = None, thread_root_event_id: str | None = None,
+                           reply_to_event_id: str | None = None) -> str:
+    """Send an m.image/m.video event referencing an ALREADY-uploaded mxc, so cached media isn't
+    re-uploaded (and Synapse doesn't store a duplicate blob). send_image == upload + this.
+    Caption/threading semantics match send_image."""
+    hs = homeserver.rstrip("/")
+    from urllib.parse import quote
+    is_video = mime.startswith("video/")
+    fname = filename or f"file.{_MIME_EXT.get(mime, 'bin')}"
+    headers_auth = {"Authorization": f"Bearer {access_token}"}
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        encoded_room = quote(room_id, safe="")
+        send_url = f"{hs}/_matrix/client/v3/rooms/{encoded_room}/send/m.room.message/{_txn_id()}"
+        info: dict = {"mimetype": mime}
+        if size is not None:
+            info["size"] = size
+        # Element needs w/h to render an image inline rather than as a download tile (video doesn't).
+        if not is_video and w and h:
+            info["w"], info["h"] = w, h
+        payload: dict = {
+            "msgtype": "m.video" if is_video else "m.image",
+            "url": mxc_uri,
+            "info": info,
+        }
+        if caption:
+            # Media caption (MSC2530): body is the caption, filename is the real file name.
+            payload["body"] = caption
+            payload["filename"] = fname
+            if caption_html:
+                payload["format"] = "org.matrix.custom.html"
+                payload["formatted_body"] = caption_html
+        else:
+            payload["body"] = fname
+        if thread_root_event_id:
+            in_reply = reply_to_event_id or thread_root_event_id
+            payload["m.relates_to"] = {
+                "rel_type": "m.thread",
+                "event_id": thread_root_event_id,
+                "is_falling_back": reply_to_event_id is None,
+                "m.in_reply_to": {"event_id": in_reply},
+            }
+        resp = await _with_429_retry(lambda: client.put(send_url, json=payload, headers=headers_auth))
+        if resp.status_code not in (200, 201):
+            raise _send_error("Failed to send Matrix image", resp.status_code, resp.text[:200])
+        return resp.json().get("event_id", "")
 
 
 async def send_image(homeserver: str, access_token: str, room_id: str,
@@ -380,58 +467,25 @@ async def send_image(homeserver: str, access_token: str, room_id: str,
     caption (MSC2530: body=caption, filename=real name, optional formatted_body=caption_html), so
     text+image render as ONE message. Threads under thread_root_event_id (with reply_to_event_id
     as the actual parent). Returns the media event's event_id."""
-    hs = homeserver.rstrip("/")
-    from urllib.parse import quote
     detected_mime, filename = _detect_mime(image_bytes)
     # Trust the byte sniff for video (callers may pass an image/* default mime).
     mime = detected_mime if detected_mime.startswith("video/") else (mime or detected_mime)
     is_video = mime.startswith("video/")
-    headers_auth = {"Authorization": f"Bearer {access_token}"}
-
     mxc_uri = await upload_media_bytes(homeserver, access_token, image_bytes, mime, filename)
-
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        encoded_room = quote(room_id, safe="")
-        send_url = f"{hs}/_matrix/client/v3/rooms/{encoded_room}/send/m.room.message/{_txn_id()}"
-        _info = {"mimetype": mime, "size": len(image_bytes)}
-        # Pixel dimensions — Matrix clients (Element) need w/h to render an image
-        # inline instead of showing a download attachment. Skip for video (PIL can't
-        # open it; clients handle videos without w/h).
-        if not is_video:
-            try:
-                from PIL import Image as _PILImage
-                from io import BytesIO as _BytesIO
-                with _PILImage.open(_BytesIO(image_bytes)) as _im:
-                    _info["w"], _info["h"] = _im.width, _im.height
-            except Exception as _dim_err:
-                logger.debug(f"Could not read image dimensions: {_dim_err}")
-        payload: dict = {
-            "msgtype": "m.video" if is_video else "m.image",
-            "url": mxc_uri,
-            "info": _info,
-        }
-        if caption:
-            # Media caption (MSC2530): body is the caption, filename is the real file name.
-            payload["body"] = caption
-            payload["filename"] = filename
-            if caption_html:
-                payload["format"] = "org.matrix.custom.html"
-                payload["formatted_body"] = caption_html
-        else:
-            payload["body"] = filename
-        if thread_root_event_id:
-            in_reply = reply_to_event_id or thread_root_event_id
-            payload["m.relates_to"] = {
-                "rel_type": "m.thread",
-                "event_id": thread_root_event_id,
-                "is_falling_back": reply_to_event_id is None,
-                "m.in_reply_to": {"event_id": in_reply},
-            }
-        resp = await _with_429_retry(lambda: client.put(send_url, json=payload, headers=headers_auth))
-        if resp.status_code not in (200, 201):
-            raise ValueError(f"Failed to send Matrix image: HTTP {resp.status_code} — {resp.text[:200]}")
-        event_id = resp.json().get("event_id", "")
-    return event_id
+    # Pixel dimensions — Element needs w/h to render an image inline (PIL can't open video).
+    w = h = None
+    if not is_video:
+        try:
+            from PIL import Image as _PILImage
+            from io import BytesIO as _BytesIO
+            with _PILImage.open(_BytesIO(image_bytes)) as _im:
+                w, h = _im.width, _im.height
+        except Exception as _dim_err:
+            logger.debug(f"Could not read image dimensions: {_dim_err}")
+    return await send_media_event(
+        homeserver, access_token, room_id, mxc_uri, mime, caption=caption,
+        caption_html=caption_html, w=w, h=h, size=len(image_bytes), filename=filename,
+        thread_root_event_id=thread_root_event_id, reply_to_event_id=reply_to_event_id)
 
 
 async def _ensure_joined(client: httpx.AsyncClient, hs: str, room_id: str, headers: dict) -> bool:

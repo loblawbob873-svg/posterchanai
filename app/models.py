@@ -310,12 +310,17 @@ class TimelinePost(Base):
 
 
 class MatrixAvatarCache(Base):
-    """Caches the Matrix mxc URI an author's avatar was uploaded to, keyed by its source URL,
-    so the fedi-timeline bridge doesn't re-upload the same avatar on every post."""
+    """Generic source-URL → Matrix mxc cache. Originally for author avatars (so the fedi-timeline
+    bridge doesn't re-upload the same avatar on every post); also reused for post media and custom
+    emoji, so identical media shared across boosts/quotes is uploaded to Synapse exactly once
+    (saves the re-download/re-upload and avoids duplicate blobs filling the media store).
+    `width`/`height` are the cached display dimensions for inline images (NULL for avatars/video)."""
     __tablename__ = "matrix_avatar_cache"
 
     author_avatar_url = Column(String(512), primary_key=True)
     mxc = Column(String(255), nullable=False)
+    width = Column(Integer, nullable=True)
+    height = Column(Integer, nullable=True)
     fetched_at = Column(DateTime, default=datetime.utcnow)
 
 

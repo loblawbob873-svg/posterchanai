@@ -287,6 +287,19 @@ def _run_migrations():
                 except Exception as e:
                     logger.warning(f"[MIGRATE] Failed to add timeline_posts.body: {e}")
 
+    # Add width/height to matrix_avatar_cache (cached display dims for reused inline media) if missing
+    if inspector.has_table('matrix_avatar_cache'):
+        ac_cols = {col['name'] for col in inspector.get_columns('matrix_avatar_cache')}
+        for col_name in ('width', 'height'):
+            if col_name not in ac_cols:
+                with engine.connect() as conn:
+                    try:
+                        conn.execute(text(f"ALTER TABLE matrix_avatar_cache ADD COLUMN {col_name} INTEGER"))
+                        conn.commit()
+                        logger.info(f"[MIGRATE] Added matrix_avatar_cache.{col_name}")
+                    except Exception as e:
+                        logger.warning(f"[MIGRATE] Failed to add matrix_avatar_cache.{col_name}: {e}")
+
     # Create proxy_image_cache table if missing (used for image search thumb IDs across workers)
     if not inspector.has_table('proxy_image_cache'):
         with engine.connect() as conn:
