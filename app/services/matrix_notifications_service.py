@@ -51,7 +51,6 @@ def _format_notification(norm: dict, avatar_mxc: str | None = None) -> tuple[str
     display = (norm.get("actor_display") or actor).strip()
     text = (norm.get("text") or "").strip()
     snippet = text if len(text) <= 280 else text[:279] + "…"
-    url = norm.get("url") or ""
 
     plain = f"{icon} {display} ({actor}) {phrase}" if display != actor else f"{icon} {actor} {phrase}"
     av = f'<img src="{html.escape(avatar_mxc)}" width="20" height="20" /> ' if avatar_mxc else ""
@@ -62,9 +61,9 @@ def _format_notification(norm: dict, avatar_mxc: str | None = None) -> tuple[str
     if snippet:
         plain += f"\n\n“{snippet}”"
         parts.append(f"<blockquote>{html.escape(snippet).replace(chr(10), '<br>')}</blockquote>")
-    if url:
-        plain += f"\n\n🔗 Open thread: {url}"
-        parts.append(f'🔗 <a href="{html.escape(url, quote=True)}">Open thread for full context</a>')
+    # No 'Open thread' web link: Element auto-generates a bulky URL-preview card from it
+    # (author avatar + bio/post text) that duplicates the message and is hard to read. The
+    # conversation is already mirrored into this notification's Matrix thread for full context.
     if norm.get("reply_target"):
         # Reply-back is wired for Matrix DMs (matrix_notifications_service + /notification-reply).
         plain += "\n↩️ Reply to this message to respond"
