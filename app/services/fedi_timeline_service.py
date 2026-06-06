@@ -258,11 +258,15 @@ def _body_text(post: dict) -> str:
 
 def _body_html(avatar_mxc: str | None, post: dict) -> str:
     a = post["author"]
-    name = _apply_emojis(html.escape(a.get("display") or a.get("acct") or ""), a.get("emoji_mxc"))
+    display = (a.get("display") or "").strip()
+    acct = (a.get("acct") or "").strip()
+    name = _apply_emojis(html.escape(display or acct or "?"), a.get("emoji_mxc"))
     avatar = f'<img src="{html.escape(avatar_mxc)}" width="20" height="20" /> ' if avatar_mxc else ""
-    # Minimal header: avatar + name only. No @handle, no profile link, no per-post link — those
-    # were bloat on every post.
-    header = f"{avatar}<strong>{name}</strong>"
+    # Header: avatar + bold name + the @handle (always show it so the sender is identifiable even
+    # when the display name is blank/ambiguous). The handle is PLAIN TEXT, not an <a> link, so it
+    # doesn't trigger Element's profile-preview card (that was the reason links were stripped).
+    handle = f' <font color="#888888">@{html.escape(acct)}</font>' if acct and acct != display else ""
+    header = f"{avatar}<strong>{name}</strong>{handle}"
     segments = [header]
     if post["text"]:
         # Pleroma content is HTML (strip profile links so no preview card); Misskey is plain text.
@@ -539,52 +543,71 @@ async def poll_once(db: Session) -> None:
     ttype = _get_setting(db, "fedi_timeline_type", "home")
     include_replies = _get_setting(db, "fedi_timeline_include_replies", "true").lower() == "true"
     since = _get_setting(db, "fedi_timeline_since")
+    PAGE = 40          # per-page fetch size
+    MAX_PAGES = 12     # bound work per poll (~480 posts); any remainder drains next poll, no gap
 
-    if platform == "misskey":
-        raw_posts = await misskey_service.fetch_timeline(instance_url, token, ttype, since_id=since or None)
+    async def _fetch(cursor: str | None, first: bool):
+        if platform == "misskey":
+            # Misskey sinceId paginates forward (ascending) with no gap; newest page when unset.
+            return await misskey_service.fetch_timeline(instance_url, token, ttype,
+                                                        since_id=(cursor or None), limit=PAGE)
+        # Pleroma: min_id drains forward without gaps; newest page on the very first poll.
+        return await pleroma_service.fetch_timeline(instance_url, token, ttype, limit=PAGE,
+                                                    min_id=(None if first else cursor))
+
+    async def _deliver_post(post) -> None:
+        uri = _canonical_uri(platform, instance_url, post)
+        if not post["id"] or _seen(db, room_id, post["id"], uri):
+            return
+        # The timeline delivers replies as flat items. If this post replies to one already in the
+        # room, thread it under that conversation; otherwise backfill its ancestors so the whole
+        # conversation threads under one real root.
+        thread_root = None
+        if include_replies and post.get("in_reply_to_id"):
+            parent = _find_parent(db, room_id, post["in_reply_to_id"])
+            if not parent:
+                await _backfill_ancestors(db, hs, bot_token, room_id, platform, instance_url, token, post)
+                parent = _find_parent(db, room_id, post["in_reply_to_id"])
+            if parent:
+                thread_root = parent.thread_root_event_id or parent.event_id
+        event_id = await _deliver(db, hs, bot_token, room_id, platform, instance_url, post,
+                                  thread_root_event_id=thread_root)
+        if include_replies and event_id and thread_root is None and post.get("replies_count", 0) > 0:
+            await _deliver_descendants(db, hs, bot_token, room_id, platform, instance_url,
+                                       token, post["id"], event_id)
+
+    if not since:
+        # First poll: set the cursor to newest without backfilling the existing timeline.
+        raw_posts = await _fetch(None, first=True)
+        if raw_posts:
+            posts = sorted((_norm(platform, r) for r in raw_posts), key=lambda p: p.get("created_at") or "")
+            if posts[-1].get("id"):
+                _set_setting(db, "fedi_timeline_since", posts[-1]["id"])
+                db.commit()
     else:
-        raw_posts = await pleroma_service.fetch_timeline(instance_url, token, ttype, since_id=since or None)
-
-    if raw_posts:
-        # Sort by created_at (ISO8601 → lexical == chronological) rather than trusting the
-        # API's order: Misskey returns ascending when sinceId is set but descending without it,
-        # so neither raw_posts[0] nor reversed() is reliably "newest"/oldest-first.
-        posts = sorted((_norm(platform, r) for r in raw_posts), key=lambda p: p.get("created_at") or "")
-        newest_id = posts[-1].get("id")
-        if not since:
-            # First poll: set the cursor without backfilling the existing timeline.
-            _set_setting(db, "fedi_timeline_since", newest_id)
-            db.commit()
-        else:
-            for post in posts:                  # oldest-first so room order is chronological
-                uri = _canonical_uri(platform, instance_url, post)
-                if not post["id"] or _seen(db, room_id, post["id"], uri):
-                    continue
+        # Drain ALL new posts forward, page by page — a single since_id fetch drops everything
+        # beyond `limit` when more than a page arrives between polls (the missing-posts bug).
+        cursor = since
+        for _page in range(MAX_PAGES):
+            raw_posts = await _fetch(cursor, first=False)
+            if not raw_posts:
+                break
+            # oldest-first (ISO8601 sorts lexically) so room order is chronological and replies
+            # are posted after their parents.
+            posts = sorted((_norm(platform, r) for r in raw_posts), key=lambda p: p.get("created_at") or "")
+            for post in posts:
                 try:
-                    # The timeline delivers replies as flat standalone items. If this post is a
-                    # reply to one already in the room, thread it under that conversation instead
-                    # of posting a new root — so a whole conversation shows as one Element thread.
-                    thread_root = None
-                    if include_replies and post.get("in_reply_to_id"):
-                        parent = _find_parent(db, room_id, post["in_reply_to_id"])
-                        if not parent:
-                            # Orphan reply (its parent/root isn't in the room yet) → backfill the
-                            # ancestor chain so the whole conversation threads under one real root.
-                            await _backfill_ancestors(db, hs, bot_token, room_id, platform, instance_url, token, post)
-                            parent = _find_parent(db, room_id, post["in_reply_to_id"])
-                        if parent:
-                            thread_root = parent.thread_root_event_id or parent.event_id
-                    event_id = await _deliver(db, hs, bot_token, room_id, platform, instance_url, post,
-                                              thread_root_event_id=thread_root)
-                    # For a brand-new root that already has replies on the fediverse, backfill them
-                    # into its thread now so "Reply in thread" shows the conversation immediately.
-                    if include_replies and event_id and thread_root is None and post.get("replies_count", 0) > 0:
-                        await _deliver_descendants(db, hs, bot_token, room_id, platform, instance_url,
-                                                   token, post["id"], event_id)
+                    await _deliver_post(post)
                 except Exception as e:
                     logger.warning(f"[fedi-timeline] post deliver failed: {e}")
-            _set_setting(db, "fedi_timeline_since", newest_id)
+            newest_id = posts[-1].get("id")
+            if not newest_id or newest_id == cursor:
+                break                       # no forward progress → stop
+            cursor = newest_id
+            _set_setting(db, "fedi_timeline_since", cursor)
             db.commit()
+            if len(raw_posts) < PAGE:
+                break                       # caught up
 
     # Re-check recent roots for replies that federated in after they were posted. Throttled
     # well below the post-poll cadence so a high-volume feed doesn't hammer the source instance.

@@ -183,10 +183,13 @@ async def fetch_notifications(instance_url: str, access_token: str, since_id: st
 
 
 async def fetch_timeline(instance_url: str, access_token: str, timeline_type: str = "home",
-                         since_id: str | None = None, limit: int = 20) -> list[dict]:
-    """Fetch recent statuses from the home/public timeline (raw Mastodon/Pleroma statuses,
-    newest-first). 'global' → public; 'local' → public?local=true. When since_id is given,
-    only newer statuses are returned."""
+                         since_id: str | None = None, limit: int = 20, min_id: str | None = None) -> list[dict]:
+    """Fetch statuses from the home/public timeline (raw Mastodon/Pleroma statuses).
+    'global' → public; 'local' → public?local=true.
+
+    Pagination: `since_id` returns the *newest* statuses after the id (a gap forms if more than
+    `limit` exist — don't use it to drain a backlog). `min_id` returns the statuses *immediately*
+    after the id and paginates forward without gaps (advance min_id to the newest returned id)."""
     base = instance_url.rstrip("/")
     if timeline_type == "home":
         url = f"{base}/api/v1/timelines/home"
@@ -196,7 +199,9 @@ async def fetch_timeline(instance_url: str, access_token: str, timeline_type: st
     params: dict = {"limit": limit}
     if timeline_type == "local":
         params["local"] = "true"
-    if since_id:
+    if min_id:
+        params["min_id"] = min_id
+    elif since_id:
         params["since_id"] = since_id
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.get(url, headers=headers, params=params)
