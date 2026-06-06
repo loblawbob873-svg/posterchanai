@@ -108,23 +108,36 @@ _MAX_CONTEXT = 25   # cap conversation messages mirrored into a notification thr
 
 async def _thread_context(db: Session, hs: str, bot_token: str, room_id: str, root_event_id: str,
                           platform: str, instance_url: str, token: str, status_id: str) -> None:
-    """Mirror the notified post's conversation (ancestors + descendants) into the notification's
-    Matrix thread, so the user reads the full context in Element instead of opening the web."""
+    """Mirror the notified post's FULL conversation — ancestors + the post itself + descendants —
+    into the notification's Matrix thread, so the user reads the whole thing in Element.
+
+    Note: we dedup only within THIS thread (a local set), not against the room-wide _seen index.
+    The room-wide check would drop any reply/post that had appeared in another notification's
+    thread or the timeline, leaving gaps — and fetch_context never returns the notified post
+    itself, so it would otherwise be missing entirely. Each notification thread is self-contained."""
     from app.services import fedi_timeline_service as ftl
     try:
         if platform == "pleroma":
             ctx = await pleroma_service.fetch_context(instance_url, token, status_id)
-            raw_items = (ctx.get("ancestors") or []) + (ctx.get("descendants") or [])
+            note = await pleroma_service.fetch_status(instance_url, token, status_id)
+            raw_items = (ctx.get("ancestors") or []) + ([note] if note else []) + (ctx.get("descendants") or [])
         else:
-            raw_items = await misskey_service.fetch_children(instance_url, token, status_id)
+            anc = await misskey_service.fetch_conversation(instance_url, token, status_id)
+            note = await misskey_service.call(instance_url, token, "notes/show", {"noteId": status_id})
+            kids = await misskey_service.fetch_children(instance_url, token, status_id)
+            # Misskey returns ancestors nearest-first; reverse to oldest-first so each reply is
+            # posted after its parent (lets _deliver thread it under the right message).
+            raw_items = list(reversed(anc or [])) + ([note] if note else []) + (kids or [])
     except Exception as e:
         logger.warning(f"[matrix-notif] context fetch failed: {e}")
         return
+    seen_local: set[str] = set()
     for raw in raw_items[:_MAX_CONTEXT]:
         post = ftl._norm(platform, raw)
-        uri = ftl._canonical_uri(platform, instance_url, post)
-        if not post.get("id") or ftl._seen(db, room_id, post["id"], uri):
+        pid = post.get("id")
+        if not pid or pid in seen_local:
             continue
+        seen_local.add(pid)
         try:
             await ftl._deliver(db, hs, bot_token, room_id, platform, instance_url, post,
                                thread_root_event_id=root_event_id)
