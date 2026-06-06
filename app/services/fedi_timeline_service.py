@@ -24,6 +24,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models import Setting, TimelinePost, MatrixAvatarCache
+from app.database import CacheSessionLocal     # ephemeral /tmp media-cache DB (see app.database)
 from app.services import misskey_service, pleroma_service, matrix_service
 from app.services.matrix_service import render_matrix_html
 
@@ -54,6 +55,13 @@ _SEND_PACING = 0.1           # seconds to pause after each Synapse write (upload
                             # /sync for real clients (Element). Pacing trickles the load so the
                             # homeserver stays responsive — the bridge trades a little latency for
                             # not taking the homeserver down.
+_RETENTION_DAYS = 30         # prune timeline_posts (durable state) older than this. Old bridged
+                            # posts aren't re-fetched (the cursor moved past) and nobody interacts
+                            # with month-old posts, so they're dead weight. Overridable via the
+                            # `fedi_timeline_retention_days` setting.
+_CACHE_RETENTION_DAYS = 90  # prune media-cache rows older than this — well under Synapse's
+                            # local_media_lifetime (365d) so a cached mxc never outlives its blob.
+                            # Overridable via the `fedi_cache_retention_days` setting.
 _last_reply_poll = 0.0        # monotonic ts of the last reply re-check (per-process)
 _TAG_RE = re.compile(r"<[^>]+>")
 _BREAK_RE = re.compile(r"<\s*br\s*/?\s*>|</\s*p\s*>", re.IGNORECASE)
@@ -387,30 +395,55 @@ def _downscale_image(data: bytes, mime: str) -> tuple[bytes, str]:
         return data, mime
 
 
+# The URL→mxc cache lives in its OWN ephemeral /tmp (RAM) SQLite DB (app.database.cache_engine),
+# not the main DB — it's a pure cache, so this isolates its high-frequency writes from the main
+# DB's write-lock and needs no disk maintenance. The `db` param is kept on these helpers (callers
+# pass the main session) but is intentionally unused for the cache; we open a short cache session.
+
 def _cached_media(db: Session, url: str) -> tuple[str, int | None, int | None] | None:
     """Look up a previously uploaded media URL in the generic URL→mxc cache. Returns
     (mxc, width, height) or None. Lets identical media shared across boosts/quotes reuse the
     existing Synapse blob instead of re-downloading + re-uploading it (and bloating the store)."""
-    row = db.query(MatrixAvatarCache).filter(MatrixAvatarCache.author_avatar_url == url).first()
-    return (row.mxc, row.width, row.height) if row else None
+    cs = CacheSessionLocal()
+    try:
+        row = cs.query(MatrixAvatarCache).filter(MatrixAvatarCache.author_avatar_url == url).first()
+        return (row.mxc, row.width, row.height) if row else None
+    except Exception as e:
+        # A broken/missing cache DB must degrade to a cache MISS (re-upload), never break delivery.
+        logger.debug(f"[fedi-timeline] media cache read failed (treating as miss): {e}")
+        return None
+    finally:
+        cs.close()
 
 
 def _store_media(db: Session, url: str, mxc: str, w: int | None = None, h: int | None = None) -> None:
     """Record an uploaded media URL→mxc (+ display dims) so the next post sharing it reuses it."""
-    if db.query(MatrixAvatarCache.author_avatar_url).filter(
-            MatrixAvatarCache.author_avatar_url == url).first():
-        return
-    db.add(MatrixAvatarCache(author_avatar_url=url, mxc=mxc, width=w, height=h))
-    db.commit()
+    cs = CacheSessionLocal()
+    try:
+        # merge = idempotent upsert on the PK (avoids an IntegrityError if the row already exists)
+        cs.merge(MatrixAvatarCache(author_avatar_url=url, mxc=mxc, width=w, height=h))
+        cs.commit()
+    except Exception as e:
+        logger.debug(f"[fedi-timeline] media cache store skipped: {e}")
+        cs.rollback()
+    finally:
+        cs.close()
 
 
 async def _avatar_mxc(db: Session, hs: str, bot_token: str, avatar_url: str | None) -> str | None:
     """Upload an author's avatar to Matrix media (cached by source URL)."""
     if not avatar_url:
         return None
-    row = db.query(MatrixAvatarCache).filter(MatrixAvatarCache.author_avatar_url == avatar_url).first()
-    if row:
-        return row.mxc
+    cs = CacheSessionLocal()
+    try:
+        row = cs.query(MatrixAvatarCache).filter(MatrixAvatarCache.author_avatar_url == avatar_url).first()
+        if row:
+            return row.mxc
+    except Exception as e:
+        # Degrade to a cache miss (re-upload) on any cache error rather than breaking delivery.
+        logger.debug(f"[fedi-timeline] avatar cache read failed (treating as miss): {e}")
+    finally:
+        cs.close()
     data, mime = await _download(avatar_url)
     if not data:
         return None
@@ -420,8 +453,15 @@ async def _avatar_mxc(db: Session, hs: str, bot_token: str, avatar_url: str | No
         logger.warning(f"[fedi-timeline] avatar upload failed: {e}")
         return None
     await asyncio.sleep(_SEND_PACING)        # pace Synapse writes (see _SEND_PACING)
-    db.add(MatrixAvatarCache(author_avatar_url=avatar_url, mxc=mxc))
-    db.commit()
+    cs = CacheSessionLocal()
+    try:
+        cs.merge(MatrixAvatarCache(author_avatar_url=avatar_url, mxc=mxc))
+        cs.commit()
+    except Exception as e:
+        logger.debug(f"[fedi-timeline] avatar cache store skipped: {e}")
+        cs.rollback()
+    finally:
+        cs.close()
     return mxc
 
 
@@ -645,6 +685,48 @@ async def _poll_replies(db: Session, hs: str, bot_token: str, room_id: str, plat
             logger.warning(f"[fedi-timeline] reply re-check failed for root {root.note_id}: {e}")
 
 
+# --- maintenance ------------------------------------------------------------
+
+def cleanup_bridge_state() -> None:
+    """Daily maintenance so neither bridge table grows unbounded:
+      - timeline_posts (durable, main DB): delete rows older than the retention window;
+      - media cache (ephemeral /tmp DB): delete rows older than the cache window.
+    Both windows are generous; pruning is safe (old posts aren't re-fetched, a cache miss just
+    re-uploads). Run from the scheduler off the event loop (synchronous DB work)."""
+    from app.database import SessionLocal
+    db = SessionLocal()
+    try:
+        try:
+            days = int(_get_setting(db, "fedi_timeline_retention_days", str(_RETENTION_DAYS)) or _RETENTION_DAYS)
+        except ValueError:
+            days = _RETENTION_DAYS
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        n = db.query(TimelinePost).filter(TimelinePost.created_at < cutoff).delete(synchronize_session=False)
+        db.commit()
+        logger.info(f"[fedi-timeline] pruned {n} timeline_posts older than {days}d")
+        try:
+            cdays = int(_get_setting(db, "fedi_cache_retention_days", str(_CACHE_RETENTION_DAYS)) or _CACHE_RETENTION_DAYS)
+        except ValueError:
+            cdays = _CACHE_RETENTION_DAYS
+    except Exception as e:
+        logger.warning(f"[fedi-timeline] timeline_posts prune failed: {e}")
+        db.rollback()
+        cdays = _CACHE_RETENTION_DAYS
+    finally:
+        db.close()
+    cs = CacheSessionLocal()
+    try:
+        ccut = datetime.utcnow() - timedelta(days=cdays)
+        n = cs.query(MatrixAvatarCache).filter(MatrixAvatarCache.fetched_at < ccut).delete(synchronize_session=False)
+        cs.commit()
+        logger.info(f"[fedi-timeline] pruned {n} media-cache rows older than {cdays}d")
+    except Exception as e:
+        logger.warning(f"[fedi-timeline] media-cache prune failed: {e}")
+        cs.rollback()
+    finally:
+        cs.close()
+
+
 # --- poll loop --------------------------------------------------------------
 
 async def poll_once(db: Session) -> None:
@@ -802,10 +884,15 @@ def start_fedi_timeline_scheduler() -> None:
         finally:
             _db.close()
 
+    async def _cleanup():
+        # Run the synchronous prune off the event loop so a large delete can't block delivery.
+        await asyncio.get_event_loop().run_in_executor(None, cleanup_bridge_state)
+
     _scheduler = AsyncIOScheduler()
     _scheduler.add_job(_job, "interval", seconds=secs, id="fedi_timeline_poll", max_instances=1, coalesce=True)
+    _scheduler.add_job(_cleanup, "interval", hours=24, id="fedi_timeline_cleanup", max_instances=1, coalesce=True)
     _scheduler.start()
-    logger.info(f"[fedi-timeline] timeline bridge poller started (every {secs}s)")
+    logger.info(f"[fedi-timeline] timeline bridge poller started (every {secs}s); daily state cleanup scheduled")
 
 
 def stop_fedi_timeline_scheduler() -> None:
