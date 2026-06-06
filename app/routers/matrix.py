@@ -1153,6 +1153,8 @@ class MatrixNotificationReplyRequest(BaseModel):
     matrix_user_id: str
     room_id: str
     target_event_id: str   # the notification DM message being replied to
+    thread_root_event_id: Optional[str] = None  # if the reply is in the notification's thread, its
+                                                 # root IS the notification event — use as fallback
     text: Optional[str] = None
     media: Optional[list[MatrixMediaItem]] = None   # image/video reply attachments
 
@@ -1182,9 +1184,12 @@ async def notification_reply(
     if not user:
         return {"ok": False, "result": "not a notification"}
 
+    # Match the replied-to event, OR (for an in-thread reply) the thread root — the notification
+    # message is the thread root, while m.in_reply_to points at the last mirrored conversation post.
+    event_ids = [e for e in (data.target_event_id, data.thread_root_event_id) if e]
     row = db.query(MatrixNotifyMap).filter(
         MatrixNotifyMap.room_id == data.room_id,
-        MatrixNotifyMap.event_id == data.target_event_id,
+        MatrixNotifyMap.event_id.in_(event_ids),
         MatrixNotifyMap.user_id == user.id,
     ).order_by(MatrixNotifyMap.id.desc()).first()
     if not row:

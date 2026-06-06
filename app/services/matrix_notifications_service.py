@@ -42,17 +42,23 @@ _NOTIF_LABELS = {
 }
 
 
-def _format_notification(norm: dict) -> tuple[str, str]:
+def _format_notification(norm: dict, avatar_mxc: str | None = None) -> tuple[str, str]:
     """Render a notification to (plain_body, html). We build the HTML by hand (escaping handles
-    like @no_de_score so underscores aren't turned into italics) rather than markdown-rendering."""
+    like @no_de_score so underscores aren't turned into italics) rather than markdown-rendering.
+    When avatar_mxc is given, the actor's avatar is inlined so you can see who interacted."""
     icon, phrase = _NOTIF_LABELS.get(norm.get("type"), ("🔔", norm.get("type") or "notification"))
-    actor = norm.get("actor") or "Someone"
+    actor = norm.get("actor") or "Someone"            # @handle
+    display = (norm.get("actor_display") or actor).strip()
     text = (norm.get("text") or "").strip()
     snippet = text if len(text) <= 280 else text[:279] + "…"
     url = norm.get("url") or ""
 
-    plain = f"{icon} {actor} {phrase}"
-    parts = [f'{icon} <strong>{html.escape(actor)}</strong> {html.escape(phrase)}']
+    plain = f"{icon} {display} ({actor}) {phrase}" if display != actor else f"{icon} {actor} {phrase}"
+    av = f'<img src="{html.escape(avatar_mxc)}" width="20" height="20" /> ' if avatar_mxc else ""
+    who = f'<strong>{html.escape(display)}</strong>'
+    if display != actor:
+        who += f' <font data-mx-color="#888888">{html.escape(actor)}</font>'
+    parts = [f'{icon} {av}{who} {html.escape(phrase)}']
     if snippet:
         plain += f"\n\n“{snippet}”"
         parts.append(f"<blockquote>{html.escape(snippet).replace(chr(10), '<br>')}</blockquote>")
@@ -165,7 +171,15 @@ async def _relay(db: Session, hs: str, bot_token: str, user: User, room_id: str,
         # Misskey notifications carry no URL; build a viewable note link for context.
         if platform == "misskey" and not norm.get("url") and norm.get("reply_target"):
             norm["url"] = f"{instance_url.rstrip('/')}/notes/{norm['reply_target']}"
-        plain, html_body = _format_notification(norm)
+        # Inline the actor's avatar so you can see WHO interacted (the DM is sent by the bot
+        # account, so the message sender avatar is the bot, not the actor).
+        avatar_mxc = None
+        try:
+            from app.services import fedi_timeline_service as _ftl
+            avatar_mxc = await _ftl._avatar_mxc(db, hs, bot_token, norm.get("actor_avatar"))
+        except Exception as e:
+            logger.warning(f"[matrix-notif] actor avatar upload failed: {e}")
+        plain, html_body = _format_notification(norm, avatar_mxc)
         try:
             event_id = await matrix_service.send_event(hs, bot_token, room_id, plain, html=html_body)
         except Exception as e:

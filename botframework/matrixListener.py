@@ -312,10 +312,13 @@ def _call_posterchanai_timeline_action(matrix_user_id: str, room_id: str, action
 
 
 def _call_posterchanai_notification_reply(matrix_user_id: str, room_id: str,
-                                          target_event_id: str, text: str, media: list = None) -> dict:
+                                          target_event_id: str, text: str, media: list = None,
+                                          thread_root_event_id: str = None) -> dict:
     """Ask posterchanai to post back to the fediverse when the user replied to a forwarded
     notification in their DM (text/image reply, or a `boost`/`fav` shortcut). Returns {ok,
-    result}; ok is false (and harmless) when the replied-to message isn't a tracked notification."""
+    result}; ok is false (and harmless) when the replied-to message isn't a tracked notification.
+    thread_root_event_id is sent so an in-thread reply (m.in_reply_to points at the last mirrored
+    post) still resolves to the notification, whose event is the thread root."""
     if not POSTERCHANAI_API_KEY:
         return None
     import requests as _req
@@ -323,6 +326,8 @@ def _call_posterchanai_notification_reply(matrix_user_id: str, room_id: str,
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {POSTERCHANAI_API_KEY}"}
     body = {"matrix_user_id": matrix_user_id, "room_id": room_id,
             "target_event_id": target_event_id, "text": text}
+    if thread_root_event_id:
+        body["thread_root_event_id"] = thread_root_event_id
     if media:
         body["media"] = media
     try:
@@ -724,11 +729,14 @@ def process_messages():
         # media flow so an image reply to a notification doesn't get hijacked. The endpoint returns
         # "not a notification" when the replied-to event isn't tracked → falls through to normal use.
         _reply_ev = message.get("reply_to_event_id")
-        if _reply_ev:
+        _thread_root_ev = message.get("thread_root_event_id")
+        if _reply_ev or _thread_root_ev:
             _nr_media = _timeline_media_from_message(message)
             _nr_text = (content or "").strip()
             if _nr_text or _nr_media:
-                _nr = _call_posterchanai_notification_reply(sender, room_id, _reply_ev, _nr_text, media=_nr_media)
+                _nr = _call_posterchanai_notification_reply(
+                    sender, room_id, _reply_ev or _thread_root_ev, _nr_text,
+                    media=_nr_media, thread_root_event_id=_thread_root_ev)
             else:
                 _nr = None
             if _nr and _nr.get("ok"):
