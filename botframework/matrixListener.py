@@ -181,6 +181,14 @@ _YTDL_COOLDOWN_SECONDS = 30
 _matrix_media_cache: dict = {}
 _MEDIA_CACHE_TTL = 300  # seconds
 
+# Timeline-room image+caption stitching. Element can't attach a caption to an image (it drops
+# the composer text and sends the image alone), so users send the caption as a SEPARATE message.
+# An image posted to the timeline room is held briefly here keyed by (sender, room); a following
+# text message claims it and they post as ONE note. If no caption arrives within the grace, the
+# image is flushed and posted on its own. (key → {media, thread_root, reply_target, ts})
+_pending_image_posts: dict = {}
+_PENDING_IMAGE_GRACE = 12  # seconds to wait for a caption before posting the image alone
+
 
 def _stash_media(sender: str, filename: str, data_b64: str, content_type: str) -> None:
     """Remember an uploaded file so a following compress/convert command can use it."""
@@ -357,13 +365,28 @@ def _handle_timeline_event(message: dict) -> None:
             _call_posterchanai_timeline_action(sender, room_id, "like", target_event_id=target, emoji=key)
         return  # reactions fail silently — a public ⚠️ for an incidental reaction is just noise
     else:
+        import time as _t
         text = (message.get("content") or "").strip()
         # An uploaded image/video → attach it to the post (its caption, if any, is the text).
         media = _timeline_media_from_message(message)
-        if not text and not media:
-            return  # nothing to post
         thread_root = message.get("thread_root_event_id")
         reply_target = message.get("reply_to_event_id")
+        key = (sender, room_id)
+        # Image with no caption text → hold it briefly; a following text message becomes its
+        # caption (Element sends them as two messages). Flushed alone by _flush_pending_image_posts.
+        if media and not text:
+            _pending_image_posts[key] = {"media": media, "thread_root": thread_root,
+                                         "reply_target": reply_target, "ts": _t.monotonic()}
+            return
+        # A text message → claim a recently-held image as this post's media (the caption case).
+        if text and not media:
+            pend = _pending_image_posts.pop(key, None)
+            if pend and _t.monotonic() - pend["ts"] <= _PENDING_IMAGE_GRACE:
+                media = pend["media"]
+                thread_root = thread_root or pend["thread_root"]
+                reply_target = reply_target or pend["reply_target"]
+        if not text and not media:
+            return  # nothing to post
         # In a thread, the root is the reliable target; m.in_reply_to points at the latest
         # (often untracked) child. Prefer the root, send in_reply_to as a secondary.
         primary_target = thread_root or reply_target
@@ -403,6 +426,30 @@ def _handle_timeline_event(message: dict) -> None:
             send_reply(message, f"⚠️ {res.get('result', 'timeline action failed')}")
         except Exception as e:
             print(f"[TIMELINE] failed to report error: {e}")
+
+
+def _flush_pending_image_posts() -> None:
+    """Post any held image that didn't get a caption within the grace window (image-only post).
+    Called once per poll cycle so a bare image still reaches the timeline."""
+    import time as _t
+    now = _t.monotonic()
+    for key in [k for k, p in _pending_image_posts.items() if now - p["ts"] > _PENDING_IMAGE_GRACE]:
+        pend = _pending_image_posts.pop(key, None)
+        if not pend:
+            continue
+        sender, room_id = key
+        tr, rt = pend.get("thread_root"), pend.get("reply_target")
+        primary = tr or rt
+        try:
+            if primary:
+                res = _call_posterchanai_timeline_action(sender, room_id, "reply", target_event_id=primary,
+                                                         thread_root_event_id=tr, text="", media=pend["media"])
+                if res and not res.get("ok") and "tracked" in (res.get("result") or "").lower():
+                    _call_posterchanai_timeline_action(sender, room_id, "post", text="", media=pend["media"])
+            else:
+                _call_posterchanai_timeline_action(sender, room_id, "post", text="", media=pend["media"])
+        except Exception as e:
+            print(f"[TIMELINE] pending image flush failed: {e}")
 
 
 def _call_posterchanai_command(matrix_user_id: str, command_text: str, room_id: str = None,
@@ -659,6 +706,9 @@ def process_messages():
     if new_token:
         sync_token = new_token
         _save_sync_token()
+
+    # Post any held timeline image whose caption never arrived (runs every cycle, even idle ones).
+    _flush_pending_image_posts()
 
     if not messages:
         print("No new messages")
