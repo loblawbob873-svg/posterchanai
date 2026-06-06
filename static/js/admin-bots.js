@@ -8,8 +8,8 @@ const BOT_KNOWN_KEYS = [
     'matrix_server', 'matrix_user_id', 'matrix_access_token', 'matrix_room_id', 'matrix_admins',
     'prompt',
     'sql_database', 'db_user', 'db_pass', 'db_host',
-    'nitter_poll_seconds', 'shamebot_rooms', 'tts_voice',
-    'welcome_image', 'welcome_lookback_minutes',
+    'nitter_poll_seconds', 'shamebot_rooms', 'tts_voice', 'tts_rate', 'tts_pitch',
+    'welcome_message', 'welcome_image', 'welcome_lookback_minutes',
     'block_image', 'report_image', 'unfollow_image',
 ];
 // Config keys backed by a checkbox.

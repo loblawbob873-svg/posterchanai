@@ -227,6 +227,10 @@
             <!-- Welcome bot (the welcome text is AI-generated from the Personality prompt + a
                  built-in default; only the image/lookback are per-bot here). -->
             <div id="bot_grp_welcome" style="display:none">
+                <div class="form-group">
+                    <label for="bot_f_welcome_message">Welcome message <span class="bots-dim">(static fallback if AI is off; optional)</span></label>
+                    <input type="text" id="bot_f_welcome_message" placeholder="Welcome to {instance_name}">
+                </div>
                 <div class="form-row">
                     <div class="form-group">
                         <label for="bot_f_welcome_image">Welcome image path <span class="bots-dim">(optional)</span></label>
@@ -276,8 +280,16 @@
                         <input type="text" id="bot_f_tts_voice" placeholder="en-GB-SoniaNeural">
                     </div>
                     <div class="form-group">
-                        <label for="bot_f_auto_narrate"><input type="checkbox" id="bot_f_auto_narrate"> Auto-narrate (TTS video)</label>
+                        <label for="bot_f_tts_rate">TTS rate <span class="bots-dim">(optional)</span></label>
+                        <input type="text" id="bot_f_tts_rate" placeholder="+10%">
                     </div>
+                    <div class="form-group">
+                        <label for="bot_f_tts_pitch">TTS pitch <span class="bots-dim">(optional)</span></label>
+                        <input type="text" id="bot_f_tts_pitch" placeholder="+5Hz">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="bot_f_auto_narrate"><input type="checkbox" id="bot_f_auto_narrate"> Auto-narrate (TTS video)</label>
                 </div>
             </div>
 
