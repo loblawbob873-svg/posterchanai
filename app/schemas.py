@@ -293,22 +293,21 @@ class SettingsResponse(BaseModel):
     # deploy the merged code safely while the legacy posterchan.service still owns the bots —
     # flip on only after retiring the old service to avoid double-posting.
     bots_manager_enabled: str = "false"
-    bots_ai_api_url: str = ""                 # OpenAI-compatible chat endpoint the bots call
-    bots_ai_api_key: str = ""
+    # Unified codebase: ONE PosterChanAI server URL drives everything. The bots reach the shared
+    # LLM at {server}/api/chat/completions and do image generation via the same server's API
+    # (they're separate processes, so they use HTTP rather than the in-process GPU model). No
+    # separate OpenAI endpoint, no ComfyUI/Stable-Diffusion.
+    bots_server_url: str = ""                  # e.g. https://ai.poster.place  (chat + image)
+    bots_ai_api_key: str = ""                  # key for the server's chat endpoint
     bots_ai_model: str = ""
-    bots_searxng_url: str = ""                # SearXNG instance for the bots' web search
+    bots_posterchanai_username: str = ""       # app login the bots use for the image API
+    bots_posterchanai_password: str = ""
+    bots_posterchanai_api_key: str = ""        # per-server image API key (X-API-Key)
+    bots_searxng_url: str = ""                 # SearXNG instance for the bots' web search
     bots_timezone: str = "MST"
-    bots_sql_user: str = ""                   # Pleroma Postgres creds (blockbot/welcome/report/engagement)
+    bots_sql_user: str = ""                    # Pleroma Postgres creds (blockbot/welcome/report)
     bots_sql_pass: str = ""
     bots_sql_host: str = ""
-    # Image backend the bots use for image posts
-    bots_use_posterchanai: str = "true"       # true = use this app's image API; false = ComfyUI/SD direct
-    bots_posterchanai_api_endpoint: str = ""  # base URL of this app (for the bots' image/API calls)
-    bots_posterchanai_username: str = ""
-    bots_posterchanai_password: str = ""
-    bots_posterchanai_api_key: str = ""
-    bots_comfyui_api_endpoint: str = ""
-    bots_stable_diffusion_endpoint: str = ""
 
     class Config:
         extra = "allow"  # Allow arbitrary extra settings

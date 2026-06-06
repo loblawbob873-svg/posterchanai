@@ -28,16 +28,35 @@
         <summary><h3 style="display:inline">Global bot settings (advanced)</h3></summary>
         <p class="bots-hint">Shared by all bots. Set once.</p>
         <div class="form-group">
-            <label for="bots_ai_api_url">AI endpoint (OpenAI-compatible chat URL)</label>
-            <input type="text" id="bots_ai_api_url" name="bots_ai_api_url" placeholder="https://ai.example/api/chat/completions">
+            <label for="bots_server_url"><b>PosterChanAI server URL</b></label>
+            <input type="text" id="bots_server_url" name="bots_server_url" placeholder="https://ai.poster.place">
+            <p class="bots-hint">The one endpoint the bots use for <b>both</b> chat and image
+                generation (chat hits <code>/api/chat/completions</code>, image uses the same
+                server's API). No separate AI endpoint or ComfyUI needed.</p>
         </div>
-        <div class="form-group">
-            <label for="bots_ai_api_key">AI API key</label>
-            <input type="password" id="bots_ai_api_key" name="bots_ai_api_key">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="bots_ai_api_key">AI API key</label>
+                <input type="password" id="bots_ai_api_key" name="bots_ai_api_key">
+            </div>
+            <div class="form-group">
+                <label for="bots_ai_model">AI model</label>
+                <input type="text" id="bots_ai_model" name="bots_ai_model">
+            </div>
         </div>
-        <div class="form-group">
-            <label for="bots_ai_model">AI model</label>
-            <input type="text" id="bots_ai_model" name="bots_ai_model">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="bots_posterchanai_username">App username (image API)</label>
+                <input type="text" id="bots_posterchanai_username" name="bots_posterchanai_username">
+            </div>
+            <div class="form-group">
+                <label for="bots_posterchanai_password">App password</label>
+                <input type="password" id="bots_posterchanai_password" name="bots_posterchanai_password">
+            </div>
+            <div class="form-group">
+                <label for="bots_posterchanai_api_key">App API key</label>
+                <input type="password" id="bots_posterchanai_api_key" name="bots_posterchanai_api_key">
+            </div>
         </div>
         <div class="form-group">
             <label for="bots_searxng_url">SearXNG URL (web search)</label>
@@ -60,37 +79,6 @@
                 <label for="bots_sql_host">Pleroma DB host</label>
                 <input type="text" id="bots_sql_host" name="bots_sql_host">
             </div>
-        </div>
-        <div class="form-group">
-            <label for="bots_use_posterchanai">
-                <input type="checkbox" id="bots_use_posterchanai" name="bots_use_posterchanai"> Use this app for image generation
-            </label>
-        </div>
-        <div class="form-group">
-            <label for="bots_posterchanai_api_endpoint">This app's base URL (for the bots' API calls)</label>
-            <input type="text" id="bots_posterchanai_api_endpoint" name="bots_posterchanai_api_endpoint">
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label for="bots_posterchanai_username">App username</label>
-                <input type="text" id="bots_posterchanai_username" name="bots_posterchanai_username">
-            </div>
-            <div class="form-group">
-                <label for="bots_posterchanai_password">App password</label>
-                <input type="password" id="bots_posterchanai_password" name="bots_posterchanai_password">
-            </div>
-            <div class="form-group">
-                <label for="bots_posterchanai_api_key">App API key</label>
-                <input type="password" id="bots_posterchanai_api_key" name="bots_posterchanai_api_key">
-            </div>
-        </div>
-        <div class="form-group">
-            <label for="bots_comfyui_api_endpoint">ComfyUI endpoint (if not using this app)</label>
-            <input type="text" id="bots_comfyui_api_endpoint" name="bots_comfyui_api_endpoint">
-        </div>
-        <div class="form-group">
-            <label for="bots_stable_diffusion_endpoint">Stable Diffusion endpoint (optional)</label>
-            <input type="text" id="bots_stable_diffusion_endpoint" name="bots_stable_diffusion_endpoint">
         </div>
     </details>
 </div>

@@ -42,21 +42,24 @@ IMAGE_SCHEDULE_HOURS = [0, 6, 12, 18]
 IMAGE_STAGGER_DELAY = 300  # seconds between staggered image bots
 RECONCILE_INTERVAL = 5     # seconds between reconcile passes
 
-# Maps a global `bots_*` setting key -> the env var the botframework expects.
+# Unified codebase: a SINGLE PosterChanAI server URL (bots_server_url) drives everything —
+# the bots reach the shared LLM and image generation through it over HTTP (they're separate
+# processes, so they can't share the GPU-loaded model in-process). No separate OPENAI endpoint,
+# no ComfyUI/Stable-Diffusion. These straightforward settings map 1:1; the server-derived ones
+# (OPENAI_ENDPOINT / POSTERCHANAI_API_ENDPOINT / USE_POSTERCHANAI) are set in _load_global_env.
 _GLOBAL_ENV_MAP = {
-    "bots_ai_api_url": "OPENAI_ENDPOINT",
     "bots_ai_api_key": "OPENAI_API_KEY",
     "bots_ai_model": "AI_MODEL",
     "bots_searxng_url": "SEARXNG_URL",
     "bots_timezone": "TIMEZONE",
-    "bots_use_posterchanai": "USE_POSTERCHANAI",
-    "bots_posterchanai_api_endpoint": "POSTERCHANAI_API_ENDPOINT",
     "bots_posterchanai_username": "POSTERCHANAI_USERNAME",
     "bots_posterchanai_password": "POSTERCHANAI_PASSWORD",
     "bots_posterchanai_api_key": "POSTERCHANAI_API_KEY",
-    "bots_comfyui_api_endpoint": "COMFYUI_API_ENDPOINT",
-    "bots_stable_diffusion_endpoint": "STABLE_DIFFUSION_ENDPOINT",
 }
+
+# The one endpoint setting. (Old installs used bots_posterchanai_api_endpoint; we read that as a
+# fallback so the merge keeps working without a manual re-entry.)
+_SERVER_URL_KEYS = ("bots_server_url", "bots_posterchanai_api_endpoint")
 
 # ---- module state (guarded by _lock) -----------------------------------------
 _lock = threading.RLock()
@@ -74,17 +77,32 @@ def get_hostname():
 
 
 def _load_global_env():
-    """Base env shared by every bot, from the global bots_* settings."""
+    """Base env shared by every bot, derived from the global bots_* settings.
+
+    Everything routes through the single PosterChanAI server URL: the bot's LLM calls hit
+    {server}/api/chat/completions and its image generation uses the server's image API
+    (USE_POSTERCHANAI is forced on — no ComfyUI/SD)."""
     env = os.environ.copy()
+    wanted = set(_GLOBAL_ENV_MAP) | set(_SERVER_URL_KEYS)
     db = SessionLocal()
     try:
-        rows = {s.key: s.value for s in db.query(Setting).filter(Setting.key.in_(_GLOBAL_ENV_MAP)).all()}
+        rows = {s.key: s.value for s in db.query(Setting).filter(Setting.key.in_(wanted)).all()}
     finally:
         db.close()
     for key, env_key in _GLOBAL_ENV_MAP.items():
         val = rows.get(key)
         if val is not None and val != "":
             env[env_key] = val
+    # Derive every endpoint from the one server URL.
+    server = ""
+    for k in _SERVER_URL_KEYS:
+        if rows.get(k):
+            server = rows[k].strip().rstrip("/")
+            break
+    if server:
+        env["POSTERCHANAI_API_ENDPOINT"] = server
+        env["OPENAI_ENDPOINT"] = server + "/api/chat/completions"
+    env["USE_POSTERCHANAI"] = "true"   # always use the unified server; never ComfyUI/SD
     # SQL_* base creds (per-bot SQL_DATABASE is added in _build_env when sql_database is set)
     db = SessionLocal()
     try:
@@ -403,18 +421,16 @@ def _monitor_loop():
 # time the manager runs so existing bots + global settings carry over from the merge.
 _EXPORT_PATH = BOTFRAMEWORK_DIR / "bots_config_export.json"
 
-# Global export key -> bots_* setting key
+# Global export key -> bots_* setting key. The legacy POSTERCHANAI_API_ENDPOINT becomes the
+# single bots_server_url (chat + image both derive from it); ComfyUI/SD/separate-AI-URL dropped.
 _SEED_GLOBALS = {
-    "AI_API_URL": "bots_ai_api_url", "AI_API_KEY": "bots_ai_api_key", "AI_MODEL": "bots_ai_model",
+    "POSTERCHANAI_API_ENDPOINT": "bots_server_url",
+    "AI_API_KEY": "bots_ai_api_key", "AI_MODEL": "bots_ai_model",
     "SEARXNG_URL": "bots_searxng_url", "TIMEZONE": "bots_timezone",
     "SQL_USER": "bots_sql_user", "SQL_PASS": "bots_sql_pass", "SQL_HOST": "bots_sql_host",
-    "USE_POSTERCHANAI": "bots_use_posterchanai",
-    "POSTERCHANAI_API_ENDPOINT": "bots_posterchanai_api_endpoint",
     "POSTERCHANAI_USERNAME": "bots_posterchanai_username",
     "POSTERCHANAI_PASSWORD": "bots_posterchanai_password",
     "POSTERCHANAI_API_KEY": "bots_posterchanai_api_key",
-    "COMFYUI_API_ENDPOINT": "bots_comfyui_api_endpoint",
-    "STABLE_DIFFUSION_ENDPOINT": "bots_stable_diffusion_endpoint",
 }
 # Bot dict keys that map to first-class columns (everything else → JSON config)
 _COLUMN_KEYS = {"name", "platform", "host", "bot_type", "modes"}

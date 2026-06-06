@@ -137,10 +137,9 @@ def _handle_media_command(note, command, arg, own_acct, visibility):
     for _v in video_outs[1:]:
         send_reply(note, "", own_acct=own_acct, visibility=visibility, video_bytes=_v)
 
-if COMFYUI_API_ENDPOINT:
-    from image_backend import generate_image_bytes
-elif STABLE_DIFFUSION_ENDPOINT:
-    from stablediffusion import generate_image_bytes
+# Unified codebase: image generation always goes through image_backend → the posterchanai
+# server. (No ComfyUI/Stable-Diffusion gating; those backends were removed in the merge.)
+from image_backend import generate_image_bytes
 
 # Persistent sets to track processed mentions and replied notes
 _processed_mention_ids = set()

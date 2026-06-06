@@ -64,11 +64,9 @@ from config import IMAGE_POSTER_RANDOM_SCENES
 from random_scenes import RANDOM_SCENE_ELEMENTS
 import random
 
-if COMFYUI_API_ENDPOINT:
-    from image_backend import generate_image_bytes
-
-if STABLE_DIFFUSION_ENDPOINT:
-    from stablediffusion import generate_image_bytes
+# Unified codebase: image generation always goes through image_backend → the posterchanai
+# server. (No ComfyUI/Stable-Diffusion gating; those backends were removed in the merge.)
+from image_backend import generate_image_bytes
 
 
 # Map a Mastodon/Pleroma media_attachment type to a mime prefix so the backend's
@@ -229,16 +227,10 @@ _load_processed_ids()
 
 
 def generate_image(prompt_text):
-    # Use retry version to ensure requests aren't missed
-    if COMFYUI_API_ENDPOINT:
-        from image_backend import generate_image_bytes_with_retries
-        return generate_image_bytes_with_retries(prompt_text, max_retries=10, retry_delay=30)
-    elif STABLE_DIFFUSION_ENDPOINT:
-        from stablediffusion import generate_image_bytes_with_retries
-        return generate_image_bytes_with_retries(prompt_text, max_retries=10, retry_delay=30)
-    else:
-        print("No image generation backend configured (COMFYUI_API_ENDPOINT or STABLE_DIFFUSION_ENDPOINT)")
-        return None
+    # Use retry version to ensure requests aren't missed. Always via image_backend → the
+    # posterchanai server (the unified image backend).
+    from image_backend import generate_image_bytes_with_retries
+    return generate_image_bytes_with_retries(prompt_text, max_retries=10, retry_delay=30)
 
 def process_notifications():
     global _processed_notification_ids, _replied_status_ids
