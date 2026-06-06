@@ -260,12 +260,16 @@ def _body_html(avatar_mxc: str | None, post: dict) -> str:
     a = post["author"]
     display = (a.get("display") or "").strip()
     acct = (a.get("acct") or "").strip()
-    name = _apply_emojis(html.escape(display or acct or "?"), a.get("emoji_mxc"))
     avatar = f'<img src="{html.escape(avatar_mxc)}" width="20" height="20" /> ' if avatar_mxc else ""
-    # Header: avatar + bold name + the @handle (always show it so the sender is identifiable even
-    # when the display name is blank/ambiguous). The handle is PLAIN TEXT, not an <a> link, so it
-    # doesn't trigger Element's profile-preview card (that was the reason links were stripped).
-    handle = f' <font color="#888888">@{html.escape(acct)}</font>' if acct and acct != display else ""
+    # Always make the sender identifiable: show the bold display name + the @handle. When there's
+    # no usable display name, the @handle *is* the name (no duplicate). The handle is PLAIN TEXT
+    # (not an <a> link) so it doesn't trigger Element's profile-preview card.
+    if display and display != acct:
+        name = _apply_emojis(html.escape(display), a.get("emoji_mxc"))
+        handle = f' <font data-mx-color="#888888">@{html.escape(acct)}</font>' if acct else ""
+    else:
+        name = _apply_emojis(html.escape(f"@{acct}" if acct else "?"), a.get("emoji_mxc"))
+        handle = ""
     header = f"{avatar}<strong>{name}</strong>{handle}"
     segments = [header]
     if post["text"]:
