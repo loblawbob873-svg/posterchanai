@@ -1193,11 +1193,8 @@ async def notification_reply(
             MatrixNotifyMap.event_id.in_(event_ids),
             MatrixNotifyMap.user_id == user.id,
         ).order_by(MatrixNotifyMap.id.desc()).first()
-    if not data.probe:
-        logger.info("[matrix-notif-reply] mxid=%s user=%s room=%s target=%s thread_root=%s -> %s",
-                    mxid, getattr(user, "id", None), data.room_id, data.target_event_id,
-                    data.thread_root_event_id, "MATCH" if row else "no-match")
     # Probe: just report whether the replied-to event is a tracked notification, without posting.
+    # The bot uses this to decide whether to hold an image-only reply for its caption.
     if data.probe:
         return {"ok": bool(row), "is_notification": bool(row), "result": "probe"}
     if not row:

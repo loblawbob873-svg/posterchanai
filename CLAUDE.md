@@ -234,7 +234,15 @@ open a fresh `SessionLocal` and capture any needed config up front.
   note/status + visibility); replying to that DM message → `POST /api/matrix/notification-reply`,
   which posts a reply (text **or image** — handled before the bot's compress/convert media flow),
   or runs a `boost`/`fav` shortcut, on the user's account (returns `not a notification` so the bot
-  falls through for non-notification replies). **Direct messages:** a fedi DM is never in the
+  falls through for non-notification replies). **Image + caption stitch:** Element sends an image
+  reply and its caption as two events, which would post twice. The bot (`matrixListener.py`,
+  `_pending_notif_replies`) holds an image-only reply for `_PENDING_IMAGE_GRACE` (12s) so the
+  following text becomes its caption and they post as ONE reply (same mechanism as the timeline
+  room's `_pending_image_posts`). It only holds when a no-post **`probe`** call (`probe:true` on
+  `notification-reply`, returns `{is_notification}`) confirms the replied-to event is a tracked
+  notification — otherwise an ordinary image reply (e.g. for a `compress`/`translate` media-action)
+  must fall straight through. Orphan held images are flushed image-only each poll cycle. **Direct
+  messages:** a fedi DM is never in the
   shared room — it arrives here as a notification (visibility `direct`), and a reply preserves that
   visibility (`notification-reply` uses `row.visibility`) so it stays a DM. To *start* a DM, the
   Matrix `/command` endpoint handles `dm @user@host <message>` → a `visibility="direct"` post
