@@ -810,7 +810,10 @@ def process_messages():
                 _nr = _call_posterchanai_notification_reply(sender, room_id, _rt, _action)
                 if _nr and _nr.get("ok"):
                     try:
-                        send_reply(message, f"✅ {_nr.get('result', 'done')}")
+                        # Confirm by replying to the NOTIFICATION message (_rt), not `message`:
+                        # `message` is the m.reaction event, and a reply pointing at a reaction
+                        # renders as "This event could not be displayed" in Element.
+                        send_message(room_id, f"✅ {_nr.get('result', 'done')}", reply_to=_rt)
                     except Exception as _e:
                         print(f"[NOTIF-REACT] confirm failed: {_e}")
             continue
