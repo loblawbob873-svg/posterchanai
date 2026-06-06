@@ -48,6 +48,12 @@ _DRAIN_BUDGET = 70           # stop the catch-up drain after this many seconds (
                               # so the poll finishes cleanly instead of being hard-cancelled; the
                               # cursor is committed per page, so the rest drains next cycle (no gap).
 _DOWNLOAD_TIMEOUT = 25       # hard total wall-clock cap on a single remote media/avatar download
+_SEND_PACING = 0.3           # seconds to pause after each Synapse write (upload/send). The bridge
+                            # mirrors a high-volume timeline into a single-process (monolith)
+                            # homeserver; bursting uploads/sends blocks its reactor and degrades
+                            # /sync for real clients (Element). Pacing trickles the load so the
+                            # homeserver stays responsive — the bridge trades a little latency for
+                            # not taking the homeserver down.
 _last_reply_poll = 0.0        # monotonic ts of the last reply re-check (per-process)
 _TAG_RE = re.compile(r"<[^>]+>")
 _BREAK_RE = re.compile(r"<\s*br\s*/?\s*>|</\s*p\s*>", re.IGNORECASE)
@@ -413,6 +419,7 @@ async def _avatar_mxc(db: Session, hs: str, bot_token: str, avatar_url: str | No
     except Exception as e:
         logger.warning(f"[fedi-timeline] avatar upload failed: {e}")
         return None
+    await asyncio.sleep(_SEND_PACING)        # pace Synapse writes (see _SEND_PACING)
     db.add(MatrixAvatarCache(author_avatar_url=avatar_url, mxc=mxc))
     db.commit()
     return mxc
@@ -507,6 +514,7 @@ async def _deliver(db: Session, hs: str, bot_token: str, room_id: str, platform:
             except Exception as e:
                 logger.warning(f"[fedi-timeline] video upload failed: {e}")
                 continue
+            await asyncio.sleep(_SEND_PACING)       # pace Synapse writes
             _store_media(db, url, f"video:{mxc}")   # tag so a cache hit knows it's a video mxc
             videos.append((mxc, eff_mime))
             continue
@@ -522,6 +530,7 @@ async def _deliver(db: Session, hs: str, bot_token: str, room_id: str, platform:
         except Exception as e:
             logger.warning(f"[fedi-timeline] inline image upload failed: {e}")
             continue
+        await asyncio.sleep(_SEND_PACING)        # pace Synapse writes
         _store_media(db, url, mxc, w, h)
         dim = f' width="{w}" height="{h}"' if w else ""
         inline_imgs.append(f'<img src="{html.escape(mxc)}"{dim} />')
@@ -531,6 +540,7 @@ async def _deliver(db: Session, hs: str, bot_token: str, room_id: str, platform:
         hs, bot_token, room_id, body_text, html=full_html,
         thread_root_event_id=thread_root_event_id, reply_to_event_id=parent_event,
     )
+    await asyncio.sleep(_SEND_PACING)            # pace Synapse writes
     _record(event_id, is_root_event=True)
     # Videos can't be inlined into Matrix HTML, so they follow as their own m.video events
     # (recorded so interacting resolves to the post). Carry the author header as the media caption
@@ -542,6 +552,7 @@ async def _deliver(db: Session, hs: str, bot_token: str, room_id: str, platform:
                                                         caption=hdr_text, caption_html=hdr_html,
                                                         thread_root_event_id=thread_root_event_id or event_id,
                                                         reply_to_event_id=event_id)
+            await asyncio.sleep(_SEND_PACING)    # pace Synapse writes
             if mid:
                 _record(mid, is_root_event=False)
         except Exception as e:
@@ -650,8 +661,10 @@ async def poll_once(db: Session) -> None:
     ttype = _get_setting(db, "fedi_timeline_type", "home")
     include_replies = _get_setting(db, "fedi_timeline_include_replies", "true").lower() == "true"
     since = _get_setting(db, "fedi_timeline_since")
-    PAGE = 40          # per-page fetch size
-    MAX_PAGES = 12     # bound work per poll (~480 posts); any remainder drains next poll, no gap
+    PAGE = 20          # per-page fetch size (smaller → the cursor commits more often, so a poll
+                       # cancelled at the cap loses less in-flight work)
+    MAX_PAGES = 6      # bound work per poll (~120 posts); any remainder drains next poll, no gap.
+                       # Kept modest so the paced drain never floods the (monolith) homeserver.
 
     async def _fetch(cursor: str | None, first: bool):
         if platform == "misskey":
@@ -707,20 +720,29 @@ async def poll_once(db: Session) -> None:
             # are posted after their parents.
             posts = sorted((_norm(platform, r) for r in raw_posts), key=lambda p: p.get("created_at") or "")
             transient = False
+            last_delivered = None           # id of the newest post we got past this page (delivered,
+                                            # already-seen, or skipped as a permanent error)
             for post in posts:
                 try:
                     await _deliver_post(post)
+                    last_delivered = post.get("id") or last_delivered
                 except (matrix_service.MatrixServerError, httpx.TransportError, asyncio.TimeoutError) as e:
-                    # Homeserver overloaded/unreachable: stop here WITHOUT advancing the cursor so
-                    # this page re-drains next cycle (already-delivered posts dedup via _seen). A
-                    # Synapse blip must not punch a permanent hole in the room.
+                    # Homeserver unavailable: stop here, but commit progress up to the last post we
+                    # got past (below) so we don't reprocess them — the failed post + remainder
+                    # retry next cycle. This makes forward progress (no permanent hole, no wedge).
                     logger.warning(f"[fedi-timeline] transient deliver failure, will retry next cycle: {e}")
                     transient = True
                     break
                 except Exception as e:
+                    # A permanent (non-5xx) error on one post: skip it and keep going so a single
+                    # poison post can't stall the whole drain.
                     logger.warning(f"[fedi-timeline] post deliver failed: {e}")
+                    last_delivered = post.get("id") or last_delivered
             if transient:
-                break          # leave fedi_timeline_since where it is; resume from here next poll
+                if last_delivered and last_delivered != cursor:
+                    _set_setting(db, "fedi_timeline_since", last_delivered)
+                    db.commit()
+                break          # resume from last_delivered next poll
             newest_id = posts[-1].get("id")
             if not newest_id or newest_id == cursor:
                 break                       # no forward progress → stop

@@ -31,28 +31,25 @@ def _txn_id() -> str:
 
 async def _with_429_retry(make_request, attempts: int = 4):
     """Call make_request() (an async fn returning a Response); on HTTP 429 honour the
-    homeserver's retry_after_ms and retry. Also backs off + retries on 5xx (_TRANSIENT_STATUSES):
-    a busy feed bridge can overload a single-process homeserver into 502/504s, and hammering it
-    instantly just makes it worse — so we ease off (exponential, capped) instead. Retrying the
-    same txn id is idempotent on Matrix, so this safely rides out both rate limits and overload."""
+    homeserver's retry_after_ms and retry. Retrying the same txn id is idempotent on Matrix,
+    so this safely rides out the rate limits a busy feed bridge hits.
+
+    NB: 5xx is deliberately NOT retried in-request. A 504 is a reverse-proxy gateway timeout —
+    each attempt already waited the full upstream timeout (tens of seconds), so retrying it 4×
+    would stall a poll past its cap and wedge the bridge. We fail fast and let the caller defer
+    the work to the next poll cycle (that cadence IS the backoff)."""
     import asyncio
     resp = None
-    for attempt in range(attempts):
+    for _ in range(attempts):
         resp = await make_request()
-        if resp.status_code == 429:
-            retry_ms = 1000
-            try:
-                retry_ms = int(resp.json().get("retry_after_ms", 1000))
-            except Exception:
-                pass
-            await asyncio.sleep(min(max(retry_ms, 100), 5000) / 1000.0)
-            continue
-        if resp.status_code in _TRANSIENT_STATUSES:
-            # Exponential backoff (1s, 2s, 4s, …) capped at 8s — give an overloaded homeserver
-            # room to recover instead of piling more requests on.
-            await asyncio.sleep(min(2 ** attempt, 8))
-            continue
-        return resp
+        if resp.status_code != 429:
+            return resp
+        retry_ms = 1000
+        try:
+            retry_ms = int(resp.json().get("retry_after_ms", 1000))
+        except Exception:
+            pass
+        await asyncio.sleep(min(max(retry_ms, 100), 5000) / 1000.0)
     return resp
 
 
@@ -386,7 +383,9 @@ async def upload_media_bytes(homeserver: str, access_token: str, data: bytes,
     headers = {"Authorization": f"Bearer {access_token}", "Content-Type": mime}
     fname = quote(filename, safe="")
     last_status, last_text = 0, ""
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    # 30s (not 120s): a healthy upload is fast; if Synapse is wedged we want to fail fast and
+    # defer to the next poll cycle rather than pin a poll slot waiting on a stalled homeserver.
+    async with httpx.AsyncClient(timeout=30.0) as client:
         for media_url in [
             f"{hs}/_matrix/client/v1/media/upload?filename={fname}",
             f"{hs}/_matrix/media/v3/upload?filename={fname}",
