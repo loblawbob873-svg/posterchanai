@@ -48,7 +48,7 @@ _DRAIN_BUDGET = 70           # stop the catch-up drain after this many seconds (
                               # so the poll finishes cleanly instead of being hard-cancelled; the
                               # cursor is committed per page, so the rest drains next cycle (no gap).
 _DOWNLOAD_TIMEOUT = 25       # hard total wall-clock cap on a single remote media/avatar download
-_SEND_PACING = 0.3           # seconds to pause after each Synapse write (upload/send). The bridge
+_SEND_PACING = 0.1           # seconds to pause after each Synapse write (upload/send). The bridge
                             # mirrors a high-volume timeline into a single-process (monolith)
                             # homeserver; bursting uploads/sends blocks its reactor and degrades
                             # /sync for real clients (Element). Pacing trickles the load so the
