@@ -188,22 +188,126 @@
                 <textarea id="bot_f_prompt" rows="4"></textarea>
             </div>
 
-            <!-- Pleroma DB name: the one per-bot field block/welcome/report actually need
-                 (no default — it's the instance's database). Shown only for those features. -->
-            <div class="form-group" id="bot_grp_db" style="display:none">
-                <label for="bot_f_sql_database">Pleroma database name <span class="bots-dim">(block/welcome/report)</span></label>
-                <input type="text" id="bot_f_sql_database" placeholder="pleroma">
+            <!-- Each section below appears only when its feature is enabled. -->
+
+            <!-- Nitter feeds -->
+            <div id="bot_grp_nitter" style="display:none">
+                <div class="form-group">
+                    <label for="bot_f_nitter_feeds">Nitter RSS feeds <span class="bots-dim">(one URL per line)</span></label>
+                    <textarea id="bot_f_nitter_feeds" rows="4" placeholder="https://nitter.net/USERNAME/rss"></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="bot_f_nitter_poll_seconds">Poll interval (seconds) <span class="bots-dim">(optional)</span></label>
+                    <input type="text" id="bot_f_nitter_poll_seconds" placeholder="300">
+                </div>
             </div>
 
-            <details class="bots-advanced">
-                <summary>Advanced overrides (JSON) — optional</summary>
-                <p class="bots-hint">Everything here has a sensible default; only set a key to
-                    override it. e.g. <code>tts_voice</code>, <code>auto_narrate</code>,
-                    <code>welcome_prompt</code>, <code>welcome_image</code>, <code>block_prompt</code>,
-                    <code>report_prompt</code>, <code>nitter_feeds</code>, <code>shamebot_rooms</code>.
-                    Merged into the bot's config.</p>
-                <textarea id="bot_f_advanced" rows="6" placeholder="{}"></textarea>
-            </details>
+            <!-- Pleroma database (block / welcome / report) -->
+            <div id="bot_grp_db" style="display:none">
+                <div class="form-group">
+                    <label for="bot_f_sql_database">Pleroma database name</label>
+                    <input type="text" id="bot_f_sql_database" placeholder="pleroma">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="bot_f_db_user">DB user <span class="bots-dim">(blank = global)</span></label>
+                        <input type="text" id="bot_f_db_user">
+                    </div>
+                    <div class="form-group">
+                        <label for="bot_f_db_pass">DB password <span class="bots-dim">(blank = global)</span></label>
+                        <input type="password" id="bot_f_db_pass">
+                    </div>
+                    <div class="form-group">
+                        <label for="bot_f_db_host">DB host <span class="bots-dim">(blank = global)</span></label>
+                        <input type="text" id="bot_f_db_host">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Welcome bot -->
+            <div id="bot_grp_welcome" style="display:none">
+                <div class="form-group">
+                    <label for="bot_f_welcome_prompt">Welcome prompt <span class="bots-dim">(optional — uses default if blank)</span></label>
+                    <textarea id="bot_f_welcome_prompt" rows="3"></textarea>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="bot_f_welcome_image">Welcome image path <span class="bots-dim">(optional)</span></label>
+                        <input type="text" id="bot_f_welcome_image">
+                    </div>
+                    <div class="form-group">
+                        <label for="bot_f_welcome_lookback_minutes">Lookback minutes <span class="bots-dim">(optional)</span></label>
+                        <input type="text" id="bot_f_welcome_lookback_minutes" placeholder="5">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Block bot -->
+            <div id="bot_grp_block" style="display:none">
+                <div class="form-group">
+                    <label for="bot_f_block_prompt">Block prompt <span class="bots-dim">(optional)</span></label>
+                    <textarea id="bot_f_block_prompt" rows="3"></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="bot_f_block_image">Block image path <span class="bots-dim">(optional)</span></label>
+                    <input type="text" id="bot_f_block_image">
+                </div>
+            </div>
+
+            <!-- Report bot -->
+            <div id="bot_grp_report" style="display:none">
+                <div class="form-group">
+                    <label for="bot_f_report_prompt">Report prompt <span class="bots-dim">(optional)</span></label>
+                    <textarea id="bot_f_report_prompt" rows="3"></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="bot_f_report_image">Report image path <span class="bots-dim">(optional)</span></label>
+                    <input type="text" id="bot_f_report_image">
+                </div>
+            </div>
+
+            <!-- Unfollow bot -->
+            <div id="bot_grp_unfollow" style="display:none">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="bot_f_unfollow_image">Unfollow image path <span class="bots-dim">(optional)</span></label>
+                        <input type="text" id="bot_f_unfollow_image">
+                    </div>
+                    <div class="form-group">
+                        <label for="bot_f_unfollow_silent_mode"><input type="checkbox" id="bot_f_unfollow_silent_mode"> Silent mode</label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Voice / narration (text bots) -->
+            <div id="bot_grp_voice" style="display:none">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="bot_f_tts_voice">TTS voice <span class="bots-dim">(optional)</span></label>
+                        <input type="text" id="bot_f_tts_voice" placeholder="en-GB-SoniaNeural">
+                    </div>
+                    <div class="form-group">
+                        <label for="bot_f_auto_narrate"><input type="checkbox" id="bot_f_auto_narrate"> Auto-narrate (TTS video)</label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Matrix extras -->
+            <div id="bot_grp_matrix_extra" style="display:none">
+                <div class="form-group">
+                    <label for="bot_f_shamebot_rooms">Shamebot rooms <span class="bots-dim">(comma-separated room IDs, optional)</span></label>
+                    <input type="text" id="bot_f_shamebot_rooms">
+                </div>
+                <div class="form-group">
+                    <label for="bot_f_stickers_enabled"><input type="checkbox" id="bot_f_stickers_enabled"> Enable stickers (post media with !name)</label>
+                </div>
+            </div>
+
+            <!-- Escape hatch: only appears if a bot has exotic keys none of the fields cover. -->
+            <div class="form-group" id="bot_grp_advanced" style="display:none">
+                <label for="bot_f_advanced">Other settings <span class="bots-dim">(rarely needed)</span></label>
+                <textarea id="bot_f_advanced" rows="4"></textarea>
+            </div>
         </div>
         <div class="bot-modal-foot">
             <span id="botModalError" class="bot-modal-error"></span>

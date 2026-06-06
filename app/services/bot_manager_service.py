@@ -215,11 +215,12 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
         # Image-backend API key: per-bot override beats the global already in base_env.
         setif("posterchanai_api_key", "POSTERCHANAI_API_KEY")
 
-        # DB creds (only when the bot needs Pleroma Postgres)
+        # DB creds (only when the bot needs Pleroma Postgres). Per-bot db_user/db_pass/db_host
+        # override the global SQL settings; blank falls back to the global.
         if bot_dict.get("sql_database"):
-            env["SQL_USER"] = sql_user
-            env["SQL_PASS"] = sql_pass
-            env["SQL_HOST"] = sql_host
+            env["SQL_USER"] = str(bot_dict.get("db_user") or sql_user)
+            env["SQL_PASS"] = str(bot_dict.get("db_pass") or sql_pass)
+            env["SQL_HOST"] = str(bot_dict.get("db_host") or sql_host)
             env["SQL_DATABASE"] = str(bot_dict["sql_database"])
 
         setif("block_image", "BLOCK_IMAGE")

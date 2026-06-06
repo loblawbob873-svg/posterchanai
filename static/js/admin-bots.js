@@ -1,15 +1,20 @@
 // Admin → Bots tab. CRUD + On/Off over /api/admin/bots; runtime status from /status.
 // The bot manager (app/services/bot_manager_service.py) owns the actual processes.
 
-// Config keys with dedicated form fields. Kept deliberately small — the per-feature
-// prompts/messages/images all have defaults, so they live in the Advanced overrides box.
-// sql_database is the one exception (no default; block/welcome/report need it).
+// Config keys with dedicated text/textarea form fields (every per-bot setting has a real
+// field — no JSON needed for normal config). Shown contextually per feature/platform.
 const BOT_KNOWN_KEYS = [
     'server', 'username', 'access_token', 'pleroma_admin_token',
     'matrix_server', 'matrix_user_id', 'matrix_access_token', 'matrix_room_id', 'matrix_admins',
-    'prompt', 'sql_database',
+    'prompt',
+    'sql_database', 'db_user', 'db_pass', 'db_host',
+    'nitter_poll_seconds', 'shamebot_rooms', 'tts_voice',
+    'welcome_prompt', 'welcome_image', 'welcome_lookback_minutes',
+    'block_prompt', 'block_image', 'report_prompt', 'report_image', 'unfollow_image',
 ];
-const BOT_KNOWN_CHECKS = [];
+// Config keys backed by a checkbox.
+const BOT_KNOWN_CHECKS = ['auto_narrate', 'unfollow_silent_mode', 'stickers_enabled'];
+// nitter_feeds is special (list of {rss} ↔ one URL per line) and handled separately.
 // feature checkbox id -> main.py mode flag
 const BOT_FEATURES = {
     bot_ft_nitter: '--nitter', bot_ft_welcome: '--welcome', bot_ft_block: '--blockbot',
@@ -108,15 +113,23 @@ function onBotFormChange() {
     const platform = _val('bot_f_platform');
     const isMatrix = platform === 'matrix';
     const isImage = type === 'image';
-    _g('bot_grp_fedi').style.display = isMatrix ? 'none' : '';
-    _g('bot_grp_matrix').style.display = isMatrix ? '' : 'none';
-    _g('bot_grp_pleroma_admin').style.display = (platform === 'pleroma' && !isImage) ? '' : 'none';
-    _g('bot_grp_features').style.display = isImage ? 'none' : '';
-
-    // Only the Pleroma DB field is contextual (shown for block/welcome/report).
     const ck = (cid) => { const e = _g(cid); return !!(e && e.checked); };
-    const dbEl = _g('bot_grp_db');
-    if (dbEl) dbEl.style.display = (!isImage && (ck('bot_ft_block') || ck('bot_ft_welcome') || ck('bot_ft_report'))) ? '' : 'none';
+    const show = (gid, on) => { const e = _g(gid); if (e) e.style.display = on ? '' : 'none'; };
+
+    show('bot_grp_fedi', !isMatrix);
+    show('bot_grp_matrix', isMatrix);
+    show('bot_grp_matrix_extra', isMatrix && !isImage);
+    show('bot_grp_pleroma_admin', platform === 'pleroma' && !isImage);
+    show('bot_grp_features', !isImage);
+
+    // Per-feature sections appear only when their feature is enabled.
+    show('bot_grp_nitter', !isImage && ck('bot_ft_nitter'));
+    show('bot_grp_db', !isImage && (ck('bot_ft_block') || ck('bot_ft_welcome') || ck('bot_ft_report')));
+    show('bot_grp_welcome', !isImage && ck('bot_ft_welcome'));
+    show('bot_grp_block', !isImage && ck('bot_ft_block'));
+    show('bot_grp_report', !isImage && ck('bot_ft_report'));
+    show('bot_grp_unfollow', !isImage && ck('bot_ft_unfollow'));
+    show('bot_grp_voice', !isImage);
 }
 
 function openBotModal(id) {
@@ -133,16 +146,21 @@ function openBotModal(id) {
     BOT_KNOWN_KEYS.forEach(k => _setVal('bot_f_' + k, cfg[k]));
     BOT_KNOWN_CHECKS.forEach(k => _setChk('bot_f_' + k, cfg[k]));
 
+    // nitter_feeds: list of {rss: url} <-> one URL per line
+    const feeds = Array.isArray(cfg.nitter_feeds) ? cfg.nitter_feeds.map(f => f && f.rss).filter(Boolean) : [];
+    _setVal('bot_f_nitter_feeds', feeds.join('\n'));
+
     // features from modes
     const modes = (b && b.modes) ? b.modes.split(',').map(m => m.trim()) : [];
     _setChk('bot_ft_reply', modes.some(m => ['--misskey', '--pleroma', '--matrix'].includes(m)));
     Object.entries(BOT_FEATURES).forEach(([cid, flag]) => _setChk(cid, modes.includes(flag)));
 
-    // leftover config -> advanced JSON
-    const known = new Set([...BOT_KNOWN_KEYS, ...BOT_KNOWN_CHECKS]);
+    // Anything no field covers (exotic keys) -> the rarely-shown escape hatch.
+    const known = new Set([...BOT_KNOWN_KEYS, ...BOT_KNOWN_CHECKS, 'nitter_feeds']);
     const leftover = {};
     Object.keys(cfg).forEach(k => { if (!known.has(k)) leftover[k] = cfg[k]; });
     _setVal('bot_f_advanced', Object.keys(leftover).length ? JSON.stringify(leftover, null, 2) : '');
+    _g('bot_grp_advanced').style.display = Object.keys(leftover).length ? '' : 'none';
 
     onBotFormChange();
     _g('botModal').style.display = 'flex';
@@ -167,18 +185,23 @@ async function saveBot() {
     const type = _val('bot_f_type');
     const platform = _val('bot_f_platform');
 
-    // assemble config from known fields
+    // assemble config from the real fields
     const config = {};
     BOT_KNOWN_KEYS.forEach(k => { const v = _val('bot_f_' + k); if (v) config[k] = v; });
     BOT_KNOWN_CHECKS.forEach(k => { if (_g('bot_f_' + k) && _g('bot_f_' + k).checked) config[k] = true; });
-    // merge advanced JSON
-    const adv = _val('bot_f_advanced');
-    if (adv) {
-        try {
-            const parsed = JSON.parse(adv);
-            if (parsed && typeof parsed === 'object') Object.assign(config, parsed);
-            else { errEl.textContent = 'Advanced config must be a JSON object.'; return; }
-        } catch (e) { errEl.textContent = 'Advanced config is not valid JSON.'; return; }
+    // nitter_feeds: textarea (one URL per line) -> [{rss: url}, ...]
+    const feedLines = _val('bot_f_nitter_feeds').split('\n').map(s => s.trim()).filter(Boolean);
+    if (feedLines.length) config.nitter_feeds = feedLines.map(rss => ({ rss }));
+    // escape hatch: only present if the bot had exotic keys (shown group)
+    if (_g('bot_grp_advanced').style.display !== 'none') {
+        const adv = _val('bot_f_advanced');
+        if (adv) {
+            try {
+                const parsed = JSON.parse(adv);
+                if (parsed && typeof parsed === 'object') Object.assign(config, parsed);
+                else { errEl.textContent = 'Other settings must be a JSON object.'; return; }
+            } catch (e) { errEl.textContent = 'Other settings is not valid JSON.'; return; }
+        }
     }
 
     const payload = {
