@@ -40,6 +40,11 @@ The backend is **Python 3.10+** and **FastAPI**. You can use cloud APIs (OpenAI-
 
 ### Bots & social
 
+- **Bot manager (Admin → Bots)**: run autonomous fediverse bots — Pleroma/Misskey reply bots,
+  the Matrix bot, nitter relays, plus blockbot/welcome/report/hashtag/unfollow daemons — from a
+  single admin tab (add/edit, On/Off, live status), backed by the database. The bot framework is
+  **bundled in this repo** (`botframework/`) and supervised in-process; no separate repo or
+  hand-edited config file. See [Bot manager](docs/BOTS.md).
 - **Telegram and Matrix bots** drive chat, commands, and media from your phone
 - **Social posting** to **Misskey**, **Pleroma/Mastodon**, and **Matrix**: turn any reply, link, or topic into a post with the `post` command (rewrite, verbatim, or with your own instructions). See [Social posting from the bots](#social-posting-from-the-bots).
 - **Social notification relay**: forward mentions/replies/DMs from Misskey/Pleroma/Matrix to Telegram and reply right from the chat. See [Social notifications to Telegram](#social-notifications-to-telegram).
@@ -49,7 +54,10 @@ The backend is **Python 3.10+** and **FastAPI**. You can use cloud APIs (OpenAI-
   - **reply shortcuts**: `boost` / `fav` / `quote <comment>`
   - **share→boost/quote**: paste a post's matrix.to link (add a comment to quote) to boost/quote the original with the author preserved
 
-  Configure under Admin → Services; the matching Matrix-bot handler lives in the separate [`posterchan`](https://git.poster.place/verita84/posterchan) repo. On a high-volume *global* feed, raise the bot's Synapse message rate limit (admin API `override_ratelimit`) so it keeps up.
+  Configure under Admin → Services; the matching Matrix-bot handler is bundled in `botframework/`
+  (`matrixListener.py`) and run by the **Bot manager** (Admin → Bots) — see [docs/BOTS.md](docs/BOTS.md).
+  On a high-volume *global* feed, raise the bot's Synapse message rate limit (admin API
+  `override_ratelimit`) so it keeps up.
 - **Fediverse notifications → Matrix DM**: opt-in per user — the bot DMs you your Pleroma/Misskey notifications (mentions, replies, favourites, boosts, follows) in a private room, each with a 🔗 link and the **conversation mirrored into the message's thread** so you read context in Element. **Reply to a notification** to respond on the platform (text or image), or reply `boost`/`fav` to act on it. **Direct messages** stay private — a received DM shows up here (not the shared room) and replying keeps it direct; send a new one with `dm @user@host <message>` (Pleroma/Mastodon).
 - **Nitter post-cards**: per-user Nitter (X/Twitter) RSS feeds rendered as image "post cards" and delivered to your linked Telegram chat.
 - **Translate**: translate text or a replied-to message to any language (`translate`), shared across the web UI, Telegram, and Matrix.
@@ -262,7 +270,8 @@ to break the Arc environment.
 
 | Path | Description |
 |------|-------------|
-| `app/` | FastAPI app, routers (auth, chat, admin, TTS, STT, RAG, mail, torrent, etc.), services |
+| `app/` | FastAPI app, routers (auth, chat, admin, TTS, STT, RAG, mail, torrent, bots, etc.), services |
+| `botframework/` | Merged autonomous bot framework (Pleroma/Misskey/Matrix/nitter listeners + daemons); spawned by `app/services/bot_manager_service.py`. See [docs/BOTS.md](docs/BOTS.md) |
 | `templates/` | Jinja2 HTML (login, chat, admin, modals) |
 | `static/` | CSS, JS, icons, mascot assets |
 | `run.py` | Server entry (uvicorn) |
@@ -285,6 +294,7 @@ Set the app’s server URL to your instance (e.g. `http://YOUR_IP:3051`).
 
 ## Documentation
 
+- **[docs/BOTS.md](docs/BOTS.md)** — Bot manager: the merged `botframework/`, Admin → Bots, per-bot config, the single server endpoint, and per-node cutover
 - **[docs/ADVANCED.md](docs/ADVANCED.md)** — RAG, MCP server, LLM backends, image generation, load balancing, Intel IPEX
 - **docs/** — Email, nginx, and other feature documentation
 
