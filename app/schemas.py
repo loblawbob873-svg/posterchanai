@@ -303,7 +303,7 @@ class SettingsResponse(BaseModel):
     bots_posterchanai_username: str = ""       # app login the bots use for the image API
     bots_posterchanai_password: str = ""
     bots_posterchanai_api_key: str = ""        # per-server image API key (X-API-Key)
-    bots_searxng_url: str = ""                 # SearXNG instance for the bots' web search
+    # (web search reuses the app's own `searxng_url` setting — no separate bot copy)
     bots_timezone: str = "MST"
     bots_sql_user: str = ""                    # Pleroma Postgres creds (blockbot/welcome/report)
     bots_sql_pass: str = ""

@@ -50,8 +50,10 @@ RECONCILE_INTERVAL = 5     # seconds between reconcile passes
 _GLOBAL_ENV_MAP = {
     "bots_ai_api_key": "OPENAI_API_KEY",
     "bots_ai_model": "AI_MODEL",
-    "bots_searxng_url": "SEARXNG_URL",
+    "searxng_url": "SEARXNG_URL",   # reuse the app's own SearXNG setting (no separate bot copy)
     "bots_timezone": "TIMEZONE",
+    # Image API auth: an app API key (preferred) OR the app login. posterchanai_api.py uses the
+    # API key if set, else logs in with username/password.
     "bots_posterchanai_username": "POSTERCHANAI_USERNAME",
     "bots_posterchanai_password": "POSTERCHANAI_PASSWORD",
     "bots_posterchanai_api_key": "POSTERCHANAI_API_KEY",
