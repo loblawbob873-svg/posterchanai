@@ -174,6 +174,7 @@
                 <label>Features</label>
                 <div class="bot-features">
                     <label><input type="checkbox" id="bot_ft_reply" onchange="onBotFormChange()"> Reply to mentions</label>
+                    <label id="bot_ft_matrix_label"><input type="checkbox" id="bot_ft_matrix" onchange="onBotFormChange()"> Also connect to Matrix (room)</label>
                     <label><input type="checkbox" id="bot_ft_nitter" onchange="onBotFormChange()"> Nitter feeds</label>
                     <label><input type="checkbox" id="bot_ft_welcome" onchange="onBotFormChange()"> Welcome new users</label>
                     <label><input type="checkbox" id="bot_ft_block" onchange="onBotFormChange()"> Block bot</label>
@@ -189,6 +190,12 @@
             </div>
 
             <!-- Each section below appears only when its feature is enabled. -->
+
+            <!-- Trusted media hosts (for bots that download media from posts) -->
+            <div class="form-group" id="bot_grp_media" style="display:none">
+                <label for="bot_f_trusted_media_hosts">Trusted media hosts <span class="bots-dim">(comma-separated; LAN instances whose media to allow; optional)</span></label>
+                <input type="text" id="bot_f_trusted_media_hosts">
+            </div>
 
             <!-- Nitter feeds -->
             <div id="bot_grp_nitter" style="display:none">

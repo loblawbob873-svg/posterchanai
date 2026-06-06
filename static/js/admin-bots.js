@@ -8,7 +8,8 @@ const BOT_KNOWN_KEYS = [
     'matrix_server', 'matrix_user_id', 'matrix_access_token', 'matrix_room_id', 'matrix_admins',
     'prompt',
     'sql_database', 'db_user', 'db_pass', 'db_host',
-    'nitter_poll_seconds', 'shamebot_rooms', 'tts_voice', 'tts_rate', 'tts_pitch',
+    'nitter_poll_seconds', 'shamebot_rooms', 'trusted_media_hosts',
+    'tts_voice', 'tts_rate', 'tts_pitch',
     'welcome_message', 'welcome_image', 'welcome_lookback_minutes',
     'block_image', 'report_image', 'unfollow_image',
 ];
@@ -116,19 +117,26 @@ function onBotFormChange() {
     const ck = (cid) => { const e = _g(cid); return !!(e && e.checked); };
     const show = (gid, on) => { const e = _g(gid); if (e) e.style.display = on ? '' : 'none'; };
 
+    // Matrix can be a SECONDARY connection on a misskey/pleroma bot (e.g. a Matrix listener
+    // that also posts to misskey). The "Also connect to Matrix" checkbox only makes sense then.
+    const matrixSecondary = ck('bot_ft_matrix');
     show('bot_grp_fedi', !isMatrix);
-    show('bot_grp_matrix', isMatrix);
-    show('bot_grp_matrix_extra', isMatrix && !isImage);
-    show('bot_grp_pleroma_admin', platform === 'pleroma' && !isImage);
+    show('bot_grp_matrix', isMatrix || (matrixSecondary && !isImage));
+    show('bot_grp_matrix_extra', (isMatrix || matrixSecondary) && !isImage);
+    show('bot_ft_matrix_label', !isMatrix && !isImage);   // the checkbox itself
     show('bot_grp_features', !isImage);
 
     // Per-feature sections appear only when their feature is enabled.
     show('bot_grp_nitter', !isImage && ck('bot_ft_nitter'));
-    show('bot_grp_db', !isImage && (ck('bot_ft_block') || ck('bot_ft_welcome') || ck('bot_ft_report')));
+    // block / welcome / report / unfollow all need the Pleroma DB.
+    const needsDb = ck('bot_ft_block') || ck('bot_ft_welcome') || ck('bot_ft_report') || ck('bot_ft_unfollow');
+    show('bot_grp_db', !isImage && needsDb);
+    show('bot_grp_pleroma_admin', platform === 'pleroma' && !isImage && ck('bot_ft_report'));  // report only
     show('bot_grp_welcome', !isImage && ck('bot_ft_welcome'));
     show('bot_grp_block', !isImage && ck('bot_ft_block'));
     show('bot_grp_report', !isImage && ck('bot_ft_report'));
     show('bot_grp_unfollow', !isImage && ck('bot_ft_unfollow'));
+    show('bot_grp_media', !isImage && (ck('bot_ft_reply') || ck('bot_ft_nitter') || matrixSecondary));
     show('bot_grp_voice', !isImage);
 }
 
@@ -151,8 +159,10 @@ function openBotModal(id) {
     _setVal('bot_f_nitter_feeds', feeds.join('\n'));
 
     // features from modes
+    const plat = b ? b.platform : 'misskey';
     const modes = (b && b.modes) ? b.modes.split(',').map(m => m.trim()) : [];
-    _setChk('bot_ft_reply', modes.some(m => ['--misskey', '--pleroma', '--matrix'].includes(m)));
+    _setChk('bot_ft_reply', modes.includes('--' + plat));               // reply on the bot's own platform
+    _setChk('bot_ft_matrix', plat !== 'matrix' && modes.includes('--matrix'));  // matrix as a secondary connection
     Object.entries(BOT_FEATURES).forEach(([cid, flag]) => _setChk(cid, modes.includes(flag)));
 
     // Anything no field covers (exotic keys) -> the rarely-shown escape hatch.
@@ -170,10 +180,11 @@ function closeBotModal() { _g('botModal').style.display = 'none'; }
 
 function _buildModes(type, platform) {
     if (type === 'image') return '';
-    const modes = [];
-    if (_g('bot_ft_reply').checked) modes.push('--' + platform);
-    Object.entries(BOT_FEATURES).forEach(([cid, flag]) => { if (_g(cid).checked) modes.push(flag); });
-    return modes.join(',');
+    const modes = new Set();
+    if (_g('bot_ft_reply').checked) modes.add('--' + platform);          // reply on own platform
+    if (platform !== 'matrix' && _g('bot_ft_matrix').checked) modes.add('--matrix');  // secondary matrix
+    Object.entries(BOT_FEATURES).forEach(([cid, flag]) => { if (_g(cid).checked) modes.add(flag); });
+    return [...modes].join(',');
 }
 
 async function saveBot() {
