@@ -259,21 +259,28 @@ def _body_text(post: dict) -> str:
     return "\n\n".join(parts)
 
 
-def _body_html(avatar_mxc: str | None, post: dict) -> str:
+def _author_header(avatar_mxc: str | None, post: dict) -> tuple[str, str]:
+    """Build the sender's identifying header as (plain_text, html). Always make the sender
+    identifiable: bold display name + @handle. When there's no usable display name the @handle
+    *is* the name (no duplicate). The handle is PLAIN TEXT (not an <a> link) so it doesn't trigger
+    Element's profile-preview card."""
     a = post["author"]
     display = (a.get("display") or "").strip()
     acct = (a.get("acct") or "").strip()
     avatar = f'<img src="{html.escape(avatar_mxc)}" width="20" height="20" /> ' if avatar_mxc else ""
-    # Always make the sender identifiable: show the bold display name + the @handle. When there's
-    # no usable display name, the @handle *is* the name (no duplicate). The handle is PLAIN TEXT
-    # (not an <a> link) so it doesn't trigger Element's profile-preview card.
     if display and display != acct:
         name = _apply_emojis(html.escape(display), a.get("emoji_mxc"))
         handle = f' <font data-mx-color="#888888">@{html.escape(acct)}</font>' if acct else ""
+        text = display + (f" @{acct}" if acct else "")
     else:
         name = _apply_emojis(html.escape(f"@{acct}" if acct else "?"), a.get("emoji_mxc"))
         handle = ""
-    header = f"{avatar}<strong>{name}</strong>{handle}"
+        text = f"@{acct}" if acct else "?"
+    return text, f"{avatar}<strong>{name}</strong>{handle}"
+
+
+def _body_html(avatar_mxc: str | None, post: dict) -> str:
+    header = _author_header(avatar_mxc, post)[1]
     segments = [header]
     if post["text"]:
         # Pleroma content is HTML (strip profile links so no preview card); Misskey is plain text.
@@ -437,11 +444,16 @@ async def _deliver(db: Session, hs: str, bot_token: str, room_id: str, platform:
         thread_root_event_id=thread_root_event_id, reply_to_event_id=parent_event,
     )
     _record(event_id, is_root_event=True)
-    # Videos follow as their own m.video events (recorded so interacting resolves to the post).
+    # Videos can't be inlined into Matrix HTML, so they follow as their own m.video events
+    # (recorded so interacting resolves to the post). Carry the author header as the media caption
+    # and thread/reply each video under the post's event so it isn't an orphan with no author.
+    hdr_text, hdr_html = _author_header(avatar_mxc, post)
     for data, mime in videos:
         try:
             mid = await matrix_service.send_image(hs, bot_token, room_id, data, mime=mime,
-                                                  thread_root_event_id=thread_root_event_id)
+                                                  caption=hdr_text, caption_html=hdr_html,
+                                                  thread_root_event_id=thread_root_event_id or event_id,
+                                                  reply_to_event_id=event_id)
             if mid:
                 _record(mid, is_root_event=False)
         except Exception as e:
