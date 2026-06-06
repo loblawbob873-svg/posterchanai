@@ -173,13 +173,13 @@
             <div id="bot_grp_features" class="form-group">
                 <label>Features</label>
                 <div class="bot-features">
-                    <label><input type="checkbox" id="bot_ft_reply"> Reply to mentions</label>
-                    <label><input type="checkbox" id="bot_ft_nitter"> Nitter feeds</label>
-                    <label><input type="checkbox" id="bot_ft_welcome"> Welcome new users</label>
-                    <label><input type="checkbox" id="bot_ft_block"> Block bot</label>
-                    <label><input type="checkbox" id="bot_ft_report"> Report bot</label>
-                    <label><input type="checkbox" id="bot_ft_hashtag"> Hashtag bot</label>
-                    <label><input type="checkbox" id="bot_ft_unfollow"> Unfollow bot</label>
+                    <label><input type="checkbox" id="bot_ft_reply" onchange="onBotFormChange()"> Reply to mentions</label>
+                    <label><input type="checkbox" id="bot_ft_nitter" onchange="onBotFormChange()"> Nitter feeds</label>
+                    <label><input type="checkbox" id="bot_ft_welcome" onchange="onBotFormChange()"> Welcome new users</label>
+                    <label><input type="checkbox" id="bot_ft_block" onchange="onBotFormChange()"> Block bot</label>
+                    <label><input type="checkbox" id="bot_ft_report" onchange="onBotFormChange()"> Report bot</label>
+                    <label><input type="checkbox" id="bot_ft_hashtag" onchange="onBotFormChange()"> Hashtag bot</label>
+                    <label><input type="checkbox" id="bot_ft_unfollow" onchange="onBotFormChange()"> Unfollow bot</label>
                 </div>
             </div>
 
@@ -188,11 +188,101 @@
                 <textarea id="bot_f_prompt" rows="4"></textarea>
             </div>
 
+            <!-- Voice / narration (text bots) -->
+            <div id="bot_grp_voice">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="bot_f_tts_voice">TTS voice</label>
+                        <input type="text" id="bot_f_tts_voice" placeholder="en-GB-SoniaNeural">
+                    </div>
+                    <div class="form-group">
+                        <label for="bot_f_tts_rate">TTS rate</label>
+                        <input type="text" id="bot_f_tts_rate" placeholder="+10%">
+                    </div>
+                    <div class="form-group">
+                        <label for="bot_f_tts_pitch">TTS pitch</label>
+                        <input type="text" id="bot_f_tts_pitch" placeholder="+5Hz">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="bot_f_auto_narrate">
+                        <input type="checkbox" id="bot_f_auto_narrate"> Auto-narrate replies (TTS video)
+                    </label>
+                </div>
+            </div>
+
+            <!-- Pleroma DB (needed by block / welcome / report bots) -->
+            <div class="form-group" id="bot_grp_db">
+                <label for="bot_f_sql_database">Pleroma database name <span class="bots-dim">(block/welcome/report)</span></label>
+                <input type="text" id="bot_f_sql_database" placeholder="pleroma">
+            </div>
+
+            <!-- Welcome bot -->
+            <div id="bot_grp_welcome" style="display:none">
+                <div class="form-group">
+                    <label for="bot_f_welcome_message">Welcome message</label>
+                    <input type="text" id="bot_f_welcome_message" placeholder="Welcome to {instance_name}">
+                </div>
+                <div class="form-group">
+                    <label for="bot_f_welcome_prompt">Welcome prompt</label>
+                    <textarea id="bot_f_welcome_prompt" rows="3"></textarea>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="bot_f_welcome_image">Welcome image path</label>
+                        <input type="text" id="bot_f_welcome_image">
+                    </div>
+                    <div class="form-group">
+                        <label for="bot_f_welcome_lookback_minutes">Lookback (minutes)</label>
+                        <input type="text" id="bot_f_welcome_lookback_minutes" placeholder="5">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Block bot -->
+            <div id="bot_grp_block" style="display:none">
+                <div class="form-group">
+                    <label for="bot_f_block_image">Block image path</label>
+                    <input type="text" id="bot_f_block_image">
+                </div>
+                <div class="form-group">
+                    <label for="bot_f_block_prompt">Block prompt</label>
+                    <textarea id="bot_f_block_prompt" rows="3"></textarea>
+                </div>
+            </div>
+
+            <!-- Report bot -->
+            <div id="bot_grp_report" style="display:none">
+                <div class="form-group">
+                    <label for="bot_f_report_image">Report image path</label>
+                    <input type="text" id="bot_f_report_image">
+                </div>
+                <div class="form-group">
+                    <label for="bot_f_report_prompt">Report prompt</label>
+                    <textarea id="bot_f_report_prompt" rows="3"></textarea>
+                </div>
+            </div>
+
+            <!-- Unfollow bot -->
+            <div id="bot_grp_unfollow" style="display:none">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="bot_f_unfollow_image">Unfollow image path</label>
+                        <input type="text" id="bot_f_unfollow_image">
+                    </div>
+                    <div class="form-group">
+                        <label for="bot_f_unfollow_silent_mode">
+                            <input type="checkbox" id="bot_f_unfollow_silent_mode"> Silent mode
+                        </label>
+                    </div>
+                </div>
+            </div>
+
             <details class="bots-advanced">
                 <summary>Advanced config (JSON)</summary>
-                <p class="bots-hint">Extra per-bot keys not shown above (e.g. <code>welcome_prompt</code>,
-                    <code>block_image</code>, <code>tts_voice</code>, <code>sql_database</code>,
-                    <code>nitter_feeds</code>). Merged into the bot's config.</p>
+                <p class="bots-hint">Any extra per-bot keys not shown above (e.g.
+                    <code>nitter_feeds</code>, <code>matrix_admins</code>, <code>shamebot_rooms</code>).
+                    Merged into the bot's config.</p>
                 <textarea id="bot_f_advanced" rows="6" placeholder="{}"></textarea>
             </details>
         </div>

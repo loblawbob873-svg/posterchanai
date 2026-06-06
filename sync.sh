@@ -40,8 +40,12 @@ git fetch origin
 git reset --hard origin/master
 _wait_gpu_free nas /tmp/posterchanai_locks/gpu.lock
 sudo systemctl restart posterchanai
-cd ~/posterchan
-git fetch origin
-git reset --hard origin/master
-sudo systemctl restart posterchan
+# nas is cut over: its bots now run via the in-app manager (botframework/ + Admin → Bots).
+# posterchan.service is stopped+disabled here, so do NOT restart it (a 'restart' would
+# re-activate a disabled unit and double-run the bots). Only refresh/restart it if it's
+# still ENABLED (a node not yet migrated).
+if systemctl is-enabled posterchan >/dev/null 2>&1; then
+    cd ~/posterchan && git fetch origin && git reset --hard origin/master
+    sudo systemctl restart posterchan
+fi
 "

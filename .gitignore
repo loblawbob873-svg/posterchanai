@@ -90,3 +90,6 @@ data/
 crush.json
 .encryption_key
 overrides/
+
+# Bot stickers (host-specific media, deployed per-node not committed)
+botframework/stickers/

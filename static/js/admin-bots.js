@@ -1,12 +1,18 @@
 // Admin → Bots tab. CRUD + On/Off over /api/admin/bots; runtime status from /status.
 // The bot manager (app/services/bot_manager_service.py) owns the actual processes.
 
-// Config keys that have dedicated form fields; everything else lives in the Advanced JSON box.
+// Config keys that have dedicated text/textarea form fields; everything else → Advanced JSON.
 const BOT_KNOWN_KEYS = [
     'server', 'username', 'access_token', 'pleroma_admin_token',
     'matrix_server', 'matrix_user_id', 'matrix_access_token', 'matrix_room_id', 'matrix_admins',
     'prompt',
+    // voice / narration + per-feature content (promoted out of the Advanced JSON box)
+    'tts_voice', 'tts_rate', 'tts_pitch', 'sql_database',
+    'welcome_message', 'welcome_prompt', 'welcome_image', 'welcome_lookback_minutes',
+    'block_image', 'block_prompt', 'report_image', 'report_prompt', 'unfollow_image',
 ];
+// Config keys backed by a checkbox (boolean) field.
+const BOT_KNOWN_CHECKS = ['auto_narrate', 'unfollow_silent_mode'];
 // feature checkbox id -> main.py mode flag
 const BOT_FEATURES = {
     bot_ft_nitter: '--nitter', bot_ft_welcome: '--welcome', bot_ft_block: '--blockbot',
@@ -109,6 +115,16 @@ function onBotFormChange() {
     _g('bot_grp_matrix').style.display = isMatrix ? '' : 'none';
     _g('bot_grp_pleroma_admin').style.display = (platform === 'pleroma' && !isImage) ? '' : 'none';
     _g('bot_grp_features').style.display = isImage ? 'none' : '';
+
+    // Voice/DB + per-feature content groups: show only when relevant.
+    const show = (gid, on) => { const e = _g(gid); if (e) e.style.display = on ? '' : 'none'; };
+    const ck = (cid) => { const e = _g(cid); return !!(e && e.checked); };
+    show('bot_grp_voice', !isImage);
+    show('bot_grp_db', !isImage && (ck('bot_ft_block') || ck('bot_ft_welcome') || ck('bot_ft_report')));
+    show('bot_grp_welcome', !isImage && ck('bot_ft_welcome'));
+    show('bot_grp_block', !isImage && ck('bot_ft_block'));
+    show('bot_grp_report', !isImage && ck('bot_ft_report'));
+    show('bot_grp_unfollow', !isImage && ck('bot_ft_unfollow'));
 }
 
 function openBotModal(id) {
@@ -123,6 +139,7 @@ function openBotModal(id) {
 
     const cfg = (b && b.config) ? b.config : {};
     BOT_KNOWN_KEYS.forEach(k => _setVal('bot_f_' + k, cfg[k]));
+    BOT_KNOWN_CHECKS.forEach(k => _setChk('bot_f_' + k, cfg[k]));
 
     // features from modes
     const modes = (b && b.modes) ? b.modes.split(',').map(m => m.trim()) : [];
@@ -130,8 +147,9 @@ function openBotModal(id) {
     Object.entries(BOT_FEATURES).forEach(([cid, flag]) => _setChk(cid, modes.includes(flag)));
 
     // leftover config -> advanced JSON
+    const known = new Set([...BOT_KNOWN_KEYS, ...BOT_KNOWN_CHECKS]);
     const leftover = {};
-    Object.keys(cfg).forEach(k => { if (!BOT_KNOWN_KEYS.includes(k)) leftover[k] = cfg[k]; });
+    Object.keys(cfg).forEach(k => { if (!known.has(k)) leftover[k] = cfg[k]; });
     _setVal('bot_f_advanced', Object.keys(leftover).length ? JSON.stringify(leftover, null, 2) : '');
 
     onBotFormChange();
@@ -160,6 +178,7 @@ async function saveBot() {
     // assemble config from known fields
     const config = {};
     BOT_KNOWN_KEYS.forEach(k => { const v = _val('bot_f_' + k); if (v) config[k] = v; });
+    BOT_KNOWN_CHECKS.forEach(k => { if (_g('bot_f_' + k) && _g('bot_f_' + k).checked) config[k] = true; });
     // merge advanced JSON
     const adv = _val('bot_f_advanced');
     if (adv) {
