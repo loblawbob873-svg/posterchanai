@@ -321,7 +321,7 @@ async def send_message(homeserver: str, access_token: str, room_id: str, text: s
 
 async def send_event(homeserver: str, access_token: str, room_id: str, body: str,
                      html: str | None = None, thread_root_event_id: str | None = None,
-                     reply_to_event_id: str | None = None) -> str:
+                     reply_to_event_id: str | None = None, as_thread: bool = True) -> str:
     """Send a text message and return its event_id.
 
     Like send_message but: returns the new event_id (needed to thread replies under it),
@@ -340,16 +340,21 @@ async def send_event(homeserver: str, access_token: str, room_id: str, body: str
     if formatted != _html.escape(body, quote=False):
         payload["format"] = "org.matrix.custom.html"
         payload["formatted_body"] = formatted
-    if thread_root_event_id:
-        # A real parent → a genuine threaded reply (is_falling_back False); otherwise the root
-        # is just the thread's fallback in-reply-to.
+    if thread_root_event_id or reply_to_event_id:
         in_reply = reply_to_event_id or thread_root_event_id
-        payload["m.relates_to"] = {
-            "rel_type": "m.thread",
-            "event_id": thread_root_event_id,
-            "is_falling_back": reply_to_event_id is None,
-            "m.in_reply_to": {"event_id": in_reply},
-        }
+        if as_thread and thread_root_event_id:
+            # A real parent → a genuine threaded reply (is_falling_back False); otherwise the root
+            # is just the thread's fallback in-reply-to.
+            payload["m.relates_to"] = {
+                "rel_type": "m.thread",
+                "event_id": thread_root_event_id,
+                "is_falling_back": reply_to_event_id is None,
+                "m.in_reply_to": {"event_id": in_reply},
+            }
+        else:
+            # Inline rich reply (no m.thread): Element renders it in the MAIN timeline with a
+            # clickable quote of the parent, instead of hiding it in a thread pane.
+            payload["m.relates_to"] = {"m.in_reply_to": {"event_id": in_reply}}
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         resp = await _with_429_retry(lambda: client.put(url, json=payload, headers=headers))
         if resp.status_code not in (200, 201):
@@ -411,7 +416,7 @@ async def send_media_event(homeserver: str, access_token: str, room_id: str, mxc
                            mime: str, caption: str = "", caption_html: str | None = None,
                            w: int | None = None, h: int | None = None, size: int | None = None,
                            filename: str | None = None, thread_root_event_id: str | None = None,
-                           reply_to_event_id: str | None = None) -> str:
+                           reply_to_event_id: str | None = None, as_thread: bool = True) -> str:
     """Send an m.image/m.video event referencing an ALREADY-uploaded mxc, so cached media isn't
     re-uploaded (and Synapse doesn't store a duplicate blob). send_image == upload + this.
     Caption/threading semantics match send_image."""
@@ -443,14 +448,18 @@ async def send_media_event(homeserver: str, access_token: str, room_id: str, mxc
                 payload["formatted_body"] = caption_html
         else:
             payload["body"] = fname
-        if thread_root_event_id:
+        if thread_root_event_id or reply_to_event_id:
             in_reply = reply_to_event_id or thread_root_event_id
-            payload["m.relates_to"] = {
-                "rel_type": "m.thread",
-                "event_id": thread_root_event_id,
-                "is_falling_back": reply_to_event_id is None,
-                "m.in_reply_to": {"event_id": in_reply},
-            }
+            if as_thread and thread_root_event_id:
+                payload["m.relates_to"] = {
+                    "rel_type": "m.thread",
+                    "event_id": thread_root_event_id,
+                    "is_falling_back": reply_to_event_id is None,
+                    "m.in_reply_to": {"event_id": in_reply},
+                }
+            else:
+                # Inline rich reply (no m.thread) — renders in the main timeline.
+                payload["m.relates_to"] = {"m.in_reply_to": {"event_id": in_reply}}
         resp = await _with_429_retry(lambda: client.put(send_url, json=payload, headers=headers_auth))
         if resp.status_code not in (200, 201):
             raise _send_error("Failed to send Matrix image", resp.status_code, resp.text[:200])
@@ -460,7 +469,7 @@ async def send_media_event(homeserver: str, access_token: str, room_id: str, mxc
 async def send_image(homeserver: str, access_token: str, room_id: str,
                      image_bytes: bytes, caption: str = "", mime: str = "",
                      thread_root_event_id: str | None = None, caption_html: str | None = None,
-                     reply_to_event_id: str | None = None) -> str:
+                     reply_to_event_id: str | None = None, as_thread: bool = True) -> str:
     """Upload image/video bytes to Matrix media and send it in a room (m.image, or m.video when
     the bytes are a video). When `caption` is given it's embedded in the media event as a media
     caption (MSC2530: body=caption, filename=real name, optional formatted_body=caption_html), so
@@ -484,7 +493,8 @@ async def send_image(homeserver: str, access_token: str, room_id: str,
     return await send_media_event(
         homeserver, access_token, room_id, mxc_uri, mime, caption=caption,
         caption_html=caption_html, w=w, h=h, size=len(image_bytes), filename=filename,
-        thread_root_event_id=thread_root_event_id, reply_to_event_id=reply_to_event_id)
+        thread_root_event_id=thread_root_event_id, reply_to_event_id=reply_to_event_id,
+        as_thread=as_thread)
 
 
 async def _ensure_joined(client: httpx.AsyncClient, hs: str, room_id: str, headers: dict) -> bool:

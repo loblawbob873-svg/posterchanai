@@ -575,10 +575,14 @@ async def _deliver(db: Session, hs: str, bot_token: str, room_id: str, platform:
         dim = f' width="{w}" height="{h}"' if w else ""
         inline_imgs.append(f'<img src="{html.escape(mxc)}"{dim} />')
 
+    # Inline mode: deliver replies as rich m.in_reply_to (shown in the main timeline) instead of
+    # m.thread (hidden in a thread pane). Roots are unaffected (no parent → no relation either way).
+    inline = _get_setting(db, "fedi_timeline_inline_replies", "false").lower() == "true"
     full_html = body_html + ("<br>" + "<br>".join(inline_imgs) if inline_imgs else "")
     event_id = await matrix_service.send_event(
         hs, bot_token, room_id, body_text, html=full_html,
         thread_root_event_id=thread_root_event_id, reply_to_event_id=parent_event,
+        as_thread=not inline,
     )
     await asyncio.sleep(_SEND_PACING)            # pace Synapse writes
     _record(event_id, is_root_event=True)
@@ -591,7 +595,7 @@ async def _deliver(db: Session, hs: str, bot_token: str, room_id: str, platform:
             mid = await matrix_service.send_media_event(hs, bot_token, room_id, mxc, mime,
                                                         caption=hdr_text, caption_html=hdr_html,
                                                         thread_root_event_id=thread_root_event_id or event_id,
-                                                        reply_to_event_id=event_id)
+                                                        reply_to_event_id=event_id, as_thread=not inline)
             await asyncio.sleep(_SEND_PACING)    # pace Synapse writes
             if mid:
                 _record(mid, is_root_event=False)

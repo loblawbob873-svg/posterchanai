@@ -235,6 +235,10 @@ class SettingsResponse(BaseModel):
     fedi_timeline_room_id: str = ""
     fedi_timeline_poll_seconds: str = "90"
     fedi_timeline_include_replies: str = "true"
+    # When true, replies are mirrored as inline rich-replies (shown in the main timeline like the
+    # fediverse) instead of Matrix threads (hidden behind a "N replies" click). Backend dedup/reply
+    # bookkeeping is unchanged; only the wire relation (m.in_reply_to vs m.thread) differs.
+    fedi_timeline_inline_replies: str = "false"
     # Personal fedi notifications → private Matrix DM (uses the fedi-timeline bot account).
     # Admin kill-switch (default off); per-user opt-in is the User.matrix_notif_enabled column.
     matrix_notif_enabled: str = "false"
