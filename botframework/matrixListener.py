@@ -189,6 +189,11 @@ _MEDIA_CACHE_TTL = 300  # seconds
 _pending_image_posts: dict = {}
 _PENDING_IMAGE_GRACE = 12  # seconds to wait for a caption before posting the image alone
 
+# Same image+caption stitching for replies to a notification DM: an image-only reply to a tracked
+# notification is held here (after a probe confirms it IS a notification) so a following text reply
+# becomes its caption and they post back as ONE fedi reply. (key → {media, reply_ev, thread_root, ts})
+_pending_notif_replies: dict = {}
+
 
 def _stash_media(sender: str, filename: str, data_b64: str, content_type: str) -> None:
     """Remember an uploaded file so a following compress/convert command can use it."""
@@ -321,7 +326,7 @@ def _call_posterchanai_timeline_action(matrix_user_id: str, room_id: str, action
 
 def _call_posterchanai_notification_reply(matrix_user_id: str, room_id: str,
                                           target_event_id: str, text: str, media: list = None,
-                                          thread_root_event_id: str = None) -> dict:
+                                          thread_root_event_id: str = None, probe: bool = False) -> dict:
     """Ask posterchanai to post back to the fediverse when the user replied to a forwarded
     notification in their DM (text/image reply, or a `boost`/`fav` shortcut). Returns {ok,
     result}; ok is false (and harmless) when the replied-to message isn't a tracked notification.
@@ -338,6 +343,8 @@ def _call_posterchanai_notification_reply(matrix_user_id: str, room_id: str,
         body["thread_root_event_id"] = thread_root_event_id
     if media:
         body["media"] = media
+    if probe:
+        body["probe"] = True
     try:
         r = _req.post(url, json=body, headers=headers, timeout=60)
         return r.json()
@@ -450,6 +457,25 @@ def _flush_pending_image_posts() -> None:
                 _call_posterchanai_timeline_action(sender, room_id, "post", text="", media=pend["media"])
         except Exception as e:
             print(f"[TIMELINE] pending image flush failed: {e}")
+
+
+def _flush_pending_notif_replies() -> None:
+    """Post any held notification-reply image whose caption never arrived (image-only reply).
+    Called once per poll cycle so a bare image reply still reaches the fediverse."""
+    import time as _t
+    now = _t.monotonic()
+    for key in [k for k, p in _pending_notif_replies.items() if now - p["ts"] > _PENDING_IMAGE_GRACE]:
+        pend = _pending_notif_replies.pop(key, None)
+        if not pend:
+            continue
+        sender, room_id = key
+        tr = pend.get("thread_root")
+        target = pend.get("reply_ev") or tr
+        try:
+            _call_posterchanai_notification_reply(
+                sender, room_id, target, "", media=pend["media"], thread_root_event_id=tr)
+        except Exception as e:
+            print(f"[NOTIF-REPLY] pending image flush failed: {e}")
 
 
 def _call_posterchanai_command(matrix_user_id: str, command_text: str, room_id: str = None,
@@ -707,8 +733,10 @@ def process_messages():
         sync_token = new_token
         _save_sync_token()
 
-    # Post any held timeline image whose caption never arrived (runs every cycle, even idle ones).
+    # Post any held image whose caption never arrived (runs every cycle, even idle ones):
+    # timeline-room posts and notification-DM replies both stitch image+caption this way.
     _flush_pending_image_posts()
+    _flush_pending_notif_replies()
 
     if not messages:
         print("No new messages")
@@ -781,20 +809,44 @@ def process_messages():
         _reply_ev = message.get("reply_to_event_id")
         _thread_root_ev = message.get("thread_root_event_id")
         if _reply_ev or _thread_root_ev:
+            import time as _nt
             _nr_media = _timeline_media_from_message(message)
             _nr_text = (content or "").strip()
-            if _nr_text or _nr_media:
-                _nr = _call_posterchanai_notification_reply(
-                    sender, room_id, _reply_ev or _thread_root_ev, _nr_text,
-                    media=_nr_media, thread_root_event_id=_thread_root_ev)
+            _nkey = (sender, room_id)
+            # Image-only reply: Element sends the image and its caption as two events. Hold the
+            # image so a following text reply becomes its caption and they post as ONE fedi reply
+            # (instead of an image reply + a text reply). Only hold if a probe confirms this is a
+            # tracked notification — otherwise let it fall through to the normal media-action flow.
+            if _nr_media and not _nr_text:
+                _probe = _call_posterchanai_notification_reply(
+                    sender, room_id, _reply_ev or _thread_root_ev, "",
+                    thread_root_event_id=_thread_root_ev, probe=True)
+                if _probe and _probe.get("is_notification"):
+                    _pending_notif_replies[_nkey] = {
+                        "media": _nr_media, "reply_ev": _reply_ev,
+                        "thread_root": _thread_root_ev, "ts": _nt.monotonic()}
+                    continue
+                # not a notification → fall through (media-action flow handles it)
             else:
-                _nr = None
-            if _nr and _nr.get("ok"):
-                try:
-                    send_reply(message, f"✅ {_nr.get('result', 'replied')}")
-                except Exception as _e:
-                    print(f"[NOTIF-REPLY] confirm failed: {_e}")
-                continue
+                # A text reply → claim a recently-held image as this reply's media (caption case).
+                if _nr_text and not _nr_media:
+                    _pend = _pending_notif_replies.pop(_nkey, None)
+                    if _pend and _nt.monotonic() - _pend["ts"] <= _PENDING_IMAGE_GRACE:
+                        _nr_media = _pend["media"]
+                        _reply_ev = _reply_ev or _pend["reply_ev"]
+                        _thread_root_ev = _thread_root_ev or _pend["thread_root"]
+                if _nr_text or _nr_media:
+                    _nr = _call_posterchanai_notification_reply(
+                        sender, room_id, _reply_ev or _thread_root_ev, _nr_text,
+                        media=_nr_media, thread_root_event_id=_thread_root_ev)
+                else:
+                    _nr = None
+                if _nr and _nr.get("ok"):
+                    try:
+                        send_reply(message, f"✅ {_nr.get('result', 'replied')}")
+                    except Exception as _e:
+                        print(f"[NOTIF-REPLY] confirm failed: {_e}")
+                    continue
 
         # Handle join events (shamebot)
         if message.get("event_type") == "join":

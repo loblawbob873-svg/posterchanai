@@ -1157,6 +1157,8 @@ class MatrixNotificationReplyRequest(BaseModel):
                                                  # root IS the notification event — use as fallback
     text: Optional[str] = None
     media: Optional[list[MatrixMediaItem]] = None   # image/video reply attachments
+    probe: Optional[bool] = False   # lookup only: report whether this is a tracked notification,
+                                    # do NOT post (lets the bot decide to hold an image for its caption)
 
 
 @router.post("/notification-reply")
@@ -1191,9 +1193,13 @@ async def notification_reply(
             MatrixNotifyMap.event_id.in_(event_ids),
             MatrixNotifyMap.user_id == user.id,
         ).order_by(MatrixNotifyMap.id.desc()).first()
-    logger.info("[matrix-notif-reply] mxid=%s user=%s room=%s target=%s thread_root=%s -> %s",
-                mxid, getattr(user, "id", None), data.room_id, data.target_event_id,
-                data.thread_root_event_id, "MATCH" if row else "no-match")
+    if not data.probe:
+        logger.info("[matrix-notif-reply] mxid=%s user=%s room=%s target=%s thread_root=%s -> %s",
+                    mxid, getattr(user, "id", None), data.room_id, data.target_event_id,
+                    data.thread_root_event_id, "MATCH" if row else "no-match")
+    # Probe: just report whether the replied-to event is a tracked notification, without posting.
+    if data.probe:
+        return {"ok": bool(row), "is_notification": bool(row), "result": "probe"}
     if not row:
         return {"ok": False, "result": "not a notification"}
 
