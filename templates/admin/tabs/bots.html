@@ -224,12 +224,9 @@
                 </div>
             </div>
 
-            <!-- Welcome bot -->
+            <!-- Welcome bot (the welcome text is AI-generated from the Personality prompt + a
+                 built-in default; only the image/lookback are per-bot here). -->
             <div id="bot_grp_welcome" style="display:none">
-                <div class="form-group">
-                    <label for="bot_f_welcome_prompt">Welcome prompt <span class="bots-dim">(optional — uses default if blank)</span></label>
-                    <textarea id="bot_f_welcome_prompt" rows="3"></textarea>
-                </div>
                 <div class="form-row">
                     <div class="form-group">
                         <label for="bot_f_welcome_image">Welcome image path <span class="bots-dim">(optional)</span></label>
@@ -245,10 +242,6 @@
             <!-- Block bot -->
             <div id="bot_grp_block" style="display:none">
                 <div class="form-group">
-                    <label for="bot_f_block_prompt">Block prompt <span class="bots-dim">(optional)</span></label>
-                    <textarea id="bot_f_block_prompt" rows="3"></textarea>
-                </div>
-                <div class="form-group">
                     <label for="bot_f_block_image">Block image path <span class="bots-dim">(optional)</span></label>
                     <input type="text" id="bot_f_block_image">
                 </div>
@@ -256,10 +249,6 @@
 
             <!-- Report bot -->
             <div id="bot_grp_report" style="display:none">
-                <div class="form-group">
-                    <label for="bot_f_report_prompt">Report prompt <span class="bots-dim">(optional)</span></label>
-                    <textarea id="bot_f_report_prompt" rows="3"></textarea>
-                </div>
                 <div class="form-group">
                     <label for="bot_f_report_image">Report image path <span class="bots-dim">(optional)</span></label>
                     <input type="text" id="bot_f_report_image">

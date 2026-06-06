@@ -9,8 +9,8 @@ const BOT_KNOWN_KEYS = [
     'prompt',
     'sql_database', 'db_user', 'db_pass', 'db_host',
     'nitter_poll_seconds', 'shamebot_rooms', 'tts_voice',
-    'welcome_prompt', 'welcome_image', 'welcome_lookback_minutes',
-    'block_prompt', 'block_image', 'report_prompt', 'report_image', 'unfollow_image',
+    'welcome_image', 'welcome_lookback_minutes',
+    'block_image', 'report_image', 'unfollow_image',
 ];
 // Config keys backed by a checkbox.
 const BOT_KNOWN_CHECKS = ['auto_narrate', 'unfollow_silent_mode', 'stickers_enabled'];
