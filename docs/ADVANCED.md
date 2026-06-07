@@ -955,6 +955,33 @@ Use posterchanai as the LLM backend for [OpenCode](https://opencode.ai):
 
 3. **Verify**: `GET https://your-base-url/v1` (no auth) returns a small JSON; if you get `{"detail":"Not found"}`, the base URL is wrong (missing `/v1` or wrong subpath).
 
+#### Editing large files on a small-context model
+
+Local models served by posterchanai have small context windows. By default a coding client's
+whole-file `write` (creating a file) or whole-file `read`+`edit` (changing one) overflows the
+context or the output budget, so **large files get truncated mid-function**. Two things fix this:
+
+- **Server side (already configured):** tool/agentic requests use a separate, higher output cap,
+  `ollama_tool_num_predict` (Admin → AI Settings → "Max Tokens (tool/agentic calls)", default
+  16384), so a `write` isn't cut off at the lower chat cap. Raise **Context Length**
+  (`ollama_num_ctx`) toward your model's trained max for the edit path.
+- **Client side (opencode recipe):** ship `read`-by-range + chunked/append writes so the model
+  never needs the whole file. Templates live in [`docs/opencode/`](opencode/):
+
+  ```sh
+  # custom tools (append_file, insert_at_line) — run on the machine where opencode runs
+  cp docs/opencode/tools/*.ts  ~/.config/opencode/tools/
+  # rules: tell the model to use range reads + targeted/chunked writes
+  cp docs/opencode/AGENTS.md   ~/.config/opencode/AGENTS.md   # or your project root
+  # provider config (edit baseURL + model)
+  cp docs/opencode/opencode.json ~/.config/opencode/opencode.json
+  ```
+
+  Workflow the rules enforce: **create** large files by writing the first chunk then
+  `append_file`-ing the rest one function at a time; **edit** existing files with `edit` on the
+  smallest unique snippet (or `insert_at_line`) after locating it with `grep` — never re-emit the
+  whole file.
+
 ### API Keys
 
 Users can generate their own API keys from the user menu. Keys are shown once on creation - save them securely.

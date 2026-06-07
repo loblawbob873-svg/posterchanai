@@ -555,7 +555,14 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     # every generation to ~32k). opencode sends max_tokens=32000, which makes a slow model
     # ramble for 100s+ and blow past opencode's ~125s request timeout -> retries. Capping at
     # server_num_predict (e.g. 4096) keeps each step bounded and under the client timeout.
-    max_tokens = min(request.max_tokens, server_num_predict) if request.max_tokens is not None else server_num_predict
+    #
+    # Tool requests are the exception: an agentic coding client (opencode) emits a whole-file
+    # `write` as ONE tool call, so the low chat cap truncates large files mid-function. Use a
+    # separate, higher cap when the request carries tools. Generic - keys on "has tools", not on
+    # any specific client.
+    predict_limit = int(settings.get("ollama_tool_num_predict", "16384")) if request.tools \
+        else server_num_predict
+    max_tokens = min(request.max_tokens, predict_limit) if request.max_tokens is not None else predict_limit
 
     # Use load balancer if configured - picks server round-robin, uses local inference for "self" URLs
     # Skip if explicitly requested (to prevent loops when called from another posterchanai instance)

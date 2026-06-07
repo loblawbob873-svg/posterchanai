@@ -1,6 +1,8 @@
 #!/bin/bash
 git commit -a -m fix || true
-git push
+# Deploy to PRODUCTION only (origin = git.poster.place). Never push to the public `github`
+# mirror from here — that's a separate, explicit `git push github master:main` step.
+git push origin master
 
 # Wait for any active GPU inference to finish before restarting.
 # Uses flock -n to test the same lock file the service uses.

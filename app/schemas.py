@@ -137,6 +137,11 @@ class SettingsResponse(BaseModel):
     ollama_repeat_penalty: str = "1.1"
     ollama_num_ctx: str = "16384"
     ollama_num_predict: str = "8192"
+    # Separate, higher output cap used ONLY when a request carries tools (agentic coding clients
+    # like opencode emit whole-file writes as one tool call - the lower num_predict cap truncates
+    # large files mid-function). Plain chat keeps ollama_num_predict so slow generations stay under
+    # the client's request timeout.
+    ollama_tool_num_predict: str = "16384"
     ollama_keep_alive: str = "-1"
     ollama_stop: str = ""
     ollama_seed: str = ""

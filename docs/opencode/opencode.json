@@ -1,0 +1,17 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "posterchanai": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "posterchanAI",
+      "options": {
+        "baseURL": "https://your-host/v1"
+      },
+      "models": {
+        "Qwen3-8B-Uncensor.gguf": {
+          "name": "Qwen3-8B (posterchanAI)"
+        }
+      }
+    }
+  }
+}
