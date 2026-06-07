@@ -218,12 +218,12 @@
             <div class="form-group" id="bot_grp_schedule" style="display:none">
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="bot_f_auto_post_interval_min">Min interval (min) <span class="bots-dim" id="bot_hint_interval_min">(blank = 180)</span></label>
-                        <input type="text" id="bot_f_auto_post_interval_min" placeholder="180">
+                        <label for="bot_f_auto_post_interval_min">Post every (min) <span class="bots-dim" id="bot_hint_interval_min">(e.g. 30 = every 30 min)</span></label>
+                        <input type="text" id="bot_f_auto_post_interval_min" placeholder="30">
                     </div>
                     <div class="form-group">
-                        <label for="bot_f_auto_post_interval_max">Max interval (min) <span class="bots-dim" id="bot_hint_interval_max">(blank = 360)</span></label>
-                        <input type="text" id="bot_f_auto_post_interval_max" placeholder="360">
+                        <label for="bot_f_auto_post_interval_max">Randomize up to (min) <span class="bots-dim" id="bot_hint_interval_max">(optional — blank = exact interval)</span></label>
+                        <input type="text" id="bot_f_auto_post_interval_max" placeholder="">
                     </div>
                     <div class="form-group">
                         <label for="bot_f_auto_post_max_per_day">Max posts/day <span class="bots-dim">(blank = no cap)</span></label>
@@ -235,8 +235,8 @@
                     </div>
                 </div>
                 <p class="bots-hint" id="bot_grp_schedule_imghint" style="display:none;margin:0">
-                    Leave both intervals blank to post on the fixed schedule (00:00 / 06:00 / 12:00 / 18:00),
-                    or set them to post every Min–Max minutes instead.
+                    Leave both fields blank to post on the fixed schedule (00:00 / 06:00 / 12:00 / 18:00).
+                    Or set “Post every” for a fixed cadence, optionally adding “Randomize up to” to vary each gap.
                 </p>
             </div>
             <div id="bot_grp_autopost" style="display:none">

@@ -495,8 +495,13 @@ def _job_uses_interval(job) -> bool:
 
 
 def _next_run_for(job, now, offset=0.0, last_run=None):
-    """When should this job next fire? Text (or any bot with an interval configured) uses a
-    randomized interval window; image bots without an interval keep the fixed-hours schedule.
+    """When should this job next fire? Interval jobs (text auto-post, or any bot with an
+    interval configured) post on the configured cadence; image bots without an interval keep
+    the fixed-hours schedule.
+
+    Interval semantics (kept intuitive): a SINGLE value is an exact cadence — set 30 and it
+    posts every 30 min. Set BOTH min and max to jitter each gap randomly between them. With
+    neither set (auto-post enabled but unconfigured), fall back to a conservative random default.
 
     For interval jobs, if a persisted last_run is known the next fire is scheduled relative
     to it (deploy-proof: an overdue bot fires once on the next reconcile, then re-rolls)."""
@@ -504,11 +509,16 @@ def _next_run_for(job, now, offset=0.0, last_run=None):
     if _job_uses_interval(job):
         imin = _to_num(d.get("auto_post_interval_min"))
         imax = _to_num(d.get("auto_post_interval_max"))
-        lo = imin if imin is not None else AUTOPOST_DEFAULT_MIN_MIN
-        hi = imax if imax is not None else max(lo, AUTOPOST_DEFAULT_MAX_MIN)
+        if imin is None and imax is None:
+            lo, hi = AUTOPOST_DEFAULT_MIN_MIN, AUTOPOST_DEFAULT_MAX_MIN
+        else:
+            # a single value is an exact interval; both present = random window between them
+            lo = imin if imin is not None else imax
+            hi = imax if imax is not None else imin
+        lo = max(lo, 1.0)  # floor: a misconfigured 0/negative must not spin (post every reconcile)
         if hi < lo:
             hi = lo
-        gap = random.uniform(lo, hi) * 60.0
+        gap = random.uniform(lo, hi) * 60.0  # lo == hi -> exactly that interval
         return (last_run + gap) if last_run else (now + gap)
     return _next_scheduled_time(IMAGE_SCHEDULE_HOURS) + offset
 

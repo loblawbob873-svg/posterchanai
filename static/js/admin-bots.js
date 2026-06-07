@@ -156,10 +156,11 @@ function onBotFormChange() {
     // image bots always (they're now interval-configurable; blank intervals = fixed hours).
     show('bot_grp_schedule', isImage || autopostOn);
     show('bot_grp_schedule_imghint', isImage);
-    // For image bots, blank intervals mean the fixed-hours schedule, not the text 180/360 default.
+    // "Post every" is an exact cadence; "Randomize up to" is optional jitter. For image bots,
+    // leaving both blank means the fixed-hours schedule rather than a default interval.
     const hMin = _g('bot_hint_interval_min'), hMax = _g('bot_hint_interval_max');
-    if (hMin) hMin.textContent = isImage ? '(blank = fixed hours)' : '(blank = 180)';
-    if (hMax) hMax.textContent = isImage ? '(blank = fixed hours)' : '(blank = 360)';
+    if (hMin) hMin.textContent = isImage ? '(blank = fixed hours)' : '(e.g. 30 = every 30 min)';
+    if (hMax) hMax.textContent = '(optional — blank = exact interval)';
 
     // Image bots get an inline image-preview tester instead of the text auto-post section.
     show('bot_grp_imgtest', isImage);
