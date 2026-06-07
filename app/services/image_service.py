@@ -122,9 +122,7 @@ class ImageService:
         width = kwargs.get("width") or 832
         height = kwargs.get("height") or 1216
 
-        # NOTE: frame-suppression negative + random scene are applied centrally in
-        # generate_image_with_load_balancing on the image server (so every caller — chat,
-        # Telegram, bots, local or remote — gets them once). Don't duplicate here.
+        # Prompt is used as typed (wildcards resolved); no negative/scene is injected here.
         # Try posterchanai REST API first (simpler, faster)
         result = await self._try_posterchanai_api(prompt, negative_prompt, width=width, height=height)
         if result:
