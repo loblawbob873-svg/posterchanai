@@ -109,6 +109,12 @@ def _max_steps(db: Session) -> int:
         return 8
 
 
+# How many times in a row the model may re-issue a command it has already run before we give up.
+# Small models degenerate into re-running the same failing command; re-executing wastes steps and
+# feeds back the same output it's already looping on, so we nudge instead and bail if it persists.
+_MAX_REPEAT_NUDGES = 3
+
+
 # Sentinel: start_job/run_to_completion fall back to the global job timeout when no override given.
 _USE_JOB_TIMEOUT = object()
 
@@ -426,6 +432,8 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
     ]
     transcript = [] if report_mode else [f"## Agent on `{node}` — goal: {goal}\n"]
     cmds_run: list[str] = []   # for a footer on the stop/error paths so they're never blank
+    cmd_outputs: dict[str, str] = {}   # command -> its last output, to detect/short-circuit repeats
+    repeat_nudges = 0          # consecutive "you already ran this" nudges (reset by a fresh command)
     last_job_id = None
 
     async def _say(text: str):
@@ -492,6 +500,24 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                     messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
                                      "content": "(no command provided)"})
                     continue
+                # Loop breaker: if the model re-issues a command it already ran, don't execute it
+                # again (re-running feeds back the same output it's looping on). Nudge it to change
+                # approach, and bail if it stays stuck.
+                if cmd in cmd_outputs:
+                    repeat_nudges += 1
+                    await _say(f"↩️ skipping repeat: `{cmd}`")
+                    if repeat_nudges >= _MAX_REPEAT_NUDGES:
+                        if report_mode:
+                            return "⏹️ the agent got stuck repeating the same command(s) without making progress."
+                        transcript.append(f"\n**⏹️ Stopped:** stuck repeating the same command(s) "
+                                          f"without progress.{_footer()}")
+                        return "\n".join(transcript)
+                    messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
+                                     "content": (f"You already ran `{cmd}` earlier; it produced:\n"
+                                                 f"{tail(cmd_outputs[cmd], 1000)}\n"
+                                                 "Re-running it will not change anything. Try a DIFFERENT "
+                                                 "command, or call finish if you are stuck or done.")})
+                    continue
                 # Stream each command as live progress, but DON'T fold the per-step command/
                 # output into the returned transcript — that's the persisted/final message, which
                 # we keep concise (header + the model's ✅ Done summary). The full play-by-play
@@ -502,6 +528,8 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                                               timeout=_agent_step_timeout(db))
                 out = job.output.strip() or "(no output)"
                 cmds_run.append(cmd)
+                cmd_outputs[cmd] = out
+                repeat_nudges = 0   # made progress with a fresh command; reset the stuck counter
                 last_job_id = job.id
                 # Tell the model explicitly when a command was killed for running too long, so it
                 # can adapt (e.g. add a count/limit, background it, or finish) instead of retrying.
