@@ -1,8 +1,40 @@
+<div align="center">
+
+<img src="static/mascot/mascot-happy-front-05.png" alt="Poster-chan mascot" width="200" />
+
 # Poster-chan AI
 
-**Poster-chan AI** is a self-hosted AI assistant and chat platform with a modern web UI, optional local LLM and image generation, and a native Android app. Run it on your own hardware and connect your email, search, and codebases so one assistant can help with chat, search, and more.
+### Your own AI assistant — self-hosted, private, and ridiculously capable.
 
-The backend is **Python 3.10+** and **FastAPI**. You can use cloud APIs (OpenAI-compatible) or local backends (Ollama, llama.cpp, IPEX-LLM for Intel Arc). Image generation supports ComfyUI or a built-in diffusers backend. Everything is configurable via the web admin and optional install script.
+One FastAPI backend that does chat, image generation, voice, RAG over your code, email, news, torrents, and runs autonomous bots on **Telegram, Matrix, Misskey & Pleroma**. Cloud LLMs or fully local. Your hardware, your data, your rules.
+
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![SQLite](https://img.shields.io/badge/SQLite-backed-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
+[![OpenAI-compatible](https://img.shields.io/badge/API-OpenAI--compatible-412991?logo=openai&logoColor=white)](#chat--ai)
+[![Self-hosted](https://img.shields.io/badge/Self--hosted-100%25-success)](#quick-start-backend-and-web-ui)
+[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20GPU%20optional-FCC624?logo=linux&logoColor=black)](#requirements)
+
+[Quick start](#quick-start-backend-and-web-ui) ·
+[Features](#features) ·
+[Bots & social](#bots--social) ·
+[Documentation](#documentation) ·
+[Android app](#android-app)
+
+</div>
+
+---
+
+## Why Poster-chan?
+
+- 🏠 **Truly self-hosted** — runs on your own box, SQLite-backed, no telemetry, single-admin multi-user. Your conversations and keys never leave your network.
+- 🔌 **Bring any model** — cloud (any OpenAI-compatible API) or local: **Ollama**, **llama.cpp** (CPU/CUDA/HIP), or **IPEX-LLM** for **Intel Arc**. Round-robin load-balance across several backends.
+- 🤖 **It's also a bot platform** — drive everything from **Telegram & Matrix**, and run autonomous **Pleroma / Misskey / Matrix** bots from a single admin tab.
+- 🧠 **Knows your stuff** — RAG over your git repos and folders, exposed to your IDE over **MCP**.
+- 🎨 **More than chat** — image generation, TTS/STT, website screenshots, YouTube/X summarize & download, media tools, email, news, finance, torrents — all behind one chat box.
+- 🛠️ **Hackable & honest** — thin routers, services for logic, an interactive installer, and an OpenAI-compatible `/v1/` endpoint that agentic coding clients (e.g. opencode) can drive against your local models.
+
+> Point any OpenAI-compatible tool at `http://your-box:3051/v1/` and you've got a private, function-calling-capable model server. Open the web UI and you've got a full assistant. Link a bot and it's in your pocket.
 
 ---
 
