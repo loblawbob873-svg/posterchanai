@@ -536,7 +536,7 @@ def send_poll(room_id, question, options, max_selections=1, disclosed=True):
     return False
 
 
-def send_message(room_id, text, reply_to=None, image_bytes=None, audio_bytes=None, video_bytes=None, image_caption=None, mentions=None):
+def send_message(room_id, text, reply_to=None, image_bytes=None, audio_bytes=None, video_bytes=None, image_caption=None, mentions=None, media_filename=None):
     """Send a message to a Matrix room.
 
     image_caption: when an image is sent, render this text as a caption on the
@@ -686,14 +686,17 @@ def send_message(room_id, text, reply_to=None, image_bytes=None, audio_bytes=Non
 
     # Send video if provided (takes priority over audio)
     if video_bytes:
-        media_uri = upload_media_to_matrix(video_bytes, filename="narration.mp4", mime="video/mp4")
+        import mimetypes as _mt
+        vfn = media_filename or "narration.mp4"
+        vmime = _mt.guess_type(vfn)[0] or "video/mp4"
+        media_uri = upload_media_to_matrix(video_bytes, filename=vfn, mime=vmime)
         if media_uri:
             content = {
                 "msgtype": "m.video",
-                "body": "narration.mp4",
+                "body": vfn,
                 "url": media_uri,
                 "info": {
-                    "mimetype": "video/mp4",
+                    "mimetype": vmime,
                     "size": len(video_bytes)
                 }
             }
@@ -711,14 +714,17 @@ def send_message(room_id, text, reply_to=None, image_bytes=None, audio_bytes=Non
             return False
     # Send audio if provided (fallback if no video)
     elif audio_bytes:
-        media_uri = upload_media_to_matrix(audio_bytes, filename="voice.mp3", mime="audio/mpeg")
+        import mimetypes as _mt
+        afn = media_filename or "voice.mp3"   # narrate passes no name → stays "voice.mp3"
+        amime = _mt.guess_type(afn)[0] or "audio/mpeg"
+        media_uri = upload_media_to_matrix(audio_bytes, filename=afn, mime=amime)
         if media_uri:
             content = {
                 "msgtype": "m.audio",
-                "body": "voice.mp3",
+                "body": afn,
                 "url": media_uri,
                 "info": {
-                    "mimetype": "audio/mpeg",
+                    "mimetype": amime,
                     "size": len(audio_bytes)
                 }
             }
@@ -777,7 +783,7 @@ def send_file_to_room(room_id, file_bytes, filename, mime="application/octet-str
     return False
 
 
-def send_reply(message_obj, reply_text, image_bytes=None, audio_bytes=None, video_bytes=None):
+def send_reply(message_obj, reply_text, image_bytes=None, audio_bytes=None, video_bytes=None, media_filename=None):
     """Reply to a specific message"""
     room_id = message_obj.get("room_id")
     event_id = message_obj.get("event_id")
@@ -795,7 +801,7 @@ def send_reply(message_obj, reply_text, image_bytes=None, audio_bytes=None, vide
                     print(f"[send_reply]   item {i}: {type(item).__name__}")
         else:
             print(f"[send_reply] image_bytes is single item")
-    return send_message(room_id, reply_text, reply_to=event_id, image_bytes=image_bytes, audio_bytes=audio_bytes, video_bytes=video_bytes)
+    return send_message(room_id, reply_text, reply_to=event_id, image_bytes=image_bytes, audio_bytes=audio_bytes, video_bytes=video_bytes, media_filename=media_filename)
 
 def post_to_matrix(room_id, text):
     """Post a message to a specific Matrix room"""

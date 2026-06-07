@@ -693,9 +693,9 @@ def _send_sticker(message, filename):
         return False
     ext = os.path.splitext(path)[1].lower()
     if ext in _STICKER_VIDEO_EXT:
-        return bool(send_reply(message, "", video_bytes=data))
+        return bool(send_reply(message, "", video_bytes=data, media_filename=filename))
     if ext in _STICKER_AUDIO_EXT:
-        return bool(send_reply(message, "", audio_bytes=data))
+        return bool(send_reply(message, "", audio_bytes=data, media_filename=filename))
     return bool(send_reply(message, "", image_bytes=data))
 
 
