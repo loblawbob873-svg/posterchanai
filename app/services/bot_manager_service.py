@@ -406,9 +406,58 @@ def _scheduled_jobs(image_bots, text_bots):
     return jobs
 
 
-def _next_run_for(job, now, offset=0.0):
+# Persisted last-post times (epoch secs) per bot, so an interval schedule survives restarts
+# instead of resetting its countdown on every deploy. Image bots schedule off the absolute
+# clock (_next_scheduled_time) and are already deploy-proof, so this only affects intervals.
+_LAST_RUN_KEY = "autopost_last_runs"
+
+
+def _load_last_runs() -> dict:
+    db = SessionLocal()
+    try:
+        s = db.query(Setting).filter(Setting.key == _LAST_RUN_KEY).first()
+        if s and s.value:
+            try:
+                data = json.loads(s.value)
+                return data if isinstance(data, dict) else {}
+            except (ValueError, TypeError):
+                return {}
+        return {}
+    finally:
+        db.close()
+
+
+def _save_last_run(name: str, ts: float):
+    db = SessionLocal()
+    try:
+        s = db.query(Setting).filter(Setting.key == _LAST_RUN_KEY).first()
+        data = {}
+        if s and s.value:
+            try:
+                data = json.loads(s.value)
+                if not isinstance(data, dict):
+                    data = {}
+            except (ValueError, TypeError):
+                data = {}
+        data[name] = ts
+        if s:
+            s.value = json.dumps(data)
+        else:
+            db.add(Setting(key=_LAST_RUN_KEY, value=json.dumps(data)))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error("[BOTS] could not persist last-run for %s: %s", name, e)
+    finally:
+        db.close()
+
+
+def _next_run_for(job, now, offset=0.0, last_run=None):
     """When should this job next fire? Text (or any bot with an interval configured) uses a
-    randomized interval window; image bots without an interval keep the fixed-hours schedule."""
+    randomized interval window; image bots without an interval keep the fixed-hours schedule.
+
+    For interval jobs, if a persisted last_run is known the next fire is scheduled relative
+    to it (deploy-proof: an overdue bot fires once on the next reconcile, then re-rolls)."""
     d = job["dict"]
     imin = _to_num(d.get("auto_post_interval_min"))
     imax = _to_num(d.get("auto_post_interval_max"))
@@ -417,7 +466,8 @@ def _next_run_for(job, now, offset=0.0):
         hi = imax if imax is not None else max(lo, AUTOPOST_DEFAULT_MAX_MIN)
         if hi < lo:
             hi = lo
-        return now + random.uniform(lo, hi) * 60.0
+        gap = random.uniform(lo, hi) * 60.0
+        return (last_run + gap) if last_run else (now + gap)
     return _next_scheduled_time(IMAGE_SCHEDULE_HOURS) + offset
 
 
@@ -427,6 +477,15 @@ def _reconcile_scheduled(jobs, base_env):
     wanted = {j["name"]: j for j in jobs}
     now = time.time()
     today = time.localtime().tm_yday
+
+    # reap finished manual test-post children (publish-now) so they don't linger as zombies
+    global _oneshot_procs
+    _oneshot_procs = [p for p in _oneshot_procs if p.poll() is None]
+
+    # persisted last-post times so interval schedules survive restarts. Only hit the DB when
+    # a schedule actually needs (re)creating — steady-state passes skip the read.
+    need_last = any(n not in _post_sched for n in wanted)
+    last_runs = _load_last_runs() if need_last else {}
 
     # drop schedules for bots no longer wanted (disabled/deleted/auto-post turned off)
     for name in list(_post_sched.keys()):
@@ -442,8 +501,8 @@ def _reconcile_scheduled(jobs, base_env):
         sched = _post_sched.get(name)
         if sched is None:
             offset = i * IMAGE_STAGGER_DELAY if job["kind"] == "image" else 0.0
-            sched = {"next_run": _next_run_for(job, now, offset), "process": None,
-                     "offset": offset, "day": today, "count": 0}
+            sched = {"next_run": _next_run_for(job, now, offset, last_runs.get(name)),
+                     "process": None, "offset": offset, "day": today, "count": 0}
             _post_sched[name] = sched
         # reap a finished one-shot
         if sched["process"] and sched["process"].poll() is not None:
@@ -470,7 +529,8 @@ def _reconcile_scheduled(jobs, base_env):
         sched["process"] = _spawn(spawn_dict, base_env)
         _post_sched["_last_start"] = now
         sched["count"] += 1
-        sched["next_run"] = _next_run_for(job, now, sched["offset"])
+        sched["next_run"] = _next_run_for(job, now, sched["offset"], now)
+        _save_last_run(name, now)
         logger.info("[BOTS] ran %s post for %s (%d today)", job["kind"], name, sched["count"])
 
 
@@ -627,6 +687,11 @@ def stop_bot_manager():
             if sched.get("process") and sched["process"].poll() is None:
                 _terminate(name, sched["process"])
         _post_sched.clear()
+        # terminate any in-flight manual test-post one-shots
+        for proc in _oneshot_procs:
+            if proc and proc.poll() is None:
+                _terminate("test-post", proc)
+        _oneshot_procs.clear()
     if _monitor_thread:
         _monitor_thread.join(timeout=15)
         _monitor_thread = None
