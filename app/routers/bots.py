@@ -232,6 +232,11 @@ async def test_post_preview(bot_id: int, db: Session = Depends(get_db),
         prompt = (cfg.get("prompt") or "").strip()
         if not prompt:
             return {"ok": False, "error": "This image bot has no prompt set."}
+        # Mirror imageposter: if random scenes are on, append one so the preview matches posts.
+        if cfg.get("random_scenes"):
+            scene = bot_manager_service.random_scene()
+            if scene:
+                prompt = f"{prompt}, {scene}"
         from app.services.image_factory import generate_image_with_load_balancing
         img = await generate_image_with_load_balancing(db=db, prompt=prompt)
         if img:

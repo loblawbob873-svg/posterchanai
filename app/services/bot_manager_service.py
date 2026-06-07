@@ -721,6 +721,20 @@ def restart_bot(name: str):
     reconcile_now()
 
 
+def random_scene() -> str:
+    """Pick a random background/location from the bot framework's scene list, so the image
+    preview path can mirror imageposter's random-scene behavior. Returns '' on any failure."""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("random_scenes", BOTFRAMEWORK_DIR / "random_scenes.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return random.choice(mod.RANDOM_SCENE_ELEMENTS)
+    except Exception as e:
+        logger.warning("[BOTS] could not load random scene: %s", e)
+        return ""
+
+
 def _bot_dict_by_name(name: str):
     """Look up a single bot (enabled or not) and return its merged config dict, or None."""
     db = SessionLocal()

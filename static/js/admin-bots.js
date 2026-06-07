@@ -17,7 +17,7 @@ const BOT_KNOWN_KEYS = [
     'text',  // image bot: caption posted with the image (IMAGE_POSTER_TEXT)
 ];
 // Config keys backed by a checkbox.
-const BOT_KNOWN_CHECKS = ['auto_narrate', 'unfollow_silent_mode', 'stickers_enabled', 'auto_post_enabled'];
+const BOT_KNOWN_CHECKS = ['auto_narrate', 'unfollow_silent_mode', 'stickers_enabled', 'auto_post_enabled', 'random_scenes'];
 // nitter_feeds is special (list of {rss} ↔ one URL per line) and handled separately.
 // feature checkbox id -> main.py mode flag
 const BOT_FEATURES = {
