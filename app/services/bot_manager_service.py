@@ -179,6 +179,7 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
             setif("access_token", "MISSKEY_ACCESS_TOKEN")
         setif("prompt", "IMAGE_POSTER_PROMPT")
         setif("text", "IMAGE_POSTER_TEXT")
+        setif("image_negative", "IMAGE_POSTER_NEGATIVE")  # optional negative prompt
         if bot_dict.get("random_scenes"):
             env["IMAGE_POSTER_RANDOM_SCENES"] = "true"
     else:

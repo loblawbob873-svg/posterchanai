@@ -237,8 +237,9 @@ async def test_post_preview(bot_id: int, db: Session = Depends(get_db),
             scene = bot_manager_service.random_scene()
             if scene:
                 prompt = f"{prompt}, {scene}"
+        negative = (cfg.get("image_negative") or "").strip()
         from app.services.image_factory import generate_image_with_load_balancing
-        img = await generate_image_with_load_balancing(db=db, prompt=prompt)
+        img = await generate_image_with_load_balancing(db=db, prompt=prompt, negative_prompt=negative)
         if img:
             return {"ok": True, "image": img}
         return {"ok": False, "error": "Image generation failed (check image servers)."}

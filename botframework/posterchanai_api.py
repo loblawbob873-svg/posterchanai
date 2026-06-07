@@ -67,10 +67,17 @@ def generate_image_bytes(prompt):
         
         # Clean prompt (remove "geni" if present)
         clean_prompt = prompt.replace("geni", "").strip()
-        
+
         # Use the direct image generation endpoint
         img_url = f"{POSTERCHANAI_API_ENDPOINT}/api/generate-image"
-        img_data = json.dumps({"prompt": clean_prompt}).encode('utf-8')
+        # Optional negative prompt (image bots set IMAGE_POSTER_NEGATIVE via the manager). Only
+        # image bots set this env, so other image flows are unaffected.
+        import os as _os
+        _payload = {"prompt": clean_prompt}
+        _negative = (_os.getenv("IMAGE_POSTER_NEGATIVE", "") or "").strip()
+        if _negative:
+            _payload["negative_prompt"] = _negative
+        img_data = json.dumps(_payload).encode('utf-8')
         
         print(f"[POSTERCHANAI] Connecting to: {POSTERCHANAI_API_ENDPOINT}")
         print(f"[POSTERCHANAI] Generating image with prompt: {clean_prompt[:100]}...")

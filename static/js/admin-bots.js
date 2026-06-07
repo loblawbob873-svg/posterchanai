@@ -15,6 +15,7 @@ const BOT_KNOWN_KEYS = [
     'auto_post_interval_min', 'auto_post_interval_max', 'auto_post_max_per_day',
     'auto_post_quiet_hours', 'auto_post_seed', 'auto_post_topics', 'auto_post_rooms',
     'text',  // image bot: caption posted with the image (IMAGE_POSTER_TEXT)
+    'image_negative',  // image bot: negative prompt (IMAGE_POSTER_NEGATIVE)
 ];
 // Config keys backed by a checkbox.
 const BOT_KNOWN_CHECKS = ['auto_narrate', 'unfollow_silent_mode', 'stickers_enabled', 'auto_post_enabled', 'random_scenes'];
