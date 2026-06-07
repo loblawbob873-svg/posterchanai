@@ -149,6 +149,9 @@ function onBotFormChange() {
     show('bot_grp_autopost_toggle', !isImage);
     show('bot_grp_autopost', autopostOn);
     show('bot_grp_autopost_rooms', autopostOn && isMatrix);
+
+    // Image bots get an inline image-preview tester instead of the text auto-post section.
+    show('bot_grp_imgtest', isImage);
 }
 
 function openBotModal(id) {
@@ -188,6 +191,8 @@ function openBotModal(id) {
     // reset the Test → Preview widgets so a prior bot's output doesn't linger
     const _ts = _g('bot_testpost_status'); if (_ts) _ts.textContent = '';
     const _tp = _g('bot_testpost_preview'); if (_tp) { _tp.textContent = ''; _tp.style.display = 'none'; }
+    const _is = _g('bot_imgtest_status'); if (_is) _is.textContent = '';
+    const _ii = _g('bot_imgtest_img'); if (_ii) { _ii.removeAttribute('src'); _ii.style.display = 'none'; }
 
     onBotFormChange();
     _g('botModal').style.display = 'flex';
@@ -248,6 +253,26 @@ async function previewPost() {
         st.textContent = '';
         pv.textContent = d.text;
         pv.style.display = '';
+    } catch (err) {
+        st.textContent = '❌ ' + err.message;
+    }
+}
+
+// Image bots: generate one image from the SAVED prompt and show it inline (no posting).
+async function previewImage() {
+    const id = _val('bot_f_id');
+    const st = _g('bot_imgtest_status');
+    const im = _g('bot_imgtest_img');
+    if (!id) { st.textContent = 'Save the bot first.'; return; }
+    st.textContent = 'Generating… (can take ~10–30s)';
+    im.style.display = 'none';
+    try {
+        const r = await fetch(`/api/admin/bots/${id}/test-post/preview`, { method: 'POST' });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || !d.ok || !d.image) throw new Error(d.error || d.detail || r.statusText);
+        st.textContent = '';
+        im.src = 'data:image/png;base64,' + d.image;
+        im.style.display = '';
     } catch (err) {
         st.textContent = '❌ ' + err.message;
     }

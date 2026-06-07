@@ -190,6 +190,17 @@
                 <textarea id="bot_f_prompt" rows="4"></textarea>
             </div>
 
+            <!-- Image bot: preview a generated image from the prompt (no posting). -->
+            <div class="form-group" id="bot_grp_imgtest" style="display:none">
+                <label>Test image <span class="bots-dim">(uses the SAVED prompt — Save first; generates without posting)</span></label>
+                <div class="form-row" style="align-items:center;gap:.5rem">
+                    <button type="button" class="btn-small" onclick="previewImage()">Preview image</button>
+                    <button type="button" class="btn-small" onclick="publishPost()">Post now</button>
+                    <span id="bot_imgtest_status" class="bots-hint" style="margin:0"></span>
+                </div>
+                <img id="bot_imgtest_img" alt="" style="display:none;max-width:100%;margin-top:.5rem;border-radius:6px" />
+            </div>
+
             <!-- Scheduled auto-posting (text bots): post in-character on a timer, using the
                  personality prompt above. The manager spawns `main.py --autopost` on the
                  configured cadence. -->

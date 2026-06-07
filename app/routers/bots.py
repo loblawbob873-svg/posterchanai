@@ -216,14 +216,31 @@ def restart_bot(bot_id: int, db: Session = Depends(get_db),
 
 
 @router.post("/{bot_id}/test-post/preview")
-def test_post_preview(bot_id: int, db: Session = Depends(get_db),
-                      admin: User = Depends(get_admin_user)):
-    """Generate one in-character post from the bot's SAVED config and return it without
-    publishing (Test → Preview in the editor)."""
+async def test_post_preview(bot_id: int, db: Session = Depends(get_db),
+                            admin: User = Depends(get_admin_user)):
+    """Generate from the bot's SAVED config and return it WITHOUT publishing.
+    Text bots → the generated post text; image bots → a generated image (base64)."""
     bot = db.query(Bot).filter(Bot.id == bot_id).first()
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
-    return bot_manager_service.preview_post(bot.name)
+
+    if bot.bot_type == "image":
+        try:
+            cfg = json.loads(bot.config) if bot.config else {}
+        except (ValueError, TypeError):
+            cfg = {}
+        prompt = (cfg.get("prompt") or "").strip()
+        if not prompt:
+            return {"ok": False, "error": "This image bot has no prompt set."}
+        from app.services.image_factory import generate_image_with_load_balancing
+        img = await generate_image_with_load_balancing(db=db, prompt=prompt)
+        if img:
+            return {"ok": True, "image": img}
+        return {"ok": False, "error": "Image generation failed (check image servers)."}
+
+    # Text bots: the preview spawns a blocking subprocess — run it off the event loop.
+    import asyncio
+    return await asyncio.get_event_loop().run_in_executor(None, bot_manager_service.preview_post, bot.name)
 
 
 @router.post("/{bot_id}/test-post/publish")
