@@ -152,6 +152,11 @@ function onBotFormChange() {
     show('bot_grp_autopost', autopostOn);
     show('bot_grp_autopost_rooms', autopostOn && isMatrix);
 
+    // Schedule cadence (interval/quiet/cap) is shared: text bots show it once auto-post is on,
+    // image bots always (they're now interval-configurable; blank intervals = fixed hours).
+    show('bot_grp_schedule', isImage || autopostOn);
+    show('bot_grp_schedule_imghint', isImage);
+
     // Image bots get an inline image-preview tester instead of the text auto-post section.
     show('bot_grp_imgtest', isImage);
 }

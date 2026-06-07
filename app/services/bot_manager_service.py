@@ -461,6 +461,17 @@ def _save_last_run(name: str, ts: float):
         db.close()
 
 
+def _job_uses_interval(job) -> bool:
+    """True if this job schedules off a randomized interval — text auto-post, or any bot
+    (including an image bot) that has an explicit interval configured — rather than the fixed
+    image-bot hours. Image bots are now interval-configurable: set auto_post_interval_min/max
+    to drive them on a timer, or leave both blank to keep the legacy fixed-hours cadence."""
+    d = job["dict"]
+    return (_to_num(d.get("auto_post_interval_min")) is not None
+            or _to_num(d.get("auto_post_interval_max")) is not None
+            or job["kind"] == "text")
+
+
 def _next_run_for(job, now, offset=0.0, last_run=None):
     """When should this job next fire? Text (or any bot with an interval configured) uses a
     randomized interval window; image bots without an interval keep the fixed-hours schedule.
@@ -468,9 +479,9 @@ def _next_run_for(job, now, offset=0.0, last_run=None):
     For interval jobs, if a persisted last_run is known the next fire is scheduled relative
     to it (deploy-proof: an overdue bot fires once on the next reconcile, then re-rolls)."""
     d = job["dict"]
-    imin = _to_num(d.get("auto_post_interval_min"))
-    imax = _to_num(d.get("auto_post_interval_max"))
-    if imin is not None or imax is not None or job["kind"] == "text":
+    if _job_uses_interval(job):
+        imin = _to_num(d.get("auto_post_interval_min"))
+        imax = _to_num(d.get("auto_post_interval_max"))
         lo = imin if imin is not None else AUTOPOST_DEFAULT_MIN_MIN
         hi = imax if imax is not None else max(lo, AUTOPOST_DEFAULT_MAX_MIN)
         if hi < lo:
@@ -510,7 +521,18 @@ def _reconcile_scheduled(jobs, base_env):
         sched = _post_sched.get(name)
         if sched is None:
             offset = i * IMAGE_STAGGER_DELAY if job["kind"] == "image" else 0.0
-            sched = {"next_run": _next_run_for(job, now, offset, last_runs.get(name)),
+            anchor = last_runs.get(name)
+            # Anchor interval schedules to a persisted time so a restart resumes the existing
+            # deadline instead of re-rolling a fresh (up to AUTOPOST_DEFAULT_MAX_MIN) countdown
+            # on every deploy. Without this seed the deploy-proofing never engaged — it only
+            # kicked in after the first successful post, so a frequently-restarted node never
+            # reached the deadline and the bot never posted at all. (Fixed-hour image bots
+            # schedule off the absolute clock and ignore the anchor, so seeding is a no-op there.)
+            if anchor is None and _job_uses_interval(job):
+                anchor = now
+                _save_last_run(name, now)
+                last_runs[name] = now
+            sched = {"next_run": _next_run_for(job, now, offset, anchor),
                      "process": None, "offset": offset, "day": today, "count": 0}
             _post_sched[name] = sched
         # reap a finished one-shot

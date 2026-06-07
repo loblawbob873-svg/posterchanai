@@ -212,11 +212,10 @@
             <div class="form-group" id="bot_grp_autopost_toggle" style="display:none">
                 <label for="bot_f_auto_post_enabled"><input type="checkbox" id="bot_f_auto_post_enabled" onchange="onBotFormChange()"> Auto-post on a schedule <span class="bots-dim">(spontaneous in-character posts using the personality prompt)</span></label>
             </div>
-            <div id="bot_grp_autopost" style="display:none">
-                <div class="form-group" id="bot_grp_autopost_rooms" style="display:none">
-                    <label for="bot_f_auto_post_rooms">Rooms to post to <span class="bots-dim">(Matrix only; one room ID per line or comma-separated — each gets its own post. Blank = the bot's default room)</span></label>
-                    <textarea id="bot_f_auto_post_rooms" rows="2" placeholder="!roomid:server.tld"></textarea>
-                </div>
+            <!-- Schedule cadence — shared by text auto-post and image bots. Image bots leave
+                 the intervals blank to keep the legacy fixed-hours cadence (00/06/12/18), or
+                 set an interval to post on a timer like a text auto-poster. -->
+            <div class="form-group" id="bot_grp_schedule" style="display:none">
                 <div class="form-row">
                     <div class="form-group">
                         <label for="bot_f_auto_post_interval_min">Min interval (min) <span class="bots-dim">(blank = 180)</span></label>
@@ -234,6 +233,16 @@
                         <label for="bot_f_auto_post_quiet_hours">Quiet hours <span class="bots-dim">(e.g. 01-08, optional)</span></label>
                         <input type="text" id="bot_f_auto_post_quiet_hours" placeholder="01-08">
                     </div>
+                </div>
+                <p class="bots-hint" id="bot_grp_schedule_imghint" style="display:none;margin:0">
+                    Leave both intervals blank to post on the fixed schedule (00:00 / 06:00 / 12:00 / 18:00),
+                    or set them to post every Min–Max minutes instead.
+                </p>
+            </div>
+            <div id="bot_grp_autopost" style="display:none">
+                <div class="form-group" id="bot_grp_autopost_rooms" style="display:none">
+                    <label for="bot_f_auto_post_rooms">Rooms to post to <span class="bots-dim">(Matrix only; one room ID per line or comma-separated — each gets its own post. Blank = the bot's default room)</span></label>
+                    <textarea id="bot_f_auto_post_rooms" rows="2" placeholder="!roomid:server.tld"></textarea>
                 </div>
                 <div class="form-group">
                     <label for="bot_f_auto_post_seed">Post instruction <span class="bots-dim">(optional; what kind of post to make — defaults to a spontaneous take)</span></label>
