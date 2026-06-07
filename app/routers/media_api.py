@@ -65,9 +65,9 @@ async def process_media(
     db: Session = Depends(get_db),
     _auth: bool = Depends(get_image_auth),
 ):
-    """Run a compress/clip/convert operation on the supplied attachments."""
+    """Run a compress/clip/convert/meme operation on the supplied attachments."""
     command = (req.command or "").strip().lower()
-    if command not in ("compress", "clip", "convert"):
+    if command not in ("compress", "clip", "convert", "meme"):
         return {"error": f"unsupported command '{command}'"}
 
     attachments = []
@@ -84,6 +84,10 @@ async def process_media(
             outputs, summary = await asyncio.to_thread(media_service.compress_attachments, attachments)
         elif command == "convert":
             outputs, summary = await asyncio.to_thread(media_service.convert_attachments, attachments, req.arg or "")
+        elif command == "meme":
+            if not (req.arg or "").strip():
+                return {"error": "meme needs caption text, e.g. 'meme top text'"}
+            outputs, summary = await asyncio.to_thread(media_service.meme_attachments, attachments, req.arg or "")
         else:  # clip
             parts = (req.arg or "").split()
             if len(parts) < 2:

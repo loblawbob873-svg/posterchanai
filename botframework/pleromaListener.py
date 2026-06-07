@@ -110,6 +110,7 @@ _BOT_HELP_TEXT = (
     "• compress — shrink an attached image/video (attach a file to the post)\n"
     "• clip <start> <end> — trim an attached video, e.g. clip 0:10 0:30\n"
     "• convert — images → PDF, or a PDF → images (attach a file)\n"
+    "• meme <text> — add outlined white caption text to an attached image\n"
     "• screenshot <url> — full-page screenshot of a website (also shot / ss)\n"
     "• /narrate <message> — reply as a short TTS video\n"
     "Or just talk to me and I'll reply. 💕"
@@ -117,11 +118,11 @@ _BOT_HELP_TEXT = (
 
 
 def _handle_media_command(status, command, arg, own_acct, visibility):
-    """Run compress/clip/convert on a status's attachment(s) via the backend and
+    """Run compress/clip/convert/meme on a status's attachment(s) via the backend and
     post the result file(s) back. Shared shape with the Misskey listener."""
     media = _gather_status_media(status)
     if not media:
-        send_reply(status, "📎 Attach a file to your post, then add `compress`, `clip 0:10 0:30` or `convert`.",
+        send_reply(status, "📎 Attach a file to your post, then add `compress`, `clip 0:10 0:30`, `convert` or `meme <text>`.",
                    own_acct=own_acct, visibility=visibility)
         return
     print(f"→ Forwarding {len(media)} file(s) for '{command}'")
@@ -349,16 +350,23 @@ def process_notifications():
             # Use pre-compiled patterns for performance
             contains_bad = contains_bad_words(lower_content)
 
-            # Handle media commands (compress/clip/convert) on an attached file.
+            # Handle media commands (compress/clip/convert/meme) on an attached file.
             lower_prompt = prompt_text.lower()
             _media_cmd = None
-            for _c in ("compress", "clip", "convert"):
+            for _c in ("compress", "clip", "convert", "meme"):
                 if lower_prompt == _c or lower_prompt.startswith(_c + " "):
                     _media_cmd = _c
                     break
             if _media_cmd:
                 _media_arg = prompt_text[len(_media_cmd):].strip()
-                _handle_media_command(status, _media_cmd, _media_arg, own_acct, visibility)
+                # meme bakes the user's caption into a publicly-posted image, so it
+                # gets the same bad-word gate as geni (compress/clip/convert add no text).
+                if _media_cmd == "meme" and contains_bad:
+                    print(f"[DEBUG] BLOCKED: meme caption contains bad words")
+                    send_reply(status, "I cannot add that text to an image.",
+                               own_acct=own_acct, visibility=visibility)
+                else:
+                    _handle_media_command(status, _media_cmd, _media_arg, own_acct, visibility)
 
             # Handle screenshot command: the backend captures the page and returns a
             # PNG, which the bot posts back as an image attachment.

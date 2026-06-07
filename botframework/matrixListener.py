@@ -1460,6 +1460,11 @@ def process_messages():
                 _media = _media_from_replied_event(message, room_id)
             if not _media:
                 send_reply(message, "📎 Attach an image, video or PDF (or reply to one), then send `compress`, `clip 0:10 0:30`, `convert` or `meme <text>`.")
+            elif lower_prompt.startswith("meme") and contains_bad_words(lower_prompt):
+                # meme bakes the user's caption into a posted image — same bad-word
+                # gate as geni (compress/clip/convert add no user text).
+                print("→ BLOCKED: meme caption contains bad words")
+                send_reply(message, "I cannot add that text to an image.")
             else:
                 print(f"→ Forwarding {len(_media)} file(s) for '{lower_prompt[:20]}'")
                 _summary, _out_files = _call_posterchanai_media(sender, prompt_text, _media)
