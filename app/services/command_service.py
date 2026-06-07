@@ -2979,15 +2979,24 @@ Files are saved to your Storage.""",
                 "content": f"To translate an email, use:\n`mail translate <account> <id> {language}`\n\nFirst check your mail with `mail` to get the email ID.",
             }
 
-        # Inline form `translate <text> to <lang>` (the documented syntax): translate the GIVEN
-        # text, not the last response. Requires non-empty text before "to" and a language after, so
+        def _unquote(s: str) -> str:
+            s = (s or "").strip()
+            if len(s) >= 2 and s[0] in "\"'“‘" and s[-1] in "\"'”’":
+                return s[1:-1].strip()
+            return s
+
+        # Inline form `translate <text> [from <src>] to <lang>` (the documented syntax): translate
+        # the GIVEN text, not the last response. Requires non-empty text and a target language, so
         # `translate spanish` / `translate to spanish` still fall through to last-response translation.
-        # The language is 1-2 words right after "to"; any trailing instruction ("... and explain")
-        # is dropped so it isn't mistaken for part of the language name.
-        _inline = re.match(r'^(.+?)\s+to\s+([A-Za-z][A-Za-z\- ]*?)(?:\s+and\s+.*)?$',
-                           arg.strip(), re.IGNORECASE)
-        if _inline and _inline.group(1).strip() and _inline.group(2).strip():
-            return await self._translate_text(_inline.group(1).strip(), _inline.group(2).strip().title())
+        # The target is 1-2 words after "to"; any trailing instruction ("... and explain") is dropped;
+        # surrounding quotes on the text are stripped.
+        _inline = re.match(
+            r'^(.+?)(?:\s+from\s+([A-Za-z][A-Za-z\- ]*?))?\s+to\s+([A-Za-z][A-Za-z\- ]*?)(?:\s+and\s+.*)?$',
+            arg.strip(), re.IGNORECASE)
+        if _inline and _unquote(_inline.group(1)) and _inline.group(3).strip():
+            _src = (_inline.group(2) or "").strip().title() or None
+            return await self._translate_text(
+                _unquote(_inline.group(1)), _inline.group(3).strip().title(), source=_src)
 
         # No `to <lang>`. If the whole arg is just a known language name, translate the LAST
         # response into it ("translate spanish"). Otherwise the arg is TEXT to translate to English
@@ -3003,9 +3012,9 @@ Files are saved to your Storage.""",
             "bulgarian", "catalan", "esperanto", "welsh", "irish", "latvian", "lithuanian",
             "estonian", "slovenian", "albanian", "macedonian", "georgian", "armenian", "mongolian",
         }
-        _norm = re.sub(r"^to\s+", "", arg.strip(), flags=re.IGNORECASE).strip().lower()
+        _norm = re.sub(r"^to\s+", "", _unquote(arg), flags=re.IGNORECASE).strip().lower()
         if _norm not in _known_langs:
-            return await self._translate_text(arg.strip(), "English")
+            return await self._translate_text(_unquote(arg), "English")
 
         # Translate the last assistant response.
         language = self._parse_language(arg)
@@ -3036,13 +3045,15 @@ Files are saved to your Storage.""",
             lang = lang[3:].strip()
         return (lang or "English").title()
 
-    async def _translate_text(self, text: str, language: str, *, kind: str = "text") -> dict:
+    async def _translate_text(self, text: str, language: str, *, kind: str = "text",
+                              source: Optional[str] = None) -> dict:
         """Translate `text` into `language`, raising the output budget so long content
-        isn't cut off. `kind` labels the prompt ('text' / 'web page text'). Shared by the
-        last-response, URL and attachment translate paths."""
+        isn't cut off. `kind` labels the prompt ('text' / 'web page text'); `source` is an optional
+        known source language. Shared by the last-response, URL and attachment translate paths."""
+        _from = f" from {source}" if source else ""
         messages = [
             {"role": "system", "content": (
-                f"Translate the following {kind} to {language}. Translate ALL of it — every "
+                f"Translate the following {kind}{_from} to {language}. Translate ALL of it — every "
                 "line and list item — do not summarize, omit, or stop early. Preserve the "
                 "original line breaks and formatting. Output only the translation.")},
             {"role": "user", "content": (text or "")[:24000]},
