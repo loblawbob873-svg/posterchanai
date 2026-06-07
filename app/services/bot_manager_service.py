@@ -415,16 +415,21 @@ def _scheduled_jobs(image_bots, text_bots):
     return jobs
 
 
-# Persisted last-post times (epoch secs) per bot, so an interval schedule survives restarts
-# instead of resetting its countdown on every deploy. Image bots schedule off the absolute
-# clock (_next_scheduled_time) and are already deploy-proof, so this only affects intervals.
+# Persisted scheduler state per bot, keyed by name, so a restart resumes instead of resetting.
+#  - last-post times (epoch secs): an interval schedule survives restarts instead of re-rolling
+#    its countdown on every deploy. Image bots on fixed hours are already deploy-proof, so this
+#    only affects intervals.
+#  - daily post counts {"day": yday, "count": n}: a per-day cap survives restarts (the in-memory
+#    counter alone resets to 0 each process, letting a frequently-restarted node blow past the cap).
 _LAST_RUN_KEY = "autopost_last_runs"
+_DAILY_COUNT_KEY = "autopost_daily_counts"
 
 
-def _load_last_runs() -> dict:
+def _load_json_dict(key: str) -> dict:
+    """Read a name-keyed JSON dict Setting (returns {} if absent/corrupt)."""
     db = SessionLocal()
     try:
-        s = db.query(Setting).filter(Setting.key == _LAST_RUN_KEY).first()
+        s = db.query(Setting).filter(Setting.key == key).first()
         if s and s.value:
             try:
                 data = json.loads(s.value)
@@ -436,10 +441,11 @@ def _load_last_runs() -> dict:
         db.close()
 
 
-def _save_last_run(name: str, ts: float):
+def _save_json_dict_entry(key: str, name: str, value):
+    """Set data[name]=value in a name-keyed JSON dict Setting (read-modify-write)."""
     db = SessionLocal()
     try:
-        s = db.query(Setting).filter(Setting.key == _LAST_RUN_KEY).first()
+        s = db.query(Setting).filter(Setting.key == key).first()
         data = {}
         if s and s.value:
             try:
@@ -448,17 +454,33 @@ def _save_last_run(name: str, ts: float):
                     data = {}
             except (ValueError, TypeError):
                 data = {}
-        data[name] = ts
+        data[name] = value
         if s:
             s.value = json.dumps(data)
         else:
-            db.add(Setting(key=_LAST_RUN_KEY, value=json.dumps(data)))
+            db.add(Setting(key=key, value=json.dumps(data)))
         db.commit()
     except Exception as e:
         db.rollback()
-        logger.error("[BOTS] could not persist last-run for %s: %s", name, e)
+        logger.error("[BOTS] could not persist %s for %s: %s", key, name, e)
     finally:
         db.close()
+
+
+def _load_last_runs() -> dict:
+    return _load_json_dict(_LAST_RUN_KEY)
+
+
+def _save_last_run(name: str, ts: float):
+    _save_json_dict_entry(_LAST_RUN_KEY, name, ts)
+
+
+def _load_daily_counts() -> dict:
+    return _load_json_dict(_DAILY_COUNT_KEY)
+
+
+def _save_daily_count(name: str, day: int, count: int):
+    _save_json_dict_entry(_DAILY_COUNT_KEY, name, {"day": day, "count": count})
 
 
 def _job_uses_interval(job) -> bool:
@@ -502,10 +524,12 @@ def _reconcile_scheduled(jobs, base_env):
     global _oneshot_procs
     _oneshot_procs = [p for p in _oneshot_procs if p.poll() is None]
 
-    # persisted last-post times so interval schedules survive restarts. Only hit the DB when
-    # a schedule actually needs (re)creating — steady-state passes skip the read.
+    # persisted last-post times + daily counts so interval schedules and per-day caps survive
+    # restarts. Only hit the DB when a schedule actually needs (re)creating — steady-state
+    # passes skip the read.
     need_last = any(n not in _post_sched for n in wanted)
     last_runs = _load_last_runs() if need_last else {}
+    daily_counts = _load_daily_counts() if need_last else {}
 
     # drop schedules for bots no longer wanted (disabled/deleted/auto-post turned off)
     for name in list(_post_sched.keys()):
@@ -532,13 +556,17 @@ def _reconcile_scheduled(jobs, base_env):
                 anchor = now
                 _save_last_run(name, now)
                 last_runs[name] = now
+            # restore today's persisted post count so a per-day cap holds across restarts;
+            # a stale (previous-day) entry resets to 0.
+            dc = daily_counts.get(name) or {}
+            count = int(dc.get("count", 0)) if dc.get("day") == today else 0
             sched = {"next_run": _next_run_for(job, now, offset, anchor),
-                     "process": None, "offset": offset, "day": today, "count": 0}
+                     "process": None, "offset": offset, "day": today, "count": count}
             _post_sched[name] = sched
         # reap a finished one-shot
         if sched["process"] and sched["process"].poll() is not None:
             sched["process"] = None
-        # reset the per-day counter at the day boundary
+        # reset the per-day counter at the day boundary (next fire re-persists for the new day)
         if sched["day"] != today:
             sched["day"], sched["count"] = today, 0
         if sched["process"] is not None or now < sched["next_run"]:
@@ -562,6 +590,7 @@ def _reconcile_scheduled(jobs, base_env):
         sched["count"] += 1
         sched["next_run"] = _next_run_for(job, now, sched["offset"], now)
         _save_last_run(name, now)
+        _save_daily_count(name, today, sched["count"])
         logger.info("[BOTS] ran %s post for %s (%d today)", job["kind"], name, sched["count"])
 
 
