@@ -224,6 +224,183 @@ def compress_image(
 
 
 # ---------------------------------------------------------------------------
+# Meme text (outlined white caption on the lower half of an image)
+# ---------------------------------------------------------------------------
+
+# Ordered candidate font files: a heavy/bold face reads best for meme captions.
+# Falls back across distros; the last resort is Pillow's bundled default.
+_MEME_FONT_CANDIDATES = [
+    "/usr/share/fonts/impact/impact.ttf",
+    "/usr/share/fonts/truetype/msttcorefonts/Impact.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/liberation-fonts/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
+]
+
+
+def _load_meme_font(size: int):
+    """Load a bold TTF at `size`, falling back to Pillow's default."""
+    from PIL import ImageFont
+    for path in _MEME_FONT_CANDIDATES:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                continue
+    # Last resort: scalable default (Pillow >= 10 supports a size arg).
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:
+        return ImageFont.load_default()
+
+
+def _wrap_text_to_width(draw, text: str, font, max_width: int) -> List[str]:
+    """Greedy word-wrap `text` so each line fits within `max_width` pixels.
+
+    A single word longer than the line is hard-broken character-by-character so
+    it can never overflow the image.
+    """
+    def width_of(s: str) -> int:
+        return int(draw.textbbox((0, 0), s, font=font)[2])
+
+    lines: List[str] = []
+    for paragraph in text.split("\n"):
+        words = paragraph.split()
+        if not words:
+            lines.append("")
+            continue
+        current = ""
+        for word in words:
+            candidate = f"{current} {word}".strip()
+            if width_of(candidate) <= max_width or not current:
+                # Hard-break an over-long single word.
+                if not current and width_of(word) > max_width:
+                    piece = ""
+                    for ch in word:
+                        if width_of(piece + ch) <= max_width or not piece:
+                            piece += ch
+                        else:
+                            lines.append(piece)
+                            piece = ch
+                    current = piece
+                else:
+                    current = candidate
+            else:
+                lines.append(current)
+                current = word
+        if current:
+            lines.append(current)
+    return lines
+
+
+def add_meme_text(data: bytes, text: str) -> bytes:
+    """Draw outlined white meme text across the lower half of an image.
+
+    The font size auto-scales: it starts large and shrinks until the wrapped text
+    fits within the image width and the bottom half's height. Returns JPEG bytes.
+    """
+    from PIL import Image, ImageDraw, ImageOps
+    try:
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+    except Exception:
+        pass
+
+    text = (text or "").strip().upper()  # uppercase = classic meme look
+    if not text:
+        raise ValueError("no caption text given")
+
+    with Image.open(io.BytesIO(data)) as img:
+        img = ImageOps.exif_transpose(img)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+
+        W, H = img.size
+        draw = ImageDraw.Draw(img)
+        margin = max(int(W * 0.04), 8)
+        max_width = W - 2 * margin
+        max_height = int(H * 0.5) - margin  # caption lives in the bottom half
+
+        # Auto-size: from ~1/6 of the height down to a readable floor, pick the
+        # largest font whose wrapped text fits the width and the bottom-half box.
+        chosen_font = None
+        chosen_lines: List[str] = []
+        line_spacing = 0
+        start = max(int(H / 6), 14)
+        for size in range(start, 11, -2):
+            font = _load_meme_font(size)
+            lines = _wrap_text_to_width(draw, text, font, max_width)
+            ascent_box = draw.textbbox((0, 0), "Ay", font=font)
+            line_h = ascent_box[3] - ascent_box[1]
+            spacing = max(int(line_h * 0.2), 2)
+            total_h = len(lines) * line_h + (len(lines) - 1) * spacing
+            widest = max((draw.textbbox((0, 0), ln, font=font)[2] for ln in lines), default=0)
+            if total_h <= max_height and widest <= max_width:
+                chosen_font, chosen_lines, line_spacing = font, lines, spacing
+                break
+        if chosen_font is None:
+            # Even the floor size overflows — use it anyway (best effort).
+            chosen_font = _load_meme_font(12)
+            chosen_lines = _wrap_text_to_width(draw, text, chosen_font, max_width)
+            ascent_box = draw.textbbox((0, 0), "Ay", font=chosen_font)
+            line_spacing = max(int((ascent_box[3] - ascent_box[1]) * 0.2), 2)
+
+        ascent_box = draw.textbbox((0, 0), "Ay", font=chosen_font)
+        line_h = ascent_box[3] - ascent_box[1]
+        total_h = len(chosen_lines) * line_h + (len(chosen_lines) - 1) * line_spacing
+        # Anchor the block to the bottom of the image, inside the margin.
+        y = H - margin - total_h
+        # Outline thickness scales with font size so it stays visible when large.
+        stroke = max(int(line_h * 0.08), 2)
+
+        for line in chosen_lines:
+            lw = draw.textbbox((0, 0), line, font=chosen_font)[2]
+            x = (W - lw) / 2
+            draw.text(
+                (x, y), line, font=chosen_font, fill="white",
+                stroke_width=stroke, stroke_fill="black",
+            )
+            y += line_h + line_spacing
+
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=90, optimize=True)
+        return out.getvalue()
+
+
+def meme_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+    text: str,
+) -> Tuple[List[OutputFile], str]:
+    """Add outlined white meme text to the first image attachment.
+
+    Returns (output_files, summary_text). Mirrors compress_attachments so the
+    web UI, Telegram and Matrix share one delivery path.
+    """
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image to caption — attach an image first."
+    if not (text or "").strip():
+        return [], "Add a caption: `meme <text>`."
+
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_meme_text(data, text)
+        out: OutputFile = {
+            "filename": f"{stem}_meme.jpg",
+            "data": result,
+            "content_type": "image/jpeg",
+        }
+        summary = f"## 🖼️ Meme\n\n🖼️ {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"meme failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
 # Video compression
 # ---------------------------------------------------------------------------
 

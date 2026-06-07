@@ -33,8 +33,11 @@ python-pptx>=1.0.0
 pytesseract>=0.3.10
 # Image processing and thumbnail generation
 # Used for: Photo gallery, image thumbnails, file manager previews,
-#           image compression and image->PDF conversion (compress/convert commands)
-Pillow>=10.0.0
+#           image compression and image->PDF conversion (compress/convert commands),
+#           and outlined meme-caption text (meme command).
+# >=10.1.0: needed for ImageFont.load_default(size=) — the meme command's font
+#           fallback when no system TTF is installed.
+Pillow>=10.1.0
 pillow-heif>=0.16.0
 # Face swap support
 insightface>=0.7.3

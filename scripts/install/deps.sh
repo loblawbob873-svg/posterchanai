@@ -119,6 +119,23 @@ check_dependencies() {
         esac
     fi
 
+    # Bold TrueType font for the 'meme' command (outlined white caption text). Pillow's
+    # bundled default works as a fallback, but a real bold face (DejaVu/Liberation/Impact)
+    # reads much better. Checked via fontconfig.
+    if command -v fc-list &>/dev/null && fc-list 2>/dev/null | grep -qiE "dejavu sans:.*bold|liberation sans:.*bold|impact"; then
+        print_success "bold TrueType font found (meme captions render cleanly)"
+    else
+        print_warning "no bold sans font - the 'meme' command falls back to Pillow's basic font"
+        case "$DISTRO" in
+            gentoo) echo "  Install with: emerge -av media-fonts/dejavu && fc-cache -f" ;;
+            arch)   echo "  Install with: pacman -S ttf-dejavu && fc-cache -f" ;;
+            debian) echo "  Install with: apt install fonts-dejavu && fc-cache -f" ;;
+            fedora) echo "  Install with: dnf install dejavu-sans-fonts && fc-cache -f" ;;
+            suse)   echo "  Install with: zypper install dejavu-fonts && fc-cache -f" ;;
+            *)      echo "  Install DejaVu Sans (or Liberation Sans) Bold for your distribution" ;;
+        esac
+    fi
+
     # Check for pax-utils (scanelf) - needed for Intel Arc on hardened kernels
     if [ "$BACKEND" = "intel" ]; then
         if ! command -v scanelf &>/dev/null; then

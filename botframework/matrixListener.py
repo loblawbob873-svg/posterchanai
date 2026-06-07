@@ -1080,6 +1080,7 @@ def process_messages():
                 if _is_img:
                     _opts.append("• `compress` — shrink the image")
                     _opts.append("• `convert` — turn image(s) into a PDF")
+                    _opts.append("• `meme <text>` — add outlined white caption text")
                     _opts.append("• `translate <language>` — read & translate the text")
                 elif _is_vid:
                     _opts.append("• `compress` — shrink the video")
@@ -1445,11 +1446,12 @@ def process_messages():
             result_text = _call_posterchanai_command(sender, f"torrents add {prompt_text.strip()}")
             send_reply(message, result_text or "Torrent added.")
 
-        # compress/clip/convert: forward the user's recently uploaded files to posterchanai,
+        # compress/clip/convert/meme: forward the user's recently uploaded files to posterchanai,
         # which processes them and posts the results back into this room.
         elif lower_prompt == "compress" or lower_prompt.startswith("compress ") \
                 or lower_prompt == "clip" or lower_prompt.startswith("clip ") \
-                or lower_prompt == "convert" or lower_prompt.startswith("convert "):
+                or lower_prompt == "convert" or lower_prompt.startswith("convert ") \
+                or lower_prompt == "meme" or lower_prompt.startswith("meme "):
             _media = _gather_cached_media(sender)
             # Fallback for clients with no media caption (e.g. Element): the user
             # uploads the file, then *replies* to it with the command. Pull the
@@ -1457,7 +1459,7 @@ def process_messages():
             if not _media:
                 _media = _media_from_replied_event(message, room_id)
             if not _media:
-                send_reply(message, "📎 Attach an image, video or PDF (or reply to one), then send `compress`, `clip 0:10 0:30` or `convert`.")
+                send_reply(message, "📎 Attach an image, video or PDF (or reply to one), then send `compress`, `clip 0:10 0:30`, `convert` or `meme <text>`.")
             else:
                 print(f"→ Forwarding {len(_media)} file(s) for '{lower_prompt[:20]}'")
                 _summary, _out_files = _call_posterchanai_media(sender, prompt_text, _media)

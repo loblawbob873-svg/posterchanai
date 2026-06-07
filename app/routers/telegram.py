@@ -690,12 +690,13 @@ _HELP_SECTIONS = {
         "• 🔄 Refresh — update the totals"
     ),
     "files": (
-        "📎 *Files — compress & convert*\n\n"
+        "📎 *Files — compress, convert & meme*\n\n"
         "Just upload a file (no caption needed) and tap a button:\n\n"
         "*Images:*\n"
         "• 🗜 Compress — shrink the image\n"
         "• 📄 To PDF — combine your image(s) into one PDF\n"
         "• 🔤 Read text — OCR the text out of the image\n"
+        "• 🖼 Meme — add outlined white caption text (I'll ask for it)\n"
         "• 📣 Post to social — share it to your connected platforms\n\n"
         "*Video:*\n"
         "• 🗜 Compress — re-encode smaller (H.264, up to 1080p)\n"
@@ -705,7 +706,7 @@ _HELP_SECTIONS = {
         "• 📝 Summarize — AI summary of the document\n\n"
         "Tips:\n"
         "• Send several images, then tap *To PDF*, to merge them into one PDF.\n"
-        "• You can also skip the buttons: send the file with `compress`, `clip 0:10 0:30` or `convert` as the caption.\n"
+        "• You can also skip the buttons: send the file with `compress`, `clip 0:10 0:30`, `convert` or `meme <text>` as the caption.\n"
         "• Telegram limits bot downloads to 20 MB — use the web UI for bigger files."
     ),
     "youtube": (
@@ -1237,6 +1238,9 @@ _CLIP_END_PROMPT = "✂️ Clip — reply with the END time (e.g. 0:30 or 1:30):
 # After tapping "📣 Post to social" on an upload, ask for optional caption text
 # before showing the platform buttons. Reply with "-" (or "skip") to post media only.
 _SOCIAL_CAPTION_PROMPT = "✍️ Add a caption for your post? Reply with text, or send - to post without any."
+# After tapping "🖼 Meme" on an image upload, ForceReply for the caption text; the
+# source image stays in the media cache and is captioned when the reply arrives.
+_MEME_PROMPT = "🖼 Meme — reply with the caption text to add:"
 
 
 def _media_action_keyboard(attachments: list, user=None) -> Optional[dict]:
@@ -1266,6 +1270,9 @@ def _media_action_keyboard(attachments: list, user=None) -> Optional[dict]:
         rows.append([
             {"text": "🔤 Read text", "callback_data": "media:ocr"},
             {"text": "🌐 Translate", "callback_data": "media:translate"},
+        ])
+        rows.append([
+            {"text": "🖼 Meme", "callback_data": "media:meme"},
         ])
     if has_pdf:
         rows.append([
@@ -1558,6 +1565,50 @@ async def _handle_telegram_update(update: dict, db: Session):
                 )
                 return {"ok": True}
 
+            # Reply to the "🖼 Meme" caption prompt → caption the cached image.
+            if reply_from.get("is_bot") and reply_text.strip() == _MEME_PROMPT:
+                from app.services.media_service import is_image
+                _entry = _media_action_cache.get(chat_id)
+                if not _entry or (time.time() - _entry.get("ts", 0)) > _MEDIA_ACTION_TTL:
+                    _media_action_cache.pop(chat_id, None)
+                    await telegram_service.send_message(chat_id, "⏳ That upload expired — please send the image again.")
+                    return {"ok": True}
+                _caption = text.strip()
+                if not _caption:
+                    await telegram_service.send_message(
+                        chat_id, "⚠️ Empty caption. " + _MEME_PROMPT,
+                        reply_markup={"force_reply": True, "selective": True,
+                                      "input_field_placeholder": "TOP TEXT"},
+                    )
+                    return {"ok": True}
+                _meme_user = db.query(User).filter(
+                    User.telegram_chat_id == chat_id,
+                    User.telegram_enabled == True
+                ).first()
+                if not _meme_user:
+                    await telegram_service.send_message(chat_id, "Your Telegram account is not linked.")
+                    return {"ok": True}
+                _atts = [a for a in _entry["attachments"] if is_image(a[0], a[2])]
+                await telegram_service.send_message(chat_id, "🖼 Adding caption…")
+                try:
+                    _res = await CommandService(db, user=_meme_user).execute_command(
+                        "meme", _caption, attachments=_atts
+                    )
+                    if _res.get("type") == "files":
+                        # Send as a document (not send_photo): the meme is a JPEG, whose
+                        # base64 starts with "/9j/" — send_photo would treat that as a
+                        # file path and fail. send_document_bytes takes raw bytes.
+                        for _f in _res.get("files", []):
+                            if _f.get("data"):
+                                await telegram_service.send_document_bytes(chat_id, _f["data"], _f.get("filename", "meme.jpg"))
+                                await asyncio.sleep(0.15)
+                    else:
+                        await telegram_service.send_message(chat_id, _res.get("content", "Done."))
+                except Exception as _meme_err:
+                    logger.error(f"Meme failed: {_meme_err}", exc_info=True)
+                    await telegram_service.send_message(chat_id, f"❌ Meme failed: {_meme_err}")
+                return {"ok": True}
+
             # Interactive video-clip flow: replies to the start/end ForceReply prompts.
             # Handled here (before social-reply/command routing) since it spans two
             # steps and pulls the source video from the media-action cache.
@@ -1749,7 +1800,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "meme", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -1981,7 +2032,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "meme", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -2190,7 +2241,7 @@ async def _handle_telegram_update(update: dict, db: Session):
 
             # If we have images, always run OCR for later use
             # (skip for compress/convert — they operate on the raw file, not its text)
-            if has_images and attachments and command not in ("compress", "clip", "convert"):
+            if has_images and attachments and command not in ("compress", "clip", "convert", "meme"):
                 for filename, file_data, content_type in attachments:
                     if content_type.startswith("image/"):
                         import base64
@@ -2237,7 +2288,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Attachment too large for Telegram to hand to the bot (20 MB cap).
             # Handle here so it works whether or not a command caption was given,
             # instead of falling through to the chat model.
-            if oversized_attachment and command in ("compress", "clip", "convert", None):
+            if oversized_attachment and command in ("compress", "clip", "convert", "meme", None):
                 _ov_name, _ov_size = oversized_attachment
                 _cap_mb = TELEGRAM_MAX_DOWNLOAD_BYTES / (1024 * 1024)
                 if telegram_service.is_local_api:
@@ -3372,6 +3423,17 @@ async def _handle_telegram_update(update: dict, db: Session):
                                 {"role": "user", "content": _doc[:12000]},
                             ])
                             await telegram_service.send_message(chat_id, f"📝 *Summary:*\n\n{_summary}")
+                    elif _action == "meme":
+                        # ForceReply for the caption; the image stays in the cache and is
+                        # captioned when the reply arrives (see _MEME_PROMPT routing).
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to caption — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(
+                                chat_id, _MEME_PROMPT,
+                                reply_markup={"force_reply": True, "selective": True,
+                                              "input_field_placeholder": "TOP TEXT"},
+                            )
                     elif _action == "translate":
                         # Ask which language to translate the upload's text into.
                         await telegram_service.send_message(

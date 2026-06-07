@@ -565,6 +565,7 @@ class CommandService:
         "compress": "Compress attached image(s) or video(s)",
         "clip": "Clip an attached video: clip <start> <end> (e.g. clip 0:10 0:30)",
         "convert": "Convert image(s) to PDF or a PDF to images",
+        "meme": "Add outlined white meme text to an attached image: meme <text>",
         "node": "Remote node mgmt: node <name> <cmd> | node all <cmd> | node agent <name> <goal> | node agent all <goal> | node list | node jobs | node log <id> | node kill <id>",
         "budget": "Show your budget summary (income, unpaid bills, remaining)",
         "bills": "List your bills: bills (unpaid) | bills all | bills paid",
@@ -695,6 +696,8 @@ class CommandService:
             return await self._clip_command(arg, attachments)
         elif command == "convert":
             return await self._convert_command(arg, attachments)
+        elif command == "meme":
+            return await self._meme_command(arg, attachments)
         elif command == "node":
             return await self._node_command(arg, notify=node_notify)
         elif command == "budget":
@@ -3185,6 +3188,27 @@ Files are saved to your Storage.""",
         from app.services.media_service import convert_attachments
 
         outputs, summary = await asyncio.to_thread(convert_attachments, attachments, arg)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _meme_command(self, arg: str, attachments: Optional[list]) -> dict:
+        """Add outlined white meme text to an attached image: `meme <text>`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {
+                "type": "text",
+                "content": "Attach an image, then send `meme <text>` to caption it.",
+            }
+        if not (arg or "").strip():
+            return {"type": "text", "content": "Usage: `meme <text>` — the caption to add."}
+
+        import asyncio
+        from app.services.media_service import meme_attachments
+
+        # Pillow text rendering is light, but keep it off the event loop for big images.
+        outputs, summary = await asyncio.to_thread(meme_attachments, attachments, arg)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
