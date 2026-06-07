@@ -181,9 +181,6 @@
     position: relative !important;
 }
 
-#userSettingsModal .modal-content,
-#userSettingsModal .modal-content.modal-fullscreen,
-#userSettingsModal > .modal-content,
 #ragModal .modal-content,
 #calendarModal .modal-content,
 #contactsModal .modal-content,
@@ -192,6 +189,20 @@
 #apiKeysModal .modal-content {
     max-height: calc(100vh - 10px) !important;
     height: calc(100vh - 10px) !important;
+    overflow-y: hidden !important;
+    box-sizing: border-box !important;
+    position: relative !important;
+}
+/* User Settings: size to the active tab's content (like the Admin panel, which is a content-height
+   page) instead of forcing full viewport height — that left a big gap below short tabs. Width
+   matches .admin-container (1000px). max-height caps it; the content area scrolls when taller. */
+#userSettingsModal .modal-content,
+#userSettingsModal .modal-content.modal-fullscreen,
+#userSettingsModal > .modal-content {
+    width: min(96vw, 1000px) !important;
+    max-width: 1000px !important;
+    height: fit-content !important;
+    max-height: calc(100vh - 20px) !important;
     overflow-y: hidden !important;
     box-sizing: border-box !important;
     position: relative !important;

@@ -1768,11 +1768,6 @@ fieldset legend {
     flex-direction: column !important;
     overflow: hidden !important;
 }
-#userSettingsModal .modal-content.modal-fullscreen {
-    /* Shrink-wrap to the active tab's content; max-height (above) caps it and the body scrolls.
-       fit-content is reliable here where plain `height:auto` left the flex column full-height. */
-    height: fit-content !important;
-}
 #userSettingsModal .modal-header,
 #ragModal .modal-header,
 #calendarModal .modal-header {
@@ -2040,8 +2035,8 @@ fieldset legend {
 
 /* User Settings Tabbed Layout */
 .modal-fullscreen {
-    width: min(95vw, 900px) !important;
-    max-width: 900px !important;
+    width: min(96vw, 1000px) !important;   /* match the Admin panel width (.admin-container) */
+    max-width: 1000px !important;
     /* Size to content, but never taller than the viewport (inner body scrolls). Fixed full-height
        made short tabs / a near-empty file manager render as an over-long window. */
     height: auto !important;

@@ -306,11 +306,6 @@ def unload_image_model(db: Session):
         logger.info("Native image model unloaded")
 
 
-def get_image_backend_for_user(db: Session, user: Optional["User"] = None) -> ImageBackend:
-    """Get the image generation backend for a user (the default server backend)."""
-    return get_image_backend(db)
-
-
 async def generate_image_for_user(
     db: Session,
     user: Optional["User"],
