@@ -25,6 +25,14 @@ resets/restarts `nas.lan`. **`git commit -a` does NOT stage new untracked files*
 any new file before running it, or it ships a broken (ImportError) tree to every node.
 `sync.sh` deploys **code only**, not Python deps (use `install.sh` option 6 for deps).
 
+**Two remotes — `origin` is production, `github` is the public mirror.** `origin`
+(`git.poster.place`, Gitea) is what `sync.sh`/`git push` deploys to **production**, so push
+there **first**. The `github` remote (`github.com/loblawbob873-svg/posterchanai`) is a **public
+mirror** whose default branch is `main`, mapped from local `master`: push to it explicitly with
+`git push github master:main`. **Always prompt/confirm before pushing to GitHub** — it's public,
+so never push there automatically as part of a normal deploy. Keep local `master` tracking
+`origin` (so plain `git push` deploys, not publishes).
+
 ## Bot framework (merged from `~/posterchan` → `botframework/`)
 
 The standalone `~/posterchan` bot framework now lives **in this repo** under `botframework/`
