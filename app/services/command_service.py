@@ -2989,6 +2989,24 @@ Files are saved to your Storage.""",
         if _inline and _inline.group(1).strip() and _inline.group(2).strip():
             return await self._translate_text(_inline.group(1).strip(), _inline.group(2).strip().title())
 
+        # No `to <lang>`. If the whole arg is just a known language name, translate the LAST
+        # response into it ("translate spanish"). Otherwise the arg is TEXT to translate to English
+        # ("translate dame desuyo") — do NOT treat it as a language for the last response, which
+        # mis-translated the previous command's output (e.g. a nyaa listing) instead of the words.
+        _known_langs = {
+            "english", "spanish", "french", "german", "italian", "portuguese", "dutch", "russian",
+            "japanese", "chinese", "mandarin", "cantonese", "korean", "arabic", "hindi", "bengali",
+            "punjabi", "urdu", "turkish", "vietnamese", "thai", "indonesian", "malay", "tagalog",
+            "filipino", "polish", "ukrainian", "czech", "slovak", "romanian", "hungarian", "greek",
+            "hebrew", "swedish", "norwegian", "danish", "finnish", "icelandic", "latin", "persian",
+            "farsi", "swahili", "tamil", "telugu", "gujarati", "marathi", "serbian", "croatian",
+            "bulgarian", "catalan", "esperanto", "welsh", "irish", "latvian", "lithuanian",
+            "estonian", "slovenian", "albanian", "macedonian", "georgian", "armenian", "mongolian",
+        }
+        _norm = re.sub(r"^to\s+", "", arg.strip(), flags=re.IGNORECASE).strip().lower()
+        if _norm not in _known_langs:
+            return await self._translate_text(arg.strip(), "English")
+
         # Translate the last assistant response.
         language = self._parse_language(arg)
         from app.models import Conversation, Message

@@ -1769,7 +1769,9 @@ fieldset legend {
     overflow: hidden !important;
 }
 #userSettingsModal .modal-content.modal-fullscreen {
-    height: auto !important; /* size to content; max-height (above) caps it and the body scrolls */
+    /* Shrink-wrap to the active tab's content; max-height (above) caps it and the body scrolls.
+       fit-content is reliable here where plain `height:auto` left the flex column full-height. */
+    height: fit-content !important;
 }
 #userSettingsModal .modal-header,
 #ragModal .modal-header,
@@ -2061,7 +2063,9 @@ fieldset legend {
     overflow: hidden;
     padding: 0 !important;
     min-height: 0; /* Allow flex child to shrink */
-    height: 100%; /* Take full available height */
+    /* height:100% forced the modal to full viewport height even for short tabs; let it size to
+       content (the modal-content max-height still caps it and the content area scrolls). */
+    height: auto;
 }
 .user-tabs {
     display: flex;
