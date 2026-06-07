@@ -99,9 +99,12 @@ IMAGE_POSTER_TEXT = os.getenv("IMAGE_POSTER_TEXT")
 IMAGE_POSTER_RANDOM_SCENES = os.getenv("IMAGE_POSTER_RANDOM_SCENES", "").lower() in ("true", "1", "yes")
 
 # Auto Poster (--autopost mode): scheduled in-character standalone posts. Scheduling
-# (interval/cap/quiet-hours) lives in bot_manager_service; these two drive content only.
+# (interval/cap/quiet-hours) lives in bot_manager_service; these drive content/targets only.
 AUTO_POST_SEED = os.getenv("AUTO_POST_SEED", "")
 AUTO_POST_TOPICS = os.getenv("AUTO_POST_TOPICS", "")
+# Matrix-only: rooms to auto-post to (one per line / comma-separated). Blank falls back to
+# the bot's default MATRIX_ROOM_ID. Each room gets its own freshly generated post.
+AUTO_POST_ROOMS = os.getenv("AUTO_POST_ROOMS", "")
 
 # SearXNG Configuration
 SEARXNG_URL = os.getenv("SEARXNG_URL", "https://search.poster.place")

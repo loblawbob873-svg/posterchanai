@@ -223,6 +223,7 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
         # content knobs. auto_post_topics is a free-form string (one per line / comma-sep).
         setif("auto_post_seed", "AUTO_POST_SEED")
         setif("auto_post_topics", "AUTO_POST_TOPICS")
+        setif("auto_post_rooms", "AUTO_POST_ROOMS")  # Matrix-only: rooms to auto-post to
 
         # Phase-4 dedup A/B switch: route this bot's Pleroma/Misskey network ops through the
         # app's shared services (via botframework/*_shim). Set "use_app_service": true in the

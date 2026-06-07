@@ -35,6 +35,30 @@ def _build_seed():
     return seed
 
 
+def _generate_post():
+    """Generate one in-character post; returns stripped text, or None on empty/failure."""
+    seed = _build_seed()
+    print(f"[autopost] Generating post with seed: {seed[:120]}...")
+    text = generate_reply(seed)
+    if not text or not text.strip():
+        print("[autopost] Generation returned empty; nothing to post.")
+        return None
+    return text.strip()
+
+
+def _matrix_rooms():
+    """Rooms a Matrix bot auto-posts to: AUTO_POST_ROOMS (one per line / comma-separated),
+    falling back to the bot's default MATRIX_ROOM_ID."""
+    raw = os.getenv("AUTO_POST_ROOMS", "")
+    rooms = [r.strip() for line in raw.splitlines() for r in line.split(",")]
+    rooms = [r for r in rooms if r]
+    if not rooms:
+        default = (os.getenv("MATRIX_ROOM_ID") or "").strip()
+        if default:
+            rooms = [default]
+    return rooms
+
+
 # Markers wrap the preview text so a caller capturing stdout (the Test → Preview button via
 # bot_manager.preview_post) can extract just the generated post out of the debug chatter.
 PREVIEW_BEGIN = "=== AUTOPOST PREVIEW BEGIN ==="
@@ -44,37 +68,54 @@ PREVIEW_END = "=== AUTOPOST PREVIEW END ==="
 def autopost(print_only=False):
     """Generate one post from the bot's personality PROMPT and post it to its platform.
 
-    print_only=True is the dry run (--autopost-print): generate and print between the
-    PREVIEW markers, but do NOT publish."""
+    print_only=True is the dry run (--autopost-print): generate one and print between the
+    PREVIEW markers, but do NOT publish.
+
+    Platform precedence is Misskey → Pleroma → Matrix. Fedi wins over a *secondary* Matrix
+    connection, so a fedi bot that also sits in a Matrix room auto-posts to fedi only (never
+    both). Matrix-only bots fall through to the room-by-room path."""
     if not PROMPT or len(PROMPT.strip()) < 10:
         print("[autopost] No personality PROMPT set; skipping.")
         return
 
-    seed = _build_seed()
-    print(f"[autopost] Generating post with seed: {seed[:120]}...")
-    text = generate_reply(seed)
-    if not text or not text.strip():
-        print("[autopost] Generation returned empty; nothing posted.")
-        return
-    text = text.strip()
-
     if print_only:
-        print(PREVIEW_BEGIN)
-        print(text)
-        print(PREVIEW_END)
+        text = _generate_post()
+        if text:
+            print(PREVIEW_BEGIN)
+            print(text)
+            print(PREVIEW_END)
         return
 
-    # Platform dispatch — both modules expose post_to_fediverse(status_text) with identical
-    # BLOCK_PHRASE / length guards. Choose by whichever endpoint the manager configured.
-    from config import MISSKEY_SERVER, PLEROMA_ENDPOINT
-    if MISSKEY_SERVER:
-        from misskey import post_to_fediverse
-    elif PLEROMA_ENDPOINT:
-        from pleroma import post_to_fediverse
+    from config import MISSKEY_SERVER, PLEROMA_ENDPOINT, MATRIX_SERVER
+
+    if MISSKEY_SERVER or PLEROMA_ENDPOINT:
+        # Fediverse: one post. Both modules expose post_to_fediverse(status_text) with
+        # identical BLOCK_PHRASE / length guards.
+        text = _generate_post()
+        if not text:
+            return
+        if MISSKEY_SERVER:
+            from misskey import post_to_fediverse
+        else:
+            from pleroma import post_to_fediverse
+        print(f"[autopost] Posting ({len(text)} chars): {text[:120]}...")
+        post_to_fediverse(text)
+    elif MATRIX_SERVER:
+        # Matrix: room-by-room — a freshly generated post per room so multiple rooms don't
+        # get identical text. send_message applies the same BLOCK_PHRASE guard.
+        rooms = _matrix_rooms()
+        if not rooms:
+            print("[autopost] Matrix bot has no rooms (auto_post_rooms / MATRIX_ROOM_ID); skipping.")
+            return
+        from matrix_client import post_to_matrix
+        for room in rooms:
+            text = _generate_post()
+            if not text:
+                continue
+            print(f"[autopost] Posting to Matrix room {room} ({len(text)} chars)...")
+            post_to_matrix(room, text)
     else:
-        print("[autopost] Neither MISSKEY_SERVER nor PLEROMA_ENDPOINT configured; skipping.")
+        print("[autopost] No Misskey/Pleroma/Matrix endpoint configured; skipping.")
         return
 
-    print(f"[autopost] Posting ({len(text)} chars): {text[:120]}...")
-    post_to_fediverse(text)
     print("[autopost] Done.")

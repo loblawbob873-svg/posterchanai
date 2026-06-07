@@ -9,6 +9,17 @@ logger = logging.getLogger(__name__)
 # Telegram rejects messages longer than 4096 chars; split with a safety margin.
 _TELEGRAM_MSG_LIMIT = 4000
 
+# Telegram rejects media captions (photo/video/audio/document) longer than 1024 chars.
+_TELEGRAM_CAPTION_LIMIT = 1024
+
+
+def _clamp_caption(caption):
+    """Truncate a media caption to Telegram's 1024-char limit so the send doesn't fail with
+    'message caption is too long' — the media still goes out, with a trimmed caption."""
+    if caption and len(caption) > _TELEGRAM_CAPTION_LIMIT:
+        return caption[:_TELEGRAM_CAPTION_LIMIT - 1].rstrip() + "…"
+    return caption
+
 
 def _split_for_telegram(text: str, limit: int = _TELEGRAM_MSG_LIMIT) -> list[str]:
     """Split text into <=limit-char pieces, preferring newline/space boundaries."""
@@ -122,7 +133,8 @@ class TelegramService:
         if not self.bot_token:
             logger.warning("Telegram bot token not configured")
             return {"ok": False, "error": "Bot token not configured"}
-        
+
+        caption = _clamp_caption(caption)
         url = f"{self.api_base}{self.bot_token}/sendPhoto"
         
         # Determine if photo_data is base64 or a URL
@@ -195,6 +207,7 @@ class TelegramService:
             logger.warning("Telegram bot token not configured")
             return {"ok": False, "error": "Bot token not configured"}
         
+        caption = _clamp_caption(caption)
         url = f"{self.api_base}{self.bot_token}/sendDocument"
         payload = {
             "chat_id": chat_id,
@@ -223,6 +236,7 @@ class TelegramService:
         """
         if not self.bot_token:
             return {"ok": False, "error": "Bot token not configured"}
+        caption = _clamp_caption(caption)
         url = f"{self.api_base}{self.bot_token}/sendDocument"
         data = {"chat_id": chat_id}
         if caption:
@@ -410,6 +424,7 @@ class TelegramService:
         if not self.bot_token:
             return {"ok": False, "error": "Bot token not configured"}
 
+        caption = _clamp_caption(caption)
         url = f"{self.api_base}{self.bot_token}/sendAudio"
 
         try:
@@ -460,6 +475,7 @@ class TelegramService:
         file_size = os.path.getsize(file_path)
         logger.info(f"send_video: Sending file {file_path}, size={file_size} bytes, chat_id={chat_id}")
 
+        caption = _clamp_caption(caption)
         url = f"{self.api_base}{self.bot_token}/sendVideo"
 
         try:
