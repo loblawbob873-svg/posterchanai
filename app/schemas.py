@@ -142,6 +142,11 @@ class SettingsResponse(BaseModel):
     # large files mid-function). Plain chat keeps ollama_num_predict so slow generations stay under
     # the client's request timeout.
     ollama_tool_num_predict: str = "16384"
+    # Small-context coding guidance injected server-side into the system prompt of any request that
+    # carries tools (opencode et al.), so large-file editing behaves without each client needing its
+    # own AGENTS.md. Empty tool_guidance_text => the built-in default in openai_api._DEFAULT_TOOL_GUIDANCE.
+    tool_guidance_enabled: str = "true"
+    tool_guidance_text: str = ""
     ollama_keep_alive: str = "-1"
     ollama_stop: str = ""
     ollama_seed: str = ""

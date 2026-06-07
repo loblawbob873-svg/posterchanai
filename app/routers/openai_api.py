@@ -15,6 +15,23 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
+# Default small-context coding guidance, appended server-side to the system prompt of any request
+# that carries tools (opencode et al.). Lets large-file editing behave on small-ctx local models
+# without each client maintaining its own AGENTS.md. Admin-overridable via the `tool_guidance_text`
+# setting; disable with `tool_guidance_enabled=false`. Kept generic (applies to ANY tool-bearing
+# client) per the keep-proxy-generic rule.
+_DEFAULT_TOOL_GUIDANCE = (
+    "You are running on a model with a SMALL context window. To work with large files reliably:\n"
+    "- Never read a whole file just to find something: use grep/glob to locate the exact lines, "
+    "then read with a tight offset/limit window. When several files are involved, grep across them "
+    "and read only the few relevant lines from each — do not open whole files (it overflows the "
+    "context and the answer is lost).\n"
+    "- To edit, replace the smallest unique snippet rather than rewriting the file.\n"
+    "- To create a large file, build it in small append steps, not one huge write (a too-large "
+    "write is truncated mid-function).\n"
+    "- Prefer many small, targeted tool calls; keep each tool result small."
+)
+
 from app.database import get_db
 from app.models import Setting, User
 from app.utils.auth_utils import query_api_key_with_retry, get_user_from_api_key
@@ -442,6 +459,19 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     rag_api_url = settings.get("rag_api_url", "").strip() or None
     if rag_enabled and not has_system and not skip_load_balancer:
         messages = await inject_rag_context(messages, db, user_id=1, top_k=3, rag_api_url=rag_api_url)
+
+    # Server-side coding guidance: when a request carries tools (agentic coding clients like
+    # opencode), append a short small-context discipline note to the system prompt so large-file
+    # editing behaves WITHOUT each client maintaining its own AGENTS.md. Generic (any tool-bearing
+    # client), admin-configurable (tool_guidance_text), toggleable (tool_guidance_enabled). Skip on
+    # LB hops so it isn't injected twice.
+    if request.tools and not skip_load_balancer \
+            and settings.get("tool_guidance_enabled", "true").lower() == "true":
+        guidance = (settings.get("tool_guidance_text", "") or "").strip() or _DEFAULT_TOOL_GUIDANCE
+        if messages and messages[0].get("role") == "system":
+            messages[0]["content"] = ((messages[0].get("content") or "").rstrip() + "\n\n" + guidance)
+        else:
+            messages.insert(0, {"role": "system", "content": guidance})
 
     # Ensure messages alternate user/assistant properly (prevents "roles must alternate" errors).
     # Must run BEFORE inject_no_think so /no_think is appended to the final merged user turn,

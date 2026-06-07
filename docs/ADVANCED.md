@@ -959,28 +959,33 @@ Use posterchanai as the LLM backend for [OpenCode](https://opencode.ai):
 
 Local models served by posterchanai have small context windows. By default a coding client's
 whole-file `write` (creating a file) or whole-file `read`+`edit` (changing one) overflows the
-context or the output budget, so **large files get truncated mid-function**. Two things fix this:
+context or the output budget, so **large files get truncated mid-function**. posterchanai handles
+this for you — **no per-host config file required**:
 
-- **Server side (already configured):** tool/agentic requests use a separate, higher output cap,
-  `ollama_tool_num_predict` (Admin → AI Settings → "Max Tokens (tool/agentic calls)", default
-  16384), so a `write` isn't cut off at the lower chat cap. Raise **Context Length**
-  (`ollama_num_ctx`) toward your model's trained max for the edit path.
-- **Client side (opencode recipe):** ship `read`-by-range + chunked/append writes so the model
-  never needs the whole file. Templates live in [`docs/opencode/`](opencode/):
+- **Higher output cap for tool calls:** tool/agentic requests use `ollama_tool_num_predict`
+  (Admin → AI Settings → "Max Tokens (tool/agentic calls)", default 16384), so a `write` isn't cut
+  off at the lower chat cap. Raise **Context Length** (`ollama_num_ctx`) toward your model's trained
+  max for the edit path.
+- **Auto-injected coding guidance:** for any request carrying tools, posterchanai appends a short
+  small-context discipline note to the system prompt (grep-first, ranged reads, smallest-snippet
+  edits, chunked creates). Admin → AI Settings → "Inject small-context coding guidance"
+  (`tool_guidance_enabled`, on by default; text overridable via `tool_guidance_text`). This means
+  you do **not** need to install an `AGENTS.md` on the opencode host — the rules ride along with
+  every request.
 
-  ```sh
-  # custom tools (append_file, insert_at_line) — run on the machine where opencode runs
-  cp docs/opencode/tools/*.ts  ~/.config/opencode/tools/
-  # rules: tell the model to use range reads + targeted/chunked writes
-  cp docs/opencode/AGENTS.md   ~/.config/opencode/AGENTS.md   # or your project root
-  # provider config (edit baseURL + model)
-  cp docs/opencode/opencode.json ~/.config/opencode/opencode.json
-  ```
+The only client-side piece posterchanai can't supply is **extra tools** (the proxy generates tool
+*calls* but opencode owns the tool *implementations*). For building large files incrementally, add
+these optional custom tools on the opencode host (templates in [`docs/opencode/`](opencode/)):
 
-  Workflow the rules enforce: **create** large files by writing the first chunk then
-  `append_file`-ing the rest one function at a time; **edit** existing files with `edit` on the
-  smallest unique snippet (or `insert_at_line`) after locating it with `grep` — never re-emit the
-  whole file.
+```sh
+# optional: append/insert tools so the model can grow a file in small steps
+cp docs/opencode/tools/*.ts    ~/.config/opencode/tools/
+# provider config (edit baseURL + model)
+cp docs/opencode/opencode.json ~/.config/opencode/opencode.json
+```
+
+(`docs/opencode/AGENTS.md` remains as an optional override / for non-posterchanai backends, but is
+redundant when using posterchanai since the guidance is injected server-side.)
 
 ### API Keys
 

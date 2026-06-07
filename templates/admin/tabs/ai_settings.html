@@ -162,6 +162,21 @@
         </div>
         <div class="form-row">
             <div class="form-group">
+                <label for="tool_guidance_enabled">Inject small-context coding guidance (tool calls)</label>
+                <select id="tool_guidance_enabled" name="tool_guidance_enabled">
+                    <option value="true">Enabled</option>
+                    <option value="false">Disabled</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group" style="flex:1 1 100%;">
+                <label for="tool_guidance_text">Coding guidance text (blank = built-in default: grep-first, ranged reads, chunked writes)</label>
+                <textarea id="tool_guidance_text" name="tool_guidance_text" rows="6" placeholder="Leave blank to use the built-in small-context guidance."></textarea>
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
                 <label for="ollama_mirostat">Mirostat</label>
                 <select id="ollama_mirostat" name="ollama_mirostat">
                     <option value="0">Disabled</option>
