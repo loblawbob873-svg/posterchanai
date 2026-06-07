@@ -55,17 +55,10 @@ def get_image_load_balancer(db: Session) -> Optional[ImageLoadBalancer]:
     return None
 
 
-# Always-on prompt enrichment, applied once at the entry server (not on forwarded
-# server-to-server requests). Suppresses the framing/cropping/flat-background the model
-# tends to add, and varies the setting so images aren't all the same backdrop.
-_BASE_NEGATIVE = "bad quality, blurry, distorted, ugly, deformed, low resolution"
-_FRAME_NEGATIVE = (
-    "picture frame, border, frame, vignette, letterbox, pillarbox, "
-    "cropped, cut off, headshot, bust, close-up, "
-    "painted background, flat background, studio backdrop, gradient background, "
-    "sketch, sketchbook, pencil sketch, pencil drawing, charcoal drawing, rough sketch, "
-    "line art, lineart, doodle, scribble, unfinished, draft, hand-drawn"
-)
+# Prompt enrichment, applied once at the entry server (not on forwarded server-to-server
+# requests). We vary the setting (random background/location) so images aren't all the same
+# backdrop. NOTE: we intentionally do NOT inject a heavy negative prompt — testing showed the
+# frame/sketch negatives degraded quality; the random scene fills the background naturally.
 _RANDOM_SCENES = [
     "in a neon-lit city street at night", "on a sunny tropical beach",
     "in a cozy coffee shop by the window", "in a misty pine forest",
@@ -82,12 +75,6 @@ _RANDOM_SCENES = [
 def _enrich_prompt(prompt: str) -> str:
     """Append a random background/location so generations vary their setting."""
     return f"{prompt}, {random.choice(_RANDOM_SCENES)}"
-
-
-def _ensure_frame_negative(negative: str) -> str:
-    """Merge the caller's negative with the base + frame-suppression negatives."""
-    parts = [p for p in [(negative or "").strip().rstrip(","), _BASE_NEGATIVE, _FRAME_NEGATIVE] if p]
-    return ", ".join(parts)
 
 
 async def generate_image_with_load_balancing(
@@ -117,7 +104,7 @@ async def generate_image_with_load_balancing(
     # load-balancing logic below is unchanged.
     if not is_load_balanced:
         prompt = _enrich_prompt(prompt)
-        negative_prompt = _ensure_frame_negative(negative_prompt)
+        # No forced negative — caller's negative (usually empty) passes through unchanged.
 
     # Query settings from database
     settings = {s.key: s.value for s in db.query(Setting).all()}
