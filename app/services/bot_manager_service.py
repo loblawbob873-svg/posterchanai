@@ -77,6 +77,9 @@ _restart_counts = {}   # bot name -> {"count": int, "first_restart": float}
 # name -> {"next_run": float, "process": Popen|None, "offset": int, "day": int, "count": int}.
 # Plus the sentinel "_last_start": float used for inter-spawn staggering.
 _post_sched = {}
+# Manual one-shot test posts fired from the admin UI (publish-now). Fire-and-forget; reaped
+# lazily so finished children don't linger as zombies.
+_oneshot_procs = []
 _monitor_thread = None
 _stop_event = threading.Event()
 
@@ -643,6 +646,64 @@ def restart_bot(name: str):
             _terminate(name, proc)
         _restart_counts.pop(name, None)
     reconcile_now()
+
+
+def _bot_dict_by_name(name: str):
+    """Look up a single bot (enabled or not) and return its merged config dict, or None."""
+    db = SessionLocal()
+    try:
+        b = db.query(Bot).filter(Bot.name == name).first()
+        return bot_to_dict(b) if b else None
+    finally:
+        db.close()
+
+
+def _one_shot_mode(bot_dict: dict) -> str:
+    """The spawn mode that makes a bot post once: image bots render an image, everything
+    else generates an in-character text post."""
+    return "--image" if bot_dict.get("bot_type") == "image" else "--autopost"
+
+
+def publish_post(name: str) -> dict:
+    """Fire a single post now (bypassing the schedule), reusing the same one-shot the
+    scheduler spawns. Fire-and-forget; the child posts and exits on its own."""
+    with _lock:
+        d = _bot_dict_by_name(name)
+        if not d:
+            return {"ok": False, "error": "bot not found"}
+        spawn_dict = dict(d)
+        spawn_dict["modes"] = [_one_shot_mode(d)]
+        proc = _spawn(spawn_dict, _load_global_env())
+        # reap any finished prior test posts so they don't linger as zombies
+        global _oneshot_procs
+        _oneshot_procs = [p for p in _oneshot_procs if p.poll() is None]
+        _oneshot_procs.append(proc)
+        return {"ok": True, "pid": proc.pid, "mode": spawn_dict["modes"][0]}
+
+
+def preview_post(name: str, timeout: int = 120) -> dict:
+    """Generate one post and return its text WITHOUT publishing. Text bots only — image
+    previews would have to round-trip a rendered image, which this doesn't do."""
+    d = _bot_dict_by_name(name)
+    if not d:
+        return {"ok": False, "error": "bot not found"}
+    if d.get("bot_type") == "image":
+        return {"ok": False, "error": "Preview is only available for text bots."}
+    env = _build_env(d, _load_global_env())
+    cmd = [sys.executable, str(MAIN_PY), "--autopost-print"]
+    try:
+        out = subprocess.run(cmd, env=env, cwd=str(BOTFRAMEWORK_DIR),
+                             capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "Generation timed out."}
+    # Extract the post text the child wrapped in PREVIEW markers (see autopost.py).
+    begin, end = "=== AUTOPOST PREVIEW BEGIN ===", "=== AUTOPOST PREVIEW END ==="
+    so = out.stdout or ""
+    if begin in so and end in so:
+        text = so.split(begin, 1)[1].split(end, 1)[0].strip()
+        if text:
+            return {"ok": True, "text": text}
+    return {"ok": False, "error": "Generation failed (no output). Check the bot's prompt and server settings."}
 
 
 def get_status():

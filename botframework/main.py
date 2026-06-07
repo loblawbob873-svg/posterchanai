@@ -20,6 +20,9 @@ def main():
         "--autopost", action="store_true", help="Generate one in-character standalone post and exit (manager schedules it)"
     )
     parser.add_argument(
+        "--autopost-print", action="store_true", help="Generate one in-character post and PRINT it without posting (preview)"
+    )
+    parser.add_argument(
         "--nitter", action="store_true", help="Post new Nitter RSS items to configured Matrix rooms"
     )
     parser.add_argument(
@@ -82,8 +85,8 @@ def main():
     args = parser.parse_args()
 
     # Validate that at least one platform is specified
-    if not args.matrix and not args.misskey and not args.nitter and not args.ping and not args.image and not args.autopost and not args.blockbot and not args.pleroma and not args.blocks and not args.blocks_print and not args.scalps and not args.scalps_print and not args.fba and not args.topposts and not args.topposts_print and not args.welcome and not args.welcome_print and not args.report and not args.report_print and not args.hashtagbot and not args.hashtagbot_print and not args.unfollowbot and not args.unfollows and not args.unfollows_print:
-        print("ERROR: Please specify at least one mode: --matrix, --misskey, --nitter, --ping, --pleroma, --blockbot, --blocks, --blocks-print, --scalps, --scalps-print, --fba, --topposts, --topposts-print, --welcome, --welcome-print, --report, --report-print, --hashtagbot, --hashtagbot-print, --unfollowbot, --unfollows, --unfollows-print, --image, or --autopost")
+    if not args.matrix and not args.misskey and not args.nitter and not args.ping and not args.image and not args.autopost and not args.autopost_print and not args.blockbot and not args.pleroma and not args.blocks and not args.blocks_print and not args.scalps and not args.scalps_print and not args.fba and not args.topposts and not args.topposts_print and not args.welcome and not args.welcome_print and not args.report and not args.report_print and not args.hashtagbot and not args.hashtagbot_print and not args.unfollowbot and not args.unfollows and not args.unfollows_print:
+        print("ERROR: Please specify at least one mode: --matrix, --misskey, --nitter, --ping, --pleroma, --blockbot, --blocks, --blocks-print, --scalps, --scalps-print, --fba, --topposts, --topposts-print, --welcome, --welcome-print, --report, --report-print, --hashtagbot, --hashtagbot-print, --unfollowbot, --unfollows, --unfollows-print, --image, --autopost, or --autopost-print")
         return
 
     # Validate Matrix configuration only if Matrix mode is enabled
@@ -207,6 +210,10 @@ def main():
         # One-shot mode - generate one in-character post and exit (manager handles scheduling)
         autopost()
         print("Auto-post done, exiting.")
+    elif args.autopost_print:
+        from autopost import autopost
+        print("Starting Auto-post preview (no posting)...")
+        autopost(print_only=True)
     elif args.blockbot:
         from blockbot import background, misskey_background, waitToStart
         from config import MISSKEY_SERVER, PLEROMA_ENDPOINT

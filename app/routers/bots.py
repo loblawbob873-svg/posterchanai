@@ -213,3 +213,25 @@ def restart_bot(bot_id: int, db: Session = Depends(get_db),
         db.commit()
     bot_manager_service.restart_bot(bot.name)
     return {"status": "restarted", "name": bot.name}
+
+
+@router.post("/{bot_id}/test-post/preview")
+def test_post_preview(bot_id: int, db: Session = Depends(get_db),
+                      admin: User = Depends(get_admin_user)):
+    """Generate one in-character post from the bot's SAVED config and return it without
+    publishing (Test → Preview in the editor)."""
+    bot = db.query(Bot).filter(Bot.id == bot_id).first()
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+    return bot_manager_service.preview_post(bot.name)
+
+
+@router.post("/{bot_id}/test-post/publish")
+def test_post_publish(bot_id: int, db: Session = Depends(get_db),
+                      admin: User = Depends(get_admin_user)):
+    """Fire one real post now from the bot's SAVED config, bypassing the schedule
+    (Test → Publish now in the editor)."""
+    bot = db.query(Bot).filter(Bot.id == bot_id).first()
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+    return bot_manager_service.publish_post(bot.name)

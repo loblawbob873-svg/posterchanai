@@ -35,8 +35,17 @@ def _build_seed():
     return seed
 
 
-def autopost():
-    """Generate one post from the bot's personality PROMPT and post it to its platform."""
+# Markers wrap the preview text so a caller capturing stdout (the Test → Preview button via
+# bot_manager.preview_post) can extract just the generated post out of the debug chatter.
+PREVIEW_BEGIN = "=== AUTOPOST PREVIEW BEGIN ==="
+PREVIEW_END = "=== AUTOPOST PREVIEW END ==="
+
+
+def autopost(print_only=False):
+    """Generate one post from the bot's personality PROMPT and post it to its platform.
+
+    print_only=True is the dry run (--autopost-print): generate and print between the
+    PREVIEW markers, but do NOT publish."""
     if not PROMPT or len(PROMPT.strip()) < 10:
         print("[autopost] No personality PROMPT set; skipping.")
         return
@@ -48,6 +57,12 @@ def autopost():
         print("[autopost] Generation returned empty; nothing posted.")
         return
     text = text.strip()
+
+    if print_only:
+        print(PREVIEW_BEGIN)
+        print(text)
+        print(PREVIEW_END)
+        return
 
     # Platform dispatch — both modules expose post_to_fediverse(status_text) with identical
     # BLOCK_PHRASE / length guards. Choose by whichever endpoint the manager configured.

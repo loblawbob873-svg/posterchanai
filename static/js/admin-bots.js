@@ -182,6 +182,10 @@ function openBotModal(id) {
     _setVal('bot_f_advanced', Object.keys(leftover).length ? JSON.stringify(leftover, null, 2) : '');
     _g('bot_grp_advanced').style.display = Object.keys(leftover).length ? '' : 'none';
 
+    // reset the Test → Preview widgets so a prior bot's output doesn't linger
+    const _ts = _g('bot_testpost_status'); if (_ts) _ts.textContent = '';
+    const _tp = _g('bot_testpost_preview'); if (_tp) { _tp.textContent = ''; _tp.style.display = 'none'; }
+
     onBotFormChange();
     _g('botModal').style.display = 'flex';
 }
@@ -223,6 +227,43 @@ async function botOauthConnect() {
         statusEl.textContent = '✅ Token minted and filled in. Click Save to keep it.';
     } catch (err) {
         statusEl.textContent = '❌ ' + err.message;
+    }
+}
+
+// Test → Preview: generate one post from the bot's SAVED config and show it (no posting).
+async function previewPost() {
+    const id = _val('bot_f_id');
+    const st = _g('bot_testpost_status');
+    const pv = _g('bot_testpost_preview');
+    if (!id) { st.textContent = 'Save the bot first.'; return; }
+    st.textContent = 'Generating…';
+    pv.style.display = 'none';
+    try {
+        const r = await fetch(`/api/admin/bots/${id}/test-post/preview`, { method: 'POST' });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || !d.ok) throw new Error(d.error || d.detail || r.statusText);
+        st.textContent = '';
+        pv.textContent = d.text;
+        pv.style.display = '';
+    } catch (err) {
+        st.textContent = '❌ ' + err.message;
+    }
+}
+
+// Test → Publish now: fire one real post immediately (bypasses the schedule).
+async function publishPost() {
+    const id = _val('bot_f_id');
+    const st = _g('bot_testpost_status');
+    if (!id) { st.textContent = 'Save the bot first.'; return; }
+    if (!confirm('Publish a test post now? It will be posted live to the timeline.')) return;
+    st.textContent = 'Posting…';
+    try {
+        const r = await fetch(`/api/admin/bots/${id}/test-post/publish`, { method: 'POST' });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || !d.ok) throw new Error(d.error || d.detail || r.statusText);
+        st.textContent = '✅ Triggered — it should appear on the timeline shortly.';
+    } catch (err) {
+        st.textContent = '❌ ' + err.message;
     }
 }
 
