@@ -98,6 +98,11 @@ IMAGE_POSTER_PROMPT = os.getenv("IMAGE_POSTER_PROMPT")
 IMAGE_POSTER_TEXT = os.getenv("IMAGE_POSTER_TEXT")
 IMAGE_POSTER_RANDOM_SCENES = os.getenv("IMAGE_POSTER_RANDOM_SCENES", "").lower() in ("true", "1", "yes")
 
+# Auto Poster (--autopost mode): scheduled in-character standalone posts. Scheduling
+# (interval/cap/quiet-hours) lives in bot_manager_service; these two drive content only.
+AUTO_POST_SEED = os.getenv("AUTO_POST_SEED", "")
+AUTO_POST_TOPICS = os.getenv("AUTO_POST_TOPICS", "")
+
 # SearXNG Configuration
 SEARXNG_URL = os.getenv("SEARXNG_URL", "https://search.poster.place")
 

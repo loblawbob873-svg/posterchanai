@@ -18,6 +18,7 @@ import os
 import sys
 import json
 import time
+import random
 import socket
 import logging
 import threading
@@ -41,6 +42,11 @@ RESTART_COUNT_RESET_TIME = 3600
 IMAGE_SCHEDULE_HOURS = [0, 6, 12, 18]
 IMAGE_STAGGER_DELAY = 300  # seconds between staggered image bots
 RECONCILE_INTERVAL = 5     # seconds between reconcile passes
+
+# Text auto-post (--autopost) default cadence when a bot enables it without setting an
+# interval. Conservative on purpose; per-bot config overrides both ends.
+AUTOPOST_DEFAULT_MIN_MIN = 180   # minutes
+AUTOPOST_DEFAULT_MAX_MIN = 360   # minutes
 
 # Unified codebase: a SINGLE PosterChanAI server URL (bots_server_url) drives everything —
 # the bots reach the shared LLM and image generation through it over HTTP (they're separate
@@ -67,7 +73,10 @@ _SERVER_URL_KEYS = ("bots_server_url", "bots_posterchanai_api_endpoint")
 _lock = threading.RLock()
 _procs = {}            # bot name -> subprocess.Popen (text bots; running children)
 _restart_counts = {}   # bot name -> {"count": int, "first_restart": float}
-_image_sched = {}      # bot name -> {"next_run": float, "process": Popen|None, "offset": int}
+# Scheduled one-shot posters (image bots + text bots with auto_post_enabled). Keyed by bot
+# name -> {"next_run": float, "process": Popen|None, "offset": int, "day": int, "count": int}.
+# Plus the sentinel "_last_start": float used for inter-spawn staggering.
+_post_sched = {}
 _monitor_thread = None
 _stop_event = threading.Event()
 
@@ -206,6 +215,12 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
 
         setif("prompt", "PROMPT")
 
+        # Auto-poster content config (--autopost). Scheduling (interval/cap/quiet-hours) is
+        # read by the manager from the bot's config, not the child; the child only needs the
+        # content knobs. auto_post_topics is a free-form string (one per line / comma-sep).
+        setif("auto_post_seed", "AUTO_POST_SEED")
+        setif("auto_post_topics", "AUTO_POST_TOPICS")
+
         # Phase-4 dedup A/B switch: route this bot's Pleroma/Misskey network ops through the
         # app's shared services (via botframework/*_shim). Set "use_app_service": true in the
         # bot's Advanced config to test one bot against the legacy clients.
@@ -292,8 +307,12 @@ def _terminate(name, proc, timeout=10):
 
 
 def _reconcile_text(text_bots, base_env):
-    """Ensure exactly the enabled text bots are running; restart crashes (rate-limited)."""
-    wanted = {d["name"]: d for d in text_bots}
+    """Ensure exactly the enabled text bots are running; restart crashes (rate-limited).
+
+    Only bots with listener modes get a persistent process — a pure auto-poster (auto-post
+    enabled, no reply/feature modes) has nothing to listen for and is driven entirely by
+    _reconcile_scheduled, so spawning a listener would just crash-loop on a default mode."""
+    wanted = {d["name"]: d for d in text_bots if d.get("modes")}
     now = time.time()
 
     # stop bots no longer wanted
@@ -327,7 +346,24 @@ def _reconcile_text(text_bots, base_env):
             info["count"] += 1
 
 
-# ---- image-bot schedule ------------------------------------------------------
+# ---- scheduled one-shot posters (image bots + text auto-post) ----------------
+#
+# Both kinds are "on a timer, spawn a one-shot subprocess that generates and posts, then
+# exits." Image bots default to fixed hours (legacy behavior, preserved); text auto-post
+# bots use a randomized interval. Either kind can override scheduling via per-bot config.
+
+def _to_num(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _truthy(v):
+    if isinstance(v, bool):
+        return v
+    return str(v).strip().lower() in ("true", "1", "yes")
+
 
 def _next_scheduled_time(hours):
     now = time.localtime()
@@ -340,34 +376,99 @@ def _next_scheduled_time(hours):
                         tom.tm_wday, tom.tm_yday, tom.tm_isdst))
 
 
-def _reconcile_image(image_bots, base_env):
-    wanted = {d["name"]: d for d in image_bots}
-    now = time.time()
+def _in_quiet_hours(spec):
+    """spec is "HH-HH" (24h, local). True if the current hour is inside the window
+    (handles windows that wrap past midnight, e.g. "23-06"). Blank/invalid = never quiet."""
+    if not spec:
+        return False
+    try:
+        a, b = (int(x) % 24 for x in str(spec).split("-", 1))
+    except (ValueError, TypeError):
+        return False
+    if a == b:
+        return False
+    h = time.localtime().tm_hour
+    return a <= h < b if a < b else (h >= a or h < b)
 
-    for name in list(_image_sched.keys()):
+
+def _scheduled_jobs(image_bots, text_bots):
+    """Build the list of scheduled posters: every image bot, plus every text bot that has
+    auto_post_enabled. Each job carries the one-shot mode to spawn and its kind."""
+    jobs = []
+    for d in image_bots:
+        jobs.append({"name": d["name"], "dict": d, "kind": "image", "mode": "--image"})
+    for d in text_bots:
+        if _truthy(d.get("auto_post_enabled")):
+            jobs.append({"name": d["name"], "dict": d, "kind": "text", "mode": "--autopost"})
+    return jobs
+
+
+def _next_run_for(job, now, offset=0.0):
+    """When should this job next fire? Text (or any bot with an interval configured) uses a
+    randomized interval window; image bots without an interval keep the fixed-hours schedule."""
+    d = job["dict"]
+    imin = _to_num(d.get("auto_post_interval_min"))
+    imax = _to_num(d.get("auto_post_interval_max"))
+    if imin is not None or imax is not None or job["kind"] == "text":
+        lo = imin if imin is not None else AUTOPOST_DEFAULT_MIN_MIN
+        hi = imax if imax is not None else max(lo, AUTOPOST_DEFAULT_MAX_MIN)
+        if hi < lo:
+            hi = lo
+        return now + random.uniform(lo, hi) * 60.0
+    return _next_scheduled_time(IMAGE_SCHEDULE_HOURS) + offset
+
+
+def _reconcile_scheduled(jobs, base_env):
+    """Ensure each scheduled poster fires on its cadence (subject to daily cap + quiet
+    hours), spawning a one-shot subprocess that posts and exits."""
+    wanted = {j["name"]: j for j in jobs}
+    now = time.time()
+    today = time.localtime().tm_yday
+
+    # drop schedules for bots no longer wanted (disabled/deleted/auto-post turned off)
+    for name in list(_post_sched.keys()):
         if name == "_last_start":
             continue
         if name not in wanted:
-            sched = _image_sched.pop(name)
+            sched = _post_sched.pop(name)
             if sched.get("process") and sched["process"].poll() is None:
                 _terminate(name, sched["process"])
 
-    for i, (name, d) in enumerate(wanted.items()):
-        sched = _image_sched.get(name)
+    for i, (name, job) in enumerate(wanted.items()):
+        d = job["dict"]
+        sched = _post_sched.get(name)
         if sched is None:
-            base = _next_scheduled_time(IMAGE_SCHEDULE_HOURS)
-            sched = {"next_run": base + i * IMAGE_STAGGER_DELAY, "process": None,
-                     "offset": i * IMAGE_STAGGER_DELAY}
-            _image_sched[name] = sched
+            offset = i * IMAGE_STAGGER_DELAY if job["kind"] == "image" else 0.0
+            sched = {"next_run": _next_run_for(job, now, offset), "process": None,
+                     "offset": offset, "day": today, "count": 0}
+            _post_sched[name] = sched
+        # reap a finished one-shot
         if sched["process"] and sched["process"].poll() is not None:
             sched["process"] = None
-        if now >= sched["next_run"] and sched["process"] is None:
-            if now - _image_sched.get("_last_start", 0) < IMAGE_STAGGER_DELAY:
-                continue
-            sched["process"] = _spawn(d, base_env)
-            _image_sched["_last_start"] = now
-            sched["next_run"] = _next_scheduled_time(IMAGE_SCHEDULE_HOURS) + sched["offset"]
-            logger.info("[BOTS] ran image bot %s", name)
+        # reset the per-day counter at the day boundary
+        if sched["day"] != today:
+            sched["day"], sched["count"] = today, 0
+        if sched["process"] is not None or now < sched["next_run"]:
+            continue
+        # don't post during quiet hours; re-check shortly
+        if _in_quiet_hours(d.get("auto_post_quiet_hours")):
+            sched["next_run"] = now + 1800
+            continue
+        # respect a per-day cap if one is set
+        cap = _to_num(d.get("auto_post_max_per_day"))
+        if cap is not None and sched["count"] >= cap:
+            sched["next_run"] = now + 3600
+            continue
+        # stagger image spawns so they don't flood the image queue (text posts are cheap)
+        if job["kind"] == "image" and now - _post_sched.get("_last_start", 0) < IMAGE_STAGGER_DELAY:
+            continue
+        spawn_dict = dict(d)
+        spawn_dict["modes"] = [job["mode"]]
+        sched["process"] = _spawn(spawn_dict, base_env)
+        _post_sched["_last_start"] = now
+        sched["count"] += 1
+        sched["next_run"] = _next_run_for(job, now, sched["offset"])
+        logger.info("[BOTS] ran %s post for %s (%d today)", job["kind"], name, sched["count"])
 
 
 def _manager_enabled() -> bool:
@@ -386,10 +487,10 @@ def _stop_all_children():
         if proc and proc.poll() is None:
             _terminate(name, proc)
     _restart_counts.clear()
-    for name in list(_image_sched.keys()):
+    for name in list(_post_sched.keys()):
         if name == "_last_start":
             continue
-        sched = _image_sched.pop(name)
+        sched = _post_sched.pop(name)
         if sched.get("process") and sched["process"].poll() is None:
             _terminate(name, sched["process"])
 
@@ -398,14 +499,14 @@ def _reconcile():
     with _lock:
         try:
             if not _manager_enabled():
-                if _procs or any(k != "_last_start" for k in _image_sched):
+                if _procs or any(k != "_last_start" for k in _post_sched):
                     logger.info("[BOTS] manager disabled; stopping all bots")
                     _stop_all_children()
                 return
             bots = _enabled_bots_for_host()
             base_env = _load_global_env()
             _reconcile_text(bots["text"], base_env)
-            _reconcile_image(bots["image"], base_env)
+            _reconcile_scheduled(_scheduled_jobs(bots["image"], bots["text"]), base_env)
         except Exception as e:
             logger.error("[BOTS] reconcile error: %s", e, exc_info=True)
 
@@ -517,12 +618,12 @@ def stop_bot_manager():
             if proc and proc.poll() is None:
                 _terminate(name, proc)
         _procs.clear()
-        for name, sched in list(_image_sched.items()):
+        for name, sched in list(_post_sched.items()):
             if name == "_last_start":
                 continue
             if sched.get("process") and sched["process"].poll() is None:
                 _terminate(name, sched["process"])
-        _image_sched.clear()
+        _post_sched.clear()
     if _monitor_thread:
         _monitor_thread.join(timeout=15)
         _monitor_thread = None
@@ -558,7 +659,7 @@ def get_status():
             running = False
             pid = None
             if b.bot_type == "image":
-                sched = _image_sched.get(b.name)
+                sched = _post_sched.get(b.name)
                 proc = sched.get("process") if sched else None
             else:
                 proc = _procs.get(b.name)

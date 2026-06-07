@@ -12,9 +12,11 @@ const BOT_KNOWN_KEYS = [
     'tts_voice', 'tts_rate', 'tts_pitch',
     'welcome_message', 'welcome_image', 'welcome_lookback_minutes',
     'block_image', 'report_image', 'unfollow_image',
+    'auto_post_interval_min', 'auto_post_interval_max', 'auto_post_max_per_day',
+    'auto_post_quiet_hours', 'auto_post_seed', 'auto_post_topics',
 ];
 // Config keys backed by a checkbox.
-const BOT_KNOWN_CHECKS = ['auto_narrate', 'unfollow_silent_mode', 'stickers_enabled'];
+const BOT_KNOWN_CHECKS = ['auto_narrate', 'unfollow_silent_mode', 'stickers_enabled', 'auto_post_enabled'];
 // nitter_feeds is special (list of {rss} ↔ one URL per line) and handled separately.
 // feature checkbox id -> main.py mode flag
 const BOT_FEATURES = {
@@ -140,6 +142,10 @@ function onBotFormChange() {
     show('bot_grp_unfollow', !isImage && ck('bot_ft_unfollow'));
     show('bot_grp_media', !isImage && (ck('bot_ft_reply') || ck('bot_ft_nitter') || matrixSecondary));
     show('bot_grp_voice', !isImage);
+
+    // Scheduled auto-posting: offered for text bots; detail fields appear once enabled.
+    show('bot_grp_autopost_toggle', !isImage);
+    show('bot_grp_autopost', !isImage && ck('bot_f_auto_post_enabled'));
 }
 
 function openBotModal(id) {
