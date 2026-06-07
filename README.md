@@ -14,6 +14,7 @@ One FastAPI backend that does chat, image generation, voice, RAG over your code,
 [![OpenAI-compatible](https://img.shields.io/badge/API-OpenAI--compatible-412991?logo=openai&logoColor=white)](#chat--ai)
 [![Self-hosted](https://img.shields.io/badge/Self--hosted-100%25-success)](#quick-start-backend-and-web-ui)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20GPU%20optional-FCC624?logo=linux&logoColor=black)](#requirements)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 [Quick start](#quick-start-backend-and-web-ui) ·
 [Features](#features) ·
@@ -332,6 +333,14 @@ Set the app’s server URL to your instance (e.g. `http://YOUR_IP:3051`).
 
 ---
 
-## License and contributing
+## License
 
-See the repository for license and contribution details.
+**Poster-chan AI** is free software, released under the **[GNU General Public License v3.0](LICENSE)**.
+You may use, study, share, and modify it — and if you distribute a modified version, you must
+pass on the same freedoms under the GPLv3. See [`LICENSE`](LICENSE) for the full text.
+
+## Contributing
+
+Issues and pull requests are welcome. Keep changes small and consistent with the existing
+patterns (thin routers, logic in services); see [`CLAUDE.md`](CLAUDE.md) for a tour of the
+codebase conventions.
