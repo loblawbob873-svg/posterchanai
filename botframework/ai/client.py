@@ -231,22 +231,19 @@ def _generate_reply_inner(user_content, previous_content, ping, thread_history, 
     # For personality prompts, reinforce character in the user message to help Qwen models stay in character
     # Qwen models sometimes ignore system prompts, so we need to reinforce in the conversation
     if is_personality_prompt and system_prompt:
-        # Extract character name. Support both "Your name is X" and "You are X" phrasings
-        # (Quartering uses "You are Jeremy Hambly, aka ..."), stopping at the first comma/
-        # period/newline so we don't grab the whole paragraph.
+        # Extract character name and key traits
+        # NOTE: only "Your name is X" prompts get a per-message reminder. We deliberately do
+        # NOT inject a reminder for "You are X" prompts (e.g. Quartering) — doing so made the
+        # bot open every reply with a fixed self-introduction ("Folks, Jer here!") and repeat
+        # itself. First-person/identity for those bots is enforced in the system prompt instead.
         import re
-        name_match = (re.search(r'Your name is ([^.\n]+)', system_prompt)
-                      or re.search(r'You are ([^,.\n]+)', system_prompt))
+        name_match = re.search(r'Your name is ([^.]+)', system_prompt)
         if name_match:
-            character_name = name_match.group(1).strip().strip('"').strip()
+            character_name = name_match.group(1).strip()
             # Get first sentence of personality description for context
             personality_start = system_prompt.split('.')[0] if '.' in system_prompt else system_prompt[:100]
-            # Strong reminder — Qwen needs explicit first-person enforcement or it slips into
-            # third person (referring to itself as "he/him") when the thread does.
-            user_content_with_reminder = (
-                f"{personality_start}. Respond AS {character_name} in the FIRST PERSON (I/me/my), "
-                f"not as a helpful assistant, and never refer to yourself in the third person. {user_content}"
-            )
+            # Add strong reminder - Qwen models need explicit instructions
+            user_content_with_reminder = f"{personality_start}. Respond AS {character_name}, not as a helpful assistant. {user_content}"
             messages.append({"role": "user", "content": user_content_with_reminder})
         else:
             messages.append({"role": "user", "content": user_content})
