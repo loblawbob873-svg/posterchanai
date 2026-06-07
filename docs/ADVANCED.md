@@ -960,7 +960,7 @@ Use posterchanai as the LLM backend for [OpenCode](https://opencode.ai):
 Local models served by posterchanai have small context windows. By default a coding client's
 whole-file `write` (creating a file) or whole-file `read`+`edit` (changing one) overflows the
 context or the output budget, so **large files get truncated mid-function**. posterchanai handles
-this for you — **no per-host config file required**:
+this for you **entirely server-side — no files to install on the opencode host**:
 
 - **Higher output cap for tool calls:** tool/agentic requests use `ollama_tool_num_predict`
   (Admin → AI Settings → "Max Tokens (tool/agentic calls)", default 16384), so a `write` isn't cut
@@ -969,23 +969,12 @@ this for you — **no per-host config file required**:
 - **Auto-injected coding guidance:** for any request carrying tools, posterchanai appends a short
   small-context discipline note to the system prompt (grep-first, ranged reads, smallest-snippet
   edits, chunked creates). Admin → AI Settings → "Inject small-context coding guidance"
-  (`tool_guidance_enabled`, on by default; text overridable via `tool_guidance_text`). This means
-  you do **not** need to install an `AGENTS.md` on the opencode host — the rules ride along with
-  every request.
+  (`tool_guidance_enabled`, on by default; text overridable via `tool_guidance_text`).
 
-The only client-side piece posterchanai can't supply is **extra tools** (the proxy generates tool
-*calls* but opencode owns the tool *implementations*). For building large files incrementally, add
-these optional custom tools on the opencode host (templates in [`docs/opencode/`](opencode/)):
-
-```sh
-# optional: append/insert tools so the model can grow a file in small steps
-cp docs/opencode/tools/*.ts    ~/.config/opencode/tools/
-# provider config (edit baseURL + model)
-cp docs/opencode/opencode.json ~/.config/opencode/opencode.json
-```
-
-(`docs/opencode/AGENTS.md` remains as an optional override / for non-posterchanai backends, but is
-redundant when using posterchanai since the guidance is injected server-side.)
+In practice opencode already edits large files out of the box (it reads in small `offset/limit`
+ranges natively), so editing needs nothing extra. The hard limit is **context size**: a small-GPU
+model cannot hold many large files at once — for that you need a larger-context model or more VRAM,
+not a config change.
 
 ### API Keys
 
