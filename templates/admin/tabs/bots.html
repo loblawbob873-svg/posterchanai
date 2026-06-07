@@ -121,6 +121,21 @@
                         <input type="password" id="bot_f_access_token">
                     </div>
                 </div>
+                <div class="form-group" id="bot_grp_oauth">
+                    <label>Connect with password <span class="bots-dim">(mints the access token above for you; the password is not stored)</span></label>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <input type="password" id="bot_f_oauth_password" placeholder="Bot account password" autocomplete="new-password">
+                        </div>
+                        <div class="form-group" id="bot_grp_oauth_totp" style="display:none">
+                            <input type="text" id="bot_f_oauth_totp" placeholder="2FA code (if enabled)" autocomplete="off">
+                        </div>
+                        <div class="form-group" style="flex:0 0 auto">
+                            <button type="button" class="btn-small" onclick="botOauthConnect()">Connect</button>
+                        </div>
+                    </div>
+                    <p class="bots-hint" id="bot_oauth_status"></p>
+                </div>
                 <div class="form-group" id="bot_grp_pleroma_admin">
                     <label for="bot_f_pleroma_admin_token">Pleroma admin token <span class="bots-dim">(report bot)</span></label>
                     <input type="password" id="bot_f_pleroma_admin_token">

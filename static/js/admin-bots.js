@@ -131,6 +131,8 @@ function onBotFormChange() {
     // block / welcome / report / unfollow all need the Pleroma DB.
     const needsDb = ck('bot_ft_block') || ck('bot_ft_welcome') || ck('bot_ft_report') || ck('bot_ft_unfollow');
     show('bot_grp_db', !isImage && needsDb);
+    show('bot_grp_oauth', platform === 'pleroma' || platform === 'misskey');  // password connect (fedi)
+    show('bot_grp_oauth_totp', platform === 'misskey');   // Misskey signin can take a 2FA code
     show('bot_grp_pleroma_admin', platform === 'pleroma' && !isImage && ck('bot_ft_report'));  // report only
     show('bot_grp_welcome', !isImage && ck('bot_ft_welcome'));
     show('bot_grp_block', !isImage && ck('bot_ft_block'));
@@ -187,6 +189,35 @@ function _buildModes(type, platform) {
     if (platform !== 'matrix' && _g('bot_ft_matrix').checked) modes.add('--matrix');  // secondary matrix
     Object.entries(BOT_FEATURES).forEach(([cid, flag]) => { if (_g(cid).checked) modes.add(flag); });
     return [...modes].join(',');
+}
+
+// Mint an access token from the bot account's password (Pleroma password grant / Misskey
+// signin) and drop it into the Access token field. Saves the admin the manual OAuth flow.
+async function botOauthConnect() {
+    const statusEl = _g('bot_oauth_status');
+    const platform = _val('bot_f_platform');
+    const server = _val('bot_f_server');
+    const username = _val('bot_f_username');
+    const password = _g('bot_f_oauth_password') ? _g('bot_f_oauth_password').value : '';
+    if (!server || !username || !password) {
+        statusEl.textContent = 'Enter Server URL, Bot username and the password first.';
+        return;
+    }
+    statusEl.textContent = 'Connecting…';
+    try {
+        const resp = await fetch('/api/admin/bots/oauth/token', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ platform, server, username, password, totp: _val('bot_f_oauth_totp') }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.detail || resp.statusText);
+        _setVal('bot_f_access_token', data.access_token);
+        _g('bot_f_oauth_password').value = '';
+        if (_g('bot_f_oauth_totp')) _g('bot_f_oauth_totp').value = '';
+        statusEl.textContent = '✅ Token minted and filled in. Click Save to keep it.';
+    } catch (err) {
+        statusEl.textContent = '❌ ' + err.message;
+    }
 }
 
 async function saveBot() {

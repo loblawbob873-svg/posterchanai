@@ -7,6 +7,27 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
+async def password_signin(instance_url: str, username: str, password: str, token: str = "") -> str:
+    """Mint a Misskey access token (`i`) from username/password via /api/signin.
+
+    The Misskey counterpart of Pleroma's OAuth password grant — lets the admin connect a
+    Misskey bot in the UI by typing its password instead of running the MiAuth browser flow.
+    `token` is the optional TOTP code if the account has 2FA. Returns the `i` token string.
+    """
+    url = instance_url.rstrip("/") + "/api/signin"
+    payload: dict = {"username": username, "password": password}
+    if token:
+        payload["token"] = token
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.post(url, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+    access = data.get("i") or data.get("token")
+    if not access:
+        raise ValueError(f"No token in signin response: {data}")
+    return access
+
+
 async def check_miauth_session(instance_url: str, session_id: str) -> dict:
     """Call Misskey's MiAuth check endpoint and return the access token payload."""
     url = instance_url.rstrip("/") + f"/api/miauth/{session_id}/check"

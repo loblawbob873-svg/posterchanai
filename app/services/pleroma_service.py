@@ -50,6 +50,51 @@ async def exchange_code(
     return token
 
 
+async def password_grant(
+    instance_url: str,
+    username: str,
+    password: str,
+    scopes: str = "read write follow push",
+    app_name: str = "PosterChanAI",
+) -> str:
+    """Mint an access token from a username/password via the OAuth2 password grant.
+
+    Registers a throwaway OAuth app (out-of-band redirect) on the instance, then exchanges
+    the credentials for a token. Used by Admin → Bots so an admin can connect a Pleroma bot
+    account by typing its password instead of running the browser authorization-code flow.
+    Returns the token string. Pleroma/Mastodon only (Misskey uses MiAuth, not this grant).
+    """
+    base = instance_url.rstrip("/")
+    oob = "urn:ietf:wg:oauth:2.0:oob"
+    async with httpx.AsyncClient(timeout=20) as client:
+        app_resp = await client.post(base + "/api/v1/apps", data={
+            "client_name": app_name,
+            "redirect_uris": oob,
+            "scopes": scopes,
+            "website": base,
+        })
+        app_resp.raise_for_status()
+        app = app_resp.json()
+        client_id, client_secret = app.get("client_id"), app.get("client_secret")
+        if not client_id or not client_secret:
+            raise ValueError(f"App registration returned no client credentials: {app}")
+
+        tok_resp = await client.post(base + "/oauth/token", data={
+            "grant_type": "password",
+            "username": username,
+            "password": password,
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "scope": scopes,
+        })
+        tok_resp.raise_for_status()
+        data = tok_resp.json()
+    token = data.get("access_token")
+    if not token:
+        raise ValueError(f"No access_token in response: {data}")
+    return token
+
+
 def build_auth_url(instance_url: str, client_id: str, redirect_uri: str) -> str:
     """Build the OAuth2 authorization URL to redirect the user to."""
     base = instance_url.rstrip("/")
