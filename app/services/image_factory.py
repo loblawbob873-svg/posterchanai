@@ -6,6 +6,7 @@ Supports user-specific custom ComfyUI endpoints.
 Supports load balancing across multiple posterchanai servers.
 """
 import logging
+import random
 from typing import Optional, Protocol, runtime_checkable, TYPE_CHECKING
 from sqlalchemy.orm import Session
 
@@ -54,6 +55,41 @@ def get_image_load_balancer(db: Session) -> Optional[ImageLoadBalancer]:
     return None
 
 
+# Always-on prompt enrichment, applied once at the entry server (not on forwarded
+# server-to-server requests). Suppresses the framing/cropping/flat-background the model
+# tends to add, and varies the setting so images aren't all the same backdrop.
+_BASE_NEGATIVE = "bad quality, blurry, distorted, ugly, deformed, low resolution"
+_FRAME_NEGATIVE = (
+    "picture frame, border, frame, vignette, letterbox, pillarbox, "
+    "cropped, cut off, headshot, bust, close-up, "
+    "painted background, flat background, studio backdrop, gradient background, "
+    "sketch, sketchbook, pencil sketch, pencil drawing, charcoal drawing, rough sketch, "
+    "line art, lineart, doodle, scribble, unfinished, draft, hand-drawn"
+)
+_RANDOM_SCENES = [
+    "in a neon-lit city street at night", "on a sunny tropical beach",
+    "in a cozy coffee shop by the window", "in a misty pine forest",
+    "on a rooftop overlooking a city skyline at dusk", "in a cyberpunk alley with glowing signs",
+    "in a sunlit meadow full of wildflowers", "inside a grand library with tall bookshelves",
+    "on a snowy mountain trail", "in a bustling night market",
+    "in an autumn park with falling leaves", "on a quiet pier at sunset",
+    "in a futuristic sci-fi corridor", "in a flower garden in full bloom",
+    "on a rain-soaked street with neon reflections", "in a desert canyon at golden hour",
+    "in a traditional Japanese garden", "in a candle-lit medieval tavern",
+]
+
+
+def _enrich_prompt(prompt: str) -> str:
+    """Append a random background/location so generations vary their setting."""
+    return f"{prompt}, {random.choice(_RANDOM_SCENES)}"
+
+
+def _ensure_frame_negative(negative: str) -> str:
+    """Merge the caller's negative with the base + frame-suppression negatives."""
+    parts = [p for p in [(negative or "").strip().rstrip(","), _BASE_NEGATIVE, _FRAME_NEGATIVE] if p]
+    return ", ".join(parts)
+
+
 async def generate_image_with_load_balancing(
     db: Session,
     prompt: str,
@@ -62,6 +98,7 @@ async def generate_image_with_load_balancing(
     height: Optional[int] = None,
     steps: Optional[int] = None,
     cfg: Optional[float] = None,
+    is_load_balanced: bool = False,
 ) -> Optional[str]:
     """
     Generate image with load balancing support.
@@ -69,8 +106,18 @@ async def generate_image_with_load_balancing(
     Remote requests run in parallel; local requests are serialized via lock.
     If vram_mode is 'llm_only', always uses remote servers.
     Returns base64 encoded image or None.
+
+    `is_load_balanced` is True only for forwarded server-to-server requests (they already
+    carry the enriched prompt/negative from the origin), so we enrich exactly once.
     """
     from app.services.locks import image_generation_lock
+
+    # Enrich once, at the origin server only — never on forwarded requests. This runs BEFORE
+    # any routing, so both local and remote backends receive the same enriched values. The
+    # load-balancing logic below is unchanged.
+    if not is_load_balanced:
+        prompt = _enrich_prompt(prompt)
+        negative_prompt = _ensure_frame_negative(negative_prompt)
 
     # Query settings from database
     settings = {s.key: s.value for s in db.query(Setting).all()}

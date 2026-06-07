@@ -121,6 +121,10 @@ async def generate_image(
     try:
         logger.info(f"[IMAGE-API] Generating image: {request.prompt[:50]}...")
 
+        # A forwarded server-to-server (load-balanced) request already carries the enriched
+        # prompt/negative from the origin — don't enrich it again here.
+        is_load_balanced = http_request.headers.get("X-Posterchanai-Load-Balanced", "").lower() == "true"
+
         # Generate image with load balancing support
         # The load balancer will detect if this server is selected and generate locally
         # Lock is handled inside for local generation only
@@ -132,7 +136,8 @@ async def generate_image(
             width=request.width,
             height=request.height,
             steps=request.steps,
-            cfg=request.cfg
+            cfg=request.cfg,
+            is_load_balanced=is_load_balanced,
         )
 
         if result:

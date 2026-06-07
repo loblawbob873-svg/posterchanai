@@ -17,29 +17,6 @@ _DEFAULT_NEGATIVE = (
     "painted background, flat background, illustrated background, studio backdrop, gradient background"
 )
 
-# Randomly appended to each prompt so generations get varied settings instead of the same
-# plain backdrop. Pairs with the negative prompt above (which suppresses flat/studio backgrounds).
-_RANDOM_SCENES = [
-    "in a neon-lit city street at night",
-    "on a sunny tropical beach",
-    "in a cozy coffee shop by the window",
-    "in a misty pine forest",
-    "on a rooftop overlooking a city skyline at dusk",
-    "in a cyberpunk alley with glowing signs",
-    "in a sunlit meadow full of wildflowers",
-    "inside a grand library with tall bookshelves",
-    "on a snowy mountain trail",
-    "in a bustling night market",
-    "in an autumn park with falling leaves",
-    "on a quiet pier at sunset",
-    "in a futuristic sci-fi corridor",
-    "in a flower garden in full bloom",
-    "on a rain-soaked street with neon reflections",
-    "in a desert canyon at golden hour",
-    "in a traditional Japanese garden",
-    "in a candle-lit medieval tavern",
-]
-
 
 class ImageService:
     def __init__(self, db: Session):
@@ -142,23 +119,19 @@ class ImageService:
             return None
 
         prompt = self._process_wildcards(prompt)
-        # Vary the setting so images aren't all the same backdrop (random background/location).
-        prompt = f"{prompt}, {random.choice(_RANDOM_SCENES)}"
         width = kwargs.get("width") or 832
         height = kwargs.get("height") or 1216
 
-        # Always apply the default negative (suppresses frames/crops/flat backgrounds), plus
-        # any caller-supplied negative. This is the key fix: the default now reaches the REST
-        # path too, not just the ComfyUI fallback.
-        full_neg = _DEFAULT_NEGATIVE if not negative_prompt else f"{_DEFAULT_NEGATIVE}, {negative_prompt}"
-
+        # NOTE: frame-suppression negative + random scene are applied centrally in
+        # generate_image_with_load_balancing on the image server (so every caller — chat,
+        # Telegram, bots, local or remote — gets them once). Don't duplicate here.
         # Try posterchanai REST API first (simpler, faster)
-        result = await self._try_posterchanai_api(prompt, full_neg, width=width, height=height)
+        result = await self._try_posterchanai_api(prompt, negative_prompt, width=width, height=height)
         if result:
             return result
 
         # Fall back to ComfyUI workflow API
-        return await self._try_comfyui_workflow(prompt, negative_prompt=full_neg, width=width, height=height)
+        return await self._try_comfyui_workflow(prompt, negative_prompt=negative_prompt, width=width, height=height)
 
     async def _try_posterchanai_api(self, prompt: str, negative_prompt: str = "", width: int = 832, height: int = 1216) -> Optional[str]:
         """
