@@ -143,6 +143,14 @@ def remove_think_tags(text):
             text = re.split(r'(?i)</thinking>', text)[-1]
         text = text.strip()
 
+    # Strip the leaked Qwen control token: the model is fed "/no_think" (thinking-suppression)
+    # and sometimes echoes it as literal text ("Hey no_think") instead of obeying it. Remove
+    # any /no_think, @no_think, no_think, "no think" so it never reaches a posted reply.
+    if "think" in text.lower():
+        text = re.sub(r'[/@]?\bno[ _]?think\b', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'\s+([.,!?;:])', r'\1', text)   # tidy orphaned space before punctuation
+        text = re.sub(r'[ \t]{2,}', ' ', text).strip()
+
     return text
 
 
