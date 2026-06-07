@@ -29,6 +29,10 @@ class ImageService:
         self.default_model = settings.get("comfyui_default_model", "")
         self.anime_model = settings.get("comfyui_anime_model", "")
         self.timeout = int(settings.get("comfyui_timeout", "300000")) / 1000  # Convert to seconds
+        # Resolution comes from the admin UI config (image_default_width/height) — the single
+        # source every image request honors, not a hardcoded value.
+        self.default_width = int(settings.get("image_default_width", "1024"))
+        self.default_height = int(settings.get("image_default_height", "1024"))
 
     def _is_anime_prompt(self, prompt: str) -> bool:
         """Check if prompt is for anime-style image"""
@@ -119,8 +123,9 @@ class ImageService:
             return None
 
         prompt = self._process_wildcards(prompt)
-        width = kwargs.get("width") or 832
-        height = kwargs.get("height") or 1216
+        # Honor the admin-UI resolution config; only an explicit per-request override wins.
+        width = kwargs.get("width") or self.default_width
+        height = kwargs.get("height") or self.default_height
 
         # Prompt is used as typed (wildcards resolved); no negative/scene is injected here.
         # Try posterchanai REST API first (simpler, faster)
