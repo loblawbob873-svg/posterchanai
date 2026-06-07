@@ -190,9 +190,11 @@
                 <textarea id="bot_f_prompt" rows="4"></textarea>
             </div>
 
-            <!-- Image bot: preview a generated image from the prompt (no posting). -->
+            <!-- Image bot: optional caption + preview a generated image from the prompt. -->
             <div class="form-group" id="bot_grp_imgtest" style="display:none">
-                <label>Test image <span class="bots-dim">(uses the SAVED prompt — Save first; generates without posting)</span></label>
+                <label for="bot_f_text">Post caption <span class="bots-dim">(optional text/hashtags posted with the image; leave blank for image-only)</span></label>
+                <input type="text" id="bot_f_text" placeholder="">
+                <label style="margin-top:.6rem">Test image <span class="bots-dim">(uses the SAVED prompt — Save first; generates without posting)</span></label>
                 <div class="form-row" style="align-items:center;gap:.5rem">
                     <button type="button" class="btn-small" onclick="previewImage()">Preview image</button>
                     <button type="button" class="btn-small" onclick="publishPost()">Post now</button>
