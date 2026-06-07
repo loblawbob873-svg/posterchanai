@@ -95,7 +95,7 @@ RESPOND_TO_ALL = os.getenv("RESPOND_TO_ALL", "false").lower() == "true"
 # Image Poster (--image mode)
 IMAGE_POSTER_FREQ = 3600
 IMAGE_POSTER_PROMPT = os.getenv("IMAGE_POSTER_PROMPT")
-IMAGE_POSTER_TEXT = os.getenv("IMAGE_POSTER_TEXT")
+IMAGE_POSTER_TEXT = os.getenv("IMAGE_POSTER_TEXT", "") or ""  # empty (no caption) when unset
 IMAGE_POSTER_RANDOM_SCENES = os.getenv("IMAGE_POSTER_RANDOM_SCENES", "").lower() in ("true", "1", "yes")
 
 # Auto Poster (--autopost mode): scheduled in-character standalone posts. Scheduling

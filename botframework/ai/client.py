@@ -211,6 +211,11 @@ def _generate_reply_inner(user_content, previous_content, ping, thread_history, 
     
     if thread_history and len(thread_history) > 0:
         history = thread_history[:-1] if len(thread_history) > 1 else []
+        # Keep only the most recent turns. Feeding the entire thread makes a small model
+        # loop on its own earlier replies (verbatim self-repetition) and echo the latest
+        # user message back. The current mention is appended separately below.
+        if len(history) > 6:
+            history = history[-6:]
         for msg in history:
             role = "assistant" if msg.get("is_bot") else "user"
             content = msg.get("content", "")

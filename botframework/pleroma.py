@@ -248,6 +248,7 @@ def send_reply(
         print(f"Send reply failed: {e}")
 
 def post_image_to_fediverse(text, image_bytes=None, audio_bytes=None, video_bytes=None):
+    text = text or ""  # caption may be unset (image-only post) — avoid None in checks below
     # Prevent sending any post that contains the BLOCK_PHRASE
     if BLOCK_PHRASE and BLOCK_PHRASE in text:
         print("Post contains blocked phrase; not sending to Pleroma.")
