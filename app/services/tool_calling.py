@@ -358,8 +358,7 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
             msg: Dict[str, Any] = {"role": "assistant", "content": content}
             return (({**msg, "tool_calls": tool_calls}, "tool_calls") if tool_calls else (msg, "stop"))
         except Exception as e:
-            import logging
-            logging.getLogger("tool_calling").warning("native-template tool path failed (%s); using fallback", e)
+            logger.warning("native-template tool path failed (%s); using fallback", e)
 
     # Fallback (no embedded template): plain chat completion; still parse any native tool calls.
     result = model.create_chat_completion(messages=messages, **params)
