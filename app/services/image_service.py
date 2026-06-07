@@ -10,6 +10,13 @@ from app.models import Setting
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_NEGATIVE = (
+    "bad quality, blurry, distorted, ugly, deformed, "
+    "cropped, cut off, missing feet, missing legs, headshot, bust, close-up, "
+    "picture frame, border, frame, vignette, letterbox, pillarbox, "
+    "painted background, flat background, illustrated background, studio backdrop, gradient background"
+)
+
 
 class ImageService:
     def __init__(self, db: Session):
@@ -33,9 +40,17 @@ class ImageService:
         prompt_lower = prompt.lower()
         return any(keyword in prompt_lower for keyword in anime_keywords)
 
-    def _build_workflow(self, prompt: str, model: str) -> dict:
+    def _process_wildcards(self, prompt: str) -> str:
+        """Resolve {option1|option2|...} wildcard syntax by randomly picking one option per group."""
+        def pick(match):
+            options = match.group(1).split('|')
+            return random.choice(options).strip()
+        return re.sub(r'\{([^}]+)\}', pick, prompt)
+
+    def _build_workflow(self, prompt: str, model: str, negative: str = "", width: int = 832, height: int = 1216) -> dict:
         """Build ComfyUI workflow for image generation"""
         clean_prompt = self._sanitize_prompt(prompt)
+        neg_text = self._sanitize_prompt(f"{_DEFAULT_NEGATIVE}, {negative}".strip(", ")) if negative else _DEFAULT_NEGATIVE
         return {
             "3": {
                 "class_type": "KSampler",
@@ -62,8 +77,8 @@ class ImageService:
                 "class_type": "EmptyLatentImage",
                 "inputs": {
                     "batch_size": 1,
-                    "height": 1024,
-                    "width": 1024
+                    "height": height,
+                    "width": width
                 }
             },
             "6": {
@@ -77,7 +92,7 @@ class ImageService:
                 "class_type": "CLIPTextEncode",
                 "inputs": {
                     "clip": ["4", 1],
-                    "text": "bad quality, blurry, distorted, ugly, deformed"
+                    "text": neg_text
                 }
             },
             "8": {
@@ -101,15 +116,19 @@ class ImageService:
         if not self.comfyui_url:
             return None
 
+        prompt = self._process_wildcards(prompt)
+        width = kwargs.get("width") or 832
+        height = kwargs.get("height") or 1216
+
         # Try posterchanai REST API first (simpler, faster)
-        result = await self._try_posterchanai_api(prompt, negative_prompt)
+        result = await self._try_posterchanai_api(prompt, negative_prompt, width=width, height=height)
         if result:
             return result
 
         # Fall back to ComfyUI workflow API
-        return await self._try_comfyui_workflow(prompt)
+        return await self._try_comfyui_workflow(prompt, negative_prompt=negative_prompt, width=width, height=height)
 
-    async def _try_posterchanai_api(self, prompt: str, negative_prompt: str = "") -> Optional[str]:
+    async def _try_posterchanai_api(self, prompt: str, negative_prompt: str = "", width: int = 832, height: int = 1216) -> Optional[str]:
         """
         Try posterchanai's simple REST API.
         Returns image on success, raises Exception on server error (don't fallback),
@@ -120,7 +139,7 @@ class ImageService:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(
                     api_url,
-                    json={"prompt": prompt, "negative_prompt": negative_prompt}
+                    json={"prompt": prompt, "negative_prompt": negative_prompt, "width": width, "height": height}
                 )
                 if response.status_code == 200:
                     data = response.json()
@@ -137,7 +156,7 @@ class ImageService:
             # Timeout - try ComfyUI fallback
             return None
 
-    async def _try_comfyui_workflow(self, prompt: str) -> Optional[str]:
+    async def _try_comfyui_workflow(self, prompt: str, negative_prompt: str = "", width: int = 832, height: int = 1216) -> Optional[str]:
         """Try ComfyUI workflow API"""
         # Select model based on prompt
         model = self.anime_model if self._is_anime_prompt(prompt) else self.default_model
@@ -147,7 +166,7 @@ class ImageService:
         if not model:
             return None
 
-        workflow = self._build_workflow(prompt, model)
+        workflow = self._build_workflow(prompt, model, negative=negative_prompt, width=width, height=height)
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
