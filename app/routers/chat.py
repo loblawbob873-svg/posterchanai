@@ -1274,11 +1274,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             system_prompt = chat_service.system_prompt.replace(
                                 "{{CURRENT_DATE}}", datetime.utcnow().strftime("%Y-%m-%d")
                             )
-                            
-                            # Add user's custom LLM prompt if set
-                            if hasattr(user, 'custom_llm_prompt') and user.custom_llm_prompt:
-                                system_prompt += f"\n\n## User's Custom Instructions\nThe user has provided these custom instructions that you should follow:\n\n{user.custom_llm_prompt}\n"
-                            
+
                             messages = [
                                 {"role": "system", "content": system_prompt}
                             ]

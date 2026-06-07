@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 from app.models import User, Setting, APIKey, VerificationToken
 from app.schemas import (
     UserLogin, UserResponse, Token, UserRegister, APIKeyCreate, APIKeyResponse, APIKeyListItem,
-    UserSettingsUpdate, UserSettingsResponse, TestConnectionRequest, TestConnectionResponse
+    UserSettingsUpdate, UserSettingsResponse
 )
 from app.auth import verify_password, create_access_token, get_current_user, get_password_hash
 from app.services.email_service import EmailService
@@ -416,16 +416,6 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
     return UserSettingsResponse(
         notification_email=current_user.notification_email,
         avatar=avatar_url,
-        # Custom LLM settings
-        custom_ai_enabled=current_user.custom_ai_enabled or False,
-        custom_ai_type=current_user.custom_ai_type,
-        custom_ai_url=current_user.custom_ai_url,
-        custom_ai_model=current_user.custom_ai_model,
-        custom_ai_has_api_key=bool(current_user.custom_ai_api_key),
-        custom_llm_prompt=current_user.custom_llm_prompt if hasattr(current_user, 'custom_llm_prompt') else None,
-        # Custom Image Generation settings
-        custom_image_enabled=current_user.custom_image_enabled or False,
-        custom_image_url=current_user.custom_image_url,
         # Scheduled news settings
         news_schedule_enabled=current_user.news_schedule_enabled or False,
         news_schedule_time=current_user.news_schedule_time or "12:00",
@@ -475,28 +465,6 @@ def update_user_settings(
                 detail="Invalid email address"
             )
         current_user.notification_email = notification_email if notification_email else None
-
-    # Update custom LLM settings
-    if settings.custom_ai_enabled is not None:
-        current_user.custom_ai_enabled = settings.custom_ai_enabled
-    if settings.custom_ai_type is not None:
-        current_user.custom_ai_type = settings.custom_ai_type
-    if settings.custom_ai_url is not None:
-        current_user.custom_ai_url = settings.custom_ai_url.strip() if settings.custom_ai_url else None
-    if settings.custom_ai_model is not None:
-        current_user.custom_ai_model = settings.custom_ai_model.strip() if settings.custom_ai_model else None
-    if settings.custom_ai_api_key is not None:
-        # Allow clearing the API key with empty string
-        current_user.custom_ai_api_key = settings.custom_ai_api_key if settings.custom_ai_api_key else None
-    if settings.custom_llm_prompt is not None:
-        # Save custom LLM prompt (can be empty to clear)
-        current_user.custom_llm_prompt = settings.custom_llm_prompt if settings.custom_llm_prompt.strip() else None
-
-    # Update custom Image Generation settings
-    if settings.custom_image_enabled is not None:
-        current_user.custom_image_enabled = settings.custom_image_enabled
-    if settings.custom_image_url is not None:
-        current_user.custom_image_url = settings.custom_image_url.strip() if settings.custom_image_url else None
 
     # Update scheduled news settings
     if settings.news_schedule_enabled is not None:
@@ -808,134 +776,6 @@ async def get_avatar(
     media_type = media_types.get(suffix, "image/png")
     
     return FileResponse(avatar_path, media_type=media_type)
-
-
-# ============== Custom AI Service Testing ==============
-
-@router.post("/test-custom-ai", response_model=TestConnectionResponse)
-async def test_custom_ai_connection(
-    request: TestConnectionRequest,
-    current_user: User = Depends(get_current_user)
-):
-    """Test connection to a custom AI service (Ollama or OpenAI-compatible)"""
-    import httpx
-
-    url = request.url.rstrip('/')
-    models = []
-
-    # Use stored API key if requested and available
-    api_key = request.api_key
-    if request.use_stored_key and current_user.custom_ai_api_key:
-        api_key = current_user.custom_ai_api_key
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            if request.api_type == "ollama":
-                # Test Ollama API - list models
-                response = await client.get(f"{url}/api/tags")
-                if response.status_code == 200:
-                    data = response.json()
-                    models = [m.get("name", m.get("model", "unknown")) for m in data.get("models", [])]
-                    return TestConnectionResponse(
-                        success=True,
-                        message=f"Connected to Ollama. Found {len(models)} model(s).",
-                        models=models
-                    )
-                else:
-                    return TestConnectionResponse(
-                        success=False,
-                        message=f"Ollama returned status {response.status_code}"
-                    )
-            else:
-                # Test OpenAI-compatible API (Open-WebUI, Posterchanai)
-                headers = {}
-                if api_key:
-                    headers["Authorization"] = f"Bearer {api_key}"
-
-                response = await client.get(f"{url}/v1/models", headers=headers)
-                if response.status_code == 200:
-                    data = response.json()
-                    models = [m.get("id", "unknown") for m in data.get("data", [])]
-                    return TestConnectionResponse(
-                        success=True,
-                        message=f"Connected to OpenAI-compatible API. Found {len(models)} model(s).",
-                        models=models
-                    )
-                elif response.status_code == 401:
-                    return TestConnectionResponse(
-                        success=False,
-                        message="Authentication failed. Check your API key."
-                    )
-                else:
-                    return TestConnectionResponse(
-                        success=False,
-                        message=f"API returned status {response.status_code}"
-                    )
-
-    except httpx.ConnectError:
-        return TestConnectionResponse(
-            success=False,
-            message=f"Could not connect to {url}. Check the URL and ensure the service is running."
-        )
-    except httpx.TimeoutException:
-        return TestConnectionResponse(
-            success=False,
-            message="Connection timed out. The service may be slow or unreachable."
-        )
-    except Exception as e:
-        return TestConnectionResponse(
-            success=False,
-            message=f"Error: {str(e)}"
-        )
-
-
-@router.post("/test-custom-image", response_model=TestConnectionResponse)
-async def test_custom_image_connection(
-    url: str,
-    current_user: User = Depends(get_current_user)
-):
-    """Test connection to a custom ComfyUI instance"""
-    import httpx
-
-    url = url.rstrip('/')
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            # Test ComfyUI API - get system stats
-            response = await client.get(f"{url}/system_stats")
-            if response.status_code == 200:
-                return TestConnectionResponse(
-                    success=True,
-                    message="Connected to ComfyUI successfully."
-                )
-            else:
-                # Try alternative endpoint
-                response = await client.get(f"{url}/prompt")
-                if response.status_code in [200, 400]:  # 400 means it's running but needs a prompt
-                    return TestConnectionResponse(
-                        success=True,
-                        message="Connected to ComfyUI successfully."
-                    )
-                return TestConnectionResponse(
-                    success=False,
-                    message=f"ComfyUI returned status {response.status_code}"
-                )
-
-    except httpx.ConnectError:
-        return TestConnectionResponse(
-            success=False,
-            message=f"Could not connect to {url}. Check the URL and ensure ComfyUI is running."
-        )
-    except httpx.TimeoutException:
-        return TestConnectionResponse(
-            success=False,
-            message="Connection timed out. ComfyUI may be slow or unreachable."
-        )
-    except Exception as e:
-        return TestConnectionResponse(
-            success=False,
-            message=f"Error: {str(e)}"
-        )
 
 
 @router.post("/scan-storage")

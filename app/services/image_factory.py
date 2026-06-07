@@ -307,26 +307,7 @@ def unload_image_model(db: Session):
 
 
 def get_image_backend_for_user(db: Session, user: Optional["User"] = None) -> ImageBackend:
-    """
-    Get the appropriate image generation backend for a specific user.
-
-    If user has custom image generation enabled with a custom ComfyUI URL,
-    returns a ComfyUI service pointing to their custom endpoint.
-    Otherwise returns the default server backend.
-    """
-    # Check if user has custom image generation enabled
-    if (user and
-        user.custom_image_enabled and
-        user.custom_image_url):
-        # Use custom ComfyUI endpoint
-        from app.services.image_service import ImageService
-        service = ImageService(db)
-        # Override the URL with user's custom URL
-        service.comfyui_url = user.custom_image_url.rstrip('/')
-        logger.debug(f"Using custom ComfyUI backend for user: {user.custom_image_url}")
-        return service
-
-    # Use default server backend
+    """Get the image generation backend for a user (the default server backend)."""
     return get_image_backend(db)
 
 
@@ -342,27 +323,10 @@ async def generate_image_for_user(
 ) -> Optional[str]:
     """
     Generate image for a specific user with load balancing support.
-    - If user has custom image generation, uses their endpoint
-    - Otherwise uses load balancing if configured
+    - Uses load balancing if configured
     - Falls back to local backend
     Returns base64 encoded image or None.
     """
-    # Check if user has custom image generation enabled - bypass load balancing
-    if (user and
-        user.custom_image_enabled and
-        user.custom_image_url):
-        logger.info(f"Using user's custom image endpoint: {user.custom_image_url}")
-        prepare_vram_for_image(db)
-        backend = get_image_backend_for_user(db, user)
-        return await backend.generate_image(
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            width=width,
-            height=height,
-            steps=steps,
-            cfg=cfg,
-        )
-
     # Use load balancing (will alternate between local and remote)
     return await generate_image_with_load_balancing(
         db=db,

@@ -270,14 +270,6 @@ def _run_migrations():
 
     # Define new columns to add to users table
     new_user_columns = [
-        ("custom_ai_enabled", "BOOLEAN DEFAULT 0"),
-        ("custom_ai_type", "VARCHAR(50)"),
-        ("custom_ai_url", "VARCHAR(500)"),
-        ("custom_ai_model", "VARCHAR(200)"),
-        ("custom_ai_api_key", "VARCHAR(500)"),
-        ("custom_llm_prompt", "TEXT"),  # Custom AI instructions from user
-        ("custom_image_enabled", "BOOLEAN DEFAULT 0"),
-        ("custom_image_url", "VARCHAR(500)"),
         ("storage_quota", "INTEGER DEFAULT 0"),  # Storage quota in bytes (0 = unlimited)
         # Scheduled news / custom news sources
         ("news_schedule_enabled", "BOOLEAN DEFAULT 0"),

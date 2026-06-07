@@ -6,7 +6,6 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import AsyncGenerator, Optional, TYPE_CHECKING
 from sqlalchemy.orm import Session
 from app.services.inference_factory import get_inference_service, prepare_vram_for_llm
-from app.services.custom_ai_service import CustomAIService
 from app.services.load_balancer import LoadBalancer, NoHealthyServersError, parse_server_urls
 
 if TYPE_CHECKING:
@@ -80,20 +79,6 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
         # Stop token(s) - can be comma-separated for multiple
         stop_setting = get_setting("ollama_stop", "").strip()
         self.stop = [s.strip() for s in stop_setting.split(",") if s.strip()] if stop_setting else None
-
-    def _get_custom_ai_service(self) -> Optional[CustomAIService]:
-        """Get custom AI service if user has it enabled, otherwise return None"""
-        if (self.user and
-            self.user.custom_ai_enabled and
-            self.user.custom_ai_url and
-            self.user.custom_ai_type):
-            return CustomAIService(
-                api_type=self.user.custom_ai_type,
-                url=self.user.custom_ai_url,
-                model=self.user.custom_ai_model or "default",
-                api_key=self.user.custom_ai_api_key
-            )
-        return None
 
     def _get_load_balancer(self) -> Optional[LoadBalancer]:
         """Get load balancer if chat servers are configured"""
@@ -256,33 +241,20 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
                 except Exception as e:
                     logger.warning(f"Load balancer error in chat(): {e}, falling back to local", exc_info=True)
 
-            # Check if user has custom AI service enabled
-            custom_service = self._get_custom_ai_service()
-            if custom_service:
-                # Use user's custom AI service
-                content = await custom_service.chat(
-                    messages=messages,
-                    temperature=self.temperature,
-                    top_p=self.top_p,
-                    max_tokens=self.num_predict,
-                    stop=self.stop
-                )
-                return content
-            else:
-                # Use server's default AI service
-                prepare_vram_for_llm(self.db)
-                service = get_inference_service(self.db)
-                result = await service.chat_completion(
-                    messages=messages,
-                    temperature=self.temperature,
-                    top_p=self.top_p,
-                    max_tokens=self.num_predict,
-                    stop=self.stop
-                )
-                if "error" in result:
-                    return f"Error: {result['error'].get('message', 'Unknown error')}"
-                content = result["choices"][0]["message"]["content"]
-                return self.strip_thinking_tags(content)
+            # Use the server's default AI service
+            prepare_vram_for_llm(self.db)
+            service = get_inference_service(self.db)
+            result = await service.chat_completion(
+                messages=messages,
+                temperature=self.temperature,
+                top_p=self.top_p,
+                max_tokens=self.num_predict,
+                stop=self.stop
+            )
+            if "error" in result:
+                return f"Error: {result['error'].get('message', 'Unknown error')}"
+            content = result["choices"][0]["message"]["content"]
+            return self.strip_thinking_tags(content)
         except Exception as e:
             return f"Error: {str(e)}"
 
@@ -374,61 +346,6 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
                     logger.info("Load balancer unavailable, using local inference")
                 except Exception as e:
                     logger.warning(f"Load balancer error: {e}, falling back to local", exc_info=True)
-
-            # Check if user has custom AI service enabled
-            custom_service = self._get_custom_ai_service()
-            if custom_service:
-                # Use user's custom AI service - stream using SSE parsing
-                # With thinking tag filtering
-                buffer = ""
-                thinking_done = False
-
-                async for chunk in custom_service.chat_stream(
-                    messages=messages,
-                    temperature=self.temperature,
-                    top_p=self.top_p,
-                    max_tokens=self.num_predict,
-                    stop=self.stop
-                ):
-                    if chunk.startswith("data: "):
-                        data_str = chunk[6:].strip()
-                        if data_str == "[DONE]":
-                            break
-                        try:
-                            data = json.loads(data_str)
-                            # Check for error
-                            if "error" in data:
-                                yield f"Error: {data['error'].get('message', 'Unknown error')}"
-                                return
-                            content = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                            if content:
-                                if not thinking_done:
-                                    buffer += content
-                                    # Look for end of thinking tag
-                                    match = THINKING_CLOSE_PATTERN.search(buffer)
-                                    if match:
-                                        thinking_done = True
-                                        after_think = buffer[match.end():]
-                                        buffer = ""  # Clear buffer - no longer needed
-                                        if after_think.strip():
-                                            yield after_think
-                                    # Also check if no think tag in first 50 chars - assume no thinking
-                                    elif len(buffer) > 50 and not has_thinking_open(buffer):
-                                        thinking_done = True
-                                        yield buffer
-                                        buffer = ""  # Clear buffer - no longer needed
-                                else:
-                                    # Thinking is done, yield content directly (don't buffer)
-                                    yield content
-                        except json.JSONDecodeError:
-                            continue
-
-                # Yield any remaining buffer
-                if buffer:
-                    clean = self.strip_thinking_tags(buffer)
-                    if clean:
-                        yield clean
-                return
 
             # Use server's default AI service
             prepare_vram_for_llm(self.db)

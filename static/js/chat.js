@@ -203,23 +203,6 @@ class ChatHandler {
             });
         }
 
-        // Custom AI elements
-        const customAiEnabled = document.getElementById('customAiEnabled');
-        const customAiSettings = document.getElementById('customAiSettings');
-        const customAiType = document.getElementById('customAiType');
-        const customAiUrl = document.getElementById('customAiUrl');
-        const customAiModel = document.getElementById('customAiModel');
-        const customAiApiKey = document.getElementById('customAiApiKey');
-        const testCustomAi = document.getElementById('testCustomAi');
-        const testAiResult = document.getElementById('testAiResult');
-
-        // Custom Image elements
-        const customImageEnabled = document.getElementById('customImageEnabled');
-        const customImageSettings = document.getElementById('customImageSettings');
-        const customImageUrl = document.getElementById('customImageUrl');
-        const testCustomImage = document.getElementById('testCustomImage');
-        const testImageResult = document.getElementById('testImageResult');
-
         // News Schedule elements
         const newsScheduleEnabled = document.getElementById('newsScheduleEnabled');
         const newsScheduleSettings = document.getElementById('newsScheduleSettings');
@@ -505,17 +488,6 @@ class ChatHandler {
                 // Profile settings
                 if (emailInput) settings.notification_email = emailInput.value;
 
-                // Custom AI settings
-                if (customAiEnabled) settings.custom_ai_enabled = customAiEnabled.checked;
-                if (customAiType) settings.custom_ai_type = customAiType.value;
-                if (customAiUrl) settings.custom_ai_url = customAiUrl.value;
-                if (customAiModel) settings.custom_ai_model = customAiModel.value;
-                if (customAiApiKey) settings.custom_ai_api_key = customAiApiKey.value;
-
-                // Custom Image settings
-                if (customImageEnabled) settings.custom_image_enabled = customImageEnabled.checked;
-                if (customImageUrl) settings.custom_image_url = customImageUrl.value;
-
                 // Schedule settings
                 const scheduleEnabled = document.getElementById('scheduleEnabled');
                 if (scheduleEnabled) settings.schedule_enabled = scheduleEnabled.checked;
@@ -713,33 +685,6 @@ class ChatHandler {
                     avatarPlaceholder.style.display = 'block';
                     if (deleteAvatarBtn) deleteAvatarBtn.style.display = 'none';
                 }
-
-                // Custom AI settings
-                const customAiEnabled = document.getElementById('customAiEnabled');
-                const customAiSettings = document.getElementById('customAiSettings');
-                if (customAiEnabled) customAiEnabled.checked = settings.custom_ai_enabled || false;
-                if (customAiSettings) customAiSettings.style.display = (settings.custom_ai_enabled) ? 'block' : 'none';
-
-                const customAiType = document.getElementById('customAiType');
-                if (customAiType) customAiType.value = settings.custom_ai_type || 'ollama';
-
-                const customAiUrl = document.getElementById('customAiUrl');
-                if (customAiUrl) customAiUrl.value = settings.custom_ai_url || '';
-
-                const customAiModel = document.getElementById('customAiModel');
-                if (customAiModel) customAiModel.value = settings.custom_ai_model || '';
-
-                const customAiApiKey = document.getElementById('customAiApiKey');
-                if (customAiApiKey) customAiApiKey.value = '';
-
-                // Custom Image settings
-                const customImageEnabled = document.getElementById('customImageEnabled');
-                const customImageSettings = document.getElementById('customImageSettings');
-                if (customImageEnabled) customImageEnabled.checked = settings.custom_image_enabled || false;
-                if (customImageSettings) customImageSettings.style.display = (settings.custom_image_enabled) ? 'block' : 'none';
-
-                const customImageUrl = document.getElementById('customImageUrl');
-                if (customImageUrl) customImageUrl.value = settings.custom_image_url || '';
 
                 // Schedule settings
                 const scheduleEnabled = document.getElementById('scheduleEnabled');

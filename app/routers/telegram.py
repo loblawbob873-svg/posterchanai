@@ -1755,6 +1755,10 @@ async def _handle_telegram_update(update: dict, db: Session):
                     command = cmd
                     arg = text[len(cmd):].strip()
                     break
+            # Telegram skips parse_command, so resolve aliases (e.g. shot/ss -> screenshot) to the
+            # canonical name, or execute_command rejects them as "Unknown command".
+            if command:
+                command = CommandService.COMMAND_ALIASES.get(command, command)
 
             # "post" can appear anywhere in a short reply message (e.g. "send post", "make a post")
             if command is None and reply_to and len(text_lower.split()) <= 5 and "post" in text_lower:
@@ -1766,8 +1770,12 @@ async def _handle_telegram_update(update: dict, db: Session):
             # If it's a reply and translate command, handle it
             if reply_text and command == "translate":
                 logger.warning(f"TRANSLATE: Processing reply with text: {reply_text[:100]}...")
-                # Use the replied text for translation
-                language = arg.replace("to", "").strip() or "English"
+                # Use the replied text for translation. Language = 1-2 words after an optional
+                # leading "to", dropping any trailing instruction ("... and explain"). (Plain
+                # arg.replace("to","") mangled words like "Esperanto".)
+                _lm = re.match(r'^(?:to\s+)?([A-Za-z][A-Za-z\- ]*?)(?:\s+and\s+.*)?$',
+                               arg.strip(), re.IGNORECASE)
+                language = (_lm.group(1).strip().title() if _lm and _lm.group(1).strip() else "English")
                 
                 from app.services.chat_service import ChatService as FreshChatService
                 fresh_chat_service = FreshChatService(db, user=None)
@@ -1979,6 +1987,10 @@ async def _handle_telegram_update(update: dict, db: Session):
                     command = cmd
                     arg = text[len(cmd):].strip()
                     break
+            # Telegram skips parse_command, so resolve aliases (e.g. shot/ss -> screenshot) to the
+            # canonical name, or execute_command rejects them as "Unknown command".
+            if command:
+                command = CommandService.COMMAND_ALIASES.get(command, command)
 
             # Auto-detect bare magnet links — route to "torrents add <magnet>"
             if not command and text.strip().startswith("magnet:?"):

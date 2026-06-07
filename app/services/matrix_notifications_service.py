@@ -233,6 +233,11 @@ async def _poll_user(db: Session, hs: str, bot_token: str, user: User) -> None:
 
 
 async def poll_once(db: Session) -> None:
+    # The timeline bridge is the master switch for ALL fedi->Matrix output (it owns the bot
+    # credentials these DMs reuse): when it's off, the personal notification DMs stop too, even if
+    # their own toggle is on.
+    if _get_setting(db, "fedi_timeline_enabled", "false").lower() != "true":
+        return
     if _get_setting(db, "matrix_notif_enabled", "false").lower() != "true":
         return
     hs = _get_setting(db, "fedi_timeline_matrix_homeserver").rstrip("/")

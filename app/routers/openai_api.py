@@ -468,9 +468,15 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     if request.tools and not skip_load_balancer \
             and settings.get("tool_guidance_enabled", "true").lower() == "true":
         guidance = (settings.get("tool_guidance_text", "") or "").strip() or _DEFAULT_TOOL_GUIDANCE
-        if messages and messages[0].get("role") == "system":
-            messages[0]["content"] = ((messages[0].get("content") or "").rstrip() + "\n\n" + guidance)
+        sys0 = messages[0] if messages and messages[0].get("role") == "system" else None
+        sys_content = sys0.get("content") if sys0 else None
+        if isinstance(sys_content, str):
+            sys0["content"] = sys_content.rstrip() + "\n\n" + guidance
+        elif isinstance(sys_content, list):
+            # OpenAI content-parts form: append guidance as another text part rather than crash.
+            sys0["content"] = sys_content + [{"type": "text", "text": guidance}]
         else:
+            # No leading system message (or null content) -> add one.
             messages.insert(0, {"role": "system", "content": guidance})
 
     # Ensure messages alternate user/assistant properly (prevents "roles must alternate" errors).
@@ -590,8 +596,13 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     # `write` as ONE tool call, so the low chat cap truncates large files mid-function. Use a
     # separate, higher cap when the request carries tools. Generic - keys on "has tools", not on
     # any specific client.
-    predict_limit = int(settings.get("ollama_tool_num_predict", "16384")) if request.tools \
-        else server_num_predict
+    if request.tools:
+        try:
+            predict_limit = int((settings.get("ollama_tool_num_predict", "16384") or "16384").strip())
+        except (TypeError, ValueError):
+            predict_limit = 16384
+    else:
+        predict_limit = server_num_predict
     max_tokens = min(request.max_tokens, predict_limit) if request.max_tokens is not None else predict_limit
 
     # Use load balancer if configured - picks server round-robin, uses local inference for "self" URLs

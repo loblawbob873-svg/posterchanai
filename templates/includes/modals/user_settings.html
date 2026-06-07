@@ -9,7 +9,6 @@
             <!-- Tab Navigation -->
             <div class="user-tabs">
                 <button class="user-tab-btn active" data-tab="profile">Profile</button>
-                <button class="user-tab-btn" data-tab="ai">AI Services</button>
                 <button class="user-tab-btn" data-tab="mail">Mail</button>
                 <button class="user-tab-btn" data-tab="telegram">Telegram</button>
                 <button class="user-tab-btn" data-tab="social">Social</button>
@@ -82,91 +81,6 @@ www.coindesk.com/price/xrp/news|XRP News"></textarea>
                             <button type="button" class="btn-secondary" id="scanUserStorageBtn">🔄 Scan My Storage</button>
                             <small>Scan your storage to refresh file listings and update cache. For local storage, this also restores EXIF timestamps and generates thumbnails.</small>
                             <div id="scanStorageStatus" class="test-result" style="display: none; margin-top: 10px;"></div>
-                        </div>
-                    </fieldset>
-                </div>
-
-                <!-- AI Services Tab -->
-                <div class="user-tab-content" id="user-tab-ai">
-                    <fieldset>
-                        <legend>Custom LLM Service</legend>
-                        <p class="fieldset-info">Connect to your own AI running on your desktop (Ollama, Open-WebUI, or Posterchanai).</p>
-                        <div class="form-group">
-                            <div class="toggle-row">
-                                <label for="customAiEnabled">Enable Custom LLM</label>
-                                <input type="checkbox" id="customAiEnabled">
-                            </div>
-                        </div>
-                        <div id="customAiSettings" class="conditional-settings" style="display: none;">
-                            <div class="form-row">
-                                <div class="form-group">
-                                    <label for="customAiType">Service Type</label>
-                                    <select id="customAiType">
-                                        <option value="ollama">Ollama</option>
-                                        <option value="openai">Open-WebUI / Posterchanai</option>
-                                    </select>
-                                </div>
-                                <div class="form-group">
-                                    <label for="customAiModel">Model Name</label>
-                                    <input type="text" id="customAiModel" placeholder="llama3:latest">
-                                </div>
-                            </div>
-                            <div class="form-group">
-                                <label for="customAiUrl">Service URL</label>
-                                <input type="text" id="customAiUrl" placeholder="http://192.168.1.100:11434">
-                                <small>Full URL to your AI service</small>
-                            </div>
-                            <div class="form-group" id="apiKeySection">
-                                <label for="customAiApiKey">API Key <span class="label-hint">(required for Open-WebUI/Posterchanai)</span></label>
-                                <input type="password" id="customAiApiKey" placeholder="API key for authentication">
-                            </div>
-                            <div class="form-group">
-                                <button type="button" class="btn-secondary" id="testCustomAi">Test Connection</button>
-                                <span id="testAiResult" class="test-result"></span>
-                            </div>
-                        </div>
-                    </fieldset>
-
-                    <fieldset>
-                        <legend>Custom Image Generation</legend>
-                        <p class="fieldset-info">Connect to your own ComfyUI instance for image generation.</p>
-                        <div class="form-group">
-                            <div class="toggle-row">
-                                <label for="customImageEnabled">Enable Custom ComfyUI</label>
-                                <input type="checkbox" id="customImageEnabled">
-                            </div>
-                        </div>
-                        <div id="customImageSettings" class="conditional-settings" style="display: none;">
-                            <div class="form-group">
-                                <label for="customImageUrl">ComfyUI URL</label>
-                                <input type="text" id="customImageUrl" placeholder="http://192.168.1.100:8188">
-                                <small>URL to your ComfyUI instance</small>
-                            </div>
-                            <div class="form-group">
-                                <button type="button" class="btn-secondary" id="testCustomImage">Test Connection</button>
-                                <span id="testImageResult" class="test-result"></span>
-                            </div>
-                        </div>
-                    </fieldset>
-
-                    <fieldset>
-                        <legend>Custom AI Training Prompt</legend>
-                        <p class="fieldset-info">Add custom instructions that the AI will always follow. Use this to create shortcuts, define behaviors, or add context the AI should know about you.</p>
-                        <div class="form-group">
-                            <label for="customLlmPrompt">Custom Instructions</label>
-                            <textarea id="customLlmPrompt" rows="8" placeholder="Example:
-When I say 'send accounting this receipt', send an email to accounting@mycompany.com with:
-- Subject: 'Accounting Receipt'
-- Body: 'Hello, Front Desk, attached is a new receipt. Thank you.'
-- Include any attached images
-
-My accountant email: accounting@mycompany.com
-My name: John Smith"></textarea>
-                            <small>These instructions are added to every AI conversation. The AI will follow them when processing your messages.</small>
-                        </div>
-                        <div class="form-group">
-                            <button type="button" class="btn-secondary" id="saveCustomPromptBtn">Save Custom Prompt</button>
-                            <span id="customPromptStatus" class="test-result"></span>
                         </div>
                     </fieldset>
                 </div>

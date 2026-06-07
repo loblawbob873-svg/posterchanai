@@ -2979,6 +2979,16 @@ Files are saved to your Storage.""",
                 "content": f"To translate an email, use:\n`mail translate <account> <id> {language}`\n\nFirst check your mail with `mail` to get the email ID.",
             }
 
+        # Inline form `translate <text> to <lang>` (the documented syntax): translate the GIVEN
+        # text, not the last response. Requires non-empty text before "to" and a language after, so
+        # `translate spanish` / `translate to spanish` still fall through to last-response translation.
+        # The language is 1-2 words right after "to"; any trailing instruction ("... and explain")
+        # is dropped so it isn't mistaken for part of the language name.
+        _inline = re.match(r'^(.+?)\s+to\s+([A-Za-z][A-Za-z\- ]*?)(?:\s+and\s+.*)?$',
+                           arg.strip(), re.IGNORECASE)
+        if _inline and _inline.group(1).strip() and _inline.group(2).strip():
+            return await self._translate_text(_inline.group(1).strip(), _inline.group(2).strip().title())
+
         # Translate the last assistant response.
         language = self._parse_language(arg)
         from app.models import Conversation, Message
