@@ -94,11 +94,20 @@ def is_safe_url(url, trusted_hosts=None):
 
 
 def strip_html(html_text):
-    """Remove HTML tags from text and unescape entities."""
+    """Remove HTML tags from text and unescape entities.
+
+    Line-break and block tags (<br>, </p>, </div>) become newlines first, so the
+    original line structure survives — otherwise e.g. a meme caption typed on two
+    lines ("armpits<br>Please!") collapses into one smashed run ("armpitsPlease!").
+    """
     if not html_text:
         return ""
-    text = re.sub(r"<[^>]+>", "", html_text)
-    return html.unescape(text).strip()
+    text = re.sub(r"(?i)<br\s*/?>", "\n", html_text)
+    text = re.sub(r"(?i)</(?:p|div)>", "\n", text)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = html.unescape(text)
+    text = re.sub(r"\n{3,}", "\n\n", text)  # collapse runs of blank lines
+    return text.strip()
 
 
 def parse_prompt_modifiers(prompt):
