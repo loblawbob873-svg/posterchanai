@@ -111,6 +111,7 @@ _BOT_HELP_TEXT = (
     "• clip <start> <end> — trim an attached video, e.g. clip 0:10 0:30\n"
     "• convert — images → PDF, or a PDF → images (attach a file)\n"
     "• meme <text> — add outlined white caption text to an attached image\n"
+    "• dildo — scatter dildos all over an attached image\n"
     "• screenshot <url> — full-page screenshot of a website (also shot / ss)\n"
     "• /narrate <message> — reply as a short TTS video\n"
     "Or just talk to me and I'll reply. 💕"
@@ -122,7 +123,7 @@ def _handle_media_command(status, command, arg, own_acct, visibility):
     post the result file(s) back. Shared shape with the Misskey listener."""
     media = _gather_status_media(status)
     if not media:
-        send_reply(status, "📎 Attach a file to your post, then add `compress`, `clip 0:10 0:30`, `convert` or `meme <text>`.",
+        send_reply(status, "📎 Attach a file to your post, then add `compress`, `clip 0:10 0:30`, `convert`, `meme <text>` or `dildo`.",
                    own_acct=own_acct, visibility=visibility)
         return
     print(f"→ Forwarding {len(media)} file(s) for '{command}'")
@@ -133,7 +134,7 @@ def _handle_media_command(status, command, arg, own_acct, visibility):
     skipped = [f["filename"] for f in out_files
                if not f["content_type"].startswith(("image/", "video/"))]
     # meme's result IS the image — reply with just the image, no summary caption.
-    text = "" if command == "meme" else (summary or "Done.")
+    text = "" if command in ("meme", "dildo") else (summary or "Done.")
     if skipped:
         text += f"\n\n(Couldn't attach {', '.join(skipped)} here — fediverse posts only take images/video.)"
     # Main reply carries the summary + all images + the first video; any further
@@ -354,7 +355,7 @@ def process_notifications():
             # Handle media commands (compress/clip/convert/meme) on an attached file.
             lower_prompt = prompt_text.lower()
             _media_cmd = None
-            for _c in ("compress", "clip", "convert", "meme"):
+            for _c in ("compress", "clip", "convert", "meme", "dildo"):
                 if lower_prompt == _c or lower_prompt.startswith(_c + " "):
                     _media_cmd = _c
                     break

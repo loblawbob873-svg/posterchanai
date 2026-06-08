@@ -464,6 +464,7 @@ async def execute_matrix_command(
             "• `convert` — turn image(s) into a single PDF, or a PDF into one image per page.\n"
             "  (Send several images first, then `convert`, to combine them into one PDF.)\n"
             "• `meme <text>` — add outlined white caption text to the lower half of an image.\n"
+            "• `dildo` — scatter dildos all over an image.\n"
             "  Uploads are remembered for 5 minutes while you decide.\n\n"
             "🎨 *Create & fetch*\n"
             "• `geni <prompt>` — generate an image.\n"
@@ -541,8 +542,8 @@ async def execute_matrix_command(
             raise HTTPException(status_code=500, detail=str(e))
         return {"result": reply}
 
-    # compress/clip/convert/translate/meme: operate on the bot-forwarded attachments.
-    if data.media and command in ("compress", "clip", "convert", "translate", "meme"):
+    # compress/clip/convert/translate/meme/dildo: operate on the bot-forwarded attachments.
+    if data.media and command in ("compress", "clip", "convert", "translate", "meme", "dildo"):
         import base64 as _b64
         attachments = []
         for item in (data.media or []):

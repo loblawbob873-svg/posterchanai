@@ -1081,6 +1081,7 @@ def process_messages():
                     _opts.append("• `compress` — shrink the image")
                     _opts.append("• `convert` — turn image(s) into a PDF")
                     _opts.append("• `meme <text>` — add outlined white caption text")
+                    _opts.append("• `dildo` — scatter dildos all over the image")
                     _opts.append("• `translate <language>` — read & translate the text")
                 elif _is_vid:
                     _opts.append("• `compress` — shrink the video")
@@ -1451,7 +1452,8 @@ def process_messages():
         elif lower_prompt == "compress" or lower_prompt.startswith("compress ") \
                 or lower_prompt == "clip" or lower_prompt.startswith("clip ") \
                 or lower_prompt == "convert" or lower_prompt.startswith("convert ") \
-                or lower_prompt == "meme" or lower_prompt.startswith("meme "):
+                or lower_prompt == "meme" or lower_prompt.startswith("meme ") \
+                or lower_prompt == "dildo" or lower_prompt.startswith("dildo "):
             _media = _gather_cached_media(sender)
             # Fallback for clients with no media caption (e.g. Element): the user
             # uploads the file, then *replies* to it with the command. Pull the
@@ -1459,7 +1461,7 @@ def process_messages():
             if not _media:
                 _media = _media_from_replied_event(message, room_id)
             if not _media:
-                send_reply(message, "📎 Attach an image, video or PDF (or reply to one), then send `compress`, `clip 0:10 0:30`, `convert` or `meme <text>`.")
+                send_reply(message, "📎 Attach an image, video or PDF (or reply to one), then send `compress`, `clip 0:10 0:30`, `convert`, `meme <text>` or `dildo`.")
             elif lower_prompt.startswith("meme") and contains_bad_words(lower_prompt):
                 # meme bakes the user's caption into a posted image — same bad-word
                 # gate as geni (compress/clip/convert add no user text).
@@ -1482,7 +1484,7 @@ def process_messages():
                 # For meme the image IS the result — don't also post the summary
                 # text (it would be a noisy second message). compress/clip/convert
                 # keep their summary (it reports the size change).
-                if _summary and not lower_prompt.startswith("meme"):
+                if _summary and not lower_prompt.startswith(("meme", "dildo")):
                     send_reply(message, _summary)
                 if _out_files and not _posted:
                     send_reply(message, "❌ Couldn't upload the processed file(s) to Matrix.")

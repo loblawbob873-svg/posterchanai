@@ -566,6 +566,7 @@ class CommandService:
         "clip": "Clip an attached video: clip <start> <end> (e.g. clip 0:10 0:30)",
         "convert": "Convert image(s) to PDF or a PDF to images",
         "meme": "Add outlined white meme text to an attached image: meme <text>",
+        "dildo": "Scatter dildos all over an attached image: dildo",
         "node": "Remote node mgmt: node <name> <cmd> | node all <cmd> | node agent <name> <goal> | node agent all <goal> | node list | node jobs | node log <id> | node kill <id>",
         "budget": "Show your budget summary (income, unpaid bills, remaining)",
         "bills": "List your bills: bills (unpaid) | bills all | bills paid",
@@ -698,6 +699,8 @@ class CommandService:
             return await self._convert_command(arg, attachments)
         elif command == "meme":
             return await self._meme_command(arg, attachments)
+        elif command == "dildo":
+            return await self._dildo_command(attachments)
         elif command == "node":
             return await self._node_command(arg, notify=node_notify)
         elif command == "budget":
@@ -3209,6 +3212,25 @@ Files are saved to your Storage.""",
 
         # Pillow text rendering is light, but keep it off the event loop for big images.
         outputs, summary = await asyncio.to_thread(meme_attachments, attachments, arg)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _dildo_command(self, attachments: Optional[list]) -> dict:
+        """Scatter dildos all over an attached image: `dildo` (no text needed)."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {
+                "type": "text",
+                "content": "Attach an image, then send `dildo` to decorate it.",
+            }
+
+        import asyncio
+        from app.services.media_service import dildo_attachments
+
+        # Pillow compositing is light, but keep it off the event loop for big images.
+        outputs, summary = await asyncio.to_thread(dildo_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}

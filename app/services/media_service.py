@@ -408,6 +408,176 @@ def meme_attachments(
 
 
 # ---------------------------------------------------------------------------
+# Dildo overlay (the "dildo" gag — scatter cartoon dildos across an image)
+# ---------------------------------------------------------------------------
+
+# A few flesh/pink/novelty tones so the scattered dildos aren't all identical.
+_DILDO_COLORS = [
+    (240, 200, 175, 255),  # light flesh
+    (212, 162, 130, 255),  # medium flesh
+    (168, 120, 95, 255),   # dark flesh
+    (246, 150, 182, 255),  # pink
+    (152, 92, 200, 255),   # purple
+]
+
+
+def _shade(c, f: float):
+    """Lighten (f>1) or darken (f<1) an RGB(A) colour, clamped, alpha forced opaque."""
+    return (min(255, int(c[0] * f)), min(255, int(c[1] * f)),
+            min(255, int(c[2] * f)), 255)
+
+
+def _make_dildo(h: int):
+    """Render one shaded dildo (pointing up) on a transparent RGBA tile.
+
+    Pure Pillow — a glans + rounded-pill shaft + two balls, with a blurred
+    highlight/shadow pass (confined to the silhouette) and a coronal ridge for a
+    3-D, semi-realistic look. Ships no image asset (the meme path is also pure
+    Pillow).
+    """
+    import random
+    from PIL import Image, ImageDraw, ImageFilter, ImageChops
+
+    W = max(int(h * 0.64), 14)
+    H = max(int(h * 1.15), 18)
+    base = random.choice(_DILDO_COLORS)
+    dark = _shade(base, 0.6)
+    light = _shade(base, 1.35)
+    # Glans reads slightly deeper and pinker than the shaft.
+    _hd = _shade(base, 0.9)
+    head = (min(255, _hd[0] + 15), _hd[1], min(255, _hd[2] + 10), 255)
+    outline = _shade(base, 0.45)
+    ow = max(int(W * 0.04), 1)
+
+    cx = W / 2.0
+    sw = W * 0.40                 # shaft width
+    ball_r = sw * 0.66
+    top = H * 0.05
+    base_y = H - ball_r * 1.05
+    head_h = sw * 1.05            # glans height
+    head_w = sw * 1.18
+    shaft_top = top + head_h * 0.45
+
+    # --- silhouette / base colours (drawn in z-order; later shapes cover earlier) ---
+    body = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    bd = ImageDraw.Draw(body)
+    for dx in (-sw * 0.40, sw * 0.40):           # balls (behind shaft)
+        bx = cx + dx
+        bd.ellipse([bx - ball_r, base_y - ball_r, bx + ball_r, base_y + ball_r],
+                   fill=base, outline=outline, width=ow)
+    bd.rounded_rectangle([cx - sw / 2, shaft_top, cx + sw / 2, base_y],
+                         radius=sw / 2, fill=base, outline=outline, width=ow)
+    bd.ellipse([cx - head_w / 2, top, cx + head_w / 2, top + head_h],
+               fill=head, outline=outline, width=ow)
+    mask = body.split()[-1]
+
+    # --- soft shading pass (blurred, then clipped to the silhouette so it can't bleed) ---
+    sh = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(sh)
+    hl = sw * 0.30
+    sd.rounded_rectangle([cx - sw * 0.08 - hl / 2, shaft_top + sw * 0.1,
+                          cx - sw * 0.08 + hl / 2, base_y - sw * 0.1],
+                         radius=hl / 2, fill=light[:3] + (150,))     # central highlight stripe
+    edge = max(int(sw * 0.12), 1)
+    sd.line([(cx - sw / 2 + sw * 0.08, shaft_top), (cx - sw / 2 + sw * 0.08, base_y)],
+            fill=dark[:3] + (120,), width=edge)
+    sd.line([(cx + sw / 2 - sw * 0.08, shaft_top), (cx + sw / 2 - sw * 0.08, base_y)],
+            fill=dark[:3] + (120,), width=edge)
+    sd.ellipse([cx - head_w * 0.18, top + head_h * 0.12,
+                cx + head_w * 0.05, top + head_h * 0.5], fill=light[:3] + (160,))  # glans sheen
+    for dx in (-sw * 0.40, sw * 0.40):           # ball highlights (upper-left)
+        bx = cx + dx
+        sd.ellipse([bx - ball_r * 0.5, base_y - ball_r * 0.6, bx + ball_r * 0.1, base_y],
+                   fill=light[:3] + (110,))
+    sh = sh.filter(ImageFilter.GaussianBlur(max(sw * 0.12, 1)))
+    sh.putalpha(ImageChops.multiply(sh.split()[-1], mask))
+
+    out = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    out.alpha_composite(body)
+    out.alpha_composite(sh)
+    # Coronal ridge: a faint arc where the glans meets the shaft.
+    ImageDraw.Draw(out).arc([cx - head_w / 2, top + head_h * 0.35,
+                             cx + head_w / 2, top + head_h * 1.15],
+                            start=20, end=160, fill=outline[:3] + (170,),
+                            width=max(int(sw * 0.07), 1))
+    return out
+
+
+def add_dildos(data: bytes, count: int = 0) -> bytes:
+    """Scatter cartoon dildos at random positions/sizes/angles over an image.
+
+    `count` <= 0 auto-scales with the image area. Returns JPEG bytes.
+    """
+    import random
+    from PIL import Image, ImageOps
+    try:
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+    except Exception:
+        pass
+
+    with Image.open(io.BytesIO(data)) as img:
+        img = ImageOps.exif_transpose(img)
+        # Flatten transparency/palette onto white (matches add_meme_text) so the
+        # final RGB save never turns transparent areas black.
+        if img.mode in ("RGBA", "LA", "P"):
+            background = Image.new("RGB", img.size, (255, 255, 255))
+            rgba = img.convert("RGBA")
+            background.paste(rgba, mask=rgba.split()[-1])
+            img = background
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+
+        W, H = img.size
+        img = img.convert("RGBA")  # composite layer
+        if count <= 0:
+            count = max(14, min(60, (W * H) // 38000))
+        base = min(W, H)
+        lo, hi = max(int(base * 0.12), 12), max(int(base * 0.28), 24)
+        for _ in range(count):
+            size = random.randint(lo, hi)
+            tile = _make_dildo(size)
+            tile = tile.rotate(random.uniform(0, 360), expand=True, resample=Image.BICUBIC)
+            # Allow partial overhang off every edge so the scatter reaches the borders.
+            x = random.randint(-tile.width // 3, max(W - tile.width * 2 // 3, 1))
+            y = random.randint(-tile.height // 3, max(H - tile.height * 2 // 3, 1))
+            img.alpha_composite(tile, (x, y))
+
+        img = img.convert("RGB")
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=90, optimize=True)
+        return out.getvalue()
+
+
+def dildo_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Scatter dildos over the first image attachment.
+
+    Returns (output_files, summary_text). Mirrors meme_attachments so the web UI,
+    Telegram, Matrix and the fedi bots share one delivery path.
+    """
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_dildos(data)
+        out: OutputFile = {
+            "filename": f"{stem}_dildo.jpg",
+            "data": result,
+            "content_type": "image/jpeg",
+        }
+        summary = f"## 🍆 Dildo\n\n🍆 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"dildo failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
 # Video compression
 # ---------------------------------------------------------------------------
 
