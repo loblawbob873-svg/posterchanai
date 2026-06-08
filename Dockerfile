@@ -84,7 +84,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
 ENV POSTERCHANAI_LLM_BACKEND=native \
     POSTERCHANAI_LLM_MODEL_PATH=/var/lib/posterchanai/models/Qwen3.5-9B-abliterated-Q4_K_M.gguf \
     POSTERCHANAI_MODEL_URL=https://huggingface.co/lukey03/Qwen3.5-9B-abliterated-GGUF/resolve/main/Qwen3.5-9B-abliterated-Q4_K_M.gguf \
-    DOWNLOAD_MODEL=1
+    DOWNLOAD_MODEL=1 \
+    POSTERCHANAI_IMAGE_BACKEND=native \
+    POSTERCHANAI_IMAGE_MODEL_PATH=stabilityai/stable-diffusion-xl-base-1.0
 
 # --- system packages (all four bases are Ubuntu, so apt is uniform) ----------
 #  build : compiler toolchain + cmake for building llama-cpp-python

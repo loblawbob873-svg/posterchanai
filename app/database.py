@@ -403,9 +403,12 @@ def init_db():
             "comfyui_default_model": "halcyonSDXL_v19.safetensors",
             "comfyui_anime_model": "nova3DCGXL_ilV80.safetensors",
             "comfyui_timeout": "300000",
-            # Native image generation settings
-            "image_backend": "comfyui",  # "native" or "comfyui"
-            "image_model_path": "",
+            # Native image generation settings. Like the LLM backend, the FIRST-RUN
+            # backend + model can be seeded from the environment (the Docker image
+            # ships native + a free SDXL repo so image gen works out of the box;
+            # diffusers downloads the model on first generation).
+            "image_backend": os.environ.get("POSTERCHANAI_IMAGE_BACKEND", "comfyui"),  # "native" or "comfyui"
+            "image_model_path": os.environ.get("POSTERCHANAI_IMAGE_MODEL_PATH", ""),
             "image_anime_model_path": "",
             "image_model_type": "sdxl",  # "sd15", "sdxl", "sd3", "flux"
             "image_default_steps": "20",
