@@ -88,7 +88,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg tesseract-ocr \
         libgl1 libglib2.0-0 libjpeg-turbo8 zlib1g \
         fonts-dejavu fonts-noto-color-emoji fontconfig \
-        python3-libtorrent \
+        python3-libtorrent tor \
     && rm -rf /var/lib/apt/lists/*
 
 # --- headless Chrome for the screenshot command (optional, on by default) -----
@@ -193,7 +193,10 @@ ENV POSTERCHANAI_PORT=3051 \
     POSTERCHANAI_MODEL_URL=https://huggingface.co/lukey03/Qwen3.5-9B-abliterated-GGUF/resolve/main/Qwen3.5-9B-abliterated-Q4_K_M.gguf \
     POSTERCHANAI_IMAGE_BACKEND=native \
     POSTERCHANAI_IMAGE_MODEL_PATH=Lykon/dreamshaper-8 \
-    POSTERCHANAI_IMAGE_MODEL_TYPE=sd15
+    POSTERCHANAI_IMAGE_MODEL_TYPE=sd15 \
+    POSTERCHANAI_TOR_ENABLED=true \
+    POSTERCHANAI_PROXY_ENABLED=true \
+    POSTERCHANAI_BT_ENABLED=true
 
 EXPOSE 3051
 

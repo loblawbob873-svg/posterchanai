@@ -251,6 +251,14 @@ export HSA_OVERRIDE_GFX_VERSION=${GFX_VER:-10.3.0}
 # Help with memory management
 export PYTORCH_HIP_ALLOC_CONF=expandable_segments:True
 
+# Persist MIOpen's compiled conv kernels so image gen pays the ROCm cold-start
+# (kernel compilation) ONCE, not on every restart — the big AMD image-gen perf
+# fix. FIND_MODE=2 (FAST) shortens the first-run kernel search.
+export MIOPEN_USER_DB_PATH="\$SCRIPT_DIR/data/miopen"
+export MIOPEN_CUSTOM_CACHE_DIR="\$SCRIPT_DIR/data/miopen"
+export MIOPEN_FIND_MODE=2
+mkdir -p "\$MIOPEN_USER_DB_PATH"
+
 exec "\$SCRIPT_DIR/venv/bin/python" run.py "\$@"
 SCRIPT
 }

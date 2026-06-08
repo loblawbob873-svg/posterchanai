@@ -572,8 +572,10 @@ When asked to write or modify code or files:
             "mcp_port": "8808",                # SSE/HTTP port for MCP clients
             "mcp_host": "0.0.0.0",             # Host to bind MCP server
             "mcp_warmup": "true",              # Pre-load embeddings on startup
-            # Built-in torrent client (libtorrent)
-            "bt_enabled": "false",
+            # Built-in torrent client (libtorrent). FIRST-RUN default can be seeded
+            # from env (the Docker image enables the torrent/proxy/Tor stack so it
+            # works out of the box; the app starts Tor + the HTTP proxy itself).
+            "bt_enabled": os.environ.get("POSTERCHANAI_BT_ENABLED", "false"),
             "bt_server_url": "",              # Remote torrent server URL (empty = local)
             "storage_server_url": "",         # Remote storage server URL (empty = local)
             "file_cache_enabled": "true",     # Enable file listing cache
@@ -587,13 +589,13 @@ When asked to write or modify code or files:
             "bt_proxy_port": "8118",          # HTTP proxy port (e.g. Privoxy for Tor)
             "bt_listen_port": "6881",         # BitTorrent listen port
             # Built-in HTTP proxy (HTTP → SOCKS5/Tor gateway)
-            "proxy_enabled": "false",         # Enable built-in HTTP proxy
+            "proxy_enabled": os.environ.get("POSTERCHANAI_PROXY_ENABLED", "false"),         # Enable built-in HTTP proxy
             "proxy_listen_host": "127.0.0.1", # HTTP proxy listen address
             "proxy_listen_port": "8118",      # HTTP proxy listen port
             "proxy_socks_host": "",           # SOCKS5 target host (Tor or remote proxy)
             "proxy_socks_port": "9052",       # SOCKS5 target port
             # Built-in Tor client
-            "tor_enabled": "false",           # Enable built-in Tor client
+            "tor_enabled": os.environ.get("POSTERCHANAI_TOR_ENABLED", "false"),           # Enable built-in Tor client
             "tor_listen_host": "127.0.0.1",   # Tor SOCKS5 listen address (0.0.0.0 for all)
             "tor_socks_port": "9052",         # Tor SOCKS5 listen port
             "tor_control_port": "9053",       # Tor control port
