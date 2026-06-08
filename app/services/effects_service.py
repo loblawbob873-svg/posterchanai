@@ -1436,7 +1436,7 @@ def add_blacked(data: bytes, count: int = 0) -> bytes:
 
         W, H = img.size
         img = img.convert("RGBA")
-        logo = _make_blacked(max(int(min(W, H) * 0.55), 96))
+        logo = _make_blacked(max(int(min(W, H) * 0.42), 80))
         # Horizontally centred, sitting in the lower third (centre at ~2/3 H),
         # clamped so the roundel never spills off the bottom edge.
         x = (W - logo.width) // 2
