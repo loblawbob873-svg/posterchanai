@@ -162,8 +162,9 @@ def upload_media_to_misskey(image_bytes, filename="image.png", mime="image/png")
     return None
 
 def send_reply(note_obj, reply_text, own_acct=None, visibility=None, image_bytes=None, audio_bytes=None, video_bytes=None):
-    # Do not send if reply_text is None or empty (unless video is attached - text is in subtitles)
-    if not reply_text and not video_bytes:
+    # Do not send if there's nothing to post: no text AND no media (video subtitles
+    # carry the text for video; an image-only reply — e.g. `meme` — is also valid).
+    if not reply_text and not video_bytes and not image_bytes:
         print("Reply is None or empty; not sending.")
         return
 
@@ -186,8 +187,9 @@ def send_reply(note_obj, reply_text, own_acct=None, visibility=None, image_bytes
     v = visibility_map.get(visibility, "public")
     reply_note_id = note_obj.get("id")
     mention_prefix = build_mention_prefix(note_obj, own_acct)
-    # If video attached, only send mention (text is in video subtitles)
-    if video_bytes and not reply_text:
+    # Media-only reply (video subtitles carry text, or an image-only meme): post just
+    # the mention prefix so the reply still threads/notifies, with the media attached.
+    if (video_bytes or image_bytes) and not reply_text:
         full_text = mention_prefix.strip()
     else:
         full_text = f"{mention_prefix}{reply_text}".strip()
