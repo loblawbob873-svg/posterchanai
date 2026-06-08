@@ -954,62 +954,77 @@ def blood_attachments(
 def _make_bullethole(h: int):
     """Render one bullet hole on a transparent tile (pure Pillow).
 
-    A dark punched hole with a slightly metallic rim, a pale crushed impact ring
-    around it, jagged radial cracks and a couple of concentric crack arcs — so it
-    reads as the surface being shot through. Ships no image asset.
+    A small IRREGULAR punched hole with a torn rim, surrounded by dense BRANCHING
+    radial cracks and jagged concentric cracks (the dominant feature) plus only a
+    very faint stress discolouration — so it reads as shattered impact, not a ball.
+    Ships no image asset.
     """
     import math
     import random
     from PIL import Image, ImageDraw, ImageFilter
 
-    W = max(int(h * 1.4), 24)
+    W = max(int(h * 1.5), 24)
     H = W
     cx = cy = W / 2.0
-    core_r = W * 0.12
+    hole_r = W * 0.075
     tile = Image.new("RGBA", (W, H), (0, 0, 0, 0))
 
-    # Pale crushed impact ring (semi-transparent so the photo shows through).
-    ring = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    rr = W * 0.34
-    ImageDraw.Draw(ring).ellipse([cx - rr, cy - rr, cx + rr, cy + rr],
-                                 fill=(205, 205, 210, 70))
-    ring = ring.filter(ImageFilter.GaussianBlur(max(W * 0.03, 1)))
-    tile.alpha_composite(ring)
+    # Very faint, irregular stress discolouration (NOT a bright disc — that was the
+    # thing that read as a ball). Low alpha, blurred, lumpy.
+    disc = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    dd = ImageDraw.Draw(disc)
+    for _ in range(10):
+        a = random.uniform(0, math.tau)
+        d = random.uniform(0, W * 0.16)
+        rr = W * random.uniform(0.10, 0.22)
+        ox, oy = cx + math.cos(a) * d, cy + math.sin(a) * d
+        dd.ellipse([ox - rr, oy - rr, ox + rr, oy + rr], fill=(210, 210, 215, 16))
+    disc = disc.filter(ImageFilter.GaussianBlur(max(W * 0.045, 1)))
+    tile.alpha_composite(disc)
 
-    # Jagged radial cracks + a few concentric arcs.
+    # Cracks (the dominant feature): jagged radial cracks that branch, + concentric.
     cracks = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     cd = ImageDraw.Draw(cracks)
-    lw = max(int(W * 0.006), 1)
-    n = random.randint(9, 14)
-    for i in range(n):
-        ang = (i / n) * math.tau + random.uniform(-0.18, 0.18)
-        length = W * random.uniform(0.26, 0.47)
-        x, y, a = cx, cy, ang
+    crack_col = (20, 20, 23, 235)
+
+    def _crack(a, length, width, x=cx, y=cy, depth=0):
+        steps = random.randint(4, 7)
+        seg = length / steps
         pts = [(x, y)]
-        steps = random.randint(3, 5)
         for _ in range(steps):
-            a += random.uniform(-0.28, 0.28)
-            x += math.cos(a) * (length / steps)
-            y += math.sin(a) * (length / steps)
+            a += random.uniform(-0.32, 0.32)
+            x += math.cos(a) * seg
+            y += math.sin(a) * seg
             pts.append((x, y))
-        cd.line(pts, fill=(22, 22, 25, 235), width=lw, joint="curve")
-    for _ in range(random.randint(1, 3)):
-        ar = W * random.uniform(0.16, 0.30)
+            if depth < 2 and width > 1 and random.random() < 0.28:
+                _crack(a + random.uniform(-1.1, 1.1), length * 0.45,
+                       max(width - 1, 1), x, y, depth + 1)
+        cd.line(pts, fill=crack_col, width=int(width), joint="curve")
+
+    n = random.randint(12, 18)
+    for i in range(n):
+        a = (i / n) * math.tau + random.uniform(-0.12, 0.12)
+        _crack(a, W * random.uniform(0.30, 0.52), max(W * 0.006, 1))
+    for _ in range(random.randint(2, 4)):
+        ar = W * random.uniform(0.12, 0.32)
         st = random.uniform(0, 360)
-        cd.arc([cx - ar, cy - ar, cx + ar, cy + ar], st, st + random.uniform(40, 150),
-               fill=(28, 28, 31, 200), width=max(int(W * 0.005), 1))
+        cd.arc([cx - ar, cy - ar, cx + ar, cy + ar], st, st + random.uniform(50, 160),
+               fill=(30, 30, 33, 200), width=max(int(W * 0.004), 1))
     tile.alpha_composite(cracks)
 
-    # The dark hole itself, with a faint metallic rim and a tiny highlight.
+    # The hole itself — a jagged dark polygon (not a clean circle) with a torn rim.
     hole = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     hd = ImageDraw.Draw(hole)
-    hd.ellipse([cx - core_r, cy - core_r, cx + core_r, cy + core_r], fill=(10, 10, 12, 255))
-    hd.ellipse([cx - core_r, cy - core_r, cx + core_r, cy + core_r],
-               outline=(70, 62, 55, 220), width=max(int(W * 0.012), 1))
-    hd.ellipse([cx - core_r * 0.45 - core_r * 0.25, cy - core_r * 0.45 - core_r * 0.25,
-                cx - core_r * 0.45 + core_r * 0.22, cy - core_r * 0.45 + core_r * 0.22],
-               fill=(150, 150, 155, 120))
-    hole = hole.filter(ImageFilter.GaussianBlur(0.6))
+    m = 12
+    pts = []
+    for i in range(m):
+        a = (i / m) * math.tau
+        r = hole_r * random.uniform(0.65, 1.3)
+        pts.append((cx + math.cos(a) * r, cy + math.sin(a) * r))
+    hd.polygon(pts, fill=(8, 8, 10, 255))
+    hd.line(pts + [pts[0]], fill=(48, 42, 38, 200),
+            width=max(int(W * 0.008), 1), joint="curve")
+    hole = hole.filter(ImageFilter.GaussianBlur(0.5))
     tile.alpha_composite(hole)
 
     return tile
@@ -1109,8 +1124,62 @@ def _make_fire(h: int):
 
 
 def add_fire(data: bytes, count: int = 0) -> bytes:
-    """Scatter flames over an image. Spin kept small so flames point up. JPEG bytes."""
-    return _scatter_overlay(data, _make_fire, count, max_rotation=8.0)
+    """Set the image alight: a wall of flames across the bottom third.
+
+    Rather than scattering flames everywhere, this builds a continuous row of
+    overlapping flames of varying heights rooted at the bottom edge (rising up to
+    ~a third of the image, taller licks higher), over a warm glow rising from the
+    bottom. Returns JPEG bytes.
+    """
+    import random
+    from PIL import Image, ImageOps, ImageDraw, ImageFilter
+    try:
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+    except Exception:
+        pass
+
+    with Image.open(io.BytesIO(data)) as img:
+        img = ImageOps.exif_transpose(img)
+        if img.mode in ("RGBA", "LA", "P"):
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            rgba = img.convert("RGBA")
+            bg.paste(rgba, mask=rgba.split()[-1])
+            img = bg
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+
+        W, H = img.size
+        img = img.convert("RGBA")
+        band = int(H * 0.34)                       # flames fill the lower third
+
+        # Warm glow rising from the bottom edge (alpha gradient → tinted layer).
+        gmask = Image.new("L", (1, H), 0)
+        for y in range(H):
+            if y >= H - band:
+                f = (y - (H - band)) / band
+                gmask.putpixel((0, y), int(140 * (f ** 1.5)))
+        glow = Image.new("RGBA", (W, H), (255, 95, 15, 0))
+        glow.putalpha(gmask.resize((W, H)))
+        img.alpha_composite(glow)
+
+        # Wall of flames: march across the width with overlap, random heights.
+        x = -int(W * 0.04)
+        while x < W:
+            fh = int(band * random.uniform(0.78, 1.45))   # some licks exceed the band
+            size = max(int(fh / 1.35), 14)
+            flame = _make_fire(size)
+            if random.random() < 0.5:
+                flame = flame.transpose(Image.FLIP_LEFT_RIGHT)
+            # root the flame's base at the image bottom (slight sink so no gap shows)
+            y = H - flame.height + int(flame.height * 0.04)
+            img.alpha_composite(flame, (x, y))
+            x += int(flame.width * random.uniform(0.42, 0.66))
+
+        img = img.convert("RGB")
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=90, optimize=True)
+        return out.getvalue()
 
 
 def fire_attachments(
