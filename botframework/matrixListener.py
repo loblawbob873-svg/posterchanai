@@ -921,14 +921,16 @@ def process_messages():
         print(f"  Username part: {username_part}")
 
         # Check m.mentions field (modern Matrix standard for mentions).
-        # For reply messages this is NOT trusted — some clients auto-add the
-        # replied-to user to m.mentions even without an explicit @mention.
-        # The text-based checks below use fallback-stripped content so they
-        # only match when the user actually typed @bot:server.
-        if not message.get("reply_to_event_id") and mentioned_users and own_user_id:
-            if own_user_id in mentioned_users:
-                bot_mentioned = True
-                print(f"→ Bot mentioned (found in m.mentions: {own_user_id})")
+        # This is honoured on replies too: clients only add the BOT to m.mentions
+        # when the user replied to the bot's OWN message (a clear intent to address
+        # it — e.g. replying to a posted image with `meme <text>`) or typed an
+        # explicit @mention. Replying to someone else's message adds THAT user, not
+        # the bot, so it won't false-trigger here. The high-volume fedi-timeline room
+        # (where replies to bridged posts are fedi actions, not commands) is already
+        # handled and `continue`d above, so it never reaches this gate.
+        if mentioned_users and own_user_id and own_user_id in mentioned_users:
+            bot_mentioned = True
+            print(f"→ Bot mentioned (found in m.mentions: {own_user_id})")
 
         # Check formatted_content (Matrix mentions are in HTML format).
         # Uses raw_formatted (without reply fallback) so reply quotes don't
