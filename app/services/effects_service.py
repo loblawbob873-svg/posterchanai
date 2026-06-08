@@ -1841,3 +1841,57 @@ def indian_attachments(
     except Exception as e:
         logger.error(f"indian failed for {filename}: {e}", exc_info=True)
         return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Yakety (the "yakety" gag — turn an image into an MP4 set to Yakety Sax)
+# ---------------------------------------------------------------------------
+
+# The shipped Yakety Sax track (repo-relative), overridable with YAKETY_AUDIO_PATH.
+_YAKETY_AUDIO_CANDIDATES = [
+    os.environ.get("YAKETY_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "yakety.mp3"),
+    "/var/lib/posterchanai/assets/yakety.mp3",
+]
+_YAKETY_DURATION = 9.0
+
+
+def _yakety_audio_path() -> str:
+    """First existing Yakety Sax mp3 from the candidate list ("" if none)."""
+    for p in _YAKETY_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_yakety(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a 9-second MP4 playing Yakety Sax over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _yakety_audio_path()
+    if not audio:
+        raise RuntimeError("Yakety Sax audio (assets/yakety.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_YAKETY_DURATION)
+
+
+def yakety_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a Yakety Sax MP4. Mirrors hava_attachments
+    (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_yakety(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_yakety.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🎷 Yakety Sax\n\n🎷 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"yakety failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
