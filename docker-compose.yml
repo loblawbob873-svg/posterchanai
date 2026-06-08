@@ -1,0 +1,75 @@
+# PosterChanAI — pick ONE service via its profile:
+#   docker compose --profile cpu   up -d --build
+#   docker compose --profile cuda  up -d --build   # NVIDIA  (needs nvidia-container-toolkit)
+#   docker compose --profile rocm  up -d --build   # AMD     (needs host amdgpu driver)
+#   docker compose --profile intel up -d --build   # Intel Arc (needs host i915 + /dev/dri)
+#
+# All four share the same data volume so you can switch backends without losing
+# your DB / models / RAG store.
+
+x-common: &common
+  image: posterchanai:${TAG:-local}
+  restart: unless-stopped
+  ports:
+    - "${POSTERCHANAI_PORT:-3051}:3051"
+  environment:
+    - POSTERCHANAI_PORT=3051
+  volumes:
+    - pc-data:/var/lib/posterchanai
+    - pc-rag:/app/data
+
+services:
+  cpu:
+    <<: *common
+    profiles: ["cpu"]
+    build:
+      context: .
+      args: { GPU: cpu }
+
+  cuda:
+    <<: *common
+    profiles: ["cuda"]
+    build:
+      context: .
+      args: { GPU: cuda }
+    # Requires the NVIDIA Container Toolkit on the host.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: ["gpu"]
+
+  rocm:
+    <<: *common
+    profiles: ["rocm"]
+    build:
+      context: .
+      args: { GPU: rocm }
+    # ROCm userspace is in the image; the kernel driver comes from the host. The
+    # container runs as root, so it reaches the render node without group juggling;
+    # the entrypoint auto-sets HSA_OVERRIDE_GFX_VERSION for consumer RDNA cards.
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    security_opt:
+      - seccomp:unconfined
+
+  intel:
+    <<: *common
+    profiles: ["intel"]
+    build:
+      context: .
+      args: { GPU: intel }
+    # Intel Arc: expose the render nodes; host needs the i915 driver.
+    devices:
+      - /dev/dri
+    # Set SOURCE_ONEAPI=1 instead if you want GPU LLM (SYCL) rather than image gen.
+    environment:
+      - POSTERCHANAI_PORT=3051
+      - SOURCE_ONEAPI=0
+
+volumes:
+  pc-data:
+  pc-rag:

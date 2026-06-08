@@ -1,0 +1,32 @@
+# Keep the build context small and never ship secrets / local state.
+.git
+.gitignore
+**/__pycache__/
+**/*.pyc
+*.pyo
+
+# Local virtualenvs (huge; the image builds its own at /opt/venv)
+venv*/
+.venv/
+env/
+
+# Local runtime state — must NOT bake into the image (mount a volume instead)
+posterchanai.db
+posterchanai.db-*
+data/
+models/
+*.gguf
+*.safetensors
+
+# Secrets / local config
+.env
+botframework/bots_config_export.json
+
+# Editor / OS cruft
+.vscode/
+.idea/
+.DS_Store
+
+# Docs and the bot framework's own export are not needed at runtime build time
+# (source is still copied; this only trims obvious bulk)
+*.log
