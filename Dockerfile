@@ -193,10 +193,11 @@ ENV POSTERCHANAI_PORT=3051 \
     POSTERCHANAI_MODEL_URL=https://huggingface.co/lukey03/Qwen3.5-9B-abliterated-GGUF/resolve/main/Qwen3.5-9B-abliterated-Q4_K_M.gguf \
     POSTERCHANAI_IMAGE_BACKEND=native \
     POSTERCHANAI_IMAGE_MODEL_PATH=Lykon/dreamshaper-8 \
-    POSTERCHANAI_IMAGE_MODEL_TYPE=sd15 \
-    POSTERCHANAI_TOR_ENABLED=true \
-    POSTERCHANAI_PROXY_ENABLED=true \
-    POSTERCHANAI_BT_ENABLED=true
+    POSTERCHANAI_IMAGE_MODEL_TYPE=sd15
+# Tor / built-in proxy / torrenting ship ready (the `tor` binary + libtorrent are
+# installed) but stay OFF by default — enable them in the admin UI, or seed them on
+# at first run with -e POSTERCHANAI_TOR_ENABLED=true -e POSTERCHANAI_PROXY_ENABLED=true
+# -e POSTERCHANAI_BT_ENABLED=true (the app then starts Tor + the HTTP proxy itself).
 
 EXPOSE 3051
 
