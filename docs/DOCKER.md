@@ -95,6 +95,29 @@ seeded from env on first run (override at `docker run -e ...`):
 fetches (4chan, news, …) through Tor — only turn it on once Tor finishes
 bootstrapping, or those features will fail while Tor is stuck.
 
+## Bring your own image models
+
+The default image model (DreamShaper-8) auto-downloads. To use your own checkpoints
+(e.g. CyberRealistic XL, an anime model like Nova 3DCG XL — CivitAI `.safetensors`
+that need a manual download), just **copy the files into the models folder**:
+
+- **compose:** files dropped in the host `./models/` folder appear in the container
+  (it's bind-mounted to `/var/lib/posterchanai/models`).
+- **plain `docker run`:** copy into the volume with
+  `docker cp CyberRealisticXL.safetensors <container>:/var/lib/posterchanai/models/`
+  (or bind-mount a folder: `-v /path/to/models:/var/lib/posterchanai/models`).
+
+Then point the app at them — in **Admin → Settings**, or at first run via env:
+
+```bash
+-e POSTERCHANAI_IMAGE_MODEL_PATH=/var/lib/posterchanai/models/CyberRealisticXL.safetensors \
+-e POSTERCHANAI_IMAGE_MODEL_TYPE=sdxl \
+-e POSTERCHANAI_IMAGE_ANIME_MODEL_PATH=/var/lib/posterchanai/models/Nova3DCGXL.safetensors
+```
+
+A single-file `.safetensors` SDXL checkpoint loads via diffusers `from_single_file`;
+set the type to `sdxl` (or `sd15`). The anime model is used for style switching.
+
 ## Backends notes
 
 - **No local GPU LLM?** Any image works pointed at an external **Ollama** (set it in

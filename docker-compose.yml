@@ -17,6 +17,11 @@ x-common: &common
   volumes:
     - pc-data:/var/lib/posterchanai
     - pc-rag:/app/data
+    # Drop your own model files here: anything you put in the host ./models folder
+    # shows up in the app's models dir. Point image_model_path / image_anime_model_path
+    # at /var/lib/posterchanai/models/<your-file>.safetensors in Admin → Settings.
+    # (The auto-downloaded LLM GGUF also lands here, so you can see/replace it.)
+    - ./models:/var/lib/posterchanai/models
 
 services:
   cpu:
