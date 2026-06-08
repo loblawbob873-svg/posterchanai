@@ -427,80 +427,149 @@ def _shade(c, f: float):
             min(255, int(c[2] * f)), 255)
 
 
-def _make_dildo(h: int):
-    """Render one shaded dildo (pointing up) on a transparent RGBA tile.
+def _gradient_sphere(base, size: int = 64):
+    """A diffuse-lit sphere (light from upper-left) as an RGBA image of `size`px.
 
-    Pure Pillow — a glans + rounded-pill shaft + two balls, with a blurred
-    highlight/shadow pass (confined to the silhouette) and a coronal ridge for a
-    3-D, semi-realistic look. Ships no image asset (the meme path is also pure
-    Pillow).
+    Rendered small once and resized by the caller — used for the glans and balls so
+    they read as rounded volumes rather than flat discs.
     """
+    import math
+    from PIL import Image
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    px = img.load()
+    r = size / 2.0
+    lx, ly, lz = -0.45, -0.5, 0.74  # light direction (upper-left, toward viewer)
+    for y in range(size):
+        for x in range(size):
+            dx = (x - r + 0.5) / r
+            dy = (y - r + 0.5) / r
+            d2 = dx * dx + dy * dy
+            if d2 > 1.0:
+                continue
+            nz = math.sqrt(1.0 - d2)
+            shade = 0.42 + 0.9 * max(0.0, dx * lx + dy * ly + nz * lz)
+            shade = min(1.4, shade)
+            px[x, y] = (min(255, int(base[0] * shade)),
+                        min(255, int(base[1] * shade)),
+                        min(255, int(base[2] * shade)), 255)
+    return img
+
+
+def _gradient_cylinder(w: int, h: int, base):
+    """A vertical cylinder gradient (bright stripe left-of-centre, darkening to the
+    edges) as an RGB image — gives the shaft a rounded, lit look."""
+    import math
+    from PIL import Image
+    w = max(int(w), 2)
+    h = max(int(h), 2)
+    strip = Image.new("RGB", (w, 1))
+    px = strip.load()
+    hl = 0.38  # highlight position across the width
+    for x in range(w):
+        t = x / (w - 1)
+        shade = 0.5 + 0.78 * max(0.0, math.cos((t - hl) * math.pi))
+        shade = min(1.32, shade)
+        px[x, 0] = (min(255, int(base[0] * shade)),
+                    min(255, int(base[1] * shade)),
+                    min(255, int(base[2] * shade)))
+    return strip.resize((w, h))
+
+
+def _make_dildo(h: int):
+    """Render one shaded, semi-anatomical dildo (pointing up) on a transparent tile.
+
+    Pure Pillow — sphere-lit balls + glans, a cylinder-shaded shaft, a flared
+    corona, urethral slit, veins and base ambient occlusion, finished with a single
+    clean outer outline. Ships no image asset (the meme path is also pure Pillow).
+    """
+    import math
     import random
     from PIL import Image, ImageDraw, ImageFilter, ImageChops
 
-    W = max(int(h * 0.64), 14)
-    H = max(int(h * 1.15), 18)
-    base = random.choice(_DILDO_COLORS)
-    dark = _shade(base, 0.6)
-    light = _shade(base, 1.35)
-    # Glans reads slightly deeper and pinker than the shaft.
-    _hd = _shade(base, 0.9)
-    head = (min(255, _hd[0] + 15), _hd[1], min(255, _hd[2] + 10), 255)
+    W = max(int(h * 0.66), 16)
+    H = max(int(h * 1.18), 20)
+    base = random.choice(_DILDO_COLORS)[:3]
     outline = _shade(base, 0.45)
-    ow = max(int(W * 0.04), 1)
 
     cx = W / 2.0
-    sw = W * 0.40                 # shaft width
-    ball_r = sw * 0.66
-    top = H * 0.05
-    base_y = H - ball_r * 1.05
-    head_h = sw * 1.05            # glans height
-    head_w = sw * 1.18
-    shaft_top = top + head_h * 0.45
+    sw = W * 0.40                       # shaft width
+    ball_r = sw * 0.62
+    top = H * 0.04
+    base_y = H - ball_r * 1.0
+    head_h = sw * 1.16                  # glans (bell head)
+    head_w = sw * 1.24
+    shaft_top = top + head_h * 0.5
 
-    # --- silhouette / base colours (drawn in z-order; later shapes cover earlier) ---
-    body = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    bd = ImageDraw.Draw(body)
-    for dx in (-sw * 0.40, sw * 0.40):           # balls (behind shaft)
+    tile = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+
+    # --- balls (sphere-shaded, reused for both) ---
+    ball_sphere = _gradient_sphere(_shade(base, 0.95)[:3])
+    bd = max(int(ball_r * 2), 2)
+    bimg = ball_sphere.resize((bd, bd))
+    for dx in (-sw * 0.40, sw * 0.40):
         bx = cx + dx
-        bd.ellipse([bx - ball_r, base_y - ball_r, bx + ball_r, base_y + ball_r],
-                   fill=base, outline=outline, width=ow)
-    bd.rounded_rectangle([cx - sw / 2, shaft_top, cx + sw / 2, base_y],
-                         radius=sw / 2, fill=base, outline=outline, width=ow)
-    bd.ellipse([cx - head_w / 2, top, cx + head_w / 2, top + head_h],
-               fill=head, outline=outline, width=ow)
-    mask = body.split()[-1]
+        tile.alpha_composite(bimg, (int(bx - ball_r), int(base_y - ball_r)))
 
-    # --- soft shading pass (blurred, then clipped to the silhouette so it can't bleed) ---
-    sh = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    sd = ImageDraw.Draw(sh)
-    hl = sw * 0.30
-    sd.rounded_rectangle([cx - sw * 0.08 - hl / 2, shaft_top + sw * 0.1,
-                          cx - sw * 0.08 + hl / 2, base_y - sw * 0.1],
-                         radius=hl / 2, fill=light[:3] + (150,))     # central highlight stripe
-    edge = max(int(sw * 0.12), 1)
-    sd.line([(cx - sw / 2 + sw * 0.08, shaft_top), (cx - sw / 2 + sw * 0.08, base_y)],
-            fill=dark[:3] + (120,), width=edge)
-    sd.line([(cx + sw / 2 - sw * 0.08, shaft_top), (cx + sw / 2 - sw * 0.08, base_y)],
-            fill=dark[:3] + (120,), width=edge)
-    sd.ellipse([cx - head_w * 0.18, top + head_h * 0.12,
-                cx + head_w * 0.05, top + head_h * 0.5], fill=light[:3] + (160,))  # glans sheen
-    for dx in (-sw * 0.40, sw * 0.40):           # ball highlights (upper-left)
-        bx = cx + dx
-        sd.ellipse([bx - ball_r * 0.5, base_y - ball_r * 0.6, bx + ball_r * 0.1, base_y],
-                   fill=light[:3] + (110,))
-    sh = sh.filter(ImageFilter.GaussianBlur(max(sw * 0.12, 1)))
-    sh.putalpha(ImageChops.multiply(sh.split()[-1], mask))
+    # --- shaft (cylinder gradient clipped to a rounded-pill mask) ---
+    sh_h = max(int(base_y - shaft_top), 2)
+    sh_w = max(int(sw), 2)
+    cyl = _gradient_cylinder(sh_w, sh_h, base).convert("RGBA")
+    smask = Image.new("L", (sh_w, sh_h), 0)
+    ImageDraw.Draw(smask).rounded_rectangle([0, 0, sh_w - 1, sh_h - 1],
+                                            radius=int(sw / 2), fill=255)
+    cyl.putalpha(smask)
+    tile.alpha_composite(cyl, (int(cx - sw / 2), int(shaft_top)))
 
-    out = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    out.alpha_composite(body)
-    out.alpha_composite(sh)
-    # Coronal ridge: a faint arc where the glans meets the shaft.
-    ImageDraw.Draw(out).arc([cx - head_w / 2, top + head_h * 0.35,
-                             cx + head_w / 2, top + head_h * 1.15],
-                            start=20, end=160, fill=outline[:3] + (170,),
-                            width=max(int(sw * 0.07), 1))
-    return out
+    # --- glans (sphere-shaded, slightly pinker, squashed into a bell) ---
+    pink = (min(255, base[0] + 20), max(0, base[1] - 6), min(255, base[2] + 8))
+    glans = _gradient_sphere(pink).resize((max(int(head_w), 2), max(int(head_h), 2)))
+    tile.alpha_composite(glans, (int(cx - head_w / 2), int(top)))
+
+    # Silhouette of the solid body so far — confines the soft passes below.
+    sil = tile.split()[-1]
+
+    # --- ambient occlusion where the shaft meets the balls ---
+    ao = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(ao).ellipse([cx - sw * 0.75, base_y - ball_r * 0.5,
+                                cx + sw * 0.75, base_y + ball_r * 0.6],
+                               fill=(0, 0, 0, 95))
+    ao = ao.filter(ImageFilter.GaussianBlur(max(sw * 0.16, 1)))
+    ao.putalpha(ImageChops.multiply(ao.split()[-1], sil))
+    tile.alpha_composite(ao)
+
+    # --- veins (two soft wavy lines down the shaft) ---
+    veins = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    vd = ImageDraw.Draw(veins)
+    vcol = _shade(base, 0.8)[:3] + (95,)
+    for vx, ph in ((cx - sw * 0.16, 0.0), (cx + sw * 0.1, 1.7)):
+        pts = []
+        for i in range(9):
+            yy = shaft_top + sh_h * i / 8.0
+            xx = vx + math.sin(i * 0.9 + ph) * sw * 0.12
+            pts.append((xx, yy))
+        vd.line(pts, fill=vcol, width=max(int(sw * 0.05), 1), joint="curve")
+    veins = veins.filter(ImageFilter.GaussianBlur(max(sw * 0.03, 0.6)))
+    veins.putalpha(ImageChops.multiply(veins.split()[-1], sil))
+    tile.alpha_composite(veins)
+
+    # --- corona (flared rim) + urethral slit ---
+    fd = ImageDraw.Draw(tile)
+    fd.arc([cx - head_w / 2, top + head_h * 0.42, cx + head_w / 2, top + head_h * 1.28],
+           start=18, end=162, fill=_shade(base, 0.55)[:3] + (160,),
+           width=max(int(sw * 0.07), 1))
+    slit_y = top + head_h * 0.16
+    fd.line([(cx, slit_y), (cx, slit_y + head_h * 0.18)],
+            fill=_shade(base, 0.38)[:3] + (190,), width=max(int(sw * 0.05), 1))
+
+    # --- single clean outer outline (edge of the union silhouette) ---
+    ow = max(int(W * 0.03), 1)
+    binr = tile.split()[-1].point(lambda a: 255 if a > 40 else 0)
+    eroded = binr.filter(ImageFilter.MinFilter(ow * 2 + 1))
+    edge = ImageChops.subtract(binr, eroded)
+    line_layer = Image.new("RGBA", (W, H), outline[:3] + (255,))
+    tile.paste(line_layer, (0, 0), edge)
+
+    return tile
 
 
 def add_dildos(data: bytes, count: int = 0) -> bytes:
