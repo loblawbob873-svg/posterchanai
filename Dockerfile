@@ -66,27 +66,14 @@ ARG GPU
 LABEL org.opencontainers.image.title="PosterChanAI" \
       org.opencontainers.image.source="https://github.com/loblawbob873-svg/posterchanai"
 
-# HF_HOME puts the HuggingFace / faster-whisper / diffusers model caches on the
-# data volume so downloads survive container recreation.
+# Build-affecting env only (PATH for the venv, apt/pip flags). Runtime env (port,
+# caches, turnkey backend defaults) lives LATE in the file so tweaking a default
+# doesn't invalidate the heavy apt/torch/llama layers below.
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    POSTERCHANAI_PORT=3051 \
     VIRTUAL_ENV=/opt/venv \
-    PATH=/opt/venv/bin:/usr/local/cuda/bin:$PATH \
-    HF_HOME=/var/lib/posterchanai/hf
-
-# Turnkey LLM defaults: every GPU/CPU build ships a locally-compiled llama-cpp, so
-# the app should use the `native` backend and a model on the data volume. The
-# entrypoint auto-downloads the recommended GGUF on first run (DOWNLOAD_MODEL=1).
-# These seed FIRST-RUN settings only (app/database.py reads them); users can change
-# the model in the admin UI afterwards. Set DOWNLOAD_MODEL=0 to skip the ~5.6 GB pull.
-ENV POSTERCHANAI_LLM_BACKEND=native \
-    POSTERCHANAI_LLM_MODEL_PATH=/var/lib/posterchanai/models/Qwen3.5-9B-abliterated-Q4_K_M.gguf \
-    POSTERCHANAI_MODEL_URL=https://huggingface.co/lukey03/Qwen3.5-9B-abliterated-GGUF/resolve/main/Qwen3.5-9B-abliterated-Q4_K_M.gguf \
-    DOWNLOAD_MODEL=1 \
-    POSTERCHANAI_IMAGE_BACKEND=native \
-    POSTERCHANAI_IMAGE_MODEL_PATH=stabilityai/stable-diffusion-xl-base-1.0
+    PATH=/opt/venv/bin:/usr/local/cuda/bin:$PATH
 
 # --- system packages (all four bases are Ubuntu, so apt is uniform) ----------
 #  build : compiler toolchain + cmake for building llama-cpp-python
@@ -185,6 +172,25 @@ COPY . /app
 RUN mkdir -p /var/lib/posterchanai/models /var/lib/posterchanai/torrents \
              /var/lib/posterchanai/tor /var/lib/posterchanai/hf /app/data/chromadb
 VOLUME ["/var/lib/posterchanai", "/app/data"]
+
+# Runtime config (LATE so changing a default is a cheap rebuild). HF_HOME caches
+# models on the data volume. Turnkey defaults: every GPU/CPU build ships a locally
+# compiled llama-cpp + torch/diffusers, so the app uses the `native` LLM AND image
+# backends. The entrypoint auto-downloads the recommended GGUF on first run
+# (DOWNLOAD_MODEL=1, ~5.6 GB); diffusers fetches the image model (DreamShaper-8, an
+# SD1.5 model — fast and fits alongside the LLM on consumer GPUs) on first gen.
+# These only SEED first-run settings (app/database.py); change them in the admin UI
+# afterwards. Set DOWNLOAD_MODEL=0 to skip the LLM pull. For a bigger image model
+# (e.g. SDXL) on a small GPU, set POSTERCHANAI_LOW_VRAM=1 to enable model offload.
+ENV POSTERCHANAI_PORT=3051 \
+    HF_HOME=/var/lib/posterchanai/hf \
+    DOWNLOAD_MODEL=1 \
+    POSTERCHANAI_LLM_BACKEND=native \
+    POSTERCHANAI_LLM_MODEL_PATH=/var/lib/posterchanai/models/Qwen3.5-9B-abliterated-Q4_K_M.gguf \
+    POSTERCHANAI_MODEL_URL=https://huggingface.co/lukey03/Qwen3.5-9B-abliterated-GGUF/resolve/main/Qwen3.5-9B-abliterated-Q4_K_M.gguf \
+    POSTERCHANAI_IMAGE_BACKEND=native \
+    POSTERCHANAI_IMAGE_MODEL_PATH=Lykon/dreamshaper-8 \
+    POSTERCHANAI_IMAGE_MODEL_TYPE=sd15
 
 EXPOSE 3051
 

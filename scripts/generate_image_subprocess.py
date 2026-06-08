@@ -186,8 +186,19 @@ def main():
                 torch_dtype=dtype,
             )
 
-        # Move to device
-        pipe = pipe.to(device)
+        # Move to device — unless LOW-VRAM mode, where we use model CPU offload so a
+        # big model (e.g. SDXL ~10 GB) fits on a small consumer GPU and can coexist
+        # with a resident LLM. Offload keeps weights in CPU RAM and pages each
+        # component to the GPU as needed (~3-4 GB VRAM) at some speed cost. Gated on
+        # POSTERCHANAI_LOW_VRAM so high-VRAM / dedicated-image-GPU hosts stay fast.
+        _low_vram = os.environ.get("POSTERCHANAI_LOW_VRAM", "").lower() in ("1", "true", "yes")
+        if _low_vram and device != "cpu":
+            try:
+                pipe.enable_model_cpu_offload()
+            except Exception:
+                pipe = pipe.to(device)
+        else:
+            pipe = pipe.to(device)
 
         # Enable optimizations
         try:

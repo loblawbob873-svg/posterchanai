@@ -410,7 +410,7 @@ def init_db():
             "image_backend": os.environ.get("POSTERCHANAI_IMAGE_BACKEND", "comfyui"),  # "native" or "comfyui"
             "image_model_path": os.environ.get("POSTERCHANAI_IMAGE_MODEL_PATH", ""),
             "image_anime_model_path": "",
-            "image_model_type": "sdxl",  # "sd15", "sdxl", "sd3", "flux"
+            "image_model_type": os.environ.get("POSTERCHANAI_IMAGE_MODEL_TYPE", "sdxl"),  # "sd15", "sdxl", "sd3", "flux"
             "image_default_steps": "20",
             "image_default_cfg": "7.0",
             "image_default_width": "1024",
