@@ -1416,7 +1416,7 @@ def _make_blacked(diam: int):
 
 
 def add_blacked(data: bytes, count: int = 0) -> bytes:
-    """Stamp the round BLACKED logo in the centre of the image. Returns JPEG bytes."""
+    """Stamp the round BLACKED logo centred in the lower third. Returns JPEG bytes."""
     from PIL import Image, ImageOps
     try:
         from pillow_heif import register_heif_opener
@@ -1437,8 +1437,11 @@ def add_blacked(data: bytes, count: int = 0) -> bytes:
         W, H = img.size
         img = img.convert("RGBA")
         logo = _make_blacked(max(int(min(W, H) * 0.55), 96))
-        # Centred on the image, like a stamped roundel.
-        img.alpha_composite(logo, ((W - logo.width) // 2, (H - logo.height) // 2))
+        # Horizontally centred, sitting in the lower third (centre at ~2/3 H),
+        # clamped so the roundel never spills off the bottom edge.
+        x = (W - logo.width) // 2
+        y = min(int(H * 0.66) - logo.height // 2, H - logo.height - max(int(H * 0.03), 4))
+        img.alpha_composite(logo, (x, max(y, 0)))
 
         img = img.convert("RGB")
         out = io.BytesIO()
