@@ -6,9 +6,11 @@ Handles rate limiting, retries, and Ollama restart logic.
 import json
 import logging
 import os
+import re
 import fcntl
 import time
 import subprocess
+import difflib
 import requests
 
 from config import (
@@ -295,6 +297,8 @@ def _generate_reply_inner(user_content, previous_content, ping, thread_history, 
 
     attempt = 0
     consecutive_failures = 0
+    echo_retries = 0
+    max_echo_retries = 3
 
     while attempt < max_attempts:
         attempt += 1
@@ -316,6 +320,20 @@ def _generate_reply_inner(user_content, previous_content, ping, thread_history, 
             if content:
                 cleaned = clean_ai_response(content, debug_mode=DEBUG_MODE)
                 if cleaned:
+                    # Guard against the model echoing the user's message back verbatim.
+                    # Retry a few times rather than posting the parrot. An echo is a fast
+                    # local condition, not a server failure, so use a short fixed delay —
+                    # NOT _handle_failure's exponential backoff, which would hold the global
+                    # AI slot for minutes and starve other bots. After a few echoes, give up
+                    # (return None) so the bot simply skips rather than looping all attempts.
+                    if not ping and _is_echo(cleaned, user_content):
+                        echo_retries += 1
+                        print(f"⚠ Response echoes the user's message ({echo_retries}/{max_echo_retries}); discarding: {cleaned[:120]}...")
+                        if echo_retries >= max_echo_retries:
+                            print("⚠ Model keeps echoing the user; giving up without posting.")
+                            return None
+                        time.sleep(2)
+                        continue
                     print(f"✓ Successfully generated response (FULL): {cleaned}")
                     print(f"✓ Successfully generated response (preview): {cleaned[:200]}...\n")
                     return cleaned
@@ -354,6 +372,33 @@ def _generate_reply_inner(user_content, previous_content, ping, thread_history, 
             _handle_failure(consecutive_failures, restart_after_failures, base_delay, max_delay)
 
     return None
+
+
+def _normalize_for_echo(text):
+    """Lowercase + strip @mentions, URLs and non-alphanumerics for echo comparison."""
+    if not text:
+        return ""
+    text = re.sub(r'@[\w@.]+', ' ', text)          # @mentions
+    text = re.sub(r'https?://\S+', ' ', text)       # URLs
+    text = re.sub(r'[^\w\s]', ' ', text.lower())    # punctuation/emoji
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+def _is_echo(reply, user_content):
+    """True if the model just parroted the user's message back instead of replying.
+
+    Small models fed thread history sometimes return the latest user message
+    verbatim (or near-verbatim). Posting that is worse than not replying, so the
+    caller treats an echo as a generation failure and retries.
+    """
+    a = _normalize_for_echo(reply)
+    b = _normalize_for_echo(user_content)
+    # Too short to judge (e.g. "lol", "yes") — don't flag, false positives are likely.
+    if len(a) < 12 or len(b) < 12:
+        return False
+    if a == b or a in b or b in a:
+        return True
+    return difflib.SequenceMatcher(None, a, b).ratio() >= 0.9
 
 
 def _extract_content(result):
