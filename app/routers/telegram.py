@@ -690,14 +690,15 @@ _HELP_SECTIONS = {
         "• 🔄 Refresh — update the totals"
     ),
     "files": (
-        "📎 *Files — compress, convert, meme & dildo*\n\n"
+        "📎 *Files — compress, convert, meme, dildo & poo*\n\n"
         "Just upload a file (no caption needed) and tap a button:\n\n"
         "*Images:*\n"
         "• 🗜 Compress — shrink the image\n"
         "• 📄 To PDF — combine your image(s) into one PDF\n"
         "• 🔤 Read text — OCR the text out of the image\n"
-        "• 🖼 Meme — add outlined white caption text (I'll ask for it)\n"
-        "• 🍆 Dildo — scatter dildos all over the image\n"
+        "• ✨ Effects → 🖼 Meme — add outlined white caption text (I'll ask for it)\n"
+        "• ✨ Effects → 🍆 Dildo — scatter dildos all over the image\n"
+        "• ✨ Effects → 💩 Poo — scatter poop all over the image\n"
         "• 📣 Post to social — share it to your connected platforms\n\n"
         "*Video:*\n"
         "• 🗜 Compress — re-encode smaller (H.264, up to 1080p)\n"
@@ -707,7 +708,7 @@ _HELP_SECTIONS = {
         "• 📝 Summarize — AI summary of the document\n\n"
         "Tips:\n"
         "• Send several images, then tap *To PDF*, to merge them into one PDF.\n"
-        "• You can also skip the buttons: send the file with `compress`, `clip 0:10 0:30`, `convert`, `meme <text>` or `dildo` as the caption.\n"
+        "• You can also skip the buttons: send the file with `compress`, `clip 0:10 0:30`, `convert`, `meme <text>`, `dildo` or `poo` as the caption.\n"
         "• Telegram limits bot downloads to 20 MB — use the web UI for bigger files."
     ),
     "youtube": (
@@ -1273,8 +1274,7 @@ def _media_action_keyboard(attachments: list, user=None) -> Optional[dict]:
             {"text": "🌐 Translate", "callback_data": "media:translate"},
         ])
         rows.append([
-            {"text": "🖼 Meme", "callback_data": "media:meme"},
-            {"text": "🍆 Dildo", "callback_data": "media:dildo"},
+            {"text": "✨ Effects", "callback_data": "media:effects"},
         ])
     if has_pdf:
         rows.append([
@@ -1286,6 +1286,20 @@ def _media_action_keyboard(attachments: list, user=None) -> Optional[dict]:
     if _social and (has_image or has_video):
         rows.append([{"text": "📣 Post to social", "callback_data": "media:post"}])
     return {"inline_keyboard": rows} if rows else None
+
+
+def _media_effects_keyboard() -> dict:
+    """Submenu shown after tapping '✨ Effects' on an image upload — the image
+    transforms (meme caption, dildo scatter, poo scatter), plus a Back to the
+    main actions."""
+    return {"inline_keyboard": [
+        [
+            {"text": "🖼 Meme", "callback_data": "media:meme"},
+            {"text": "🍆 Dildo", "callback_data": "media:dildo"},
+            {"text": "💩 Poo", "callback_data": "media:poo"},
+        ],
+        [{"text": "⬅️ Back", "callback_data": "media:back"}],
+    ]}
 
 
 def _ytdl_video_keyboard() -> dict:
@@ -1802,7 +1816,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "meme", "dildo", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "meme", "dildo", "poo", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -2034,7 +2048,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "meme", "dildo", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "meme", "dildo", "poo", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -2243,7 +2257,7 @@ async def _handle_telegram_update(update: dict, db: Session):
 
             # If we have images, always run OCR for later use
             # (skip for compress/convert — they operate on the raw file, not its text)
-            if has_images and attachments and command not in ("compress", "clip", "convert", "meme", "dildo"):
+            if has_images and attachments and command not in ("compress", "clip", "convert", "meme", "dildo", "poo"):
                 for filename, file_data, content_type in attachments:
                     if content_type.startswith("image/"):
                         import base64
@@ -2290,7 +2304,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Attachment too large for Telegram to hand to the bot (20 MB cap).
             # Handle here so it works whether or not a command caption was given,
             # instead of falling through to the chat model.
-            if oversized_attachment and command in ("compress", "clip", "convert", "meme", "dildo", None):
+            if oversized_attachment and command in ("compress", "clip", "convert", "meme", "dildo", "poo", None):
                 _ov_name, _ov_size = oversized_attachment
                 _cap_mb = TELEGRAM_MAX_DOWNLOAD_BYTES / (1024 * 1024)
                 if telegram_service.is_local_api:
@@ -3425,6 +3439,23 @@ async def _handle_telegram_update(update: dict, db: Session):
                                 {"role": "user", "content": _doc[:12000]},
                             ])
                             await telegram_service.send_message(chat_id, f"📝 *Summary:*\n\n{_summary}")
+                    elif _action == "effects":
+                        # Open the Effects submenu (meme / dildo / poo). The image stays in
+                        # the cache; the submenu's buttons reuse the existing actions.
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to do — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(
+                                chat_id, "✨ Effects:",
+                                reply_markup=_media_effects_keyboard(),
+                            )
+                    elif _action == "back":
+                        # Return from the Effects submenu to the main file actions.
+                        _kbd = _media_action_keyboard(_atts, user=cb_user)
+                        if _kbd:
+                            await telegram_service.send_message(
+                                chat_id, "📎 File actions:", reply_markup=_kbd,
+                            )
                     elif _action == "meme":
                         # ForceReply for the caption; the image stays in the cache and is
                         # captioned when the reply arrives (see _MEME_PROMPT routing).
@@ -3447,6 +3478,14 @@ async def _handle_telegram_update(update: dict, db: Session):
                             # whose base64 starts with "/9j/" — send_photo would treat that
                             # as a file path and fail.
                             await _send_files_result(await cb_command_service.execute_command("dildo", "", attachments=_imgs))
+                    elif _action == "poo":
+                        # No caption needed — run immediately and post the result.
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to decorate — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(chat_id, "💩 Adding poop…")
+                            _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                            await _send_files_result(await cb_command_service.execute_command("poo", "", attachments=_imgs))
                     elif _action == "translate":
                         # Ask which language to translate the upload's text into.
                         await telegram_service.send_message(

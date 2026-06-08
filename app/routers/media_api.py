@@ -1,12 +1,13 @@
-"""Generic media-processing API (compress / clip / convert) for the bots.
+"""Generic media-processing API (compress / clip / convert / meme / dildo / poo) for the bots.
 
-Identity-agnostic: compress/clip/convert are pure byte transforms, so this
-endpoint only authenticates the caller (API key or JWT, reusing the image API's
-auth) — it does not run as a specific user. Shared by the Matrix, Misskey and
-Pleroma listener bots so they all reuse one HW-accelerated ffmpeg/Pillow path
-(`app/services/media_service.py`) instead of each reimplementing it.
+Identity-agnostic: these are pure byte transforms, so this endpoint only
+authenticates the caller (API key or JWT, reusing the image API's auth) — it does
+not run as a specific user. Shared by the Matrix, Misskey and Pleroma listener
+bots so they all reuse one HW-accelerated ffmpeg/Pillow path instead of each
+reimplementing it: the byte transforms live in `app/services/media_service.py`,
+the creative effects (meme/dildo/poo) in `app/services/effects_service.py`.
 
-Request:  {"command": "compress|clip|convert", "arg": "", "media": [{filename, data(b64), content_type}]}
+Request:  {"command": "compress|clip|convert|meme|dildo|poo", "arg": "", "media": [{filename, data(b64), content_type}]}
 Response: {"summary": str, "files": [{filename, data(b64), content_type}]}  — or {"error": str}
 """
 import asyncio
@@ -20,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.routers.image_api import get_image_auth
-from app.services import media_service
+from app.services import effects_service, media_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/media", tags=["media"])
@@ -65,9 +66,9 @@ async def process_media(
     db: Session = Depends(get_db),
     _auth: bool = Depends(get_image_auth),
 ):
-    """Run a compress/clip/convert/meme/dildo operation on the supplied attachments."""
+    """Run a compress/clip/convert/meme/dildo/poo operation on the supplied attachments."""
     command = (req.command or "").strip().lower()
-    if command not in ("compress", "clip", "convert", "meme", "dildo"):
+    if command not in ("compress", "clip", "convert", "meme", "dildo", "poo"):
         return {"error": f"unsupported command '{command}'"}
 
     attachments = []
@@ -87,9 +88,11 @@ async def process_media(
         elif command == "meme":
             if not (req.arg or "").strip():
                 return {"error": "meme needs caption text, e.g. 'meme top text'"}
-            outputs, summary = await asyncio.to_thread(media_service.meme_attachments, attachments, req.arg or "")
+            outputs, summary = await asyncio.to_thread(effects_service.meme_attachments, attachments, req.arg or "")
         elif command == "dildo":
-            outputs, summary = await asyncio.to_thread(media_service.dildo_attachments, attachments)
+            outputs, summary = await asyncio.to_thread(effects_service.dildo_attachments, attachments)
+        elif command == "poo":
+            outputs, summary = await asyncio.to_thread(effects_service.poo_attachments, attachments)
         else:  # clip
             parts = (req.arg or "").split()
             if len(parts) < 2:
