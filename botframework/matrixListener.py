@@ -928,7 +928,7 @@ def process_messages():
         # spam the room). So on a reply we only accept it when the text is one of the
         # media commands that act on the replied-to attachment (e.g. replying to a
         # posted image with `meme <text>` or `dildo`).
-        _MEDIA_REPLY_CMDS = ("compress", "clip", "convert", "translate", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay")
+        _MEDIA_REPLY_CMDS = ("compress", "clip", "convert", "translate", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher")
         if mentioned_users and own_user_id and own_user_id in mentioned_users:
             if not message.get("reply_to_event_id"):
                 bot_mentioned = True
@@ -1097,6 +1097,8 @@ def process_messages():
                     _opts.append("• `bullethole` — punch bullet holes into the image")
                     _opts.append("• `fire` — set the image on fire")
                     _opts.append("• `gay` — stamp a big red GAY on the image")
+                    _opts.append("• `blacked` — slap the BLACKED logo on the image")
+                    _opts.append("• `kosher` — stamp a 100% KOSHER seal on the image")
                     _opts.append("• `translate <language>` — read & translate the text")
                 elif _is_vid:
                     _opts.append("• `compress` — shrink the video")
@@ -1474,7 +1476,9 @@ def process_messages():
                 or lower_prompt == "blood" or lower_prompt.startswith("blood ") \
                 or lower_prompt == "bullethole" or lower_prompt.startswith("bullethole ") \
                 or lower_prompt == "fire" or lower_prompt.startswith("fire ") \
-                or lower_prompt == "gay" or lower_prompt.startswith("gay "):
+                or lower_prompt == "gay" or lower_prompt.startswith("gay ") \
+                or lower_prompt == "blacked" or lower_prompt.startswith("blacked ") \
+                or lower_prompt == "kosher" or lower_prompt.startswith("kosher "):
             _media = _gather_cached_media(sender)
             # Fallback for clients with no media caption (e.g. Element): the user
             # uploads the file, then *replies* to it with the command. Pull the
@@ -1505,7 +1509,7 @@ def process_messages():
                 # For meme the image IS the result — don't also post the summary
                 # text (it would be a noisy second message). compress/clip/convert
                 # keep their summary (it reports the size change).
-                if _summary and not lower_prompt.startswith(("meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay")):
+                if _summary and not lower_prompt.startswith(("meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher")):
                     send_reply(message, _summary)
                 if _out_files and not _posted:
                     send_reply(message, "❌ Couldn't upload the processed file(s) to Matrix.")

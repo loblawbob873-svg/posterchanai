@@ -1,5 +1,5 @@
-"""Creative image effects — the "Effects" group: meme captions and the dildo / poo
-scatter gags.
+"""Creative image effects — the "Effects" group: meme captions, the dildo / poo
+scatter gags, the BLACKED wordmark and the KOSHER seal.
 
 Split out of media_service so the byte-level transforms (compress/clip/convert/PDF)
 stay separate from these Pillow-drawn novelty overlays. All three expose the same
@@ -1307,4 +1307,216 @@ def gay_attachments(
         return [out], summary
     except Exception as e:
         logger.error(f"gay failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# BLACKED logo (the "blacked" gag — the blacked.com wordmark across an image)
+# ---------------------------------------------------------------------------
+
+def _make_blacked(text_w: int):
+    """Render the blacked.com wordmark ("BLACKED") on a transparent tile.
+
+    The studio logo is plain bold white "BLACKED" — drawn here in the heaviest
+    available face with a thin dark outline + soft drop shadow so the white reads
+    on any background. Pure Pillow (no shipped asset); the caller scales/places it.
+    `text_w` is the target cap height in px.
+    """
+    from PIL import Image, ImageDraw, ImageFilter
+
+    text = "BLACKED"
+    font = _load_meme_font(text_w)
+    stroke = max(text_w // 22, 1)
+    tmp = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
+    bbox = tmp.textbbox((0, 0), text, font=font, stroke_width=stroke)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+
+    pad = max(int(text_w * 0.28), 6)
+    W, H = tw + pad * 2, th + pad * 2
+    tile = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+
+    # Soft drop shadow on its own layer (blurred), so the white wordmark separates
+    # from light backgrounds.
+    shadow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(shadow)
+    off = max(int(text_w * 0.045), 2)
+    sd.text((pad - bbox[0] + off, pad - bbox[1] + off), text, font=font,
+            fill=(0, 0, 0, 200), stroke_width=stroke, stroke_fill=(0, 0, 0, 200))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(max(text_w * 0.03, 1)))
+    tile.alpha_composite(shadow)
+
+    # The white wordmark with a thin dark outline.
+    d = ImageDraw.Draw(tile)
+    d.text((pad - bbox[0], pad - bbox[1]), text, font=font,
+           fill=(255, 255, 255, 255), stroke_width=stroke, stroke_fill=(0, 0, 0, 235))
+    return tile
+
+
+def add_blacked(data: bytes, count: int = 0) -> bytes:
+    """Slap the BLACKED wordmark across the top of the image. Returns JPEG bytes."""
+    from PIL import Image, ImageOps
+    try:
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+    except Exception:
+        pass
+
+    with Image.open(io.BytesIO(data)) as img:
+        img = ImageOps.exif_transpose(img)
+        if img.mode in ("RGBA", "LA", "P"):
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            rgba = img.convert("RGBA")
+            bg.paste(rgba, mask=rgba.split()[-1])
+            img = bg
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+
+        W, H = img.size
+        img = img.convert("RGBA")
+        logo = _make_blacked(max(int(min(W, H) * 0.16), 22))
+        target_w = int(W * 0.72)                       # studio logo spans most of the width
+        scale = target_w / logo.width
+        logo = logo.resize((max(int(logo.width * scale), 1),
+                            max(int(logo.height * scale), 1)), Image.BICUBIC)
+        # Centred near the top, like the real watermark.
+        x = (W - logo.width) // 2
+        y = int(H * 0.04)
+        img.alpha_composite(logo, (x, y))
+
+        img = img.convert("RGB")
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=90, optimize=True)
+        return out.getvalue()
+
+
+def blacked_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Slap the BLACKED logo on the first image attachment. Mirrors gay_attachments."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_blacked(data)
+        out: OutputFile = {
+            "filename": f"{stem}_blacked.jpg",
+            "data": result,
+            "content_type": "image/jpeg",
+        }
+        summary = f"## 🥷 Blacked\n\n🥷 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"blacked failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Kosher seal (the "kosher" gag — a 100% KOSHER certification badge on an image)
+# ---------------------------------------------------------------------------
+
+def _make_kosher(diam: int):
+    """Render a circular kosher-certification seal on a transparent tile.
+
+    A clean OU-style hechsher: a white disc with a double dark-blue ring, a bold
+    "U" inscribed in an inner circle (the classic OU mark), "KOSHER" arched-style
+    text below it and "100%" above — wholesome and SFW. Pure Pillow (no asset);
+    the caller scales/places it. `diam` is the badge diameter in px.
+    """
+    from PIL import Image, ImageDraw
+
+    diam = max(int(diam), 40)
+    W = H = diam
+    cx = cy = diam / 2.0
+    blue = (20, 64, 140, 255)
+    white = (255, 255, 255, 255)
+
+    tile = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(tile)
+
+    ring = max(int(diam * 0.045), 3)
+    # white disc
+    d.ellipse([1, 1, W - 2, H - 2], fill=white)
+    # outer + inner ring
+    d.ellipse([1, 1, W - 2, H - 2], outline=blue, width=ring)
+    inset = int(diam * 0.10)
+    d.ellipse([inset, inset, W - inset, H - inset], outline=blue, width=max(ring // 2, 2))
+
+    # The OU mark: a "U" inscribed in a circle, centred a touch high.
+    ou_r = diam * 0.20
+    ou_cy = cy - diam * 0.06
+    d.ellipse([cx - ou_r, ou_cy - ou_r, cx + ou_r, ou_cy + ou_r],
+              outline=blue, width=max(int(diam * 0.025), 2))
+    u_font = _load_meme_font(max(int(diam * 0.26), 14))
+    ub = d.textbbox((0, 0), "U", font=u_font)
+    uw, uh = ub[2] - ub[0], ub[3] - ub[1]
+    d.text((cx - uw / 2 - ub[0], ou_cy - uh / 2 - ub[1]), "U", font=u_font, fill=blue)
+
+    # "100%" above the mark, "KOSHER" below — straight lines, centred.
+    top_font = _load_meme_font(max(int(diam * 0.11), 8))
+    tb = d.textbbox((0, 0), "100%", font=top_font)
+    d.text((cx - (tb[2] - tb[0]) / 2 - tb[0], diam * 0.16 - tb[1]),
+           "100%", font=top_font, fill=blue)
+    bot_font = _load_meme_font(max(int(diam * 0.13), 9))
+    bb = d.textbbox((0, 0), "KOSHER", font=bot_font)
+    d.text((cx - (bb[2] - bb[0]) / 2 - bb[0], diam * 0.70 - bb[1]),
+           "KOSHER", font=bot_font, fill=blue)
+
+    return tile
+
+
+def add_kosher(data: bytes, count: int = 0) -> bytes:
+    """Stamp a 100% KOSHER certification seal in the corner of an image. JPEG bytes."""
+    from PIL import Image, ImageOps
+    try:
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+    except Exception:
+        pass
+
+    with Image.open(io.BytesIO(data)) as img:
+        img = ImageOps.exif_transpose(img)
+        if img.mode in ("RGBA", "LA", "P"):
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            rgba = img.convert("RGBA")
+            bg.paste(rgba, mask=rgba.split()[-1])
+            img = bg
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+
+        W, H = img.size
+        img = img.convert("RGBA")
+        diam = max(int(min(W, H) * 0.30), 48)
+        seal = _make_kosher(diam)
+        margin = max(int(min(W, H) * 0.04), 8)
+        # Top-right corner, like a real certification mark.
+        img.alpha_composite(seal, (W - seal.width - margin, margin))
+
+        img = img.convert("RGB")
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=90, optimize=True)
+        return out.getvalue()
+
+
+def kosher_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Stamp the KOSHER seal on the first image attachment. Mirrors gay_attachments."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_kosher(data)
+        out: OutputFile = {
+            "filename": f"{stem}_kosher.jpg",
+            "data": result,
+            "content_type": "image/jpeg",
+        }
+        summary = f"## ✡️ Kosher\n\n✡️ {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"kosher failed for {filename}: {e}", exc_info=True)
         return [], f"❌ {filename}: {e}"

@@ -573,6 +573,8 @@ class CommandService:
         "bullethole": "Punch bullet holes all over an attached image: bullethole",
         "fire": "Set an attached image on fire: fire",
         "gay": "Stamp a big red GAY rubber stamp on an attached image: gay",
+        "blacked": "Slap the BLACKED logo on an attached image: blacked",
+        "kosher": "Stamp a 100% KOSHER certification seal on an attached image: kosher",
         "node": "Remote node mgmt: node <name> <cmd> | node all <cmd> | node agent <name> <goal> | node agent all <goal> | node list | node jobs | node log <id> | node kill <id>",
         "budget": "Show your budget summary (income, unpaid bills, remaining)",
         "bills": "List your bills: bills (unpaid) | bills all | bills paid",
@@ -719,6 +721,10 @@ class CommandService:
             return await self._fire_command(attachments)
         elif command == "gay":
             return await self._gay_command(attachments)
+        elif command == "blacked":
+            return await self._blacked_command(attachments)
+        elif command == "kosher":
+            return await self._kosher_command(attachments)
         elif command == "node":
             return await self._node_command(arg, notify=node_notify)
         elif command == "budget":
@@ -3351,6 +3357,36 @@ Files are saved to your Storage.""",
         from app.services.effects_service import gay_attachments
 
         outputs, summary = await asyncio.to_thread(gay_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _blacked_command(self, attachments: Optional[list]) -> dict:
+        """Slap the BLACKED logo on an attached image: `blacked`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `blacked`."}
+
+        import asyncio
+        from app.services.effects_service import blacked_attachments
+
+        outputs, summary = await asyncio.to_thread(blacked_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _kosher_command(self, attachments: Optional[list]) -> dict:
+        """Stamp a 100% KOSHER certification seal on an attached image: `kosher`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `kosher`."}
+
+        import asyncio
+        from app.services.effects_service import kosher_attachments
+
+        outputs, summary = await asyncio.to_thread(kosher_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}

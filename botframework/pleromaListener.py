@@ -118,6 +118,8 @@ _BOT_HELP_TEXT = (
     "• bullethole — punch bullet holes into an attached image\n"
     "• fire — set an attached image on fire\n"
     "• gay — stamp a big red GAY on an attached image\n"
+    "• blacked — slap the BLACKED logo on an attached image\n"
+    "• kosher — stamp a 100% KOSHER seal on an attached image\n"
     "• screenshot <url> — full-page screenshot of a website (also shot / ss)\n"
     "• /narrate <message> — reply as a short TTS video\n"
     "Or just talk to me and I'll reply. 💕"
@@ -140,7 +142,7 @@ def _handle_media_command(status, command, arg, own_acct, visibility):
     skipped = [f["filename"] for f in out_files
                if not f["content_type"].startswith(("image/", "video/"))]
     # meme's result IS the image — reply with just the image, no summary caption.
-    text = "" if command in ("meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay") else (summary or "Done.")
+    text = "" if command in ("meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher") else (summary or "Done.")
     if skipped:
         text += f"\n\n(Couldn't attach {', '.join(skipped)} here — fediverse posts only take images/video.)"
     # Main reply carries the summary + all images + the first video; any further
@@ -361,7 +363,7 @@ def process_notifications():
             # Handle media commands (compress/clip/convert/meme) on an attached file.
             lower_prompt = prompt_text.lower()
             _media_cmd = None
-            for _c in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay"):
+            for _c in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher"):
                 if lower_prompt == _c or lower_prompt.startswith(_c + " "):
                     _media_cmd = _c
                     break
