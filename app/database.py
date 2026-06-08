@@ -592,7 +592,7 @@ When asked to write or modify code or files:
             "proxy_enabled": os.environ.get("POSTERCHANAI_PROXY_ENABLED", "false"),         # Enable built-in HTTP proxy
             "proxy_listen_host": "127.0.0.1", # HTTP proxy listen address
             "proxy_listen_port": "8118",      # HTTP proxy listen port
-            "proxy_socks_host": "",           # SOCKS5 target host (Tor or remote proxy)
+            "proxy_socks_host": os.environ.get("POSTERCHANAI_PROXY_SOCKS_HOST", "127.0.0.1"),  # SOCKS5 target host (default: local built-in Tor)
             "proxy_socks_port": "9052",       # SOCKS5 target port
             # Built-in Tor client
             "tor_enabled": os.environ.get("POSTERCHANAI_TOR_ENABLED", "false"),           # Enable built-in Tor client

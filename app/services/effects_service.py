@@ -1203,3 +1203,108 @@ def fire_attachments(
     except Exception as e:
         logger.error(f"fire failed for {filename}: {e}", exc_info=True)
         return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Gay stamp (the "gay" gag — a big red rubber stamp reading GAY across an image)
+# ---------------------------------------------------------------------------
+
+def _make_gay_stamp(text_h: int):
+    """Render a distressed red rubber stamp reading "GAY" on a transparent tile.
+
+    Bold text inside a double rectangular border, inked in stamp-red with a grungy
+    speckle so it looks pressed (not printed). Pure Pillow. Returned upright; the
+    caller rotates + scales it onto the image.
+    """
+    import random
+    from PIL import Image, ImageDraw
+
+    text = "GAY"
+    stroke = max(text_h // 16, 2)
+    font = _load_meme_font(text_h)
+    tmp = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
+    bbox = tmp.textbbox((0, 0), text, font=font, stroke_width=stroke)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+
+    pad = int(text_h * 0.55)
+    bw = max(int(text_h * 0.11), 4)
+    W, H = tw + pad * 2, th + pad * 2
+    red = (200, 28, 28, 235)
+
+    tile = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(tile)
+    # double border
+    d.rectangle([bw, bw, W - bw, H - bw], outline=red, width=bw)
+    off = int(bw * 2.2)
+    d.rectangle([off, off, W - off, H - off], outline=red, width=max(bw // 2, 2))
+    # the word
+    d.text(((W - tw) / 2 - bbox[0], (H - th) / 2 - bbox[1]), text, font=font,
+           fill=red, stroke_width=stroke, stroke_fill=red)
+
+    # grunge: knock out random specks so the ink looks pressed/uneven
+    px = tile.load()
+    for _ in range(int(W * H * 0.05)):
+        x, y = random.randint(0, W - 1), random.randint(0, H - 1)
+        r, g, b, a = px[x, y]
+        if a > 0:
+            px[x, y] = (r, g, b, int(a * random.uniform(0.0, 0.6)))
+    return tile
+
+
+def add_gay(data: bytes, count: int = 0) -> bytes:
+    """Stamp a big rotated red "GAY" across the image. Returns JPEG bytes."""
+    import random
+    from PIL import Image, ImageOps
+    try:
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+    except Exception:
+        pass
+
+    with Image.open(io.BytesIO(data)) as img:
+        img = ImageOps.exif_transpose(img)
+        if img.mode in ("RGBA", "LA", "P"):
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            rgba = img.convert("RGBA")
+            bg.paste(rgba, mask=rgba.split()[-1])
+            img = bg
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+
+        W, H = img.size
+        img = img.convert("RGBA")
+        stamp = _make_gay_stamp(max(int(min(W, H) * 0.17), 24))
+        target_w = int(W * 0.66)
+        scale = target_w / stamp.width
+        stamp = stamp.resize((max(int(stamp.width * scale), 1),
+                              max(int(stamp.height * scale), 1)), Image.BICUBIC)
+        stamp = stamp.rotate(random.uniform(15, 22), expand=True, resample=Image.BICUBIC)
+        img.alpha_composite(stamp, ((W - stamp.width) // 2, (H - stamp.height) // 2))
+
+        img = img.convert("RGB")
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=90, optimize=True)
+        return out.getvalue()
+
+
+def gay_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Stamp GAY on the first image attachment. Mirrors blood_attachments."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_gay(data)
+        out: OutputFile = {
+            "filename": f"{stem}_gay.jpg",
+            "data": result,
+            "content_type": "image/jpeg",
+        }
+        summary = f"## 🏳️‍🌈 Gay\n\n🏳️‍🌈 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"gay failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
