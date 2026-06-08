@@ -1363,50 +1363,52 @@ def _draw_tracked(draw, x: float, y: float, text: str, font, tracking: float, **
     return x
 
 
-def _make_blacked(text_w: int):
-    """Render the blacked.com wordmark ("BLACKED") on a transparent tile.
+def _make_blacked(diam: int):
+    """Render the blacked.com logo — a BLACK CIRCLE with white "BLACKED" inside.
 
-    The real logo's recognisable traits aren't the letters themselves but its
-    HEAVY weight and WIDE letter-spacing — so this draws a heavy grotesque with
-    manual tracking, faking a black weight by over-stroking the glyphs in their
-    own colour, with a thin dark outline + soft drop shadow so the white reads on
-    any background. Pure Pillow (no shipped asset); the caller scales/places it.
-    `text_w` is the font size in px.
+    The font size auto-scales so the heavy, lightly-tracked wordmark fits across
+    the disc; a thin light ring + soft drop shadow keep the black roundel visible
+    on dark backgrounds too. Pure Pillow (no shipped asset); the caller scales and
+    places it. `diam` is the circle diameter in px.
     """
     from PIL import Image, ImageDraw, ImageFilter
 
+    diam = max(int(diam), 80)
+    W = H = diam
+    cx = cy = diam / 2.0
     text = "BLACKED"
-    font = _load_blacked_font(text_w)
-    tracking = max(text_w * 0.16, 2)          # the signature wide spacing
-    heavy = max(int(text_w * 0.05), 2)        # over-stroke → fake a black weight
-    outline = max(int(text_w * 0.05), 2)      # dark halo for legibility on photos
+    target_w = diam * 0.80                    # wordmark spans most of the disc
+    tracking_ratio = 0.10
 
+    # Pick the largest font whose tracked wordmark fits target_w (one scale pass).
     probe = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
+    base = max(int(diam * 0.16), 10)
+    w0 = _tracked_width(probe, text, _load_blacked_font(base), base * tracking_ratio)
+    fsize = max(int(base * target_w / max(w0, 1)), 10)
+    font = _load_blacked_font(fsize)
+    tracking = fsize * tracking_ratio
     total_w = _tracked_width(probe, text, font, tracking)
-    ink = probe.textbbox((0, 0), text, font=font, stroke_width=heavy + outline)
-
-    pad = max(int(text_w * 0.32), 8)
-    W = int(total_w) + (heavy + outline) * 2 + pad * 2
-    H = (ink[3] - ink[1]) + pad * 2
-    x0 = pad + heavy + outline
-    y0 = pad - ink[1]
+    heavy = max(int(fsize * 0.045), 1)        # over-stroke → fake a black weight
+    ink = probe.textbbox((0, 0), text, font=font, stroke_width=heavy)
+    th = ink[3] - ink[1]
 
     tile = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    pad = max(int(diam * 0.03), 3)
 
-    # Soft drop shadow on its own layer (blurred) so the white separates on light bg.
+    # Soft drop shadow so the black disc separates from a dark background.
     shadow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    sd = ImageDraw.Draw(shadow)
-    off = max(int(text_w * 0.05), 2)
-    _draw_tracked(sd, x0 + off, y0 + off, text, font, tracking,
-                  fill=(0, 0, 0, 210), stroke_width=heavy, stroke_fill=(0, 0, 0, 210))
-    shadow = shadow.filter(ImageFilter.GaussianBlur(max(text_w * 0.04, 1)))
+    ImageDraw.Draw(shadow).ellipse([pad, pad, W - pad, H - pad], fill=(0, 0, 0, 170))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(max(diam * 0.02, 2)))
     tile.alpha_composite(shadow)
 
     d = ImageDraw.Draw(tile)
-    # 1) dark outline pass (a touch thicker), 2) white face pass on top.
-    _draw_tracked(d, x0, y0, text, font, tracking,
-                  fill=(10, 10, 10, 245), stroke_width=heavy + outline,
-                  stroke_fill=(10, 10, 10, 245))
+    # The black roundel with a thin light ring (reads on dark photos too).
+    d.ellipse([pad, pad, W - pad, H - pad], fill=(8, 8, 8, 255),
+              outline=(244, 244, 244, 255), width=max(int(diam * 0.012), 2))
+
+    # White "BLACKED" centred across the disc.
+    x0 = cx - total_w / 2.0
+    y0 = cy - th / 2.0 - ink[1]
     _draw_tracked(d, x0, y0, text, font, tracking,
                   fill=(255, 255, 255, 255), stroke_width=heavy,
                   stroke_fill=(255, 255, 255, 255))
@@ -1414,7 +1416,7 @@ def _make_blacked(text_w: int):
 
 
 def add_blacked(data: bytes, count: int = 0) -> bytes:
-    """Slap the BLACKED wordmark across the top of the image. Returns JPEG bytes."""
+    """Stamp the round BLACKED logo in the centre of the image. Returns JPEG bytes."""
     from PIL import Image, ImageOps
     try:
         from pillow_heif import register_heif_opener
@@ -1434,15 +1436,9 @@ def add_blacked(data: bytes, count: int = 0) -> bytes:
 
         W, H = img.size
         img = img.convert("RGBA")
-        logo = _make_blacked(max(int(min(W, H) * 0.16), 22))
-        target_w = int(W * 0.84)                       # studio logo spans most of the width
-        scale = target_w / logo.width
-        logo = logo.resize((max(int(logo.width * scale), 1),
-                            max(int(logo.height * scale), 1)), Image.BICUBIC)
-        # Centred near the top, like the real watermark.
-        x = (W - logo.width) // 2
-        y = int(H * 0.04)
-        img.alpha_composite(logo, (x, y))
+        logo = _make_blacked(max(int(min(W, H) * 0.55), 96))
+        # Centred on the image, like a stamped roundel.
+        img.alpha_composite(logo, ((W - logo.width) // 2, (H - logo.height) // 2))
 
         img = img.convert("RGB")
         out = io.BytesIO()
