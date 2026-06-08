@@ -858,9 +858,14 @@ def download_image_from_url(url, timeout=30):
 
 def mxc_to_https(mxc_url):
     """
-    Convert an mxc:// URL to an HTTPS download URL.
-    Uses the authenticated client media endpoint.
-    mxc://server/media_id -> https://server/_matrix/client/v1/media/download/server/media_id
+    Convert an mxc:// URL to an authenticated HTTPS download URL.
+
+    The authenticated client media endpoint must be served by the bot's OWN
+    homeserver (which holds a valid token for us and proxies remote media over
+    federation), NOT the media's origin server — hitting the origin directly with
+    our homeserver's token returns 401 for any remote (federated) media, e.g. an
+    image posted from another server in a shared room.
+    mxc://origin/media_id -> https://<our-homeserver>/_matrix/client/v1/media/download/origin/media_id
     """
     if not mxc_url or not mxc_url.startswith("mxc://"):
         return None
@@ -870,8 +875,10 @@ def mxc_to_https(mxc_url):
     if len(parts) != 2:
         return None
     server, media_id = parts
-    # Use authenticated client media endpoint
-    return f"https://{server}/_matrix/client/v1/media/download/{server}/{media_id}"
+    # Route through our own homeserver (federates remote media); fall back to the
+    # origin server only if the homeserver isn't configured.
+    base = matrix_server if matrix_server else f"https://{server}"
+    return f"{base}/_matrix/client/v1/media/download/{server}/{media_id}"
 
 
 def get_event_images(event_obj):
