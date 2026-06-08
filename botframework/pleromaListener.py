@@ -78,15 +78,19 @@ def _gather_status_media(status):
     """Download media attached to a status (or its parent) for a media command.
     Returns a list of (filename, data_bytes, content_type) tuples."""
     attachments = list(status.get("media_attachments") or [])
+    print(f"[DEBUG] _gather_status_media: own_media={len(attachments)}, in_reply_to_id={status.get('in_reply_to_id')}")
     if not attachments and status.get("in_reply_to_id"):
         parent = get_status(status["in_reply_to_id"]) or {}
         attachments = list(parent.get("media_attachments") or [])
+        print(f"[DEBUG] _gather_status_media: parent fetched={bool(parent)}, parent_media={len(attachments)}")
     media = []
     for att in attachments:
         url = att.get("url")
         if not url:
+            print(f"[DEBUG] _gather_status_media: attachment has no url: {att.get('type')}")
             continue
         data = download_image_from_url(url, timeout=300)  # generic downloader, any file
+        print(f"[DEBUG] _gather_status_media: download {url[:80]} -> {len(data) if data else 'FAILED'}")
         if data:
             fname = url.split("?")[0].rstrip("/").split("/")[-1] or "file"
             media.append((fname, data, _ATTACH_MIME.get(att.get("type"), "")))
