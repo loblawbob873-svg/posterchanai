@@ -163,21 +163,29 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
 
     @staticmethod
     def _ensure_alternating_roles(messages: list[dict]) -> list[dict]:
-        """Ensure messages alternate user/assistant/user/assistant... 
+        """Ensure messages alternate user/assistant/user/assistant...
         Merges consecutive same-role messages and removes invalid sequences."""
         if not messages:
             return messages
-        
+
         result = []
         prev_role = None
         for msg in messages:
             role = msg.get("role", "user")
             content = msg.get("content", "")
-            
+
             if role == "system":
                 result.append(msg)
                 continue
-            
+
+            # tool/function result messages sit between assistant and user turns and must
+            # pass through intact (each has its own tool_call_id). Reset prev_role so the
+            # next assistant turn isn't incorrectly merged with the one before the tool block.
+            if role in ("tool", "function"):
+                result.append(msg)
+                prev_role = None
+                continue
+
             if role == prev_role and result:
                 last = result[-1]
                 if isinstance(last.get("content"), str) and isinstance(content, str):
@@ -185,7 +193,7 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
                 elif isinstance(last.get("content"), str):
                     result[-1]["content"] = last["content"]
                 continue
-            
+
             result.append(msg)
             prev_role = role
         
