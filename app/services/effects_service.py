@@ -1787,3 +1787,57 @@ def hava_attachments(
     except Exception as e:
         logger.error(f"hava failed for {filename}: {e}", exc_info=True)
         return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Indian (the "indian" gag — turn an image into an MP4 set to an Indian song)
+# ---------------------------------------------------------------------------
+
+# The shipped Indian track (repo-relative), overridable with INDIAN_AUDIO_PATH.
+_INDIAN_AUDIO_CANDIDATES = [
+    os.environ.get("INDIAN_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "indian.mp3"),
+    "/var/lib/posterchanai/assets/indian.mp3",
+]
+_INDIAN_DURATION = 6.0
+
+
+def _indian_audio_path() -> str:
+    """First existing Indian-song mp3 from the candidate list ("" if none)."""
+    for p in _INDIAN_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_indian(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a 6-second MP4 playing the Indian song over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _indian_audio_path()
+    if not audio:
+        raise RuntimeError("Indian audio (assets/indian.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_INDIAN_DURATION)
+
+
+def indian_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into an Indian-song MP4. Mirrors hava_attachments
+    (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_indian(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_indian.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🇮🇳 Indian\n\n🇮🇳 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"indian failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
