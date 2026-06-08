@@ -1314,41 +1314,102 @@ def gay_attachments(
 # BLACKED logo (the "blacked" gag — the blacked.com wordmark across an image)
 # ---------------------------------------------------------------------------
 
+# The real wordmark is a HEAVY, WIDE grotesque (Helvetica/Akzidenz-black family) —
+# deliberately NOT Impact (too condensed/tall). Prefer black/heavy faces, then a
+# bold Helvetica/Arial clone; fall back to the meme font as a last resort.
+_BLACKED_FONT_CANDIDATES = [
+    "/usr/share/fonts/archivo-black/ArchivoBlack-Regular.ttf",
+    "/usr/share/fonts/truetype/archivo-black/ArchivoBlack-Regular.ttf",
+    "/usr/share/fonts/roboto/Roboto-Black.ttf",
+    "/usr/share/fonts/truetype/roboto/Roboto-Black.ttf",
+    "/usr/share/fonts/montserrat/Montserrat-Black.ttf",
+    "/usr/share/fonts/msttcorefonts/Arial_Black.ttf",
+    "/usr/share/fonts/truetype/msttcorefonts/Arial_Black.ttf",
+    "/usr/share/fonts/liberation-fonts/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+]
+
+
+def _load_blacked_font(size: int):
+    """Load a heavy, wide grotesque for the BLACKED wordmark (never Impact)."""
+    from PIL import ImageFont
+    for path in _BLACKED_FONT_CANDIDATES:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                continue
+    return _load_meme_font(size)
+
+
+def _tracked_width(draw, text: str, font, tracking: float) -> float:
+    """Total pixel width of `text` rendered with `tracking` px between glyphs."""
+    if not text:
+        return 0.0
+    return sum(draw.textlength(ch, font=font) for ch in text) + tracking * (len(text) - 1)
+
+
+def _draw_tracked(draw, x: float, y: float, text: str, font, tracking: float, **kw):
+    """Draw `text` glyph-by-glyph with `tracking` px added between letters.
+
+    Pillow has no letter-spacing, so we advance manually by each glyph's own
+    width + `tracking`. `kw` is passed straight to ``draw.text`` (fill/stroke)."""
+    for ch in text:
+        draw.text((x, y), ch, font=font, **kw)
+        x += draw.textlength(ch, font=font) + tracking
+    return x
+
+
 def _make_blacked(text_w: int):
     """Render the blacked.com wordmark ("BLACKED") on a transparent tile.
 
-    The studio logo is plain bold white "BLACKED" — drawn here in the heaviest
-    available face with a thin dark outline + soft drop shadow so the white reads
-    on any background. Pure Pillow (no shipped asset); the caller scales/places it.
-    `text_w` is the target cap height in px.
+    The real logo's recognisable traits aren't the letters themselves but its
+    HEAVY weight and WIDE letter-spacing — so this draws a heavy grotesque with
+    manual tracking, faking a black weight by over-stroking the glyphs in their
+    own colour, with a thin dark outline + soft drop shadow so the white reads on
+    any background. Pure Pillow (no shipped asset); the caller scales/places it.
+    `text_w` is the font size in px.
     """
     from PIL import Image, ImageDraw, ImageFilter
 
     text = "BLACKED"
-    font = _load_meme_font(text_w)
-    stroke = max(text_w // 22, 1)
-    tmp = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
-    bbox = tmp.textbbox((0, 0), text, font=font, stroke_width=stroke)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    font = _load_blacked_font(text_w)
+    tracking = max(text_w * 0.16, 2)          # the signature wide spacing
+    heavy = max(int(text_w * 0.05), 2)        # over-stroke → fake a black weight
+    outline = max(int(text_w * 0.05), 2)      # dark halo for legibility on photos
 
-    pad = max(int(text_w * 0.28), 6)
-    W, H = tw + pad * 2, th + pad * 2
+    probe = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
+    total_w = _tracked_width(probe, text, font, tracking)
+    ink = probe.textbbox((0, 0), text, font=font, stroke_width=heavy + outline)
+
+    pad = max(int(text_w * 0.32), 8)
+    W = int(total_w) + (heavy + outline) * 2 + pad * 2
+    H = (ink[3] - ink[1]) + pad * 2
+    x0 = pad + heavy + outline
+    y0 = pad - ink[1]
+
     tile = Image.new("RGBA", (W, H), (0, 0, 0, 0))
 
-    # Soft drop shadow on its own layer (blurred), so the white wordmark separates
-    # from light backgrounds.
+    # Soft drop shadow on its own layer (blurred) so the white separates on light bg.
     shadow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     sd = ImageDraw.Draw(shadow)
-    off = max(int(text_w * 0.045), 2)
-    sd.text((pad - bbox[0] + off, pad - bbox[1] + off), text, font=font,
-            fill=(0, 0, 0, 200), stroke_width=stroke, stroke_fill=(0, 0, 0, 200))
-    shadow = shadow.filter(ImageFilter.GaussianBlur(max(text_w * 0.03, 1)))
+    off = max(int(text_w * 0.05), 2)
+    _draw_tracked(sd, x0 + off, y0 + off, text, font, tracking,
+                  fill=(0, 0, 0, 210), stroke_width=heavy, stroke_fill=(0, 0, 0, 210))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(max(text_w * 0.04, 1)))
     tile.alpha_composite(shadow)
 
-    # The white wordmark with a thin dark outline.
     d = ImageDraw.Draw(tile)
-    d.text((pad - bbox[0], pad - bbox[1]), text, font=font,
-           fill=(255, 255, 255, 255), stroke_width=stroke, stroke_fill=(0, 0, 0, 235))
+    # 1) dark outline pass (a touch thicker), 2) white face pass on top.
+    _draw_tracked(d, x0, y0, text, font, tracking,
+                  fill=(10, 10, 10, 245), stroke_width=heavy + outline,
+                  stroke_fill=(10, 10, 10, 245))
+    _draw_tracked(d, x0, y0, text, font, tracking,
+                  fill=(255, 255, 255, 255), stroke_width=heavy,
+                  stroke_fill=(255, 255, 255, 255))
     return tile
 
 
@@ -1374,7 +1435,7 @@ def add_blacked(data: bytes, count: int = 0) -> bytes:
         W, H = img.size
         img = img.convert("RGBA")
         logo = _make_blacked(max(int(min(W, H) * 0.16), 22))
-        target_w = int(W * 0.72)                       # studio logo spans most of the width
+        target_w = int(W * 0.84)                       # studio logo spans most of the width
         scale = target_w / logo.width
         logo = logo.resize((max(int(logo.width * scale), 1),
                             max(int(logo.height * scale), 1)), Image.BICUBIC)
@@ -1467,7 +1528,7 @@ def _make_kosher(diam: int):
 
 
 def add_kosher(data: bytes, count: int = 0) -> bytes:
-    """Stamp a 100% KOSHER certification seal in the corner of an image. JPEG bytes."""
+    """Stamp a 100% KOSHER certification seal centred in the lower third. JPEG bytes."""
     from PIL import Image, ImageOps
     try:
         from pillow_heif import register_heif_opener
@@ -1487,11 +1548,13 @@ def add_kosher(data: bytes, count: int = 0) -> bytes:
 
         W, H = img.size
         img = img.convert("RGBA")
-        diam = max(int(min(W, H) * 0.30), 48)
+        diam = max(int(min(W, H) * 0.42), 48)
         seal = _make_kosher(diam)
-        margin = max(int(min(W, H) * 0.04), 8)
-        # Top-right corner, like a real certification mark.
-        img.alpha_composite(seal, (W - seal.width - margin, margin))
+        # Horizontally centred, sitting in the lower third (its centre at ~2/3 H),
+        # clamped so it never spills off the bottom edge.
+        x = (W - seal.width) // 2
+        y = min(int(H * 0.66) - seal.height // 2, H - seal.height - max(int(H * 0.03), 4))
+        img.alpha_composite(seal, (x, max(y, 0)))
 
         img = img.convert("RGB")
         out = io.BytesIO()
@@ -1519,4 +1582,150 @@ def kosher_attachments(
         return [out], summary
     except Exception as e:
         logger.error(f"kosher failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Barked (the "barked" gag — a smirking cartoon dog + "#BARKED" caption)
+# ---------------------------------------------------------------------------
+
+def _make_barked_dog(h: int):
+    """Render a smirking cartoon dog face on a transparent square tile (pure Pillow).
+
+    Floppy ears, a lighter muzzle with a black nose, half-lidded sly eyes, a cocked
+    eyebrow and an asymmetric raised-corner smirk (with a cheeky tongue). Ships no
+    image asset. `h` is the tile size in px.
+    """
+    from PIL import Image, ImageDraw
+
+    W = H = max(int(h), 48)
+    cx = W / 2.0
+    fur = (176, 132, 86)
+    dark = _shade(fur, 0.72)[:3]
+    muzzle = (228, 205, 170)
+    outline = _shade(fur, 0.5)[:3]
+    lw = max(int(W * 0.012), 2)
+
+    tile = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(tile)
+
+    # --- floppy ears (behind the head) ---
+    d.ellipse([W * 0.02, H * 0.16, W * 0.32, H * 0.74], fill=dark, outline=outline, width=lw)
+    d.ellipse([W * 0.68, H * 0.16, W * 0.98, H * 0.74], fill=dark, outline=outline, width=lw)
+
+    # --- head ---
+    d.ellipse([W * 0.15, H * 0.12, W * 0.85, H * 0.88], fill=fur, outline=outline, width=lw)
+
+    # --- muzzle (lighter) ---
+    d.ellipse([W * 0.30, H * 0.50, W * 0.70, H * 0.88], fill=muzzle, outline=outline, width=lw)
+
+    # --- eyes: half-lidded / sly. A white lens with a big pupil, a fur "lid" over
+    # the top half, plus a cocked right eyebrow → smug. ---
+    for ex in (W * 0.39, W * 0.61):
+        ey = H * 0.42
+        rx, ry = W * 0.085, H * 0.085
+        d.ellipse([ex - rx, ey - ry, ex + rx, ey + ry], fill=(255, 255, 255, 255),
+                  outline=outline, width=max(lw - 1, 1))
+        # pupil sits low (looking down its nose)
+        pr = rx * 0.62
+        d.ellipse([ex - pr, ey - pr * 0.4, ex + pr, ey + pr * 1.6], fill=(25, 22, 20, 255))
+        d.ellipse([ex - pr * 0.2, ey + pr * 0.1, ex + pr * 0.3, ey + pr * 0.6],
+                  fill=(255, 255, 255, 230))  # catch-light
+        # heavy upper lid (fur) covering the top third → half-closed sly look
+        d.chord([ex - rx - 1, ey - ry - 1, ex + rx + 1, ey + ry * 0.7], 180, 360, fill=fur)
+    # cocked eyebrow over the right eye
+    d.line([(W * 0.54, H * 0.30), (W * 0.69, H * 0.26)], fill=outline, width=lw + 1, joint="curve")
+    d.line([(W * 0.31, H * 0.30), (W * 0.46, H * 0.31)], fill=outline, width=lw + 1, joint="curve")
+
+    # --- nose ---
+    d.ellipse([cx - W * 0.075, H * 0.52, cx + W * 0.075, H * 0.63], fill=(28, 24, 22, 255))
+    d.ellipse([cx - W * 0.03, H * 0.535, cx, H * 0.565], fill=(120, 110, 105, 220))  # sheen
+
+    # --- smirk: philtrum down from the nose, a small relaxed left side and a raised
+    # right corner; a cheeky tongue peeks from the high corner. ---
+    mouth_col = _shade(fur, 0.35)[:3]
+    d.line([(cx, H * 0.63), (cx, H * 0.70)], fill=mouth_col, width=lw, joint="curve")
+    d.line([(cx, H * 0.70), (W * 0.40, H * 0.76), (W * 0.36, H * 0.72)],
+           fill=mouth_col, width=lw, joint="curve")                       # relaxed left
+    d.line([(cx, H * 0.70), (W * 0.62, H * 0.72), (W * 0.70, H * 0.65)],
+           fill=mouth_col, width=lw + 1, joint="curve")                   # raised right (smirk)
+    # tongue at the raised corner
+    d.ellipse([W * 0.60, H * 0.70, W * 0.70, H * 0.80], fill=(228, 120, 130, 255),
+              outline=mouth_col, width=max(lw - 1, 1))
+    d.line([(W * 0.65, H * 0.71), (W * 0.65, H * 0.78)], fill=_shade((228, 120, 130), 0.8)[:3],
+           width=max(lw - 1, 1))
+
+    return tile
+
+
+def add_barked(data: bytes, count: int = 0) -> bytes:
+    """Drop a smirking cartoon dog with a "#BARKED" caption onto an image. JPEG bytes."""
+    from PIL import Image, ImageOps, ImageDraw
+    try:
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+    except Exception:
+        pass
+
+    with Image.open(io.BytesIO(data)) as img:
+        img = ImageOps.exif_transpose(img)
+        if img.mode in ("RGBA", "LA", "P"):
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            rgba = img.convert("RGBA")
+            bg.paste(rgba, mask=rgba.split()[-1])
+            img = bg
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+
+        W, H = img.size
+        img = img.convert("RGBA")
+
+        dog_size = max(int(min(W, H) * 0.5), 64)
+        dog = _make_barked_dog(dog_size)
+
+        # "#BARKED" caption (outlined white) sits below the dog; the dog + caption
+        # are centred horizontally and sit as a group in the lower third.
+        text = "#BARKED"
+        font = _load_meme_font(max(int(dog_size * 0.24), 14))
+        stroke = max(int(dog_size * 0.012), 2)
+        d = ImageDraw.Draw(img)
+        tb = d.textbbox((0, 0), text, font=font, stroke_width=stroke)
+        tw, th = tb[2] - tb[0], tb[3] - tb[1]
+        gap = max(int(dog_size * 0.06), 6)
+
+        total_h = dog.height + gap + th
+        # Group centre sits at ~2/3 H (lower third), clamped to the bottom margin.
+        bottom_margin = max(int(H * 0.03), 4)
+        top = int(H * 0.66) - total_h // 2
+        top = max(min(top, H - total_h - bottom_margin), 0)
+        img.alpha_composite(dog, ((W - dog.width) // 2, top))
+        d.text(((W - tw) / 2 - tb[0], top + dog.height + gap - tb[1]),
+               text, font=font, fill="white", stroke_width=stroke, stroke_fill="black")
+
+        img = img.convert("RGB")
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=90, optimize=True)
+        return out.getvalue()
+
+
+def barked_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Drop the smirking dog + #BARKED on the first image attachment. Mirrors gay_attachments."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_barked(data)
+        out: OutputFile = {
+            "filename": f"{stem}_barked.jpg",
+            "data": result,
+            "content_type": "image/jpeg",
+        }
+        summary = f"## 🐶 Barked\n\n🐶 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"barked failed for {filename}: {e}", exc_info=True)
         return [], f"❌ {filename}: {e}"

@@ -66,9 +66,9 @@ async def process_media(
     db: Session = Depends(get_db),
     _auth: bool = Depends(get_image_auth),
 ):
-    """Run a compress/clip/convert/meme/dildo/poo/cum/blood/bullethole/fire/gay/blacked/kosher operation on the supplied attachments."""
+    """Run a compress/clip/convert/meme/dildo/poo/cum/blood/bullethole/fire/gay/blacked/kosher/barked operation on the supplied attachments."""
     command = (req.command or "").strip().lower()
-    if command not in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher"):
+    if command not in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked"):
         return {"error": f"unsupported command '{command}'"}
 
     attachments = []
@@ -107,6 +107,8 @@ async def process_media(
             outputs, summary = await asyncio.to_thread(effects_service.blacked_attachments, attachments)
         elif command == "kosher":
             outputs, summary = await asyncio.to_thread(effects_service.kosher_attachments, attachments)
+        elif command == "barked":
+            outputs, summary = await asyncio.to_thread(effects_service.barked_attachments, attachments)
         else:  # clip
             parts = (req.arg or "").split()
             if len(parts) < 2:

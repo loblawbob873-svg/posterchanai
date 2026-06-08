@@ -575,6 +575,7 @@ class CommandService:
         "gay": "Stamp a big red GAY rubber stamp on an attached image: gay",
         "blacked": "Slap the BLACKED logo on an attached image: blacked",
         "kosher": "Stamp a 100% KOSHER certification seal on an attached image: kosher",
+        "barked": "Drop a smirking dog and #BARKED on an attached image: barked",
         "node": "Remote node mgmt: node <name> <cmd> | node all <cmd> | node agent <name> <goal> | node agent all <goal> | node list | node jobs | node log <id> | node kill <id>",
         "budget": "Show your budget summary (income, unpaid bills, remaining)",
         "bills": "List your bills: bills (unpaid) | bills all | bills paid",
@@ -725,6 +726,8 @@ class CommandService:
             return await self._blacked_command(attachments)
         elif command == "kosher":
             return await self._kosher_command(attachments)
+        elif command == "barked":
+            return await self._barked_command(attachments)
         elif command == "node":
             return await self._node_command(arg, notify=node_notify)
         elif command == "budget":
@@ -3387,6 +3390,21 @@ Files are saved to your Storage.""",
         from app.services.effects_service import kosher_attachments
 
         outputs, summary = await asyncio.to_thread(kosher_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _barked_command(self, attachments: Optional[list]) -> dict:
+        """Drop a smirking dog and #BARKED on an attached image: `barked`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `barked`."}
+
+        import asyncio
+        from app.services.effects_service import barked_attachments
+
+        outputs, summary = await asyncio.to_thread(barked_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}

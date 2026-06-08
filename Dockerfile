@@ -78,7 +78,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # --- system packages (all four bases are Ubuntu, so apt is uniform) ----------
 #  build : compiler toolchain + cmake for building llama-cpp-python
 #  media : ffmpeg (video/TTS), tesseract (OCR), libgl/glib (opencv, PyMuPDF)
-#  fonts : DejaVu Bold (meme captions) + Noto color emoji (screenshots/cards)
+#  fonts : DejaVu Bold + Liberation Sans Bold (meme captions & the Effects
+#          text overlays — the BLACKED wordmark prefers the Helvetica-clone
+#          Liberation face) + Noto color emoji (screenshots/cards)
 #  bt    : system libtorrent (the venv is created with --system-site-packages
 #          so the torrent feature can import it)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -87,7 +89,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl gnupg \
         ffmpeg tesseract-ocr \
         libgl1 libglib2.0-0 libjpeg-turbo8 zlib1g \
-        fonts-dejavu fonts-noto-color-emoji fontconfig \
+        fonts-dejavu fonts-liberation fonts-noto-color-emoji fontconfig \
         python3-libtorrent tor \
     && rm -rf /var/lib/apt/lists/*
 
