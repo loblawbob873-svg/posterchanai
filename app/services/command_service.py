@@ -570,6 +570,8 @@ class CommandService:
         "poo": "Scatter poop all over an attached image: poo",
         "cum": "Scatter cum all over an attached image: cum",
         "blood": "Splatter blood all over an attached image: blood",
+        "bullethole": "Punch bullet holes all over an attached image: bullethole",
+        "fire": "Set an attached image on fire: fire",
         "node": "Remote node mgmt: node <name> <cmd> | node all <cmd> | node agent <name> <goal> | node agent all <goal> | node list | node jobs | node log <id> | node kill <id>",
         "budget": "Show your budget summary (income, unpaid bills, remaining)",
         "bills": "List your bills: bills (unpaid) | bills all | bills paid",
@@ -710,6 +712,10 @@ class CommandService:
             return await self._cum_command(attachments)
         elif command == "blood":
             return await self._blood_command(attachments)
+        elif command == "bullethole":
+            return await self._bullethole_command(attachments)
+        elif command == "fire":
+            return await self._fire_command(attachments)
         elif command == "node":
             return await self._node_command(arg, notify=node_notify)
         elif command == "budget":
@@ -3297,6 +3303,36 @@ Files are saved to your Storage.""",
 
         # Pillow compositing is light, but keep it off the event loop for big images.
         outputs, summary = await asyncio.to_thread(blood_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _bullethole_command(self, attachments: Optional[list]) -> dict:
+        """Punch bullet holes all over an attached image: `bullethole` (no text)."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `bullethole`."}
+
+        import asyncio
+        from app.services.effects_service import bullethole_attachments
+
+        outputs, summary = await asyncio.to_thread(bullethole_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _fire_command(self, attachments: Optional[list]) -> dict:
+        """Set an attached image on fire: `fire` (no text needed)."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `fire`."}
+
+        import asyncio
+        from app.services.effects_service import fire_attachments
+
+        outputs, summary = await asyncio.to_thread(fire_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}

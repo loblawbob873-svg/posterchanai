@@ -1,5 +1,10 @@
 # Core web framework
 fastapi>=0.109.0,<1.0.0
+# Pin Starlette to the 0.4x–0.50 line: Starlette 1.x dropped the legacy
+# TemplateResponse(name, context) signature this app uses everywhere, so an
+# unpinned fresh install (e.g. a fresh Docker build) pulls 1.x and every page
+# 500s with "unhashable type: 'dict'". 0.50.x is the proven production version.
+starlette>=0.40.0,<0.51.0
 uvicorn[standard]>=0.27.0,<1.0.0
 python-multipart>=0.0.6
 python-jose[cryptography]>=3.3.0

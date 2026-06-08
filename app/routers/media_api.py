@@ -1,13 +1,13 @@
-"""Generic media-processing API (compress / clip / convert / meme / dildo / poo / cum / blood) for the bots.
+"""Generic media-processing API (compress / clip / convert / meme / dildo / poo / cum / blood / bullethole / fire) for the bots.
 
 Identity-agnostic: these are pure byte transforms, so this endpoint only
 authenticates the caller (API key or JWT, reusing the image API's auth) — it does
 not run as a specific user. Shared by the Matrix, Misskey and Pleroma listener
 bots so they all reuse one HW-accelerated ffmpeg/Pillow path instead of each
 reimplementing it: the byte transforms live in `app/services/media_service.py`,
-the creative effects (meme/dildo/poo/cum/blood) in `app/services/effects_service.py`.
+the creative effects (meme/dildo/poo/cum/blood/bullethole/fire) in `app/services/effects_service.py`.
 
-Request:  {"command": "compress|clip|convert|meme|dildo|poo|cum|blood", "arg": "", "media": [{filename, data(b64), content_type}]}
+Request:  {"command": "compress|clip|convert|meme|dildo|poo|cum|blood|bullethole|fire", "arg": "", "media": [{filename, data(b64), content_type}]}
 Response: {"summary": str, "files": [{filename, data(b64), content_type}]}  — or {"error": str}
 """
 import asyncio
@@ -66,9 +66,9 @@ async def process_media(
     db: Session = Depends(get_db),
     _auth: bool = Depends(get_image_auth),
 ):
-    """Run a compress/clip/convert/meme/dildo/poo/cum/blood operation on the supplied attachments."""
+    """Run a compress/clip/convert/meme/dildo/poo/cum/blood/bullethole/fire operation on the supplied attachments."""
     command = (req.command or "").strip().lower()
-    if command not in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood"):
+    if command not in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire"):
         return {"error": f"unsupported command '{command}'"}
 
     attachments = []
@@ -97,6 +97,10 @@ async def process_media(
             outputs, summary = await asyncio.to_thread(effects_service.cum_attachments, attachments)
         elif command == "blood":
             outputs, summary = await asyncio.to_thread(effects_service.blood_attachments, attachments)
+        elif command == "bullethole":
+            outputs, summary = await asyncio.to_thread(effects_service.bullethole_attachments, attachments)
+        elif command == "fire":
+            outputs, summary = await asyncio.to_thread(effects_service.fire_attachments, attachments)
         else:  # clip
             parts = (req.arg or "").split()
             if len(parts) < 2:

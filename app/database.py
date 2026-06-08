@@ -492,9 +492,11 @@ When asked to write or modify code or files:
             "chat_server_urls": "",  # Comma-separated URLs (empty = use local backend)
             # Load balancing - proxy image generation to external posterchanai servers
             "image_server_urls": "",  # Comma-separated URLs (empty = use local backend)
-            # Native LLM settings
-            "llm_backend": "ollama",  # "native", "ipex", or "ollama"
-            "llm_model_path": "/home/verita84/models/model.gguf",
+            # Native LLM settings. The backend/model-path FIRST-RUN defaults can be
+            # seeded from the environment (used by the Docker image to ship a
+            # turnkey native+GPU config); unset → the historical defaults below.
+            "llm_backend": os.environ.get("POSTERCHANAI_LLM_BACKEND", "ollama"),  # "native", "ipex", or "ollama"
+            "llm_model_path": os.environ.get("POSTERCHANAI_LLM_MODEL_PATH", "/home/verita84/models/model.gguf"),
             "llm_gpu_layers": "-1",  # -1 = all layers on GPU
             "llm_n_threads": "0",  # 0 = auto-detect (physical cores)
             "llm_n_batch": "1024",  # Batch size for prompt processing (higher = faster, try 2048+ with 16GB+ VRAM)

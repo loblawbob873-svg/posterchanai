@@ -277,7 +277,7 @@ async def execute_matrix_command(
     # before the linked-account requirement below (the bot-API-key auth above is the
     # only gate they need).
     if data.media and command_str.split()[0].lower() in (
-        "compress", "clip", "convert", "translate", "meme", "dildo", "poo", "cum", "blood"
+        "compress", "clip", "convert", "translate", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire"
     ):
         from app.services.command_service import CommandService
         _media_svc = CommandService(db, user=user)
@@ -538,6 +538,8 @@ async def execute_matrix_command(
             "• `poo` — scatter poop all over an image.\n"
             "• `cum` — scatter cum all over an image.\n"
             "• `blood` — splatter blood all over an image.\n"
+            "• `bullethole` — punch bullet holes into an image.\n"
+            "• `fire` — set an image on fire.\n"
             "  Uploads are remembered for 5 minutes while you decide.\n\n"
             "🎨 *Create & fetch*\n"
             "• `geni <prompt>` — generate an image.\n"

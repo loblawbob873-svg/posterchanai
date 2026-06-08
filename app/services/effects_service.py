@@ -799,15 +799,6 @@ def _make_blood(h: int):
     def _dot(x, y, r):
         md.ellipse([x - r, y - r, x + r, y + r], fill=255)
 
-    # Irregular central pool: a core plus protruding lobes at random angles so the
-    # outline is jagged (not a clean disc).
-    _dot(cx, cy, main_r * 0.85)
-    for _ in range(7):
-        a = random.uniform(0, math.tau)
-        d = main_r * random.uniform(0.2, 0.85)
-        lr = main_r * random.uniform(0.4, 0.8)
-        _dot(cx + math.cos(a) * d, cy + math.sin(a) * d, lr)
-
     def _trail(x0, y0, x1, y1, wa, wb):
         """A smooth tapering trail from (x0,y0,width wa) to (x1,y1,width wb):
         overlapping dots spaced finer than their radius so it reads continuous."""
@@ -816,6 +807,30 @@ def _make_blood(h: int):
         for s in range(n + 1):
             f = s / n
             _dot(x0 + (x1 - x0) * f, y0 + (y1 - y0) * f, max(wa + (wb - wa) * f, 1.0))
+
+    # Directional, irregular pool: globs spread ALONG a random impact axis (so it's
+    # elongated, not a round blob) with jagged pointed fingers around the rim — the
+    # surface-tension spikes that make it read as a splat rather than balls.
+    axis = random.uniform(0, math.tau)
+    ax, ay = math.cos(axis), math.sin(axis)
+    perpx, perpy = -ay, ax
+    _dot(cx, cy, main_r * 0.5)
+    for _ in range(10):
+        t = random.uniform(-1.1, 1.1)            # along the impact axis
+        s = random.uniform(-0.4, 0.4)            # small perpendicular jitter
+        ox = cx + ax * t * main_r * 1.15 + perpx * s * main_r
+        oy = cy + ay * t * main_r * 1.15 + perpy * s * main_r
+        _dot(ox, oy, main_r * random.uniform(0.28, 0.58))
+    # pointed rim fingers (tapering spikes sticking out of the pool edge)
+    for _ in range(random.randint(8, 13)):
+        a = random.uniform(0, math.tau)
+        r0 = main_r * random.uniform(0.5, 0.95)
+        fl = main_r * random.uniform(0.35, 1.2)
+        sx, sy = cx + math.cos(a) * r0, cy + math.sin(a) * r0
+        ex, ey = cx + math.cos(a) * (r0 + fl), cy + math.sin(a) * (r0 + fl)
+        _trail(sx, sy, ex, ey, main_r * random.uniform(0.09, 0.16), main_r * 0.02)
+        if random.random() < 0.45:
+            _dot(ex, ey, main_r * random.uniform(0.04, 0.09))
 
     # Cast-off arms: a few thin tapering streaks at RANDOM angles (not an even
     # star), each tipped with a droplet — irregular like real impact spatter.
@@ -929,4 +944,193 @@ def blood_attachments(
         return [out], summary
     except Exception as e:
         logger.error(f"blood failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Bullethole overlay (the "bullethole" gag — punch cracked holes into an image)
+# ---------------------------------------------------------------------------
+
+def _make_bullethole(h: int):
+    """Render one bullet hole on a transparent tile (pure Pillow).
+
+    A dark punched hole with a slightly metallic rim, a pale crushed impact ring
+    around it, jagged radial cracks and a couple of concentric crack arcs — so it
+    reads as the surface being shot through. Ships no image asset.
+    """
+    import math
+    import random
+    from PIL import Image, ImageDraw, ImageFilter
+
+    W = max(int(h * 1.4), 24)
+    H = W
+    cx = cy = W / 2.0
+    core_r = W * 0.12
+    tile = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+
+    # Pale crushed impact ring (semi-transparent so the photo shows through).
+    ring = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    rr = W * 0.34
+    ImageDraw.Draw(ring).ellipse([cx - rr, cy - rr, cx + rr, cy + rr],
+                                 fill=(205, 205, 210, 70))
+    ring = ring.filter(ImageFilter.GaussianBlur(max(W * 0.03, 1)))
+    tile.alpha_composite(ring)
+
+    # Jagged radial cracks + a few concentric arcs.
+    cracks = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    cd = ImageDraw.Draw(cracks)
+    lw = max(int(W * 0.006), 1)
+    n = random.randint(9, 14)
+    for i in range(n):
+        ang = (i / n) * math.tau + random.uniform(-0.18, 0.18)
+        length = W * random.uniform(0.26, 0.47)
+        x, y, a = cx, cy, ang
+        pts = [(x, y)]
+        steps = random.randint(3, 5)
+        for _ in range(steps):
+            a += random.uniform(-0.28, 0.28)
+            x += math.cos(a) * (length / steps)
+            y += math.sin(a) * (length / steps)
+            pts.append((x, y))
+        cd.line(pts, fill=(22, 22, 25, 235), width=lw, joint="curve")
+    for _ in range(random.randint(1, 3)):
+        ar = W * random.uniform(0.16, 0.30)
+        st = random.uniform(0, 360)
+        cd.arc([cx - ar, cy - ar, cx + ar, cy + ar], st, st + random.uniform(40, 150),
+               fill=(28, 28, 31, 200), width=max(int(W * 0.005), 1))
+    tile.alpha_composite(cracks)
+
+    # The dark hole itself, with a faint metallic rim and a tiny highlight.
+    hole = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    hd = ImageDraw.Draw(hole)
+    hd.ellipse([cx - core_r, cy - core_r, cx + core_r, cy + core_r], fill=(10, 10, 12, 255))
+    hd.ellipse([cx - core_r, cy - core_r, cx + core_r, cy + core_r],
+               outline=(70, 62, 55, 220), width=max(int(W * 0.012), 1))
+    hd.ellipse([cx - core_r * 0.45 - core_r * 0.25, cy - core_r * 0.45 - core_r * 0.25,
+                cx - core_r * 0.45 + core_r * 0.22, cy - core_r * 0.45 + core_r * 0.22],
+               fill=(150, 150, 155, 120))
+    hole = hole.filter(ImageFilter.GaussianBlur(0.6))
+    tile.alpha_composite(hole)
+
+    return tile
+
+
+def add_bulletholes(data: bytes, count: int = 0) -> bytes:
+    """Punch scattered bullet holes over an image. `count` <= 0 auto-scales. JPEG bytes."""
+    return _scatter_overlay(data, _make_bullethole, count)
+
+
+def bullethole_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Punch bullet holes into the first image attachment. Mirrors blood_attachments."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_bulletholes(data)
+        out: OutputFile = {
+            "filename": f"{stem}_bulletholes.jpg",
+            "data": result,
+            "content_type": "image/jpeg",
+        }
+        summary = f"## 🕳️ Bullet holes\n\n🕳️ {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"bullethole failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Fire overlay (the "fire" gag — scatter cartoon-real flames across an image)
+# ---------------------------------------------------------------------------
+
+def _make_fire(h: int):
+    """Render one flame on a transparent tile (pure Pillow).
+
+    Nested flame silhouettes from dark-red → red → orange → yellow → near-white
+    core (a hot gradient), each with wobbling licks toward a tapered tip, plus a
+    soft outer glow. Slightly translucent for an additive look. No image asset.
+    """
+    import math
+    import random
+    from PIL import Image, ImageDraw, ImageFilter, ImageChops
+
+    W = max(int(h * 0.95), 18)
+    H = max(int(h * 1.35), 26)
+    cxf = W * 0.5
+    base_y = H * 0.92
+    phase = random.uniform(0, math.tau)
+    tile = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+
+    def _flame_mask(scale: float, wob: float):
+        m = Image.new("L", (W, H), 0)
+        d = ImageDraw.Draw(m)
+        fw = W * 0.40 * scale          # half-width at the base
+        fh = H * 0.84 * scale          # height
+        n = 22
+        left, right = [], []
+        for i in range(n + 1):
+            f = i / n
+            y = base_y - f * fh
+            # taper to the tip, with sinusoidal licks that grow toward the top
+            w = fw * (1 - f) ** 0.65 * (1 + wob * 0.5 * math.sin(f * 7 + phase))
+            sway = math.sin(f * 3.0 + phase) * fw * 0.16 * f
+            left.append((cxf - w + sway, y))
+            right.append((cxf + w + sway, y))
+        d.polygon(left + list(reversed(right)), fill=255)
+        d.ellipse([cxf - fw, base_y - fw * 0.5, cxf + fw, base_y + fw * 0.45], fill=255)
+        return m
+
+    # Outer glow (dark-red, blurred) then the hot nested layers. Same phase so the
+    # licks of each layer line up and read as one flame with a bright core.
+    layers = [
+        (1.00, (120, 18, 4), 0.9, True),    # dark red glow
+        (0.94, (210, 40, 6), 0.9, False),   # red
+        (0.74, (255, 130, 18), 0.7, False), # orange
+        (0.52, (255, 205, 60), 0.5, False), # yellow
+        (0.30, (255, 248, 210), 0.35, False),  # white-hot core
+    ]
+    for scale, col, wob, glow in layers:
+        m = _flame_mask(scale, wob)
+        if glow:
+            m = m.filter(ImageFilter.GaussianBlur(max(W * 0.06, 1)))
+            alpha = 150
+        else:
+            m = m.filter(ImageFilter.GaussianBlur(max(W * 0.012, 0.6)))
+            alpha = 235
+        lyr = Image.new("RGBA", (W, H), col + (0,))
+        lyr.putalpha(m.point(lambda a, _al=alpha: int(a * _al / 255)))
+        tile.alpha_composite(lyr)
+
+    return tile
+
+
+def add_fire(data: bytes, count: int = 0) -> bytes:
+    """Scatter flames over an image. Spin kept small so flames point up. JPEG bytes."""
+    return _scatter_overlay(data, _make_fire, count, max_rotation=8.0)
+
+
+def fire_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Set the first image attachment on fire. Mirrors blood_attachments."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_fire(data)
+        out: OutputFile = {
+            "filename": f"{stem}_fire.jpg",
+            "data": result,
+            "content_type": "image/jpeg",
+        }
+        summary = f"## 🔥 Fire\n\n🔥 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"fire failed for {filename}: {e}", exc_info=True)
         return [], f"❌ {filename}: {e}"

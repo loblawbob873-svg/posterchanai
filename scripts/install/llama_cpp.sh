@@ -221,6 +221,21 @@ setup_llama_cpp_amd() {
         exit 1
     fi
 
+    # ROCm >= 6.3 required: the current llama.cpp HIP backend uses OCP FP8 types
+    # (__hip_fp8_e4m3) absent in ROCm <= 6.2, so the GPU build fails to compile and
+    # silently falls back to CPU. Warn early (confirmed in the Docker build).
+    local ROCM_VER=""
+    [ -f /opt/rocm/.info/version ] && ROCM_VER=$(cut -d- -f1 < /opt/rocm/.info/version 2>/dev/null)
+    if [ -n "$ROCM_VER" ]; then
+        local RMAJ=${ROCM_VER%%.*}; local RMIN; RMIN=$(echo "$ROCM_VER" | cut -d. -f2)
+        if [ "${RMAJ:-0}" -lt 6 ] || { [ "${RMAJ:-0}" -eq 6 ] && [ "${RMIN:-0}" -lt 3 ]; }; then
+            print_warning "ROCm $ROCM_VER detected — llama.cpp's HIP backend needs ROCm >= 6.3."
+            echo "  The GPU build will likely fail and fall back to CPU; upgrade ROCm to 6.3+ for GPU LLM."
+        else
+            print_success "ROCm $ROCM_VER (>= 6.3) — HIP llama.cpp build supported"
+        fi
+    fi
+
     # Gentoo-specific warning
     if [ "$DISTRO" = "gentoo" ]; then
         echo ""
