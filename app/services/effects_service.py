@@ -1895,3 +1895,57 @@ def yakety_attachments(
     except Exception as e:
         logger.error(f"yakety failed for {filename}: {e}", exc_info=True)
         return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Yamete (the "yamete" gag — turn an image into an MP4 set to the yamete clip)
+# ---------------------------------------------------------------------------
+
+# The shipped Yamete track (repo-relative), overridable with YAMETE_AUDIO_PATH.
+_YAMETE_AUDIO_CANDIDATES = [
+    os.environ.get("YAMETE_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "yamete.mp3"),
+    "/var/lib/posterchanai/assets/yamete.mp3",
+]
+_YAMETE_DURATION = 6.0
+
+
+def _yamete_audio_path() -> str:
+    """First existing Yamete mp3 from the candidate list ("" if none)."""
+    for p in _YAMETE_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_yamete(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a 6-second MP4 playing the yamete clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _yamete_audio_path()
+    if not audio:
+        raise RuntimeError("Yamete audio (assets/yamete.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_YAMETE_DURATION)
+
+
+def yamete_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a yamete MP4. Mirrors hava_attachments
+    (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_yamete(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_yamete.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🛑 Yamete\n\n🛑 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"yamete failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"

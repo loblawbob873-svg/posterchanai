@@ -579,6 +579,7 @@ class CommandService:
         "hava": "Turn an attached image into a 6s MP4 set to Hava Nagila: hava",
         "indian": "Turn an attached image into a 6s MP4 set to an Indian song: indian",
         "yakety": "Turn an attached image into a 9s MP4 set to Yakety Sax: yakety",
+        "yamete": "Turn an attached image into a 6s MP4 set to the yamete clip: yamete",
         "node": "Remote node mgmt: node <name> <cmd> | node all <cmd> | node agent <name> <goal> | node agent all <goal> | node list | node jobs | node log <id> | node kill <id>",
         "budget": "Show your budget summary (income, unpaid bills, remaining)",
         "bills": "List your bills: bills (unpaid) | bills all | bills paid",
@@ -737,6 +738,8 @@ class CommandService:
             return await self._indian_command(attachments)
         elif command == "yakety":
             return await self._yakety_command(attachments)
+        elif command == "yamete":
+            return await self._yamete_command(attachments)
         elif command == "node":
             return await self._node_command(arg, notify=node_notify)
         elif command == "budget":
@@ -3459,6 +3462,21 @@ Files are saved to your Storage.""",
         from app.services.effects_service import yakety_attachments
 
         outputs, summary = await asyncio.to_thread(yakety_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _yamete_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into a 6s MP4 set to the yamete clip: `yamete`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `yamete`."}
+
+        import asyncio
+        from app.services.effects_service import yamete_attachments
+
+        outputs, summary = await asyncio.to_thread(yamete_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
