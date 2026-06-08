@@ -7,7 +7,7 @@
 set -e
 
 DATA_HOME="${POSTERCHANAI_DATA:-/var/lib/posterchanai}"
-mkdir -p "$DATA_HOME"/{models,torrents,tor,hf} /app/data/chromadb
+mkdir -p "$DATA_HOME"/{models,torrents,tor,hf,miopen} /app/data/chromadb
 
 # Persist the sqlite DB on the data volume: the app opens ./posterchanai.db in
 # /app, so point that path at the volume (symlink target is created by sqlite on

@@ -184,6 +184,9 @@ VOLUME ["/var/lib/posterchanai", "/app/data"]
 # (e.g. SDXL) on a small GPU, set POSTERCHANAI_LOW_VRAM=1 to enable model offload.
 ENV POSTERCHANAI_PORT=3051 \
     HF_HOME=/var/lib/posterchanai/hf \
+    MIOPEN_USER_DB_PATH=/var/lib/posterchanai/miopen \
+    MIOPEN_CUSTOM_CACHE_DIR=/var/lib/posterchanai/miopen \
+    MIOPEN_FIND_MODE=2 \
     DOWNLOAD_MODEL=1 \
     POSTERCHANAI_LLM_BACKEND=native \
     POSTERCHANAI_LLM_MODEL_PATH=/var/lib/posterchanai/models/Qwen3.5-9B-abliterated-Q4_K_M.gguf \
