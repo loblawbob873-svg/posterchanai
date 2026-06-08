@@ -73,11 +73,19 @@ import pytz
 
 def _gather_note_media(note):
     """Download any files attached to a Misskey note (or its parent) for a media
-    command. Returns a list of (filename, data_bytes, content_type) tuples."""
+    command. Returns a list of (filename, data_bytes, content_type) tuples.
+
+    When the note has no attachment of its own (the user replied to an image post
+    with e.g. `meme foo` instead of re-uploading), fall back to the parent note's
+    files — using the embedded `reply` if present, otherwise fetching the parent by
+    `replyId` (mentions/notifications don't always embed the parent's files)."""
     files = list(note.get("files") or [])
-    parent = note.get("reply") or {}
-    if not files and isinstance(parent, dict):
-        files = list(parent.get("files") or [])
+    if not files:
+        parent = note.get("reply")
+        if not (isinstance(parent, dict) and parent.get("files")) and note.get("replyId"):
+            parent = get_note(note["replyId"]) or parent
+        if isinstance(parent, dict):
+            files = list(parent.get("files") or [])
     media = []
     for f in files:
         url = f.get("url")

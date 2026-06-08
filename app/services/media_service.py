@@ -314,7 +314,14 @@ def add_meme_text(data: bytes, text: str) -> bytes:
 
     with Image.open(io.BytesIO(data)) as img:
         img = ImageOps.exif_transpose(img)
-        if img.mode != "RGB":
+        # Flatten transparency/palette onto white (a bare convert("RGB") would turn
+        # transparent areas black), matching compress_image's handling.
+        if img.mode in ("RGBA", "LA", "P"):
+            background = Image.new("RGB", img.size, (255, 255, 255))
+            rgba = img.convert("RGBA")
+            background.paste(rgba, mask=rgba.split()[-1])
+            img = background
+        elif img.mode != "RGB":
             img = img.convert("RGB")
 
         W, H = img.size
