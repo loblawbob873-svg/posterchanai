@@ -604,3 +604,159 @@ def poo_attachments(
     except Exception as e:
         logger.error(f"poo failed for {filename}: {e}", exc_info=True)
         return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Cum overlay (the "cum" gag — scatter glossy off-white splatters over an image)
+# ---------------------------------------------------------------------------
+
+# A few off-white / cream tones so the scattered splatters aren't all identical.
+_CUM_COLORS = [
+    (246, 244, 236, 255),  # cream white
+    (238, 236, 228, 255),  # off white
+    (250, 249, 244, 255),  # bright white
+    (240, 238, 224, 255),  # warm ivory
+]
+
+
+def _make_cum(h: int):
+    """Render one glossy off-white splatter (the "cum" gag) on a transparent tile.
+
+    Pure Pillow — an irregular central blob plus a few radiating strands tipped
+    with droplets (and the odd satellite speck), given a soft translucent dark rim
+    so the near-white body still reads on light backgrounds, plus wet specular
+    highlights and slight translucency. Ships no image asset (like the poo path).
+    """
+    import math
+    import random
+    from PIL import Image, ImageDraw, ImageFilter, ImageChops
+
+    W = max(int(h * 1.15), 18)
+    H = max(int(h * 1.15), 18)
+    base = random.choice(_CUM_COLORS)[:3]
+    cx, cy = W * 0.5, H * 0.52
+    phase = random.uniform(0, math.tau)
+
+    # --- build the splatter SHAPE on an alpha mask (lets us rim/shade it after) ---
+    mask = Image.new("L", (W, H), 0)
+    md = ImageDraw.Draw(mask)
+    main_r = W * 0.19
+
+    def _dot(x, y, r):
+        md.ellipse([x - r, y - r, x + r, y + r], fill=255)
+
+    # A guaranteed-solid core so the blob never has an interior pinhole (a gap
+    # would let the outer-rim pass leak inward as a dark ring).
+    md.ellipse([cx - main_r, cy - main_r * 0.85, cx + main_r, cy + main_r * 0.85], fill=255)
+
+    # Cohesive central blob: several big, tightly-overlapping ellipses (lots of
+    # overlap so there are no interior gaps that would shade into dark artifacts).
+    for _ in range(5):
+        ox = cx + random.uniform(-1, 1) * main_r * 0.35
+        oy = cy + random.uniform(-1, 1) * main_r * 0.30
+        rx = main_r * random.uniform(0.8, 1.15)
+        ry = main_r * random.uniform(0.7, 1.0)
+        md.ellipse([ox - rx, oy - ry, ox + rx, oy + ry], fill=255)
+
+    # Flung streaks: a tapered tail (wide at the blob, thinning out) capped by a
+    # fatter droplet head — reads like fluid thrown outward, not a molecule graph.
+    for i in range(random.randint(4, 6)):
+        ang = phase + i * (math.tau / 5) + random.uniform(-0.4, 0.4)
+        dist = main_r * random.uniform(1.4, 3.0)
+        dx, dy = math.cos(ang), math.sin(ang)
+        steps = 12
+        for s in range(steps + 1):
+            f = s / steps
+            px = cx + dx * (main_r * 0.5 + f * dist)
+            py = cy + dy * (main_r * 0.5 + f * dist)
+            rad = main_r * (0.26 * (1 - f) ** 1.4 + 0.04)
+            _dot(px, py, rad)
+        # droplet head at the tip, slightly past the tail end
+        hx, hy = cx + dx * (main_r * 0.5 + dist), cy + dy * (main_r * 0.5 + dist)
+        _dot(hx, hy, main_r * random.uniform(0.16, 0.30))
+        # an occasional small satellite fleck beyond the head
+        if random.random() < 0.5:
+            _dot(hx + dx * main_r * 0.7, hy + dy * main_r * 0.7,
+                 main_r * random.uniform(0.06, 0.13))
+
+    # Morphological close (dilate→erode) to seal any thin gaps between strokes,
+    # then a light blur for soft edges.
+    _k = max(int(W * 0.02) | 1, 3)
+    mask = mask.filter(ImageFilter.MaxFilter(_k)).filter(ImageFilter.MinFilter(_k))
+    sil = mask.filter(ImageFilter.GaussianBlur(max(W * 0.012, 0.7)))  # soft edges
+
+    tile = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+
+    # --- soft translucent dark rim just outside the shape (so white reads on white) ---
+    grow = max(int(W * 0.03) | 1, 3)
+    ring = ImageChops.subtract(sil.filter(ImageFilter.MaxFilter(grow)), sil)
+    ring = ring.filter(ImageFilter.GaussianBlur(max(W * 0.02, 1)))
+    rim = Image.new("RGBA", (W, H), (50, 50, 60, 0))
+    rim.putalpha(ring.point(lambda a: int(a * 0.55)))
+    tile.alpha_composite(rim)
+
+    # --- body fill (slightly translucent for a wet look) ---
+    body = Image.new("RGBA", (W, H), base + (236,))
+    body.putalpha(ImageChops.multiply(body.split()[-1], sil))
+    tile.alpha_composite(body)
+
+    # --- inner edge shading (darker cream rim) for a little volume ---
+    inner = ImageChops.subtract(sil, sil.filter(ImageFilter.MinFilter(grow)))
+    inner = inner.filter(ImageFilter.GaussianBlur(max(W * 0.012, 0.6)))
+    shade = Image.new("RGBA", (W, H), _shade(base, 0.82)[:3] + (0,))
+    shade.putalpha(ImageChops.multiply(inner, sil).point(lambda a: int(a * 0.33)))
+    tile.alpha_composite(shade)
+
+    # --- wet specular highlights (a few bright spots on the blob) ---
+    # Draw + blur on an ALPHA mask, then tint a uniformly-white layer with it: if
+    # we blurred a coloured RGBA layer instead, its transparent (black) RGB would
+    # bleed into a dark halo — very visible on a near-white body.
+    hlmask = Image.new("L", (W, H), 0)
+    hd = ImageDraw.Draw(hlmask)
+    for _ in range(3):
+        hx = cx + random.uniform(-main_r * 0.5, main_r * 0.3)
+        hy = cy + random.uniform(-main_r * 0.5, main_r * 0.1)
+        hr = main_r * random.uniform(0.12, 0.26)
+        hd.ellipse([hx - hr, hy - hr * 0.7, hx + hr, hy + hr * 0.7], fill=235)
+    hlmask = hlmask.filter(ImageFilter.GaussianBlur(max(W * 0.012, 0.6)))
+    hl = Image.new("RGBA", (W, H), (255, 255, 255, 0))
+    hl.putalpha(ImageChops.multiply(hlmask, sil))
+    tile.alpha_composite(hl)
+
+    return tile
+
+
+def add_cum(data: bytes, count: int = 0) -> bytes:
+    """Scatter glossy off-white splatters at random positions/sizes/angles over an image.
+
+    `count` <= 0 auto-scales with the image area. Returns JPEG bytes.
+    """
+    return _scatter_overlay(data, _make_cum, count)
+
+
+def cum_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Scatter splatters over the first image attachment.
+
+    Returns (output_files, summary_text). Mirrors poo_attachments so the web UI,
+    Telegram, Matrix and the fedi bots share one delivery path.
+    """
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_cum(data)
+        out: OutputFile = {
+            "filename": f"{stem}_cum.jpg",
+            "data": result,
+            "content_type": "image/jpeg",
+        }
+        summary = f"## 💦 Cum\n\n💦 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"cum failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"

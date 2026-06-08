@@ -568,6 +568,7 @@ class CommandService:
         "meme": "Add outlined white meme text to an attached image: meme <text>",
         "dildo": "Scatter dildos all over an attached image: dildo",
         "poo": "Scatter poop all over an attached image: poo",
+        "cum": "Scatter cum all over an attached image: cum",
         "node": "Remote node mgmt: node <name> <cmd> | node all <cmd> | node agent <name> <goal> | node agent all <goal> | node list | node jobs | node log <id> | node kill <id>",
         "budget": "Show your budget summary (income, unpaid bills, remaining)",
         "bills": "List your bills: bills (unpaid) | bills all | bills paid",
@@ -704,6 +705,8 @@ class CommandService:
             return await self._dildo_command(attachments)
         elif command == "poo":
             return await self._poo_command(attachments)
+        elif command == "cum":
+            return await self._cum_command(attachments)
         elif command == "node":
             return await self._node_command(arg, notify=node_notify)
         elif command == "budget":
@@ -3253,6 +3256,25 @@ Files are saved to your Storage.""",
 
         # Pillow compositing is light, but keep it off the event loop for big images.
         outputs, summary = await asyncio.to_thread(poo_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _cum_command(self, attachments: Optional[list]) -> dict:
+        """Scatter cum all over an attached image: `cum` (no text needed)."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {
+                "type": "text",
+                "content": "Attach an image, then send `cum` to decorate it.",
+            }
+
+        import asyncio
+        from app.services.effects_service import cum_attachments
+
+        # Pillow compositing is light, but keep it off the event loop for big images.
+        outputs, summary = await asyncio.to_thread(cum_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
