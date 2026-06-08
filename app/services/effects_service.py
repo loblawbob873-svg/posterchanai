@@ -1437,10 +1437,10 @@ def add_blacked(data: bytes, count: int = 0) -> bytes:
         W, H = img.size
         img = img.convert("RGBA")
         logo = _make_blacked(max(int(min(W, H) * 0.42), 80))
-        # Horizontally centred, sitting in the lower third (centre at ~2/3 H),
-        # clamped so the roundel never spills off the bottom edge.
+        # Horizontally centred, sitting low (centre at ~78% H), clamped so the
+        # roundel never spills off the bottom edge.
         x = (W - logo.width) // 2
-        y = min(int(H * 0.66) - logo.height // 2, H - logo.height - max(int(H * 0.03), 4))
+        y = min(int(H * 0.78) - logo.height // 2, H - logo.height - max(int(H * 0.03), 4))
         img.alpha_composite(logo, (x, max(y, 0)))
 
         img = img.convert("RGB")
