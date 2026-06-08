@@ -360,8 +360,13 @@ def download_image_from_url(url, timeout=30):
     if not is_safe_url(url, trusted_hosts=_trusted_media_hosts()):
         print(f"[SECURITY] Rejected unsafe URL: {url[:100]}")
         return None
+    # A browser-like User-Agent: some fediverse media CDNs reset the connection for
+    # the default python-requests UA (symptom: "Stream … was reset by remote peer"),
+    # which broke downloading a remote post's image for `meme`/compress on a reply.
+    headers = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                             "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"}
     try:
-        r = requests.get(url, timeout=timeout)
+        r = requests.get(url, timeout=timeout, headers=headers)
         if r.status_code == 200:
             return r.content
         print(f"Failed to download image from {url}: {r.status_code}")
