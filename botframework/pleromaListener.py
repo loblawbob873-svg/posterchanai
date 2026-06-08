@@ -132,7 +132,8 @@ def _handle_media_command(status, command, arg, own_acct, visibility):
     video_outs = [f["data"] for f in out_files if f["content_type"].startswith("video/")]
     skipped = [f["filename"] for f in out_files
                if not f["content_type"].startswith(("image/", "video/"))]
-    text = summary or "Done."
+    # meme's result IS the image — reply with just the image, no summary caption.
+    text = "" if command == "meme" else (summary or "Done.")
     if skipped:
         text += f"\n\n(Couldn't attach {', '.join(skipped)} here — fediverse posts only take images/video.)"
     # Main reply carries the summary + all images + the first video; any further

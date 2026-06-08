@@ -1479,7 +1479,10 @@ def process_messages():
                             _posted += 1
                     except Exception as _e:
                         print(f"→ Failed to post processed file {_f.get('filename')}: {_e}")
-                if _summary:
+                # For meme the image IS the result — don't also post the summary
+                # text (it would be a noisy second message). compress/clip/convert
+                # keep their summary (it reports the size change).
+                if _summary and not lower_prompt.startswith("meme"):
                     send_reply(message, _summary)
                 if _out_files and not _posted:
                     send_reply(message, "❌ Couldn't upload the processed file(s) to Matrix.")
