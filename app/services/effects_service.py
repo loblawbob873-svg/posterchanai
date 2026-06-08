@@ -760,3 +760,173 @@ def cum_attachments(
     except Exception as e:
         logger.error(f"cum failed for {filename}: {e}", exc_info=True)
         return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Blood overlay (the "blood" gag — scatter wet blood splatters across an image)
+# ---------------------------------------------------------------------------
+
+# A few deep-red tones so the scattered splatters aren't all identical.
+_BLOOD_COLORS = [
+    (140, 8, 8, 255),     # crimson
+    (110, 3, 3, 255),     # dark red
+    (92, 6, 6, 255),      # dried red
+    (165, 16, 12, 255),   # bright arterial
+]
+
+
+def _make_blood(h: int):
+    """Render one wet blood splatter on a transparent tile (pure Pillow).
+
+    An irregular central pool with thin radial impact spatter (droplet-tipped
+    arms) AND the signature gravity DRIPS running downward into rounded beads,
+    finished with a soft dark rim, a slightly darker inner edge for depth, and a
+    small wet specular highlight. Ships no image asset (like the cum path).
+    """
+    import math
+    import random
+    from PIL import Image, ImageDraw, ImageFilter, ImageChops
+
+    W = max(int(h * 1.5), 24)
+    H = max(int(h * 1.9), 32)             # roomy: fits the spray + downward drips
+    base = random.choice(_BLOOD_COLORS)[:3]
+    cx, cy = W * 0.5, H * 0.30            # pool sits high; drips fall below it
+    main_r = W * 0.14
+
+    mask = Image.new("L", (W, H), 0)
+    md = ImageDraw.Draw(mask)
+
+    def _dot(x, y, r):
+        md.ellipse([x - r, y - r, x + r, y + r], fill=255)
+
+    # Irregular central pool: a core plus protruding lobes at random angles so the
+    # outline is jagged (not a clean disc).
+    _dot(cx, cy, main_r * 0.85)
+    for _ in range(7):
+        a = random.uniform(0, math.tau)
+        d = main_r * random.uniform(0.2, 0.85)
+        lr = main_r * random.uniform(0.4, 0.8)
+        _dot(cx + math.cos(a) * d, cy + math.sin(a) * d, lr)
+
+    def _trail(x0, y0, x1, y1, wa, wb):
+        """A smooth tapering trail from (x0,y0,width wa) to (x1,y1,width wb):
+        overlapping dots spaced finer than their radius so it reads continuous."""
+        seg = math.hypot(x1 - x0, y1 - y0)
+        n = max(int(seg / max(min(wa, wb) * 0.5, 1.0)), 6)
+        for s in range(n + 1):
+            f = s / n
+            _dot(x0 + (x1 - x0) * f, y0 + (y1 - y0) * f, max(wa + (wb - wa) * f, 1.0))
+
+    # Cast-off arms: a few thin tapering streaks at RANDOM angles (not an even
+    # star), each tipped with a droplet — irregular like real impact spatter.
+    for _ in range(random.randint(4, 7)):
+        ang = random.uniform(0, math.tau)
+        dist = main_r * random.uniform(1.2, 2.9)
+        dx, dy = math.cos(ang), math.sin(ang)
+        sx, sy = cx + dx * main_r * 0.5, cy + dy * main_r * 0.5
+        ex, ey = cx + dx * (main_r * 0.5 + dist), cy + dy * (main_r * 0.5 + dist)
+        _trail(sx, sy, ex, ey, main_r * random.uniform(0.12, 0.20), main_r * 0.03)
+        _dot(ex, ey, main_r * random.uniform(0.08, 0.20))            # droplet head
+
+    # Fine secondary droplets: a spray clustered along a random impact direction,
+    # plus a few stray specks — the detail that sells it as spatter, not paint.
+    spray = random.uniform(0, math.tau)
+    for _ in range(random.randint(14, 28)):
+        a = spray + random.uniform(-1.0, 1.0)
+        d = main_r * random.uniform(1.0, 3.2)
+        _dot(cx + math.cos(a) * d, cy + math.sin(a) * d,
+             main_r * random.uniform(0.03, 0.13))
+    for _ in range(random.randint(4, 9)):
+        a = random.uniform(0, math.tau)
+        d = main_r * random.uniform(0.8, 3.0)
+        _dot(cx + math.cos(a) * d, cy + math.sin(a) * d,
+             main_r * random.uniform(0.02, 0.07))
+
+    # Gravity drips: a few tapering trails running DOWN from the pool, each ending
+    # in a rounded bead — the detail that makes it read as blood rather than paint.
+    for _ in range(random.randint(2, 4)):
+        x0 = cx + random.uniform(-main_r * 0.8, main_r * 0.8)
+        top = cy + main_r * 0.3
+        length = H * random.uniform(0.28, 0.58)
+        w0 = main_r * random.uniform(0.16, 0.30)
+        drift = random.uniform(-main_r * 0.18, main_r * 0.18)        # slight lean
+        _trail(x0, top, x0 + drift, top + length, w0, max(w0 * 0.4, 1.2))
+        _dot(x0 + drift, top + length, w0 * random.uniform(1.0, 1.5))  # swelling bead
+
+    sil = mask.filter(ImageFilter.GaussianBlur(max(W * 0.005, 0.5)))
+
+    tile = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+
+    # Soft dark rim just outside the shape → depth / separation from the photo.
+    grow = max(int(W * 0.025) | 1, 3)
+    ring = ImageChops.subtract(sil.filter(ImageFilter.MaxFilter(grow)), sil)
+    ring = ring.filter(ImageFilter.GaussianBlur(max(W * 0.02, 1)))
+    rim = Image.new("RGBA", (W, H), (20, 0, 0, 0))
+    rim.putalpha(ring.point(lambda a: int(a * 0.6)))
+    tile.alpha_composite(rim)
+
+    # Body fill (nearly opaque — wet blood).
+    body = Image.new("RGBA", (W, H), base + (250,))
+    body.putalpha(ImageChops.multiply(body.split()[-1], sil))
+    tile.alpha_composite(body)
+
+    # Darker inner edge for a pooled, glossy look.
+    inner = ImageChops.subtract(sil, sil.filter(ImageFilter.MinFilter(grow)))
+    inner = inner.filter(ImageFilter.GaussianBlur(max(W * 0.012, 0.6)))
+    shade = Image.new("RGBA", (W, H), _shade(base, 0.55)[:3] + (0,))
+    shade.putalpha(ImageChops.multiply(inner, sil).point(lambda a: int(a * 0.5)))
+    tile.alpha_composite(shade)
+
+    # Wet specular highlight: one soft vertical-ish sheen on the upper-left of the
+    # pool (vertical so it doesn't read like a pair of eyes), via the alpha-mask
+    # method to avoid a dark blur halo. A tiny offset speck adds wetness.
+    hlmask = Image.new("L", (W, H), 0)
+    hd = ImageDraw.Draw(hlmask)
+    hx, hy = cx - main_r * 0.30, cy - main_r * 0.28
+    hd.ellipse([hx - main_r * 0.11, hy - main_r * 0.22,
+                hx + main_r * 0.11, hy + main_r * 0.22], fill=200)
+    hd.ellipse([cx + main_r * 0.12, cy - main_r * 0.02,
+                cx + main_r * 0.20, cy + main_r * 0.06], fill=120)
+    hlmask = hlmask.filter(ImageFilter.GaussianBlur(max(W * 0.012, 0.6)))
+    hl = Image.new("RGBA", (W, H), (255, 235, 235, 0))
+    hl.putalpha(ImageChops.multiply(hlmask, sil))
+    tile.alpha_composite(hl)
+
+    return tile
+
+
+def add_blood(data: bytes, count: int = 0) -> bytes:
+    """Scatter wet blood splatters over an image.
+
+    `count` <= 0 auto-scales with the image area. Spin is kept small so the drips
+    keep running downward. Returns JPEG bytes.
+    """
+    return _scatter_overlay(data, _make_blood, count, max_rotation=10.0)
+
+
+def blood_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Scatter blood over the first image attachment.
+
+    Returns (output_files, summary_text). Mirrors cum_attachments so the web UI,
+    Telegram, Matrix and the fedi bots share one delivery path.
+    """
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_blood(data)
+        out: OutputFile = {
+            "filename": f"{stem}_blood.jpg",
+            "data": result,
+            "content_type": "image/jpeg",
+        }
+        summary = f"## 🩸 Blood\n\n🩸 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"blood failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
