@@ -131,10 +131,14 @@ def validate_block_message(ai_msg, original_msg):
         logging.warning("Could not parse original block message for validation")
         return False
     
-    blocker_username = blocker_match.group(1)
-    blocker_domain = blocker_match.group(2)
-    blockee_username = blockee_match.group(1)
-    blockee_domain = blockee_match.group(2)
+    # Strip trailing punctuation: the original format places ". Profile is available"
+    # right after the blockee host, so the greedy [^\s]+ captures "domain." with the
+    # period. A rephrased AI post rarely contains that literal "domain." substring, so
+    # without this the blockee check fails and every block falls back to the raw message.
+    blocker_username = blocker_match.group(1).rstrip('.,;:')
+    blocker_domain = blocker_match.group(2).rstrip('.,;:')
+    blockee_username = blockee_match.group(1).rstrip('.,;:')
+    blockee_domain = blockee_match.group(2).rstrip('.,;:')
     
     # Check if AI message contains the correct usernames and domains
     # Allow for case-insensitive matching and different formatting
