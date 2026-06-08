@@ -116,7 +116,29 @@ One FastAPI backend that does chat, image generation, voice, RAG over your code,
 
 ## Quick start (backend and web UI)
 
-### Option A: Installer (Linux, recommended)
+### Option A: Docker (turnkey — one image, any GPU)
+
+One Ubuntu image builds for **CPU, NVIDIA (CUDA), AMD (ROCm), or Intel Arc (XPU)** —
+pick the accelerator with a build-arg. It comes up **turnkey**: native local LLM +
+image backends, auto-downloads the recommended chat model on first run, and (on AMD)
+auto-detects the GPU override and persists the MIOpen kernel cache for fast image gen.
+
+```bash
+# build for your accelerator:  cpu | cuda | rocm | intel
+docker build -t posterchanai:rocm --build-arg GPU=rocm .
+
+# run (AMD shown — see docs/DOCKER.md for the cuda/intel/cpu run flags)
+docker run -d --device /dev/kfd --device /dev/dri --security-opt seccomp=unconfined \
+  -p 3051:3051 -v pc-data:/var/lib/posterchanai -v pc-rag:/app/data posterchanai:rocm
+```
+
+Open **http://localhost:3051** and log in with **`admin` / `admin`**. The GPU kernel
+driver comes from the host (CUDA toolkit / `amdgpu` / `i915`); the userspace + a
+GPU-compiled `llama-cpp` are baked into the image. Full matrix — GPU run flags, model
+auto-download, opt-ins (Tor/proxy/torrenting), and the opencode/OpenAI-client config —
+in **[docs/DOCKER.md](docs/DOCKER.md)**.
+
+### Option B: Installer (Linux, recommended for bare metal)
 
 The **installer** sets up the virtual environment, dependencies, optional GPU backends (LLM and image), and can configure a systemd service.
 
@@ -143,7 +165,7 @@ The **installer** sets up the virtual environment, dependencies, optional GPU ba
 
 **Installer options:** `./install.sh --help` for usage; `./install.sh --packages` to print required system packages for your distro.
 
-### Option B: Manual setup (all platforms)
+### Option C: Manual setup (all platforms)
 
 1. **Clone and enter the project:**
    ```bash
@@ -327,6 +349,7 @@ Set the app’s server URL to your instance (e.g. `http://YOUR_IP:3051`).
 
 ## Documentation
 
+- **[docs/DOCKER.md](docs/DOCKER.md)** — Turnkey Docker image (CPU / NVIDIA / AMD / Intel Arc): build matrix, GPU run flags, model auto-download, opt-ins, and OpenAI-client/opencode setup
 - **[docs/BOTS.md](docs/BOTS.md)** — Bot manager: the merged `botframework/`, Admin → Bots, per-bot config, the single server endpoint, and per-node cutover
 - **[docs/ADVANCED.md](docs/ADVANCED.md)** — RAG, MCP server, LLM backends, image generation, load balancing, Intel IPEX
 - **docs/** — Email, nginx, and other feature documentation
