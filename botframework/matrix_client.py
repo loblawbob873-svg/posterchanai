@@ -494,6 +494,70 @@ def upload_media_to_matrix(image_bytes, filename="image.png", mime="image/png"):
     print("ERROR: All media upload endpoints failed")
     return None
 
+
+def _video_event_info(video_bytes, mime):
+    """Build a rich `info` dict for an m.video event so Element renders it inline.
+
+    Without w/h/duration + a thumbnail, Element shows a tiny cut-off tile until you
+    click. Probes dimensions/duration with ffprobe and grabs a first-frame JPEG
+    thumbnail with ffmpeg (uploaded to its own mxc). Best-effort — on any failure
+    it just returns the minimal info so sending still works.
+    """
+    import subprocess, tempfile, os, shutil, json as _json
+    info = {"mimetype": mime, "size": len(video_bytes)}
+    ffmpeg = shutil.which("ffmpeg")
+    ffprobe = shutil.which("ffprobe")
+    tmp = None
+    try:
+        tmp = tempfile.mkdtemp(prefix="mx_vid_")
+        vpath = os.path.join(tmp, "v.mp4")
+        with open(vpath, "wb") as f:
+            f.write(video_bytes)
+        if ffprobe:
+            try:
+                out = subprocess.run(
+                    [ffprobe, "-v", "error", "-select_streams", "v:0",
+                     "-show_entries", "stream=width,height", "-show_entries",
+                     "format=duration", "-of", "json", vpath],
+                    capture_output=True, text=True, timeout=30)
+                data = _json.loads(out.stdout or "{}")
+                streams = data.get("streams") or []
+                if streams and streams[0].get("width") and streams[0].get("height"):
+                    info["w"] = int(streams[0]["width"])
+                    info["h"] = int(streams[0]["height"])
+                dur = (data.get("format") or {}).get("duration")
+                if dur:
+                    info["duration"] = int(float(dur) * 1000)  # ms
+            except Exception as e:
+                print(f"[matrix video] ffprobe failed: {e}")
+        if ffmpeg:
+            try:
+                tpath = os.path.join(tmp, "t.jpg")
+                subprocess.run(
+                    [ffmpeg, "-v", "error", "-y", "-i", vpath, "-frames:v", "1",
+                     "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", "-q:v", "3", tpath],
+                    capture_output=True, timeout=30)
+                if os.path.exists(tpath) and os.path.getsize(tpath) > 0:
+                    with open(tpath, "rb") as f:
+                        thumb = f.read()
+                    thumb_uri = upload_media_to_matrix(thumb, filename="thumb.jpg", mime="image/jpeg")
+                    if thumb_uri:
+                        info["thumbnail_url"] = thumb_uri
+                        tinfo = {"mimetype": "image/jpeg", "size": len(thumb)}
+                        if info.get("w") and info.get("h"):
+                            tinfo["w"], tinfo["h"] = info["w"], info["h"]
+                        info["thumbnail_info"] = tinfo
+            except Exception as e:
+                print(f"[matrix video] thumbnail failed: {e}")
+    except Exception as e:
+        # Best-effort: never let metadata extraction break the actual send.
+        print(f"[matrix video] info extraction failed: {e}")
+    finally:
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
+    return info
+
+
 def send_poll(room_id, question, options, max_selections=1, disclosed=True):
     """Post a native Matrix poll (m.poll.start, MSC3381 / Matrix 1.7).
 
@@ -695,10 +759,7 @@ def send_message(room_id, text, reply_to=None, image_bytes=None, audio_bytes=Non
                 "msgtype": "m.video",
                 "body": vfn,
                 "url": media_uri,
-                "info": {
-                    "mimetype": vmime,
-                    "size": len(video_bytes)
-                }
+                "info": _video_event_info(video_bytes, vmime),
             }
 
             txn_id = str(uuid.uuid4())
@@ -768,11 +829,17 @@ def send_file_to_room(room_id, file_bytes, filename, mime="application/octet-str
     if not media_uri:
         print(f"✗ File upload failed for {filename}")
         return False
+    msgtype = _msgtype_for_mime(mime)
+    # Videos need w/h/duration + a thumbnail or Element shows a cut-off tile.
+    if msgtype == "m.video":
+        info = _video_event_info(file_bytes, mime)
+    else:
+        info = {"mimetype": mime, "size": len(file_bytes)}
     content = {
-        "msgtype": _msgtype_for_mime(mime),
+        "msgtype": msgtype,
         "body": filename,
         "url": media_uri,
-        "info": {"mimetype": mime, "size": len(file_bytes)},
+        "info": info,
     }
     txn_id = str(uuid.uuid4())
     result = matrix_request("PUT", f"rooms/{room_id}/send/m.room.message/{txn_id}", data=content)
