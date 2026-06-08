@@ -51,10 +51,10 @@ check_dependencies() {
 
     # Check optional dependencies
     if ! command -v ffmpeg &>/dev/null; then
-        print_warning "ffmpeg not found - music transcoding and video compression will be unavailable"
-        echo "  Install ffmpeg for music streaming and the 'compress' command (video)"
+        print_warning "ffmpeg not found - music transcoding, video compression and the 'hava' effect will be unavailable"
+        echo "  Install ffmpeg for music streaming, the 'compress'/'clip' commands (video) and the 'hava' image→song video"
     else
-        print_success "ffmpeg found (music transcoding + video compression available)"
+        print_success "ffmpeg found (music transcoding + video compression + 'hava' video available)"
     fi
 
     # tesseract OCR binary - pytesseract (in requirements.txt) is only a wrapper and

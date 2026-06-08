@@ -77,7 +77,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # --- system packages (all four bases are Ubuntu, so apt is uniform) ----------
 #  build : compiler toolchain + cmake for building llama-cpp-python
-#  media : ffmpeg (video/TTS), tesseract (OCR), libgl/glib (opencv, PyMuPDF)
+#  media : ffmpeg (video/TTS + the `hava` effect's image→song MP4), tesseract
+#          (OCR), libgl/glib (opencv, PyMuPDF). The Hava Nagila track ships in the
+#          repo (assets/hava.mp3) and is baked in by the `COPY . /app` below.
 #  fonts : DejaVu Bold + Liberation Sans Bold (meme captions & the Effects
 #          text overlays — the BLACKED wordmark prefers the Helvetica-clone
 #          Liberation face) + Noto color emoji (screenshots/cards)

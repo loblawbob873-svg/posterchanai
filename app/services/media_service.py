@@ -468,6 +468,81 @@ def clip_attachment(
 
 
 # ---------------------------------------------------------------------------
+# Still image + audio → MP4 (the "narrate"-style image-over-a-song video)
+# ---------------------------------------------------------------------------
+
+def image_audio_to_video(image_data: bytes, source_filename: str, audio_path: str,
+                         duration: Optional[float] = None) -> bytes:
+    """Loop a still image for the length of an audio track and mux to one MP4.
+
+    Mirrors the bot's narrate path: `-loop 1` over the image, `-shortest` so the
+    video ends with the song, even dimensions + yuv420p for broad playback. Reuses
+    the same HW-accel encoder autodetect (NVENC → VAAPI → libx264) as compress/clip.
+    `duration` (seconds), if given, caps the output (e.g. just the first 6s of the
+    song). Returns MP4 bytes; raises RuntimeError if ffmpeg is missing or every
+    encoder fails.
+    """
+    global _video_encoder_cache
+    ffmpeg = resolve_ffmpeg()
+    if not ffmpeg_available():
+        raise RuntimeError("ffmpeg is not installed on the server")
+    if not (audio_path and os.path.exists(audio_path)):
+        raise RuntimeError(f"audio track not found: {audio_path}")
+
+    tmp_dir = tempfile.mkdtemp(prefix="media_hava_")
+    in_suffix = _ext(source_filename) or ".jpg"
+    in_path = os.path.join(tmp_dir, f"input{in_suffix}")
+    out_path = os.path.join(tmp_dir, "output.mp4")
+    try:
+        with open(in_path, "wb") as f:
+            f.write(image_data)
+
+        # Even dimensions are required by yuv420p/H.264 (odd → encoder error).
+        scale_filter = "scale=trunc(iw/2)*2:trunc(ih/2)*2"
+
+        candidates = _video_encoder_candidates(ffmpeg)
+        if _video_encoder_cache and _video_encoder_cache in candidates:
+            candidates = [_video_encoder_cache] + [c for c in candidates if c != _video_encoder_cache]
+
+        last_err = ""
+        for encoder in candidates:
+            pre, vf = [], scale_filter
+            if encoder == "h264_nvenc":
+                venc = ["-c:v", "h264_nvenc", "-preset", "p5"]
+            elif encoder == "h264_vaapi":
+                pre = ["-vaapi_device", _render_node()]
+                vf = scale_filter + ",format=nv12,hwupload"
+                venc = ["-c:v", "h264_vaapi"]
+            else:  # libx264
+                venc = ["-c:v", "libx264", "-preset", VIDEO_PRESET, "-tune", "stillimage", "-crf", str(VIDEO_CRF)]
+            cmd = (
+                [ffmpeg] + pre
+                + ["-loop", "1", "-framerate", "2", "-i", in_path, "-i", audio_path,
+                   "-vf", vf]
+                + venc
+                + ["-pix_fmt", "yuv420p", "-r", "12",
+                   "-c:a", "aac", "-b:a", VIDEO_AUDIO_BITRATE]
+                + (["-t", f"{duration:.3f}"] if duration and duration > 0 else [])
+                + ["-shortest", "-movflags", "+faststart", "-y", out_path]
+            )
+            result = subprocess.run(cmd, capture_output=True, timeout=3600, text=True)
+            if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+                if encoder != "libx264":
+                    logger.info(f"hava video encoded with GPU encoder: {encoder}")
+                _video_encoder_cache = encoder
+                with open(out_path, "rb") as f:
+                    return f.read()
+            last_err = (result.stderr or "")[-300:]
+            logger.warning(f"hava encoder {encoder} failed, trying next: {last_err}")
+            if os.path.exists(out_path):
+                os.unlink(out_path)
+
+        raise RuntimeError(f"image→video failed (tried {candidates}): {last_err}")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
 # Image <-> PDF conversion
 # ---------------------------------------------------------------------------
 

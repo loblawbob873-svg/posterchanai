@@ -1728,3 +1728,62 @@ def barked_attachments(
     except Exception as e:
         logger.error(f"barked failed for {filename}: {e}", exc_info=True)
         return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Hava (the "hava" gag — turn an image into an MP4 set to Hava Nagila)
+# ---------------------------------------------------------------------------
+
+# The shipped Hava Nagila track (repo-relative), overridable with HAVA_AUDIO_PATH
+# (e.g. point it at nas.lan:/raid/cloud/Music/hava.mp3 if mounted locally).
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_HAVA_AUDIO_CANDIDATES = [
+    os.environ.get("HAVA_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "hava.mp3"),
+    "/var/lib/posterchanai/assets/hava.mp3",
+]
+
+
+def _hava_audio_path() -> str:
+    """First existing Hava Nagila mp3 from the candidate list ("" if none)."""
+    for p in _HAVA_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+# Length of song to play over the image (seconds).
+_HAVA_DURATION = 6.0
+
+
+def add_hava(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a 6-second MP4 playing Hava Nagila over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _hava_audio_path()
+    if not audio:
+        raise RuntimeError("Hava Nagila audio (assets/hava.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_HAVA_DURATION)
+
+
+def hava_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a Hava Nagila MP4. Mirrors gay_attachments,
+    but the output is a video (so the bots route it through their video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_hava(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_hava.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🎻 Hava\n\n🎻 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"hava failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
