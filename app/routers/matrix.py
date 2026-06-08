@@ -173,6 +173,62 @@ class MatrixTimelineActionRequest(BaseModel):
     media: Optional[list[MatrixMediaItem]] = None  # attachments (base64) for "reply"/"post"
 
 
+async def _process_matrix_media(cmd_service, command: str, arg: str, data) -> dict:
+    """Run an identity-free media transform on the bot-forwarded attachments.
+
+    compress/clip/convert/translate/meme/dildo are pure byte ops and the bot
+    uploads the result as itself, so no linked user is required — they're a public
+    feature. Returns the {result, files} payload the bot uploads into the room.
+    """
+    import base64 as _b64
+    attachments = []
+    for item in (data.media or []):
+        try:
+            attachments.append((item.filename, _b64.b64decode(item.data), item.content_type or ""))
+        except Exception as e:
+            logger.warning(f"Matrix {command}: bad media item {item.filename}: {e}")
+
+    # translate: extract text from the uploaded image(s)/PDF(s) and translate it.
+    if command == "translate":
+        from app.services.document_service import extract_pdf_text, extract_image_text
+        from app.services.media_service import is_pdf as _is_pdf, is_image as _is_image
+        parts = []
+        for _fn, _fdata, _ct in attachments:
+            _b = _b64.b64encode(_fdata).decode()
+            if _is_pdf(_fn, _ct):
+                parts.append(extract_pdf_text(_b) or "")
+            elif _is_image(_fn, _ct):
+                parts.append(extract_image_text(_b) or "")
+        src = "\n\n".join(p for p in parts if p).strip()
+        if not src:
+            return {"result": "Couldn't extract any text to translate."}
+        lang = (arg or "English").strip().title()
+        translated = await cmd_service.chat_service.chat([
+            {"role": "system", "content": f"Translate the following text to {lang}. Output ONLY the translation, no commentary."},
+            {"role": "user", "content": src[:12000]},
+        ])
+        return {"result": f"🌐 {lang}:\n\n{translated}"}
+
+    result = await cmd_service.execute_command(command, arg, attachments=attachments or None)
+    if result.get("type") != "files":
+        return {"result": result.get("content", "")}
+
+    # Hand the base64 files back to the bot, which uploads them into the room
+    # itself (posting as the bot — consistent with image/ytdl delivery).
+    out_files = result.get("files", [])
+    return {
+        "result": result.get("content", ""),
+        "files": [
+            {
+                "filename": f.get("filename", "file"),
+                "data": _b64.b64encode(f["data"]).decode("ascii"),
+                "content_type": f.get("content_type", "application/octet-stream"),
+            }
+            for f in out_files
+        ],
+    }
+
+
 @router.post("/command")
 async def execute_matrix_command(
     data: MatrixCommandRequest,
@@ -210,12 +266,26 @@ async def execute_matrix_command(
         User.matrix_enabled == True,
         User.matrix_user_id == sender_matrix_id,
     ).first()
-    if not user:
-        raise HTTPException(status_code=403, detail="Matrix user is not linked to any account")
 
     command_str = data.command.strip()
     if not command_str:
         raise HTTPException(status_code=400, detail="Command is required")
+
+    # Identity-free media transforms (compress/clip/convert/translate/meme/dildo) are
+    # pure byte ops and the bot uploads the result as itself — a PUBLIC feature any
+    # Matrix user can use, even one not linked to a posterchanai account. Handle them
+    # before the linked-account requirement below (the bot-API-key auth above is the
+    # only gate they need).
+    if data.media and command_str.split()[0].lower() in (
+        "compress", "clip", "convert", "translate", "meme", "dildo"
+    ):
+        from app.services.command_service import CommandService
+        _media_svc = CommandService(db, user=user)
+        _mcmd, _marg = _media_svc.parse_command(command_str)
+        return await _process_matrix_media(_media_svc, _mcmd, _marg, data)
+
+    if not user:
+        raise HTTPException(status_code=403, detail="Matrix user is not linked to any account")
 
     # Handle `post` / `post <url>` / `post raw <text>` — generate or share a social post.
     import re as _re
@@ -542,55 +612,9 @@ async def execute_matrix_command(
             raise HTTPException(status_code=500, detail=str(e))
         return {"result": reply}
 
-    # compress/clip/convert/translate/meme/dildo: operate on the bot-forwarded attachments.
-    if data.media and command in ("compress", "clip", "convert", "translate", "meme", "dildo"):
-        import base64 as _b64
-        attachments = []
-        for item in (data.media or []):
-            try:
-                attachments.append((item.filename, _b64.b64decode(item.data), item.content_type or ""))
-            except Exception as e:
-                logger.warning(f"Matrix {command}: bad media item {item.filename}: {e}")
-
-        # translate: extract text from the uploaded image(s)/PDF(s) and translate it.
-        if command == "translate":
-            from app.services.document_service import extract_pdf_text, extract_image_text
-            from app.services.media_service import is_pdf as _is_pdf, is_image as _is_image
-            parts = []
-            for _fn, _fdata, _ct in attachments:
-                _b = _b64.b64encode(_fdata).decode()
-                if _is_pdf(_fn, _ct):
-                    parts.append(extract_pdf_text(_b) or "")
-                elif _is_image(_fn, _ct):
-                    parts.append(extract_image_text(_b) or "")
-            src = "\n\n".join(p for p in parts if p).strip()
-            if not src:
-                return {"result": "Couldn't extract any text to translate."}
-            lang = (arg or "English").strip().title()
-            translated = await cmd_service.chat_service.chat([
-                {"role": "system", "content": f"Translate the following text to {lang}. Output ONLY the translation, no commentary."},
-                {"role": "user", "content": src[:12000]},
-            ])
-            return {"result": f"🌐 {lang}:\n\n{translated}"}
-
-        result = await cmd_service.execute_command(command, arg, attachments=attachments or None)
-        if result.get("type") != "files":
-            return {"result": result.get("content", "")}
-
-        # Hand the base64 files back to the bot, which uploads them into the room
-        # itself (posting as the bot — consistent with image/ytdl delivery).
-        out_files = result.get("files", [])
-        return {
-            "result": result.get("content", ""),
-            "files": [
-                {
-                    "filename": f.get("filename", "file"),
-                    "data": _b64.b64encode(f["data"]).decode("ascii"),
-                    "content_type": f.get("content_type", "application/octet-stream"),
-                }
-                for f in out_files
-            ],
-        }
+    # Identity-free media transforms (compress/clip/convert/translate/meme/dildo) are
+    # handled up front (before the linked-account check) by _process_matrix_media, so
+    # they work for any Matrix user — see the top of this endpoint.
 
     # ytdl: download and send audio/video directly to the Matrix room
     if command == "ytdl" and data.room_id and user.matrix_enabled and user.matrix_access_token:
