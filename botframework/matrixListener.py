@@ -921,16 +921,23 @@ def process_messages():
         print(f"  Username part: {username_part}")
 
         # Check m.mentions field (modern Matrix standard for mentions).
-        # This is honoured on replies too: clients only add the BOT to m.mentions
-        # when the user replied to the bot's OWN message (a clear intent to address
-        # it — e.g. replying to a posted image with `meme <text>`) or typed an
-        # explicit @mention. Replying to someone else's message adds THAT user, not
-        # the bot, so it won't false-trigger here. The high-volume fedi-timeline room
-        # (where replies to bridged posts are fedi actions, not commands) is already
-        # handled and `continue`d above, so it never reaches this gate.
+        # A NON-reply with the bot in m.mentions is a real, explicit @mention → trust it.
+        # On a REPLY, clients auto-add the replied-to user, so the bot lands in
+        # m.mentions for ANY reply to its own messages. We must NOT treat casual replies
+        # as addressed to the bot (that would make it chime in on ordinary chatter and
+        # spam the room). So on a reply we only accept it when the text is one of the
+        # media commands that act on the replied-to attachment (e.g. replying to a
+        # posted image with `meme <text>` or `dildo`).
+        _MEDIA_REPLY_CMDS = ("compress", "clip", "convert", "translate", "meme", "dildo")
         if mentioned_users and own_user_id and own_user_id in mentioned_users:
-            bot_mentioned = True
-            print(f"→ Bot mentioned (found in m.mentions: {own_user_id})")
+            if not message.get("reply_to_event_id"):
+                bot_mentioned = True
+                print(f"→ Bot mentioned (found in m.mentions: {own_user_id})")
+            else:
+                _first_word = raw_body.strip().split()[0].lower() if raw_body.strip() else ""
+                if _first_word in _MEDIA_REPLY_CMDS:
+                    bot_mentioned = True
+                    print(f"→ Bot media command on reply ('{_first_word}' + m.mentions)")
 
         # Check formatted_content (Matrix mentions are in HTML format).
         # Uses raw_formatted (without reply fallback) so reply quotes don't
