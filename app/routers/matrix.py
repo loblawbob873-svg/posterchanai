@@ -277,7 +277,7 @@ async def execute_matrix_command(
     # before the linked-account requirement below (the bot-API-key auth above is the
     # only gate they need).
     if data.media and command_str.split()[0].lower() in (
-        "compress", "clip", "convert", "translate", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "sopranos", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug"
+        "compress", "clip", "convert", "translate", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug"
     ):
         from app.services.command_service import CommandService
         _media_svc = CommandService(db, user=user)
@@ -563,6 +563,17 @@ async def execute_matrix_command(
             "• `retard` — turn an image into a retard-alert video.\n"
             "• `whoabuddy` — turn an image into a whoa buddy video.\n"
             "• `sopranos` — turn an image into a Sopranos theme video.\n"
+            "• `cheers` — turn an image into a Cheers theme video.\n"
+            "• `munsters` — turn an image into a Munsters theme video.\n"
+            "• `happydays` — turn an image into a Happy Days theme video.\n"
+            "• `dontwanttowait` — turn an image into a Dawson's Creek theme video.\n"
+            "• `strangerthings` — turn an image into a Stranger Things theme video.\n"
+            "• `adamsfamily` — turn an image into an Addams Family theme video.\n"
+            "• `xmen` — turn an image into an X-Men theme video.\n"
+            "• `futurama` — turn an image into a Futurama theme video.\n"
+            "• `charliesangles` — turn an image into a Charlie's Angels theme video.\n"
+            "• `differentstroke` — turn an image into a Diff'rent Strokes theme video.\n"
+            "• `seinfeld` — turn an image into a Seinfeld theme video.\n"
             "• `freebird` — turn an image into a Free Bird video.\n"
             "• `kanye` — turn an image into a Kanye video.\n"
             "• `darkness` — turn an image into a darkness video.\n"

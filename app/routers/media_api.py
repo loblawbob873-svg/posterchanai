@@ -68,7 +68,7 @@ async def process_media(
 ):
     """Run a compress/clip/convert/meme/dildo/poo/cum/blood/bullethole/fire/gay/blacked/kosher/barked operation on the supplied attachments."""
     command = (req.command or "").strip().lower()
-    if command not in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "sopranos", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug"):
+    if command not in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug"):
         return {"error": f"unsupported command '{command}'"}
 
     # Trailing subcommands on an effect: <effect> [zoom|shake] [meme <text>]
@@ -165,6 +165,28 @@ async def process_media(
             outputs, summary = await asyncio.to_thread(effects_service.whoabuddy_attachments, attachments)
         elif command == "sopranos":
             outputs, summary = await asyncio.to_thread(effects_service.sopranos_attachments, attachments)
+        elif command == "cheers":
+            outputs, summary = await asyncio.to_thread(effects_service.cheers_attachments, attachments)
+        elif command == "munsters":
+            outputs, summary = await asyncio.to_thread(effects_service.munsters_attachments, attachments)
+        elif command == "happydays":
+            outputs, summary = await asyncio.to_thread(effects_service.happydays_attachments, attachments)
+        elif command == "dontwanttowait":
+            outputs, summary = await asyncio.to_thread(effects_service.dontwanttowait_attachments, attachments)
+        elif command == "strangerthings":
+            outputs, summary = await asyncio.to_thread(effects_service.strangerthings_attachments, attachments)
+        elif command == "adamsfamily":
+            outputs, summary = await asyncio.to_thread(effects_service.adamsfamily_attachments, attachments)
+        elif command == "xmen":
+            outputs, summary = await asyncio.to_thread(effects_service.xmen_attachments, attachments)
+        elif command == "futurama":
+            outputs, summary = await asyncio.to_thread(effects_service.futurama_attachments, attachments)
+        elif command == "charliesangles":
+            outputs, summary = await asyncio.to_thread(effects_service.charliesangles_attachments, attachments)
+        elif command == "differentstroke":
+            outputs, summary = await asyncio.to_thread(effects_service.differentstroke_attachments, attachments)
+        elif command == "seinfeld":
+            outputs, summary = await asyncio.to_thread(effects_service.seinfeld_attachments, attachments)
         elif command == "freebird":
             outputs, summary = await asyncio.to_thread(effects_service.freebird_attachments, attachments)
         elif command == "kanye":

@@ -595,6 +595,17 @@ class CommandService:
         "retard": "Turn an attached image into a short MP4 set to the retard-alert clip: retard",
         "whoabuddy": "Turn an attached image into a short MP4 set to the whoa buddy clip: whoabuddy",
         "sopranos": "Turn an attached image into an MP4 set to the Sopranos theme clip: sopranos",
+        "cheers": "Turn an attached image into an MP4 set to the Cheers theme clip: cheers",
+        "munsters": "Turn an attached image into an MP4 set to the Munsters theme clip: munsters",
+        "happydays": "Turn an attached image into an MP4 set to the Happy Days theme clip: happydays",
+        "dontwanttowait": "Turn an attached image into an MP4 set to the Dawson's Creek theme clip: dontwanttowait",
+        "strangerthings": "Turn an attached image into an MP4 set to the Stranger Things theme clip: strangerthings",
+        "adamsfamily": "Turn an attached image into an MP4 set to the Addams Family theme clip: adamsfamily",
+        "xmen": "Turn an attached image into an MP4 set to the X-Men theme clip: xmen",
+        "futurama": "Turn an attached image into an MP4 set to the Futurama theme clip: futurama",
+        "charliesangles": "Turn an attached image into an MP4 set to the Charlie's Angels theme clip: charliesangles",
+        "differentstroke": "Turn an attached image into an MP4 set to the Diff'rent Strokes theme clip: differentstroke",
+        "seinfeld": "Turn an attached image into an MP4 set to the Seinfeld theme clip: seinfeld",
         "freebird": "Turn an attached image into an MP4 set to the Free Bird solo: freebird",
         "kanye": "Turn an attached image into an MP4 set to the Kanye clip: kanye",
         "darkness": "Turn an attached image into an MP4 set to the darkness clip: darkness",
@@ -638,7 +649,7 @@ class CommandService:
         "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete",
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
         "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy",
-        "sopranos", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
+        "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
         "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug",
     }
 
@@ -857,6 +868,28 @@ class CommandService:
             return await self._whoabuddy_command(attachments)
         elif command == "sopranos":
             return await self._sopranos_command(attachments)
+        elif command == "cheers":
+            return await self._cheers_command(attachments)
+        elif command == "munsters":
+            return await self._munsters_command(attachments)
+        elif command == "happydays":
+            return await self._happydays_command(attachments)
+        elif command == "dontwanttowait":
+            return await self._dontwanttowait_command(attachments)
+        elif command == "strangerthings":
+            return await self._strangerthings_command(attachments)
+        elif command == "adamsfamily":
+            return await self._adamsfamily_command(attachments)
+        elif command == "xmen":
+            return await self._xmen_command(attachments)
+        elif command == "futurama":
+            return await self._futurama_command(attachments)
+        elif command == "charliesangles":
+            return await self._charliesangles_command(attachments)
+        elif command == "differentstroke":
+            return await self._differentstroke_command(attachments)
+        elif command == "seinfeld":
+            return await self._seinfeld_command(attachments)
         elif command == "freebird":
             return await self._freebird_command(attachments)
         elif command == "kanye":
@@ -3849,6 +3882,171 @@ Files are saved to your Storage.""",
         from app.services.effects_service import sopranos_attachments
 
         outputs, summary = await asyncio.to_thread(sopranos_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _cheers_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into an MP4 set to the Cheers theme clip: `cheers`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `cheers`."}
+
+        import asyncio
+        from app.services.effects_service import cheers_attachments
+
+        outputs, summary = await asyncio.to_thread(cheers_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _munsters_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into an MP4 set to the Munsters theme clip: `munsters`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `munsters`."}
+
+        import asyncio
+        from app.services.effects_service import munsters_attachments
+
+        outputs, summary = await asyncio.to_thread(munsters_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _happydays_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into an MP4 set to the Happy Days theme clip: `happydays`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `happydays`."}
+
+        import asyncio
+        from app.services.effects_service import happydays_attachments
+
+        outputs, summary = await asyncio.to_thread(happydays_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _dontwanttowait_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into an MP4 set to the Dawson's Creek theme clip: `dontwanttowait`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `dontwanttowait`."}
+
+        import asyncio
+        from app.services.effects_service import dontwanttowait_attachments
+
+        outputs, summary = await asyncio.to_thread(dontwanttowait_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _strangerthings_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into an MP4 set to the Stranger Things theme clip: `strangerthings`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `strangerthings`."}
+
+        import asyncio
+        from app.services.effects_service import strangerthings_attachments
+
+        outputs, summary = await asyncio.to_thread(strangerthings_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _adamsfamily_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into an MP4 set to the Addams Family theme clip: `adamsfamily`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `adamsfamily`."}
+
+        import asyncio
+        from app.services.effects_service import adamsfamily_attachments
+
+        outputs, summary = await asyncio.to_thread(adamsfamily_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _xmen_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into an MP4 set to the X-Men theme clip: `xmen`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `xmen`."}
+
+        import asyncio
+        from app.services.effects_service import xmen_attachments
+
+        outputs, summary = await asyncio.to_thread(xmen_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _futurama_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into an MP4 set to the Futurama theme clip: `futurama`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `futurama`."}
+
+        import asyncio
+        from app.services.effects_service import futurama_attachments
+
+        outputs, summary = await asyncio.to_thread(futurama_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _charliesangles_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into an MP4 set to the Charlie's Angels theme clip: `charliesangles`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `charliesangles`."}
+
+        import asyncio
+        from app.services.effects_service import charliesangles_attachments
+
+        outputs, summary = await asyncio.to_thread(charliesangles_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _differentstroke_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into an MP4 set to the Diff'rent Strokes theme clip: `differentstroke`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `differentstroke`."}
+
+        import asyncio
+        from app.services.effects_service import differentstroke_attachments
+
+        outputs, summary = await asyncio.to_thread(differentstroke_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _seinfeld_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into an MP4 set to the Seinfeld theme clip: `seinfeld`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `seinfeld`."}
+
+        import asyncio
+        from app.services.effects_service import seinfeld_attachments
+
+        outputs, summary = await asyncio.to_thread(seinfeld_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}

@@ -749,7 +749,7 @@ _HELP_SECTIONS = {
         "• 📝 Summarize — AI summary of the document\n\n"
         "Tips:\n"
         "• Send several images, then tap *To PDF*, to merge them into one PDF.\n"
-        "• You can also skip the buttons: send the file with `compress`, `clip 0:10 0:30`, `convert`, `meme <text>`, `dildo`, `poo`, `cum`, `blood`, `bullethole`, `fire`, `gay`, `blacked`, `kosher`, `barked`, `hava`, `indian`, `yakety`, `yamete`, `curb`, `depressing`, `fahh`, `helpme`, `gong`, `fbi`, `redeem`, `gigity`, `beavis`, `smell`, `hood`, `akbar`, `retard`, `whoabuddy`, `sopranos`, `freebird`, `kanye`, `darkness`, `bike`, `jobs`, `ree`, `liberal`, `moving`, `harlem`, `chimp`, `consider`, `clay`, `wasteland`, `mixalot` or `thug` as the caption.\n"
+        "• You can also skip the buttons: send the file with `compress`, `clip 0:10 0:30`, `convert`, `meme <text>`, `dildo`, `poo`, `cum`, `blood`, `bullethole`, `fire`, `gay`, `blacked`, `kosher`, `barked`, `hava`, `indian`, `yakety`, `yamete`, `curb`, `depressing`, `fahh`, `helpme`, `gong`, `fbi`, `redeem`, `gigity`, `beavis`, `smell`, `hood`, `akbar`, `retard`, `whoabuddy`, `sopranos`, `cheers`, `munsters`, `happydays`, `dontwanttowait`, `strangerthings`, `adamsfamily`, `xmen`, `futurama`, `charliesangles`, `differentstroke`, `seinfeld`, `freebird`, `kanye`, `darkness`, `bike`, `jobs`, `ree`, `liberal`, `moving`, `harlem`, `chimp`, `consider`, `clay`, `wasteland`, `mixalot` or `thug` as the caption.\n"
         "• Telegram limits bot downloads to 20 MB — use the web UI for bigger files."
     ),
     "youtube": (
@@ -1403,6 +1403,22 @@ def _media_effects_keyboard() -> dict:
             {"text": "🇮🇹 Sopranos", "callback_data": "media:zq:sopranos"},
         ],
         [
+            {"text": "🍻 Cheers", "callback_data": "media:zq:cheers"},
+            {"text": "🧛 Munsters", "callback_data": "media:zq:munsters"},
+        ],
+        [
+            {"text": "😃 Happy Days", "callback_data": "media:zq:happydays"},
+            {"text": "🌊 Don't Wait", "callback_data": "media:zq:dontwanttowait"},
+        ],
+        [
+            {"text": "🔦 Stranger Things", "callback_data": "media:zq:strangerthings"},
+            {"text": "🖤 Addams Family", "callback_data": "media:zq:adamsfamily"},
+        ],
+        [
+            {"text": "❌ X-Men", "callback_data": "media:zq:xmen"},
+            {"text": "🚀 Futurama", "callback_data": "media:zq:futurama"},
+        ],
+        [
             {"text": "🦅 Freebird", "callback_data": "media:zq:freebird"},
             {"text": "🐻 Kanye", "callback_data": "media:zq:kanye"},
         ],
@@ -1431,6 +1447,11 @@ def _media_effects_keyboard() -> dict:
             {"text": "🍑 Mixalot", "callback_data": "media:zq:mixalot"},
         ],
         [
+            {"text": "👼 Charlie's Angels", "callback_data": "media:zq:charliesangles"},
+            {"text": "🌍 Diff'rent Strokes", "callback_data": "media:zq:differentstroke"},
+        ],
+        [
+            {"text": "🎤 Seinfeld", "callback_data": "media:zq:seinfeld"},
             {"text": "😎 Thug", "callback_data": "media:zq:thug"},
         ],
         [{"text": "⬅️ Back", "callback_data": "media:back"}],
@@ -1981,7 +2002,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "sopranos", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -2213,7 +2234,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "sopranos", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -2422,7 +2443,7 @@ async def _handle_telegram_update(update: dict, db: Session):
 
             # If we have images, always run OCR for later use
             # (skip for compress/convert — they operate on the raw file, not its text)
-            if has_images and attachments and command not in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "sopranos", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug"):
+            if has_images and attachments and command not in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug"):
                 for filename, file_data, content_type in attachments:
                     if content_type.startswith("image/"):
                         import base64
@@ -2469,7 +2490,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Attachment too large for Telegram to hand to the bot (20 MB cap).
             # Handle here so it works whether or not a command caption was given,
             # instead of falling through to the chat model.
-            if oversized_attachment and command in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "sopranos", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", None):
+            if oversized_attachment and command in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", None):
                 _ov_name, _ov_size = oversized_attachment
                 _cap_mb = TELEGRAM_MAX_DOWNLOAD_BYTES / (1024 * 1024)
                 if telegram_service.is_local_api:
@@ -3974,6 +3995,94 @@ async def _handle_telegram_update(update: dict, db: Session):
                             await telegram_service.send_message(chat_id, "🇮🇹 Sopranos…")
                             _imgs = [a for a in _atts if is_image(a[0], a[2])]
                             await _send_files_result(await cb_command_service.execute_command("sopranos", "", attachments=_imgs))
+                    elif _action == "cheers":
+                        # No caption needed — render the video and post it.
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(chat_id, "🍻 Cheers…")
+                            _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                            await _send_files_result(await cb_command_service.execute_command("cheers", "", attachments=_imgs))
+                    elif _action == "munsters":
+                        # No caption needed — render the video and post it.
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(chat_id, "🧛 Munsters…")
+                            _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                            await _send_files_result(await cb_command_service.execute_command("munsters", "", attachments=_imgs))
+                    elif _action == "happydays":
+                        # No caption needed — render the video and post it.
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(chat_id, "🕺 Happy Days…")
+                            _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                            await _send_files_result(await cb_command_service.execute_command("happydays", "", attachments=_imgs))
+                    elif _action == "dontwanttowait":
+                        # No caption needed — render the video and post it.
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(chat_id, "🌊 Don't Want to Wait…")
+                            _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                            await _send_files_result(await cb_command_service.execute_command("dontwanttowait", "", attachments=_imgs))
+                    elif _action == "strangerthings":
+                        # No caption needed — render the video and post it.
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(chat_id, "🔦 Stranger Things…")
+                            _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                            await _send_files_result(await cb_command_service.execute_command("strangerthings", "", attachments=_imgs))
+                    elif _action == "adamsfamily":
+                        # No caption needed — render the video and post it.
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(chat_id, "🖤 Addams Family…")
+                            _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                            await _send_files_result(await cb_command_service.execute_command("adamsfamily", "", attachments=_imgs))
+                    elif _action == "xmen":
+                        # No caption needed — render the video and post it.
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(chat_id, "❌ X-Men…")
+                            _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                            await _send_files_result(await cb_command_service.execute_command("xmen", "", attachments=_imgs))
+                    elif _action == "futurama":
+                        # No caption needed — render the video and post it.
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(chat_id, "🚀 Futurama…")
+                            _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                            await _send_files_result(await cb_command_service.execute_command("futurama", "", attachments=_imgs))
+                    elif _action == "charliesangles":
+                        # No caption needed — render the video and post it.
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(chat_id, "👼 Charlie's Angels…")
+                            _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                            await _send_files_result(await cb_command_service.execute_command("charliesangles", "", attachments=_imgs))
+                    elif _action == "differentstroke":
+                        # No caption needed — render the video and post it.
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(chat_id, "🌍 Diff'rent Strokes…")
+                            _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                            await _send_files_result(await cb_command_service.execute_command("differentstroke", "", attachments=_imgs))
+                    elif _action == "seinfeld":
+                        # No caption needed — render the video and post it.
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(chat_id, "🎤 Seinfeld…")
+                            _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                            await _send_files_result(await cb_command_service.execute_command("seinfeld", "", attachments=_imgs))
                     elif _action == "freebird":
                         # No caption needed — render the video and post it.
                         if not any(is_image(fn, ct) for fn, _, ct in _atts):

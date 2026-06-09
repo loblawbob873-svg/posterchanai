@@ -2739,6 +2739,622 @@ def whoabuddy_attachments(
 
 
 # ---------------------------------------------------------------------------
+# Cheers (turn an image into a short MP4 set to the Cheers theme clip — the
+# "cheers" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped cheers track (repo-relative), overridable with CHEERS_AUDIO_PATH.
+_CHEERS_AUDIO_CANDIDATES = [
+    os.environ.get("CHEERS_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "cheers.mp3"),
+    "/var/lib/posterchanai/assets/cheers.mp3",
+]
+# Cap above the ~10s clip length; -shortest ends the video at the audio end.
+_CHEERS_DURATION = 11.0
+
+
+def _cheers_audio_path() -> str:
+    """First existing cheers mp3 from the candidate list ("" if none)."""
+    for p in _CHEERS_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_cheers(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the Cheers clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _cheers_audio_path()
+    if not audio:
+        raise RuntimeError("Cheers audio (assets/cheers.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_CHEERS_DURATION)
+
+
+def cheers_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a cheers MP4. Mirrors
+    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_cheers(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_cheers.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🍻 Cheers\n\n🍻 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"cheers failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Munsters (turn an image into a short MP4 set to the Munsters theme clip — the
+# "munsters" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped munsters track (repo-relative), overridable with MUNSTERS_AUDIO_PATH.
+_MUNSTERS_AUDIO_CANDIDATES = [
+    os.environ.get("MUNSTERS_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "munsters.mp3"),
+    "/var/lib/posterchanai/assets/munsters.mp3",
+]
+# Cap above the ~10s clip length; -shortest ends the video at the audio end.
+_MUNSTERS_DURATION = 11.0
+
+
+def _munsters_audio_path() -> str:
+    """First existing munsters mp3 from the candidate list ("" if none)."""
+    for p in _MUNSTERS_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_munsters(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the Munsters clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _munsters_audio_path()
+    if not audio:
+        raise RuntimeError("Munsters audio (assets/munsters.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_MUNSTERS_DURATION)
+
+
+def munsters_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a munsters MP4. Mirrors
+    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_munsters(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_munsters.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🧛 Munsters\n\n🧛 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"munsters failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Happy Days (turn an image into a short MP4 set to the Happy Days theme clip —
+# the "happydays" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped happydays track (repo-relative), overridable with HAPPYDAYS_AUDIO_PATH.
+_HAPPYDAYS_AUDIO_CANDIDATES = [
+    os.environ.get("HAPPYDAYS_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "happydays.mp3"),
+    "/var/lib/posterchanai/assets/happydays.mp3",
+]
+# Cap above the ~13s clip length; -shortest ends the video at the audio end.
+_HAPPYDAYS_DURATION = 14.0
+
+
+def _happydays_audio_path() -> str:
+    """First existing happydays mp3 from the candidate list ("" if none)."""
+    for p in _HAPPYDAYS_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_happydays(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the Happy Days clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _happydays_audio_path()
+    if not audio:
+        raise RuntimeError("Happy Days audio (assets/happydays.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_HAPPYDAYS_DURATION)
+
+
+def happydays_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a happydays MP4. Mirrors
+    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_happydays(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_happydays.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🕺 Happy Days\n\n🕺 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"happydays failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Don't Want to Wait (turn an image into a short MP4 set to the Dawson's Creek
+# theme clip — the "dontwanttowait" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped dontwanttowait track (repo-relative), overridable with DONTWANTTOWAIT_AUDIO_PATH.
+_DONTWANTTOWAIT_AUDIO_CANDIDATES = [
+    os.environ.get("DONTWANTTOWAIT_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "dontwanttowait.mp3"),
+    "/var/lib/posterchanai/assets/dontwanttowait.mp3",
+]
+# Cap above the ~10s clip length; -shortest ends the video at the audio end.
+_DONTWANTTOWAIT_DURATION = 11.0
+
+
+def _dontwanttowait_audio_path() -> str:
+    """First existing dontwanttowait mp3 from the candidate list ("" if none)."""
+    for p in _DONTWANTTOWAIT_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_dontwanttowait(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the Dawson's Creek clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _dontwanttowait_audio_path()
+    if not audio:
+        raise RuntimeError("Don't Want to Wait audio (assets/dontwanttowait.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_DONTWANTTOWAIT_DURATION)
+
+
+def dontwanttowait_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a dontwanttowait MP4. Mirrors
+    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_dontwanttowait(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_dontwanttowait.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🌊 Don't Want to Wait\n\n🌊 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"dontwanttowait failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Stranger Things (turn an image into a short MP4 set to the Stranger Things
+# theme clip — the "strangerthings" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped strangerthings track (repo-relative), overridable with STRANGERTHINGS_AUDIO_PATH.
+_STRANGERTHINGS_AUDIO_CANDIDATES = [
+    os.environ.get("STRANGERTHINGS_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "strangerthings.mp3"),
+    "/var/lib/posterchanai/assets/strangerthings.mp3",
+]
+# Cap above the ~13s clip length; -shortest ends the video at the audio end.
+_STRANGERTHINGS_DURATION = 14.0
+
+
+def _strangerthings_audio_path() -> str:
+    """First existing strangerthings mp3 from the candidate list ("" if none)."""
+    for p in _STRANGERTHINGS_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_strangerthings(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the Stranger Things clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _strangerthings_audio_path()
+    if not audio:
+        raise RuntimeError("Stranger Things audio (assets/strangerthings.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_STRANGERTHINGS_DURATION)
+
+
+def strangerthings_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a strangerthings MP4. Mirrors
+    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_strangerthings(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_strangerthings.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🔦 Stranger Things\n\n🔦 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"strangerthings failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Addams Family (turn an image into a short MP4 set to the Addams Family theme
+# clip — the "adamsfamily" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped adamsfamily track (repo-relative), overridable with ADAMSFAMILY_AUDIO_PATH.
+_ADAMSFAMILY_AUDIO_CANDIDATES = [
+    os.environ.get("ADAMSFAMILY_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "adamsfamily.mp3"),
+    "/var/lib/posterchanai/assets/adamsfamily.mp3",
+]
+# Cap above the ~13s clip length; -shortest ends the video at the audio end.
+_ADAMSFAMILY_DURATION = 14.0
+
+
+def _adamsfamily_audio_path() -> str:
+    """First existing adamsfamily mp3 from the candidate list ("" if none)."""
+    for p in _ADAMSFAMILY_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_adamsfamily(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the Addams Family clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _adamsfamily_audio_path()
+    if not audio:
+        raise RuntimeError("Addams Family audio (assets/adamsfamily.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_ADAMSFAMILY_DURATION)
+
+
+def adamsfamily_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into an adamsfamily MP4. Mirrors
+    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_adamsfamily(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_adamsfamily.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🖤 Addams Family\n\n🖤 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"adamsfamily failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# X-Men (turn an image into a short MP4 set to the X-Men theme clip — the
+# "xmen" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped xmen track (repo-relative), overridable with XMEN_AUDIO_PATH.
+_XMEN_AUDIO_CANDIDATES = [
+    os.environ.get("XMEN_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "xmen.mp3"),
+    "/var/lib/posterchanai/assets/xmen.mp3",
+]
+# Cap above the ~15s clip length; -shortest ends the video at the audio end.
+_XMEN_DURATION = 16.0
+
+
+def _xmen_audio_path() -> str:
+    """First existing xmen mp3 from the candidate list ("" if none)."""
+    for p in _XMEN_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_xmen(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the X-Men clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _xmen_audio_path()
+    if not audio:
+        raise RuntimeError("X-Men audio (assets/xmen.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_XMEN_DURATION)
+
+
+def xmen_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into an xmen MP4. Mirrors
+    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_xmen(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_xmen.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## ❌ X-Men\n\n❌ {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"xmen failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Futurama (turn an image into a short MP4 set to the Futurama theme clip — the
+# "futurama" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped futurama track (repo-relative), overridable with FUTURAMA_AUDIO_PATH.
+_FUTURAMA_AUDIO_CANDIDATES = [
+    os.environ.get("FUTURAMA_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "futurama.mp3"),
+    "/var/lib/posterchanai/assets/futurama.mp3",
+]
+# Cap above the ~11s clip length; -shortest ends the video at the audio end.
+_FUTURAMA_DURATION = 12.0
+
+
+def _futurama_audio_path() -> str:
+    """First existing futurama mp3 from the candidate list ("" if none)."""
+    for p in _FUTURAMA_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_futurama(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the Futurama clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _futurama_audio_path()
+    if not audio:
+        raise RuntimeError("Futurama audio (assets/futurama.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_FUTURAMA_DURATION)
+
+
+def futurama_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a futurama MP4. Mirrors
+    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_futurama(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_futurama.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🚀 Futurama\n\n🚀 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"futurama failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Charlie's Angels (turn an image into a short MP4 set to the Charlie's Angels
+# theme clip — the "charliesangles" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped charliesangles track (repo-relative), overridable with CHARLIESANGLES_AUDIO_PATH.
+_CHARLIESANGLES_AUDIO_CANDIDATES = [
+    os.environ.get("CHARLIESANGLES_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "charliesangles.mp3"),
+    "/var/lib/posterchanai/assets/charliesangles.mp3",
+]
+# Cap above the ~12s clip length; -shortest ends the video at the audio end.
+_CHARLIESANGLES_DURATION = 13.0
+
+
+def _charliesangles_audio_path() -> str:
+    """First existing charliesangles mp3 from the candidate list ("" if none)."""
+    for p in _CHARLIESANGLES_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_charliesangles(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the Charlie's Angels clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _charliesangles_audio_path()
+    if not audio:
+        raise RuntimeError("Charlie's Angels audio (assets/charliesangles.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_CHARLIESANGLES_DURATION)
+
+
+def charliesangles_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a charliesangles MP4. Mirrors
+    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_charliesangles(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_charliesangles.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 👼 Charlie's Angels\n\n👼 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"charliesangles failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Diff'rent Strokes (turn an image into a short MP4 set to the Diff'rent Strokes
+# theme clip — the "differentstroke" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped differentstroke track (repo-relative), overridable with DIFFERENTSTROKE_AUDIO_PATH.
+_DIFFERENTSTROKE_AUDIO_CANDIDATES = [
+    os.environ.get("DIFFERENTSTROKE_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "differentstroke.mp3"),
+    "/var/lib/posterchanai/assets/differentstroke.mp3",
+]
+# Cap above the ~8s clip length; -shortest ends the video at the audio end.
+_DIFFERENTSTROKE_DURATION = 9.0
+
+
+def _differentstroke_audio_path() -> str:
+    """First existing differentstroke mp3 from the candidate list ("" if none)."""
+    for p in _DIFFERENTSTROKE_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_differentstroke(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the Diff'rent Strokes clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _differentstroke_audio_path()
+    if not audio:
+        raise RuntimeError("Diff'rent Strokes audio (assets/differentstroke.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_DIFFERENTSTROKE_DURATION)
+
+
+def differentstroke_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a differentstroke MP4. Mirrors
+    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_differentstroke(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_differentstroke.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🌍 Diff'rent Strokes\n\n🌍 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"differentstroke failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Seinfeld (turn an image into a short MP4 set to the Seinfeld theme clip — the
+# "seinfeld" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped seinfeld track (repo-relative), overridable with SEINFELD_AUDIO_PATH.
+_SEINFELD_AUDIO_CANDIDATES = [
+    os.environ.get("SEINFELD_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "seinfeld.mp3"),
+    "/var/lib/posterchanai/assets/seinfeld.mp3",
+]
+# Cap above the ~13s clip length; -shortest ends the video at the audio end.
+_SEINFELD_DURATION = 14.0
+
+
+def _seinfeld_audio_path() -> str:
+    """First existing seinfeld mp3 from the candidate list ("" if none)."""
+    for p in _SEINFELD_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_seinfeld(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the Seinfeld clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _seinfeld_audio_path()
+    if not audio:
+        raise RuntimeError("Seinfeld audio (assets/seinfeld.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_SEINFELD_DURATION)
+
+
+def seinfeld_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a seinfeld MP4. Mirrors
+    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_seinfeld(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_seinfeld.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🎤 Seinfeld\n\n🎤 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"seinfeld failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
 # Sopranos (turn an image into a short MP4 set to the Sopranos theme clip — the
 # "sopranos" gag)
 # ---------------------------------------------------------------------------
