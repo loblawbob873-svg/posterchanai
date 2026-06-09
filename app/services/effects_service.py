@@ -3272,8 +3272,8 @@ _CLAY_AUDIO_CANDIDATES = [
     os.path.join(_REPO_ROOT, "assets", "clay.mp3"),
     "/var/lib/posterchanai/assets/clay.mp3",
 ]
-# The clip is ~3s; run the overlay for one play.
-_CLAY_DURATION = 3.1
+# The clip is ~2s (first second trimmed off); run the overlay for one play.
+_CLAY_DURATION = 2.1
 
 
 def _clay_overlay_path() -> str:
@@ -3301,7 +3301,7 @@ def add_clay(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
         raise RuntimeError("Clay overlay (assets/clay.mov) is missing on the server")
     return image_gif_overlay_video(image_data, source_filename, overlay,
                                    duration=_CLAY_DURATION, audio_path=_clay_audio_path() or None,
-                                   height_frac=0.6)
+                                   height_frac=0.72)
 
 
 def clay_attachments(
