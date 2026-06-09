@@ -3169,6 +3169,95 @@ def moving_attachments(
 
 
 # ---------------------------------------------------------------------------
+# Consider (overlay the chroma-keyed "consider the following" cutout — "consider")
+# ---------------------------------------------------------------------------
+
+# The shipped consider cutout (transparent PNG), overridable with CONSIDER_PNG_PATH.
+_CONSIDER_PNG_CANDIDATES = [
+    os.environ.get("CONSIDER_PNG_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "consider.png"),
+    "/var/lib/posterchanai/assets/consider.png",
+]
+
+
+def _consider_png_path() -> str:
+    """First existing consider png from the candidate list ("" if none)."""
+    for p in _CONSIDER_PNG_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_consider(data: bytes) -> bytes:
+    """Composite the (transparent) "consider the following" cutout over an image,
+    scaled large and anchored to the bottom-right. Returns JPEG bytes."""
+    from PIL import Image, ImageOps
+    try:
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+    except Exception:
+        pass
+
+    png = _consider_png_path()
+    if not png:
+        raise RuntimeError("Consider cutout (assets/consider.png) is missing on the server")
+
+    with Image.open(io.BytesIO(data)) as img:
+        img = ImageOps.exif_transpose(img)
+        if img.mode in ("RGBA", "LA", "P"):
+            background = Image.new("RGB", img.size, (255, 255, 255))
+            rgba = img.convert("RGBA")
+            background.paste(rgba, mask=rgba.split()[-1])
+            img = background
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+
+        W, H = img.size
+        img = img.convert("RGBA")
+        with Image.open(png) as ov_src:
+            ov = ov_src.convert("RGBA")
+        ow, oh = ov.size
+        # Scale the cutout to ~80% of the image height, but never wider than 95% of
+        # the image (so it still fits on portrait images), keeping its aspect ratio.
+        scale = min(H * 0.80 / oh, W * 0.95 / ow)
+        nw, nh = max(int(ow * scale), 1), max(int(oh * scale), 1)
+        ov = ov.resize((nw, nh), Image.LANCZOS)
+        # Anchor to the bottom-right corner (small margin).
+        margin = max(int(W * 0.01), 2)
+        x, y = W - nw - margin, H - nh - margin
+        img.alpha_composite(ov, (max(x, 0), max(y, 0)))
+
+        img = img.convert("RGB")
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=90, optimize=True)
+        return out.getvalue()
+
+
+def consider_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Overlay the consider cutout on the first image attachment. Mirrors
+    meme_attachments (image output, one shared delivery path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_consider(data)
+        out: OutputFile = {
+            "filename": f"{stem}_consider.jpg",
+            "data": result,
+            "content_type": "image/jpeg",
+        }
+        summary = f"## 🤔 Consider\n\n🤔 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"consider failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
 # Harlem (turn an image into an MP4 set to the Harlem Shake clip — "harlem" gag)
 # ---------------------------------------------------------------------------
 

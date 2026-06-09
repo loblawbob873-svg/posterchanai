@@ -604,6 +604,7 @@ class CommandService:
         "moving": "Turn an attached image into an MP4 set to the moving clip: moving",
         "harlem": "Turn an attached image into an MP4 set to the Harlem Shake clip: harlem",
         "chimp": "Overlay the animated chimp gif on the lower third of an attached image: chimp",
+        "consider": "Overlay the 'consider the following' cutout on an attached image: consider",
         "thug": "Turn an attached image into an MP4 set to the THUG LIFE clip: thug",
         "node": "Remote node mgmt: node <name> <cmd> | node all <cmd> | node agent <name> <goal> | node agent all <goal> | node list | node jobs | node log <id> | node kill <id>",
         "budget": "Show your budget summary (income, unpaid bills, remaining)",
@@ -634,7 +635,7 @@ class CommandService:
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
         "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy",
         "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
-        "harlem", "chimp", "thug",
+        "harlem", "chimp", "consider", "thug",
     }
 
     # Effects whose output is ALREADY animated (e.g. the chimp gif overlay). The
@@ -870,6 +871,8 @@ class CommandService:
             return await self._harlem_command(attachments)
         elif command == "chimp":
             return await self._chimp_command(attachments)
+        elif command == "consider":
+            return await self._consider_command(attachments)
         elif command == "thug":
             return await self._thug_command(attachments)
         elif command == "node":
@@ -3969,6 +3972,21 @@ Files are saved to your Storage.""",
         from app.services.effects_service import chimp_attachments
 
         outputs, summary = await asyncio.to_thread(chimp_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _consider_command(self, attachments: Optional[list]) -> dict:
+        """Overlay the 'consider the following' cutout on an attached image: `consider`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `consider`."}
+
+        import asyncio
+        from app.services.effects_service import consider_attachments
+
+        outputs, summary = await asyncio.to_thread(consider_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
