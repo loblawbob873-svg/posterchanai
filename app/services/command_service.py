@@ -594,6 +594,7 @@ class CommandService:
         "akbar": "Turn an attached image into a short MP4 set to the akbar clip: akbar",
         "retard": "Turn an attached image into a short MP4 set to the retard-alert clip: retard",
         "whoabuddy": "Turn an attached image into a short MP4 set to the whoa buddy clip: whoabuddy",
+        "sopranos": "Turn an attached image into an MP4 set to the Sopranos theme clip: sopranos",
         "freebird": "Turn an attached image into an MP4 set to the Free Bird solo: freebird",
         "kanye": "Turn an attached image into an MP4 set to the Kanye clip: kanye",
         "darkness": "Turn an attached image into an MP4 set to the darkness clip: darkness",
@@ -637,7 +638,7 @@ class CommandService:
         "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete",
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
         "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy",
-        "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
+        "sopranos", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
         "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug",
     }
 
@@ -854,6 +855,8 @@ class CommandService:
             return await self._retard_command(attachments)
         elif command == "whoabuddy":
             return await self._whoabuddy_command(attachments)
+        elif command == "sopranos":
+            return await self._sopranos_command(attachments)
         elif command == "freebird":
             return await self._freebird_command(attachments)
         elif command == "kanye":
@@ -3831,6 +3834,21 @@ Files are saved to your Storage.""",
         from app.services.effects_service import whoabuddy_attachments
 
         outputs, summary = await asyncio.to_thread(whoabuddy_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _sopranos_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into an MP4 set to the Sopranos theme clip: `sopranos`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `sopranos`."}
+
+        import asyncio
+        from app.services.effects_service import sopranos_attachments
+
+        outputs, summary = await asyncio.to_thread(sopranos_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
