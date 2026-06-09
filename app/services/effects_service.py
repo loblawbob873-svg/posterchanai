@@ -3272,8 +3272,9 @@ _CLAY_AUDIO_CANDIDATES = [
     os.path.join(_REPO_ROOT, "assets", "clay.mp3"),
     "/var/lib/posterchanai/assets/clay.mp3",
 ]
-# The clip is ~2.95s (first half-second trimmed, runs to the true end); one play.
-_CLAY_DURATION = 3.0
+# Clay's shot only (0:05.5 → the scene-cut at ~0:08.0, before it cuts to the other
+# character); ~2.58s, one play.
+_CLAY_DURATION = 2.6
 
 
 def _clay_overlay_path() -> str:
