@@ -3530,28 +3530,31 @@ async def _handle_telegram_update(update: dict, db: Session):
                                 chat_id, "📎 File actions:", reply_markup=_kbd,
                             )
                     elif _action.startswith("zq:"):
-                        # Effect chosen from the Effects menu → ask whether to add a zoom
-                        # pan-out. "No zoom" reuses the effect's own media:<eff> handler.
+                        # Effect chosen from the Effects menu → offer a motion (zoom
+                        # pan-out / camera shake). "No motion" reuses the effect's own
+                        # media:<eff> handler.
                         _eff = _action.split(":", 1)[1]
                         if not any(is_image(fn, ct) for fn, _, ct in _atts):
                             await telegram_service.send_message(chat_id, "Nothing to do — that upload has no image.")
                         else:
                             await telegram_service.send_message(
-                                chat_id, "🔍 Add a zoom pan-out?",
+                                chat_id, "✨ Add motion?",
                                 reply_markup={"inline_keyboard": [[
-                                    {"text": "✅ With zoom", "callback_data": f"media:dz:{_eff}"},
-                                    {"text": "❌ No zoom", "callback_data": f"media:{_eff}"},
+                                    {"text": "🔍 Zoom", "callback_data": f"media:dz:{_eff}"},
+                                    {"text": "📳 Shake", "callback_data": f"media:sh:{_eff}"},
+                                    {"text": "❌ None", "callback_data": f"media:{_eff}"},
                                 ]]},
                             )
-                    elif _action.startswith("dz:"):
-                        # "With zoom" chosen → render the effect, then Ken Burns pan-out it.
+                    elif _action.startswith("dz:") or _action.startswith("sh:"):
+                        # A motion was chosen → render the effect, then transform it.
+                        _motion = "zoom" if _action.startswith("dz:") else "shake"
                         _eff = _action.split(":", 1)[1]
                         if not any(is_image(fn, ct) for fn, _, ct in _atts):
                             await telegram_service.send_message(chat_id, "Nothing to do — that upload has no image.")
                         else:
-                            await telegram_service.send_message(chat_id, f"🔍 {_eff} + zoom…")
+                            await telegram_service.send_message(chat_id, f"✨ {_eff} + {_motion}…")
                             _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                            await _send_files_result(await cb_command_service.execute_command(_eff, "zoom", attachments=_imgs))
+                            await _send_files_result(await cb_command_service.execute_command(_eff, _motion, attachments=_imgs))
                     elif _action == "meme":
                         # ForceReply for the caption; the image stays in the cache and is
                         # captioned when the reply arrives (see _MEME_PROMPT routing).

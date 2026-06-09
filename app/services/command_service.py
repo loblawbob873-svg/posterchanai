@@ -612,8 +612,9 @@ class CommandService:
         "ss": "screenshot",
     }
 
-    # Effects that accept a trailing `zoom` arg (Ken Burns pan-out of the output).
-    ZOOMABLE_EFFECTS = {
+    # Effects that accept a trailing motion arg (`zoom` Ken Burns pan-out or
+    # `shake` camera shake of the output).
+    MOTION_EFFECTS = {
         "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay",
         "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete",
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
@@ -692,19 +693,22 @@ class CommandService:
         # commands literally (Telegram) accept them just like the web UI's parse_command.
         command = self.COMMAND_ALIASES.get(command, command)
 
-        # "<effect> zoom" → run the effect, then Ken Burns zoom-out its output
-        # (e.g. `dildo zoom`). Re-enter with the trailing token stripped so the
-        # normal dispatch runs untouched, then pan-out the resulting files. The
-        # strip keeps any preceding arg intact (e.g. `meme some text zoom`).
-        _ztokens = (arg or "").split()
-        if command in self.ZOOMABLE_EFFECTS and _ztokens and _ztokens[-1].lower() == "zoom":
+        # "<effect> zoom" / "<effect> shake" → run the effect, then apply the
+        # motion to its output (e.g. `dildo zoom`). Re-enter with the trailing
+        # token stripped so the normal dispatch runs untouched, then transform the
+        # resulting files. The strip keeps any preceding arg intact (e.g.
+        # `meme some text zoom`).
+        _mtokens = (arg or "").split()
+        if command in self.MOTION_EFFECTS and _mtokens and _mtokens[-1].lower() in ("zoom", "shake"):
             import asyncio
             from app.services import effects_service
+            _motion = _mtokens[-1].lower()
             inner = await self.execute_command(
-                command, " ".join(_ztokens[:-1]), last_prompt, stop_check, attachments, node_notify,
+                command, " ".join(_mtokens[:-1]), last_prompt, stop_check, attachments, node_notify,
             )
             if isinstance(inner, dict) and inner.get("type") == "files" and inner.get("files"):
-                inner["files"] = await asyncio.to_thread(effects_service.apply_zoom, inner["files"])
+                _apply = effects_service.apply_shake if _motion == "shake" else effects_service.apply_zoom
+                inner["files"] = await asyncio.to_thread(_apply, inner["files"])
             return inner
 
         if command == "help":

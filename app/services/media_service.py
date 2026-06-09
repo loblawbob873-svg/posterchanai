@@ -557,14 +557,13 @@ def _probe_duration(path: str) -> float:
         return 0.0
 
 
-def image_zoompan_video(image_data: bytes, source_filename: str, duration: float = 4.0,
-                        audio_path: Optional[str] = None) -> bytes:
-    """Ken Burns zoom-out: start ~1.25x zoomed in on the image centre and pan
-    out to the full frame over `duration` seconds. Optional `audio_path` is
-    muxed in (used by the audio effects, whose still frame gets the motion).
-
-    Even dimensions + yuv420p for broad playback; reuses the same HW-accel
-    encoder autodetect (NVENC → VAAPI → libx264) as the other video paths.
+def _render_motion_video(image_data: bytes, source_filename: str, vf_builder,
+                         duration: float = 4.0, audio_path: Optional[str] = None) -> bytes:
+    """Render a motion clip from a still image. `vf_builder(W, H, n_frames)`
+    returns the video-filter chain (scale + motion, NO format/hwupload suffix);
+    the encoder loop appends the right pixel-format step per encoder. Optional
+    `audio_path` is muxed in. Even dimensions + yuv420p for broad playback;
+    reuses the HW-accel encoder autodetect (NVENC → VAAPI → libx264).
     Returns MP4 bytes; raises RuntimeError if ffmpeg is missing or all fail.
     """
     global _video_encoder_cache
@@ -575,7 +574,7 @@ def image_zoompan_video(image_data: bytes, source_filename: str, duration: float
     if audio_path and not os.path.exists(audio_path):
         audio_path = None
 
-    tmp_dir = tempfile.mkdtemp(prefix="media_zoom_")
+    tmp_dir = tempfile.mkdtemp(prefix="media_motion_")
     in_suffix = _ext(source_filename) or ".jpg"
     in_path = os.path.join(tmp_dir, f"input{in_suffix}")
     out_path = os.path.join(tmp_dir, "output.mp4")
@@ -593,14 +592,7 @@ def image_zoompan_video(image_data: bytes, source_filename: str, duration: float
         fps = 25
         dur = max(0.5, float(duration))
         n_frames = max(2, int(round(fps * dur)))
-        # Pre-upscale 2x so zoompan's integer steps don't jitter, then zoom from
-        # 1.25x down to 1.0 over the clip, kept centred.
-        zexpr = f"max(1.0,1.25-0.25*on/{n_frames})"
-        zoompan = (
-            f"scale={2 * W}:{2 * H},"
-            f"zoompan=z='{zexpr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
-            f"d={n_frames}:s={W}x{H}:fps={fps}"
-        )
+        motion = vf_builder(W, H, n_frames)
 
         candidates = _video_encoder_candidates(ffmpeg)
         if _video_encoder_cache and _video_encoder_cache in candidates:
@@ -608,12 +600,12 @@ def image_zoompan_video(image_data: bytes, source_filename: str, duration: float
 
         last_err = ""
         for encoder in candidates:
-            pre, vf = [], zoompan + ",format=yuv420p"
+            pre, vf = [], motion + ",format=yuv420p"
             if encoder == "h264_nvenc":
                 venc = ["-c:v", "h264_nvenc", "-preset", "p5"]
             elif encoder == "h264_vaapi":
                 pre = ["-vaapi_device", _render_node()]
-                vf = zoompan + ",format=nv12,hwupload"
+                vf = motion + ",format=nv12,hwupload"
                 venc = ["-c:v", "h264_vaapi"]
             else:  # libx264
                 venc = ["-c:v", "libx264", "-preset", VIDEO_PRESET, "-crf", str(VIDEO_CRF)]
@@ -631,23 +623,23 @@ def image_zoompan_video(image_data: bytes, source_filename: str, duration: float
                 with open(out_path, "rb") as f:
                     return f.read()
             last_err = (result.stderr or "")[-300:]
-            logger.warning(f"zoom encoder {encoder} failed, trying next: {last_err}")
+            logger.warning(f"motion encoder {encoder} failed, trying next: {last_err}")
             if os.path.exists(out_path):
                 os.unlink(out_path)
 
-        raise RuntimeError(f"zoom video failed (tried {candidates}): {last_err}")
+        raise RuntimeError(f"motion video failed (tried {candidates}): {last_err}")
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-def zoom_existing_video(video_data: bytes, source_filename: str = "video.mp4") -> bytes:
-    """Apply the zoom-out motion to a still-frame effect video, keeping its
-    audio: pulls the first frame + the original audio and re-renders the pan-out
-    over the clip's real length. Returns MP4 bytes."""
+def _motion_existing_video(video_data: bytes, source_filename: str, render_fn) -> bytes:
+    """Apply a still-image motion (`render_fn`) to an existing static-frame effect
+    video, keeping its audio: pulls the first frame + the original audio and
+    re-renders the motion over the clip's real length. Returns MP4 bytes."""
     ffmpeg = resolve_ffmpeg()
     if not ffmpeg_available():
         raise RuntimeError("ffmpeg is not installed on the server")
-    tmp_dir = tempfile.mkdtemp(prefix="media_zoomv_")
+    tmp_dir = tempfile.mkdtemp(prefix="media_motionv_")
     vin = os.path.join(tmp_dir, "in.mp4")
     frame = os.path.join(tmp_dir, "frame.png")
     try:
@@ -662,9 +654,52 @@ def zoom_existing_video(video_data: bytes, source_filename: str = "video.mp4") -
             raise RuntimeError(f"could not extract a frame: {(extract.stderr or '')[-200:]}")
         with open(frame, "rb") as f:
             frame_data = f.read()
-        return image_zoompan_video(frame_data, "frame.png", duration=dur, audio_path=vin)
+        return render_fn(frame_data, "frame.png", duration=dur, audio_path=vin)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _zoom_vf(W: int, H: int, n_frames: int) -> str:
+    # Pre-upscale 2x so zoompan's integer steps don't jitter, then zoom from
+    # 1.25x down to 1.0 over the clip, kept centred.
+    zexpr = f"max(1.0,1.25-0.25*on/{n_frames})"
+    return (
+        f"scale={2 * W}:{2 * H},"
+        f"zoompan=z='{zexpr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+        f"d={n_frames}:s={W}x{H}:fps=25"
+    )
+
+
+def _shake_vf(W: int, H: int, n_frames: int) -> str:
+    # Camera shake: upscale ~10% for margin, then crop a W×H window whose centre
+    # jitters via two out-of-phase sinusoids per axis (stays inside the margin).
+    sw = max(W + 2, int(W * 1.1) // 2 * 2)
+    sh = max(H + 2, int(H * 1.1) // 2 * 2)
+    xexpr = f"(in_w-{W})/2+(in_w-{W})/2*0.9*sin(2*PI*9*t)"
+    yexpr = f"(in_h-{H})/2+(in_h-{H})/2*0.9*cos(2*PI*11*t)"
+    return f"scale={sw}:{sh},crop={W}:{H}:'{xexpr}':'{yexpr}'"
+
+
+def image_zoompan_video(image_data: bytes, source_filename: str, duration: float = 4.0,
+                        audio_path: Optional[str] = None) -> bytes:
+    """Ken Burns zoom-out from a still image (see `_render_motion_video`)."""
+    return _render_motion_video(image_data, source_filename, _zoom_vf, duration, audio_path)
+
+
+def image_shake_video(image_data: bytes, source_filename: str, duration: float = 4.0,
+                      audio_path: Optional[str] = None) -> bytes:
+    """Camera-shake clip from a still image (see `_render_motion_video`)."""
+    return _render_motion_video(image_data, source_filename, _shake_vf, duration, audio_path)
+
+
+def zoom_existing_video(video_data: bytes, source_filename: str = "video.mp4") -> bytes:
+    """Apply the zoom-out motion to a still-frame effect video, keeping its audio."""
+    return _motion_existing_video(video_data, source_filename, image_zoompan_video)
+
+
+def shake_existing_video(video_data: bytes, source_filename: str = "video.mp4") -> bytes:
+    """Apply the camera-shake motion to a still-frame effect video, keeping its audio."""
+    return _motion_existing_video(video_data, source_filename, image_shake_video)
 
 
 # ---------------------------------------------------------------------------

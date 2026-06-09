@@ -2562,45 +2562,51 @@ def hood_attachments(
 
 
 # ---------------------------------------------------------------------------
-# Zoom (the "zoom" trailing arg, e.g. `dildo zoom`) — Ken Burns pan-out applied
-# to ANY effect's output: an image becomes a short pan-out video; an
-# audio/video effect keeps its audio while its still frame zooms out.
+# Motion subcommands (trailing arg, e.g. `dildo zoom` / `dildo shake`) — applied
+# to ANY effect's output: an image becomes a short motion video; an audio/video
+# effect keeps its audio while its still frame moves.
 # ---------------------------------------------------------------------------
 
-# How long the pan-out runs for an image effect (audio effects use their own
-# length so the zoom completes over the whole clip).
-_ZOOM_IMAGE_DURATION = 4.0
+# How long the motion runs for an image effect (audio effects use their own
+# length so the motion completes over the whole clip).
+_MOTION_IMAGE_DURATION = 4.0
 
 
-def apply_zoom(outputs: List[OutputFile]) -> List[OutputFile]:
-    """Replace each effect output with a zoom-out (Ken Burns) version. Images
-    turn into a short pan-out MP4; existing videos are re-rendered with the
-    same motion, keeping their audio. On failure the original output is kept."""
-    from app.services.media_service import image_zoompan_video, zoom_existing_video
-
-    zoomed: List[OutputFile] = []
+def _apply_motion(outputs: List[OutputFile], suffix: str, image_fn, video_fn) -> List[OutputFile]:
+    """Replace each effect output with a motion version. Images turn into a short
+    motion MP4 (via `image_fn`); existing videos are re-rendered with the same
+    motion keeping their audio (via `video_fn`). Original kept on failure."""
+    result_files: List[OutputFile] = []
     for out in outputs or []:
         ct = (out.get("content_type") or "").lower()
         fn = out.get("filename") or "image"
         stem = Path(fn).stem or "image"
         try:
             if ct.startswith("image/"):
-                video = image_zoompan_video(out["data"], fn, duration=_ZOOM_IMAGE_DURATION)
-                zoomed.append({
-                    "filename": f"{stem}_zoom.mp4",
-                    "data": video,
-                    "content_type": "video/mp4",
-                })
+                video = image_fn(out["data"], fn, duration=_MOTION_IMAGE_DURATION)
             elif ct.startswith("video/"):
-                video = zoom_existing_video(out["data"], fn)
-                zoomed.append({
-                    "filename": f"{stem}_zoom.mp4",
-                    "data": video,
-                    "content_type": "video/mp4",
-                })
+                video = video_fn(out["data"], fn)
             else:
-                zoomed.append(out)
+                result_files.append(out)
+                continue
+            result_files.append({
+                "filename": f"{stem}_{suffix}.mp4",
+                "data": video,
+                "content_type": "video/mp4",
+            })
         except Exception as e:
-            logger.error(f"zoom failed for {fn}: {e}", exc_info=True)
-            zoomed.append(out)
-    return zoomed
+            logger.error(f"{suffix} failed for {fn}: {e}", exc_info=True)
+            result_files.append(out)
+    return result_files
+
+
+def apply_zoom(outputs: List[OutputFile]) -> List[OutputFile]:
+    """Ken Burns zoom-out pan applied to each effect output (the `zoom` arg)."""
+    from app.services.media_service import image_zoompan_video, zoom_existing_video
+    return _apply_motion(outputs, "zoom", image_zoompan_video, zoom_existing_video)
+
+
+def apply_shake(outputs: List[OutputFile]) -> List[OutputFile]:
+    """Camera-shake motion applied to each effect output (the `shake` arg)."""
+    from app.services.media_service import image_shake_video, shake_existing_video
+    return _apply_motion(outputs, "shake", image_shake_video, shake_existing_video)

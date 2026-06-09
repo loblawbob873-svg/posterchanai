@@ -4,7 +4,8 @@ Copy the block below into opencode, filling in the four placeholders at the top.
 These effects turn an attached image into a short MP4 with a sound clip over it
 (like `curb`, `fbi`, `hood`). The effect name becomes a command usable in the
 web UI, Telegram, Matrix, and the Pleroma/Misskey/Matrix bots, and it
-automatically supports the `<name> zoom` Ken Burns pan-out (no extra wiring).
+automatically supports the `<name> zoom` (Ken Burns pan-out) and `<name> shake`
+(camera shake) motion subcommands (no extra wiring).
 
 Existing effects to copy from: `meme dildo poo cum blood bullethole fire gay
 blacked kosher barked hava indian yakety yamete curb depressing fahh helpme gong
