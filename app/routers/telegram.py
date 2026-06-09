@@ -3658,6 +3658,12 @@ async def _handle_telegram_update(update: dict, db: Session):
                         _eff = _action.split(":", 1)[1]
                         if not any(is_image(fn, ct) for fn, _, ct in _atts):
                             await telegram_service.send_message(chat_id, "Nothing to do — that upload has no image.")
+                        elif _eff in CommandService.ANIMATED_EFFECTS:
+                            # Already-animated effect — zoom/shake would freeze it, so
+                            # skip the motion menu and render it straight away.
+                            await telegram_service.send_message(chat_id, f"✨ {_eff}…")
+                            _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                            await _send_files_result(await cb_command_service.execute_command(_eff, "", attachments=_imgs))
                         else:
                             _rows = [[
                                 {"text": "🔍 Zoom", "callback_data": f"media:dz:{_eff}"},

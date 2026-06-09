@@ -637,6 +637,12 @@ class CommandService:
         "harlem", "chimp", "thug",
     }
 
+    # Effects whose output is ALREADY animated (e.g. the chimp gif overlay). The
+    # zoom/shake motions freeze-and-pan a single still frame (they extract frame 1 of
+    # the effect video), which would kill a real animation — so skip them here. A
+    # `meme` caption is still fine (ffmpeg drawtext preserves the motion).
+    ANIMATED_EFFECTS = {"chimp"}
+
     # Natural language phrases that map directly to commands with arguments
     # Format: "phrase" -> ("command", "argument")
     PHRASE_COMMANDS = {}
@@ -738,7 +744,9 @@ class CommandService:
                 )
                 if isinstance(inner, dict) and inner.get("type") == "files" and inner.get("files"):
                     files = inner["files"]
-                    if _motion:
+                    # zoom/shake would freeze an already-animated effect (they pan a
+                    # single still frame) — skip them for those, keep the caption.
+                    if _motion and command not in self.ANIMATED_EFFECTS:
                         _apply = effects_service.apply_shake if _motion == "shake" else effects_service.apply_zoom
                         files = await asyncio.to_thread(_apply, files)
                     if _meme_text:
