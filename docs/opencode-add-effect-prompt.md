@@ -7,7 +7,7 @@ web UI, Telegram, Matrix, and the Pleroma/Misskey/Matrix bots, and it
 automatically supports the `<name> zoom` Ken Burns pan-out (no extra wiring).
 
 Existing effects to copy from: `meme dildo poo cum blood bullethole fire gay
-blacked kosher barked hava indian yakety yamete curb depressing fuu helpme gong
+blacked kosher barked hava indian yakety yamete curb depressing fahh helpme gong
 fbi redeem gigity beavis smell hood`.
 
 ---

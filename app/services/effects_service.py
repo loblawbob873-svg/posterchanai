@@ -2064,39 +2064,39 @@ def depressing_attachments(
 
 
 # ---------------------------------------------------------------------------
-# Fuu (turn an image into a 5s MP4 set to the fuu clip — the "fuu" gag)
+# Fahh (turn an image into a short MP4 set to the fahh clip — the "fahh" gag)
 # ---------------------------------------------------------------------------
 
-# The shipped fuu track (repo-relative), overridable with FUU_AUDIO_PATH.
-_FUU_AUDIO_CANDIDATES = [
-    os.environ.get("FUU_AUDIO_PATH", ""),
-    os.path.join(_REPO_ROOT, "assets", "fuu.mp3"),
-    "/var/lib/posterchanai/assets/fuu.mp3",
+# The shipped fahh track (repo-relative), overridable with FAHH_AUDIO_PATH.
+_FAHH_AUDIO_CANDIDATES = [
+    os.environ.get("FAHH_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "fahh.mp3"),
+    "/var/lib/posterchanai/assets/fahh.mp3",
 ]
-_FUU_DURATION = 5.0
+_FAHH_DURATION = 5.0
 
 
-def _fuu_audio_path() -> str:
-    """First existing fuu mp3 from the candidate list ("" if none)."""
-    for p in _FUU_AUDIO_CANDIDATES:
+def _fahh_audio_path() -> str:
+    """First existing fahh mp3 from the candidate list ("" if none)."""
+    for p in _FAHH_AUDIO_CANDIDATES:
         if p and os.path.exists(p):
             return p
     return ""
 
 
-def add_fuu(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
-    """Turn a still image into a 5s MP4 playing the fuu clip over it. MP4 bytes."""
+def add_fahh(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the fahh clip over it. MP4 bytes."""
     from app.services.media_service import image_audio_to_video
-    audio = _fuu_audio_path()
+    audio = _fahh_audio_path()
     if not audio:
-        raise RuntimeError("Fuu audio (assets/fuu.mp3) is missing on the server")
-    return image_audio_to_video(image_data, source_filename, audio, duration=_FUU_DURATION)
+        raise RuntimeError("Fahh audio (assets/fahh.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_FAHH_DURATION)
 
 
-def fuu_attachments(
+def fahh_attachments(
     attachments: List[Tuple[str, bytes, str]],
 ) -> Tuple[List[OutputFile], str]:
-    """Turn the first image attachment into a fuu 5s MP4. Mirrors
+    """Turn the first image attachment into a fahh MP4. Mirrors
     depressing_attachments (video output, routed through the bots' video path)."""
     images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
     if not images:
@@ -2104,16 +2104,16 @@ def fuu_attachments(
     filename, data, _ = images[0]
     stem = Path(filename).stem or "image"
     try:
-        result = add_fuu(data, filename)
+        result = add_fahh(data, filename)
         out: OutputFile = {
-            "filename": f"{stem}_fuu.mp4",
+            "filename": f"{stem}_fahh.mp4",
             "data": result,
             "content_type": "video/mp4",
         }
-        summary = f"## 🌀 Fuu\n\n🌀 {filename}: {_human_size(len(result))}"
+        summary = f"## 🌀 Fahh\n\n🌀 {filename}: {_human_size(len(result))}"
         return [out], summary
     except Exception as e:
-        logger.error(f"fuu failed for {filename}: {e}", exc_info=True)
+        logger.error(f"fahh failed for {filename}: {e}", exc_info=True)
         return [], f"❌ {filename}: {e}"
 
 
@@ -2151,7 +2151,7 @@ def helpme_attachments(
     attachments: List[Tuple[str, bytes, str]],
 ) -> Tuple[List[OutputFile], str]:
     """Turn the first image attachment into a helpme 5s MP4. Mirrors
-    fuu_attachments (video output, routed through the bots' video path)."""
+    fahh_attachments (video output, routed through the bots' video path)."""
     images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
     if not images:
         return [], "No image — attach an image first."

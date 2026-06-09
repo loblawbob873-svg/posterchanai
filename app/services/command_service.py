@@ -582,7 +582,7 @@ class CommandService:
         "yamete": "Turn an attached image into a 6s MP4 set to the yamete clip: yamete",
         "curb": "Turn an attached image into an MP4 set to the Curb Your Enthusiasm theme: curb",
         "depressing": "Turn an attached image into a 10s MP4 set to a depressing track: depressing",
-        "fuu": "Turn an attached image into a 5s MP4 set to the fuu clip: fuu",
+        "fahh": "Turn an attached image into a short MP4 set to the fahh clip: fahh",
         "helpme": "Turn an attached image into a 5s MP4 set to the helpme clip: helpme",
         "gong": "Turn an attached image into a short MP4 set to the gong clip: gong",
         "fbi": "Turn an attached image into a short MP4 set to the FBI open up clip: fbi",
@@ -616,7 +616,7 @@ class CommandService:
     ZOOMABLE_EFFECTS = {
         "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay",
         "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete",
-        "curb", "depressing", "fuu", "helpme", "gong", "fbi", "redeem",
+        "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
         "gigity", "beavis", "smell", "hood",
     }
 
@@ -779,8 +779,8 @@ class CommandService:
             return await self._curb_command(attachments)
         elif command == "depressing":
             return await self._depressing_command(attachments)
-        elif command == "fuu":
-            return await self._fuu_command(attachments)
+        elif command == "fahh":
+            return await self._fahh_command(attachments)
         elif command == "helpme":
             return await self._helpme_command(attachments)
         elif command == "gong":
@@ -3568,17 +3568,17 @@ Files are saved to your Storage.""",
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
 
-    async def _fuu_command(self, attachments: Optional[list]) -> dict:
-        """Turn an attached image into a 5s MP4 set to the fuu clip: `fuu`."""
+    async def _fahh_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into a short MP4 set to the fahh clip: `fahh`."""
         from app.services.media_service import is_image
 
         if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
-            return {"type": "text", "content": "Attach an image, then send `fuu`."}
+            return {"type": "text", "content": "Attach an image, then send `fahh`."}
 
         import asyncio
-        from app.services.effects_service import fuu_attachments
+        from app.services.effects_service import fahh_attachments
 
-        outputs, summary = await asyncio.to_thread(fuu_attachments, attachments)
+        outputs, summary = await asyncio.to_thread(fahh_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}

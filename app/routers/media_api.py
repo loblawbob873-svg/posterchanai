@@ -68,7 +68,7 @@ async def process_media(
 ):
     """Run a compress/clip/convert/meme/dildo/poo/cum/blood/bullethole/fire/gay/blacked/kosher/barked operation on the supplied attachments."""
     command = (req.command or "").strip().lower()
-    if command not in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fuu", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood"):
+    if command not in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood"):
         return {"error": f"unsupported command '{command}'"}
 
     # "<effect> zoom" trailing arg → Ken Burns pan-out the output (e.g. `dildo
@@ -132,8 +132,8 @@ async def process_media(
             outputs, summary = await asyncio.to_thread(effects_service.curb_attachments, attachments)
         elif command == "depressing":
             outputs, summary = await asyncio.to_thread(effects_service.depressing_attachments, attachments)
-        elif command == "fuu":
-            outputs, summary = await asyncio.to_thread(effects_service.fuu_attachments, attachments)
+        elif command == "fahh":
+            outputs, summary = await asyncio.to_thread(effects_service.fahh_attachments, attachments)
         elif command == "helpme":
             outputs, summary = await asyncio.to_thread(effects_service.helpme_attachments, attachments)
         elif command == "gong":

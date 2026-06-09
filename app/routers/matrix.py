@@ -277,7 +277,7 @@ async def execute_matrix_command(
     # before the linked-account requirement below (the bot-API-key auth above is the
     # only gate they need).
     if data.media and command_str.split()[0].lower() in (
-        "compress", "clip", "convert", "translate", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fuu", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood"
+        "compress", "clip", "convert", "translate", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood"
     ):
         from app.services.command_service import CommandService
         _media_svc = CommandService(db, user=user)
@@ -550,7 +550,7 @@ async def execute_matrix_command(
             "• `yamete` — turn an image into a 6s yamete video.\n"
             "• `curb` — turn an image into a Curb Your Enthusiasm video.\n"
             "• `depressing` — turn an image into a 10s depressing video.\n"
-            "• `fuu` — turn an image into a 5s fuu video.\n"
+            "• `fahh` — turn an image into a fahh video.\n"
             "• `helpme` — turn an image into a 5s helpme video.\n"
             "• `gong` — turn an image into a gong video.\n"
             "• `fbi` — turn an image into an FBI open up video.\n"
