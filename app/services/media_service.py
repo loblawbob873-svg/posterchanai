@@ -543,16 +543,19 @@ def image_audio_to_video(image_data: bytes, source_filename: str, audio_path: st
 
 
 def image_gif_overlay_video(image_data: bytes, source_filename: str, gif_path: str,
-                            duration: float = 6.0) -> bytes:
-    """Composite a (looping, transparent) GIF onto the lower third of a still image
-    and render to one MP4.
+                            duration: float = 6.0, audio_path: Optional[str] = None,
+                            height_frac: float = 0.55) -> bytes:
+    """Composite a (looping, transparent) GIF onto the lower part of a still image
+    and render to one fixed-length MP4.
 
     The background image is held static (`-loop 1`) while the GIF loops
-    (`-ignore_loop 0`) for `duration` seconds. The GIF is scaled to a third of the
-    image height (aspect kept), centred horizontally and anchored to the bottom; its
-    transparency is preserved so only the artwork sits over the photo. Reuses the
-    same HW-accel encoder autodetect (NVENC → VAAPI → libx264) as the audio effects.
-    Returns MP4 bytes; raises RuntimeError if ffmpeg is missing or every encoder fails.
+    (`-ignore_loop 0`); the clip runs exactly `duration` seconds. The GIF is scaled to
+    `height_frac` of the image height (aspect kept), centred horizontally and anchored
+    to the bottom; its transparency is preserved so only the artwork sits over the
+    photo. If `audio_path` is given it's looped (`-stream_loop -1`) to fill the whole
+    clip duration. Reuses the same HW-accel encoder autodetect (NVENC → VAAPI →
+    libx264) as the audio effects. Returns MP4 bytes; raises RuntimeError if ffmpeg is
+    missing or every encoder fails.
     """
     global _video_encoder_cache
     ffmpeg = resolve_ffmpeg()
@@ -560,6 +563,8 @@ def image_gif_overlay_video(image_data: bytes, source_filename: str, gif_path: s
         raise RuntimeError("ffmpeg is not installed on the server")
     if not (gif_path and os.path.exists(gif_path)):
         raise RuntimeError(f"overlay gif not found: {gif_path}")
+    has_audio = bool(audio_path and os.path.exists(audio_path))
+    height_frac = min(max(height_frac, 0.1), 1.0)
 
     tmp_dir = tempfile.mkdtemp(prefix="media_overlay_")
     in_suffix = _ext(source_filename) or ".jpg"
@@ -569,13 +574,13 @@ def image_gif_overlay_video(image_data: bytes, source_filename: str, gif_path: s
         with open(in_path, "wb") as f:
             f.write(image_data)
 
-        # scale2ref sizes the GIF to a third of the image height (aspect kept), then
-        # overlay centres it horizontally and anchors it to the bottom edge.
+        # scale2ref sizes the GIF to `height_frac` of the image height (aspect kept),
+        # then overlay centres it horizontally and anchors it to the bottom edge.
         base = (
             "[0:v]scale=trunc(iw/2)*2:trunc(ih/2)*2[bg0];"
             "[1:v]format=rgba,fps=12[g];"
-            "[g][bg0]scale2ref=w=-1:h=main_h/3[ov][bg];"
-            "[bg][ov]overlay=x=(W-w)/2:y=H-h:shortest=1"
+            f"[g][bg0]scale2ref=w=-1:h=main_h*{height_frac:.3f}[ov][bg];"
+            "[bg][ov]overlay=x=(W-w)/2:y=H-h:shortest=0"
         )
 
         candidates = _video_encoder_candidates(ffmpeg)
@@ -598,8 +603,11 @@ def image_gif_overlay_video(image_data: bytes, source_filename: str, gif_path: s
             cmd = (
                 [ffmpeg] + pre
                 + ["-loop", "1", "-framerate", "12", "-i", in_path,
-                   "-ignore_loop", "0", "-i", gif_path,
-                   "-filter_complex", fc, "-map", "[v]"]
+                   "-ignore_loop", "0", "-i", gif_path]
+                # -stream_loop -1 repeats the track to fill the whole clip duration.
+                + (["-stream_loop", "-1", "-i", audio_path] if has_audio else [])
+                + ["-filter_complex", fc, "-map", "[v]"]
+                + (["-map", "2:a", "-c:a", "aac", "-b:a", VIDEO_AUDIO_BITRATE] if has_audio else [])
                 + venc
                 + ["-r", "12", "-t", f"{duration:.3f}",
                    "-movflags", "+faststart", "-y", out_path]

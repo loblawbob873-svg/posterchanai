@@ -3233,7 +3233,13 @@ _CHIMP_GIF_CANDIDATES = [
     os.path.join(_REPO_ROOT, "assets", "chimp.gif"),
     "/var/lib/posterchanai/assets/chimp.gif",
 ]
-# How long the looping overlay video runs.
+# Optional chimp soundtrack (repo-relative), overridable with CHIMP_AUDIO_PATH.
+_CHIMP_AUDIO_CANDIDATES = [
+    os.environ.get("CHIMP_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "chimp.mp3"),
+    "/var/lib/posterchanai/assets/chimp.mp3",
+]
+# Safety cap on the looping overlay video; with audio, `-shortest` ends it with the track.
 _CHIMP_DURATION = 6.0
 
 
@@ -3245,13 +3251,23 @@ def _chimp_gif_path() -> str:
     return ""
 
 
+def _chimp_audio_path() -> str:
+    """First existing chimp mp3 from the candidate list ("" if none)."""
+    for p in _CHIMP_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
 def add_chimp(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
-    """Composite the animated chimp gif over the lower third of an image. MP4 bytes."""
+    """Composite the animated chimp gif over the lower third of an image, with its
+    soundtrack if present. MP4 bytes."""
     from app.services.media_service import image_gif_overlay_video
     gif = _chimp_gif_path()
     if not gif:
         raise RuntimeError("Chimp gif (assets/chimp.gif) is missing on the server")
-    return image_gif_overlay_video(image_data, source_filename, gif, duration=_CHIMP_DURATION)
+    return image_gif_overlay_video(image_data, source_filename, gif,
+                                   duration=_CHIMP_DURATION, audio_path=_chimp_audio_path() or None)
 
 
 def chimp_attachments(
