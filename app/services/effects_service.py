@@ -2799,7 +2799,9 @@ def _detect_thug_faces(gray, anime_gray, im_w: int, im_h: int):
     if anime_xml:
         anime = cv2.CascadeClassifier(anime_xml)
         if not anime.empty():
-            boxes += [(b, "anime") for b in anime.detectMultiScale(anime_gray, scaleFactor=1.1, minNeighbors=5, minSize=min_side)]
+            # minNeighbors=3 is nagadomi's default; 5 missed many real faces. The
+            # min_side floor (above) is what suppresses spurious tiny detections.
+            boxes += [(b, "anime") for b in anime.detectMultiScale(anime_gray, scaleFactor=1.1, minNeighbors=3, minSize=min_side)]
     # Drop boxes whose centre falls inside an already-accepted box (same face hit
     # by both cascades). Prefer a 'real' hit over an 'anime' one on the same face
     # (real geometry is correct for photos; true anime never trips the real
@@ -2849,6 +2851,9 @@ def _apply_thug_face(image_data: bytes) -> bytes:
             faces = _detect_thug_faces(gray, cv2.equalizeHist(gray), im.width, im.height)
             if not faces:
                 return image_data
+            # Thug memes target one subject; keep only the largest face so stray
+            # cascade hits on hands/collars/background don't get stamped too.
+            faces = [max(faces, key=lambda f: f[2] * f[3])]
             eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_eye.xml")
             # Joint + smoke go on an RGBA overlay so the smoke can be translucent.
             overlay = Image.new("RGBA", im.size, (0, 0, 0, 0))
