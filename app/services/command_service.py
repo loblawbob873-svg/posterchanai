@@ -594,6 +594,7 @@ class CommandService:
         "akbar": "Turn an attached image into a short MP4 set to the akbar clip: akbar",
         "retard": "Turn an attached image into a short MP4 set to the retard-alert clip: retard",
         "whoabuddy": "Turn an attached image into a short MP4 set to the whoa buddy clip: whoabuddy",
+        "thug": "Turn an attached image into an MP4 set to the THUG LIFE clip: thug",
         "node": "Remote node mgmt: node <name> <cmd> | node all <cmd> | node agent <name> <goal> | node agent all <goal> | node list | node jobs | node log <id> | node kill <id>",
         "budget": "Show your budget summary (income, unpaid bills, remaining)",
         "bills": "List your bills: bills (unpaid) | bills all | bills paid",
@@ -621,7 +622,7 @@ class CommandService:
         "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay",
         "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete",
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
-        "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy",
+        "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "thug",
     }
 
     # Natural language phrases that map directly to commands with arguments
@@ -810,6 +811,8 @@ class CommandService:
             return await self._retard_command(attachments)
         elif command == "whoabuddy":
             return await self._whoabuddy_command(attachments)
+        elif command == "thug":
+            return await self._thug_command(attachments)
         elif command == "node":
             return await self._node_command(arg, notify=node_notify)
         elif command == "budget":
@@ -3757,6 +3760,21 @@ Files are saved to your Storage.""",
         from app.services.effects_service import whoabuddy_attachments
 
         outputs, summary = await asyncio.to_thread(whoabuddy_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _thug_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into an MP4 set to the THUG LIFE clip: `thug`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `thug`."}
+
+        import asyncio
+        from app.services.effects_service import thug_attachments
+
+        outputs, summary = await asyncio.to_thread(thug_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}

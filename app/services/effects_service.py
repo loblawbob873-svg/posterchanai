@@ -2729,6 +2729,61 @@ def whoabuddy_attachments(
 
 
 # ---------------------------------------------------------------------------
+# Thug (turn an image into an MP4 set to the THUG LIFE clip — the "thug" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped thug track (repo-relative), overridable with THUG_AUDIO_PATH.
+_THUG_AUDIO_CANDIDATES = [
+    os.environ.get("THUG_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "thug.mp3"),
+    "/var/lib/posterchanai/assets/thug.mp3",
+]
+# Cap above the ~17.5s clip length; -shortest ends the video at the audio end.
+_THUG_DURATION = 18.0
+
+
+def _thug_audio_path() -> str:
+    """First existing thug mp3 from the candidate list ("" if none)."""
+    for p in _THUG_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_thug(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into an MP4 playing the THUG LIFE clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _thug_audio_path()
+    if not audio:
+        raise RuntimeError("Thug audio (assets/thug.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_THUG_DURATION)
+
+
+def thug_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a THUG LIFE MP4. Mirrors
+    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_thug(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_thug.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 😎 Thug\n\n😎 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"thug failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
 # Motion subcommands (trailing arg, e.g. `dildo zoom` / `dildo shake`) — applied
 # to ANY effect's output: an image becomes a short motion video; an audio/video
 # effect keeps its audio while its still frame moves.
