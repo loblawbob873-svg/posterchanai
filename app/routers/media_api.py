@@ -71,16 +71,23 @@ async def process_media(
     if command not in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "thug"):
         return {"error": f"unsupported command '{command}'"}
 
-    # "<effect> zoom" / "<effect> shake" trailing arg → apply that motion to the
-    # output (e.g. `dildo zoom`). Strip the token here so it doesn't leak into
-    # meme caption text; apply the motion to the produced files after dispatch.
+    # Trailing subcommands on an effect: <effect> [zoom|shake] [meme <text>]
+    # (e.g. `dildo zoom meme top text`). Strip them here; apply motion then
+    # caption to the produced files after dispatch.
     arg = req.arg or ""
     motion = None
+    meme_text = None
     if command not in ("compress", "clip", "convert"):
-        _zt = arg.split()
-        if _zt and _zt[-1].lower() in ("zoom", "shake"):
-            motion = _zt[-1].lower()
-            arg = " ".join(_zt[:-1])
+        _toks = arg.split()
+        _low = [t.lower() for t in _toks]
+        if command not in ("meme", "thug") and "meme" in _low:
+            _i = _low.index("meme")
+            meme_text = " ".join(_toks[_i + 1:]).strip()
+            _toks, _low = _toks[:_i], _low[:_i]
+        if _low and _low[-1] in ("zoom", "shake"):
+            motion = _low[-1]
+            _toks = _toks[:-1]
+        arg = " ".join(_toks)
 
     attachments = []
     for item in (req.media or []):
@@ -172,6 +179,8 @@ async def process_media(
         if motion and outputs:
             _apply = effects_service.apply_shake if motion == "shake" else effects_service.apply_zoom
             outputs = await asyncio.to_thread(_apply, outputs)
+        if meme_text and outputs:
+            outputs = await asyncio.to_thread(effects_service.apply_meme_text, outputs, meme_text)
     except Exception as e:
         logger.error(f"[MEDIA-API] {command} failed: {e}", exc_info=True)
         return {"error": str(e)}

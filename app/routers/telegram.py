@@ -1270,6 +1270,11 @@ _SOCIAL_CAPTION_PROMPT = "✍️ Add a caption for your post? Reply with text, o
 # After tapping "🖼 Meme" on an image upload, ForceReply for the caption text; the
 # source image stays in the media cache and is captioned when the reply arrives.
 _MEME_PROMPT = "🖼 Meme — reply with the caption text to add:"
+# After tapping "📝 Add caption" in an effect's motion prompt, ForceReply for the
+# caption; the chosen effect + the cached upload are remembered, then the user
+# picks zoom/shake/none and the effect renders with the caption burned on.
+_EFFECT_CAPTION_PROMPT = "✍️ Reply with the caption text for this effect:"
+_effect_caption_pending: dict = {}  # chat_id -> {"eff": str, "text": str, "ts": float}
 
 
 def _media_action_keyboard(attachments: list, user=None) -> Optional[dict]:
@@ -1708,6 +1713,36 @@ async def _handle_telegram_update(update: dict, db: Session):
                 except Exception as _meme_err:
                     logger.error(f"Meme failed: {_meme_err}", exc_info=True)
                     await telegram_service.send_message(chat_id, f"❌ Meme failed: {_meme_err}")
+                return {"ok": True}
+
+            # Reply to the "📝 Add caption" effect prompt → stash the text, then ask
+            # for the motion (zoom/shake/none); the effect renders with the caption.
+            if reply_from.get("is_bot") and reply_text.strip() == _EFFECT_CAPTION_PROMPT:
+                _pend = _effect_caption_pending.get(chat_id)
+                _entry = _media_action_cache.get(chat_id)
+                if not _pend or not _entry or (time.time() - _entry.get("ts", 0)) > _MEDIA_ACTION_TTL:
+                    _effect_caption_pending.pop(chat_id, None)
+                    await telegram_service.send_message(chat_id, "⏳ That upload expired — please send the image again.")
+                    return {"ok": True}
+                _cap = text.strip()
+                if not _cap:
+                    await telegram_service.send_message(
+                        chat_id, "⚠️ Empty caption. " + _EFFECT_CAPTION_PROMPT,
+                        reply_markup={"force_reply": True, "selective": True,
+                                      "input_field_placeholder": "TOP TEXT"},
+                    )
+                    return {"ok": True}
+                _pend["text"] = _cap
+                _pend["ts"] = time.time()
+                _eff = _pend["eff"]
+                await telegram_service.send_message(
+                    chat_id, "✨ Add motion to the captioned effect?",
+                    reply_markup={"inline_keyboard": [[
+                        {"text": "🔍 Zoom", "callback_data": f"media:cgo:{_eff}:zoom"},
+                        {"text": "📳 Shake", "callback_data": f"media:cgo:{_eff}:shake"},
+                        {"text": "❌ None", "callback_data": f"media:cgo:{_eff}:none"},
+                    ]]},
+                )
                 return {"ok": True}
 
             # Interactive video-clip flow: replies to the start/end ForceReply prompts.
@@ -3594,13 +3629,16 @@ async def _handle_telegram_update(update: dict, db: Session):
                         if not any(is_image(fn, ct) for fn, _, ct in _atts):
                             await telegram_service.send_message(chat_id, "Nothing to do — that upload has no image.")
                         else:
+                            _rows = [[
+                                {"text": "🔍 Zoom", "callback_data": f"media:dz:{_eff}"},
+                                {"text": "📳 Shake", "callback_data": f"media:sh:{_eff}"},
+                                {"text": "❌ None", "callback_data": f"media:{_eff}"},
+                            ]]
+                            # thug bakes its own "THUG LIFE" text — no custom caption.
+                            if _eff != "thug":
+                                _rows.append([{"text": "📝 Add caption", "callback_data": f"media:cap:{_eff}"}])
                             await telegram_service.send_message(
-                                chat_id, "✨ Add motion?",
-                                reply_markup={"inline_keyboard": [[
-                                    {"text": "🔍 Zoom", "callback_data": f"media:dz:{_eff}"},
-                                    {"text": "📳 Shake", "callback_data": f"media:sh:{_eff}"},
-                                    {"text": "❌ None", "callback_data": f"media:{_eff}"},
-                                ]]},
+                                chat_id, "✨ Add motion?", reply_markup={"inline_keyboard": _rows},
                             )
                     elif _action.startswith("dz:") or _action.startswith("sh:"):
                         # A motion was chosen → render the effect, then transform it.
@@ -3612,6 +3650,33 @@ async def _handle_telegram_update(update: dict, db: Session):
                             await telegram_service.send_message(chat_id, f"✨ {_eff} + {_motion}…")
                             _imgs = [a for a in _atts if is_image(a[0], a[2])]
                             await _send_files_result(await cb_command_service.execute_command(_eff, _motion, attachments=_imgs))
+                    elif _action.startswith("cap:"):
+                        # "📝 Add caption" → remember the effect, ForceReply for the text.
+                        _eff = _action.split(":", 1)[1]
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to do — that upload has no image.")
+                        else:
+                            _effect_caption_pending[chat_id] = {"eff": _eff, "ts": time.time()}
+                            await telegram_service.send_message(
+                                chat_id, _EFFECT_CAPTION_PROMPT,
+                                reply_markup={"force_reply": True, "selective": True,
+                                              "input_field_placeholder": "TOP TEXT"},
+                            )
+                    elif _action.startswith("cgo:"):
+                        # Motion chosen for a captioned effect → render with both.
+                        _parts = _action.split(":")
+                        _eff, _motion = _parts[1], _parts[2]
+                        _pend = _effect_caption_pending.get(chat_id)
+                        if not _pend or (time.time() - _pend.get("ts", 0)) > _MEDIA_ACTION_TTL or not _pend.get("text"):
+                            await telegram_service.send_message(chat_id, "⏳ That caption expired — tap the effect again.")
+                        elif not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to do — that upload has no image.")
+                        else:
+                            _arg = (f"{_motion} " if _motion in ("zoom", "shake") else "") + f"meme {_pend['text']}"
+                            await telegram_service.send_message(chat_id, f"✨ {_eff} + caption…")
+                            _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                            await _send_files_result(await cb_command_service.execute_command(_eff, _arg, attachments=_imgs))
+                            _effect_caption_pending.pop(chat_id, None)
                     elif _action == "meme":
                         # ForceReply for the caption; the image stays in the cache and is
                         # captioned when the reply arrives (see _MEME_PROMPT routing).

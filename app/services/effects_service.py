@@ -2954,29 +2954,27 @@ def _apply_thug_face(image_data: bytes) -> bytes:
 
 
 def add_thug(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
-    """Burn a "THUG LIFE" meme caption onto the image's lower third, then turn it
-    into an MP4 playing the THUG LIFE clip over it. MP4 bytes."""
+    """Stamp the THUG LIFE meme (pixel sunglasses + joint on the detected face),
+    burn the "THUG LIFE" caption over the lower third, then turn it into an MP4
+    with the THUG LIFE clip over it. MP4 bytes. Each step falls back to the prior
+    image so a missing face or font never aborts it."""
     from app.services.media_service import image_audio_to_video
     audio = _thug_audio_path()
     if not audio:
         raise RuntimeError("Thug audio (assets/thug.mp3) is missing on the server")
-    # Stamp the classic THUG LIFE meme: pixel sunglasses + joint on the detected
-    # face, then the outlined "THUG LIFE" caption over the lower third. Each step
-    # falls back to the prior image so a missing face or font never aborts it.
     faced = _apply_thug_face(image_data)
     try:
-        captioned = add_meme_text(faced, "THUG LIFE")
+        faced = add_meme_text(faced, "THUG LIFE")
     except Exception as e:
         logger.warning(f"thug caption failed, using bare image: {e}")
-        captioned = faced
-    return image_audio_to_video(captioned, "image.jpg", audio, duration=_THUG_DURATION)
+    return image_audio_to_video(faced, "image.jpg", audio, duration=_THUG_DURATION)
 
 
 def thug_attachments(
     attachments: List[Tuple[str, bytes, str]],
 ) -> Tuple[List[OutputFile], str]:
-    """Turn the first image attachment into a THUG LIFE MP4. Mirrors
-    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    """Turn the first image attachment into a THUG LIFE MP4 (bakes its own
+    "THUG LIFE" caption — it does not take a custom `meme` caption)."""
     images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
     if not images:
         return [], "No image — attach an image first."
@@ -3045,3 +3043,40 @@ def apply_shake(outputs: List[OutputFile]) -> List[OutputFile]:
     """Camera-shake motion applied to each effect output (the `shake` arg)."""
     from app.services.media_service import image_shake_video, shake_existing_video
     return _apply_motion(outputs, "shake", image_shake_video, shake_existing_video)
+
+
+def _meme_font_path() -> str:
+    """First existing meme font file ("" if none → ffmpeg uses its default)."""
+    for p in _MEME_FONT_CANDIDATES:
+        if os.path.exists(p):
+            return p
+    return ""
+
+
+def apply_meme_text(outputs: List[OutputFile], text: str) -> List[OutputFile]:
+    """Burn a meme caption (outlined white, lower third) onto each effect output —
+    images via Pillow, videos via ffmpeg drawtext. The trailing `meme <text>`
+    subcommand; applied last so it sits over any zoom/shake motion. Original kept
+    on failure."""
+    text = (text or "").strip()
+    if not text:
+        return outputs
+    from app.services.media_service import caption_video
+    result: List[OutputFile] = []
+    for out in outputs or []:
+        ct = (out.get("content_type") or "").lower()
+        fn = out.get("filename") or "file"
+        stem = Path(fn).stem or "file"
+        try:
+            if ct.startswith("image/"):
+                data = add_meme_text(out["data"], text)
+                result.append({"filename": f"{stem}.jpg", "data": data, "content_type": "image/jpeg"})
+            elif ct.startswith("video/"):
+                data = caption_video(out["data"], text, _meme_font_path())
+                result.append({"filename": fn, "data": data, "content_type": "video/mp4"})
+            else:
+                result.append(out)
+        except Exception as e:
+            logger.error(f"meme text overlay failed for {fn}: {e}", exc_info=True)
+            result.append(out)
+    return result

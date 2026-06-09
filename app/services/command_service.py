@@ -697,23 +697,42 @@ class CommandService:
         # commands literally (Telegram) accept them just like the web UI's parse_command.
         command = self.COMMAND_ALIASES.get(command, command)
 
-        # "<effect> zoom" / "<effect> shake" → run the effect, then apply the
-        # motion to its output (e.g. `dildo zoom`). Re-enter with the trailing
-        # token stripped so the normal dispatch runs untouched, then transform the
-        # resulting files. The strip keeps any preceding arg intact (e.g.
-        # `meme some text zoom`).
-        _mtokens = (arg or "").split()
-        if command in self.MOTION_EFFECTS and _mtokens and _mtokens[-1].lower() in ("zoom", "shake"):
-            import asyncio
-            from app.services import effects_service
-            _motion = _mtokens[-1].lower()
-            inner = await self.execute_command(
-                command, " ".join(_mtokens[:-1]), last_prompt, stop_check, attachments, node_notify,
-            )
-            if isinstance(inner, dict) and inner.get("type") == "files" and inner.get("files"):
-                _apply = effects_service.apply_shake if _motion == "shake" else effects_service.apply_zoom
-                inner["files"] = await asyncio.to_thread(_apply, inner["files"])
-            return inner
+        # Trailing subcommands on an effect, applied to its output in order:
+        #   <effect> [zoom|shake] [meme <text>]
+        # e.g. `dildo zoom meme top text`. `meme <text>` consumes the rest as the
+        # caption; zoom/shake is a single token before it. Re-enter with all the
+        # trailing parts stripped so the base effect renders untouched, then
+        # transform the files (motion first, caption last so it sits on top).
+        if command in self.MOTION_EFFECTS and arg:
+            _toks = arg.split()
+            _low = [t.lower() for t in _toks]
+            _meme_text = None
+            # `meme` only acts as a trailing subcommand for OTHER effects — not for
+            # the meme effect itself (its whole arg is the caption) nor thug (which
+            # bakes its own "THUG LIFE" text).
+            if command not in ("meme", "thug") and "meme" in _low:
+                _i = _low.index("meme")
+                _meme_text = " ".join(_toks[_i + 1:]).strip()
+                _toks, _low = _toks[:_i], _low[:_i]
+            _motion = None
+            if _low and _low[-1] in ("zoom", "shake"):
+                _motion = _low[-1]
+                _toks = _toks[:-1]
+            if _motion or _meme_text:
+                import asyncio
+                from app.services import effects_service
+                inner = await self.execute_command(
+                    command, " ".join(_toks), last_prompt, stop_check, attachments, node_notify,
+                )
+                if isinstance(inner, dict) and inner.get("type") == "files" and inner.get("files"):
+                    files = inner["files"]
+                    if _motion:
+                        _apply = effects_service.apply_shake if _motion == "shake" else effects_service.apply_zoom
+                        files = await asyncio.to_thread(_apply, files)
+                    if _meme_text:
+                        files = await asyncio.to_thread(effects_service.apply_meme_text, files, _meme_text)
+                    inner["files"] = files
+                return inner
 
         if command == "help":
             return await self._help_command()

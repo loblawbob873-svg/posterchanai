@@ -542,6 +542,69 @@ def image_audio_to_video(image_data: bytes, source_filename: str, audio_path: st
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+def _probe_height(path: str) -> int:
+    """Video height in px via ffprobe (0 if unknown)."""
+    ffmpeg = resolve_ffmpeg()
+    ffprobe = ffmpeg[:-6] + "ffprobe" if ffmpeg.endswith("ffmpeg") else "ffprobe"
+    try:
+        out = subprocess.run(
+            [ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries",
+             "stream=height", "-of", "default=noprint_wrappers=1:nokey=1", path],
+            capture_output=True, timeout=60, text=True,
+        )
+        return int((out.stdout or "0").strip() or 0)
+    except Exception:
+        return 0
+
+
+def caption_video(video_data: bytes, text: str, font_path: str = "") -> bytes:
+    """Burn an outlined white meme caption across the lower third of a video
+    (static overlay — stays put while the video zooms/shakes). Keeps the audio.
+    Returns MP4 bytes; raises RuntimeError if ffmpeg is missing."""
+    ffmpeg = resolve_ffmpeg()
+    if not ffmpeg_available():
+        raise RuntimeError("ffmpeg is not installed on the server")
+    text = (text or "").strip().upper()
+    if not text:
+        return video_data
+
+    tmp_dir = tempfile.mkdtemp(prefix="media_caption_")
+    vin = os.path.join(tmp_dir, "in.mp4")
+    tf = os.path.join(tmp_dir, "caption.txt")
+    out_path = os.path.join(tmp_dir, "out.mp4")
+    try:
+        with open(vin, "wb") as f:
+            f.write(video_data)
+        # textfile= avoids shell/filter escaping of the caption entirely.
+        with open(tf, "w") as f:
+            f.write(text)
+        H = _probe_height(vin) or 720
+        fs = max(16, H // 11)
+        bw = max(2, fs // 12)
+        margin = max(10, H // 22)
+        fontopt = f"fontfile='{font_path}':" if font_path and os.path.exists(font_path) else ""
+        vf = (
+            f"drawtext={fontopt}textfile='{tf}':fontcolor=white:bordercolor=black:"
+            f"borderw={bw}:fontsize={fs}:x=(w-text_w)/2:y=h-text_h-{margin}"
+        )
+        cmd = [
+            ffmpeg, "-i", vin, "-vf", vf,
+            "-c:v", "libx264", "-preset", VIDEO_PRESET, "-crf", str(VIDEO_CRF),
+            "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", "-y", out_path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, timeout=3600, text=True)
+        if result.returncode != 0 or not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+            # Some clips have no audio stream to copy — retry encoding audio.
+            cmd[cmd.index("copy")] = "aac"
+            result = subprocess.run(cmd, capture_output=True, timeout=3600, text=True)
+            if result.returncode != 0 or not os.path.exists(out_path):
+                raise RuntimeError(f"caption_video failed: {(result.stderr or '')[-300:]}")
+        with open(out_path, "rb") as f:
+            return f.read()
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def _probe_duration(path: str) -> float:
     """Media duration in seconds via ffprobe (0.0 if unknown)."""
     ffmpeg = resolve_ffmpeg()
