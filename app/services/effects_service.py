@@ -2750,13 +2750,96 @@ def _thug_audio_path() -> str:
     return ""
 
 
+def _make_deal_with_it_glasses(target_w: int, target_h: int):
+    """Pixel-art 'deal with it' black sunglasses, sized to a face's eye band.
+    Drawn small then scaled NEAREST for the 8-bit look. Returns RGBA Image."""
+    from PIL import Image, ImageDraw
+    cw, ch = 80, 30
+    g = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+    d = ImageDraw.Draw(g)
+    black = (12, 12, 12, 255)
+    d.rectangle([0, 4, cw, 9], fill=black)          # temple bar across the top
+    d.rectangle([6, 8, 34, 26], fill=black)         # left lens
+    d.rectangle([46, 8, 74, 26], fill=black)        # right lens
+    d.rectangle([34, 11, 46, 15], fill=black)       # bridge
+    return g.resize((max(2, target_w), max(2, target_h)), Image.NEAREST)
+
+
+def _make_joint(length: int):
+    """A lit joint: white paper, brown filter, glowing ember + smoke. RGBA Image."""
+    from PIL import Image, ImageDraw
+    length = max(20, length)
+    th = max(6, length // 9)
+    pad = th * 4  # headroom for the ember glow + smoke
+    img = Image.new("RGBA", (length + pad, th + pad), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    y0 = pad // 2
+    body_end = length - th
+    d.rectangle([0, y0, body_end, y0 + th], fill=(245, 240, 230, 255))           # paper
+    d.rectangle([0, y0, int(length * 0.16), y0 + th], fill=(120, 80, 40, 255))   # filter (mouth end)
+    d.ellipse([body_end - 2, y0 - 2, length + 2, y0 + th + 2], fill=(255, 90, 20, 255))  # ember glow
+    d.ellipse([body_end + 1, y0 + 1, length - 1, y0 + th - 1], fill=(255, 190, 60, 255))  # hot core
+    for i, (r, a) in enumerate([(5, 150), (8, 110), (11, 70)]):  # smoke rising off the tip
+        cx, cy = length, y0 - (i + 1) * th
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(225, 225, 225, a))
+    return img
+
+
+def _apply_thug_face(image_data: bytes) -> bytes:
+    """Detect face(s) and stamp pixel sunglasses over the eyes + a lit joint at
+    the mouth (the classic THUG LIFE overlay). Returns JPEG bytes; on no face or
+    any error returns the original bytes unchanged."""
+    try:
+        import cv2
+        import numpy as np
+        from PIL import Image, ImageOps
+    except Exception as e:
+        logger.warning(f"thug face overlay unavailable ({e}); skipping")
+        return image_data
+    try:
+        with Image.open(io.BytesIO(image_data)) as im:
+            im = ImageOps.exif_transpose(im).convert("RGB")
+            gray = cv2.cvtColor(np.asarray(im), cv2.COLOR_RGB2GRAY)
+            cascade = cv2.CascadeClassifier(
+                cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+            )
+            faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5,
+                                             minSize=(max(30, im.width // 20), max(30, im.height // 20)))
+            if len(faces) == 0:
+                return image_data
+            for (x, y, w, h) in faces:
+                # Sunglasses across the eye band (~upper third of the face).
+                gw, gh = int(w * 1.04), max(8, int(h * 0.30))
+                glasses = _make_deal_with_it_glasses(gw, gh)
+                im.paste(glasses, (x + (w - gw) // 2, y + int(h * 0.28)), glasses)
+                # Joint drooping from the mouth corner (~lower third of the face).
+                joint = _make_joint(int(w * 0.85)).rotate(-18, expand=True, resample=Image.BICUBIC)
+                im.paste(joint, (x + int(w * 0.40), y + int(h * 0.60)), joint)
+            out = io.BytesIO()
+            im.save(out, format="JPEG", quality=92)
+            return out.getvalue()
+    except Exception as e:
+        logger.warning(f"thug face overlay failed, using bare image: {e}")
+        return image_data
+
+
 def add_thug(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
-    """Turn a still image into an MP4 playing the THUG LIFE clip over it. MP4 bytes."""
+    """Burn a "THUG LIFE" meme caption onto the image's lower third, then turn it
+    into an MP4 playing the THUG LIFE clip over it. MP4 bytes."""
     from app.services.media_service import image_audio_to_video
     audio = _thug_audio_path()
     if not audio:
         raise RuntimeError("Thug audio (assets/thug.mp3) is missing on the server")
-    return image_audio_to_video(image_data, source_filename, audio, duration=_THUG_DURATION)
+    # Stamp the classic THUG LIFE meme: pixel sunglasses + joint on the detected
+    # face, then the outlined "THUG LIFE" caption over the lower third. Each step
+    # falls back to the prior image so a missing face or font never aborts it.
+    faced = _apply_thug_face(image_data)
+    try:
+        captioned = add_meme_text(faced, "THUG LIFE")
+    except Exception as e:
+        logger.warning(f"thug caption failed, using bare image: {e}")
+        captioned = faced
+    return image_audio_to_video(captioned, "image.jpg", audio, duration=_THUG_DURATION)
 
 
 def thug_attachments(

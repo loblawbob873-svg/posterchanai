@@ -3289,6 +3289,26 @@ async def _handle_telegram_update(update: dict, db: Session):
                         logger.error(f"Failed to send file {f_name}: {send_result}")
                         await telegram_service.send_message(chat_id, f"❌ Failed to send {f_name}")
                     await asyncio.sleep(0.15)
+                # After an effect, offer to post the result to the user's timeline.
+                if command in CommandService.MOTION_EFFECTS:
+                    _share = next(
+                        (f for f in files if f.get("data") and (f.get("content_type") or "").startswith(("image/", "video/"))),
+                        None,
+                    )
+                    _share_u = db.query(User).filter(
+                        User.telegram_chat_id == chat_id, User.telegram_enabled == True
+                    ).first() if _share else None
+                    if _share and _share_u and (_has_misskey(_share_u) or _has_pleroma(_share_u) or _has_matrix(_share_u)):
+                        _media_action_cache[chat_id] = {
+                            "attachments": [(_share.get("filename", "file"), _share["data"], _share.get("content_type", ""))],
+                            "ts": time.time(),
+                        }
+                        await telegram_service.send_message(
+                            chat_id, "📣 Post this to your timeline?",
+                            reply_markup={"inline_keyboard": [[
+                                {"text": "📣 Post to social", "callback_data": "media:post"},
+                            ]]},
+                        )
             else:
                 await telegram_service.send_message(chat_id, response_content, reply_markup=reply_markup)
 
@@ -3442,8 +3462,12 @@ async def _handle_telegram_update(update: dict, db: Session):
                 from app.services.media_service import is_image, is_video, is_pdf
                 cb_command_service = CommandService(db, user=cb_user)
 
-                async def _send_files_result(result):
-                    """Send a CommandService 'files' result back as Telegram documents."""
+                async def _send_files_result(result, offer_share: bool = True):
+                    """Send a CommandService 'files' result back as Telegram documents.
+
+                    When `offer_share` and the first output is image/video and the user
+                    has a connected platform, follow up with a 'Post to social' prompt
+                    pointed at the produced file (so effects can be shared right away)."""
                     if result.get("type") == "files":
                         if result.get("content"):
                             await telegram_service.send_message(chat_id, result["content"])
@@ -3451,6 +3475,27 @@ async def _handle_telegram_update(update: dict, db: Session):
                             if f.get("data"):
                                 await telegram_service.send_document_bytes(chat_id, f["data"], f.get("filename", "file"))
                                 await asyncio.sleep(0.15)
+                        if offer_share:
+                            _files = [f for f in result.get("files", []) if f.get("data")]
+                            _shareable = next(
+                                (f for f in _files if (f.get("content_type") or "").startswith(("image/", "video/"))),
+                                None,
+                            )
+                            if _shareable and (_has_misskey(cb_user) or _has_pleroma(cb_user) or _has_matrix(cb_user)):
+                                _media_action_cache[chat_id] = {
+                                    "attachments": [(
+                                        _shareable.get("filename", "file"),
+                                        _shareable["data"],
+                                        _shareable.get("content_type", ""),
+                                    )],
+                                    "ts": time.time(),
+                                }
+                                await telegram_service.send_message(
+                                    chat_id, "📣 Post this to your timeline?",
+                                    reply_markup={"inline_keyboard": [[
+                                        {"text": "📣 Post to social", "callback_data": "media:post"},
+                                    ]]},
+                                )
                     else:
                         await telegram_service.send_message(chat_id, result.get("content", "Done."))
 
@@ -3458,7 +3503,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     if _action == "compress":
                         await telegram_service.send_message(chat_id, "🗜 Compressing…")
                         _cres = await cb_command_service.execute_command("compress", "", attachments=_atts)
-                        await _send_files_result(_cres)
+                        await _send_files_result(_cres, offer_share=False)
                         # For a ytdl download, offer to post the compressed result.
                         if _entry.get("ytdl") and _cres.get("files") and _cres["files"][0].get("data"):
                             _cf = _cres["files"][0]
@@ -3480,11 +3525,11 @@ async def _handle_telegram_update(update: dict, db: Session):
                             )
                     elif _action == "topdf":
                         _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                        await _send_files_result(await cb_command_service.execute_command("convert", "pdf", attachments=_imgs))
+                        await _send_files_result(await cb_command_service.execute_command("convert", "pdf", attachments=_imgs), offer_share=False)
                     elif _action == "toimg":
                         _pdfs = [a for a in _atts if is_pdf(a[0], a[2])]
                         await telegram_service.send_message(chat_id, "🖼 Converting…")
-                        await _send_files_result(await cb_command_service.execute_command("convert", "images", attachments=_pdfs))
+                        await _send_files_result(await cb_command_service.execute_command("convert", "images", attachments=_pdfs), offer_share=False)
                     elif _action == "ocr":
                         import base64 as _ocr_b64
                         from app.services.document_service import extract_image_text
