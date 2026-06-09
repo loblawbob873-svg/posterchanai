@@ -2785,10 +2785,52 @@ def _make_joint(length: int):
     return img
 
 
+# Anime-face detector (nagadomi's lbpcascade), so the THUG overlay also lands on
+# anime/illustrated faces that the real-face haarcascade misses.
+_ANIME_CASCADE_CANDIDATES = [
+    os.environ.get("ANIME_CASCADE_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "lbpcascade_animeface.xml"),
+    "/var/lib/posterchanai/assets/lbpcascade_animeface.xml",
+]
+
+
+def _anime_cascade_path() -> str:
+    """First existing anime-face cascade from the candidate list ("" if none)."""
+    for p in _ANIME_CASCADE_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def _detect_thug_faces(gray, anime_gray, im_w: int, im_h: int):
+    """Run the real-face + anime-face cascades and return de-duplicated boxes.
+    Anime detection uses a histogram-equalized gray (nagadomi's recommendation)."""
+    import cv2
+    min_side = (max(30, im_w // 20), max(30, im_h // 20))
+    boxes = []
+    real = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+    if not real.empty():
+        boxes += list(real.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=min_side))
+    anime_xml = _anime_cascade_path()
+    if anime_xml:
+        anime = cv2.CascadeClassifier(anime_xml)
+        if not anime.empty():
+            boxes += list(anime.detectMultiScale(anime_gray, scaleFactor=1.1, minNeighbors=3, minSize=min_side))
+    # Drop boxes whose centre falls inside an already-accepted box (same face hit
+    # by both cascades), keeping the first (larger cascades run first).
+    accepted = []
+    for (x, y, w, h) in sorted(boxes, key=lambda b: b[2] * b[3], reverse=True):
+        cx, cy = x + w / 2, y + h / 2
+        if any(ax <= cx <= ax + aw and ay <= cy <= ay + ah for (ax, ay, aw, ah) in accepted):
+            continue
+        accepted.append((x, y, w, h))
+    return accepted
+
+
 def _apply_thug_face(image_data: bytes) -> bytes:
-    """Detect face(s) and stamp pixel sunglasses over the eyes + a lit joint at
-    the mouth (the classic THUG LIFE overlay). Returns JPEG bytes; on no face or
-    any error returns the original bytes unchanged."""
+    """Detect face(s) — real or anime — and stamp pixel sunglasses over the eyes +
+    a lit joint at the mouth (the classic THUG LIFE overlay). Returns JPEG bytes;
+    on no face or any error returns the original bytes unchanged."""
     try:
         import cv2
         import numpy as np
@@ -2800,12 +2842,8 @@ def _apply_thug_face(image_data: bytes) -> bytes:
         with Image.open(io.BytesIO(image_data)) as im:
             im = ImageOps.exif_transpose(im).convert("RGB")
             gray = cv2.cvtColor(np.asarray(im), cv2.COLOR_RGB2GRAY)
-            cascade = cv2.CascadeClassifier(
-                cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-            )
-            faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5,
-                                             minSize=(max(30, im.width // 20), max(30, im.height // 20)))
-            if len(faces) == 0:
+            faces = _detect_thug_faces(gray, cv2.equalizeHist(gray), im.width, im.height)
+            if not faces:
                 return image_data
             for (x, y, w, h) in faces:
                 # Sunglasses across the eye band (~upper third of the face).
