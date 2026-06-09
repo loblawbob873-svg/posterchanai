@@ -277,7 +277,7 @@ async def execute_matrix_command(
     # before the linked-account requirement below (the bot-API-key auth above is the
     # only gate they need).
     if data.media and command_str.split()[0].lower() in (
-        "compress", "clip", "convert", "translate", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing"
+        "compress", "clip", "convert", "translate", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fuu", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell"
     ):
         from app.services.command_service import CommandService
         _media_svc = CommandService(db, user=user)
@@ -550,6 +550,14 @@ async def execute_matrix_command(
             "• `yamete` — turn an image into a 6s yamete video.\n"
             "• `curb` — turn an image into a Curb Your Enthusiasm video.\n"
             "• `depressing` — turn an image into a 10s depressing video.\n"
+            "• `fuu` — turn an image into a 5s fuu video.\n"
+            "• `helpme` — turn an image into a 5s helpme video.\n"
+            "• `gong` — turn an image into a gong video.\n"
+            "• `fbi` — turn an image into an FBI open up video.\n"
+            "• `redeem` — turn an image into a do not redeem video.\n"
+            "• `gigity` — turn an image into a giggity video.\n"
+            "• `beavis` — turn an image into a Beavis laugh video.\n"
+            "• `smell` — turn an image into a can you imagine the smell video.\n"
             "  Uploads are remembered for 5 minutes while you decide.\n\n"
             "🎨 *Create & fetch*\n"
             "• `geni <prompt>` — generate an image.\n"

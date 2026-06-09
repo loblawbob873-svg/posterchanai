@@ -131,6 +131,14 @@ _BOT_HELP_TEXT = (
     "• yamete — turn an attached image into a 6s yamete video\n"
     "• curb — turn an attached image into a Curb Your Enthusiasm video\n"
     "• depressing — turn an attached image into a 10s depressing video\n"
+    "• fuu — turn an attached image into a 5s fuu video\n"
+    "• helpme — turn an attached image into a 5s helpme video\n"
+    "• gong — turn an attached image into a gong video\n"
+    "• fbi — turn an attached image into an FBI open up video\n"
+    "• redeem — turn an attached image into a do not redeem video\n"
+    "• gigity — turn an attached image into a giggity video\n"
+    "• beavis — turn an attached image into a Beavis laugh video\n"
+    "• smell — turn an attached image into a can you imagine the smell video\n"
     "• screenshot <url> — full-page screenshot of a website (also shot / ss)\n"
     "• /narrate <message> — reply as a short TTS video\n"
     "Or just talk to me and I'll reply. 💕"
@@ -153,7 +161,7 @@ def _handle_media_command(note, command, arg, own_acct, visibility):
     skipped = [f["filename"] for f in out_files
                if not f["content_type"].startswith(("image/", "video/"))]
     # meme's result IS the image — reply with just the image, no summary caption.
-    text = "" if command in ("meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing") else (summary or "Done.")
+    text = "" if command in ("meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fuu", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell") else (summary or "Done.")
     if skipped:
         text += f"\n\n(Couldn't attach {', '.join(skipped)} here — fediverse posts only take images/video.)"
     # Main reply carries the summary + all images + the first video; any further
@@ -380,7 +388,7 @@ def process_mentions():
             # Handle media commands (compress/clip/convert/meme) on an attached file.
             lower_prompt = prompt_text.lower()
             _media_cmd = None
-            for _c in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing"):
+            for _c in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fuu", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell"):
                 if lower_prompt == _c or lower_prompt.startswith(_c + " "):
                     _media_cmd = _c
                     break

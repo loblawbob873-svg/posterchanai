@@ -713,6 +713,14 @@ _HELP_SECTIONS = {
         "• ✨ Effects → 🛑 Yamete — turn the image into a 6s yamete video\n"
         "• ✨ Effects → 😬 Curb — turn the image into a Curb Your Enthusiasm video\n"
         "• ✨ Effects → 😢 Depressing — turn the image into a 10s depressing video\n"
+        "• ✨ Effects → 🌀 Fuu — turn the image into a 5s fuu video\n"
+        "• ✨ Effects → 🆘 Helpme — turn the image into a 5s helpme video\n"
+        "• ✨ Effects → 🔔 Gong — turn the image into a gong video\n"
+        "• ✨ Effects → 🚨 FBI — turn the image into an FBI open up video\n"
+        "• ✨ Effects → 💳 Redeem — turn the image into a do not redeem video\n"
+        "• ✨ Effects → 😏 Gigity — turn the image into a giggity video\n"
+        "• ✨ Effects → 🤤 Beavis — turn the image into a Beavis laugh video\n"
+        "• ✨ Effects → 👃 Smell — turn the image into a can you imagine the smell video\n"
         "• 📣 Post to social — share it to your connected platforms\n\n"
         "*Video:*\n"
         "• 🗜 Compress — re-encode smaller (H.264, up to 1080p)\n"
@@ -722,7 +730,7 @@ _HELP_SECTIONS = {
         "• 📝 Summarize — AI summary of the document\n\n"
         "Tips:\n"
         "• Send several images, then tap *To PDF*, to merge them into one PDF.\n"
-        "• You can also skip the buttons: send the file with `compress`, `clip 0:10 0:30`, `convert`, `meme <text>`, `dildo`, `poo`, `cum`, `blood`, `bullethole`, `fire`, `gay`, `blacked`, `kosher`, `barked`, `hava`, `indian`, `yakety`, `yamete`, `curb` or `depressing` as the caption.\n"
+        "• You can also skip the buttons: send the file with `compress`, `clip 0:10 0:30`, `convert`, `meme <text>`, `dildo`, `poo`, `cum`, `blood`, `bullethole`, `fire`, `gay`, `blacked`, `kosher`, `barked`, `hava`, `indian`, `yakety`, `yamete`, `curb`, `depressing`, `fuu`, `helpme`, `gong`, `fbi`, `redeem`, `gigity`, `beavis` or `smell` as the caption.\n"
         "• Telegram limits bot downloads to 20 MB — use the web UI for bigger files."
     ),
     "youtube": (
@@ -1307,41 +1315,59 @@ def _media_effects_keyboard() -> dict:
     transforms (meme caption, dildo / poo / cum / blood / fire scatter + bullet
     holes), plus a Back to
     the main actions."""
+    # Effect buttons route through a zoom Yes/No prompt (`media:zq:<eff>`); Meme
+    # keeps its direct caption flow.
     return {"inline_keyboard": [
         [
             {"text": "🖼 Meme", "callback_data": "media:meme"},
-            {"text": "🍆 Dildo", "callback_data": "media:dildo"},
+            {"text": "🍆 Dildo", "callback_data": "media:zq:dildo"},
         ],
         [
-            {"text": "💩 Poo", "callback_data": "media:poo"},
-            {"text": "💦 Cum", "callback_data": "media:cum"},
+            {"text": "💩 Poo", "callback_data": "media:zq:poo"},
+            {"text": "💦 Cum", "callback_data": "media:zq:cum"},
         ],
         [
-            {"text": "🩸 Blood", "callback_data": "media:blood"},
-            {"text": "🔥 Fire", "callback_data": "media:fire"},
+            {"text": "🩸 Blood", "callback_data": "media:zq:blood"},
+            {"text": "🔥 Fire", "callback_data": "media:zq:fire"},
         ],
         [
-            {"text": "🕳️ Bullet holes", "callback_data": "media:bullethole"},
-            {"text": "🏳️‍🌈 Gay", "callback_data": "media:gay"},
+            {"text": "🕳️ Bullet holes", "callback_data": "media:zq:bullethole"},
+            {"text": "🏳️‍🌈 Gay", "callback_data": "media:zq:gay"},
         ],
         [
-            {"text": "🥷 Blacked", "callback_data": "media:blacked"},
-            {"text": "✡️ Kosher", "callback_data": "media:kosher"},
+            {"text": "🥷 Blacked", "callback_data": "media:zq:blacked"},
+            {"text": "✡️ Kosher", "callback_data": "media:zq:kosher"},
         ],
         [
-            {"text": "🐶 Barked", "callback_data": "media:barked"},
-            {"text": "🎻 Hava", "callback_data": "media:hava"},
+            {"text": "🐶 Barked", "callback_data": "media:zq:barked"},
+            {"text": "🎻 Hava", "callback_data": "media:zq:hava"},
         ],
         [
-            {"text": "🇮🇳 Indian", "callback_data": "media:indian"},
-            {"text": "🎷 Yakety", "callback_data": "media:yakety"},
+            {"text": "🇮🇳 Indian", "callback_data": "media:zq:indian"},
+            {"text": "🎷 Yakety", "callback_data": "media:zq:yakety"},
         ],
         [
-            {"text": "🛑 Yamete", "callback_data": "media:yamete"},
-            {"text": "😬 Curb", "callback_data": "media:curb"},
+            {"text": "🛑 Yamete", "callback_data": "media:zq:yamete"},
+            {"text": "😬 Curb", "callback_data": "media:zq:curb"},
         ],
         [
-            {"text": "😢 Depressing", "callback_data": "media:depressing"},
+            {"text": "😢 Depressing", "callback_data": "media:zq:depressing"},
+            {"text": "🌀 Fuu", "callback_data": "media:zq:fuu"},
+        ],
+        [
+            {"text": "🆘 Helpme", "callback_data": "media:zq:helpme"},
+            {"text": "🔔 Gong", "callback_data": "media:zq:gong"},
+        ],
+        [
+            {"text": "🚨 FBI", "callback_data": "media:zq:fbi"},
+            {"text": "💳 Redeem", "callback_data": "media:zq:redeem"},
+        ],
+        [
+            {"text": "😏 Gigity", "callback_data": "media:zq:gigity"},
+            {"text": "🤤 Beavis", "callback_data": "media:zq:beavis"},
+        ],
+        [
+            {"text": "👃 Smell", "callback_data": "media:zq:smell"},
         ],
         [{"text": "⬅️ Back", "callback_data": "media:back"}],
     ]}
@@ -1861,7 +1887,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fuu", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -2093,7 +2119,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fuu", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -2302,7 +2328,7 @@ async def _handle_telegram_update(update: dict, db: Session):
 
             # If we have images, always run OCR for later use
             # (skip for compress/convert — they operate on the raw file, not its text)
-            if has_images and attachments and command not in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing"):
+            if has_images and attachments and command not in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fuu", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell"):
                 for filename, file_data, content_type in attachments:
                     if content_type.startswith("image/"):
                         import base64
@@ -2349,7 +2375,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Attachment too large for Telegram to hand to the bot (20 MB cap).
             # Handle here so it works whether or not a command caption was given,
             # instead of falling through to the chat model.
-            if oversized_attachment and command in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", None):
+            if oversized_attachment and command in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fuu", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", None):
                 _ov_name, _ov_size = oversized_attachment
                 _cap_mb = TELEGRAM_MAX_DOWNLOAD_BYTES / (1024 * 1024)
                 if telegram_service.is_local_api:
@@ -3501,6 +3527,29 @@ async def _handle_telegram_update(update: dict, db: Session):
                             await telegram_service.send_message(
                                 chat_id, "📎 File actions:", reply_markup=_kbd,
                             )
+                    elif _action.startswith("zq:"):
+                        # Effect chosen from the Effects menu → ask whether to add a zoom
+                        # pan-out. "No zoom" reuses the effect's own media:<eff> handler.
+                        _eff = _action.split(":", 1)[1]
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to do — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(
+                                chat_id, "🔍 Add a zoom pan-out?",
+                                reply_markup={"inline_keyboard": [[
+                                    {"text": "✅ With zoom", "callback_data": f"media:dz:{_eff}"},
+                                    {"text": "❌ No zoom", "callback_data": f"media:{_eff}"},
+                                ]]},
+                            )
+                    elif _action.startswith("dz:"):
+                        # "With zoom" chosen → render the effect, then Ken Burns pan-out it.
+                        _eff = _action.split(":", 1)[1]
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to do — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(chat_id, f"🔍 {_eff} + zoom…")
+                            _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                            await _send_files_result(await cb_command_service.execute_command(_eff, "zoom", attachments=_imgs))
                     elif _action == "meme":
                         # ForceReply for the caption; the image stays in the cache and is
                         # captioned when the reply arrives (see _MEME_PROMPT routing).
@@ -3643,6 +3692,70 @@ async def _handle_telegram_update(update: dict, db: Session):
                             await telegram_service.send_message(chat_id, "😢 Getting depressing…")
                             _imgs = [a for a in _atts if is_image(a[0], a[2])]
                             await _send_files_result(await cb_command_service.execute_command("depressing", "", attachments=_imgs))
+                    elif _action == "fuu":
+                        # No caption needed — render the video and post it.
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(chat_id, "🌀 Fuu…")
+                            _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                            await _send_files_result(await cb_command_service.execute_command("fuu", "", attachments=_imgs))
+                    elif _action == "helpme":
+                        # No caption needed — render the video and post it.
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(chat_id, "🆘 Helpme…")
+                            _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                            await _send_files_result(await cb_command_service.execute_command("helpme", "", attachments=_imgs))
+                    elif _action == "gong":
+                        # No caption needed — render the video and post it.
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(chat_id, "🔔 Gong…")
+                            _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                            await _send_files_result(await cb_command_service.execute_command("gong", "", attachments=_imgs))
+                    elif _action == "fbi":
+                        # No caption needed — render the video and post it.
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(chat_id, "🚨 FBI OPEN UP…")
+                            _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                            await _send_files_result(await cb_command_service.execute_command("fbi", "", attachments=_imgs))
+                    elif _action == "redeem":
+                        # No caption needed — render the video and post it.
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(chat_id, "💳 Do NOT redeem it…")
+                            _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                            await _send_files_result(await cb_command_service.execute_command("redeem", "", attachments=_imgs))
+                    elif _action == "gigity":
+                        # No caption needed — render the video and post it.
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(chat_id, "😏 Gigity…")
+                            _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                            await _send_files_result(await cb_command_service.execute_command("gigity", "", attachments=_imgs))
+                    elif _action == "beavis":
+                        # No caption needed — render the video and post it.
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(chat_id, "🤤 Beavis…")
+                            _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                            await _send_files_result(await cb_command_service.execute_command("beavis", "", attachments=_imgs))
+                    elif _action == "smell":
+                        # No caption needed — render the video and post it.
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(chat_id, "👃 Can you imagine the smell…")
+                            _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                            await _send_files_result(await cb_command_service.execute_command("smell", "", attachments=_imgs))
                     elif _action == "translate":
                         # Ask which language to translate the upload's text into.
                         await telegram_service.send_message(

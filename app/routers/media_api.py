@@ -68,8 +68,19 @@ async def process_media(
 ):
     """Run a compress/clip/convert/meme/dildo/poo/cum/blood/bullethole/fire/gay/blacked/kosher/barked operation on the supplied attachments."""
     command = (req.command or "").strip().lower()
-    if command not in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing"):
+    if command not in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fuu", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell"):
         return {"error": f"unsupported command '{command}'"}
+
+    # "<effect> zoom" trailing arg → Ken Burns pan-out the output (e.g. `dildo
+    # zoom`). Strip the token here so it doesn't leak into meme caption text;
+    # apply the zoom to the produced files after dispatch.
+    arg = req.arg or ""
+    zoom_requested = False
+    if command not in ("compress", "clip", "convert"):
+        _zt = arg.split()
+        if _zt and _zt[-1].lower() == "zoom":
+            zoom_requested = True
+            arg = " ".join(_zt[:-1])
 
     attachments = []
     for item in (req.media or []):
@@ -86,9 +97,9 @@ async def process_media(
         elif command == "convert":
             outputs, summary = await asyncio.to_thread(media_service.convert_attachments, attachments, req.arg or "")
         elif command == "meme":
-            if not (req.arg or "").strip():
+            if not arg.strip():
                 return {"error": "meme needs caption text, e.g. 'meme top text'"}
-            outputs, summary = await asyncio.to_thread(effects_service.meme_attachments, attachments, req.arg or "")
+            outputs, summary = await asyncio.to_thread(effects_service.meme_attachments, attachments, arg)
         elif command == "dildo":
             outputs, summary = await asyncio.to_thread(effects_service.dildo_attachments, attachments)
         elif command == "poo":
@@ -121,6 +132,22 @@ async def process_media(
             outputs, summary = await asyncio.to_thread(effects_service.curb_attachments, attachments)
         elif command == "depressing":
             outputs, summary = await asyncio.to_thread(effects_service.depressing_attachments, attachments)
+        elif command == "fuu":
+            outputs, summary = await asyncio.to_thread(effects_service.fuu_attachments, attachments)
+        elif command == "helpme":
+            outputs, summary = await asyncio.to_thread(effects_service.helpme_attachments, attachments)
+        elif command == "gong":
+            outputs, summary = await asyncio.to_thread(effects_service.gong_attachments, attachments)
+        elif command == "fbi":
+            outputs, summary = await asyncio.to_thread(effects_service.fbi_attachments, attachments)
+        elif command == "redeem":
+            outputs, summary = await asyncio.to_thread(effects_service.redeem_attachments, attachments)
+        elif command == "gigity":
+            outputs, summary = await asyncio.to_thread(effects_service.gigity_attachments, attachments)
+        elif command == "beavis":
+            outputs, summary = await asyncio.to_thread(effects_service.beavis_attachments, attachments)
+        elif command == "smell":
+            outputs, summary = await asyncio.to_thread(effects_service.smell_attachments, attachments)
         else:  # clip
             parts = (req.arg or "").split()
             if len(parts) < 2:
@@ -132,6 +159,8 @@ async def process_media(
             if end <= start:
                 return {"error": "end time must be after start time"}
             outputs, summary = await asyncio.to_thread(media_service.clip_attachment, attachments, start, end)
+        if zoom_requested and outputs:
+            outputs = await asyncio.to_thread(effects_service.apply_zoom, outputs)
     except Exception as e:
         logger.error(f"[MEDIA-API] {command} failed: {e}", exc_info=True)
         return {"error": str(e)}

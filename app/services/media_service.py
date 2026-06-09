@@ -542,6 +542,131 @@ def image_audio_to_video(image_data: bytes, source_filename: str, audio_path: st
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+def _probe_duration(path: str) -> float:
+    """Media duration in seconds via ffprobe (0.0 if unknown)."""
+    ffmpeg = resolve_ffmpeg()
+    ffprobe = ffmpeg[:-6] + "ffprobe" if ffmpeg.endswith("ffmpeg") else "ffprobe"
+    try:
+        out = subprocess.run(
+            [ffprobe, "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", path],
+            capture_output=True, timeout=60, text=True,
+        )
+        return float((out.stdout or "").strip())
+    except Exception:
+        return 0.0
+
+
+def image_zoompan_video(image_data: bytes, source_filename: str, duration: float = 4.0,
+                        audio_path: Optional[str] = None) -> bytes:
+    """Ken Burns zoom-out: start ~1.25x zoomed in on the image centre and pan
+    out to the full frame over `duration` seconds. Optional `audio_path` is
+    muxed in (used by the audio effects, whose still frame gets the motion).
+
+    Even dimensions + yuv420p for broad playback; reuses the same HW-accel
+    encoder autodetect (NVENC → VAAPI → libx264) as the other video paths.
+    Returns MP4 bytes; raises RuntimeError if ffmpeg is missing or all fail.
+    """
+    global _video_encoder_cache
+    from PIL import Image as _PILImage
+    ffmpeg = resolve_ffmpeg()
+    if not ffmpeg_available():
+        raise RuntimeError("ffmpeg is not installed on the server")
+    if audio_path and not os.path.exists(audio_path):
+        audio_path = None
+
+    tmp_dir = tempfile.mkdtemp(prefix="media_zoom_")
+    in_suffix = _ext(source_filename) or ".jpg"
+    in_path = os.path.join(tmp_dir, f"input{in_suffix}")
+    out_path = os.path.join(tmp_dir, "output.mp4")
+    try:
+        with open(in_path, "wb") as f:
+            f.write(image_data)
+        # Target = input dims rounded to even (yuv420p/H.264 require even).
+        try:
+            with _PILImage.open(in_path) as im:
+                W, H = im.size
+        except Exception:
+            W, H = 1280, 720
+        W = max(2, (W // 2) * 2)
+        H = max(2, (H // 2) * 2)
+        fps = 25
+        dur = max(0.5, float(duration))
+        n_frames = max(2, int(round(fps * dur)))
+        # Pre-upscale 2x so zoompan's integer steps don't jitter, then zoom from
+        # 1.25x down to 1.0 over the clip, kept centred.
+        zexpr = f"max(1.0,1.25-0.25*on/{n_frames})"
+        zoompan = (
+            f"scale={2 * W}:{2 * H},"
+            f"zoompan=z='{zexpr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+            f"d={n_frames}:s={W}x{H}:fps={fps}"
+        )
+
+        candidates = _video_encoder_candidates(ffmpeg)
+        if _video_encoder_cache and _video_encoder_cache in candidates:
+            candidates = [_video_encoder_cache] + [c for c in candidates if c != _video_encoder_cache]
+
+        last_err = ""
+        for encoder in candidates:
+            pre, vf = [], zoompan + ",format=yuv420p"
+            if encoder == "h264_nvenc":
+                venc = ["-c:v", "h264_nvenc", "-preset", "p5"]
+            elif encoder == "h264_vaapi":
+                pre = ["-vaapi_device", _render_node()]
+                vf = zoompan + ",format=nv12,hwupload"
+                venc = ["-c:v", "h264_vaapi"]
+            else:  # libx264
+                venc = ["-c:v", "libx264", "-preset", VIDEO_PRESET, "-crf", str(VIDEO_CRF)]
+            cmd = [ffmpeg] + pre + ["-loop", "1", "-framerate", str(fps), "-i", in_path]
+            if audio_path:
+                cmd += ["-i", audio_path]
+            cmd += ["-vf", vf] + venc + ["-pix_fmt", "yuv420p", "-r", str(fps)]
+            if audio_path:
+                cmd += ["-c:a", "aac", "-b:a", VIDEO_AUDIO_BITRATE]
+            cmd += (["-t", f"{dur:.3f}", "-shortest"] if audio_path else ["-t", f"{dur:.3f}"])
+            cmd += ["-movflags", "+faststart", "-y", out_path]
+            result = subprocess.run(cmd, capture_output=True, timeout=3600, text=True)
+            if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+                _video_encoder_cache = encoder
+                with open(out_path, "rb") as f:
+                    return f.read()
+            last_err = (result.stderr or "")[-300:]
+            logger.warning(f"zoom encoder {encoder} failed, trying next: {last_err}")
+            if os.path.exists(out_path):
+                os.unlink(out_path)
+
+        raise RuntimeError(f"zoom video failed (tried {candidates}): {last_err}")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def zoom_existing_video(video_data: bytes, source_filename: str = "video.mp4") -> bytes:
+    """Apply the zoom-out motion to a still-frame effect video, keeping its
+    audio: pulls the first frame + the original audio and re-renders the pan-out
+    over the clip's real length. Returns MP4 bytes."""
+    ffmpeg = resolve_ffmpeg()
+    if not ffmpeg_available():
+        raise RuntimeError("ffmpeg is not installed on the server")
+    tmp_dir = tempfile.mkdtemp(prefix="media_zoomv_")
+    vin = os.path.join(tmp_dir, "in.mp4")
+    frame = os.path.join(tmp_dir, "frame.png")
+    try:
+        with open(vin, "wb") as f:
+            f.write(video_data)
+        dur = _probe_duration(vin) or 5.0
+        extract = subprocess.run(
+            [ffmpeg, "-i", vin, "-frames:v", "1", "-y", frame],
+            capture_output=True, timeout=120, text=True,
+        )
+        if extract.returncode != 0 or not os.path.exists(frame):
+            raise RuntimeError(f"could not extract a frame: {(extract.stderr or '')[-200:]}")
+        with open(frame, "rb") as f:
+            frame_data = f.read()
+        return image_zoompan_video(frame_data, "frame.png", duration=dur, audio_path=vin)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 # ---------------------------------------------------------------------------
 # Image <-> PDF conversion
 # ---------------------------------------------------------------------------

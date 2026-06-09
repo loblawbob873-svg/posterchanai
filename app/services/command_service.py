@@ -582,6 +582,14 @@ class CommandService:
         "yamete": "Turn an attached image into a 6s MP4 set to the yamete clip: yamete",
         "curb": "Turn an attached image into an MP4 set to the Curb Your Enthusiasm theme: curb",
         "depressing": "Turn an attached image into a 10s MP4 set to a depressing track: depressing",
+        "fuu": "Turn an attached image into a 5s MP4 set to the fuu clip: fuu",
+        "helpme": "Turn an attached image into a 5s MP4 set to the helpme clip: helpme",
+        "gong": "Turn an attached image into a short MP4 set to the gong clip: gong",
+        "fbi": "Turn an attached image into a short MP4 set to the FBI open up clip: fbi",
+        "redeem": "Turn an attached image into a short MP4 set to the do not redeem clip: redeem",
+        "gigity": "Turn an attached image into a short MP4 set to the giggity clip: gigity",
+        "beavis": "Turn an attached image into a short MP4 set to the Beavis laugh: beavis",
+        "smell": "Turn an attached image into a short MP4 set to the can you imagine the smell clip: smell",
         "node": "Remote node mgmt: node <name> <cmd> | node all <cmd> | node agent <name> <goal> | node agent all <goal> | node list | node jobs | node log <id> | node kill <id>",
         "budget": "Show your budget summary (income, unpaid bills, remaining)",
         "bills": "List your bills: bills (unpaid) | bills all | bills paid",
@@ -601,6 +609,14 @@ class CommandService:
         "finance": "budget",
         "shot": "screenshot",
         "ss": "screenshot",
+    }
+
+    # Effects that accept a trailing `zoom` arg (Ken Burns pan-out of the output).
+    ZOOMABLE_EFFECTS = {
+        "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay",
+        "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete",
+        "curb", "depressing", "fuu", "helpme", "gong", "fbi", "redeem",
+        "gigity", "beavis", "smell",
     }
 
     # Natural language phrases that map directly to commands with arguments
@@ -674,6 +690,22 @@ class CommandService:
         # Resolve aliases (e.g. "shot" → "screenshot") centrally so callers that match
         # commands literally (Telegram) accept them just like the web UI's parse_command.
         command = self.COMMAND_ALIASES.get(command, command)
+
+        # "<effect> zoom" → run the effect, then Ken Burns zoom-out its output
+        # (e.g. `dildo zoom`). Re-enter with the trailing token stripped so the
+        # normal dispatch runs untouched, then pan-out the resulting files. The
+        # strip keeps any preceding arg intact (e.g. `meme some text zoom`).
+        _ztokens = (arg or "").split()
+        if command in self.ZOOMABLE_EFFECTS and _ztokens and _ztokens[-1].lower() == "zoom":
+            import asyncio
+            from app.services import effects_service
+            inner = await self.execute_command(
+                command, " ".join(_ztokens[:-1]), last_prompt, stop_check, attachments, node_notify,
+            )
+            if isinstance(inner, dict) and inner.get("type") == "files" and inner.get("files"):
+                inner["files"] = await asyncio.to_thread(effects_service.apply_zoom, inner["files"])
+            return inner
+
         if command == "help":
             return await self._help_command()
         elif command == "search":
@@ -746,6 +778,22 @@ class CommandService:
             return await self._curb_command(attachments)
         elif command == "depressing":
             return await self._depressing_command(attachments)
+        elif command == "fuu":
+            return await self._fuu_command(attachments)
+        elif command == "helpme":
+            return await self._helpme_command(attachments)
+        elif command == "gong":
+            return await self._gong_command(attachments)
+        elif command == "fbi":
+            return await self._fbi_command(attachments)
+        elif command == "redeem":
+            return await self._redeem_command(attachments)
+        elif command == "gigity":
+            return await self._gigity_command(attachments)
+        elif command == "beavis":
+            return await self._beavis_command(attachments)
+        elif command == "smell":
+            return await self._smell_command(attachments)
         elif command == "node":
             return await self._node_command(arg, notify=node_notify)
         elif command == "budget":
@@ -3513,6 +3561,126 @@ Files are saved to your Storage.""",
         from app.services.effects_service import depressing_attachments
 
         outputs, summary = await asyncio.to_thread(depressing_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _fuu_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into a 5s MP4 set to the fuu clip: `fuu`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `fuu`."}
+
+        import asyncio
+        from app.services.effects_service import fuu_attachments
+
+        outputs, summary = await asyncio.to_thread(fuu_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _helpme_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into a 5s MP4 set to the helpme clip: `helpme`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `helpme`."}
+
+        import asyncio
+        from app.services.effects_service import helpme_attachments
+
+        outputs, summary = await asyncio.to_thread(helpme_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _gong_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into a short MP4 set to the gong clip: `gong`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `gong`."}
+
+        import asyncio
+        from app.services.effects_service import gong_attachments
+
+        outputs, summary = await asyncio.to_thread(gong_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _fbi_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into a short MP4 set to the FBI open up clip: `fbi`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `fbi`."}
+
+        import asyncio
+        from app.services.effects_service import fbi_attachments
+
+        outputs, summary = await asyncio.to_thread(fbi_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _redeem_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into a short MP4 set to the do not redeem clip: `redeem`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `redeem`."}
+
+        import asyncio
+        from app.services.effects_service import redeem_attachments
+
+        outputs, summary = await asyncio.to_thread(redeem_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _gigity_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into a short MP4 set to the giggity clip: `gigity`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `gigity`."}
+
+        import asyncio
+        from app.services.effects_service import gigity_attachments
+
+        outputs, summary = await asyncio.to_thread(gigity_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _beavis_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into a short MP4 set to the Beavis laugh: `beavis`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `beavis`."}
+
+        import asyncio
+        from app.services.effects_service import beavis_attachments
+
+        outputs, summary = await asyncio.to_thread(beavis_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _smell_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into a short MP4 set to the smell clip: `smell`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `smell`."}
+
+        import asyncio
+        from app.services.effects_service import smell_attachments
+
+        outputs, summary = await asyncio.to_thread(smell_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}

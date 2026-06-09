@@ -928,7 +928,7 @@ def process_messages():
         # spam the room). So on a reply we only accept it when the text is one of the
         # media commands that act on the replied-to attachment (e.g. replying to a
         # posted image with `meme <text>` or `dildo`).
-        _MEDIA_REPLY_CMDS = ("compress", "clip", "convert", "translate", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing")
+        _MEDIA_REPLY_CMDS = ("compress", "clip", "convert", "translate", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fuu", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell")
         if mentioned_users and own_user_id and own_user_id in mentioned_users:
             if not message.get("reply_to_event_id"):
                 bot_mentioned = True
@@ -1106,6 +1106,14 @@ def process_messages():
                     _opts.append("• `yamete` — turn the image into a 6s yamete video")
                     _opts.append("• `curb` — turn the image into a Curb Your Enthusiasm video")
                     _opts.append("• `depressing` — turn the image into a 10s depressing video")
+                    _opts.append("• `fuu` — turn the image into a 5s fuu video")
+                    _opts.append("• `helpme` — turn the image into a 5s helpme video")
+                    _opts.append("• `gong` — turn the image into a gong video")
+                    _opts.append("• `fbi` — turn the image into an FBI open up video")
+                    _opts.append("• `redeem` — turn the image into a do not redeem video")
+                    _opts.append("• `gigity` — turn the image into a giggity video")
+                    _opts.append("• `beavis` — turn the image into a Beavis laugh video")
+                    _opts.append("• `smell` — turn the image into a can you imagine the smell video")
                     _opts.append("• `translate <language>` — read & translate the text")
                 elif _is_vid:
                     _opts.append("• `compress` — shrink the video")
@@ -1492,7 +1500,15 @@ def process_messages():
                 or lower_prompt == "yakety" or lower_prompt.startswith("yakety ") \
                 or lower_prompt == "yamete" or lower_prompt.startswith("yamete ") \
                 or lower_prompt == "curb" or lower_prompt.startswith("curb ") \
-                or lower_prompt == "depressing" or lower_prompt.startswith("depressing "):
+                or lower_prompt == "depressing" or lower_prompt.startswith("depressing ") \
+                or lower_prompt == "fuu" or lower_prompt.startswith("fuu ") \
+                or lower_prompt == "helpme" or lower_prompt.startswith("helpme ") \
+                or lower_prompt == "gong" or lower_prompt.startswith("gong ") \
+                or lower_prompt == "fbi" or lower_prompt.startswith("fbi ") \
+                or lower_prompt == "redeem" or lower_prompt.startswith("redeem ") \
+                or lower_prompt == "gigity" or lower_prompt.startswith("gigity ") \
+                or lower_prompt == "beavis" or lower_prompt.startswith("beavis ") \
+                or lower_prompt == "smell" or lower_prompt.startswith("smell "):
             _media = _gather_cached_media(sender)
             # Fallback for clients with no media caption (e.g. Element): the user
             # uploads the file, then *replies* to it with the command. Pull the
@@ -1523,7 +1539,7 @@ def process_messages():
                 # For meme the image IS the result — don't also post the summary
                 # text (it would be a noisy second message). compress/clip/convert
                 # keep their summary (it reports the size change).
-                if _summary and not lower_prompt.startswith(("meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing")):
+                if _summary and not lower_prompt.startswith(("meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fuu", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell")):
                     send_reply(message, _summary)
                 if _out_files and not _posted:
                     send_reply(message, "❌ Couldn't upload the processed file(s) to Matrix.")

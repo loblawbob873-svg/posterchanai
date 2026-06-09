@@ -2061,3 +2061,491 @@ def depressing_attachments(
     except Exception as e:
         logger.error(f"depressing failed for {filename}: {e}", exc_info=True)
         return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Fuu (turn an image into a 5s MP4 set to the fuu clip — the "fuu" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped fuu track (repo-relative), overridable with FUU_AUDIO_PATH.
+_FUU_AUDIO_CANDIDATES = [
+    os.environ.get("FUU_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "fuu.mp3"),
+    "/var/lib/posterchanai/assets/fuu.mp3",
+]
+_FUU_DURATION = 5.0
+
+
+def _fuu_audio_path() -> str:
+    """First existing fuu mp3 from the candidate list ("" if none)."""
+    for p in _FUU_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_fuu(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a 5s MP4 playing the fuu clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _fuu_audio_path()
+    if not audio:
+        raise RuntimeError("Fuu audio (assets/fuu.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_FUU_DURATION)
+
+
+def fuu_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a fuu 5s MP4. Mirrors
+    depressing_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_fuu(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_fuu.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🌀 Fuu\n\n🌀 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"fuu failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Helpme (turn an image into a 5s MP4 set to the helpme clip — the "helpme" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped helpme track (repo-relative), overridable with HELPME_AUDIO_PATH.
+_HELPME_AUDIO_CANDIDATES = [
+    os.environ.get("HELPME_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "helpme.mp3"),
+    "/var/lib/posterchanai/assets/helpme.mp3",
+]
+_HELPME_DURATION = 5.0
+
+
+def _helpme_audio_path() -> str:
+    """First existing helpme mp3 from the candidate list ("" if none)."""
+    for p in _HELPME_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_helpme(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a 5s MP4 playing the helpme clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _helpme_audio_path()
+    if not audio:
+        raise RuntimeError("Helpme audio (assets/helpme.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_HELPME_DURATION)
+
+
+def helpme_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a helpme 5s MP4. Mirrors
+    fuu_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_helpme(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_helpme.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🆘 Helpme\n\n🆘 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"helpme failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Gong (turn an image into a short MP4 set to the gong clip — the "gong" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped gong track (repo-relative), overridable with GONG_AUDIO_PATH.
+_GONG_AUDIO_CANDIDATES = [
+    os.environ.get("GONG_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "gong.mp3"),
+    "/var/lib/posterchanai/assets/gong.mp3",
+]
+# Cap above the ~4s clip length; -shortest ends the video at the audio end.
+_GONG_DURATION = 5.0
+
+
+def _gong_audio_path() -> str:
+    """First existing gong mp3 from the candidate list ("" if none)."""
+    for p in _GONG_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_gong(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the gong clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _gong_audio_path()
+    if not audio:
+        raise RuntimeError("Gong audio (assets/gong.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_GONG_DURATION)
+
+
+def gong_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a gong MP4. Mirrors
+    helpme_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_gong(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_gong.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🔔 Gong\n\n🔔 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"gong failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# FBI (turn an image into a short MP4 set to the "FBI open up" clip — the
+# "fbi" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped fbi track (repo-relative), overridable with FBI_AUDIO_PATH.
+_FBI_AUDIO_CANDIDATES = [
+    os.environ.get("FBI_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "fbi.mp3"),
+    "/var/lib/posterchanai/assets/fbi.mp3",
+]
+# Cap above the ~7s clip length; -shortest ends the video at the audio end.
+_FBI_DURATION = 8.0
+
+
+def _fbi_audio_path() -> str:
+    """First existing fbi mp3 from the candidate list ("" if none)."""
+    for p in _FBI_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_fbi(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the FBI clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _fbi_audio_path()
+    if not audio:
+        raise RuntimeError("FBI audio (assets/fbi.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_FBI_DURATION)
+
+
+def fbi_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into an FBI MP4. Mirrors
+    gong_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_fbi(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_fbi.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🚨 FBI\n\n🚨 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"fbi failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Redeem (turn an image into a short MP4 set to the "do not redeem it" clip —
+# the "redeem" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped redeem track (repo-relative), overridable with REDEEM_AUDIO_PATH.
+_REDEEM_AUDIO_CANDIDATES = [
+    os.environ.get("REDEEM_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "redeem.mp3"),
+    "/var/lib/posterchanai/assets/redeem.mp3",
+]
+# Cap above the ~8s clip length; -shortest ends the video at the audio end.
+_REDEEM_DURATION = 9.0
+
+
+def _redeem_audio_path() -> str:
+    """First existing redeem mp3 from the candidate list ("" if none)."""
+    for p in _REDEEM_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_redeem(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the redeem clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _redeem_audio_path()
+    if not audio:
+        raise RuntimeError("Redeem audio (assets/redeem.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_REDEEM_DURATION)
+
+
+def redeem_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a redeem MP4. Mirrors
+    fbi_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_redeem(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_redeem.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 💳 Redeem\n\n💳 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"redeem failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Gigity (turn an image into a short MP4 set to the "giggity" clip — the
+# "gigity" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped gigity track (repo-relative), overridable with GIGITY_AUDIO_PATH.
+_GIGITY_AUDIO_CANDIDATES = [
+    os.environ.get("GIGITY_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "gigity.mp3"),
+    "/var/lib/posterchanai/assets/gigity.mp3",
+]
+# Cap above the ~1s clip length; -shortest ends the video at the audio end.
+_GIGITY_DURATION = 3.0
+
+
+def _gigity_audio_path() -> str:
+    """First existing gigity mp3 from the candidate list ("" if none)."""
+    for p in _GIGITY_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_gigity(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the gigity clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _gigity_audio_path()
+    if not audio:
+        raise RuntimeError("Gigity audio (assets/gigity.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_GIGITY_DURATION)
+
+
+def gigity_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a gigity MP4. Mirrors
+    redeem_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_gigity(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_gigity.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 😏 Gigity\n\n😏 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"gigity failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Beavis (turn an image into a short MP4 set to the Beavis & Butt-Head laugh —
+# the "beavis" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped beavis track (repo-relative), overridable with BEAVIS_AUDIO_PATH.
+_BEAVIS_AUDIO_CANDIDATES = [
+    os.environ.get("BEAVIS_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "beavis.mp3"),
+    "/var/lib/posterchanai/assets/beavis.mp3",
+]
+# Cap above the ~11s clip length; -shortest ends the video at the audio end.
+_BEAVIS_DURATION = 12.0
+
+
+def _beavis_audio_path() -> str:
+    """First existing beavis mp3 from the candidate list ("" if none)."""
+    for p in _BEAVIS_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_beavis(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the beavis laugh over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _beavis_audio_path()
+    if not audio:
+        raise RuntimeError("Beavis audio (assets/beavis.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_BEAVIS_DURATION)
+
+
+def beavis_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a beavis MP4. Mirrors
+    gigity_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_beavis(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_beavis.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🤤 Beavis\n\n🤤 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"beavis failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Smell (turn an image into a short MP4 set to the "can you imagine the smell"
+# clip — the "smell" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped smell track (repo-relative), overridable with SMELL_AUDIO_PATH.
+_SMELL_AUDIO_CANDIDATES = [
+    os.environ.get("SMELL_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "smell.mp3"),
+    "/var/lib/posterchanai/assets/smell.mp3",
+]
+# Cap above the ~4s clip length; -shortest ends the video at the audio end.
+_SMELL_DURATION = 5.0
+
+
+def _smell_audio_path() -> str:
+    """First existing smell mp3 from the candidate list ("" if none)."""
+    for p in _SMELL_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_smell(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the smell clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _smell_audio_path()
+    if not audio:
+        raise RuntimeError("Smell audio (assets/smell.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_SMELL_DURATION)
+
+
+def smell_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a smell MP4. Mirrors
+    beavis_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_smell(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_smell.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 👃 Smell\n\n👃 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"smell failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Zoom (the "zoom" trailing arg, e.g. `dildo zoom`) — Ken Burns pan-out applied
+# to ANY effect's output: an image becomes a short pan-out video; an
+# audio/video effect keeps its audio while its still frame zooms out.
+# ---------------------------------------------------------------------------
+
+# How long the pan-out runs for an image effect (audio effects use their own
+# length so the zoom completes over the whole clip).
+_ZOOM_IMAGE_DURATION = 4.0
+
+
+def apply_zoom(outputs: List[OutputFile]) -> List[OutputFile]:
+    """Replace each effect output with a zoom-out (Ken Burns) version. Images
+    turn into a short pan-out MP4; existing videos are re-rendered with the
+    same motion, keeping their audio. On failure the original output is kept."""
+    from app.services.media_service import image_zoompan_video, zoom_existing_video
+
+    zoomed: List[OutputFile] = []
+    for out in outputs or []:
+        ct = (out.get("content_type") or "").lower()
+        fn = out.get("filename") or "image"
+        stem = Path(fn).stem or "image"
+        try:
+            if ct.startswith("image/"):
+                video = image_zoompan_video(out["data"], fn, duration=_ZOOM_IMAGE_DURATION)
+                zoomed.append({
+                    "filename": f"{stem}_zoom.mp4",
+                    "data": video,
+                    "content_type": "video/mp4",
+                })
+            elif ct.startswith("video/"):
+                video = zoom_existing_video(out["data"], fn)
+                zoomed.append({
+                    "filename": f"{stem}_zoom.mp4",
+                    "data": video,
+                    "content_type": "video/mp4",
+                })
+            else:
+                zoomed.append(out)
+        except Exception as e:
+            logger.error(f"zoom failed for {fn}: {e}", exc_info=True)
+            zoomed.append(out)
+    return zoomed
