@@ -2729,6 +2729,116 @@ def whoabuddy_attachments(
 
 
 # ---------------------------------------------------------------------------
+# Freebird (turn an image into an MP4 set to the Free Bird solo — the "freebird" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped freebird track (repo-relative), overridable with FREEBIRD_AUDIO_PATH.
+_FREEBIRD_AUDIO_CANDIDATES = [
+    os.environ.get("FREEBIRD_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "freebird.mp3"),
+    "/var/lib/posterchanai/assets/freebird.mp3",
+]
+# Cap above the ~13s clip length; -shortest ends the video at the audio end.
+_FREEBIRD_DURATION = 14.0
+
+
+def _freebird_audio_path() -> str:
+    """First existing freebird mp3 from the candidate list ("" if none)."""
+    for p in _FREEBIRD_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_freebird(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the Free Bird solo over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _freebird_audio_path()
+    if not audio:
+        raise RuntimeError("Freebird audio (assets/freebird.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_FREEBIRD_DURATION)
+
+
+def freebird_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a freebird MP4. Mirrors
+    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_freebird(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_freebird.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🦅 Freebird\n\n🦅 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"freebird failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Kanye (turn an image into an MP4 set to the Kanye clip — the "kanye" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped kanye track (repo-relative), overridable with KANYE_AUDIO_PATH.
+_KANYE_AUDIO_CANDIDATES = [
+    os.environ.get("KANYE_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "kanye.mp3"),
+    "/var/lib/posterchanai/assets/kanye.mp3",
+]
+# Cap above the ~9s clip length; -shortest ends the video at the audio end.
+_KANYE_DURATION = 10.0
+
+
+def _kanye_audio_path() -> str:
+    """First existing kanye mp3 from the candidate list ("" if none)."""
+    for p in _KANYE_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_kanye(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the Kanye clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _kanye_audio_path()
+    if not audio:
+        raise RuntimeError("Kanye audio (assets/kanye.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_KANYE_DURATION)
+
+
+def kanye_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a kanye MP4. Mirrors
+    freebird_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_kanye(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_kanye.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🐻 Kanye\n\n🐻 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"kanye failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
 # Thug (turn an image into an MP4 set to the THUG LIFE clip — the "thug" gag)
 # ---------------------------------------------------------------------------
 
