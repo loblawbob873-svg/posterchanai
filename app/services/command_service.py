@@ -581,6 +581,7 @@ class CommandService:
         "yakety": "Turn an attached image into a 9s MP4 set to Yakety Sax: yakety",
         "yamete": "Turn an attached image into a 6s MP4 set to the yamete clip: yamete",
         "curb": "Turn an attached image into an MP4 set to the Curb Your Enthusiasm theme: curb",
+        "depressing": "Turn an attached image into a 10s MP4 set to a depressing track: depressing",
         "node": "Remote node mgmt: node <name> <cmd> | node all <cmd> | node agent <name> <goal> | node agent all <goal> | node list | node jobs | node log <id> | node kill <id>",
         "budget": "Show your budget summary (income, unpaid bills, remaining)",
         "bills": "List your bills: bills (unpaid) | bills all | bills paid",
@@ -743,6 +744,8 @@ class CommandService:
             return await self._yamete_command(attachments)
         elif command == "curb":
             return await self._curb_command(attachments)
+        elif command == "depressing":
+            return await self._depressing_command(attachments)
         elif command == "node":
             return await self._node_command(arg, notify=node_notify)
         elif command == "budget":
@@ -3495,6 +3498,21 @@ Files are saved to your Storage.""",
         from app.services.effects_service import curb_attachments
 
         outputs, summary = await asyncio.to_thread(curb_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _depressing_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into a 10s MP4 set to a depressing track: `depressing`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `depressing`."}
+
+        import asyncio
+        from app.services.effects_service import depressing_attachments
+
+        outputs, summary = await asyncio.to_thread(depressing_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}

@@ -2005,3 +2005,59 @@ def curb_attachments(
     except Exception as e:
         logger.error(f"curb failed for {filename}: {e}", exc_info=True)
         return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Depressing (turn an image into an MP4 set to the first 10s of a melancholy
+# track — the "depressing" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped depressing track (repo-relative), overridable with
+# DEPRESSING_AUDIO_PATH.
+_DEPRESSING_AUDIO_CANDIDATES = [
+    os.environ.get("DEPRESSING_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "depressing.mp3"),
+    "/var/lib/posterchanai/assets/depressing.mp3",
+]
+_DEPRESSING_DURATION = 10.0
+
+
+def _depressing_audio_path() -> str:
+    """First existing depressing mp3 from the candidate list ("" if none)."""
+    for p in _DEPRESSING_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_depressing(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a 10s MP4 playing the depressing track over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _depressing_audio_path()
+    if not audio:
+        raise RuntimeError("Depressing audio (assets/depressing.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_DEPRESSING_DURATION)
+
+
+def depressing_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a depressing 10s MP4. Mirrors
+    curb_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_depressing(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_depressing.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 😢 Depressing\n\n😢 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"depressing failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
