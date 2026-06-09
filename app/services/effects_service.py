@@ -2949,6 +2949,61 @@ def bike_attachments(
 
 
 # ---------------------------------------------------------------------------
+# Jobs (turn an image into an MP4 set to the "they took our jobs" clip — "jobs" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped jobs track (repo-relative), overridable with JOBS_AUDIO_PATH.
+_JOBS_AUDIO_CANDIDATES = [
+    os.environ.get("JOBS_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "jobs.mp3"),
+    "/var/lib/posterchanai/assets/jobs.mp3",
+]
+# Cap above the ~13s clip length; -shortest ends the video at the audio end.
+_JOBS_DURATION = 14.0
+
+
+def _jobs_audio_path() -> str:
+    """First existing jobs mp3 from the candidate list ("" if none)."""
+    for p in _JOBS_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_jobs(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the jobs clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _jobs_audio_path()
+    if not audio:
+        raise RuntimeError("Jobs audio (assets/jobs.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_JOBS_DURATION)
+
+
+def jobs_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a jobs MP4. Mirrors
+    bike_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_jobs(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_jobs.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 💼 Jobs\n\n💼 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"jobs failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
 # Thug (turn an image into an MP4 set to the THUG LIFE clip — the "thug" gag)
 # ---------------------------------------------------------------------------
 
