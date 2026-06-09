@@ -592,6 +592,8 @@ class CommandService:
         "smell": "Turn an attached image into a short MP4 set to the can you imagine the smell clip: smell",
         "hood": "Turn an attached image into a 10s MP4 set to the hood clip: hood",
         "akbar": "Turn an attached image into a short MP4 set to the akbar clip: akbar",
+        "retard": "Turn an attached image into a short MP4 set to the retard-alert clip: retard",
+        "whoabuddy": "Turn an attached image into a short MP4 set to the whoa buddy clip: whoabuddy",
         "node": "Remote node mgmt: node <name> <cmd> | node all <cmd> | node agent <name> <goal> | node agent all <goal> | node list | node jobs | node log <id> | node kill <id>",
         "budget": "Show your budget summary (income, unpaid bills, remaining)",
         "bills": "List your bills: bills (unpaid) | bills all | bills paid",
@@ -619,7 +621,7 @@ class CommandService:
         "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay",
         "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete",
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
-        "gigity", "beavis", "smell", "hood", "akbar",
+        "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy",
     }
 
     # Natural language phrases that map directly to commands with arguments
@@ -804,6 +806,10 @@ class CommandService:
             return await self._hood_command(attachments)
         elif command == "akbar":
             return await self._akbar_command(attachments)
+        elif command == "retard":
+            return await self._retard_command(attachments)
+        elif command == "whoabuddy":
+            return await self._whoabuddy_command(attachments)
         elif command == "node":
             return await self._node_command(arg, notify=node_notify)
         elif command == "budget":
@@ -3721,6 +3727,36 @@ Files are saved to your Storage.""",
         from app.services.effects_service import akbar_attachments
 
         outputs, summary = await asyncio.to_thread(akbar_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _retard_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into a short MP4 set to the retard-alert clip: `retard`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `retard`."}
+
+        import asyncio
+        from app.services.effects_service import retard_attachments
+
+        outputs, summary = await asyncio.to_thread(retard_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _whoabuddy_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into a short MP4 set to the whoa buddy clip: `whoabuddy`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `whoabuddy`."}
+
+        import asyncio
+        from app.services.effects_service import whoabuddy_attachments
+
+        outputs, summary = await asyncio.to_thread(whoabuddy_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}

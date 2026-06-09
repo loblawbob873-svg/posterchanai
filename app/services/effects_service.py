@@ -2617,6 +2617,118 @@ def akbar_attachments(
 
 
 # ---------------------------------------------------------------------------
+# Retard (turn an image into a short MP4 set to the retard-alert clip — the
+# "retard" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped retard track (repo-relative), overridable with RETARD_AUDIO_PATH.
+_RETARD_AUDIO_CANDIDATES = [
+    os.environ.get("RETARD_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "retard.mp3"),
+    "/var/lib/posterchanai/assets/retard.mp3",
+]
+# Cap above the ~6.7s clip length; -shortest ends the video at the audio end.
+_RETARD_DURATION = 7.5
+
+
+def _retard_audio_path() -> str:
+    """First existing retard mp3 from the candidate list ("" if none)."""
+    for p in _RETARD_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_retard(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the retard clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _retard_audio_path()
+    if not audio:
+        raise RuntimeError("Retard audio (assets/retard.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_RETARD_DURATION)
+
+
+def retard_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a retard MP4. Mirrors
+    akbar_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_retard(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_retard.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## ⚠️ Retard\n\n⚠️ {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"retard failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Whoabuddy (turn an image into a short MP4 set to the "whoa buddy" clip — the
+# "whoabuddy" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped whoabuddy track (repo-relative), overridable with WHOABUDDY_AUDIO_PATH.
+_WHOABUDDY_AUDIO_CANDIDATES = [
+    os.environ.get("WHOABUDDY_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "whoabuddy.mp3"),
+    "/var/lib/posterchanai/assets/whoabuddy.mp3",
+]
+# Cap above the ~5.5s clip length; -shortest ends the video at the audio end.
+_WHOABUDDY_DURATION = 6.0
+
+
+def _whoabuddy_audio_path() -> str:
+    """First existing whoabuddy mp3 from the candidate list ("" if none)."""
+    for p in _WHOABUDDY_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_whoabuddy(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the whoabuddy clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _whoabuddy_audio_path()
+    if not audio:
+        raise RuntimeError("Whoabuddy audio (assets/whoabuddy.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_WHOABUDDY_DURATION)
+
+
+def whoabuddy_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a whoabuddy MP4. Mirrors
+    retard_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_whoabuddy(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_whoabuddy.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🤠 Whoabuddy\n\n🤠 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"whoabuddy failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
 # Motion subcommands (trailing arg, e.g. `dildo zoom` / `dildo shake`) — applied
 # to ANY effect's output: an image becomes a short motion video; an audio/video
 # effect keeps its audio while its still frame moves.
