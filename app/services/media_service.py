@@ -635,25 +635,69 @@ def image_gif_overlay_video(image_data: bytes, source_filename: str, gif_path: s
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-def _probe_height(path: str) -> int:
-    """Video height in px via ffprobe (0 if unknown)."""
+def _probe_dim(path: str, dim: str) -> int:
+    """Video width/height in px via ffprobe (0 if unknown). `dim` is 'width'|'height'."""
     ffmpeg = resolve_ffmpeg()
     ffprobe = ffmpeg[:-6] + "ffprobe" if ffmpeg.endswith("ffmpeg") else "ffprobe"
     try:
         out = subprocess.run(
             [ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries",
-             "stream=height", "-of", "default=noprint_wrappers=1:nokey=1", path],
+             f"stream={dim}", "-of", "default=noprint_wrappers=1:nokey=1", path],
             capture_output=True, timeout=60, text=True,
         )
-        return int((out.stdout or "0").strip() or 0)
+        # take the first numeric line (some files report extra fields)
+        for line in (out.stdout or "").splitlines():
+            line = line.strip()
+            if line.isdigit():
+                return int(line)
+        return 0
     except Exception:
         return 0
 
 
+def _probe_height(path: str) -> int:
+    """Video height in px via ffprobe (0 if unknown)."""
+    return _probe_dim(path, "height")
+
+
+def _probe_width(path: str) -> int:
+    """Video width in px via ffprobe (0 if unknown)."""
+    return _probe_dim(path, "width")
+
+
+def _wrap_caption(text: str, font, max_width: int) -> List[str]:
+    """Greedy word-wrap `text` to `max_width` px for `font` (PIL); a single word
+    wider than the line is hard-broken so it can never overflow."""
+    def w(s: str) -> int:
+        return int(font.getlength(s))
+    lines: List[str] = []
+    for word in text.split():
+        if lines and w(lines[-1] + " " + word) <= max_width:
+            lines[-1] += " " + word
+        elif w(word) <= max_width:
+            lines.append(word)
+        else:  # hard-break an over-long single word
+            piece = ""
+            for ch in word:
+                if w(piece + ch) <= max_width or not piece:
+                    piece += ch
+                else:
+                    lines.append(piece)
+                    piece = ch
+            if piece:
+                lines.append(piece)
+    return lines or [text]
+
+
 def caption_video(video_data: bytes, text: str, font_path: str = "") -> bytes:
-    """Burn an outlined white meme caption across the lower third of a video
+    """Burn an outlined white meme caption across the lower part of a video
     (static overlay — stays put while the video zooms/shakes). Keeps the audio.
-    Returns MP4 bytes; raises RuntimeError if ffmpeg is missing."""
+
+    The caption is word-wrapped to the video WIDTH and auto-sized so it never runs
+    off the sides — critical for narrow/vertical (mobile) videos where ffmpeg
+    drawtext, which does no wrapping of its own, would otherwise clip the text.
+    Each wrapped line is drawn as its own centred drawtext. Returns MP4 bytes."""
+    from PIL import ImageFont
     ffmpeg = resolve_ffmpeg()
     if not ffmpeg_available():
         raise RuntimeError("ffmpeg is not installed on the server")
@@ -663,23 +707,61 @@ def caption_video(video_data: bytes, text: str, font_path: str = "") -> bytes:
 
     tmp_dir = tempfile.mkdtemp(prefix="media_caption_")
     vin = os.path.join(tmp_dir, "in.mp4")
-    tf = os.path.join(tmp_dir, "caption.txt")
     out_path = os.path.join(tmp_dir, "out.mp4")
     try:
         with open(vin, "wb") as f:
             f.write(video_data)
-        # textfile= avoids shell/filter escaping of the caption entirely.
-        with open(tf, "w") as f:
-            f.write(text)
+        W = _probe_width(vin) or 1280
         H = _probe_height(vin) or 720
-        fs = max(16, H // 11)
-        bw = max(2, fs // 12)
         margin = max(10, H // 22)
+        margin_x = max(8, int(W * 0.04))
+        max_width = W - 2 * margin_x
+        max_height = int(H * 0.5)  # caption lives in the lower half
+
+        def _font(sz: int):
+            if font_path and os.path.exists(font_path):
+                return ImageFont.truetype(font_path, sz)
+            try:
+                return ImageFont.load_default(sz)
+            except TypeError:
+                return ImageFont.load_default()
+
+        # Auto-size: largest font (from ~1/8 height down) whose wrapped block fits
+        # the width and the lower-half height.
+        fs = max(16, H // 11)
+        lines = [text]
+        for size in range(max(int(H / 8), 16), 11, -2):
+            f = _font(size)
+            wrapped = _wrap_caption(text, f, max_width)
+            line_h = int(size * 1.3)
+            if line_h * len(wrapped) <= max_height:
+                fs, lines = size, wrapped
+                break
+        else:
+            # Nothing fit the lower half even at the floor — use the smallest size
+            # (best effort; very long captions on short clips).
+            f = _font(12)
+            fs, lines = 12, _wrap_caption(text, f, max_width)
+
+        bw = max(2, fs // 12)
+        line_h = int(fs * 1.3)
+        total_h = line_h * len(lines)
+        y0 = H - margin - total_h  # top of the caption block
         fontopt = f"fontfile='{font_path}':" if font_path and os.path.exists(font_path) else ""
-        vf = (
-            f"drawtext={fontopt}textfile='{tf}':fontcolor=white:bordercolor=black:"
-            f"borderw={bw}:fontsize={fs}:x=(w-text_w)/2:y=h-text_h-{margin}"
-        )
+
+        # One centred drawtext per line (drawtext has no per-line centering); each
+        # line goes to its own textfile to avoid filter-escaping issues.
+        draws = []
+        for i, ln in enumerate(lines):
+            tf = os.path.join(tmp_dir, f"cap_{i}.txt")
+            with open(tf, "w") as fh:
+                fh.write(ln)
+            y = y0 + i * line_h
+            draws.append(
+                f"drawtext={fontopt}textfile='{tf}':fontcolor=white:bordercolor=black:"
+                f"borderw={bw}:fontsize={fs}:x=(w-text_w)/2:y={y}"
+            )
+        vf = ",".join(draws)
         cmd = [
             ffmpeg, "-i", vin, "-vf", vf,
             "-c:v", "libx264", "-preset", VIDEO_PRESET, "-crf", str(VIDEO_CRF),
