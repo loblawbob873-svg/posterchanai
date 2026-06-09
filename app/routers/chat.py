@@ -1058,7 +1058,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             # compress/clip/convert/translate operate on raw file bytes
                             # (translate OCRs an uploaded image/PDF and translates the text)
                             media_attachments = None
-                            if command in ("compress", "clip", "convert", "translate", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "freebird", "kanye", "thug"):
+                            if command in ("compress", "clip", "convert", "translate", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "freebird", "kanye", "darkness", "thug"):
                                 media_attachments = build_media_attachments(
                                     images, image_data, pdfs, pdf_data,
                                     documents, document_data, videos

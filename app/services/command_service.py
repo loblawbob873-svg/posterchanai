@@ -596,6 +596,7 @@ class CommandService:
         "whoabuddy": "Turn an attached image into a short MP4 set to the whoa buddy clip: whoabuddy",
         "freebird": "Turn an attached image into an MP4 set to the Free Bird solo: freebird",
         "kanye": "Turn an attached image into an MP4 set to the Kanye clip: kanye",
+        "darkness": "Turn an attached image into an MP4 set to the darkness clip: darkness",
         "thug": "Turn an attached image into an MP4 set to the THUG LIFE clip: thug",
         "node": "Remote node mgmt: node <name> <cmd> | node all <cmd> | node agent <name> <goal> | node agent all <goal> | node list | node jobs | node log <id> | node kill <id>",
         "budget": "Show your budget summary (income, unpaid bills, remaining)",
@@ -625,7 +626,7 @@ class CommandService:
         "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete",
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
         "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy",
-        "freebird", "kanye", "thug",
+        "freebird", "kanye", "darkness", "thug",
     }
 
     # Natural language phrases that map directly to commands with arguments
@@ -837,6 +838,8 @@ class CommandService:
             return await self._freebird_command(attachments)
         elif command == "kanye":
             return await self._kanye_command(attachments)
+        elif command == "darkness":
+            return await self._darkness_command(attachments)
         elif command == "thug":
             return await self._thug_command(attachments)
         elif command == "node":
@@ -3816,6 +3819,21 @@ Files are saved to your Storage.""",
         from app.services.effects_service import kanye_attachments
 
         outputs, summary = await asyncio.to_thread(kanye_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _darkness_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into an MP4 set to the darkness clip: `darkness`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `darkness`."}
+
+        import asyncio
+        from app.services.effects_service import darkness_attachments
+
+        outputs, summary = await asyncio.to_thread(darkness_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
