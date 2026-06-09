@@ -3258,6 +3258,77 @@ def consider_attachments(
 
 
 # ---------------------------------------------------------------------------
+# Clay (overlay the background-removed Clay Davis "Shiiiit" clip — the "clay" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped clay overlay (alpha video) + soundtrack, overridable via env.
+_CLAY_OVERLAY_CANDIDATES = [
+    os.environ.get("CLAY_OVERLAY_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "clay.mov"),
+    "/var/lib/posterchanai/assets/clay.mov",
+]
+_CLAY_AUDIO_CANDIDATES = [
+    os.environ.get("CLAY_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "clay.mp3"),
+    "/var/lib/posterchanai/assets/clay.mp3",
+]
+# The clip is ~3s; run the overlay for one play.
+_CLAY_DURATION = 3.1
+
+
+def _clay_overlay_path() -> str:
+    """First existing clay overlay video from the candidate list ("" if none)."""
+    for p in _CLAY_OVERLAY_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def _clay_audio_path() -> str:
+    """First existing clay mp3 from the candidate list ("" if none)."""
+    for p in _CLAY_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_clay(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Composite the background-removed Clay Davis clip over an image, with its
+    "Shiiiit" soundtrack. MP4 bytes."""
+    from app.services.media_service import image_gif_overlay_video
+    overlay = _clay_overlay_path()
+    if not overlay:
+        raise RuntimeError("Clay overlay (assets/clay.mov) is missing on the server")
+    return image_gif_overlay_video(image_data, source_filename, overlay,
+                                   duration=_CLAY_DURATION, audio_path=_clay_audio_path() or None,
+                                   height_frac=0.6)
+
+
+def clay_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Overlay the clay clip on the first image attachment. Mirrors chimp_attachments
+    (animated video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_clay(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_clay.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🗣️ Clay\n\n🗣️ {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"clay failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
 # Harlem (turn an image into an MP4 set to the Harlem Shake clip — "harlem" gag)
 # ---------------------------------------------------------------------------
 

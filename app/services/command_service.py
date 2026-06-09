@@ -605,6 +605,7 @@ class CommandService:
         "harlem": "Turn an attached image into an MP4 set to the Harlem Shake clip: harlem",
         "chimp": "Overlay the animated chimp gif on the lower third of an attached image: chimp",
         "consider": "Overlay the 'consider the following' cutout on an attached image: consider",
+        "clay": "Overlay the background-removed Clay Davis 'Shiiiit' clip on an image: clay",
         "thug": "Turn an attached image into an MP4 set to the THUG LIFE clip: thug",
         "node": "Remote node mgmt: node <name> <cmd> | node all <cmd> | node agent <name> <goal> | node agent all <goal> | node list | node jobs | node log <id> | node kill <id>",
         "budget": "Show your budget summary (income, unpaid bills, remaining)",
@@ -635,14 +636,14 @@ class CommandService:
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
         "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy",
         "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
-        "harlem", "chimp", "consider", "thug",
+        "harlem", "chimp", "consider", "clay", "thug",
     }
 
     # Effects whose output is ALREADY animated (e.g. the chimp gif overlay). The
     # zoom/shake motions freeze-and-pan a single still frame (they extract frame 1 of
     # the effect video), which would kill a real animation — so skip them here. A
     # `meme` caption is still fine (ffmpeg drawtext preserves the motion).
-    ANIMATED_EFFECTS = {"chimp"}
+    ANIMATED_EFFECTS = {"chimp", "clay"}
 
     # Natural language phrases that map directly to commands with arguments
     # Format: "phrase" -> ("command", "argument")
@@ -873,6 +874,8 @@ class CommandService:
             return await self._chimp_command(attachments)
         elif command == "consider":
             return await self._consider_command(attachments)
+        elif command == "clay":
+            return await self._clay_command(attachments)
         elif command == "thug":
             return await self._thug_command(attachments)
         elif command == "node":
@@ -3987,6 +3990,21 @@ Files are saved to your Storage.""",
         from app.services.effects_service import consider_attachments
 
         outputs, summary = await asyncio.to_thread(consider_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _clay_command(self, attachments: Optional[list]) -> dict:
+        """Overlay the background-removed Clay Davis clip on an image: `clay`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `clay`."}
+
+        import asyncio
+        from app.services.effects_service import clay_attachments
+
+        outputs, summary = await asyncio.to_thread(clay_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}

@@ -928,7 +928,7 @@ def process_messages():
         # spam the room). So on a reply we only accept it when the text is one of the
         # media commands that act on the replied-to attachment (e.g. replying to a
         # posted image with `meme <text>` or `dildo`).
-        _MEDIA_REPLY_CMDS = ("compress", "clip", "convert", "translate", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "thug")
+        _MEDIA_REPLY_CMDS = ("compress", "clip", "convert", "translate", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "thug")
         if mentioned_users and own_user_id and own_user_id in mentioned_users:
             if not message.get("reply_to_event_id"):
                 bot_mentioned = True
@@ -1129,6 +1129,7 @@ def process_messages():
                     _opts.append("• `harlem` — turn the image into a Harlem Shake video")
                     _opts.append("• `chimp` — overlay the animated chimp gif on the lower third")
                     _opts.append("• `consider` — overlay the 'consider the following' cutout on an image")
+                    _opts.append("• `clay` — overlay the background-removed Clay Davis 'Shiiiit' clip")
                     _opts.append("• `thug` — turn the image into a THUG LIFE video")
                     _opts.append("• `translate <language>` — read & translate the text")
                 elif _is_vid:
@@ -1540,6 +1541,7 @@ def process_messages():
                 or lower_prompt == "harlem" or lower_prompt.startswith("harlem ") \
                 or lower_prompt == "chimp" or lower_prompt.startswith("chimp ") \
                 or lower_prompt == "consider" or lower_prompt.startswith("consider ") \
+                or lower_prompt == "clay" or lower_prompt.startswith("clay ") \
                 or lower_prompt == "thug" or lower_prompt.startswith("thug "):
             _media = _gather_cached_media(sender)
             # Fallback for clients with no media caption (e.g. Element): the user
@@ -1571,7 +1573,7 @@ def process_messages():
                 # For meme the image IS the result — don't also post the summary
                 # text (it would be a noisy second message). compress/clip/convert
                 # keep their summary (it reports the size change).
-                if _summary and not lower_prompt.startswith(("meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "thug")):
+                if _summary and not lower_prompt.startswith(("meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "thug")):
                     send_reply(message, _summary)
                 if _out_files and not _posted:
                     send_reply(message, "❌ Couldn't upload the processed file(s) to Matrix.")

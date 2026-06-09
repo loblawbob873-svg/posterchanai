@@ -545,26 +545,30 @@ def image_audio_to_video(image_data: bytes, source_filename: str, audio_path: st
 def image_gif_overlay_video(image_data: bytes, source_filename: str, gif_path: str,
                             duration: float = 6.0, audio_path: Optional[str] = None,
                             height_frac: float = 0.55) -> bytes:
-    """Composite a (looping, transparent) GIF onto the lower part of a still image
-    and render to one fixed-length MP4.
+    """Composite a looping transparent overlay (animated GIF *or* a video with an
+    alpha channel, e.g. a ProRes 4444 .mov / VP8 .webm) onto the lower part of a still
+    image and render to one fixed-length MP4.
 
-    The background image is held static (`-loop 1`) while the GIF loops
-    (`-ignore_loop 0`); the clip runs exactly `duration` seconds. The GIF is scaled to
-    `height_frac` of the image height (aspect kept), centred horizontally and anchored
-    to the bottom; its transparency is preserved so only the artwork sits over the
-    photo. If `audio_path` is given it's looped (`-stream_loop -1`) to fill the whole
-    clip duration. Reuses the same HW-accel encoder autodetect (NVENC → VAAPI →
-    libx264) as the audio effects. Returns MP4 bytes; raises RuntimeError if ffmpeg is
-    missing or every encoder fails.
+    The background image is held static (`-loop 1`) while the overlay loops — a GIF via
+    `-ignore_loop 0`, any other (video) overlay via `-stream_loop -1`; the clip runs
+    exactly `duration` seconds. The overlay is scaled to `height_frac` of the image
+    height (aspect kept), centred horizontally and anchored to the bottom; its
+    transparency is preserved so only the artwork sits over the photo. If `audio_path`
+    is given it's looped (`-stream_loop -1`) to fill the whole clip duration. Reuses the
+    same HW-accel encoder autodetect (NVENC → VAAPI → libx264) as the audio effects.
+    Returns MP4 bytes; raises RuntimeError if ffmpeg is missing or every encoder fails.
     """
     global _video_encoder_cache
     ffmpeg = resolve_ffmpeg()
     if not ffmpeg_available():
         raise RuntimeError("ffmpeg is not installed on the server")
     if not (gif_path and os.path.exists(gif_path)):
-        raise RuntimeError(f"overlay gif not found: {gif_path}")
+        raise RuntimeError(f"overlay not found: {gif_path}")
     has_audio = bool(audio_path and os.path.exists(audio_path))
     height_frac = min(max(height_frac, 0.1), 1.0)
+    # A GIF loops with -ignore_loop 0; an alpha video loops with -stream_loop -1.
+    is_gif_overlay = gif_path.lower().endswith(".gif")
+    overlay_loop = ["-ignore_loop", "0"] if is_gif_overlay else ["-stream_loop", "-1"]
 
     tmp_dir = tempfile.mkdtemp(prefix="media_overlay_")
     in_suffix = _ext(source_filename) or ".jpg"
@@ -602,8 +606,8 @@ def image_gif_overlay_video(image_data: bytes, source_filename: str, gif_path: s
                 venc = ["-c:v", "libx264", "-preset", VIDEO_PRESET, "-crf", str(VIDEO_CRF)]
             cmd = (
                 [ffmpeg] + pre
-                + ["-loop", "1", "-framerate", "12", "-i", in_path,
-                   "-ignore_loop", "0", "-i", gif_path]
+                + ["-loop", "1", "-framerate", "12", "-i", in_path]
+                + overlay_loop + ["-i", gif_path]
                 # -stream_loop -1 repeats the track to fill the whole clip duration.
                 + (["-stream_loop", "-1", "-i", audio_path] if has_audio else [])
                 + ["-filter_complex", fc, "-map", "[v]"]
