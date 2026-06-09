@@ -2765,26 +2765,6 @@ def _make_deal_with_it_glasses(target_w: int, target_h: int):
     return g.resize((max(2, target_w), max(2, target_h)), Image.NEAREST)
 
 
-def _make_joint(length: int):
-    """A lit joint: white paper, brown filter, glowing ember + smoke. RGBA Image."""
-    from PIL import Image, ImageDraw
-    length = max(20, length)
-    th = max(6, length // 9)
-    pad = th * 4  # headroom for the ember glow + smoke
-    img = Image.new("RGBA", (length + pad, th + pad), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    y0 = pad // 2
-    body_end = length - th
-    d.rectangle([0, y0, body_end, y0 + th], fill=(245, 240, 230, 255))           # paper
-    d.rectangle([0, y0, int(length * 0.16), y0 + th], fill=(120, 80, 40, 255))   # filter (mouth end)
-    d.ellipse([body_end - 2, y0 - 2, length + 2, y0 + th + 2], fill=(255, 90, 20, 255))  # ember glow
-    d.ellipse([body_end + 1, y0 + 1, length - 1, y0 + th - 1], fill=(255, 190, 60, 255))  # hot core
-    for i, (r, a) in enumerate([(5, 150), (8, 110), (11, 70)]):  # smoke rising off the tip
-        cx, cy = length, y0 - (i + 1) * th
-        d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(225, 225, 225, a))
-    return img
-
-
 # Anime-face detector (nagadomi's lbpcascade), so the THUG overlay also lands on
 # anime/illustrated faces that the real-face haarcascade misses.
 _ANIME_CASCADE_CANDIDATES = [
@@ -2803,28 +2783,52 @@ def _anime_cascade_path() -> str:
 
 
 def _detect_thug_faces(gray, anime_gray, im_w: int, im_h: int):
-    """Run the real-face + anime-face cascades and return de-duplicated boxes.
-    Anime detection uses a histogram-equalized gray (nagadomi's recommendation)."""
+    """Run the real-face + anime-face cascades and return de-duplicated boxes as
+    (x, y, w, h, kind) where kind is 'real' or 'anime' (their feature geometry
+    differs — anime mouths sit much higher in the box). Anime detection uses a
+    histogram-equalized gray (nagadomi's recommendation)."""
     import cv2
-    min_side = (max(30, im_w // 20), max(30, im_h // 20))
+    # A meme subject's face is large; a higher floor + neighbour count keeps the
+    # anime cascade from stamping spurious tiny "faces" on hands/background.
+    min_side = (max(40, im_w // 12), max(40, im_h // 12))
     boxes = []
     real = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
     if not real.empty():
-        boxes += list(real.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=min_side))
+        boxes += [(b, "real") for b in real.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=min_side)]
     anime_xml = _anime_cascade_path()
     if anime_xml:
         anime = cv2.CascadeClassifier(anime_xml)
         if not anime.empty():
-            boxes += list(anime.detectMultiScale(anime_gray, scaleFactor=1.1, minNeighbors=3, minSize=min_side))
+            boxes += [(b, "anime") for b in anime.detectMultiScale(anime_gray, scaleFactor=1.1, minNeighbors=5, minSize=min_side)]
     # Drop boxes whose centre falls inside an already-accepted box (same face hit
-    # by both cascades), keeping the first (larger cascades run first).
+    # by both cascades). Prefer a 'real' hit over an 'anime' one on the same face
+    # (real geometry is correct for photos; true anime never trips the real
+    # cascade), then larger boxes first.
     accepted = []
-    for (x, y, w, h) in sorted(boxes, key=lambda b: b[2] * b[3], reverse=True):
+    for (x, y, w, h), kind in sorted(boxes, key=lambda bk: (bk[1] != "real", -(bk[0][2] * bk[0][3]))):
         cx, cy = x + w / 2, y + h / 2
-        if any(ax <= cx <= ax + aw and ay <= cy <= ay + ah for (ax, ay, aw, ah) in accepted):
+        if any(ax <= cx <= ax + aw and ay <= cy <= ay + ah for (ax, ay, aw, ah, _) in accepted):
             continue
-        accepted.append((x, y, w, h))
+        accepted.append((x, y, w, h, kind))
     return accepted
+
+
+def _draw_joint(overlay_draw, x0: float, y0: float, length: float, th: float, angle_deg: float = 18.0):
+    """Draw a lit joint on an RGBA overlay: filter end anchored at (x0, y0)
+    (the mouth), drooping down-right, with a glowing ember and smoke."""
+    import math
+    a = math.radians(angle_deg)
+    dx, dy = math.cos(a), math.sin(a)
+    x1, y1 = x0 + length * dx, y0 + length * dy            # ember (far) end
+    fx, fy = x0 + length * 0.18 * dx, y0 + length * 0.18 * dy
+    overlay_draw.line([(x0, y0), (x1, y1)], fill=(245, 240, 230, 255), width=int(th))   # paper
+    overlay_draw.line([(x0, y0), (fx, fy)], fill=(120, 80, 40, 255), width=int(th))     # filter (mouth end)
+    r = th * 0.7
+    overlay_draw.ellipse([x1 - r, y1 - r, x1 + r, y1 + r], fill=(255, 90, 20, 255))     # ember glow
+    overlay_draw.ellipse([x1 - r * 0.6, y1 - r * 0.6, x1 + r * 0.6, y1 + r * 0.6], fill=(255, 190, 60, 255))
+    for i, (rr, al) in enumerate([(th * 0.6, 150), (th * 0.9, 110), (th * 1.2, 70)]):   # smoke rising
+        cx, cy = x1, y1 - (i + 1) * th * 1.2
+        overlay_draw.ellipse([cx - rr, cy - rr, cx + rr, cy + rr], fill=(225, 225, 225, al))
 
 
 def _apply_thug_face(image_data: bytes) -> bytes:
@@ -2834,7 +2838,7 @@ def _apply_thug_face(image_data: bytes) -> bytes:
     try:
         import cv2
         import numpy as np
-        from PIL import Image, ImageOps
+        from PIL import Image, ImageOps, ImageDraw
     except Exception as e:
         logger.warning(f"thug face overlay unavailable ({e}); skipping")
         return image_data
@@ -2845,14 +2849,19 @@ def _apply_thug_face(image_data: bytes) -> bytes:
             faces = _detect_thug_faces(gray, cv2.equalizeHist(gray), im.width, im.height)
             if not faces:
                 return image_data
-            for (x, y, w, h) in faces:
-                # Sunglasses across the eye band (~upper third of the face).
+            # Joint + smoke go on an RGBA overlay so the smoke can be translucent.
+            overlay = Image.new("RGBA", im.size, (0, 0, 0, 0))
+            od = ImageDraw.Draw(overlay)
+            for (x, y, w, h, kind) in faces:
+                # Eyes sit a touch lower in an anime box (big forehead/hair).
+                eye_top = 0.32 if kind == "anime" else 0.28
                 gw, gh = int(w * 1.04), max(8, int(h * 0.30))
                 glasses = _make_deal_with_it_glasses(gw, gh)
-                im.paste(glasses, (x + (w - gw) // 2, y + int(h * 0.28)), glasses)
-                # Joint drooping from the mouth corner (~lower third of the face).
-                joint = _make_joint(int(w * 0.85)).rotate(-18, expand=True, resample=Image.BICUBIC)
-                im.paste(joint, (x + int(w * 0.40), y + int(h * 0.60)), joint)
+                im.paste(glasses, (x + (w - gw) // 2, y + int(h * eye_top)), glasses)
+                # Mouth is much higher in an anime box than a real one.
+                mouth_frac = 0.55 if kind == "anime" else 0.78
+                _draw_joint(od, x + 0.40 * w, y + mouth_frac * h, w * 0.72, max(5, int(h * 0.045)))
+            im = Image.alpha_composite(im.convert("RGBA"), overlay).convert("RGB")
             out = io.BytesIO()
             im.save(out, format="JPEG", quality=92)
             return out.getvalue()
