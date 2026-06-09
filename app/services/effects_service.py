@@ -3169,6 +3169,116 @@ def moving_attachments(
 
 
 # ---------------------------------------------------------------------------
+# Harlem (turn an image into an MP4 set to the Harlem Shake clip — "harlem" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped harlem track (repo-relative), overridable with HARLEM_AUDIO_PATH.
+_HARLEM_AUDIO_CANDIDATES = [
+    os.environ.get("HARLEM_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "harlem.mp3"),
+    "/var/lib/posterchanai/assets/harlem.mp3",
+]
+# Cap above the ~12s clip length; -shortest ends the video at the audio end.
+_HARLEM_DURATION = 13.0
+
+
+def _harlem_audio_path() -> str:
+    """First existing harlem mp3 from the candidate list ("" if none)."""
+    for p in _HARLEM_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_harlem(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the Harlem Shake clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _harlem_audio_path()
+    if not audio:
+        raise RuntimeError("Harlem audio (assets/harlem.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_HARLEM_DURATION)
+
+
+def harlem_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a harlem MP4. Mirrors
+    moving_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_harlem(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_harlem.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🕺 Harlem\n\n🕺 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"harlem failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Chimp (overlay an animated transparent GIF on the lower third — the "chimp" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped chimp gif (repo-relative), overridable with CHIMP_GIF_PATH.
+_CHIMP_GIF_CANDIDATES = [
+    os.environ.get("CHIMP_GIF_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "chimp.gif"),
+    "/var/lib/posterchanai/assets/chimp.gif",
+]
+# How long the looping overlay video runs.
+_CHIMP_DURATION = 6.0
+
+
+def _chimp_gif_path() -> str:
+    """First existing chimp gif from the candidate list ("" if none)."""
+    for p in _CHIMP_GIF_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_chimp(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Composite the animated chimp gif over the lower third of an image. MP4 bytes."""
+    from app.services.media_service import image_gif_overlay_video
+    gif = _chimp_gif_path()
+    if not gif:
+        raise RuntimeError("Chimp gif (assets/chimp.gif) is missing on the server")
+    return image_gif_overlay_video(image_data, source_filename, gif, duration=_CHIMP_DURATION)
+
+
+def chimp_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Overlay the chimp gif on the first image attachment. Mirrors the audio
+    effects' shape (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_chimp(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_chimp.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🐵 Chimp\n\n🐵 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"chimp failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
 # Thug (turn an image into an MP4 set to the THUG LIFE clip — the "thug" gag)
 # ---------------------------------------------------------------------------
 

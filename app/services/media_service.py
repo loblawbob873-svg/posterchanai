@@ -542,6 +542,85 @@ def image_audio_to_video(image_data: bytes, source_filename: str, audio_path: st
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+def image_gif_overlay_video(image_data: bytes, source_filename: str, gif_path: str,
+                            duration: float = 6.0) -> bytes:
+    """Composite a (looping, transparent) GIF onto the lower third of a still image
+    and render to one MP4.
+
+    The background image is held static (`-loop 1`) while the GIF loops
+    (`-ignore_loop 0`) for `duration` seconds. The GIF is scaled to a third of the
+    image height (aspect kept), centred horizontally and anchored to the bottom; its
+    transparency is preserved so only the artwork sits over the photo. Reuses the
+    same HW-accel encoder autodetect (NVENC → VAAPI → libx264) as the audio effects.
+    Returns MP4 bytes; raises RuntimeError if ffmpeg is missing or every encoder fails.
+    """
+    global _video_encoder_cache
+    ffmpeg = resolve_ffmpeg()
+    if not ffmpeg_available():
+        raise RuntimeError("ffmpeg is not installed on the server")
+    if not (gif_path and os.path.exists(gif_path)):
+        raise RuntimeError(f"overlay gif not found: {gif_path}")
+
+    tmp_dir = tempfile.mkdtemp(prefix="media_overlay_")
+    in_suffix = _ext(source_filename) or ".jpg"
+    in_path = os.path.join(tmp_dir, f"input{in_suffix}")
+    out_path = os.path.join(tmp_dir, "output.mp4")
+    try:
+        with open(in_path, "wb") as f:
+            f.write(image_data)
+
+        # scale2ref sizes the GIF to a third of the image height (aspect kept), then
+        # overlay centres it horizontally and anchors it to the bottom edge.
+        base = (
+            "[0:v]scale=trunc(iw/2)*2:trunc(ih/2)*2[bg0];"
+            "[1:v]format=rgba,fps=12[g];"
+            "[g][bg0]scale2ref=w=-1:h=main_h/3[ov][bg];"
+            "[bg][ov]overlay=x=(W-w)/2:y=H-h:shortest=1"
+        )
+
+        candidates = _video_encoder_candidates(ffmpeg)
+        if _video_encoder_cache and _video_encoder_cache in candidates:
+            candidates = [_video_encoder_cache] + [c for c in candidates if c != _video_encoder_cache]
+
+        last_err = ""
+        for encoder in candidates:
+            pre = []
+            if encoder == "h264_nvenc":
+                fc = base + ",format=yuv420p[v]"
+                venc = ["-c:v", "h264_nvenc", "-preset", "p5"]
+            elif encoder == "h264_vaapi":
+                pre = ["-vaapi_device", _render_node()]
+                fc = base + ",format=nv12,hwupload[v]"
+                venc = ["-c:v", "h264_vaapi"]
+            else:  # libx264
+                fc = base + ",format=yuv420p[v]"
+                venc = ["-c:v", "libx264", "-preset", VIDEO_PRESET, "-crf", str(VIDEO_CRF)]
+            cmd = (
+                [ffmpeg] + pre
+                + ["-loop", "1", "-framerate", "12", "-i", in_path,
+                   "-ignore_loop", "0", "-i", gif_path,
+                   "-filter_complex", fc, "-map", "[v]"]
+                + venc
+                + ["-r", "12", "-t", f"{duration:.3f}",
+                   "-movflags", "+faststart", "-y", out_path]
+            )
+            result = subprocess.run(cmd, capture_output=True, timeout=3600, text=True)
+            if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+                if encoder != "libx264":
+                    logger.info(f"gif-overlay video encoded with GPU encoder: {encoder}")
+                _video_encoder_cache = encoder
+                with open(out_path, "rb") as f:
+                    return f.read()
+            last_err = (result.stderr or "")[-300:]
+            logger.warning(f"gif-overlay encoder {encoder} failed, trying next: {last_err}")
+            if os.path.exists(out_path):
+                os.unlink(out_path)
+
+        raise RuntimeError(f"gif-overlay→video failed (tried {candidates}): {last_err}")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def _probe_height(path: str) -> int:
     """Video height in px via ffprobe (0 if unknown)."""
     ffmpeg = resolve_ffmpeg()
