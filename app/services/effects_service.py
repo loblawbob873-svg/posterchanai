@@ -2874,7 +2874,7 @@ def _apply_thug_face(image_data: bytes) -> bytes:
                 im.paste(glasses, (x + (w - gw) // 2, int(eye_cy - gh / 2)), glasses)
                 # Joint at the mouth, a kind-specific drop below the eyes (anime
                 # faces have a much shorter eyes→mouth distance than real ones).
-                mouth_y = eye_cy + (0.16 if kind == "anime" else 0.38) * h
+                mouth_y = eye_cy + (0.21 if kind == "anime" else 0.38) * h
                 _draw_joint(od, x + 0.40 * w, mouth_y, w * 0.72, max(5, int(h * 0.045)))
             im = Image.alpha_composite(im.convert("RGBA"), overlay).convert("RGB")
             out = io.BytesIO()
