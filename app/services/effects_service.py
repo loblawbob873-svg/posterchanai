@@ -129,44 +129,54 @@ def add_meme_text(data: bytes, text: str) -> bytes:
 
         # Auto-size: from ~1/6 of the height down to a readable floor, pick the
         # largest font whose wrapped text fits the width and the bottom-half box.
+        # Measure the WHOLE wrapped block with Pillow's multiline metrics (incl.
+        # stroke + real line advance) — estimating per-line from a tight "Ay" bbox
+        # undercounts the height and overflows the bottom on tall/portrait photos.
+        def _spacing_for(font) -> int:
+            lh = draw.textbbox((0, 0), "Ay", font=font)[3]
+            return max(int(lh * 0.2), 2)
+
+        def _block_bbox(font, lines, stroke, spacing):
+            return draw.multiline_textbbox(
+                (0, 0), "\n".join(lines), font=font, stroke_width=stroke,
+                spacing=spacing, align="center",
+            )
+
         chosen_font = None
         chosen_lines: List[str] = []
         line_spacing = 0
+        stroke = 2
         start = max(int(H / 6), 14)
         for size in range(start, 11, -2):
             font = _load_meme_font(size)
             lines = _wrap_text_to_width(draw, text, font, max_width)
-            ascent_box = draw.textbbox((0, 0), "Ay", font=font)
-            line_h = ascent_box[3] - ascent_box[1]
-            spacing = max(int(line_h * 0.2), 2)
-            total_h = len(lines) * line_h + (len(lines) - 1) * spacing
-            widest = max((draw.textbbox((0, 0), ln, font=font)[2] for ln in lines), default=0)
-            if total_h <= max_height and widest <= max_width:
-                chosen_font, chosen_lines, line_spacing = font, lines, spacing
+            spacing = _spacing_for(font)
+            st = max(int(size * 0.06), 2)  # outline scales with font size
+            bbox = _block_bbox(font, lines, st, spacing)
+            bw, bh = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            if bh <= max_height and bw <= max_width:
+                chosen_font, chosen_lines, line_spacing, stroke = font, lines, spacing, st
                 break
         if chosen_font is None:
             # Even the floor size overflows — use it anyway (best effort).
             chosen_font = _load_meme_font(12)
             chosen_lines = _wrap_text_to_width(draw, text, chosen_font, max_width)
-            ascent_box = draw.textbbox((0, 0), "Ay", font=chosen_font)
-            line_spacing = max(int((ascent_box[3] - ascent_box[1]) * 0.2), 2)
+            line_spacing = _spacing_for(chosen_font)
+            stroke = 2
 
-        ascent_box = draw.textbbox((0, 0), "Ay", font=chosen_font)
-        line_h = ascent_box[3] - ascent_box[1]
-        total_h = len(chosen_lines) * line_h + (len(chosen_lines) - 1) * line_spacing
-        # Anchor the block to the bottom of the image, inside the margin.
-        y = H - margin - total_h
-        # Outline thickness scales with font size so it stays visible when large.
-        stroke = max(int(line_h * 0.08), 2)
-
-        for line in chosen_lines:
-            lw = draw.textbbox((0, 0), line, font=chosen_font)[2]
-            x = (W - lw) / 2
-            draw.text(
-                (x, y), line, font=chosen_font, fill="white",
-                stroke_width=stroke, stroke_fill="black",
-            )
-            y += line_h + line_spacing
+        block = "\n".join(chosen_lines)
+        bbox = _block_bbox(chosen_font, chosen_lines, stroke, line_spacing)
+        bw, bh = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        # Anchor: horizontally centred, block bottom inside the bottom margin.
+        # Offset by the bbox origin so the placement is exact (stroke can push the
+        # measured top negative).
+        x = (W - bw) / 2 - bbox[0]
+        y = (H - margin - bh) - bbox[1]
+        draw.multiline_text(
+            (x, y), block, font=chosen_font, fill="white",
+            stroke_width=stroke, stroke_fill="black",
+            spacing=line_spacing, align="center",
+        )
 
         out = io.BytesIO()
         img.save(out, format="JPEG", quality=90, optimize=True)
