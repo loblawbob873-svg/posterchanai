@@ -3302,7 +3302,7 @@ def add_clay(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
         raise RuntimeError("Clay overlay (assets/clay.mov) is missing on the server")
     return image_gif_overlay_video(image_data, source_filename, overlay,
                                    duration=_CLAY_DURATION, audio_path=_clay_audio_path() or None,
-                                   height_frac=0.9)
+                                   height_frac=0.95)
 
 
 def clay_attachments(

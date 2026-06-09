@@ -583,7 +583,9 @@ def image_gif_overlay_video(image_data: bytes, source_filename: str, gif_path: s
         base = (
             "[0:v]scale=trunc(iw/2)*2:trunc(ih/2)*2[bg0];"
             "[1:v]format=rgba,fps=12[g];"
-            f"[g][bg0]scale2ref=w=-1:h=main_h*{height_frac:.3f}[ov][bg];"
+            # NB: in scale2ref `rh` is the REFERENCE (the background image) height;
+            # `main_h` is the overlay's own height — using it ignores the image size.
+            f"[g][bg0]scale2ref=w=-1:h=rh*{height_frac:.3f}[ov][bg];"
             "[bg][ov]overlay=x=(W-w)/2:y=H-h:shortest=0"
         )
 
