@@ -591,6 +591,7 @@ class CommandService:
         "beavis": "Turn an attached image into a short MP4 set to the Beavis laugh: beavis",
         "smell": "Turn an attached image into a short MP4 set to the can you imagine the smell clip: smell",
         "hood": "Turn an attached image into a 10s MP4 set to the hood clip: hood",
+        "akbar": "Turn an attached image into a short MP4 set to the akbar clip: akbar",
         "node": "Remote node mgmt: node <name> <cmd> | node all <cmd> | node agent <name> <goal> | node agent all <goal> | node list | node jobs | node log <id> | node kill <id>",
         "budget": "Show your budget summary (income, unpaid bills, remaining)",
         "bills": "List your bills: bills (unpaid) | bills all | bills paid",
@@ -618,7 +619,7 @@ class CommandService:
         "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay",
         "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete",
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
-        "gigity", "beavis", "smell", "hood",
+        "gigity", "beavis", "smell", "hood", "akbar",
     }
 
     # Natural language phrases that map directly to commands with arguments
@@ -801,6 +802,8 @@ class CommandService:
             return await self._smell_command(attachments)
         elif command == "hood":
             return await self._hood_command(attachments)
+        elif command == "akbar":
+            return await self._akbar_command(attachments)
         elif command == "node":
             return await self._node_command(arg, notify=node_notify)
         elif command == "budget":
@@ -3703,6 +3706,21 @@ Files are saved to your Storage.""",
         from app.services.effects_service import hood_attachments
 
         outputs, summary = await asyncio.to_thread(hood_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _akbar_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into a short MP4 set to the akbar clip: `akbar`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `akbar`."}
+
+        import asyncio
+        from app.services.effects_service import akbar_attachments
+
+        outputs, summary = await asyncio.to_thread(akbar_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
