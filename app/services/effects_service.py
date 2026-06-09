@@ -2507,6 +2507,61 @@ def smell_attachments(
 
 
 # ---------------------------------------------------------------------------
+# Hood (turn an image into a short MP4 set to the first 10s of the hood clip —
+# the "hood" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped hood track (repo-relative), overridable with HOOD_AUDIO_PATH.
+_HOOD_AUDIO_CANDIDATES = [
+    os.environ.get("HOOD_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "hood.mp3"),
+    "/var/lib/posterchanai/assets/hood.mp3",
+]
+_HOOD_DURATION = 10.0
+
+
+def _hood_audio_path() -> str:
+    """First existing hood mp3 from the candidate list ("" if none)."""
+    for p in _HOOD_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_hood(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a 10s MP4 playing the hood clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _hood_audio_path()
+    if not audio:
+        raise RuntimeError("Hood audio (assets/hood.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_HOOD_DURATION)
+
+
+def hood_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a hood 10s MP4. Mirrors
+    smell_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_hood(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_hood.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🏚️ Hood\n\n🏚️ {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"hood failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
 # Zoom (the "zoom" trailing arg, e.g. `dildo zoom`) — Ken Burns pan-out applied
 # to ANY effect's output: an image becomes a short pan-out video; an
 # audio/video effect keeps its audio while its still frame zooms out.

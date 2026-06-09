@@ -135,6 +135,7 @@ _BOT_HELP_TEXT = (
     "• gigity — turn an attached image into a giggity video\n"
     "• beavis — turn an attached image into a Beavis laugh video\n"
     "• smell — turn an attached image into a can you imagine the smell video\n"
+    "• hood — turn an attached image into a 10s hood video\n"
     "• screenshot <url> — full-page screenshot of a website (also shot / ss)\n"
     "• /narrate <message> — reply as a short TTS video\n"
     "Or just talk to me and I'll reply. 💕"
@@ -157,7 +158,7 @@ def _handle_media_command(status, command, arg, own_acct, visibility):
     skipped = [f["filename"] for f in out_files
                if not f["content_type"].startswith(("image/", "video/"))]
     # meme's result IS the image — reply with just the image, no summary caption.
-    text = "" if command in ("meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fuu", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell") else (summary or "Done.")
+    text = "" if command in ("meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fuu", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood") else (summary or "Done.")
     if skipped:
         text += f"\n\n(Couldn't attach {', '.join(skipped)} here — fediverse posts only take images/video.)"
     # Main reply carries the summary + all images + the first video; any further
@@ -378,7 +379,7 @@ def process_notifications():
             # Handle media commands (compress/clip/convert/meme) on an attached file.
             lower_prompt = prompt_text.lower()
             _media_cmd = None
-            for _c in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fuu", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell"):
+            for _c in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fuu", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood"):
                 if lower_prompt == _c or lower_prompt.startswith(_c + " "):
                     _media_cmd = _c
                     break

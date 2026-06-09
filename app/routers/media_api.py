@@ -68,7 +68,7 @@ async def process_media(
 ):
     """Run a compress/clip/convert/meme/dildo/poo/cum/blood/bullethole/fire/gay/blacked/kosher/barked operation on the supplied attachments."""
     command = (req.command or "").strip().lower()
-    if command not in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fuu", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell"):
+    if command not in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fuu", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood"):
         return {"error": f"unsupported command '{command}'"}
 
     # "<effect> zoom" trailing arg → Ken Burns pan-out the output (e.g. `dildo
@@ -148,6 +148,8 @@ async def process_media(
             outputs, summary = await asyncio.to_thread(effects_service.beavis_attachments, attachments)
         elif command == "smell":
             outputs, summary = await asyncio.to_thread(effects_service.smell_attachments, attachments)
+        elif command == "hood":
+            outputs, summary = await asyncio.to_thread(effects_service.hood_attachments, attachments)
         else:  # clip
             parts = (req.arg or "").split()
             if len(parts) < 2:
