@@ -3272,8 +3272,8 @@ _CLAY_AUDIO_CANDIDATES = [
     os.path.join(_REPO_ROOT, "assets", "clay.mp3"),
     "/var/lib/posterchanai/assets/clay.mp3",
 ]
-# The clip is ~2s (first second trimmed off); run the overlay for one play.
-_CLAY_DURATION = 2.1
+# The clip is ~2.6s (first half-second trimmed off); run the overlay for one play.
+_CLAY_DURATION = 2.6
 
 
 def _clay_overlay_path() -> str:
