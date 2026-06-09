@@ -3004,6 +3004,171 @@ def jobs_attachments(
 
 
 # ---------------------------------------------------------------------------
+# Ree (turn an image into an MP4 set to the REEEE clip — the "ree" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped ree track (repo-relative), overridable with REE_AUDIO_PATH.
+_REE_AUDIO_CANDIDATES = [
+    os.environ.get("REE_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "ree.mp3"),
+    "/var/lib/posterchanai/assets/ree.mp3",
+]
+# Cap above the ~6s clip length; -shortest ends the video at the audio end.
+_REE_DURATION = 7.0
+
+
+def _ree_audio_path() -> str:
+    """First existing ree mp3 from the candidate list ("" if none)."""
+    for p in _REE_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_ree(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the ree clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _ree_audio_path()
+    if not audio:
+        raise RuntimeError("Ree audio (assets/ree.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_REE_DURATION)
+
+
+def ree_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a ree MP4. Mirrors
+    jobs_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_ree(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_ree.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 😡 Ree\n\n😡 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"ree failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Liberal (turn an image into an MP4 set to the liberal clip — the "liberal" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped liberal track (repo-relative), overridable with LIBERAL_AUDIO_PATH.
+_LIBERAL_AUDIO_CANDIDATES = [
+    os.environ.get("LIBERAL_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "liberal.mp3"),
+    "/var/lib/posterchanai/assets/liberal.mp3",
+]
+# Cap above the ~11s clip length; -shortest ends the video at the audio end.
+_LIBERAL_DURATION = 12.0
+
+
+def _liberal_audio_path() -> str:
+    """First existing liberal mp3 from the candidate list ("" if none)."""
+    for p in _LIBERAL_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_liberal(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the liberal clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _liberal_audio_path()
+    if not audio:
+        raise RuntimeError("Liberal audio (assets/liberal.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_LIBERAL_DURATION)
+
+
+def liberal_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a liberal MP4. Mirrors
+    ree_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_liberal(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_liberal.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🗽 Liberal\n\n🗽 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"liberal failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Moving (turn an image into an MP4 set to the moving clip — the "moving" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped moving track (repo-relative), overridable with MOVING_AUDIO_PATH.
+_MOVING_AUDIO_CANDIDATES = [
+    os.environ.get("MOVING_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "moving.mp3"),
+    "/var/lib/posterchanai/assets/moving.mp3",
+]
+# Cap above the ~11s clip length; -shortest ends the video at the audio end.
+_MOVING_DURATION = 12.0
+
+
+def _moving_audio_path() -> str:
+    """First existing moving mp3 from the candidate list ("" if none)."""
+    for p in _MOVING_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_moving(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the moving clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _moving_audio_path()
+    if not audio:
+        raise RuntimeError("Moving audio (assets/moving.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_MOVING_DURATION)
+
+
+def moving_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a moving MP4. Mirrors
+    liberal_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_moving(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_moving.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 📦 Moving\n\n📦 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"moving failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
 # Thug (turn an image into an MP4 set to the THUG LIFE clip — the "thug" gag)
 # ---------------------------------------------------------------------------
 

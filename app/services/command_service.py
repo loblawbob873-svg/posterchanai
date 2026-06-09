@@ -599,6 +599,9 @@ class CommandService:
         "darkness": "Turn an attached image into an MP4 set to the darkness clip: darkness",
         "bike": "Turn an attached image into an MP4 set to the bike clip: bike",
         "jobs": "Turn an attached image into an MP4 set to the they-took-our-jobs clip: jobs",
+        "ree": "Turn an attached image into an MP4 set to the REEEE clip: ree",
+        "liberal": "Turn an attached image into an MP4 set to the liberal clip: liberal",
+        "moving": "Turn an attached image into an MP4 set to the moving clip: moving",
         "thug": "Turn an attached image into an MP4 set to the THUG LIFE clip: thug",
         "node": "Remote node mgmt: node <name> <cmd> | node all <cmd> | node agent <name> <goal> | node agent all <goal> | node list | node jobs | node log <id> | node kill <id>",
         "budget": "Show your budget summary (income, unpaid bills, remaining)",
@@ -628,7 +631,7 @@ class CommandService:
         "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete",
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
         "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy",
-        "freebird", "kanye", "darkness", "bike", "jobs", "thug",
+        "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "thug",
     }
 
     # Natural language phrases that map directly to commands with arguments
@@ -846,6 +849,12 @@ class CommandService:
             return await self._bike_command(attachments)
         elif command == "jobs":
             return await self._jobs_command(attachments)
+        elif command == "ree":
+            return await self._ree_command(attachments)
+        elif command == "liberal":
+            return await self._liberal_command(attachments)
+        elif command == "moving":
+            return await self._moving_command(attachments)
         elif command == "thug":
             return await self._thug_command(attachments)
         elif command == "node":
@@ -3870,6 +3879,51 @@ Files are saved to your Storage.""",
         from app.services.effects_service import jobs_attachments
 
         outputs, summary = await asyncio.to_thread(jobs_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _ree_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into an MP4 set to the REEEE clip: `ree`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `ree`."}
+
+        import asyncio
+        from app.services.effects_service import ree_attachments
+
+        outputs, summary = await asyncio.to_thread(ree_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _liberal_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into an MP4 set to the liberal clip: `liberal`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `liberal`."}
+
+        import asyncio
+        from app.services.effects_service import liberal_attachments
+
+        outputs, summary = await asyncio.to_thread(liberal_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _moving_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into an MP4 set to the moving clip: `moving`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `moving`."}
+
+        import asyncio
+        from app.services.effects_service import moving_attachments
+
+        outputs, summary = await asyncio.to_thread(moving_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
