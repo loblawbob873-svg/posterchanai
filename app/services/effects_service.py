@@ -2849,18 +2849,33 @@ def _apply_thug_face(image_data: bytes) -> bytes:
             faces = _detect_thug_faces(gray, cv2.equalizeHist(gray), im.width, im.height)
             if not faces:
                 return image_data
+            eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_eye.xml")
             # Joint + smoke go on an RGBA overlay so the smoke can be translucent.
             overlay = Image.new("RGBA", im.size, (0, 0, 0, 0))
             od = ImageDraw.Draw(overlay)
             for (x, y, w, h, kind) in faces:
-                # Eyes sit a touch lower in an anime box (big forehead/hair).
-                eye_top = 0.32 if kind == "anime" else 0.28
-                gw, gh = int(w * 1.04), max(8, int(h * 0.30))
+                # Anchor on the actual eye line — far more robust across art styles
+                # than a fixed fraction (boxes vary in how much hat/forehead/neck
+                # they include). Fall back to a fraction if no eyes are found.
+                eye_cy = None
+                if not eye_cascade.empty():
+                    eyes = eye_cascade.detectMultiScale(
+                        gray[y:y + h, x:x + w], scaleFactor=1.05, minNeighbors=3,
+                        minSize=(max(8, int(w * 0.10)), max(6, int(h * 0.06))),
+                    )
+                    eyes = [e for e in eyes if (e[1] + e[3] / 2) < 0.6 * h]  # ignore nostril/mouth hits
+                    if eyes:
+                        eye_cy = y + sum(e[1] + e[3] / 2 for e in eyes) / len(eyes)
+                if eye_cy is None:
+                    eye_cy = y + (0.42 if kind == "anime" else 0.40) * h
+                # Sunglasses centred on the eye line.
+                gw, gh = int(w * 1.04), max(8, int(h * 0.26))
                 glasses = _make_deal_with_it_glasses(gw, gh)
-                im.paste(glasses, (x + (w - gw) // 2, y + int(h * eye_top)), glasses)
-                # Mouth is much higher in an anime box than a real one.
-                mouth_frac = 0.55 if kind == "anime" else 0.78
-                _draw_joint(od, x + 0.40 * w, y + mouth_frac * h, w * 0.72, max(5, int(h * 0.045)))
+                im.paste(glasses, (x + (w - gw) // 2, int(eye_cy - gh / 2)), glasses)
+                # Joint at the mouth, a kind-specific drop below the eyes (anime
+                # faces have a much shorter eyes→mouth distance than real ones).
+                mouth_y = eye_cy + (0.16 if kind == "anime" else 0.38) * h
+                _draw_joint(od, x + 0.40 * w, mouth_y, w * 0.72, max(5, int(h * 0.045)))
             im = Image.alpha_composite(im.convert("RGBA"), overlay).convert("RGB")
             out = io.BytesIO()
             im.save(out, format="JPEG", quality=92)
