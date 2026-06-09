@@ -2833,10 +2833,55 @@ def _draw_joint(overlay_draw, x0: float, y0: float, length: float, th: float, an
         overlay_draw.ellipse([cx - rr, cy - rr, cx + rr, cy + rr], fill=(225, 225, 225, al))
 
 
+_INSIGHTFACE_APP = None
+_INSIGHTFACE_TRIED = False
+
+
+def _insightface_app():
+    """Lazily build a detection-only InsightFace app (SCRFD gives 5 landmarks:
+    eyes, nose, mouth corners). Cached; returns None if unavailable."""
+    global _INSIGHTFACE_APP, _INSIGHTFACE_TRIED
+    if _INSIGHTFACE_TRIED:
+        return _INSIGHTFACE_APP
+    _INSIGHTFACE_TRIED = True
+    try:
+        import warnings
+        warnings.filterwarnings("ignore")
+        from insightface.app import FaceAnalysis
+        app = FaceAnalysis(name="buffalo_l", allowed_modules=["detection"],
+                           providers=["CPUExecutionProvider"])
+        app.prepare(ctx_id=-1, det_size=(640, 640))
+        _INSIGHTFACE_APP = app
+    except Exception as e:
+        logger.warning(f"insightface unavailable for thug overlay: {e}")
+        _INSIGHTFACE_APP = None
+    return _INSIGHTFACE_APP
+
+
+def _draw_thug_from_landmarks(im, kps, ImageDraw):
+    """Stamp glasses across the two eye landmarks (rotation-aware) and a joint at
+    the mouth centre (between the mouth-corner landmarks). `kps` is SCRFD's 5×2:
+    [left eye, right eye, nose, left mouth, right mouth]."""
+    import math
+    from PIL import Image
+    le, re, lm, rm = kps[0], kps[1], kps[3], kps[4]
+    ipd = math.hypot(re[0] - le[0], re[1] - le[1]) or 1.0
+    midx, midy = (le[0] + re[0]) / 2, (le[1] + re[1]) / 2
+    ang = math.degrees(math.atan2(re[1] - le[1], re[0] - le[0]))
+    gw, gh = max(8, int(ipd * 2.1)), max(8, int(ipd * 0.62))
+    glasses = _make_deal_with_it_glasses(gw, gh).rotate(-ang, expand=True, resample=Image.BICUBIC)
+    im.paste(glasses, (int(midx - glasses.width / 2), int(midy - glasses.height / 2)), glasses)
+    mx, my = (lm[0] + rm[0]) / 2, (lm[1] + rm[1]) / 2
+    overlay = Image.new("RGBA", im.size, (0, 0, 0, 0))
+    _draw_joint(ImageDraw.Draw(overlay), mx - 0.15 * ipd, my, ipd * 1.7, max(5, int(ipd * 0.17)))
+    return Image.alpha_composite(im.convert("RGBA"), overlay).convert("RGB")
+
+
 def _apply_thug_face(image_data: bytes) -> bytes:
-    """Detect face(s) — real or anime — and stamp pixel sunglasses over the eyes +
-    a lit joint at the mouth (the classic THUG LIFE overlay). Returns JPEG bytes;
-    on no face or any error returns the original bytes unchanged."""
+    """Detect a face and stamp pixel sunglasses over the eyes + a lit joint at the
+    mouth (the classic THUG LIFE overlay). Tries InsightFace landmarks first
+    (exact, handles ¾ views), then falls back to the haar/anime cascades for flat
+    2D art. Returns JPEG bytes; on no face or any error returns the original."""
     try:
         import cv2
         import numpy as np
@@ -2844,6 +2889,24 @@ def _apply_thug_face(image_data: bytes) -> bytes:
     except Exception as e:
         logger.warning(f"thug face overlay unavailable ({e}); skipping")
         return image_data
+
+    # Preferred path: InsightFace landmarks (precise eyes + mouth).
+    app = _insightface_app()
+    if app is not None:
+        try:
+            with Image.open(io.BytesIO(image_data)) as im0:
+                im = ImageOps.exif_transpose(im0).convert("RGB")
+            bgr = cv2.cvtColor(np.asarray(im), cv2.COLOR_RGB2BGR)
+            dets = app.get(bgr)
+            if dets:
+                f = max(dets, key=lambda d: (d.bbox[2] - d.bbox[0]) * (d.bbox[3] - d.bbox[1]))
+                if getattr(f, "kps", None) is not None and len(f.kps) >= 5:
+                    out_img = _draw_thug_from_landmarks(im, f.kps, ImageDraw)
+                    out = io.BytesIO()
+                    out_img.save(out, format="JPEG", quality=92)
+                    return out.getvalue()
+        except Exception as e:
+            logger.warning(f"insightface thug path failed, falling back: {e}")
     try:
         with Image.open(io.BytesIO(image_data)) as im:
             im = ImageOps.exif_transpose(im).convert("RGB")
