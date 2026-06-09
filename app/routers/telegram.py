@@ -1401,34 +1401,36 @@ def _media_effects_keyboard() -> dict:
         [
             {"text": "🤠 Whoabuddy", "callback_data": "media:zq:whoabuddy"},
             {"text": "🇮🇹 Sopranos", "callback_data": "media:zq:sopranos"},
+        ],
+        [
             {"text": "🦅 Freebird", "callback_data": "media:zq:freebird"},
-        ],
-        [
             {"text": "🐻 Kanye", "callback_data": "media:zq:kanye"},
+        ],
+        [
             {"text": "🌑 Darkness", "callback_data": "media:zq:darkness"},
-        ],
-        [
             {"text": "🚲 Bike", "callback_data": "media:zq:bike"},
+        ],
+        [
             {"text": "💼 Jobs", "callback_data": "media:zq:jobs"},
-        ],
-        [
             {"text": "😡 Ree", "callback_data": "media:zq:ree"},
+        ],
+        [
             {"text": "🗽 Liberal", "callback_data": "media:zq:liberal"},
-        ],
-        [
             {"text": "📦 Moving", "callback_data": "media:zq:moving"},
+        ],
+        [
             {"text": "🕺 Harlem", "callback_data": "media:zq:harlem"},
-        ],
-        [
             {"text": "🐵 Chimp", "callback_data": "media:zq:chimp"},
+        ],
+        [
             {"text": "🤔 Consider", "callback_data": "media:zq:consider"},
-        ],
-        [
             {"text": "🗣️ Clay", "callback_data": "media:zq:clay"},
-            {"text": "🎸 Wasteland", "callback_data": "media:zq:wasteland"},
         ],
         [
+            {"text": "🎸 Wasteland", "callback_data": "media:zq:wasteland"},
             {"text": "🍑 Mixalot", "callback_data": "media:zq:mixalot"},
+        ],
+        [
             {"text": "😎 Thug", "callback_data": "media:zq:thug"},
         ],
         [{"text": "⬅️ Back", "callback_data": "media:back"}],
