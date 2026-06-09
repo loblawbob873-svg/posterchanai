@@ -3456,6 +3456,116 @@ def chimp_attachments(
 
 
 # ---------------------------------------------------------------------------
+# Wasteland (turn an image into an MP4 set to the Baba O'Riley intro — "wasteland")
+# ---------------------------------------------------------------------------
+
+# The shipped wasteland track (repo-relative), overridable with WASTELAND_AUDIO_PATH.
+_WASTELAND_AUDIO_CANDIDATES = [
+    os.environ.get("WASTELAND_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "wasteland.mp3"),
+    "/var/lib/posterchanai/assets/wasteland.mp3",
+]
+# Cap above the ~12s clip (0:40–0:52); -shortest ends the video at the audio end.
+_WASTELAND_DURATION = 13.0
+
+
+def _wasteland_audio_path() -> str:
+    """First existing wasteland mp3 from the candidate list ("" if none)."""
+    for p in _WASTELAND_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_wasteland(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the Teenage Wasteland intro. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _wasteland_audio_path()
+    if not audio:
+        raise RuntimeError("Wasteland audio (assets/wasteland.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_WASTELAND_DURATION)
+
+
+def wasteland_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a wasteland MP4. Mirrors
+    harlem_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_wasteland(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_wasteland.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🎸 Wasteland\n\n🎸 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"wasteland failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Mixalot (turn an image into an MP4 set to the Baby Got Back clip — "mixalot")
+# ---------------------------------------------------------------------------
+
+# The shipped mixalot track (repo-relative), overridable with MIXALOT_AUDIO_PATH.
+_MIXALOT_AUDIO_CANDIDATES = [
+    os.environ.get("MIXALOT_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "mixalot.mp3"),
+    "/var/lib/posterchanai/assets/mixalot.mp3",
+]
+# Cap above the ~9s clip (0:29–0:38); -shortest ends the video at the audio end.
+_MIXALOT_DURATION = 10.0
+
+
+def _mixalot_audio_path() -> str:
+    """First existing mixalot mp3 from the candidate list ("" if none)."""
+    for p in _MIXALOT_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_mixalot(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the Baby Got Back clip. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _mixalot_audio_path()
+    if not audio:
+        raise RuntimeError("Mixalot audio (assets/mixalot.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_MIXALOT_DURATION)
+
+
+def mixalot_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a mixalot MP4. Mirrors
+    wasteland_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_mixalot(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_mixalot.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🍑 Mixalot\n\n🍑 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"mixalot failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
 # Thug (turn an image into an MP4 set to the THUG LIFE clip — the "thug" gag)
 # ---------------------------------------------------------------------------
 
