@@ -928,6 +928,18 @@ def _shake_medium_vf(W: int, H: int, n_frames: int) -> str:
     return f"scale={sw}:{sh},crop={W}:{H}:'{xexpr}':'{yexpr}'"
 
 
+def _pulse_vf(W: int, H: int, n_frames: int) -> str:
+    # Rhythmic zoom in/out (bass-thump pulse): the zoom oscillates ~1.0..1.24
+    # twice a second, kept centred. Pre-upscale 2x so zoompan's integer steps
+    # don't jitter (same trick as `_zoom_vf`).
+    zexpr = "1.12+0.12*sin(2*PI*2*on/25)"
+    return (
+        f"scale={2 * W}:{2 * H},"
+        f"zoompan=z='{zexpr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+        f"d={n_frames}:s={W}x{H}:fps=25"
+    )
+
+
 def _trippy_vf(W: int, H: int, n_frames: int) -> str:
     # Psychedelic colour cycle (no camera motion): rotate the hue a full turn
     # every ~3s while the saturation pulses, so a still image churns through the
@@ -981,6 +993,12 @@ def image_trippy_video(image_data: bytes, source_filename: str, duration: float 
     return _render_motion_video(image_data, source_filename, _trippy_vf, duration, audio_path)
 
 
+def image_pulse_video(image_data: bytes, source_filename: str, duration: float = 4.0,
+                      audio_path: Optional[str] = None) -> bytes:
+    """Rhythmic zoom-pulse clip from a still image (see `_render_motion_video`)."""
+    return _render_motion_video(image_data, source_filename, _pulse_vf, duration, audio_path)
+
+
 def zoom_existing_video(video_data: bytes, source_filename: str = "video.mp4") -> bytes:
     """Apply the zoom-out motion to a still-frame effect video, keeping its audio."""
     return _motion_existing_video(video_data, source_filename, image_zoompan_video)
@@ -1004,6 +1022,11 @@ def beginshake_existing_video(video_data: bytes, source_filename: str = "video.m
 def trippy_existing_video(video_data: bytes, source_filename: str = "video.mp4") -> bytes:
     """Apply the psychedelic hue-cycle to a still-frame effect video, keeping its audio."""
     return _motion_existing_video(video_data, source_filename, image_trippy_video)
+
+
+def pulse_existing_video(video_data: bytes, source_filename: str = "video.mp4") -> bytes:
+    """Apply the rhythmic zoom-pulse to a still-frame effect video, keeping its audio."""
+    return _motion_existing_video(video_data, source_filename, image_pulse_video)
 
 
 # ---------------------------------------------------------------------------

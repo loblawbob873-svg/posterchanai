@@ -84,7 +84,7 @@ async def process_media(
             _i = _low.index("meme")
             meme_text = " ".join(_toks[_i + 1:]).strip()
             _toks, _low = _toks[:_i], _low[:_i]
-        if _low and _low[-1] in ("zoom", "shake", "medshake", "beginshake", "trippy"):
+        if _low and _low[-1] in ("zoom", "shake", "medshake", "beginshake", "trippy", "pulse"):
             motion = _low[-1]
             _toks = _toks[:-1]
         arg = " ".join(_toks)
@@ -239,6 +239,7 @@ async def process_media(
                 "medshake": effects_service.apply_medshake,
                 "beginshake": effects_service.apply_beginshake,
                 "trippy": effects_service.apply_trippy,
+                "pulse": effects_service.apply_pulse,
             }.get(motion, effects_service.apply_zoom)
             outputs = await asyncio.to_thread(_apply, outputs)
         if meme_text and outputs:
