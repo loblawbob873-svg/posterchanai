@@ -1314,11 +1314,53 @@ def _recover_post_text(callback_query: dict) -> str:
 # After tapping "🖼 Meme" on an image upload, ForceReply for the caption text; the
 # source image stays in the media cache and is captioned when the reply arrives.
 _MEME_PROMPT = "🖼 Meme — reply with the caption text to add:"
-# After tapping "📝 Add caption" in an effect's motion prompt, ForceReply for the
-# caption; the chosen effect + the cached upload are remembered, then the user
-# picks zoom/shake/none and the effect renders with the caption burned on.
+# After picking a motion then "✍️ Add text", ForceReply for the caption; the chosen
+# effect + motion + the cached upload are remembered, and on the reply the effect
+# renders with the motion and the caption burned on.
 _EFFECT_CAPTION_PROMPT = "✍️ Reply with the caption text for this effect:"
-_effect_caption_pending: dict = {}  # chat_id -> {"eff": str, "text": str, "ts": float}
+# chat_id -> {"eff": str, "motion": str, "ts": float}. The motion is chosen first
+# (mo: callback), then the optional caption is the FINAL step, so this carries the
+# picked motion through the ForceReply caption round-trip.
+_effect_caption_pending: dict = {}
+
+
+async def _deliver_files_result(chat_id: int, user, result: dict, offer_share: bool = True):
+    """Send a CommandService 'files' result back as Telegram documents, optionally
+    following up with a 'Post to social' prompt for the first image/video output.
+
+    Module-level so both the callback handler and the message-handler caption reply
+    deliver effect results identically (the callback's local `_send_files_result`
+    delegates here)."""
+    if result.get("type") == "files":
+        if result.get("content"):
+            await telegram_service.send_message(chat_id, result["content"])
+        for f in result.get("files", []):
+            if f.get("data"):
+                await telegram_service.send_document_bytes(chat_id, f["data"], f.get("filename", "file"))
+                await asyncio.sleep(0.15)
+        if offer_share:
+            _files = [f for f in result.get("files", []) if f.get("data")]
+            _shareable = next(
+                (f for f in _files if (f.get("content_type") or "").startswith(("image/", "video/"))),
+                None,
+            )
+            if _shareable and (_has_misskey(user) or _has_pleroma(user) or _has_matrix(user)):
+                _media_action_cache[chat_id] = {
+                    "attachments": [(
+                        _shareable.get("filename", "file"),
+                        _shareable["data"],
+                        _shareable.get("content_type", ""),
+                    )],
+                    "ts": time.time(),
+                }
+                await telegram_service.send_message(
+                    chat_id, "📣 Post this to your timeline?",
+                    reply_markup={"inline_keyboard": [[
+                        {"text": "📣 Post to social", "callback_data": "media:post"},
+                    ]]},
+                )
+    else:
+        await telegram_service.send_message(chat_id, result.get("content", "Done."))
 
 
 def _media_action_keyboard(attachments: list, user=None) -> Optional[dict]:
@@ -1775,9 +1817,10 @@ async def _handle_telegram_update(update: dict, db: Session):
                     await telegram_service.send_message(chat_id, f"❌ Meme failed: {_meme_err}")
                 return {"ok": True}
 
-            # Reply to the "📝 Add caption" effect prompt → stash the text, then ask
-            # for the motion (zoom/shake/none); the effect renders with the caption.
+            # Reply to the effect caption prompt → the motion was already chosen (held in
+            # _effect_caption_pending["motion"]); render the effect with motion + caption.
             if reply_from.get("is_bot") and reply_text.strip() == _EFFECT_CAPTION_PROMPT:
+                from app.services.media_service import is_image
                 _pend = _effect_caption_pending.get(chat_id)
                 _entry = _media_action_cache.get(chat_id)
                 if not _pend or not _entry or (time.time() - _entry.get("ts", 0)) > _MEDIA_ACTION_TTL:
@@ -1792,27 +1835,28 @@ async def _handle_telegram_update(update: dict, db: Session):
                                       "input_field_placeholder": "TOP TEXT"},
                     )
                     return {"ok": True}
-                _pend["text"] = _cap
-                _pend["ts"] = time.time()
                 _eff = _pend["eff"]
-                await telegram_service.send_message(
-                    chat_id, "✨ Add motion to the captioned effect?",
-                    reply_markup={"inline_keyboard": [
-                        [
-                            {"text": "🔍 Zoom", "callback_data": f"media:cgo:{_eff}:zoom"},
-                            {"text": "📳 Shake", "callback_data": f"media:cgo:{_eff}:shake"},
-                        ],
-                        [
-                            {"text": "〰️ Med shake", "callback_data": f"media:cgo:{_eff}:medshake"},
-                            {"text": "💥 Begin shake", "callback_data": f"media:cgo:{_eff}:beginshake"},
-                        ],
-                        [
-                            {"text": "🌈 Trippy", "callback_data": f"media:cgo:{_eff}:trippy"},
-                            {"text": "💓 Pulse", "callback_data": f"media:cgo:{_eff}:pulse"},
-                        ],
-                        [{"text": "❌ None", "callback_data": f"media:cgo:{_eff}:none"}],
-                    ]},
-                )
+                _motion = _pend.get("motion", "")
+                _cap_user = db.query(User).filter(
+                    User.telegram_chat_id == chat_id,
+                    User.telegram_enabled == True
+                ).first()
+                if not _cap_user:
+                    _effect_caption_pending.pop(chat_id, None)
+                    await telegram_service.send_message(chat_id, "Your Telegram account is not linked.")
+                    return {"ok": True}
+                _imgs = [a for a in _entry["attachments"] if is_image(a[0], a[2])]
+                _arg = (f"{_motion} " if _motion else "") + f"meme {_cap}"
+                await telegram_service.send_message(chat_id, f"✨ {_eff} + caption…")
+                try:
+                    _res = await CommandService(db, user=_cap_user).execute_command(
+                        _eff, _arg, attachments=_imgs,
+                    )
+                    await _deliver_files_result(chat_id, _cap_user, _res)
+                except Exception as _eff_err:
+                    logger.error(f"Captioned effect failed: {_eff_err}", exc_info=True)
+                    await telegram_service.send_message(chat_id, f"❌ {_eff} failed: {_eff_err}")
+                _effect_caption_pending.pop(chat_id, None)
                 return {"ok": True}
 
             # Interactive video-clip flow: replies to the start/end ForceReply prompts.
@@ -3568,41 +3612,9 @@ async def _handle_telegram_update(update: dict, db: Session):
                 cb_command_service = CommandService(db, user=cb_user)
 
                 async def _send_files_result(result, offer_share: bool = True):
-                    """Send a CommandService 'files' result back as Telegram documents.
-
-                    When `offer_share` and the first output is image/video and the user
-                    has a connected platform, follow up with a 'Post to social' prompt
-                    pointed at the produced file (so effects can be shared right away)."""
-                    if result.get("type") == "files":
-                        if result.get("content"):
-                            await telegram_service.send_message(chat_id, result["content"])
-                        for f in result.get("files", []):
-                            if f.get("data"):
-                                await telegram_service.send_document_bytes(chat_id, f["data"], f.get("filename", "file"))
-                                await asyncio.sleep(0.15)
-                        if offer_share:
-                            _files = [f for f in result.get("files", []) if f.get("data")]
-                            _shareable = next(
-                                (f for f in _files if (f.get("content_type") or "").startswith(("image/", "video/"))),
-                                None,
-                            )
-                            if _shareable and (_has_misskey(cb_user) or _has_pleroma(cb_user) or _has_matrix(cb_user)):
-                                _media_action_cache[chat_id] = {
-                                    "attachments": [(
-                                        _shareable.get("filename", "file"),
-                                        _shareable["data"],
-                                        _shareable.get("content_type", ""),
-                                    )],
-                                    "ts": time.time(),
-                                }
-                                await telegram_service.send_message(
-                                    chat_id, "📣 Post this to your timeline?",
-                                    reply_markup={"inline_keyboard": [[
-                                        {"text": "📣 Post to social", "callback_data": "media:post"},
-                                    ]]},
-                                )
-                    else:
-                        await telegram_service.send_message(chat_id, result.get("content", "Done."))
+                    """Deliver a CommandService 'files' result (callback-scope wrapper
+                    around the module-level `_deliver_files_result`)."""
+                    await _deliver_files_result(chat_id, cb_user, result, offer_share)
 
                 try:
                     if _action == "compress":
@@ -3749,19 +3761,17 @@ async def _handle_telegram_update(update: dict, db: Session):
                                 ],
                                 [
                                     {"text": "🌈 Trippy", "callback_data": f"media:mo:tr:{_eff}"},
-                                    {"text": "❌ None", "callback_data": f"media:{_eff}"},
+                                    {"text": "❌ None", "callback_data": f"media:mo:none:{_eff}"},
                                 ],
                             ]
-                            # thug bakes its own "THUG LIFE" text — no custom caption.
-                            if _eff != "thug":
-                                _rows.append([{"text": "📝 Add caption", "callback_data": f"media:cap:{_eff}"}])
                             await telegram_service.send_message(
                                 chat_id, "✨ Add motion?", reply_markup={"inline_keyboard": _rows},
                             )
                     elif _action.startswith("mo:"):
-                        # A motion (and optional trippy combo) was chosen → render the
-                        # effect, then transform it. Code maps to the command arg, e.g.
-                        # "dzt" → "zoom trippy" (zoom + trippy colours).
+                        # A motion (and optional trippy combo) was chosen. Code maps to
+                        # the command arg, e.g. "dzt" → "zoom trippy", "none" → no motion.
+                        # Caption is the FINAL step: after the motion we ask "Add text?"
+                        # so any motion can be combined with a meme caption.
                         _, _code, _eff = _action.split(":", 2)
                         _motion = {
                             "dz": "zoom", "dzt": "zoom trippy",
@@ -3769,40 +3779,49 @@ async def _handle_telegram_update(update: dict, db: Session):
                             "ms": "medshake", "mst": "medshake trippy",
                             "bs": "beginshake", "bst": "beginshake trippy",
                             "pl": "pulse", "plt": "pulse trippy",
-                            "tr": "trippy",
-                        }.get(_code, "zoom")
+                            "tr": "trippy", "none": "",
+                        }.get(_code, "")
                         if not any(is_image(fn, ct) for fn, _, ct in _atts):
                             await telegram_service.send_message(chat_id, "Nothing to do — that upload has no image.")
-                        else:
-                            await telegram_service.send_message(chat_id, f"✨ {_eff} + {_motion}…")
+                        elif _eff == "thug":
+                            # thug bakes its own "THUG LIFE" text — no custom caption; render now.
+                            await telegram_service.send_message(chat_id, f"✨ {_eff}{(' + ' + _motion) if _motion else ''}…")
                             _imgs = [a for a in _atts if is_image(a[0], a[2])]
                             await _send_files_result(await cb_command_service.execute_command(_eff, _motion, attachments=_imgs))
-                    elif _action.startswith("cap:"):
-                        # "📝 Add caption" → remember the effect, ForceReply for the text.
-                        _eff = _action.split(":", 1)[1]
-                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
-                            await telegram_service.send_message(chat_id, "Nothing to do — that upload has no image.")
                         else:
-                            _effect_caption_pending[chat_id] = {"eff": _eff, "ts": time.time()}
+                            # Remember the effect + chosen motion, then offer the caption.
+                            _effect_caption_pending[chat_id] = {"eff": _eff, "motion": _motion, "ts": time.time()}
+                            await telegram_service.send_message(
+                                chat_id, "📝 Add a caption?",
+                                reply_markup={"inline_keyboard": [[
+                                    {"text": "✍️ Add text", "callback_data": "media:capq:add"},
+                                    {"text": "▶️ No, render", "callback_data": "media:capq:skip"},
+                                ]]},
+                            )
+                    elif _action.startswith("capq:"):
+                        # Caption decision after a motion was picked. "add" → ForceReply
+                        # for the text (render happens on the reply); "skip" → render now
+                        # with just the motion.
+                        _decision = _action.split(":", 1)[1]
+                        _pend = _effect_caption_pending.get(chat_id)
+                        if not _pend or (time.time() - _pend.get("ts", 0)) > _MEDIA_ACTION_TTL:
+                            await telegram_service.send_message(chat_id, "⏳ That upload expired — tap the effect again.")
+                            _effect_caption_pending.pop(chat_id, None)
+                        elif not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to do — that upload has no image.")
+                            _effect_caption_pending.pop(chat_id, None)
+                        elif _decision == "add":
+                            _pend["ts"] = time.time()
                             await telegram_service.send_message(
                                 chat_id, _EFFECT_CAPTION_PROMPT,
                                 reply_markup={"force_reply": True, "selective": True,
                                               "input_field_placeholder": "TOP TEXT"},
                             )
-                    elif _action.startswith("cgo:"):
-                        # Motion chosen for a captioned effect → render with both.
-                        _parts = _action.split(":")
-                        _eff, _motion = _parts[1], _parts[2]
-                        _pend = _effect_caption_pending.get(chat_id)
-                        if not _pend or (time.time() - _pend.get("ts", 0)) > _MEDIA_ACTION_TTL or not _pend.get("text"):
-                            await telegram_service.send_message(chat_id, "⏳ That caption expired — tap the effect again.")
-                        elif not any(is_image(fn, ct) for fn, _, ct in _atts):
-                            await telegram_service.send_message(chat_id, "Nothing to do — that upload has no image.")
-                        else:
-                            _arg = (f"{_motion} " if _motion in ("zoom", "shake", "medshake", "beginshake", "trippy", "pulse") else "") + f"meme {_pend['text']}"
-                            await telegram_service.send_message(chat_id, f"✨ {_eff} + caption…")
+                        else:  # skip → render with just the motion
+                            _eff, _motion = _pend["eff"], _pend.get("motion", "")
+                            await telegram_service.send_message(chat_id, f"✨ {_eff}{(' + ' + _motion) if _motion else ''}…")
                             _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                            await _send_files_result(await cb_command_service.execute_command(_eff, _arg, attachments=_imgs))
+                            await _send_files_result(await cb_command_service.execute_command(_eff, _motion, attachments=_imgs))
                             _effect_caption_pending.pop(chat_id, None)
                     elif _action == "meme":
                         # ForceReply for the caption; the image stays in the cache and is
