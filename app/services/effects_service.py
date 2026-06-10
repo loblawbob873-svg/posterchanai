@@ -2968,6 +2968,60 @@ def whoabuddy_attachments(
 
 
 # ---------------------------------------------------------------------------
+# Prayer (turn an image into a short MP4 set to the prayer clip)
+# ---------------------------------------------------------------------------
+
+# The shipped prayer track (repo-relative), overridable with PRAYER_AUDIO_PATH.
+_PRAYER_AUDIO_CANDIDATES = [
+    os.environ.get("PRAYER_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "prayer.mp3"),
+    "/var/lib/posterchanai/assets/prayer.mp3",
+]
+# Cap just above the ~9.9s clip; -shortest ends the video at the audio end.
+_PRAYER_DURATION = 11.0
+
+
+def _prayer_audio_path() -> str:
+    """First existing prayer mp3 from the candidate list ("" if none)."""
+    for p in _PRAYER_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_prayer(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the prayer clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _prayer_audio_path()
+    if not audio:
+        raise RuntimeError("Prayer audio (assets/prayer.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_PRAYER_DURATION)
+
+
+def prayer_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a prayer MP4 (mirrors whoabuddy_attachments)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_prayer(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_prayer.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🙏 Prayer\n\n🙏 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"prayer failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
 # Glow — generic "make it stand out" enhancement (no gag, no audio): a gentle
 # breathing zoom + colour pop + a soft light sweep. A pure-ffmpeg render, so the
 # work lives in media_service; this is just the attachment wrapper.

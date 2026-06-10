@@ -65,7 +65,7 @@ the LLM. The bots reply with TTS via `/narrate <message>`.
 `dontwanttowait`, `strangerthings`, `adamsfamily`, `xmen`, `futurama`, `charliesangles`,
 `differentstroke`, `seinfeld`, `onepiece`, `overtaken`, `freebird`, `kanye`, `darkness`,
 `bike`, `jobs`, `ree`, `liberal`, `moving`, `harlem`, `wasteland`, `mixalot`, `thug`,
-`feltedtables`.
+`feltedtables`, `prayer`.
 
 **Enhance** (generic — no gag, just make a post stand out): `glow` (on an attached image →
 gentle breathing zoom + colour pop + a soft light sweeping across → short MP4), `glow <text>`

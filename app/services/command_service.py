@@ -626,6 +626,7 @@ class CommandService:
         "mixalot": "Turn an attached image into an MP4 set to the Baby Got Back clip: mixalot",
         "thug": "Turn an attached image into an MP4 set to the THUG LIFE clip: thug",
         "feltedtables": "Turn an attached image into an MP4 set to the felted-tables clip: feltedtables",
+        "prayer": "Turn an attached image into an MP4 set to the prayer clip: prayer",
         "node": "Remote node mgmt: node <name> <cmd> | node all <cmd> | node agent <name> <goal> | node agent all <goal> | node list | node jobs | node log <id> | node kill <id>",
         "budget": "Show your budget summary (income, unpaid bills, remaining)",
         "bills": "List your bills: bills (unpaid) | bills all | bills paid",
@@ -656,7 +657,7 @@ class CommandService:
         "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy",
         "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
         "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug",
-        "feltedtables", "glow",
+        "feltedtables", "glow", "prayer",
     }
 
     # Trailing motion tokens an effect accepts (zoom pan-out, full camera shake,
@@ -885,6 +886,8 @@ class CommandService:
             return await self._alive_command(arg, attachments)
         elif command == "glow":
             return await self._glow_command(arg, attachments)
+        elif command == "prayer":
+            return await self._prayer_command(attachments)
         elif command == "gay":
             return await self._gay_command(attachments)
         elif command == "blacked":
@@ -3980,6 +3983,21 @@ Files are saved to your Storage.""",
         from app.services.effects_service import whoabuddy_attachments
 
         outputs, summary = await asyncio.to_thread(whoabuddy_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _prayer_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into a short MP4 set to the prayer clip: `prayer`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `prayer`."}
+
+        import asyncio
+        from app.services.effects_service import prayer_attachments
+
+        outputs, summary = await asyncio.to_thread(prayer_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
