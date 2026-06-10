@@ -1104,76 +1104,84 @@ def blood_attachments(
 def _make_bullethole(h: int):
     """Render one bullet hole on a transparent tile (pure Pillow).
 
-    A small IRREGULAR punched hole with a torn rim, surrounded by dense BRANCHING
-    radial cracks and jagged concentric cracks (the dominant feature) plus only a
-    very faint stress discolouration — so it reads as shattered impact, not a ball.
-    Ships no image asset.
+    A punched impact on a SOLID surface: a dark irregular penetration ringed by a
+    ragged, pulverised crater of deformed material, with only a few short uneven
+    stress chips and a little knocked-out debris. Deliberately NOT the dense even
+    radial + concentric crack pattern that read as a spider web. Ships no image asset.
     """
     import math
     import random
     from PIL import Image, ImageDraw, ImageFilter
 
-    W = max(int(h * 1.5), 24)
+    W = max(int(h * 1.4), 22)
     H = W
     cx = cy = W / 2.0
-    hole_r = W * 0.075
+    hole_r = W * 0.15
+    crater_r = hole_r * 1.95
     tile = Image.new("RGBA", (W, H), (0, 0, 0, 0))
 
-    # Very faint, irregular stress discolouration (NOT a bright disc — that was the
-    # thing that read as a ball). Low alpha, blurred, lumpy.
-    disc = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    dd = ImageDraw.Draw(disc)
-    for _ in range(10):
+    def _blob(rmin, rmax, m=20):
+        """A closed irregular blob polygon of points between rmin..rmax of crater_r."""
+        pts = []
+        for i in range(m):
+            a = (i / m) * math.tau
+            rr = crater_r * random.uniform(rmin, rmax)
+            pts.append((cx + math.cos(a) * rr, cy + math.sin(a) * rr))
+        return pts
+
+    # --- pulverised crater rim: a ragged lighter ring of deformed material (the
+    #     surface punched out), soft-edged and irregular so it never reads as a disc. ---
+    crater = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(crater).polygon(_blob(0.78, 1.18), fill=(165, 162, 160, 205))
+    crater = crater.filter(ImageFilter.GaussianBlur(max(W * 0.025, 1)))
+    tile.alpha_composite(crater)
+
+    # --- darker bruise just inside the crater (depth toward the hole) ---
+    bruise = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(bruise).polygon(_blob(0.42, 0.72), fill=(78, 74, 74, 170))
+    bruise = bruise.filter(ImageFilter.GaussianBlur(max(W * 0.018, 0.8)))
+    tile.alpha_composite(bruise)
+
+    # --- a FEW short stress chips: uneven angles, no branching, no concentric rings ---
+    chips = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    chd = ImageDraw.Draw(chips)
+    for _ in range(random.randint(3, 6)):
         a = random.uniform(0, math.tau)
-        d = random.uniform(0, W * 0.16)
-        rr = W * random.uniform(0.10, 0.22)
-        ox, oy = cx + math.cos(a) * d, cy + math.sin(a) * d
-        dd.ellipse([ox - rr, oy - rr, ox + rr, oy + rr], fill=(210, 210, 215, 16))
-    disc = disc.filter(ImageFilter.GaussianBlur(max(W * 0.045, 1)))
-    tile.alpha_composite(disc)
-
-    # Cracks (the dominant feature): jagged radial cracks that branch, + concentric.
-    cracks = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    cd = ImageDraw.Draw(cracks)
-    crack_col = (20, 20, 23, 235)
-
-    def _crack(a, length, width, x=cx, y=cy, depth=0):
-        steps = random.randint(4, 7)
+        length = W * random.uniform(0.10, 0.24)
+        steps = random.randint(2, 4)
         seg = length / steps
-        pts = [(x, y)]
+        x, y = cx + math.cos(a) * hole_r * 0.85, cy + math.sin(a) * hole_r * 0.85
+        pts, aa = [(x, y)], a
         for _ in range(steps):
-            a += random.uniform(-0.32, 0.32)
-            x += math.cos(a) * seg
-            y += math.sin(a) * seg
+            aa += random.uniform(-0.3, 0.3)
+            x += math.cos(aa) * seg
+            y += math.sin(aa) * seg
             pts.append((x, y))
-            if depth < 2 and width > 1 and random.random() < 0.28:
-                _crack(a + random.uniform(-1.1, 1.1), length * 0.45,
-                       max(width - 1, 1), x, y, depth + 1)
-        cd.line(pts, fill=crack_col, width=int(width), joint="curve")
+        chd.line(pts, fill=(36, 33, 33, 210), width=max(int(W * 0.012), 1), joint="curve")
+    tile.alpha_composite(chips)
 
-    n = random.randint(12, 18)
-    for i in range(n):
-        a = (i / n) * math.tau + random.uniform(-0.12, 0.12)
-        _crack(a, W * random.uniform(0.30, 0.52), max(W * 0.006, 1))
-    for _ in range(random.randint(2, 4)):
-        ar = W * random.uniform(0.12, 0.32)
-        st = random.uniform(0, 360)
-        cd.arc([cx - ar, cy - ar, cx + ar, cy + ar], st, st + random.uniform(50, 160),
-               fill=(30, 30, 33, 200), width=max(int(W * 0.004), 1))
-    tile.alpha_composite(cracks)
+    # --- knocked-out debris specks scattered just outside the crater ---
+    deb = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    dbd = ImageDraw.Draw(deb)
+    for _ in range(random.randint(4, 9)):
+        a = random.uniform(0, math.tau)
+        d = random.uniform(crater_r * 0.55, crater_r * 1.35)
+        rr = W * random.uniform(0.006, 0.018)
+        ox, oy = cx + math.cos(a) * d, cy + math.sin(a) * d
+        dbd.ellipse([ox - rr, oy - rr, ox + rr, oy + rr],
+                    fill=(46, 43, 43, random.randint(110, 200)))
+    tile.alpha_composite(deb)
 
-    # The hole itself — a jagged dark polygon (not a clean circle) with a torn rim.
+    # --- the hole itself: a dark irregular penetration with a faint torn rim ---
     hole = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     hd = ImageDraw.Draw(hole)
-    m = 12
     pts = []
-    for i in range(m):
-        a = (i / m) * math.tau
-        r = hole_r * random.uniform(0.65, 1.3)
+    for i in range(12):
+        a = (i / 12) * math.tau
+        r = hole_r * random.uniform(0.7, 1.25)
         pts.append((cx + math.cos(a) * r, cy + math.sin(a) * r))
-    hd.polygon(pts, fill=(8, 8, 10, 255))
-    hd.line(pts + [pts[0]], fill=(48, 42, 38, 200),
-            width=max(int(W * 0.008), 1), joint="curve")
+    hd.polygon(pts, fill=(10, 9, 11, 255))
+    hd.line(pts + [pts[0]], fill=(72, 66, 60, 170), width=max(int(W * 0.01), 1), joint="curve")
     hole = hole.filter(ImageFilter.GaussianBlur(0.5))
     tile.alpha_composite(hole)
 

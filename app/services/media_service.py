@@ -1132,28 +1132,34 @@ def image_pulse_video(image_data: bytes, source_filename: str, duration: float =
 
 
 def zoom_existing_video(video_data: bytes, source_filename: str = "video.mp4") -> bytes:
-    """Apply the zoom-out motion to a still-frame effect video, keeping its audio."""
-    return _motion_existing_video(video_data, source_filename, image_zoompan_video)
+    """Apply the zoom-out camera move OVER the real frames of an effect video, keeping
+    its motion (parallax/animation) + audio — no longer freezes to the first frame."""
+    return _motion_filter_video(video_data, source_filename,
+                                lambda W, H, dur, n: _zoom_vf_video(W, H, dur))
 
 
 def shake_existing_video(video_data: bytes, source_filename: str = "video.mp4") -> bytes:
-    """Apply the camera-shake motion to a still-frame effect video, keeping its audio."""
-    return _motion_existing_video(video_data, source_filename, image_shake_video)
+    """Apply the camera-shake over the real frames, keeping motion + audio."""
+    return _motion_filter_video(video_data, source_filename,
+                                lambda W, H, dur, n: _shake_vf(W, H, n))
 
 
 def medshake_existing_video(video_data: bytes, source_filename: str = "video.mp4") -> bytes:
-    """Apply the gentler camera-shake motion to a still-frame effect video, keeping its audio."""
-    return _motion_existing_video(video_data, source_filename, image_medshake_video)
+    """Apply the gentler camera-shake over the real frames, keeping motion + audio."""
+    return _motion_filter_video(video_data, source_filename,
+                                lambda W, H, dur, n: _shake_medium_vf(W, H, n))
 
 
 def beginshake_existing_video(video_data: bytes, source_filename: str = "video.mp4") -> bytes:
-    """Apply the shake-then-settle motion to a still-frame effect video, keeping its audio."""
-    return _motion_existing_video(video_data, source_filename, image_beginshake_video)
+    """Apply the shake-then-settle over the real frames, keeping motion + audio."""
+    return _motion_filter_video(video_data, source_filename,
+                                lambda W, H, dur, n: _shake_begin_vf(W, H, n))
 
 
 def pulse_existing_video(video_data: bytes, source_filename: str = "video.mp4") -> bytes:
-    """Apply the rhythmic zoom-pulse to a still-frame effect video, keeping its audio."""
-    return _motion_existing_video(video_data, source_filename, image_pulse_video)
+    """Apply the rhythmic zoom-pulse over the real frames, keeping motion + audio."""
+    return _motion_filter_video(video_data, source_filename,
+                                lambda W, H, dur, n: _pulse_vf_video(W, H, dur))
 
 
 def recolor_existing_video(video_data: bytes, source_filename: str = "video.mp4") -> bytes:
@@ -1201,6 +1207,96 @@ def recolor_existing_video(video_data: bytes, source_filename: str = "video.mp4"
                 os.unlink(out_path)
 
         raise RuntimeError(f"recolor video failed (tried {candidates}): {last_err}")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _probe_video_wh(path: str) -> Tuple[int, int]:
+    """First video stream's (width, height) via ffprobe; (1280, 720) on failure."""
+    ffmpeg = resolve_ffmpeg()
+    ffprobe = ffmpeg[:-6] + "ffprobe" if ffmpeg.endswith("ffmpeg") else "ffprobe"
+    try:
+        out = subprocess.run(
+            [ffprobe, "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", path],
+            capture_output=True, timeout=60, text=True,
+        )
+        w, h = (out.stdout or "").strip().split("x")
+        return int(w), int(h)
+    except Exception:
+        return 1280, 720
+
+
+# Video-stream versions of the zoom/pulse camera moves. The still-image builders run
+# `zoompan` with d=n_frames (spinning frames out of ONE picture); over a real video we
+# use the same zoompan but with `d=1` (one output frame per input frame) so the clip's
+# own motion is preserved while the zoom animates via the per-output-frame index `on`.
+# (A plain `crop`/`scale` can't animate size — ffmpeg fixes those at config time.)
+def _zoom_vf_video(W: int, H: int, dur: float) -> str:
+    n = max(2, int(round(25 * max(dur, 0.5))))
+    z = f"max(1.0,1.25-0.25*on/{n})"                   # 1.25x → 1.0 over the clip
+    return (f"scale={2 * W}:{2 * H},"
+            f"zoompan=z='{z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+            f"d=1:s={W}x{H}:fps=25")
+
+
+def _pulse_vf_video(W: int, H: int, dur: float) -> str:
+    z = "1.12+0.12*sin(2*PI*2*on/25)"                  # ~1.0..1.24, twice a second
+    return (f"scale={2 * W}:{2 * H},"
+            f"zoompan=z='{z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+            f"d=1:s={W}x{H}:fps=25")
+
+
+def _motion_filter_video(video_data: bytes, source_filename: str, build_vf) -> bytes:
+    """Apply a camera-motion filter OVER the real frames of an existing video, keeping
+    its motion and audio. `build_vf(W, H, dur, n_frames)` returns the filter chain (no
+    format/hwupload suffix). The replacement for `_motion_existing_video`, which froze
+    the clip to its first frame — this keeps the parallax/animation underneath."""
+    global _video_encoder_cache
+    ffmpeg = resolve_ffmpeg()
+    if not ffmpeg_available():
+        raise RuntimeError("ffmpeg is not installed on the server")
+    tmp_dir = tempfile.mkdtemp(prefix="media_vmotion_")
+    in_path = os.path.join(tmp_dir, "in.mp4")
+    out_path = os.path.join(tmp_dir, "out.mp4")
+    try:
+        with open(in_path, "wb") as f:
+            f.write(video_data)
+        W, H = _probe_video_wh(in_path)
+        W = max(2, (W // 2) * 2)
+        H = max(2, (H // 2) * 2)
+        dur = _probe_duration(in_path) or 5.0
+        n_frames = max(2, int(round(25 * dur)))
+        motion = build_vf(W, H, dur, n_frames)
+
+        candidates = _video_encoder_candidates(ffmpeg)
+        if _video_encoder_cache and _video_encoder_cache in candidates:
+            candidates = [_video_encoder_cache] + [c for c in candidates if c != _video_encoder_cache]
+
+        last_err = ""
+        for encoder in candidates:
+            pre, vf = [], motion + ",format=yuv420p"
+            if encoder == "h264_nvenc":
+                venc = ["-c:v", "h264_nvenc", "-preset", "p5"]
+            elif encoder == "h264_vaapi":
+                pre = ["-vaapi_device", _render_node()]
+                vf = motion + ",format=nv12,hwupload"
+                venc = ["-c:v", "h264_vaapi"]
+            else:  # libx264
+                venc = ["-c:v", "libx264", "-preset", VIDEO_PRESET, "-crf", str(VIDEO_CRF)]
+            cmd = ([ffmpeg] + pre + ["-i", in_path, "-vf", vf] + venc
+                   + ["-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", "-y", out_path])
+            result = subprocess.run(cmd, capture_output=True, timeout=3600, text=True)
+            if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+                _video_encoder_cache = encoder
+                with open(out_path, "rb") as f:
+                    return f.read()
+            last_err = (result.stderr or "")[-300:]
+            logger.warning(f"video-motion encoder {encoder} failed, trying next: {last_err}")
+            if os.path.exists(out_path):
+                os.unlink(out_path)
+
+        raise RuntimeError(f"video-motion failed (tried {candidates}): {last_err}")
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
