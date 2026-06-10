@@ -612,13 +612,16 @@ def images_audio_to_video(images: List[Tuple[str, bytes]], audio_path: str,
     ffmpeg = resolve_ffmpeg()
     if not ffmpeg_available():
         raise RuntimeError("ffmpeg is not installed on the server")
-    if not (audio_path and os.path.exists(audio_path)):
+    # audio_path is optional: None → a SILENT slideshow (used by glow's multi-image path,
+    # which adds its own colour/sweep over the frames afterwards).
+    if audio_path and not os.path.exists(audio_path):
         raise RuntimeError(f"audio track not found: {audio_path}")
     imgs = [(fn, d) for fn, d in (images or []) if d]
     if not imgs:
         raise RuntimeError("no images supplied")
-    # A single image has no slideshow to make — use the normal (parallax) path.
-    if len(imgs) == 1:
+    # A single image has no slideshow to make — use the normal (parallax) path (only when
+    # there's audio; a silent single image just falls through to the static-hold render).
+    if len(imgs) == 1 and audio_path:
         return image_audio_to_video(imgs[0][1], imgs[0][0], audio_path, duration)
 
     # Canvas = first image's dimensions, capped to a 1280 long edge, rounded even.
@@ -653,37 +656,43 @@ def images_audio_to_video(images: List[Tuple[str, bytes]], audio_path: str,
                 frame_paths.append(fp)
 
         total = float(duration) if (duration and duration > 0) else 12.0
-        seg = max(0.6, total / len(frame_paths))
-        # concat demuxer: each frame for `seg`s. The demuxer ignores the LAST entry's
-        # duration, so repeat the final frame to give it its full hold.
-        list_path = os.path.join(tmp_dir, "list.txt")
-        with open(list_path, "w") as lf:
-            for fp in frame_paths:
-                lf.write(f"file '{fp}'\nduration {seg:.3f}\n")
-            lf.write(f"file '{frame_paths[-1]}'\n")
+        n = len(frame_paths)
+        seg = max(0.6, total / n)
+        # Per-image inputs (each held for `seg`s via -loop 1 -t) joined by the concat
+        # FILTER. This gives exact, reliable per-image timing — the concat *demuxer*'s
+        # image-duration handling was unreliable here (a fixed `-t` truncated the whole
+        # thing to one segment), the bug behind "only 1 image".
+        img_inputs = []
+        for fp in frame_paths:
+            img_inputs += ["-loop", "1", "-framerate", "25", "-t", f"{seg:.3f}", "-i", fp]
 
-        scale_filter = f"scale={cw}:{ch}:force_original_aspect_ratio=decrease,pad={cw}:{ch}:(ow-iw)/2:(oh-ih)/2,setsar=1"
         candidates = _video_encoder_candidates(ffmpeg)
         if _video_encoder_cache and _video_encoder_cache in candidates:
             candidates = [_video_encoder_cache] + [c for c in candidates if c != _video_encoder_cache]
 
         last_err = ""
         for encoder in candidates:
-            pre, vf = [], scale_filter + ",format=yuv420p"
-            if encoder == "h264_nvenc":
-                venc = ["-c:v", "h264_nvenc", "-preset", "p5"]
-            elif encoder == "h264_vaapi":
+            pre = []
+            _concat = ("".join(f"[{i}:v]setsar=1[v{i}];" for i in range(n))
+                       + "".join(f"[v{i}]" for i in range(n))
+                       + f"concat=n={n}:v=1:a=0[vc]")
+            if encoder == "h264_vaapi":
                 pre = ["-vaapi_device", _render_node()]
-                vf = scale_filter + ",format=nv12,hwupload"
+                fc = _concat + ";[vc]format=nv12,hwupload[vout]"
                 venc = ["-c:v", "h264_vaapi"]
+            elif encoder == "h264_nvenc":
+                fc = _concat + ";[vc]format=yuv420p[vout]"
+                venc = ["-c:v", "h264_nvenc", "-preset", "p5"]
             else:
+                fc = _concat + ";[vc]format=yuv420p[vout]"
                 venc = ["-c:v", "libx264", "-preset", VIDEO_PRESET, "-crf", str(VIDEO_CRF)]
             cmd = (
-                [ffmpeg, "-f", "concat", "-safe", "0", "-i", list_path, "-i", audio_path]
-                + ["-vf", vf] + venc
-                + ["-pix_fmt", "yuv420p", "-r", "25", "-c:a", "aac", "-b:a", VIDEO_AUDIO_BITRATE]
-                + (["-t", f"{total:.3f}"])
-                + ["-shortest", "-movflags", "+faststart", "-y", out_path]
+                [ffmpeg] + pre + img_inputs
+                + (["-i", audio_path] if audio_path else [])
+                + ["-filter_complex", fc, "-map", "[vout]"]
+                + ([f"-map", f"{n}:a", "-c:a", "aac", "-b:a", VIDEO_AUDIO_BITRATE, "-shortest"]
+                   if audio_path else ["-an"])
+                + venc + ["-pix_fmt", "yuv420p", "-r", "25", "-movflags", "+faststart", "-y", out_path]
             )
             result = subprocess.run(cmd, capture_output=True, timeout=3600, text=True)
             if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:

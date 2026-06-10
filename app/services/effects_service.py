@@ -3052,20 +3052,29 @@ def glow_attachments(
     """Turn the first image attachment into a glow MP4 (breathing zoom + colour pop +
     light sweep). Mirrors whoabuddy_attachments (video output, routed through the
     shared video path)."""
-    from app.services.media_service import image_glow_video
+    from app.services.media_service import image_glow_video, images_audio_to_video, glow_existing_video
     images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
     stem = Path(filename).stem or "image"
     try:
-        result = image_glow_video(data, filename)
+        if len(images) > 1:
+            # Multiple images → a glowing slideshow: build a silent slideshow (each image
+            # in order), then lay the glow look (colour pop + light sweep) over it.
+            _imgs = [(fn, d) for fn, d, _ct in images]
+            slideshow = images_audio_to_video(_imgs, None, duration=max(5.0, 3.0 * len(_imgs)))
+            result = glow_existing_video(slideshow)
+            summary = f"## ✨ Glow\n\n✨ {len(images)} images: {_human_size(len(result))}"
+        else:
+            # A glow-only post reads better a touch longer than the 5s default.
+            result = image_glow_video(data, filename, duration=7.0)
+            summary = f"## ✨ Glow\n\n✨ {filename}: {_human_size(len(result))}"
         out: OutputFile = {
             "filename": f"{stem}_glow.mp4",
             "data": result,
             "content_type": "video/mp4",
         }
-        summary = f"## ✨ Glow\n\n✨ {filename}: {_human_size(len(result))}"
         return [out], summary
     except Exception as e:
         logger.error(f"glow failed for {filename}: {e}", exc_info=True)

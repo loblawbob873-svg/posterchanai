@@ -275,7 +275,8 @@ def alive_attachments(attachments, arg: str = ""):
             result = add_parallax_slideshow([d for _fn, d, _ct in images], amplitude=amp, zoom=zoom)
             summary = f"## ✨ Alive ({label})\n\n✨ {len(images)} images: {_human_size(len(result))}"
         else:
-            result = add_parallax(data, amplitude=amp, zoom=zoom)
+            # An alive-only post reads better a touch longer (3 orbits ≈ 6s vs 2 ≈ 4s).
+            result = add_parallax(data, amplitude=amp, zoom=zoom, loops=3)
             summary = f"## ✨ Alive ({label})\n\n✨ {filename}: {_human_size(len(result))}"
         out = {"filename": f"{stem}_alive.mp4", "data": result, "content_type": "video/mp4"}
         return [out], summary
