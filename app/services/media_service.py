@@ -1233,8 +1233,10 @@ def _probe_video_wh(path: str) -> Tuple[int, int]:
 # own motion is preserved while the zoom animates via the per-output-frame index `on`.
 # (A plain `crop`/`scale` can't animate size — ffmpeg fixes those at config time.)
 def _zoom_vf_video(W: int, H: int, dur: float) -> str:
-    n = max(2, int(round(25 * max(dur, 0.5))))
-    z = f"max(1.0,1.25-0.25*on/{n})"                   # 1.25x → 1.0 over the clip
+    # Continuous slow zoom in/out — perceptible on ANY clip length and it loops.
+    # (A clip-length-normalised 1.25→1.0 ramp was ~invisible on long 10-18s audio
+    # gags like thug/curb, which read as "didn't zoom".)
+    z = "1.09+0.09*sin(2*PI*on/(25*5))"                # 1.0..1.18, ~5s period
     return (f"scale={2 * W}:{2 * H},"
             f"zoompan=z='{z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
             f"d=1:s={W}x{H}:fps=25")

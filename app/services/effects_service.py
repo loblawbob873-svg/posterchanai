@@ -4322,11 +4322,7 @@ def consider_attachments(
     stem = Path(filename).stem or "image"
     try:
         result = add_consider(data)
-        out: OutputFile = {
-            "filename": f"{stem}_consider.jpg",
-            "data": result,
-            "content_type": "image/jpeg",
-        }
+        out = _alive_or_still(result, stem, "consider")
         summary = f"## 🤔 Consider\n\n🤔 {filename}: {_human_size(len(result))}"
         return [out], summary
     except Exception as e:

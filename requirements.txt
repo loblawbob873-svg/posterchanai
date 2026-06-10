@@ -51,6 +51,9 @@ pillow-heif>=0.16.0
 insightface>=0.7.3
 opencv-python-headless>=4.8.0
 onnxruntime>=1.16.0
+# Used directly by parallax_service (depth post-processing / warp grids). Already a
+# transitive dep of opencv/onnxruntime/torch; listed explicitly since we import it.
+numpy
 # Native LLM inference (requires compilation with GPU flags - see README)
 # llama-cpp-python>=0.2.90
 
