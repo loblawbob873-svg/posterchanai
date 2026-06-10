@@ -17,7 +17,9 @@ _wait_gpu_free() {
 }
 
 _wait_gpu_free "arc" /tmp/posterchanai_locks/gpu.lock
-sudo systemctl restart posterchanai.service posterchanai-xpu-image.service
+# Unified Intel stack: ONE service does chat + image (the old posterchanai-xpu-image.service
+# on :3052 was retired). Restart just the single service.
+sudo systemctl restart posterchanai.service
 
 # server1 is cut over: the bots now run via the in-app manager (botframework/ + Admin → Bots,
 # bots_manager_enabled). The legacy posterchan.service is stopped+disabled here, so do NOT
