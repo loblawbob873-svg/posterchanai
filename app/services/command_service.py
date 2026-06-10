@@ -655,6 +655,10 @@ class CommandService:
         "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug",
     }
 
+    # Trailing motion tokens an effect accepts (zoom pan-out, full camera shake,
+    # a gentler `medshake`, and `beginshake` which shakes hard then settles).
+    MOTION_ARGS = ("zoom", "shake", "medshake", "beginshake")
+
     # Effects whose output is ALREADY animated (e.g. the chimp gif overlay). The
     # zoom/shake motions freeze-and-pan a single still frame (they extract frame 1 of
     # the effect video), which would kill a real animation — so skip them here. A
@@ -751,7 +755,7 @@ class CommandService:
                 _meme_text = " ".join(_toks[_i + 1:]).strip()
                 _toks, _low = _toks[:_i], _low[:_i]
             _motion = None
-            if _low and _low[-1] in ("zoom", "shake"):
+            if _low and _low[-1] in self.MOTION_ARGS:
                 _motion = _low[-1]
                 _toks = _toks[:-1]
             if _motion or _meme_text:
@@ -765,7 +769,12 @@ class CommandService:
                     # zoom/shake would freeze an already-animated effect (they pan a
                     # single still frame) — skip them for those, keep the caption.
                     if _motion and command not in self.ANIMATED_EFFECTS:
-                        _apply = effects_service.apply_shake if _motion == "shake" else effects_service.apply_zoom
+                        _apply = {
+                            "zoom": effects_service.apply_zoom,
+                            "shake": effects_service.apply_shake,
+                            "medshake": effects_service.apply_medshake,
+                            "beginshake": effects_service.apply_beginshake,
+                        }.get(_motion, effects_service.apply_zoom)
                         files = await asyncio.to_thread(_apply, files)
                     if _meme_text:
                         files = await asyncio.to_thread(effects_service.apply_meme_text, files, _meme_text)

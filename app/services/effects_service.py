@@ -4676,6 +4676,18 @@ def apply_shake(outputs: List[OutputFile]) -> List[OutputFile]:
     return _apply_motion(outputs, "shake", image_shake_video, shake_existing_video)
 
 
+def apply_medshake(outputs: List[OutputFile]) -> List[OutputFile]:
+    """Gentler camera-shake motion applied to each effect output (the `medshake` arg)."""
+    from app.services.media_service import image_medshake_video, medshake_existing_video
+    return _apply_motion(outputs, "medshake", image_medshake_video, medshake_existing_video)
+
+
+def apply_beginshake(outputs: List[OutputFile]) -> List[OutputFile]:
+    """Shake-then-settle motion applied to each effect output (the `beginshake` arg)."""
+    from app.services.media_service import image_beginshake_video, beginshake_existing_video
+    return _apply_motion(outputs, "beginshake", image_beginshake_video, beginshake_existing_video)
+
+
 def _meme_font_path() -> str:
     """First existing meme font file ("" if none → ffmpeg uses its default)."""
     for p in _MEME_FONT_CANDIDATES:

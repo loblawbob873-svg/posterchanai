@@ -918,6 +918,29 @@ def _shake_vf(W: int, H: int, n_frames: int) -> str:
     return f"scale={sw}:{sh},crop={W}:{H}:'{xexpr}':'{yexpr}'"
 
 
+def _shake_medium_vf(W: int, H: int, n_frames: int) -> str:
+    # Gentler shake than `_shake_vf`: smaller margin, lower amplitude/frequency
+    # for a subtler, less frenetic wobble.
+    sw = max(W + 2, int(W * 1.06) // 2 * 2)
+    sh = max(H + 2, int(H * 1.06) // 2 * 2)
+    xexpr = f"(in_w-{W})/2+(in_w-{W})/2*0.55*sin(2*PI*6*t)"
+    yexpr = f"(in_h-{H})/2+(in_h-{H})/2*0.55*cos(2*PI*7*t)"
+    return f"scale={sw}:{sh},crop={W}:{H}:'{xexpr}':'{yexpr}'"
+
+
+def _shake_begin_vf(W: int, H: int, n_frames: int) -> str:
+    # Strong shake that decays to still: same jitter as `_shake_vf` multiplied by
+    # a linear envelope that reaches 0 at the first third of the clip, so it
+    # shakes hard at the start then settles for the remainder.
+    dur = max(0.5, n_frames / 25.0)
+    env = f"max(0,1-3*t/{dur:.3f})"
+    sw = max(W + 2, int(W * 1.1) // 2 * 2)
+    sh = max(H + 2, int(H * 1.1) // 2 * 2)
+    xexpr = f"(in_w-{W})/2+(in_w-{W})/2*0.9*{env}*sin(2*PI*9*t)"
+    yexpr = f"(in_h-{H})/2+(in_h-{H})/2*0.9*{env}*cos(2*PI*11*t)"
+    return f"scale={sw}:{sh},crop={W}:{H}:'{xexpr}':'{yexpr}'"
+
+
 def image_zoompan_video(image_data: bytes, source_filename: str, duration: float = 4.0,
                         audio_path: Optional[str] = None) -> bytes:
     """Ken Burns zoom-out from a still image (see `_render_motion_video`)."""
@@ -930,6 +953,18 @@ def image_shake_video(image_data: bytes, source_filename: str, duration: float =
     return _render_motion_video(image_data, source_filename, _shake_vf, duration, audio_path)
 
 
+def image_medshake_video(image_data: bytes, source_filename: str, duration: float = 4.0,
+                         audio_path: Optional[str] = None) -> bytes:
+    """Gentler camera-shake clip from a still image (see `_render_motion_video`)."""
+    return _render_motion_video(image_data, source_filename, _shake_medium_vf, duration, audio_path)
+
+
+def image_beginshake_video(image_data: bytes, source_filename: str, duration: float = 4.0,
+                           audio_path: Optional[str] = None) -> bytes:
+    """Camera-shake clip that shakes hard at the start then settles (see `_render_motion_video`)."""
+    return _render_motion_video(image_data, source_filename, _shake_begin_vf, duration, audio_path)
+
+
 def zoom_existing_video(video_data: bytes, source_filename: str = "video.mp4") -> bytes:
     """Apply the zoom-out motion to a still-frame effect video, keeping its audio."""
     return _motion_existing_video(video_data, source_filename, image_zoompan_video)
@@ -938,6 +973,16 @@ def zoom_existing_video(video_data: bytes, source_filename: str = "video.mp4") -
 def shake_existing_video(video_data: bytes, source_filename: str = "video.mp4") -> bytes:
     """Apply the camera-shake motion to a still-frame effect video, keeping its audio."""
     return _motion_existing_video(video_data, source_filename, image_shake_video)
+
+
+def medshake_existing_video(video_data: bytes, source_filename: str = "video.mp4") -> bytes:
+    """Apply the gentler camera-shake motion to a still-frame effect video, keeping its audio."""
+    return _motion_existing_video(video_data, source_filename, image_medshake_video)
+
+
+def beginshake_existing_video(video_data: bytes, source_filename: str = "video.mp4") -> bytes:
+    """Apply the shake-then-settle motion to a still-frame effect video, keeping its audio."""
+    return _motion_existing_video(video_data, source_filename, image_beginshake_video)
 
 
 # ---------------------------------------------------------------------------

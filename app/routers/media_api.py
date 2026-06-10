@@ -84,7 +84,7 @@ async def process_media(
             _i = _low.index("meme")
             meme_text = " ".join(_toks[_i + 1:]).strip()
             _toks, _low = _toks[:_i], _low[:_i]
-        if _low and _low[-1] in ("zoom", "shake"):
+        if _low and _low[-1] in ("zoom", "shake", "medshake", "beginshake"):
             motion = _low[-1]
             _toks = _toks[:-1]
         arg = " ".join(_toks)
@@ -233,7 +233,12 @@ async def process_media(
                 return {"error": "end time must be after start time"}
             outputs, summary = await asyncio.to_thread(media_service.clip_attachment, attachments, start, end)
         if motion and outputs:
-            _apply = effects_service.apply_shake if motion == "shake" else effects_service.apply_zoom
+            _apply = {
+                "zoom": effects_service.apply_zoom,
+                "shake": effects_service.apply_shake,
+                "medshake": effects_service.apply_medshake,
+                "beginshake": effects_service.apply_beginshake,
+            }.get(motion, effects_service.apply_zoom)
             outputs = await asyncio.to_thread(_apply, outputs)
         if meme_text and outputs:
             outputs = await asyncio.to_thread(effects_service.apply_meme_text, outputs, meme_text)

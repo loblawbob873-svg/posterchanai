@@ -1797,11 +1797,17 @@ async def _handle_telegram_update(update: dict, db: Session):
                 _eff = _pend["eff"]
                 await telegram_service.send_message(
                     chat_id, "✨ Add motion to the captioned effect?",
-                    reply_markup={"inline_keyboard": [[
-                        {"text": "🔍 Zoom", "callback_data": f"media:cgo:{_eff}:zoom"},
-                        {"text": "📳 Shake", "callback_data": f"media:cgo:{_eff}:shake"},
-                        {"text": "❌ None", "callback_data": f"media:cgo:{_eff}:none"},
-                    ]]},
+                    reply_markup={"inline_keyboard": [
+                        [
+                            {"text": "🔍 Zoom", "callback_data": f"media:cgo:{_eff}:zoom"},
+                            {"text": "📳 Shake", "callback_data": f"media:cgo:{_eff}:shake"},
+                        ],
+                        [
+                            {"text": "〰️ Med shake", "callback_data": f"media:cgo:{_eff}:medshake"},
+                            {"text": "💥 Begin shake", "callback_data": f"media:cgo:{_eff}:beginshake"},
+                        ],
+                        [{"text": "❌ None", "callback_data": f"media:cgo:{_eff}:none"}],
+                    ]},
                 )
                 return {"ok": True}
 
@@ -3712,20 +3718,27 @@ async def _handle_telegram_update(update: dict, db: Session):
                             _imgs = [a for a in _atts if is_image(a[0], a[2])]
                             await _send_files_result(await cb_command_service.execute_command(_eff, "", attachments=_imgs))
                         else:
-                            _rows = [[
-                                {"text": "🔍 Zoom", "callback_data": f"media:dz:{_eff}"},
-                                {"text": "📳 Shake", "callback_data": f"media:sh:{_eff}"},
-                                {"text": "❌ None", "callback_data": f"media:{_eff}"},
-                            ]]
+                            _rows = [
+                                [
+                                    {"text": "🔍 Zoom", "callback_data": f"media:dz:{_eff}"},
+                                    {"text": "📳 Shake", "callback_data": f"media:sh:{_eff}"},
+                                ],
+                                [
+                                    {"text": "〰️ Med shake", "callback_data": f"media:ms:{_eff}"},
+                                    {"text": "💥 Begin shake", "callback_data": f"media:bs:{_eff}"},
+                                ],
+                                [{"text": "❌ None", "callback_data": f"media:{_eff}"}],
+                            ]
                             # thug bakes its own "THUG LIFE" text — no custom caption.
                             if _eff != "thug":
                                 _rows.append([{"text": "📝 Add caption", "callback_data": f"media:cap:{_eff}"}])
                             await telegram_service.send_message(
                                 chat_id, "✨ Add motion?", reply_markup={"inline_keyboard": _rows},
                             )
-                    elif _action.startswith("dz:") or _action.startswith("sh:"):
+                    elif _action[:3] in ("dz:", "sh:", "ms:", "bs:"):
                         # A motion was chosen → render the effect, then transform it.
-                        _motion = "zoom" if _action.startswith("dz:") else "shake"
+                        _motion = {"dz": "zoom", "sh": "shake",
+                                   "ms": "medshake", "bs": "beginshake"}[_action[:2]]
                         _eff = _action.split(":", 1)[1]
                         if not any(is_image(fn, ct) for fn, _, ct in _atts):
                             await telegram_service.send_message(chat_id, "Nothing to do — that upload has no image.")
@@ -3755,7 +3768,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                         elif not any(is_image(fn, ct) for fn, _, ct in _atts):
                             await telegram_service.send_message(chat_id, "Nothing to do — that upload has no image.")
                         else:
-                            _arg = (f"{_motion} " if _motion in ("zoom", "shake") else "") + f"meme {_pend['text']}"
+                            _arg = (f"{_motion} " if _motion in ("zoom", "shake", "medshake", "beginshake") else "") + f"meme {_pend['text']}"
                             await telegram_service.send_message(chat_id, f"✨ {_eff} + caption…")
                             _imgs = [a for a in _atts if is_image(a[0], a[2])]
                             await _send_files_result(await cb_command_service.execute_command(_eff, _arg, attachments=_imgs))
