@@ -3052,7 +3052,7 @@ def glow_attachments(
     """Turn the first image attachment into a glow MP4 (breathing zoom + colour pop +
     light sweep). Mirrors whoabuddy_attachments (video output, routed through the
     shared video path)."""
-    from app.services.media_service import image_glow_video, images_audio_to_video, glow_existing_video
+    from app.services.media_service import image_glow_video, images_glow_video
     images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
     if not images:
         return [], "No image — attach an image first."
@@ -3060,11 +3060,10 @@ def glow_attachments(
     stem = Path(filename).stem or "image"
     try:
         if len(images) > 1:
-            # Multiple images → a glowing slideshow: build a silent slideshow (each image
-            # in order), then lay the glow look (colour pop + light sweep) over it.
-            _imgs = [(fn, d) for fn, d, _ct in images]
-            slideshow = images_audio_to_video(_imgs, None, duration=max(5.0, 3.0 * len(_imgs)))
-            result = glow_existing_video(slideshow)
+            # Multiple images → each image gets the FULL glow (breathe + colour pop + light
+            # sweep), played in order, so EVERY image actually glows (not one sweep across a
+            # flat slideshow).
+            result = images_glow_video([(fn, d) for fn, d, _ct in images])
             summary = f"## ✨ Glow\n\n✨ {len(images)} images: {_human_size(len(result))}"
         else:
             # A glow-only post reads better a touch longer than the 5s default.

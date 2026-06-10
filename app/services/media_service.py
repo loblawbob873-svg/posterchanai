@@ -709,6 +709,108 @@ def images_audio_to_video(images: List[Tuple[str, bytes]], audio_path: str,
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+def _concat_video_clips(videos: List[bytes]) -> bytes:
+    """Concatenate same-size silent MP4 clips IN ORDER via the concat filter (re-encode).
+    Reuses the HW-accel encoder autodetect. Returns MP4 bytes."""
+    global _video_encoder_cache
+    ffmpeg = resolve_ffmpeg()
+    if not ffmpeg_available():
+        raise RuntimeError("ffmpeg is not installed on the server")
+    vids = [v for v in (videos or []) if v]
+    if not vids:
+        raise RuntimeError("no clips to concatenate")
+    if len(vids) == 1:
+        return vids[0]
+    tmp_dir = tempfile.mkdtemp(prefix="media_concat_")
+    out_path = os.path.join(tmp_dir, "output.mp4")
+    try:
+        inputs, n = [], len(vids)
+        for i, v in enumerate(vids):
+            p = os.path.join(tmp_dir, f"clip_{i:04d}.mp4")
+            with open(p, "wb") as f:
+                f.write(v)
+            inputs += ["-i", p]
+        candidates = _video_encoder_candidates(ffmpeg)
+        if _video_encoder_cache and _video_encoder_cache in candidates:
+            candidates = [_video_encoder_cache] + [c for c in candidates if c != _video_encoder_cache]
+        last_err = ""
+        for encoder in candidates:
+            pre = []
+            _concat = ("".join(f"[{i}:v]setsar=1[v{i}];" for i in range(n))
+                       + "".join(f"[v{i}]" for i in range(n))
+                       + f"concat=n={n}:v=1:a=0[vc]")
+            if encoder == "h264_vaapi":
+                pre = ["-vaapi_device", _render_node()]
+                fc = _concat + ";[vc]format=nv12,hwupload[vout]"
+                venc = ["-c:v", "h264_vaapi"]
+            elif encoder == "h264_nvenc":
+                fc = _concat + ";[vc]format=yuv420p[vout]"
+                venc = ["-c:v", "h264_nvenc", "-preset", "p5"]
+            else:
+                fc = _concat + ";[vc]format=yuv420p[vout]"
+                venc = ["-c:v", "libx264", "-preset", VIDEO_PRESET, "-crf", str(VIDEO_CRF)]
+            cmd = ([ffmpeg] + pre + inputs + ["-filter_complex", fc, "-map", "[vout]", "-an"]
+                   + venc + ["-pix_fmt", "yuv420p", "-r", "25", "-movflags", "+faststart", "-y", out_path])
+            result = subprocess.run(cmd, capture_output=True, timeout=3600, text=True)
+            if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+                _video_encoder_cache = encoder
+                with open(out_path, "rb") as f:
+                    return f.read()
+            last_err = (result.stderr or "")[-300:]
+            logger.warning(f"concat encoder {encoder} failed, trying next: {last_err}")
+            if os.path.exists(out_path):
+                os.unlink(out_path)
+        raise RuntimeError(f"concat clips failed (tried {candidates}): {last_err}")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def images_glow_video(images: List[Tuple[str, bytes]], per_image: float = 4.0) -> bytes:
+    """Several images → ONE glowing clip: each image gets the FULL glow (breathing zoom +
+    colour pop + light sweep) for `per_image`s, played IN ORDER. Each image is letterboxed
+    onto a common canvas (first image's even dims, capped 1280) so the per-image glow clips
+    concat cleanly. (Glowing each image individually — vs one sweep across a slideshow —
+    so every image actually glows.) Returns MP4 bytes."""
+    from io import BytesIO
+    from PIL import Image as _Img, ImageOps as _ImageOps
+    try:
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+    except Exception:
+        pass
+    imgs = [(fn, d) for fn, d in (images or []) if d]
+    if not imgs:
+        raise RuntimeError("no images supplied")
+    if len(imgs) == 1:
+        return image_glow_video(imgs[0][1], imgs[0][0], duration=per_image)
+
+    with _Img.open(BytesIO(imgs[0][1])) as _im0:
+        _im0 = _ImageOps.exif_transpose(_im0)
+        cw, ch = _im0.size
+    cap = 1280
+    if max(cw, ch) > cap:
+        if cw >= ch:
+            cw, ch = cap, max(2, round(ch * cap / cw))
+        else:
+            cw, ch = max(2, round(cw * cap / ch)), cap
+    cw = max(2, (cw // 2) * 2)
+    ch = max(2, (ch // 2) * 2)
+
+    clips = []
+    for _fn, d in imgs:
+        with _Img.open(BytesIO(d)) as im:
+            im = _ImageOps.exif_transpose(im)
+            if im.mode != "RGB":
+                im = im.convert("RGB")
+            canvas = _Img.new("RGB", (cw, ch), (0, 0, 0))
+            fitted = _ImageOps.contain(im, (cw, ch), _Img.LANCZOS)
+            canvas.paste(fitted, ((cw - fitted.width) // 2, (ch - fitted.height) // 2))
+            buf = BytesIO()
+            canvas.save(buf, "PNG")
+        clips.append(image_glow_video(buf.getvalue(), "frame.png", duration=per_image))
+    return _concat_video_clips(clips)
+
+
 def frames_to_video(frames, fps: int = 14, loops: int = 1) -> bytes:
     """Encode a sequence of RGB PIL frames into a silent H.264 MP4.
 
