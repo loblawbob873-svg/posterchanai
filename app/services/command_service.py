@@ -977,8 +977,12 @@ class CommandService:
         for cmd, desc in self.COMMANDS.items():
             help_text += f"**{cmd}** - {desc}\n"
 
-        # Plugin commands
-
+        # Motion/colour modifiers — appended to any effect, not standalone commands.
+        help_text += (
+            "\n**Effect modifiers** (append to any effect): "
+            "`zoom` `shake` `medshake` `beginshake` `pulse` motion, and/or `trippy` "
+            "colours — e.g. `dildo zoom trippy`, `whoabuddy pulse trippy`.\n"
+        )
 
         return {"type": "text", "content": help_text}
 
