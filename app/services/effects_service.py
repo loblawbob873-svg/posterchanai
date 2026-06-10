@@ -20,6 +20,22 @@ from app.services.media_service import OutputFile, _human_size, is_image
 logger = logging.getLogger(__name__)
 
 
+def _alive_or_still(still_bytes: bytes, stem: str, suffix: str) -> OutputFile:
+    """Wrap a finished still 'sticker' effect so it MOVES: run it through 3D parallax
+    and return an MP4 OutputFile. Falls back to the still JPEG if the depth model is
+    unavailable or parallax fails. Keeps amplitude subtle (the look the user preferred).
+    Used by the overlay/stamp gags (meme/dildo/poo/bullethole/gay/blacked/kosher/barked)
+    so they aren't a flat sticker; fire/blood/cum animate their own content instead."""
+    try:
+        from app.services import parallax_service
+        if parallax_service._session() is not None:
+            mp4 = parallax_service.add_parallax(still_bytes, amplitude=0.022, zoom=1.04)
+            return {"filename": f"{stem}_{suffix}.mp4", "data": mp4, "content_type": "video/mp4"}
+    except Exception as e:
+        logger.warning(f"parallax for {suffix} failed, using still: {e}")
+    return {"filename": f"{stem}_{suffix}.jpg", "data": still_bytes, "content_type": "image/jpeg"}
+
+
 # ---------------------------------------------------------------------------
 # Meme text (outlined white caption on the lower half of an image)
 # ---------------------------------------------------------------------------
@@ -202,11 +218,7 @@ def meme_attachments(
     stem = Path(filename).stem or "image"
     try:
         result = add_meme_text(data, text)
-        out: OutputFile = {
-            "filename": f"{stem}_meme.jpg",
-            "data": result,
-            "content_type": "image/jpeg",
-        }
+        out = _alive_or_still(result, stem, "meme")
         summary = f"## 🖼️ Meme\n\n🖼️ {filename}: {_human_size(len(result))}"
         return [out], summary
     except Exception as e:
@@ -532,11 +544,7 @@ def dildo_attachments(
     stem = Path(filename).stem or "image"
     try:
         result = add_dildos(data)
-        out: OutputFile = {
-            "filename": f"{stem}_dildo.jpg",
-            "data": result,
-            "content_type": "image/jpeg",
-        }
+        out = _alive_or_still(result, stem, "dildo")
         summary = f"## 🍆 Dildo\n\n🍆 {filename}: {_human_size(len(result))}"
         return [out], summary
     except Exception as e:
@@ -678,11 +686,7 @@ def poo_attachments(
     stem = Path(filename).stem or "image"
     try:
         result = add_poo(data)
-        out: OutputFile = {
-            "filename": f"{stem}_poo.jpg",
-            "data": result,
-            "content_type": "image/jpeg",
-        }
+        out = _alive_or_still(result, stem, "poo")
         summary = f"## 💩 Poo\n\n💩 {filename}: {_human_size(len(result))}"
         return [out], summary
     except Exception as e:
@@ -1192,11 +1196,7 @@ def bullethole_attachments(
     stem = Path(filename).stem or "image"
     try:
         result = add_bulletholes(data)
-        out: OutputFile = {
-            "filename": f"{stem}_bulletholes.jpg",
-            "data": result,
-            "content_type": "image/jpeg",
-        }
+        out = _alive_or_still(result, stem, "bulletholes")
         summary = f"## 🕳️ Bullet holes\n\n🕳️ {filename}: {_human_size(len(result))}"
         return [out], summary
     except Exception as e:
@@ -1544,11 +1544,7 @@ def gay_attachments(
     stem = Path(filename).stem or "image"
     try:
         result = add_gay(data)
-        out: OutputFile = {
-            "filename": f"{stem}_gay.jpg",
-            "data": result,
-            "content_type": "image/jpeg",
-        }
+        out = _alive_or_still(result, stem, "gay")
         summary = f"## 🏳️‍🌈 Gay\n\n🏳️‍🌈 {filename}: {_human_size(len(result))}"
         return [out], summary
     except Exception as e:
@@ -1706,11 +1702,7 @@ def blacked_attachments(
     stem = Path(filename).stem or "image"
     try:
         result = add_blacked(data)
-        out: OutputFile = {
-            "filename": f"{stem}_blacked.jpg",
-            "data": result,
-            "content_type": "image/jpeg",
-        }
+        out = _alive_or_still(result, stem, "blacked")
         summary = f"## 🥷 Blacked\n\n🥷 {filename}: {_human_size(len(result))}"
         return [out], summary
     except Exception as e:
@@ -1818,11 +1810,7 @@ def kosher_attachments(
     stem = Path(filename).stem or "image"
     try:
         result = add_kosher(data)
-        out: OutputFile = {
-            "filename": f"{stem}_kosher.jpg",
-            "data": result,
-            "content_type": "image/jpeg",
-        }
+        out = _alive_or_still(result, stem, "kosher")
         summary = f"## ✡️ Kosher\n\n✡️ {filename}: {_human_size(len(result))}"
         return [out], summary
     except Exception as e:
@@ -1964,11 +1952,7 @@ def barked_attachments(
     stem = Path(filename).stem or "image"
     try:
         result = add_barked(data)
-        out: OutputFile = {
-            "filename": f"{stem}_barked.jpg",
-            "data": result,
-            "content_type": "image/jpeg",
-        }
+        out = _alive_or_still(result, stem, "barked")
         summary = f"## 🐶 Barked\n\n🐶 {filename}: {_human_size(len(result))}"
         return [out], summary
     except Exception as e:

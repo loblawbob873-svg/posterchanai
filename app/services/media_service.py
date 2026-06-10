@@ -471,16 +471,48 @@ def clip_attachment(
 # Still image + audio → MP4 (the "narrate"-style image-over-a-song video)
 # ---------------------------------------------------------------------------
 
+def _parallax_audio_to_video(image_data: bytes, audio_path: str,
+                             duration: Optional[float] = None) -> bytes:
+    """Make the photo move (3D parallax) and loop it under the audio track.
+
+    Renders a short seamless parallax loop of the image, then loops that silent clip
+    (`-stream_loop -1`, video stream-copied) under the song, cut to the audio (or
+    `duration`). Used by image_audio_to_video so the ~40 'sound' gags get a moving
+    photo + their music instead of a freeze-frame."""
+    from app.services import parallax_service
+    loop_mp4 = parallax_service.add_parallax(image_data, amplitude=0.022, zoom=1.04)
+    ffmpeg = resolve_ffmpeg()
+    tmp_dir = tempfile.mkdtemp(prefix="media_paudio_")
+    loop_path = os.path.join(tmp_dir, "loop.mp4")
+    out_path = os.path.join(tmp_dir, "out.mp4")
+    try:
+        with open(loop_path, "wb") as f:
+            f.write(loop_mp4)
+        cmd = [ffmpeg, "-stream_loop", "-1", "-i", loop_path, "-i", audio_path,
+               "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy",
+               "-c:a", "aac", "-b:a", VIDEO_AUDIO_BITRATE]
+        if duration and duration > 0:
+            cmd += ["-t", f"{duration:.3f}"]
+        cmd += ["-shortest", "-movflags", "+faststart", "-y", out_path]
+        result = subprocess.run(cmd, capture_output=True, timeout=3600, text=True)
+        if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+            with open(out_path, "rb") as f:
+                return f.read()
+        raise RuntimeError((result.stderr or "")[-300:])
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def image_audio_to_video(image_data: bytes, source_filename: str, audio_path: str,
                          duration: Optional[float] = None) -> bytes:
-    """Loop a still image for the length of an audio track and mux to one MP4.
+    """Loop an image for the length of an audio track and mux to one MP4.
 
-    Mirrors the bot's narrate path: `-loop 1` over the image, `-shortest` so the
-    video ends with the song, even dimensions + yuv420p for broad playback. Reuses
-    the same HW-accel encoder autodetect (NVENC → VAAPI → libx264) as compress/clip.
-    `duration` (seconds), if given, caps the output (e.g. just the first 6s of the
-    song). Returns MP4 bytes; raises RuntimeError if ffmpeg is missing or every
-    encoder fails.
+    The image is made to MOVE first (3D parallax) so the 'sound' gags aren't a
+    freeze-frame; on any failure (e.g. depth model missing) it falls back to the
+    original still `-loop 1` path. `-shortest` ends the video with the song, even
+    dimensions + yuv420p for broad playback, same HW-accel encoder autodetect as
+    compress/clip. `duration` (seconds), if given, caps the output. Returns MP4
+    bytes; raises RuntimeError if ffmpeg is missing or every encoder fails.
     """
     global _video_encoder_cache
     ffmpeg = resolve_ffmpeg()
@@ -488,6 +520,14 @@ def image_audio_to_video(image_data: bytes, source_filename: str, audio_path: st
         raise RuntimeError("ffmpeg is not installed on the server")
     if not (audio_path and os.path.exists(audio_path)):
         raise RuntimeError(f"audio track not found: {audio_path}")
+
+    # Preferred: a moving (parallax) photo under the audio. Fall back to a still loop.
+    try:
+        from app.services import parallax_service
+        if parallax_service._session() is not None:
+            return _parallax_audio_to_video(image_data, audio_path, duration)
+    except Exception as e:
+        logger.warning(f"parallax audio path failed ({e}); using still loop")
 
     tmp_dir = tempfile.mkdtemp(prefix="media_hava_")
     in_suffix = _ext(source_filename) or ".jpg"
