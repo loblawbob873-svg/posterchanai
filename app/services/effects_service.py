@@ -12,6 +12,7 @@ dildo/poo tiles are drawn entirely in Pillow (no shipped image assets), reusing 
 import io
 import logging
 import os
+import re
 from pathlib import Path
 from typing import List, Tuple
 
@@ -2998,13 +2999,23 @@ def glow_attachments(
         return [], f"❌ {filename}: {e}"
 
 
+_EMOJI_RE = re.compile(
+    "[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF"
+    "\U00002B00-\U00002BFF\U00002190-\U000021FF\U0000FE00-\U0000FE0F\U0000200D\U000023E9-\U000023FA]+",
+    flags=re.UNICODE,
+)
+
+
 def render_glow_text_card(text: str, size: int = 1080) -> bytes:
     """Render `text` as glowing neon type centred on a dark gradient — a "glowing text
     post" graphic (PNG bytes). A bright cyan halo (blurred text screened over the
     background a couple of times for bloom) sits under a crisp near-white core. Used by
     the Telegram post flow's 🌟 Glow button to attach a graphic to a text-only post."""
     from PIL import Image, ImageDraw, ImageFilter, ImageChops
-    text = (text or "").strip() or " "
+    # Drop emoji / pictographs — the meme font has no glyphs for them, so they'd render
+    # as tofu boxes ([]). Collapse the whitespace the removal leaves behind.
+    text = _EMOJI_RE.sub("", text or "")
+    text = re.sub(r"[ \t]{2,}", " ", text).strip() or " "
     W = H = max(256, int(size))
 
     # Dark vertical gradient (deep blue -> near-black). Build one column then stretch

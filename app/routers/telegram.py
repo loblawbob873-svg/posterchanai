@@ -2592,6 +2592,24 @@ async def _handle_telegram_update(update: dict, db: Session):
             if command:
                 logger.info(f"Executing command: {command} with arg: {arg}, attachments: {len(attachments)}")
                 try:
+                    # New glowing TEXT post from scratch: `glow <text>` with NO image →
+                    # render the neon card and go straight to the social-post offer
+                    # (empty body — the text IS the image). Tightly gated so it never
+                    # touches `glow`+image (the effect), bare `glow`, or any other
+                    # command — those all fall through to the existing handlers below.
+                    if command == "glow" and not has_images and arg.strip():
+                        try:
+                            from app.services import effects_service as _fx
+                            _png = await asyncio.to_thread(_fx.render_glow_text_card, arg)
+                            import base64 as _b64
+                            await telegram_service.send_photo(
+                                chat_id, _b64.b64encode(_png).decode("ascii"), "🌟 Glowing text preview")
+                            await _offer_social_post(chat_id, "", user_obj, telegram_service,
+                                                     prompt="📣 *Post this glowing image?*", image_bytes=_png)
+                        except Exception as _ge:
+                            logger.error(f"glow text post failed: {_ge}", exc_info=True)
+                            await telegram_service.send_message(chat_id, f"❌ Couldn't make the glowing text post: {_ge}")
+                        return {"ok": True}
                     if command == "help":
                         await telegram_service.send_message(
                             chat_id,
@@ -5131,7 +5149,8 @@ async def _handle_telegram_update(update: dict, db: Session):
                 import base64 as _b64
                 await telegram_service.send_photo(
                     chat_id, _b64.b64encode(_glow_png).decode("ascii"), "🌟 Glowing text preview")
-                await _offer_social_post(chat_id, _gp, _gu, telegram_service,
+                # Empty body: the text is now the image, so don't also post it as text.
+                await _offer_social_post(chat_id, "", _gu, telegram_service,
                                          prompt="📣 *Post this glowing image?*", image_bytes=_glow_png)
                 return {"ok": True}
 
