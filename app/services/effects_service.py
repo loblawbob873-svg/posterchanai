@@ -398,6 +398,167 @@ def _scatter_frames(data: bytes, make_tile_seeded, count: int = 0,
 
 
 # ---------------------------------------------------------------------------
+# Ambient particles ("alive" — drift dust/snow/embers/rain over the WHOLE image so
+# the original photo feels alive, rather than overlaying a gag). Pure Pillow + the
+# shared frames_to_video encoder. The motion is a seamless LOOP: every particle's
+# travel over the cycle is an integer number of wraps and every flicker/sway uses an
+# integer number of cycles, so frame N lands exactly on frame 0.
+# ---------------------------------------------------------------------------
+
+_ALIVE_FRAMES = 30
+_ALIVE_FPS = 15
+_ALIVE_LOOPS = 2
+_ALIVE_MAXDIM = 1280
+_ALIVE_FLICKER_LEVELS = 5
+
+# Per-style look. color = particle RGB; counts scale with image area.
+_ALIVE_STYLES = {
+    # style:   (color,            rising, sway_amp, base_speed, size_lo, size_hi, density, streak, alpha)
+    "dust":    ((250, 244, 220),  False,  0.05,     1.0,        2,       6,       0.9,     False,  70),
+    "snow":    ((255, 255, 255),  False,  0.10,     1.6,        3,       9,       1.1,     False,  150),
+    "embers":  ((255, 150, 40),   True,   0.06,     1.7,        2,       6,       0.8,     False,  150),
+    "rain":    ((205, 225, 245),  False,  0.02,     3.2,        2,       5,       1.3,     True,   120),
+}
+_ALIVE_ALIASES = {"sparkle": "dust", "motes": "dust", "snowing": "snow",
+                  "fire": "embers", "ember": "embers", "raining": "rain"}
+
+
+def _alive_sprite(style: str, d: int, color, alpha: int, streak: bool):
+    """A soft, pre-blurred particle sprite (round mote, or a tall streak for rain)."""
+    from PIL import Image, ImageDraw, ImageFilter, ImageChops
+    d = max(int(d), 2)
+    if streak:
+        w, h = max(d // 2, 1), d * 4
+        pad = max(int(w), 2)
+        sw, sh = w + pad * 2, h + pad * 2
+        m = Image.new("L", (sw, sh), 0)
+        ImageDraw.Draw(m).ellipse([pad, pad, pad + w, pad + h], fill=alpha)
+        m = m.filter(ImageFilter.GaussianBlur(max(w * 0.6, 0.6)))
+    else:
+        pad = max(int(d * 0.7), 2)
+        s = d + pad * 2
+        m = Image.new("L", (s, s), 0)
+        ImageDraw.Draw(m).ellipse([pad, pad, pad + d, pad + d], fill=alpha)
+        m = m.filter(ImageFilter.GaussianBlur(max(d * 0.35, 0.6)))
+        # embers/dust get a brighter pinpoint core so they read as glints
+        if style in ("embers", "dust"):
+            core = Image.new("L", (s, s), 0)
+            cr = max(int(d * 0.3), 1)
+            c0 = (s - cr) // 2
+            ImageDraw.Draw(core).ellipse([c0, c0, c0 + cr, c0 + cr], fill=min(255, alpha + 90))
+            m = ImageChops.lighter(m, core.filter(ImageFilter.GaussianBlur(max(cr * 0.4, 0.4))))
+    spr = Image.new("RGBA", m.size, tuple(color) + (0,))
+    spr.putalpha(m)
+    return spr
+
+
+def add_alive(data: bytes, style: str = "dust") -> bytes:
+    """Animate the WHOLE image with a looping field of ambient particles (the `alive`
+    gag). `style` ∈ {dust, snow, embers, rain}. Returns silent H.264 MP4 bytes."""
+    import math
+    import random
+    from PIL import Image, ImageOps
+    from app.services.media_service import frames_to_video
+    try:
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+    except Exception:
+        pass
+
+    style = _ALIVE_ALIASES.get((style or "").strip().lower(), (style or "").strip().lower())
+    if style not in _ALIVE_STYLES:
+        style = "dust"
+    color, rising, sway_amp, base_speed, slo, shi, density, streak, alpha = _ALIVE_STYLES[style]
+
+    with Image.open(io.BytesIO(data)) as img:
+        img = ImageOps.exif_transpose(img)
+        if img.mode in ("RGBA", "LA", "P"):
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            rgba = img.convert("RGBA")
+            bg.paste(rgba, mask=rgba.split()[-1])
+            img = bg
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+        if max(img.size) > _ALIVE_MAXDIM:
+            img.thumbnail((_ALIVE_MAXDIM, _ALIVE_MAXDIM), Image.LANCZOS)
+        base_rgb = img.convert("RGB")
+
+    W, H = base_rgb.size
+    n = max(40, min(260, int((W * H) // 9000 * density)))
+
+    # Pre-render sprites for each size bucket × flicker level (alpha steps) so the
+    # twinkle is just a sprite swap, not a per-frame blur.
+    sizes = list(range(slo, shi + 1))
+    sprites = {}
+    for d in sizes:
+        for lv in range(_ALIVE_FLICKER_LEVELS):
+            a = int(alpha * (0.35 + 0.65 * lv / (_ALIVE_FLICKER_LEVELS - 1)))
+            sprites[(d, lv)] = _alive_sprite(style, d, color, a, streak)
+
+    # Fix each particle once. k (integer wraps/cycle) gives parallax + seamless loop;
+    # sway/flicker use integer cycle counts m/fl so they also return to frame 0.
+    parts = []
+    for _ in range(n):
+        d = random.choice(sizes)
+        depth = (d - slo) / max(shi - slo, 1)          # bigger = nearer = faster
+        k = max(1, int(round(base_speed * (0.6 + 0.9 * depth))))
+        parts.append({
+            "x0": random.random(), "y0": random.random(), "d": d,
+            "k": k, "phase": random.uniform(0, math.tau),
+            "m": random.choice((1, 1, 2)),              # sway cycles
+            "fl": random.choice((1, 2, 2, 3)),          # flicker cycles
+            "flph": random.uniform(0, math.tau),
+            "sway": sway_amp * (0.5 + depth),
+        })
+
+    frames = []
+    for fi in range(_ALIVE_FRAMES):
+        t = fi / _ALIVE_FRAMES
+        layer = base_rgb.convert("RGBA")
+        for p in parts:
+            travel = p["k"] * t
+            y = (p["y0"] - travel) % 1.0 if rising else (p["y0"] + travel) % 1.0
+            x = (p["x0"] + p["sway"] * math.sin(p["m"] * math.tau * t + p["phase"])) % 1.0
+            lvf = 0.5 + 0.5 * math.sin(p["fl"] * math.tau * t + p["flph"])
+            lv = min(_ALIVE_FLICKER_LEVELS - 1, int(lvf * _ALIVE_FLICKER_LEVELS))
+            spr = sprites[(p["d"], lv)]
+            px = int(x * W - spr.width / 2)
+            py = int(y * H - spr.height / 2)
+            layer.alpha_composite(spr, (px, py))
+        frames.append(layer.convert("RGB"))
+
+    return frames_to_video(frames, fps=_ALIVE_FPS, loops=_ALIVE_LOOPS)
+
+
+def alive_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+    arg: str = "",
+) -> Tuple[List[OutputFile], str]:
+    """Animate the first image attachment with looping ambient particles. `arg` picks
+    the style (dust/snow/embers/rain); default dust. Mirrors fire_attachments."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    style = (arg or "").strip().split()[0].lower() if (arg or "").strip() else "dust"
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_alive(data, style)
+        styled = _ALIVE_ALIASES.get(style, style)
+        styled = styled if styled in _ALIVE_STYLES else "dust"
+        out: OutputFile = {
+            "filename": f"{stem}_alive.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## ✨ Alive ({styled})\n\n✨ {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"alive failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
 # Dildo overlay (the "dildo" gag — scatter cartoon dildos across an image)
 # ---------------------------------------------------------------------------
 
