@@ -576,6 +576,7 @@ class CommandService:
         "blacked": "Slap the BLACKED logo on an attached image: blacked",
         "kosher": "Stamp a 100% KOSHER certification seal on an attached image: kosher",
         "barked": "Drop a smirking dog and #BARKED on an attached image: barked",
+        "alive": "Make an attached photo come alive with 3D parallax motion: alive [subtle|normal|strong]",
         "hava": "Turn an attached image into a 6s MP4 set to Hava Nagila: hava",
         "indian": "Turn an attached image into a 6s MP4 set to an Indian song: indian",
         "yakety": "Turn an attached image into a 9s MP4 set to Yakety Sax: yakety",
@@ -879,6 +880,8 @@ class CommandService:
             return await self._bullethole_command(attachments)
         elif command == "fire":
             return await self._fire_command(attachments)
+        elif command == "alive":
+            return await self._alive_command(arg, attachments)
         elif command == "gay":
             return await self._gay_command(attachments)
         elif command == "blacked":
@@ -3604,6 +3607,22 @@ Files are saved to your Storage.""",
         from app.services.effects_service import fire_attachments
 
         outputs, summary = await asyncio.to_thread(fire_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _alive_command(self, arg: str, attachments: Optional[list]) -> dict:
+        """Make an attached photo come alive with 3D parallax motion:
+        `alive [subtle|normal|strong]` (default normal)."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach a photo, then send `alive [subtle|normal|strong]`."}
+
+        import asyncio
+        from app.services.parallax_service import alive_attachments
+
+        outputs, summary = await asyncio.to_thread(alive_attachments, attachments, arg or "")
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
