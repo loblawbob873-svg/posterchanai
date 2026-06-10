@@ -170,29 +170,7 @@ if hasattr(storage, 'files_router'):
 async def startup():
     try:
         init_db()
-
-        # Check LLM backend configuration
         from app.database import SessionLocal
-        db = SessionLocal()
-        try:
-            backend = db.query(Setting).filter(Setting.key == "llm_backend").first()
-            backend_type = backend.value if backend else "ollama"
-
-            if backend_type == "ipex":
-                # Verify IPEX environment is properly configured
-                from app.services.ipex_service import check_xpu_available
-                xpu_ok, xpu_msg = check_xpu_available()
-                if xpu_ok:
-                    logging.info(f"IPEX backend: {xpu_msg}")
-                else:
-                    logging.warning("=" * 60)
-                    logging.warning(f"IPEX BACKEND WARNING: {xpu_msg}")
-                    logging.warning("GPU acceleration may not work. Start with ./run-intel.sh")
-                    logging.warning("=" * 60)
-        except Exception as e:
-            logging.error(f"Error checking LLM backend configuration: {e}", exc_info=True)
-        finally:
-            db.close()
 
         # Start health check if enabled (in background, don't block startup)
         try:

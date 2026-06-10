@@ -107,15 +107,8 @@ print('Whisper model ready', file=sys.stderr)
 configure_database_settings() {
     print_step "Configuring database settings..."
 
-    # Determine llm_backend value. Intel now uses the NATIVE llama.cpp (SYCL) backend in the
-    # unified venv — not the EOL "ipex" backend.
-    local DB_LLM_BACKEND="ollama"
-    case "$BACKEND" in
-        intel|nvidia|amd|cpu) DB_LLM_BACKEND="native" ;;
-        ollama) DB_LLM_BACKEND="ollama" ;;
-    esac
-
-    # Initialize database if needed
+    # The local LLM backend is always native llama.cpp now (no llm_backend/image_backend
+    # settings). Initialize the database if needed.
     if [ ! -f "posterchanai.db" ]; then
         print_step "Initializing database..."
         local VENV_PATH="venv"
@@ -123,18 +116,12 @@ configure_database_settings() {
         "$VENV_PATH/bin/python" -c "from app.database import init_db; init_db()" 2>/dev/null || true
     fi
 
-    # Update settings
-    if [ -f "posterchanai.db" ]; then
-        sqlite3 posterchanai.db "INSERT OR REPLACE INTO settings (key, value) VALUES ('llm_backend', '$DB_LLM_BACKEND');" 2>/dev/null
-        print_success "LLM backend set to: $DB_LLM_BACKEND"
-        # Intel unified stack: native image gen in a per-gen subprocess so it releases VRAM
-        # back to the resident LLM on the shared GPU.
-        if [ "$BACKEND" = "intel" ] && [ "$IMAGE_BACKEND" = "native" ]; then
-            sqlite3 posterchanai.db "INSERT OR REPLACE INTO settings (key, value) VALUES ('image_backend', 'native');" 2>/dev/null
-            sqlite3 posterchanai.db "INSERT OR REPLACE INTO settings (key, value) VALUES ('image_gpu_device', 'xpu');" 2>/dev/null
-            sqlite3 posterchanai.db "INSERT OR REPLACE INTO settings (key, value) VALUES ('image_subprocess_mode', 'true');" 2>/dev/null
-            print_success "Intel: native image gen + subprocess VRAM release enabled"
-        fi
+    # Intel unified stack: native image gen in a per-gen subprocess so it releases VRAM
+    # back to the resident LLM on the shared GPU.
+    if [ -f "posterchanai.db" ] && [ "$BACKEND" = "intel" ] && [ "$IMAGE_BACKEND" = "native" ]; then
+        sqlite3 posterchanai.db "INSERT OR REPLACE INTO settings (key, value) VALUES ('image_gpu_device', 'xpu');" 2>/dev/null
+        sqlite3 posterchanai.db "INSERT OR REPLACE INTO settings (key, value) VALUES ('image_subprocess_mode', 'true');" 2>/dev/null
+        print_success "Intel: native image gen + subprocess VRAM release enabled"
     fi
 }
 

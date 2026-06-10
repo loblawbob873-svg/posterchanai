@@ -528,14 +528,8 @@ git pull
 sudo systemctl restart posterchanai
 ```
 
-**Automatic migrations:** New settings are automatically added to the database when the app starts. No manual migration is needed.
-
-**Manual migration (optional):** If you want to verify or run migrations without starting the app:
-
-```bash
-source venv/bin/activate  # or venv-ipex
-python scripts/migrate.py
-```
+**Automatic migrations:** new settings are added (and renamed/removed settings migrated) in
+`app/database.py:init_db()` every time the app starts. No manual migration step is needed.
 
 ### Manual Setup
 
@@ -688,22 +682,11 @@ VRAM modes:
 - **GPU Resource Serialization**: LLM and image generation requests are automatically serialized per node. Only one type (LLM or image) runs at a time on each node to prevent GPU RAM exhaustion, even with load balancing across multiple nodes
 - CUDA memory fragmentation is handled automatically with `PYTORCH_CUDA_ALLOC_CONF`
 
-#### ComfyUI/External Backend (Recommended for proxy setups)
+#### Remote image server (proxy setups)
 
-Connects to an external image generation server (ComfyUI or another posterchanai instance).
-
-| Setting | Description |
-|---------|-------------|
-| `image_backend` | Set to `comfyui` for external backend |
-| `comfyui_url` | URL to ComfyUI or posterchanai (e.g., `http://nas.lan:3051`) |
-| `comfyui_timeout` | Request timeout in milliseconds |
-| `comfyui_default_model` | Default checkpoint name (for ComfyUI workflow fallback) |
-| `comfyui_anime_model` | Anime checkpoint name (for ComfyUI workflow fallback) |
-
-**How it works:**
-1. First tries posterchanai's REST API (`/api/generate-image`, `/api/img2img`)
-2. Falls back to ComfyUI's workflow API if REST API unavailable
-3. This allows proxying to a dedicated posterchanai image server
+Image generation is always the native diffusers backend locally. To offload it to another
+posterchanai instance, set **`image_server_urls`** (comma-separated) — requests are load-balanced
+to those servers' `/api/generate-image`. `image_timeout` bounds each request.
 
 #### Distributed Setup Example
 
@@ -711,30 +694,27 @@ For setups with a dedicated image generation server:
 
 **Image Server (nas.lan with NVIDIA GPU):**
 ```
-image_backend: native
 image_gpu_device: cuda
 image_model_path: /path/to/sdxl_model.safetensors
 image_idle_timeout: 120      # Unload after 2 min idle to free VRAM
 vram_mode: image_only
-ollama_ping_enabled: false   # No LLM health check needed
+llm_health_check_enabled: false   # No local LLM here
 ```
 
 **LLM Server (router.lan with Intel Arc):**
 ```
-llm_backend: ipex
-image_backend: comfyui
-comfyui_url: http://nas.lan:3051
+image_server_urls: http://nas.lan:3051   # offload image gen to the image server
 vram_mode: llm_only
-ollama_ping_enabled: true    # LLM health check enabled
+llm_health_check_enabled: true    # native LLM health check enabled
 gpu_memory_check_enabled: true
 gpu_memory_threshold: 95
 gpu_type: intel
 ```
 
 **How it works:**
-- Image requests from the LLM server are proxied to the image server via REST API
+- The LLM server keeps the LLM resident (`vram_mode: llm_only`) and proxies image requests to
+  the image server via `image_server_urls`
 - Each server only loads the model it's responsible for
-- Health checks only monitor the local model type
 - Sequential image generation prevents GPU overload on the image server
 
 #### Load Balancing
@@ -817,34 +797,13 @@ nfs-server:/export/posterchanai  /var/lib/posterchanai  nfs  defaults  0  0
 - If using proxying: Check that `storage_server_url` is configured correctly
 - If using shared storage: Check that `upload_path` points to shared storage on all nodes
 
-#### Intel Arc Dual-Instance Setup
+#### Intel Arc: unified single instance
 
-Intel Arc GPUs can run both LLM (via IPEX-LLM) and image generation (via PyTorch XPU), but they require different Python environments. The solution is to run two instances:
-
-| Instance | Port | Environment | Purpose |
-|----------|------|-------------|---------|
-| Main (IPEX-LLM) | 3051 | venv-ipex | Chat/LLM |
-| Image (XPU) | 3052 | venv-xpu | Image generation |
-
-**Setup:**
-```bash
-# Run the setup script
-./scripts/setup-image-instance.sh
-
-# Install and start the image service
-cp posterchanai-xpu-image.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now posterchanai-xpu-image
-```
-
-**Configure main instance (Admin > Site Settings):**
-- Image Server URLs: `http://localhost:3052`
-
-**How it works:**
-- Main instance handles chat on Intel Arc via IPEX-LLM
-- Image instance handles image generation on Intel Arc via PyTorch XPU
-- Separate databases prevent conflicts
-- Main instance forwards all image requests to port 3052
+Intel Arc now runs **both** chat (llama.cpp SYCL) and image generation (diffusers torch-XPU)
+from **one venv (`venv-unified`) in one service** — no separate image instance/port. Image gen
+runs as a per-gen subprocess (`image_subprocess_mode`) so it releases VRAM back to the resident
+LLM on the shared GPU. See [Intel Arc Setup](IPEX-LLM-SETUP.md). (The old dual `venv-ipex`/
+`venv-xpu` + port-3052 split has been retired.)
 
 ### Image Generation REST API
 

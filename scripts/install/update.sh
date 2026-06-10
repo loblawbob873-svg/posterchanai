@@ -8,8 +8,10 @@
 # constraints file, so `pip install --upgrade` can move everything else but can
 # never touch them (a conflicting upgrade fails loudly instead of breaking Arc).
 
-# Packages that are unsafe to upgrade in the Intel Arc/IPEX venv.
-_IPEX_FROZEN_RE='^(torch|torchvision|torchaudio|intel[-_]extension[-_]for[-_]pytorch|ipex[-_]llm|bigdl[-_a-z]*|numpy|transformers|tokenizers|accelerate|safetensors)=='
+# Packages that are unsafe to upgrade in the unified Intel Arc venv (torch-XPU + diffusers).
+# A generic `pip install -U` must NOT pull a CPU torch over the XPU build, nor bump transformers
+# to >=5 (breaks diffusers SDXL). The EOL IPEX/bigdl/numpy<2 pins are gone (no longer installed).
+_IPEX_FROZEN_RE='^(torch|torchvision|torchaudio|transformers|tokenizers|diffusers|accelerate|safetensors)=='
 
 _update_one_venv() {
     local venv="$1" is_ipex="$2"

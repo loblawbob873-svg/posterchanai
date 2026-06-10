@@ -86,12 +86,9 @@ class SettingsUpdate(BaseModel):
 
 
 class SettingsResponse(BaseModel):
-    comfyui_url: str = ""
-    comfyui_default_model: str = ""
-    comfyui_anime_model: str = ""
-    comfyui_timeout: str = "300000"
-    # Native image generation settings
-    image_backend: str = "comfyui"  # "native" or "comfyui"
+    # Native image generation (diffusers / torch-XPU). image_timeout also bounds the
+    # image-server load-balancer request when image_server_urls is configured.
+    image_timeout: str = "300000"  # image request timeout in ms
     image_model_path: str = ""
     image_anime_model_path: str = ""  # Optional anime model for style switching
     image_model_type: str = "sdxl"  # "sd15", "sdxl", "sd3", "flux"
@@ -110,8 +107,7 @@ class SettingsResponse(BaseModel):
     tts_rate: str = "+5%"
     tts_pitch: str = "+10Hz"
     upload_path: str = "/var/lib/posterchanai"
-    # LLM Backend settings
-    llm_backend: str = "native"  # "native", "ipex", or "ollama"
+    # LLM settings (backend is always native llama.cpp — SYCL/CUDA/HIP/CPU)
     llm_model_path: str = ""
     llm_gpu_layers: str = "-1"  # -1 = all layers on GPU
     llm_n_threads: str = "0"  # 0 = auto-detect (cpu_count - 2)
@@ -123,12 +119,10 @@ class SettingsResponse(BaseModel):
     llm_use_mlock: str = "true"  # Lock model in RAM
     llm_idle_timeout: str = "0"  # Seconds before unloading LLM model (0=disabled)
     llm_token_timeout: str = "600"  # Max seconds between tokens during streaming
-    # Ollama settings (also used for native backend sampling parameters)
-    ollama_url: str = "http://localhost:11434"
-    ollama_api_format: str = "ollama"  # "ollama" for /api/chat, "openai" for /v1/chat/completions
-    ollama_model: str = "llama3"  # Set in Admin → Settings; use a model you have in Ollama or your LLM backend
-    ollama_timeout: str = "300000"  # 5 min (video summaries need longer)
-    ollama_max_concurrent: str = "1"
+    # LLM generation parameters (the `ollama_` prefix is a legacy key namespace — these are the
+    # native llama.cpp backend's sampling/runtime settings, NOT an Ollama connection).
+    ollama_model: str = "native"  # display/label for the loaded model
+    ollama_timeout: str = "300000"  # LLM request timeout in ms (5 min; video summaries need longer)
     ollama_system_prompt: str = ""
     # Advanced model settings
     ollama_temperature: str = "0.2"
@@ -147,7 +141,6 @@ class SettingsResponse(BaseModel):
     # own AGENTS.md. Empty tool_guidance_text => the built-in default in openai_api._DEFAULT_TOOL_GUIDANCE.
     tool_guidance_enabled: str = "true"
     tool_guidance_text: str = ""
-    ollama_keep_alive: str = "-1"
     ollama_stop: str = ""
     ollama_seed: str = ""
     ollama_mirostat: str = "0"
@@ -160,11 +153,10 @@ class SettingsResponse(BaseModel):
     chat_server_urls: str = ""  # Comma-separated list of posterchanai server URLs for load balancing
     # Load balancing - proxy image generation to external posterchanai servers
     image_server_urls: str = ""  # Comma-separated list of posterchanai server URLs for image load balancing
-    # Ollama health check
-    ollama_ping_enabled: str = "false"
-    ollama_restart_command: str = "sudo systemctl restart ollama"
-    ollama_ping_interval: str = "90"
-    ollama_restart_after_failures: str = "5"
+    # Native LLM health check (ping the loaded model; reload it on repeated failure / high VRAM)
+    llm_health_check_enabled: str = "false"
+    llm_health_check_interval: str = "90"
+    llm_reload_after_failures: str = "5"
     # GPU memory monitoring
     gpu_memory_check_enabled: str = "false"
     gpu_memory_threshold: str = "99"

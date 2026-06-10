@@ -32,25 +32,20 @@
     <fieldset>
         <legend>LLM Health Check</legend>
         <div class="form-group">
-            <label for="ollama_ping_enabled">
-                <input type="checkbox" id="ollama_ping_enabled" name="ollama_ping_enabled"> Enable Health Check
+            <label for="llm_health_check_enabled">
+                <input type="checkbox" id="llm_health_check_enabled" name="llm_health_check_enabled"> Enable Health Check
             </label>
-            <small>Periodically check LLM backend and recover if unresponsive</small>
+            <small>Periodically ping the loaded native LLM and reload it in-process if unresponsive.</small>
         </div>
         <div class="form-row">
             <div class="form-group">
-                <label for="ollama_ping_interval">Ping Interval (seconds)</label>
-                <input type="number" id="ollama_ping_interval" name="ollama_ping_interval" value="90" min="30">
+                <label for="llm_health_check_interval">Ping Interval (seconds)</label>
+                <input type="number" id="llm_health_check_interval" name="llm_health_check_interval" value="90" min="30">
             </div>
             <div class="form-group">
-                <label for="ollama_restart_after_failures">Restart After Failures</label>
-                <input type="number" id="ollama_restart_after_failures" name="ollama_restart_after_failures" value="5" min="1">
+                <label for="llm_reload_after_failures">Reload After Failures</label>
+                <input type="number" id="llm_reload_after_failures" name="llm_reload_after_failures" value="5" min="1">
             </div>
-        </div>
-        <div class="form-group">
-            <label for="ollama_restart_command">Restart Command (Ollama only)</label>
-            <input type="text" id="ollama_restart_command" name="ollama_restart_command" value="sudo systemctl restart ollama">
-            <small>Command to restart Ollama service. Native/IPEX backends reload the model in-process instead.</small>
         </div>
         <div class="form-group" style="margin-top: 15px;">
             <label for="gpu_memory_check_enabled">

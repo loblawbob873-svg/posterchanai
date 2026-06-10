@@ -399,15 +399,11 @@ def init_db():
     db = SessionLocal()
     try:
         default_settings = {
-            "comfyui_url": "http://192.168.0.85:8188",
-            "comfyui_default_model": "halcyonSDXL_v19.safetensors",
-            "comfyui_anime_model": "nova3DCGXL_ilV80.safetensors",
-            "comfyui_timeout": "300000",
-            # Native image generation settings. Like the LLM backend, the FIRST-RUN
-            # backend + model can be seeded from the environment (the Docker image
-            # ships native + a free SDXL repo so image gen works out of the box;
-            # diffusers downloads the model on first generation).
-            "image_backend": os.environ.get("POSTERCHANAI_IMAGE_BACKEND", "comfyui"),  # "native" or "comfyui"
+            # Native image generation (diffusers / torch-XPU) is the only image backend.
+            # image_timeout also bounds the image-server LB request (image_server_urls). The
+            # model FIRST-RUN default can be seeded from the environment (the Docker image ships
+            # a free SDXL repo so image gen works out of the box; diffusers downloads on first gen).
+            "image_timeout": "300000",  # image request timeout in ms
             "image_model_path": os.environ.get("POSTERCHANAI_IMAGE_MODEL_PATH", ""),
             "image_anime_model_path": os.environ.get("POSTERCHANAI_IMAGE_ANIME_MODEL_PATH", ""),
             "image_model_type": os.environ.get("POSTERCHANAI_IMAGE_MODEL_TYPE", "sdxl"),  # "sd15", "sdxl", "sd3", "flux"
@@ -430,12 +426,9 @@ def init_db():
             "tts_rate": "+5%",
             "tts_pitch": "+10Hz",
             "upload_path": "/var/lib/posterchanai",
-            # Ollama settings
-            "ollama_url": "http://localhost:11434",
-            "ollama_api_format": "ollama",  # "ollama" for /api/chat, "openai" for /v1/chat/completions
-            "ollama_model": "llama3",  # Set in Admin → Settings to match your Ollama/LLM backend
-            "ollama_timeout": "300000",  # 5 min (video summaries need longer)
-            "ollama_max_concurrent": "1",
+            # LLM generation params (legacy ollama_ key namespace; native llama.cpp backend)
+            "ollama_model": "native",  # display/label for the loaded model
+            "ollama_timeout": "300000",  # LLM request timeout in ms (5 min; video summaries need longer)
             "ollama_system_prompt": """You are an helpful, cute, funny, ditsy, and informative AI assistant that loves technology and politics. Your persona is a cute anime girl that responds in a cute manner. Your name is Poster-Chan! When greeting users, address them by their username, not your own name.
 
 Your background, views, and values:
@@ -486,7 +479,6 @@ When asked to write or modify code or files:
             "ollama_repeat_penalty": "1.1",
             "ollama_num_ctx": "16384",
             "ollama_num_predict": "8192",
-            "ollama_keep_alive": "-1",
             "ollama_stop": "",
             "ollama_seed": "",
             "ollama_mirostat": "0",
@@ -499,10 +491,9 @@ When asked to write or modify code or files:
             "chat_server_urls": "",  # Comma-separated URLs (empty = use local backend)
             # Load balancing - proxy image generation to external posterchanai servers
             "image_server_urls": "",  # Comma-separated URLs (empty = use local backend)
-            # Native LLM settings. The backend/model-path FIRST-RUN defaults can be
-            # seeded from the environment (used by the Docker image to ship a
-            # turnkey native+GPU config); unset → the historical defaults below.
-            "llm_backend": os.environ.get("POSTERCHANAI_LLM_BACKEND", "ollama"),  # "native", "ipex", or "ollama"
+            # Native LLM settings (the local LLM backend is always native llama.cpp now). The
+            # model-path FIRST-RUN default can be seeded from the environment (the Docker image
+            # ships a turnkey native+GPU config); unset → the default below.
             "llm_model_path": os.environ.get("POSTERCHANAI_LLM_MODEL_PATH", "/home/verita84/models/model.gguf"),
             "llm_gpu_layers": "-1",  # -1 = all layers on GPU
             "llm_n_threads": "0",  # 0 = auto-detect (physical cores)
@@ -515,11 +506,10 @@ When asked to write or modify code or files:
             "llm_idle_timeout": "0",  # Seconds before unloading LLM (0=disabled)
             "llm_token_timeout": "600",  # Max seconds between tokens during streaming (10 min default)
             "llm_flash_attn": "false",  # Flash attention (disabled by default; enable for Qwen3/3.5 on CUDA builds)
-            # LLM health check
-            "ollama_ping_enabled": "false",
-            "ollama_restart_command": "sudo systemctl restart ollama",
-            "ollama_ping_interval": "90",
-            "ollama_restart_after_failures": "2",
+            # Native LLM health check (ping the loaded model; reload on repeated failure / high VRAM)
+            "llm_health_check_enabled": "false",
+            "llm_health_check_interval": "90",
+            "llm_reload_after_failures": "2",
             # GPU memory monitoring
             "gpu_memory_check_enabled": "false",
             "gpu_memory_threshold": "99",
@@ -606,6 +596,36 @@ When asked to write or modify code or files:
             "tor_exit_nodes": "{us}",         # Exit node country codes (e.g., {us},{ca},{gb})
             "tor_data_dir": "/var/lib/posterchanai/tor",  # Tor data directory
         }
+
+        # Migrate RENAMED settings (preserve the user's value under the new key).
+        _renamed_settings = {
+            "ollama_ping_enabled": "llm_health_check_enabled",
+            "ollama_ping_interval": "llm_health_check_interval",
+            "ollama_restart_after_failures": "llm_reload_after_failures",
+            "comfyui_timeout": "image_timeout",  # now the generic image request timeout
+        }
+        for _old, _new in _renamed_settings.items():
+            _o = db.query(Setting).filter(Setting.key == _old).first()
+            if _o is not None:
+                if db.query(Setting).filter(Setting.key == _new).first() is None:
+                    db.add(Setting(key=_new, value=_o.value))
+                db.delete(_o)
+
+        # Drop settings for REMOVED backends (Ollama / IPEX-LLM / ComfyUI) so they don't linger.
+        _removed_settings = [
+            "llm_backend", "image_backend",
+            "ollama_url", "ollama_api_format", "ollama_max_concurrent",
+            "ollama_keep_alive", "ollama_restart_command",
+            "comfyui_url", "comfyui_default_model", "comfyui_anime_model",
+        ]
+        for _k in _removed_settings:
+            _obj = db.query(Setting).filter(Setting.key == _k).first()
+            if _obj is not None:
+                db.delete(_obj)
+
+        # Flush the renames/deletes so the default-seed loop below sees the new keys as existing
+        # (otherwise it would re-add them and hit a UNIQUE constraint on commit).
+        db.flush()
 
         added_settings = []
         for key, value in default_settings.items():

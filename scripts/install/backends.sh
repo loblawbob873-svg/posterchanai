@@ -22,10 +22,10 @@ select_components() {
     echo "     Chat and text generation only (no image features)"
     echo ""
     echo -e "  3) ${BOLD}Image Only${NC}"
-    echo "     Image generation only (use external LLM like Ollama)"
+    echo "     Image generation only (chat via a remote OpenAI-compatible server)"
     echo ""
     echo -e "  4) ${BOLD}Lightweight${NC}"
-    echo "     Web UI only (use external Ollama + ComfyUI)"
+    echo "     Web UI only (chat + image via remote posterchanai servers)"
     echo ""
     echo -e "  5) ${BOLD}Telegram Bot API server${NC} (add-on only — for an existing install)"
     echo "     Sets up ONLY the local Telegram Bot API server (so the bot handles"
@@ -97,15 +97,15 @@ select_components() {
 select_llm_backend() {
     # Skip if not installing LLM
     if [ "$INSTALL_LLM" = "0" ]; then
-        LLM_BACKEND="ollama"  # Default to external Ollama
-        BACKEND="ollama"
+        LLM_BACKEND="remote"  # No local LLM — use a remote/external OpenAI-compatible server
+        BACKEND="remote"
         return
     fi
 
     print_step "Select LLM inference backend:"
     echo ""
-    echo -e "  1) ${BOLD}Intel Arc GPU${NC} (IPEX-LLM + llama.cpp SYCL)"
-    echo "     Best for Intel Arc A770, A750, A380, etc."
+    echo -e "  1) ${BOLD}Intel Arc GPU${NC} (llama.cpp SYCL)"
+    echo "     Best for Intel Arc A770, A750, A380, Battlemage, etc."
     echo ""
     echo -e "  2) ${BOLD}NVIDIA GPU${NC} (llama.cpp CUDA)"
     echo "     Best for GeForce RTX, Tesla, etc."
@@ -117,9 +117,6 @@ select_llm_backend() {
     echo -e "  4) ${BOLD}CPU Only${NC} (llama.cpp)"
     echo "     Works on any system, slower inference"
     echo ""
-    echo -e "  5) ${BOLD}Ollama${NC} (External service)"
-    echo "     Use existing Ollama installation"
-    echo ""
 
     # Default based on detection
     local DEFAULT=4
@@ -129,7 +126,7 @@ select_llm_backend() {
         amd) DEFAULT=3 ;;
     esac
 
-    read -p "Select LLM backend [1-5, default=$DEFAULT]: " BACKEND_CHOICE
+    read -p "Select LLM backend [1-4, default=$DEFAULT]: " BACKEND_CHOICE
     BACKEND_CHOICE=${BACKEND_CHOICE:-$DEFAULT}
 
     case "$BACKEND_CHOICE" in
@@ -137,7 +134,6 @@ select_llm_backend() {
         2) LLM_BACKEND="nvidia" ;;
         3) LLM_BACKEND="amd" ;;
         4) LLM_BACKEND="cpu" ;;
-        5) LLM_BACKEND="ollama" ;;
         *) LLM_BACKEND="cpu" ;;
     esac
 

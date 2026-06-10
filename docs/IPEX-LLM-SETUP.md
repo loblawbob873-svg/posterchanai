@@ -13,8 +13,8 @@
 > |-----------|-----------------|-------|
 > | venv | **`venv-unified`** | ONE venv: chat **and** image |
 > | torch | **2.12.0+xpu** | native PyTorch-XPU; bundles its own oneAPI runtime (no system oneAPI, no IPEX) |
-> | chat backend | **`llama-cpp-python` (SYCL)** | `llm_backend=native`; built `-DGGML_SYCL=ON` |
-> | image backend | **diffusers (torch-XPU)** | `image_backend=native`, per-gen subprocess (`image_subprocess_mode=true`) frees VRAM on the shared GPU |
+> | chat backend | **`llama-cpp-python` (SYCL)** | built `-DGGML_SYCL=ON` (the only local LLM backend — Ollama/IPEX removed) |
+> | image backend | **diffusers (torch-XPU)** | the only image backend (ComfyUI removed); per-gen subprocess (`image_subprocess_mode=true`) frees VRAM on the shared GPU |
 > | IGC (system) | **>= 2.35.5** | `scripts/install-igc.sh`; still required for SDXL ≥768 |
 > | launcher | **`run-intel.sh`** | sets `LD_LIBRARY_PATH=venv-unified/lib:/usr/lib64` + **`ONEAPI_DEVICE_SELECTOR=level_zero:gpu`** |
 >
@@ -482,15 +482,13 @@ port 3052) in its **own venv**, on a **modern torch 2.8 XPU** stack — no IPEX,
 (torch 2.8 bundles its own oneAPI 2025.1 runtime via pip). It runs the actual generation in a
 subprocess (`scripts/generate_image_subprocess.py`).
 
-**Setup:**
+**Setup (legacy — superseded by the unified `install.sh` flow at the top of this doc):**
 ```bash
 sudo ./scripts/install-igc.sh        # IGC >=2.35.5 — REQUIRED for SDXL at >=768x768
-./scripts/setup-image-instance.sh    # creates venv-xpu-new (torch 2.8 + diffusers), seeds image DB
 ```
-`setup-image-instance.sh` creates **`venv-xpu-new`** and installs `torch==2.8.0` from
-`https://download.pytorch.org/whl/xpu` first, then `requirements.txt` + `requirements-image.txt`.
-Launcher: `run-xpu-image.sh` (prefers `venv-xpu-new`, sets `LD_LIBRARY_PATH` to the venv libs +
-system, does **not** source oneAPI).
+The separate `venv-xpu`/`venv-xpu-new` image instance and `setup-image-instance.sh` have been
+removed. Image generation now lives in the unified `venv-unified` (see the banner at the top),
+running as a per-gen subprocess (`scripts/generate_image_subprocess.py`).
 
 **Key constraints (all enforced in `requirements-image.txt`):**
 - **IGC ≥ 2.35.5** — at 768/1024 older IGC fails with oneDNN `could not create a primitive`

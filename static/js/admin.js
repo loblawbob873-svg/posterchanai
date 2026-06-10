@@ -541,22 +541,14 @@ document.getElementById('viewTelegramUsersBtn').addEventListener('click', async 
     }
 });
 
-// Backend type switching
+// The local LLM is always native llama.cpp now — show both the native settings and the
+// generation-parameters section (no backend dropdown to toggle).
 function updateBackendUI() {
-    const backend = document.getElementById('llm_backend').value;
     const nativeSettings = document.getElementById('native-settings');
     const ollamaSettings = document.getElementById('ollama-settings');
-
-    if (backend === 'native' || backend === 'ipex') {
-        nativeSettings.style.display = 'block';
-        ollamaSettings.style.display = 'none';
-    } else {
-        nativeSettings.style.display = 'none';
-        ollamaSettings.style.display = 'block';
-    }
+    if (nativeSettings) nativeSettings.style.display = 'block';
+    if (ollamaSettings) ollamaSettings.style.display = 'block';
 }
-
-document.getElementById('llm_backend').addEventListener('change', updateBackendUI);
 
 // Reload model button
 document.getElementById('reloadModelBtn').addEventListener('click', async () => {
@@ -639,22 +631,11 @@ document.getElementById('clearRagCacheBtn').addEventListener('click', async () =
     }
 });
 
-// Image backend type switching
+// Image generation is always native diffusers now — show the native image settings.
 function updateImageBackendUI() {
-    const backend = document.getElementById('image_backend').value;
     const nativeSettings = document.getElementById('native-image-settings');
-    const comfyuiSettings = document.getElementById('comfyui-settings');
-
-    if (backend === 'native') {
-        nativeSettings.style.display = 'block';
-        comfyuiSettings.style.display = 'none';
-    } else {
-        nativeSettings.style.display = 'none';
-        comfyuiSettings.style.display = 'block';
-    }
+    if (nativeSettings) nativeSettings.style.display = 'block';
 }
-
-document.getElementById('image_backend').addEventListener('change', updateImageBackendUI);
 
 // Reload image model button
 document.getElementById('reloadImageModelBtn').addEventListener('click', async () => {
@@ -692,8 +673,8 @@ async function refreshImageQueue() {
         if (imgResponse.ok) {
             const data = await imgResponse.json();
             document.getElementById('imageBackendStatus').textContent = data.loaded ? 'Ready' : 'Not loaded';
-            document.getElementById('imageModelName').textContent = data.model_path || data.comfyui_url || '-';
-            document.getElementById('imageDeviceName').textContent = data.device || data.backend || '-';
+            document.getElementById('imageModelName').textContent = data.model_path || '-';
+            document.getElementById('imageDeviceName').textContent = data.device || '-';
             document.getElementById('imageQueueCount').textContent = (data.queue_size || 0) + ' pending';
         }
 

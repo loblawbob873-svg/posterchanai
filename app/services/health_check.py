@@ -40,21 +40,17 @@ def _get_settings(db: Session) -> dict:
     vram_mode = settings.get("vram_mode", "shared")
 
     # LLM health check is disabled in image_only mode (no local LLM)
-    enabled = settings.get("ollama_ping_enabled", "false").lower() == "true"
+    enabled = settings.get("llm_health_check_enabled", "false").lower() == "true"
     if vram_mode == "image_only":
         enabled = False
 
     return {
         "enabled": enabled,
-        "backend": settings.get("llm_backend", "ollama"),
-        "ollama_url": settings.get("ollama_url", "http://localhost:11434"),
-        "ollama_model": settings.get("ollama_model", "llama3"),
         "model_path": settings.get("llm_model_path", ""),
-        # 120 seconds (2 min) interval for IPEX/Intel Arc GPU health check query
-        "ping_interval": int(settings.get("ollama_ping_interval", "120")),
-        # Restart after 2 consecutive failures (Intel Arc GPU can be flaky)
-        "restart_after_failures": int(settings.get("ollama_restart_after_failures", "2")),
-        "restart_command": settings.get("ollama_restart_command", "sudo docker restart ollama-intel-arc"),
+        # Seconds between native-LLM health pings
+        "ping_interval": int(settings.get("llm_health_check_interval", "120")),
+        # Reload the model after N consecutive failed pings
+        "reload_after_failures": int(settings.get("llm_reload_after_failures", "2")),
         # GPU memory monitoring - also disabled in image_only mode
         "gpu_memory_check_enabled": settings.get("gpu_memory_check_enabled", "false").lower() == "true" and vram_mode != "image_only",
         "gpu_memory_threshold": int(settings.get("gpu_memory_threshold", "99")),
@@ -63,71 +59,6 @@ def _get_settings(db: Session) -> dict:
         "vram_mode": vram_mode,
     }
 
-
-def restart_ollama(restart_command: str):
-    """Restart Ollama using the configured command"""
-    logger.warning(f"Restarting Ollama with: {restart_command}")
-
-    # Validate restart command - only allow specific safe commands
-    allowed_commands = [
-        "sudo /usr/bin/systemctl restart ollama",
-        "sudo systemctl restart ollama",
-        "systemctl restart ollama",
-        "sudo /bin/systemctl restart ollama",
-        "sudo docker restart ollama-intel-arc",
-        "docker restart ollama-intel-arc",
-    ]
-
-    if restart_command not in allowed_commands:
-        logger.error(f"Restart command '{restart_command}' is not in allowed list")
-        logger.error(f"Allowed commands: {', '.join(allowed_commands)}")
-        return False
-
-    try:
-        # Use fixed argument list instead of shell parsing for security
-        if "docker restart" in restart_command:
-            if restart_command.startswith("sudo "):
-                result = subprocess.run(
-                    ["/usr/bin/sudo", "/usr/bin/docker", "restart", "ollama-intel-arc"],
-                    check=False,
-                    capture_output=True,
-                    timeout=60
-                )
-            else:
-                result = subprocess.run(
-                    ["/usr/bin/docker", "restart", "ollama-intel-arc"],
-                    check=False,
-                    capture_output=True,
-                    timeout=60
-                )
-        elif restart_command.startswith("sudo "):
-            result = subprocess.run(
-                ["/usr/bin/sudo", "/usr/bin/systemctl", "restart", "ollama"],
-                check=False,
-                capture_output=True,
-                timeout=30
-            )
-        else:
-            result = subprocess.run(
-                ["/usr/bin/systemctl", "restart", "ollama"],
-                check=False,
-                capture_output=True,
-                timeout=30
-            )
-
-        if result.returncode == 0:
-            logger.info("Ollama restart successful")
-            return True
-        else:
-            logger.error(f"Ollama restart failed: {result.stderr.decode()}")
-            return False
-
-    except subprocess.TimeoutExpired:
-        logger.error("Ollama restart timed out")
-        return False
-    except Exception as e:
-        logger.error(f"Ollama restart error: {e}")
-        return False
 
 
 def _run_nvidia_reset_sync() -> bool:
@@ -201,19 +132,6 @@ def reload_native_model(db: Session) -> bool:
         return True
     except Exception as e:
         logger.error(f"Failed to reload native model: {e}")
-        return False
-
-
-def reload_ipex_model(db: Session) -> bool:
-    """Reload the IPEX-LLM model"""
-    logger.info("Reloading IPEX-LLM model...")
-    try:
-        from app.services.ipex_service import reload_ipex_model as ipex_reload
-        ipex_reload(db)
-        logger.info("IPEX-LLM model reloaded successfully")
-        return True
-    except Exception as e:
-        logger.error(f"Failed to reload IPEX model: {e}")
         return False
 
 
@@ -341,17 +259,9 @@ def check_gpu_memory_and_reload(db: Session, settings: dict) -> bool:
     if usage >= threshold:
         logger.warning(f"GPU memory at {usage:.1f}% (threshold: {threshold}%), triggering model reload")
 
-        backend = settings["backend"]
-        if backend == "native":
-            if settings["gpu_type"] == "nvidia" and settings["nvidia_reset_before_reload"]:
-                _run_nvidia_reset_sync()
-            reload_native_model(db)
-        elif backend == "ipex":
-            reload_ipex_model(db)
-        else:
-            # For Ollama, restart the service
-            restart_ollama(settings["restart_command"])
-
+        if settings["gpu_type"] == "nvidia" and settings["nvidia_reset_before_reload"]:
+            _run_nvidia_reset_sync()
+        reload_native_model(db)
         return True
 
     return False
@@ -387,81 +297,8 @@ async def ping_native(db: Session) -> bool:
         return False
 
 
-async def ping_ipex(db: Session) -> bool:
-    """Check if IPEX-LLM is loaded and responsive"""
-    try:
-        from app.services.ipex_service import get_ipex_service
-
-        service = get_ipex_service(db)
-        info = service.get_model_info()
-
-        if not info["loaded"]:
-            logger.warning("IPEX model not loaded, attempting to load...")
-            try:
-                # Run model loading in thread pool to avoid blocking the event loop
-                import asyncio
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, service._ensure_model_loaded)
-                logger.info("IPEX model loaded successfully")
-                return True
-            except Exception as e:
-                logger.error(f"Failed to load IPEX model: {e}")
-                return False
-
-        # Model is loaded - that's enough, skip inference test to avoid blocking user requests
-        logger.debug("IPEX model is loaded")
-        return True
-
-    except Exception as e:
-        logger.error(f"IPEX ping failed: {e}")
-        return False
-
-
-async def ping_ollama(ollama_url: str, model: str = "llama3") -> bool:
-    """Ping Ollama - just check if it's alive, don't force model loads"""
-    import httpx
-
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            # Just check if Ollama is alive with /api/tags (fast, no model load)
-            response = await client.get(f"{ollama_url}/api/tags")
-            if response.status_code != 200:
-                logger.error("Ollama not responding to /api/tags")
-                return False
-
-            # Check if model is loaded and refresh keep_alive if so
-            ps_response = await client.get(f"{ollama_url}/api/ps")
-            if ps_response.status_code == 200:
-                ps_data = ps_response.json()
-                models = ps_data.get("models", [])
-                for m in models:
-                    if m.get("name") == model:
-                        # Our model is loaded, refresh keep_alive
-                        try:
-                            await client.post(
-                                f"{ollama_url}/api/generate",
-                                json={
-                                    "model": model,
-                                    "prompt": "",
-                                    "keep_alive": -1
-                                },
-                                timeout=10
-                            )
-                        except Exception:
-                            pass  # Keep-alive refresh is best-effort
-                        break
-
-            # Ollama is alive, that's what matters
-            logger.info("Ollama ping OK")
-            return True
-
-    except Exception as e:
-        logger.error(f"Ollama ping failed: {e}")
-        return False
-
-
 async def health_check_loop():
-    """Main health check loop - supports both native and Ollama backends"""
+    """Main health check loop - native LLM only (ping + reload on failure / high VRAM)."""
     global _consecutive_failures
 
     logger.info("Health check loop started")
@@ -481,18 +318,9 @@ async def health_check_loop():
                     logger.info("Health check disabled, stopping loop")
                     break
 
-                backend = settings["backend"]
-
-                # Ping based on backend type
-                if backend == "native":
-                    logger.debug("Pinging native LLM...")
-                    success = await ping_native(db)
-                elif backend == "ipex":
-                    logger.debug("Pinging IPEX-LLM...")
-                    success = await ping_ipex(db)
-                else:
-                    logger.debug(f"Pinging Ollama at {settings['ollama_url']}...")
-                    success = await ping_ollama(settings["ollama_url"], settings["ollama_model"])
+                # Ping the native LLM
+                logger.debug("Pinging native LLM...")
+                success = await ping_native(db)
 
                 if success:
                     _consecutive_failures = 0
@@ -505,38 +333,21 @@ async def health_check_loop():
                                 f"GPU VRAM usage at {usage:.1f}% (>= {settings['gpu_memory_threshold']}% threshold) - "
                                 f"triggering model reload to free memory"
                             )
-                            if backend == "native":
-                                if settings["gpu_type"] == "nvidia" and settings["nvidia_reset_before_reload"]:
-                                    await run_nvidia_reset()
-                                reload_native_model(db)
-                            elif backend == "ipex":
-                                reload_ipex_model(db)
-                            else:
-                                restart_ollama(settings["restart_command"])
-                            # Wait a bit for recovery
-                            await asyncio.sleep(10)
-                else:
-                    _consecutive_failures += 1
-                    logger.warning(f"Ping FAILED ({_consecutive_failures}/{settings['restart_after_failures']})")
-
-                    if _consecutive_failures >= settings["restart_after_failures"]:
-                        logger.error("Too many failures, attempting recovery...")
-
-                        if backend == "native":
                             if settings["gpu_type"] == "nvidia" and settings["nvidia_reset_before_reload"]:
                                 await run_nvidia_reset()
-                            # For native, try to reload the model
                             reload_native_model(db)
-                        elif backend == "ipex":
-                            # For IPEX, try to reload the model
-                            reload_ipex_model(db)
-                        else:
-                            # For Ollama, restart the service
-                            restart_ollama(settings["restart_command"])
+                            await asyncio.sleep(10)  # wait for recovery
+                else:
+                    _consecutive_failures += 1
+                    logger.warning(f"Ping FAILED ({_consecutive_failures}/{settings['reload_after_failures']})")
 
+                    if _consecutive_failures >= settings["reload_after_failures"]:
+                        logger.error("Too many failures, reloading the native model...")
+                        if settings["gpu_type"] == "nvidia" and settings["nvidia_reset_before_reload"]:
+                            await run_nvidia_reset()
+                        reload_native_model(db)
                         _consecutive_failures = 0
-                        # Wait a bit for recovery
-                        await asyncio.sleep(10)
+                        await asyncio.sleep(10)  # wait for recovery
 
             finally:
                 db.close()

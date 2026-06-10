@@ -270,6 +270,11 @@ class DiffusersService:
         # generation then crashes at the first compute step. (Recommended for Intel XPU sharing the
         # GPU with the LLM.)
         self._subprocess_mode = settings.get("image_subprocess_mode", "false").lower() == "true"
+        # Image request timeout (admin setting, ms -> s). Bounds the generation subprocess.
+        try:
+            self._request_timeout = max(60, int(settings.get("image_timeout", "300000")) // 1000)
+        except (TypeError, ValueError):
+            self._request_timeout = 600
 
         # Device settings
         device_setting = settings.get("image_gpu_device", "auto")
@@ -290,9 +295,6 @@ class DiffusersService:
             elif self._device == "xpu" and not (hasattr(torch, "xpu") and torch.xpu.is_available()):
                 logger.warning(f"image_gpu_device is set to 'xpu' but XPU is not available, falling back to auto-detection")
                 self._device = detect_device()
-
-        # Backend setting
-        self.backend = settings.get("image_backend", "comfyui")  # "native" or "comfyui"
 
     def _is_anime_prompt(self, prompt: str) -> bool:
         """Check if prompt is for anime-style image"""
@@ -830,7 +832,7 @@ class DiffusersService:
                 [python_path, script_path, json.dumps(config)],
                 capture_output=True,
                 text=True,
-                timeout=600,  # 10 minute timeout
+                timeout=self._request_timeout,  # admin image_timeout setting (default 300s)
                 cwd=os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
                 env=env,
             )

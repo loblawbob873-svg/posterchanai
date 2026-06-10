@@ -198,10 +198,8 @@ ENV POSTERCHANAI_PORT=3051 \
     DOWNLOAD_DEPTH_MODEL=1 \
     DEPTH_MODEL_PATH=/var/lib/posterchanai/assets/depth_anything_v2_vits.onnx \
     DEPTH_MODEL_URL=https://huggingface.co/onnx-community/depth-anything-v2-small/resolve/main/onnx/model.onnx \
-    POSTERCHANAI_LLM_BACKEND=native \
     POSTERCHANAI_LLM_MODEL_PATH=/var/lib/posterchanai/models/Qwen3.5-9B-abliterated-Q4_K_M.gguf \
     POSTERCHANAI_MODEL_URL=https://huggingface.co/lukey03/Qwen3.5-9B-abliterated-GGUF/resolve/main/Qwen3.5-9B-abliterated-Q4_K_M.gguf \
-    POSTERCHANAI_IMAGE_BACKEND=native \
     POSTERCHANAI_IMAGE_MODEL_PATH=Lykon/dreamshaper-8 \
     POSTERCHANAI_IMAGE_MODEL_TYPE=sd15
 # Tor / built-in proxy / torrenting ship ready (the `tor` binary + libtorrent are

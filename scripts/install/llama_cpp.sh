@@ -22,9 +22,9 @@ setup_llama_cpp() {
         cpu)
             setup_llama_cpp_cpu
             ;;
-        ollama)
+        remote)
             deactivate
-            print_success "Using Ollama backend (no llama-cpp-python needed)"
+            print_success "No local LLM (using a remote/external OpenAI-compatible server) — skipping llama-cpp-python"
             return
             ;;
     esac

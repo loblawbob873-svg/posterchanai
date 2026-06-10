@@ -1259,34 +1259,12 @@ class CommandService:
             return {"type": "text", "content": "Generation cancelled."}
 
         if not image_data:
-            # Get backend info for better error message
-            from app.services.image_factory import get_image_backend_info
-            backend_info = get_image_backend_info(self.db)
-            backend_type = backend_info.get("backend", "unknown")
-            
             error_msg = "## ❌ Image Generation Failed\n\n"
-            
-            if backend_type == "comfyui":
-                comfyui_url = backend_info.get("comfyui_url", "")
-                if not comfyui_url:
-                    error_msg += "**ComfyUI URL not configured.**\n\n"
-                    error_msg += "Go to Admin → Services → Image Generation and set the ComfyUI URL.\n"
-                else:
-                    error_msg += f"**ComfyUI backend configured** (`{comfyui_url}`)\n\n"
-                    error_msg += "Possible issues:\n"
-                    error_msg += "- ComfyUI server is not running\n"
-                    error_msg += "- ComfyUI server is not accessible at the configured URL\n"
-                    error_msg += "- Check server logs for errors\n"
-            elif backend_type == "native":
-                error_msg += "**Native diffusers backend**\n\n"
-                error_msg += "Possible issues:\n"
-                error_msg += "- Model not loaded (check VRAM availability)\n"
-                error_msg += "- Generation failed (check logs)\n"
-                error_msg += "- GPU/XPU not available\n"
-            else:
-                error_msg += "**Image backend not properly configured.**\n\n"
-                error_msg += "Go to Admin → Services → Image Generation to configure.\n"
-            
+            error_msg += "**Native diffusers backend**\n\n"
+            error_msg += "Possible issues:\n"
+            error_msg += "- Model not loaded (check VRAM availability)\n"
+            error_msg += "- Generation failed (check logs)\n"
+            error_msg += "- GPU/XPU not available\n"
             error_msg += "\n**Prompt:** " + prompt
             logger.warning(f"Image generation returned None for prompt: {prompt[:100]}...")
             

@@ -1,21 +1,8 @@
 <!-- AI Settings Tab -->
 <div class="tab-content active" id="tab-ai">
-    <fieldset>
-        <legend>LLM Backend</legend>
-        <p class="fieldset-desc"><strong>Posterchanai runs the models</strong> when using Native or IPEX (in-process). Choose Ollama only to use an external Ollama server.</p>
-        <div class="form-group">
-            <label for="llm_backend">Backend Type</label>
-            <select id="llm_backend" name="llm_backend">
-                <option value="ollama">Ollama (external server)</option>
-                <option value="native">Native GPU (posterchanai runs model)</option>
-                <option value="ipex">IPEX-LLM (posterchanai runs model, Intel Arc)</option>
-            </select>
-            <small>Native: llama-cpp-python with SYCL/CUDA. IPEX: Best for Intel Arc. Both run inside posterchanai.</small>
-        </div>
-    </fieldset>
-
-    <fieldset id="native-settings" style="display: none;">
-        <legend>Native LLM Settings</legend>
+    <fieldset id="native-settings">
+        <legend>LLM Settings</legend>
+        <p class="fieldset-desc"><strong>Posterchanai runs the model in-process</strong> via native llama.cpp (SYCL on Intel Arc, CUDA on NVIDIA, HIP on AMD, CPU otherwise).</p>
         <div class="form-group">
             <label for="llm_model_path">Model Path (GGUF)</label>
             <input type="text" id="llm_model_path" name="llm_model_path" placeholder="/path/to/model.gguf">
@@ -102,27 +89,16 @@
     </fieldset>
 
     <fieldset id="ollama-settings">
-        <legend>Model name &amp; connection</legend>
-        <div class="form-group">
-            <label for="ollama_url">Primary URL</label>
-            <input type="url" id="ollama_url" name="ollama_url" placeholder="http://localhost:11434">
-        </div>
-        <div class="form-group">
-            <label for="ollama_api_format">API Format</label>
-            <select id="ollama_api_format" name="ollama_api_format">
-                <option value="ollama">Ollama (/api/chat)</option>
-                <option value="openai">OpenAI (/v1/chat/completions)</option>
-            </select>
-            <small>Use "OpenAI" for posterchanai servers or any OpenAI-compatible API</small>
-        </div>
+        <legend>Model name &amp; timeout</legend>
         <div class="form-group">
             <label for="ollama_model">Default Model (name in logs / API)</label>
-            <input type="text" id="ollama_model" name="ollama_model" placeholder="llama3">
-            <small><strong>This is the value that appears in logs</strong> (e.g. &quot;LoadBalancer model='...'&quot;). Set it to your model name (e.g. <code>deepseek</code>, <code>llama3</code>, or the base name of your .gguf). For Native/IPEX, <strong>Model Path (GGUF)</strong> above is the file actually loaded; this field is the label sent to clients and other servers. If you see the wrong model name in logs, change this and Save.</small>
+            <input type="text" id="ollama_model" name="ollama_model" placeholder="native">
+            <small><strong>This is the value that appears in logs and the API</strong> (e.g. &quot;LoadBalancer model='...'&quot;). <strong>Model Path (GGUF)</strong> above is the file actually loaded; this field is just the label sent to clients and other servers. If you see the wrong model name in logs, change this and Save.</small>
         </div>
         <div class="form-group">
-            <label for="ollama_timeout">Timeout (ms)</label>
+            <label for="ollama_timeout">LLM Request Timeout (ms)</label>
             <input type="number" id="ollama_timeout" name="ollama_timeout" value="300000">
+            <small>Max time for an LLM request (video summaries need longer).</small>
         </div>
     </fieldset>
 

@@ -1,9 +1,8 @@
 """
 Image Generation Factory
-Selects between native diffusers and ComfyUI backends based on settings.
-Integrates with VRAM manager for model swapping on shared GPU.
-Supports user-specific custom ComfyUI endpoints.
-Supports load balancing across multiple posterchanai servers.
+Image generation is always native diffusers (torch-XPU/CUDA/HIP/CPU). Integrates with the
+VRAM manager for model swapping on a shared GPU, and supports load balancing across multiple
+posterchanai image servers (image_server_urls).
 """
 import logging
 from typing import Optional, Protocol, runtime_checkable, TYPE_CHECKING
@@ -48,7 +47,7 @@ def get_image_load_balancer(db: Session) -> Optional[ImageLoadBalancer]:
     servers = parse_image_server_urls(image_server_urls)
 
     if servers:
-        timeout = int(settings.get("comfyui_timeout", "300000")) / 1000
+        timeout = int(settings.get("image_timeout", "300000")) / 1000
         logger.debug(f"Image load balancer available with {len(servers)} server(s)")
         return ImageLoadBalancer(servers, timeout=timeout)
     return None
@@ -91,7 +90,7 @@ async def generate_image_with_load_balancing(
     if servers:
         from app.services.image_load_balancer import get_healthy_image_server
         
-        timeout = int(settings.get("comfyui_timeout", "300000")) / 1000
+        timeout = int(settings.get("image_timeout", "300000")) / 1000
         selected_server = await get_healthy_image_server(servers)
         logger.info(f"[IMAGE] Load balancer returned: {selected_server}")
         
@@ -213,7 +212,7 @@ async def generate_image_with_load_balancing(
     # Fallback to remote if local failed and remote servers are available
     if result is None and servers:
         logger.warning("Local image generation failed, falling back to remote server")
-        timeout = int(settings.get("comfyui_timeout", "300000")) / 1000
+        timeout = int(settings.get("image_timeout", "300000")) / 1000
         
         # Server-to-server fallback - no authentication needed
         try:
@@ -238,72 +237,36 @@ async def generate_image_with_load_balancing(
         logger.error(f"[IMAGE] All image generation attempts failed - local and remote")
         # Log configuration for debugging
         settings = {s.key: s.value for s in db.query(Setting).all()}
-        logger.error(f"[IMAGE] Config - image_backend: {settings.get('image_backend', 'comfyui')}, "
-                    f"image_server_urls: {settings.get('image_server_urls', '')}, "
+        logger.error(f"[IMAGE] Config - image_server_urls: {settings.get('image_server_urls', '')}, "
                     f"vram_mode: {settings.get('vram_mode', 'shared')}")
     
     return result
 
 
 def get_image_backend(db: Session) -> ImageBackend:
-    """
-    Get the appropriate image generation backend based on settings.
-
-    Returns either DiffusersService (native) or ImageService (ComfyUI)
-    """
-    settings = {s.key: s.value for s in db.query(Setting).all()}
-    backend = settings.get("image_backend", "comfyui")
-
-    if backend == "native":
-        from app.services.diffusers_service import get_diffusers_service
-        logger.debug("Using native diffusers backend")
-        return get_diffusers_service(db)
-    else:
-        from app.services.image_service import get_image_service
-        logger.debug("Using ComfyUI backend")
-        return get_image_service(db)
+    """Get the image generation backend (always native diffusers/torch-XPU now)."""
+    from app.services.diffusers_service import get_diffusers_service
+    return get_diffusers_service(db)
 
 
 def get_image_backend_info(db: Session) -> dict:
-    """Get information about the current image backend"""
-    settings = {s.key: s.value for s in db.query(Setting).all()}
-    backend = settings.get("image_backend", "comfyui")
-
-    if backend == "native":
-        from app.services.diffusers_service import get_diffusers_service
-        service = get_diffusers_service(db)
-        return service.get_model_info()
-    else:
-        return {
-            "loaded": bool(settings.get("comfyui_url")),
-            "backend": "comfyui",
-            "comfyui_url": settings.get("comfyui_url", ""),
-        }
+    """Get information about the native image backend."""
+    from app.services.diffusers_service import get_diffusers_service
+    return get_diffusers_service(db).get_model_info()
 
 
 def reload_image_model(db: Session):
-    """Reload the image model (native backend only)"""
-    settings = {s.key: s.value for s in db.query(Setting).all()}
-    backend = settings.get("image_backend", "comfyui")
-
-    if backend == "native":
-        from app.services.diffusers_service import reload_diffusers_model
-        reload_diffusers_model(db)
-        logger.info("Native image model reloaded")
-    else:
-        logger.info("ComfyUI backend - no model reload needed")
+    """Reload the native image model."""
+    from app.services.diffusers_service import reload_diffusers_model
+    reload_diffusers_model(db)
+    logger.info("Native image model reloaded")
 
 
 def unload_image_model(db: Session):
-    """Unload the image model to free VRAM (native backend only)"""
-    settings = {s.key: s.value for s in db.query(Setting).all()}
-    backend = settings.get("image_backend", "comfyui")
-
-    if backend == "native":
-        from app.services.diffusers_service import get_diffusers_service
-        service = get_diffusers_service(db)
-        service.unload_model()
-        logger.info("Native image model unloaded")
+    """Unload the native image model to free VRAM."""
+    from app.services.diffusers_service import get_diffusers_service
+    get_diffusers_service(db).unload_model()
+    logger.info("Native image model unloaded")
 
 
 async def generate_image_for_user(

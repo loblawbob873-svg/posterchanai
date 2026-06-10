@@ -73,7 +73,7 @@ print_summary() {
 
     # Show next steps based on configuration
     echo -e "  ${BOLD}Next Steps:${NC}"
-    if [ "$INSTALL_LLM" = "1" ] && [ "$LLM_BACKEND" != "ollama" ]; then
+    if [ "$INSTALL_LLM" = "1" ] && [ "$LLM_BACKEND" != "remote" ]; then
         echo "    1. Download a GGUF model to /var/lib/posterchanai/models/"
         echo "    2. Configure model path in Admin > AI Settings"
     else
