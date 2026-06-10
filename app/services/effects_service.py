@@ -323,6 +323,80 @@ def _scatter_overlay(data: bytes, make_tile, count: int = 0,
         return out.getvalue()
 
 
+# Animated counterpart of _scatter_overlay. The scatter LAYOUT (per-tile size, spin,
+# shape seed and position) is fixed once; each frame re-renders every tile with an
+# advancing `grow`, so the splatters stay put while their drips/strands run outward.
+# Returns a list of RGB frames (encode with media_service.frames_to_video). The motion
+# is a one-shot reveal — `grow` ramps up then holds — so blood/cum land and drip
+# rather than looping.
+_SCATTER_ANIM_FRAMES = 36
+_SCATTER_ANIM_FPS = 14
+_SCATTER_ANIM_MAXDIM = 1280   # cap the working long edge so re-render + encode stay cheap
+_SCATTER_ANIM_MAXTILES = 30   # cap tile count for animation (the still allows up to 60)
+
+
+def _scatter_frames(data: bytes, make_tile_seeded, count: int = 0,
+                    max_rotation: float = 180.0, n_frames: int = _SCATTER_ANIM_FRAMES,
+                    ramp_frac: float = 0.55, start_grow: float = 0.12):
+    """Build the animation frames for a scatter gag. `make_tile_seeded(size, seed,
+    grow)` must render one RGBA tile deterministically for a given seed (stable shape)
+    with `grow` in [0,1] scaling its drip/streak extent."""
+    import random
+    from PIL import Image, ImageOps
+    try:
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+    except Exception:
+        pass
+
+    with Image.open(io.BytesIO(data)) as img:
+        img = ImageOps.exif_transpose(img)
+        if img.mode in ("RGBA", "LA", "P"):
+            background = Image.new("RGB", img.size, (255, 255, 255))
+            rgba = img.convert("RGBA")
+            background.paste(rgba, mask=rgba.split()[-1])
+            img = background
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+        # Bound the working resolution so re-rendering N frames stays affordable.
+        if max(img.size) > _SCATTER_ANIM_MAXDIM:
+            img.thumbnail((_SCATTER_ANIM_MAXDIM, _SCATTER_ANIM_MAXDIM), Image.LANCZOS)
+        base_rgb = img.convert("RGB")
+
+    W, H = base_rgb.size
+    if count <= 0:
+        count = max(14, min(60, (W * H) // 38000))
+    count = min(count, _SCATTER_ANIM_MAXTILES)
+    base = min(W, H)
+    lo, hi = max(int(base * 0.12), 12), max(int(base * 0.28), 24)
+
+    # Fix the layout once. Position is picked from a full-grow render's rotated size;
+    # the tile canvas is grow-independent, so every frame's tile lands identically.
+    layout = []
+    for _ in range(count):
+        size = random.randint(lo, hi)
+        angle = random.uniform(-max_rotation, max_rotation)
+        seed = random.randrange(1 << 30)
+        sample = make_tile_seeded(size, seed, 1.0).rotate(
+            angle, expand=True, resample=Image.BICUBIC)
+        x = random.randint(-sample.width // 3, max(W - sample.width * 2 // 3, 1))
+        y = random.randint(-sample.height // 3, max(H - sample.height * 2 // 3, 1))
+        layout.append((size, angle, seed, x, y))
+
+    frames = []
+    for fi in range(n_frames):
+        # grow ramps start_grow→1 (smoothstep) over the first `ramp_frac`, then holds.
+        p = min(fi / max(n_frames * ramp_frac, 1.0), 1.0)
+        grow = start_grow + (1.0 - start_grow) * (p * p * (3 - 2 * p))
+        layer = base_rgb.convert("RGBA")
+        for size, angle, seed, x, y in layout:
+            tile = make_tile_seeded(size, seed, grow).rotate(
+                angle, expand=True, resample=Image.BICUBIC)
+            layer.alpha_composite(tile, (x, y))
+        frames.append(layer.convert("RGB"))
+    return frames
+
+
 # ---------------------------------------------------------------------------
 # Dildo overlay (the "dildo" gag — scatter cartoon dildos across an image)
 # ---------------------------------------------------------------------------
@@ -629,17 +703,22 @@ _CUM_COLORS = [
 ]
 
 
-def _make_cum(h: int):
+def _make_cum(h: int, rng=None, grow: float = 1.0):
     """Render one glossy off-white splatter (the "cum" gag) on a transparent tile.
 
     Pure Pillow — an irregular central blob plus a few radiating strands tipped
     with droplets (and the odd satellite speck), given a soft translucent dark rim
     so the near-white body still reads on light backgrounds, plus wet specular
     highlights and slight translucency. Ships no image asset (like the poo path).
+
+    For animation: pass a seeded ``rng`` (a ``random.Random``) so the blob's shape is
+    stable frame-to-frame, and a ``grow`` in [0,1] that scales how far the flung
+    strands have shot out — advance it across frames and the strands ooze outward.
     """
     import math
-    import random
+    import random as _rnd
     from PIL import Image, ImageDraw, ImageFilter, ImageChops
+    random = rng if rng is not None else _rnd
 
     W = max(int(h * 1.15), 18)
     H = max(int(h * 1.15), 18)
@@ -672,7 +751,7 @@ def _make_cum(h: int):
     # fatter droplet head — reads like fluid thrown outward, not a molecule graph.
     for i in range(random.randint(4, 6)):
         ang = phase + i * (math.tau / 5) + random.uniform(-0.4, 0.4)
-        dist = main_r * random.uniform(1.4, 3.0)
+        dist = main_r * random.uniform(1.4, 3.0) * grow
         dx, dy = math.cos(ang), math.sin(ang)
         steps = 12
         for s in range(steps + 1):
@@ -744,6 +823,20 @@ def add_cum(data: bytes, count: int = 0) -> bytes:
     return _scatter_overlay(data, _make_cum, count)
 
 
+def _cum_tile(size: int, seed: int, grow: float):
+    """One seeded cum tile (stable shape, `grow`-scaled strands) for the animator."""
+    import random
+    return _make_cum(size, rng=random.Random(seed), grow=grow)
+
+
+def add_cum_animated(data: bytes, count: int = 0) -> bytes:
+    """Scatter cum as a short MP4 — the strands ooze outward then hold. Silent H.264
+    bytes. The splatters are placed once; each frame re-renders them further along."""
+    from app.services.media_service import frames_to_video
+    frames = _scatter_frames(data, _cum_tile, count=count)
+    return frames_to_video(frames, fps=_SCATTER_ANIM_FPS, loops=1)
+
+
 def cum_attachments(
     attachments: List[Tuple[str, bytes, str]],
 ) -> Tuple[List[OutputFile], str]:
@@ -759,8 +852,20 @@ def cum_attachments(
     filename, data, _ = images[0]
     stem = Path(filename).stem or "image"
     try:
+        if _effects_animate():
+            try:
+                result = add_cum_animated(data)
+                out: OutputFile = {
+                    "filename": f"{stem}_cum.mp4",
+                    "data": result,
+                    "content_type": "video/mp4",
+                }
+                summary = f"## 💦 Cum\n\n💦 {filename}: {_human_size(len(result))}"
+                return [out], summary
+            except Exception as e:
+                logger.warning(f"animated cum failed for {filename}, using still: {e}")
         result = add_cum(data)
-        out: OutputFile = {
+        out = {
             "filename": f"{stem}_cum.jpg",
             "data": result,
             "content_type": "image/jpeg",
@@ -785,17 +890,22 @@ _BLOOD_COLORS = [
 ]
 
 
-def _make_blood(h: int):
+def _make_blood(h: int, rng=None, grow: float = 1.0):
     """Render one wet blood splatter on a transparent tile (pure Pillow).
 
     An irregular central pool with thin radial impact spatter (droplet-tipped
     arms) AND the signature gravity DRIPS running downward into rounded beads,
     finished with a soft dark rim, a slightly darker inner edge for depth, and a
     small wet specular highlight. Ships no image asset (like the cum path).
+
+    For animation: pass a seeded ``rng`` (a ``random.Random``) so the splatter's
+    shape is stable frame-to-frame, and a ``grow`` in [0,1] that scales how far the
+    gravity drips have run down — advance it across frames and the blood drips.
     """
     import math
-    import random
+    import random as _rnd
     from PIL import Image, ImageDraw, ImageFilter, ImageChops
+    random = rng if rng is not None else _rnd
 
     W = max(int(h * 1.5), 24)
     H = max(int(h * 1.9), 32)             # roomy: fits the spray + downward drips
@@ -872,7 +982,7 @@ def _make_blood(h: int):
     for _ in range(random.randint(2, 4)):
         x0 = cx + random.uniform(-main_r * 0.8, main_r * 0.8)
         top = cy + main_r * 0.3
-        length = H * random.uniform(0.28, 0.58)
+        length = H * random.uniform(0.28, 0.58) * grow
         w0 = main_r * random.uniform(0.16, 0.30)
         drift = random.uniform(-main_r * 0.18, main_r * 0.18)        # slight lean
         _trail(x0, top, x0 + drift, top + length, w0, max(w0 * 0.4, 1.2))
@@ -929,6 +1039,20 @@ def add_blood(data: bytes, count: int = 0) -> bytes:
     return _scatter_overlay(data, _make_blood, count, max_rotation=10.0)
 
 
+def _blood_tile(size: int, seed: int, grow: float):
+    """One seeded blood tile (stable shape, `grow`-scaled drips) for the animator."""
+    import random
+    return _make_blood(size, rng=random.Random(seed), grow=grow)
+
+
+def add_blood_animated(data: bytes, count: int = 0) -> bytes:
+    """Scatter blood as a short MP4 — the drips run downward then hold. Silent H.264
+    bytes. Spin stays small (like the still) so the drips fall straight down."""
+    from app.services.media_service import frames_to_video
+    frames = _scatter_frames(data, _blood_tile, count=count, max_rotation=10.0)
+    return frames_to_video(frames, fps=_SCATTER_ANIM_FPS, loops=1)
+
+
 def blood_attachments(
     attachments: List[Tuple[str, bytes, str]],
 ) -> Tuple[List[OutputFile], str]:
@@ -944,8 +1068,20 @@ def blood_attachments(
     filename, data, _ = images[0]
     stem = Path(filename).stem or "image"
     try:
+        if _effects_animate():
+            try:
+                result = add_blood_animated(data)
+                out: OutputFile = {
+                    "filename": f"{stem}_blood.mp4",
+                    "data": result,
+                    "content_type": "video/mp4",
+                }
+                summary = f"## 🩸 Blood\n\n🩸 {filename}: {_human_size(len(result))}"
+                return [out], summary
+            except Exception as e:
+                logger.warning(f"animated blood failed for {filename}, using still: {e}")
         result = add_blood(data)
-        out: OutputFile = {
+        out = {
             "filename": f"{stem}_blood.jpg",
             "data": result,
             "content_type": "image/jpeg",
@@ -1072,12 +1208,16 @@ def bullethole_attachments(
 # Fire overlay (the "fire" gag — scatter cartoon-real flames across an image)
 # ---------------------------------------------------------------------------
 
-def _make_fire(h: int):
+def _make_fire(h: int, phase=None):
     """Render one flame on a transparent tile (pure Pillow).
 
     Nested flame silhouettes from dark-red → red → orange → yellow → near-white
     core (a hot gradient), each with wobbling licks toward a tapered tip, plus a
     soft outer glow. Slightly translucent for an additive look. No image asset.
+
+    `phase` (radians) sets where the flame is in its wobble cycle — pass an
+    advancing value to animate the licks frame-to-frame; defaults to random (a
+    fixed still flame).
     """
     import math
     import random
@@ -1087,7 +1227,8 @@ def _make_fire(h: int):
     H = max(int(h * 1.35), 26)
     cxf = W * 0.5
     base_y = H * 0.92
-    phase = random.uniform(0, math.tau)
+    if phase is None:
+        phase = random.uniform(0, math.tau)
     tile = Image.new("RGBA", (W, H), (0, 0, 0, 0))
 
     def _flame_mask(scale: float, wob: float):
@@ -1192,6 +1333,89 @@ def add_fire(data: bytes, count: int = 0) -> bytes:
         return out.getvalue()
 
 
+def _effects_animate() -> bool:
+    """Whether the animatable effects (fire/blood/cum) render as a moving MP4 rather
+    than a flat still. On by default; set EFFECTS_ANIMATE=0 to fall back to stills
+    (no redeploy needed — flip the env on the service and restart)."""
+    return os.environ.get("EFFECTS_ANIMATE", "1").strip().lower() not in ("0", "false", "no")
+
+
+# How many frames make one seamless flicker cycle, and the playback rate. The cycle
+# wraps (phase 0 → 2π), so `frames_to_video(..., loops=N)` plays it N times smoothly.
+_FIRE_ANIM_FRAMES = 20
+_FIRE_ANIM_FPS = 14
+_FIRE_ANIM_LOOPS = 3
+
+
+def add_fire_animated(data: bytes) -> bytes:
+    """Set the image alight as a looping MP4 — the flames actually flicker.
+
+    Same wall-of-flames layout as `add_fire`, but the per-flame positions/sizes are
+    fixed once and each flame's wobble `phase` advances over a wrapping cycle, so the
+    licks dance frame-to-frame. Returns silent H.264 MP4 bytes (routed like the audio
+    gags). Falls back to the still `add_fire` JPEG only via the caller on error.
+    """
+    import math
+    import random
+    from PIL import Image, ImageOps
+    from app.services.media_service import frames_to_video
+    try:
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+    except Exception:
+        pass
+
+    with Image.open(io.BytesIO(data)) as img:
+        img = ImageOps.exif_transpose(img)
+        if img.mode in ("RGBA", "LA", "P"):
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            rgba = img.convert("RGBA")
+            bg.paste(rgba, mask=rgba.split()[-1])
+            img = bg
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+
+        W, H = img.size
+        base = img.convert("RGBA")
+        band = int(H * 0.34)
+
+        # Warm glow rising from the bottom edge — static across frames.
+        gmask = Image.new("L", (1, H), 0)
+        for y in range(H):
+            if y >= H - band:
+                f = (y - (H - band)) / band
+                gmask.putpixel((0, y), int(140 * (f ** 1.5)))
+        glow = Image.new("RGBA", (W, H), (255, 95, 15, 0))
+        glow.putalpha(gmask.resize((W, H)))
+        base.alpha_composite(glow)
+
+        # Fix the flame layout ONCE (position, size, flip, phase offset) so only the
+        # licks move between frames — re-randomising per frame would just boil noise.
+        flames = []
+        x = -int(W * 0.04)
+        while x < W:
+            fh = int(band * random.uniform(0.78, 1.45))
+            size = max(int(fh / 1.35), 14)
+            flip = random.random() < 0.5
+            ph0 = random.uniform(0, math.tau)
+            flames.append((x, size, flip, ph0))
+            x += int(size * 0.95 * random.uniform(0.42, 0.66)) or 1
+
+        frames = []
+        for fi in range(_FIRE_ANIM_FRAMES):
+            t = fi / _FIRE_ANIM_FRAMES          # 0 → just-under-1, wraps to 0
+            frame = base.copy()
+            for fx, size, flip, ph0 in flames:
+                flame = _make_fire(size, phase=ph0 + math.tau * t)
+                if flip:
+                    flame = flame.transpose(Image.FLIP_LEFT_RIGHT)
+                y = H - flame.height + int(flame.height * 0.04)
+                frame.alpha_composite(flame, (fx, y))
+            frames.append(frame.convert("RGB"))
+
+    return frames_to_video(frames, fps=_FIRE_ANIM_FPS, loops=_FIRE_ANIM_LOOPS)
+
+
 def fire_attachments(
     attachments: List[Tuple[str, bytes, str]],
 ) -> Tuple[List[OutputFile], str]:
@@ -1202,8 +1426,20 @@ def fire_attachments(
     filename, data, _ = images[0]
     stem = Path(filename).stem or "image"
     try:
+        if _effects_animate():
+            try:
+                result = add_fire_animated(data)
+                out: OutputFile = {
+                    "filename": f"{stem}_fire.mp4",
+                    "data": result,
+                    "content_type": "video/mp4",
+                }
+                summary = f"## 🔥 Fire\n\n🔥 {filename}: {_human_size(len(result))}"
+                return [out], summary
+            except Exception as e:
+                logger.warning(f"animated fire failed for {filename}, using still: {e}")
         result = add_fire(data)
-        out: OutputFile = {
+        out = {
             "filename": f"{stem}_fire.jpg",
             "data": result,
             "content_type": "image/jpeg",
