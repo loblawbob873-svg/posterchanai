@@ -749,7 +749,7 @@ _HELP_SECTIONS = {
         "• 📝 Summarize — AI summary of the document\n\n"
         "Tips:\n"
         "• Send several images, then tap *To PDF*, to merge them into one PDF.\n"
-        "• You can also skip the buttons: send the file with `compress`, `clip 0:10 0:30`, `convert`, `meme <text>`, `dildo`, `poo`, `cum`, `blood`, `bullethole`, `fire`, `gay`, `blacked`, `kosher`, `barked`, `hava`, `indian`, `yakety`, `yamete`, `curb`, `depressing`, `fahh`, `helpme`, `gong`, `fbi`, `redeem`, `gigity`, `beavis`, `smell`, `hood`, `akbar`, `retard`, `whoabuddy`, `sopranos`, `cheers`, `munsters`, `happydays`, `dontwanttowait`, `strangerthings`, `adamsfamily`, `xmen`, `futurama`, `charliesangles`, `differentstroke`, `seinfeld`, `freebird`, `kanye`, `darkness`, `bike`, `jobs`, `ree`, `liberal`, `moving`, `harlem`, `chimp`, `consider`, `clay`, `wasteland`, `mixalot` or `thug` as the caption.\n"
+        "• You can also skip the buttons: send the file with `compress`, `clip 0:10 0:30`, `convert`, `meme <text>`, `dildo`, `poo`, `cum`, `blood`, `bullethole`, `fire`, `gay`, `blacked`, `kosher`, `barked`, `hava`, `indian`, `yakety`, `yamete`, `curb`, `depressing`, `fahh`, `helpme`, `gong`, `fbi`, `redeem`, `gigity`, `beavis`, `smell`, `hood`, `akbar`, `retard`, `whoabuddy`, `sopranos`, `cheers`, `munsters`, `happydays`, `dontwanttowait`, `strangerthings`, `adamsfamily`, `xmen`, `futurama`, `charliesangles`, `differentstroke`, `seinfeld`, `onepiece`, `overtaken`, `freebird`, `kanye`, `darkness`, `bike`, `jobs`, `ree`, `liberal`, `moving`, `harlem`, `chimp`, `consider`, `clay`, `wasteland`, `mixalot` or `thug` as the caption.\n"
         "• Telegram limits bot downloads to 20 MB — use the web UI for bigger files."
     ),
     "youtube": (
@@ -1281,6 +1281,36 @@ _CLIP_END_PROMPT = "✂️ Clip — reply with the END time (e.g. 0:30 or 1:30):
 # After tapping "📣 Post to social" on an upload, ask for optional caption text
 # before showing the platform buttons. Reply with "-" (or "skip") to post media only.
 _SOCIAL_CAPTION_PROMPT = "✍️ Add a caption for your post? Reply with text, or send - to post without any."
+
+# Every "share/post this?" prompt that gets appended to a post body or sent standalone
+# alongside the platform buttons. A handler that recovers the post text from the button
+# message (cache miss, e.g. after a restart) MUST strip these — and must never treat a
+# bare prompt as the post body (bug: the prompt itself was posted to Misskey/Pleroma/
+# Matrix on a caption-less media post). Keep in sync with every `prompt=` passed to
+# _offer_social_post and every standalone "📣 …?" message.
+_POST_PROMPTS = (
+    "📣 *Post this?*", "📣 Post this?",
+    "📣 *Post this (as written)?*", "📣 Post this (as written)?",
+    "📣 Post this to your timeline?",
+    "📣 *Share this image?*", "📣 Share this image?",
+    "📣 *Share this?*", "📣 Share this?",
+)
+
+
+def _recover_post_text(callback_query: dict) -> str:
+    """Recover the user's post text from the button message when the per-platform cache
+    missed. Strips a trailing prompt; returns "" if the message was ONLY a prompt (a
+    caption-less media post) so the prompt itself is never posted to the platform."""
+    _msg_text = (callback_query.get("message") or {}).get("text", "") or ""
+    for _prompt in _POST_PROMPTS:
+        _suffix = "\n\n" + _prompt
+        if _suffix in _msg_text:
+            _msg_text = _msg_text[:_msg_text.rfind(_suffix)]
+            break
+    _msg_text = _msg_text.strip()
+    if _msg_text in _POST_PROMPTS:
+        return ""
+    return _msg_text
 # After tapping "🖼 Meme" on an image upload, ForceReply for the caption text; the
 # source image stays in the media cache and is captioned when the reply arrives.
 _MEME_PROMPT = "🖼 Meme — reply with the caption text to add:"
@@ -1334,128 +1364,92 @@ def _media_action_keyboard(attachments: list, user=None) -> Optional[dict]:
     return {"inline_keyboard": rows} if rows else None
 
 
+# Effect catalog grouped into the three Effects categories. Each entry is
+# (button label, effect name → media:zq:<name>). Adding a new effect = add ONE
+# line to the right group; the keyboards below build themselves. "meme" is special
+# (direct caption flow via media:meme) and is prepended to the Memes keyboard.
+_FX_THEMES = [
+    ("🇮🇹 Sopranos", "sopranos"), ("🍻 Cheers", "cheers"),
+    ("🧛 Munsters", "munsters"), ("😃 Happy Days", "happydays"),
+    ("🌊 Don't Wait", "dontwanttowait"), ("🔦 Stranger Things", "strangerthings"),
+    ("🖤 Addams Family", "adamsfamily"), ("❌ X-Men", "xmen"),
+    ("🚀 Futurama", "futurama"), ("👼 Charlie's Angels", "charliesangles"),
+    ("🌍 Diff'rent Strokes", "differentstroke"), ("🎤 Seinfeld", "seinfeld"),
+    ("🦅 Freebird", "freebird"), ("🕺 Harlem", "harlem"),
+    ("🎻 Hava", "hava"), ("🎷 Yakety", "yakety"),
+    ("😬 Curb", "curb"), ("🎸 Wasteland", "wasteland"),
+    ("🍑 Mixalot", "mixalot"), ("🏴‍☠️ One Piece", "onepiece"),
+]
+_FX_SOUNDS = [
+    ("🤠 Whoabuddy", "whoabuddy"), ("🕌 Akbar", "akbar"),
+    ("⚠️ Retard", "retard"), ("🔔 Gong", "gong"),
+    ("🚨 FBI", "fbi"), ("💳 Redeem", "redeem"),
+    ("😏 Gigity", "gigity"), ("🤤 Beavis", "beavis"),
+    ("👃 Smell", "smell"), ("🏚️ Hood", "hood"),
+    ("🇮🇳 Indian", "indian"), ("🛑 Yamete", "yamete"),
+    ("😢 Depressing", "depressing"), ("🌀 Fahh", "fahh"),
+    ("🆘 Helpme", "helpme"), ("🐶 Barked", "barked"),
+    ("😡 Ree", "ree"), ("🐻 Kanye", "kanye"),
+    ("🌑 Darkness", "darkness"), ("🚲 Bike", "bike"),
+    ("💼 Jobs", "jobs"), ("🗽 Liberal", "liberal"),
+    ("📦 Moving", "moving"), ("🏎️ Overtaken", "overtaken"),
+]
+_FX_MEMES = [
+    ("🍆 Dildo", "dildo"), ("💩 Poo", "poo"),
+    ("💦 Cum", "cum"), ("🩸 Blood", "blood"),
+    ("🔥 Fire", "fire"), ("🕳️ Bullet holes", "bullethole"),
+    ("🏳️‍🌈 Gay", "gay"), ("🥷 Blacked", "blacked"),
+    ("✡️ Kosher", "kosher"), ("🤔 Consider", "consider"),
+    ("🐵 Chimp", "chimp"), ("🗣️ Clay", "clay"),
+    ("😎 Thug", "thug"),
+]
+
+
+def _fx_category_keyboard(effects: list, back_to: str) -> dict:
+    """Build an effect sub-keyboard: buttons (2 per row) + a Back button.
+    `back_to` is the callback the Back button fires (the category picker)."""
+    rows: list = []
+    pair: list = []
+    for lbl, name in effects:
+        pair.append({"text": lbl, "callback_data": f"media:zq:{name}"})
+        if len(pair) == 2:
+            rows.append(pair)
+            pair = []
+    if pair:
+        rows.append(pair)
+    rows.append([{"text": "⬅️ Back", "callback_data": back_to}])
+    return {"inline_keyboard": rows}
+
+
 def _media_effects_keyboard() -> dict:
-    """Submenu shown after tapping '✨ Effects' on an image upload — the image
-    transforms (meme caption, dildo / poo / cum / blood / fire scatter + bullet
-    holes), plus a Back to
-    the main actions."""
-    # Effect buttons route through a zoom Yes/No prompt (`media:zq:<eff>`); Meme
-    # keeps its direct caption flow.
+    """Category picker shown after tapping '✨ Effects' on an upload. Splits the
+    (50+) effects into Themes / Sounds / Memes so no single list is overwhelming;
+    each opens its own sub-keyboard (media:fxcat:<cat>)."""
     return {"inline_keyboard": [
         [
-            {"text": "🖼 Meme", "callback_data": "media:meme"},
-            {"text": "🍆 Dildo", "callback_data": "media:zq:dildo"},
+            {"text": "📺 TV/Movie Themes", "callback_data": "media:fxcat:themes"},
+            {"text": "🔊 Sound clips", "callback_data": "media:fxcat:sounds"},
         ],
         [
-            {"text": "💩 Poo", "callback_data": "media:zq:poo"},
-            {"text": "💦 Cum", "callback_data": "media:zq:cum"},
-        ],
-        [
-            {"text": "🩸 Blood", "callback_data": "media:zq:blood"},
-            {"text": "🔥 Fire", "callback_data": "media:zq:fire"},
-        ],
-        [
-            {"text": "🕳️ Bullet holes", "callback_data": "media:zq:bullethole"},
-            {"text": "🏳️‍🌈 Gay", "callback_data": "media:zq:gay"},
-        ],
-        [
-            {"text": "🥷 Blacked", "callback_data": "media:zq:blacked"},
-            {"text": "✡️ Kosher", "callback_data": "media:zq:kosher"},
-        ],
-        [
-            {"text": "🐶 Barked", "callback_data": "media:zq:barked"},
-            {"text": "🎻 Hava", "callback_data": "media:zq:hava"},
-        ],
-        [
-            {"text": "🇮🇳 Indian", "callback_data": "media:zq:indian"},
-            {"text": "🎷 Yakety", "callback_data": "media:zq:yakety"},
-        ],
-        [
-            {"text": "🛑 Yamete", "callback_data": "media:zq:yamete"},
-            {"text": "😬 Curb", "callback_data": "media:zq:curb"},
-        ],
-        [
-            {"text": "😢 Depressing", "callback_data": "media:zq:depressing"},
-            {"text": "🌀 Fahh", "callback_data": "media:zq:fahh"},
-        ],
-        [
-            {"text": "🆘 Helpme", "callback_data": "media:zq:helpme"},
-            {"text": "🔔 Gong", "callback_data": "media:zq:gong"},
-        ],
-        [
-            {"text": "🚨 FBI", "callback_data": "media:zq:fbi"},
-            {"text": "💳 Redeem", "callback_data": "media:zq:redeem"},
-        ],
-        [
-            {"text": "😏 Gigity", "callback_data": "media:zq:gigity"},
-            {"text": "🤤 Beavis", "callback_data": "media:zq:beavis"},
-        ],
-        [
-            {"text": "👃 Smell", "callback_data": "media:zq:smell"},
-            {"text": "🏚️ Hood", "callback_data": "media:zq:hood"},
-        ],
-        [
-            {"text": "🕌 Akbar", "callback_data": "media:zq:akbar"},
-            {"text": "⚠️ Retard", "callback_data": "media:zq:retard"},
-        ],
-        [
-            {"text": "🤠 Whoabuddy", "callback_data": "media:zq:whoabuddy"},
-            {"text": "🇮🇹 Sopranos", "callback_data": "media:zq:sopranos"},
-        ],
-        [
-            {"text": "🍻 Cheers", "callback_data": "media:zq:cheers"},
-            {"text": "🧛 Munsters", "callback_data": "media:zq:munsters"},
-        ],
-        [
-            {"text": "😃 Happy Days", "callback_data": "media:zq:happydays"},
-            {"text": "🌊 Don't Wait", "callback_data": "media:zq:dontwanttowait"},
-        ],
-        [
-            {"text": "🔦 Stranger Things", "callback_data": "media:zq:strangerthings"},
-            {"text": "🖤 Addams Family", "callback_data": "media:zq:adamsfamily"},
-        ],
-        [
-            {"text": "❌ X-Men", "callback_data": "media:zq:xmen"},
-            {"text": "🚀 Futurama", "callback_data": "media:zq:futurama"},
-        ],
-        [
-            {"text": "🦅 Freebird", "callback_data": "media:zq:freebird"},
-            {"text": "🐻 Kanye", "callback_data": "media:zq:kanye"},
-        ],
-        [
-            {"text": "🌑 Darkness", "callback_data": "media:zq:darkness"},
-            {"text": "🚲 Bike", "callback_data": "media:zq:bike"},
-        ],
-        [
-            {"text": "💼 Jobs", "callback_data": "media:zq:jobs"},
-            {"text": "😡 Ree", "callback_data": "media:zq:ree"},
-        ],
-        [
-            {"text": "🗽 Liberal", "callback_data": "media:zq:liberal"},
-            {"text": "📦 Moving", "callback_data": "media:zq:moving"},
-        ],
-        [
-            {"text": "🕺 Harlem", "callback_data": "media:zq:harlem"},
-            {"text": "🐵 Chimp", "callback_data": "media:zq:chimp"},
-        ],
-        [
-            {"text": "🤔 Consider", "callback_data": "media:zq:consider"},
-            {"text": "🗣️ Clay", "callback_data": "media:zq:clay"},
-        ],
-        [
-            {"text": "🎸 Wasteland", "callback_data": "media:zq:wasteland"},
-            {"text": "🍑 Mixalot", "callback_data": "media:zq:mixalot"},
-        ],
-        [
-            {"text": "👼 Charlie's Angels", "callback_data": "media:zq:charliesangles"},
-            {"text": "🌍 Diff'rent Strokes", "callback_data": "media:zq:differentstroke"},
-        ],
-        [
-            {"text": "🎤 Seinfeld", "callback_data": "media:zq:seinfeld"},
-            {"text": "😎 Thug", "callback_data": "media:zq:thug"},
+            {"text": "🎨 Memes / overlays", "callback_data": "media:fxcat:memes"},
         ],
         [{"text": "⬅️ Back", "callback_data": "media:back"}],
     ]}
+
+
+def _media_fx_themes_keyboard() -> dict:
+    return _fx_category_keyboard(_FX_THEMES, "media:effects")
+
+
+def _media_fx_sounds_keyboard() -> dict:
+    return _fx_category_keyboard(_FX_SOUNDS, "media:effects")
+
+
+def _media_fx_memes_keyboard() -> dict:
+    # Meme has its own caption flow (media:meme), so prepend it as a button.
+    kb = _fx_category_keyboard(_FX_MEMES, "media:effects")
+    kb["inline_keyboard"].insert(0, [{"text": "🖼 Meme", "callback_data": "media:meme"}])
+    return kb
 
 
 def _ytdl_video_keyboard() -> dict:
@@ -2002,7 +1996,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -2234,7 +2228,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -2443,7 +2437,7 @@ async def _handle_telegram_update(update: dict, db: Session):
 
             # If we have images, always run OCR for later use
             # (skip for compress/convert — they operate on the raw file, not its text)
-            if has_images and attachments and command not in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug"):
+            if has_images and attachments and command not in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug"):
                 for filename, file_data, content_type in attachments:
                     if content_type.startswith("image/"):
                         import base64
@@ -2490,7 +2484,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Attachment too large for Telegram to hand to the bot (20 MB cap).
             # Handle here so it works whether or not a command caption was given,
             # instead of falling through to the chat model.
-            if oversized_attachment and command in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", None):
+            if oversized_attachment and command in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", None):
                 _ov_name, _ov_size = oversized_attachment
                 _cap_mb = TELEGRAM_MAX_DOWNLOAD_BYTES / (1024 * 1024)
                 if telegram_service.is_local_api:
@@ -3677,8 +3671,25 @@ async def _handle_telegram_update(update: dict, db: Session):
                             await telegram_service.send_message(chat_id, "Nothing to do — that upload has no image.")
                         else:
                             await telegram_service.send_message(
-                                chat_id, "✨ Effects:",
+                                chat_id, "✨ Effects — pick a category:",
                                 reply_markup=_media_effects_keyboard(),
+                            )
+                    elif _action.startswith("fxcat:"):
+                        # An Effects category was chosen → show that sub-keyboard.
+                        _cat = _action.split(":", 1)[1]
+                        _cat_kbd = {
+                            "themes": _media_fx_themes_keyboard,
+                            "sounds": _media_fx_sounds_keyboard,
+                            "memes": _media_fx_memes_keyboard,
+                        }.get(_cat)
+                        if not _cat_kbd:
+                            await telegram_service.send_message(chat_id, "Unknown effects category.")
+                        elif not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to do — that upload has no image.")
+                        else:
+                            _cat_label = {"themes": "📺 TV/Movie Themes", "sounds": "🔊 Sound clips", "memes": "🎨 Memes / overlays"}[_cat]
+                            await telegram_service.send_message(
+                                chat_id, f"{_cat_label}:", reply_markup=_cat_kbd(),
                             )
                     elif _action == "back":
                         # Return from the Effects submenu to the main file actions.
@@ -4083,6 +4094,22 @@ async def _handle_telegram_update(update: dict, db: Session):
                             await telegram_service.send_message(chat_id, "🎤 Seinfeld…")
                             _imgs = [a for a in _atts if is_image(a[0], a[2])]
                             await _send_files_result(await cb_command_service.execute_command("seinfeld", "", attachments=_imgs))
+                    elif _action == "onepiece":
+                        # No caption needed — render the video and post it.
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(chat_id, "🏴‍☠️ One Piece…")
+                            _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                            await _send_files_result(await cb_command_service.execute_command("onepiece", "", attachments=_imgs))
+                    elif _action == "overtaken":
+                        # No caption needed — render the video and post it.
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(chat_id, "🏎️ Overtaken…")
+                            _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                            await _send_files_result(await cb_command_service.execute_command("overtaken", "", attachments=_imgs))
                     elif _action == "freebird":
                         # No caption needed — render the video and post it.
                         if not any(is_image(fn, ct) for fn, _, ct in _atts):
@@ -5011,13 +5038,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     await telegram_service.send_message(chat_id, "Already posted via 'Post to All'.")
                     return {"ok": True}
                 if pending_post is None:
-                    _msg_text = (callback_query.get("message") or {}).get("text", "")
-                    if _msg_text:
-                        for _suffix in ("\n\n📣 *Post this?*", "\n\n📣 Post this?", "\n\n📣 *Share this image?*", "\n\n📣 Share this image?", "\n\n📣 *Share this?*", "\n\n📣 Share this?"):
-                            if _suffix in _msg_text:
-                                _msg_text = _msg_text[:_msg_text.rfind(_suffix)]
-                                break
-                        pending_post = _msg_text.strip() or None
+                    pending_post = _recover_post_text(callback_query) or None
                 if pending_post is None:
                     await telegram_service.send_message(chat_id, "No pending Misskey post found. Please generate a new post.")
                     return {"ok": True}
@@ -5068,13 +5089,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     await telegram_service.send_message(chat_id, "Already posted via 'Post to All'.")
                     return {"ok": True}
                 if pending_post is None:
-                    _msg_text = (callback_query.get("message") or {}).get("text", "")
-                    if _msg_text:
-                        for _suffix in ("\n\n📣 *Post this?*", "\n\n📣 Post this?", "\n\n📣 *Share this image?*", "\n\n📣 Share this image?", "\n\n📣 *Share this?*", "\n\n📣 Share this?"):
-                            if _suffix in _msg_text:
-                                _msg_text = _msg_text[:_msg_text.rfind(_suffix)]
-                                break
-                        pending_post = _msg_text.strip() or None
+                    pending_post = _recover_post_text(callback_query) or None
                 if pending_post is None:
                     await telegram_service.send_message(chat_id, "No pending Pleroma post found. Please generate a new post.")
                     return {"ok": True}
@@ -5119,14 +5134,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     # Cache miss (e.g. after service restart) — recover from message text.
                     # "" is a valid caption-less media post, so only recover when truly absent.
                     if pending_post is None:
-                        _msg_text = (callback_query.get("message") or {}).get("text", "")
-                        if _msg_text:
-                            # Strip the prompt suffix appended by _offer_social_post
-                            for _suffix in ("\n\n📣 *Post this?*", "\n\n📣 Post this?", "\n\n📣 *Share this image?*", "\n\n📣 Share this image?", "\n\n📣 *Share this?*", "\n\n📣 Share this?"):
-                                if _suffix in _msg_text:
-                                    _msg_text = _msg_text[:_msg_text.rfind(_suffix)]
-                                    break
-                            pending_post = _msg_text.strip() or None
+                        pending_post = _recover_post_text(callback_query) or None
                         if pending_post:
                             _matrix_post_cache[chat_id] = pending_post
                             logger.info(f"mtx:post — recovered post text from message ({len(pending_post)} chars)")
@@ -5237,14 +5245,9 @@ async def _handle_telegram_update(update: dict, db: Session):
                     User.telegram_enabled == True
                 ).first()
 
-                # Recover post text from message if caches were lost (e.g. service restart)
-                def _recover_post_text() -> str:
-                    _msg_text = (callback_query.get("message") or {}).get("text", "")
-                    for _suffix in ("\n\n📣 *Post this?*", "\n\n📣 Post this?", "\n\n📣 *Share this image?*", "\n\n📣 Share this image?", "\n\n📣 *Share this?*", "\n\n📣 Share this?"):
-                        if _suffix in _msg_text:
-                            _msg_text = _msg_text[:_msg_text.rfind(_suffix)]
-                            break
-                    return _msg_text.strip()
+                # Recover post text from message if caches were lost (e.g. service restart).
+                # Shared _recover_post_text() strips the prompt and refuses to post a bare
+                # prompt — same helper used by the individual mk:/plr:/mtx: handlers.
 
                 results = []
                 matrix_attempted = False
@@ -5252,7 +5255,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                 _all_image = _geni_image_cache.get(chat_id)  # leave in cache for Matrix room-picker step
 
                 # Misskey — post when there's text OR a media attachment (caption-less post).
-                mk_post = _misskey_post_cache.pop(chat_id, None) or _recover_post_text()
+                mk_post = _misskey_post_cache.pop(chat_id, None) or _recover_post_text(callback_query)
                 if (mk_post or _all_image) and all_user and _has_misskey(all_user):
                     try:
                         from app.services.misskey_service import post_note as _mk_note
@@ -5266,7 +5269,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     _misskey_post_cache[chat_id] = _CONSUMED
 
                 # Pleroma
-                plr_post = _pleroma_post_cache.pop(chat_id, None) or _recover_post_text()
+                plr_post = _pleroma_post_cache.pop(chat_id, None) or _recover_post_text(callback_query)
                 if (plr_post or _all_image) and all_user and _has_pleroma(all_user):
                     try:
                         from app.services.pleroma_service import post_status as _plr_status
@@ -5283,7 +5286,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                     await telegram_service.send_message(chat_id, "\n".join(results))
 
                 # Matrix — needs room selection; show picker if configured
-                mtx_post = _matrix_post_cache.get(chat_id) or _recover_post_text()
+                mtx_post = _matrix_post_cache.get(chat_id) or _recover_post_text(callback_query)
                 if (mtx_post or _all_image) and mtx_post != _CONSUMED and all_user and _has_matrix(all_user):
                     matrix_attempted = True
                     try:

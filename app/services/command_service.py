@@ -606,6 +606,8 @@ class CommandService:
         "charliesangles": "Turn an attached image into an MP4 set to the Charlie's Angels theme clip: charliesangles",
         "differentstroke": "Turn an attached image into an MP4 set to the Diff'rent Strokes theme clip: differentstroke",
         "seinfeld": "Turn an attached image into an MP4 set to the Seinfeld theme clip: seinfeld",
+        "onepiece": "Turn an attached image into an MP4 set to the One Piece theme clip: onepiece",
+        "overtaken": "Turn an attached image into an MP4 set to the overtaken clip: overtaken",
         "freebird": "Turn an attached image into an MP4 set to the Free Bird solo: freebird",
         "kanye": "Turn an attached image into an MP4 set to the Kanye clip: kanye",
         "darkness": "Turn an attached image into an MP4 set to the darkness clip: darkness",
@@ -649,7 +651,7 @@ class CommandService:
         "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete",
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
         "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy",
-        "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
+        "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
         "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug",
     }
 
@@ -890,6 +892,10 @@ class CommandService:
             return await self._differentstroke_command(attachments)
         elif command == "seinfeld":
             return await self._seinfeld_command(attachments)
+        elif command == "onepiece":
+            return await self._onepiece_command(attachments)
+        elif command == "overtaken":
+            return await self._overtaken_command(attachments)
         elif command == "freebird":
             return await self._freebird_command(attachments)
         elif command == "kanye":
@@ -4047,6 +4053,36 @@ Files are saved to your Storage.""",
         from app.services.effects_service import seinfeld_attachments
 
         outputs, summary = await asyncio.to_thread(seinfeld_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _onepiece_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into an MP4 set to the One Piece theme clip: `onepiece`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `onepiece`."}
+
+        import asyncio
+        from app.services.effects_service import onepiece_attachments
+
+        outputs, summary = await asyncio.to_thread(onepiece_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _overtaken_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into an MP4 set to the overtaken clip: `overtaken`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `overtaken`."}
+
+        import asyncio
+        from app.services.effects_service import overtaken_attachments
+
+        outputs, summary = await asyncio.to_thread(overtaken_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}

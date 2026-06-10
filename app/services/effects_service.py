@@ -3355,6 +3355,118 @@ def seinfeld_attachments(
 
 
 # ---------------------------------------------------------------------------
+# One Piece (turn an image into a short MP4 set to the One Piece theme clip — the
+# "onepiece" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped onepiece track (repo-relative), overridable with ONEPIECE_AUDIO_PATH.
+_ONEPIECE_AUDIO_CANDIDATES = [
+    os.environ.get("ONEPIECE_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "onepiece.mp3"),
+    "/var/lib/posterchanai/assets/onepiece.mp3",
+]
+# Cap above the ~10s clip length; -shortest ends the video at the audio end.
+_ONEPIECE_DURATION = 11.0
+
+
+def _onepiece_audio_path() -> str:
+    """First existing onepiece mp3 from the candidate list ("" if none)."""
+    for p in _ONEPIECE_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_onepiece(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the One Piece clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _onepiece_audio_path()
+    if not audio:
+        raise RuntimeError("One Piece audio (assets/onepiece.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_ONEPIECE_DURATION)
+
+
+def onepiece_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a onepiece MP4. Mirrors
+    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_onepiece(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_onepiece.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🏴‍☠️ One Piece\n\n🏴‍☠️ {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"onepiece failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Overtaken (turn an image into a short MP4 set to the "overtaken" clip — the
+# "overtaken" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped overtaken track (repo-relative), overridable with OVERTAKEN_AUDIO_PATH.
+_OVERTAKEN_AUDIO_CANDIDATES = [
+    os.environ.get("OVERTAKEN_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "overtaken.mp3"),
+    "/var/lib/posterchanai/assets/overtaken.mp3",
+]
+# Cap above the ~10s clip length; -shortest ends the video at the audio end.
+_OVERTAKEN_DURATION = 11.0
+
+
+def _overtaken_audio_path() -> str:
+    """First existing overtaken mp3 from the candidate list ("" if none)."""
+    for p in _OVERTAKEN_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_overtaken(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the overtaken clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _overtaken_audio_path()
+    if not audio:
+        raise RuntimeError("Overtaken audio (assets/overtaken.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_OVERTAKEN_DURATION)
+
+
+def overtaken_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into an overtaken MP4. Mirrors
+    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_overtaken(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_overtaken.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🏎️ Overtaken\n\n🏎️ {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"overtaken failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
 # Sopranos (turn an image into a short MP4 set to the Sopranos theme clip — the
 # "sopranos" gag)
 # ---------------------------------------------------------------------------
