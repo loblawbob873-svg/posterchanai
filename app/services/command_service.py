@@ -596,6 +596,7 @@ class CommandService:
         "akbar": "Turn an attached image into a short MP4 set to the akbar clip: akbar",
         "retard": "Turn an attached image into a short MP4 set to the retard-alert clip: retard",
         "whoabuddy": "Turn an attached image into a short MP4 set to the whoa buddy clip: whoabuddy",
+        "feliz": "Turn an attached image into a short MP4 set to the feliz clip: feliz",
         "sopranos": "Turn an attached image into an MP4 set to the Sopranos theme clip: sopranos",
         "cheers": "Turn an attached image into an MP4 set to the Cheers theme clip: cheers",
         "munsters": "Turn an attached image into an MP4 set to the Munsters theme clip: munsters",
@@ -657,7 +658,7 @@ class CommandService:
         "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy",
         "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
         "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug",
-        "feltedtables", "glow", "prayer", "alive",
+        "feltedtables", "glow", "prayer", "alive", "feliz",
     }
 
     # Trailing motion tokens an effect accepts (zoom pan-out, full camera shake,
@@ -934,6 +935,8 @@ class CommandService:
             return await self._retard_command(attachments)
         elif command == "whoabuddy":
             return await self._whoabuddy_command(attachments)
+        elif command == "feliz":
+            return await self._feliz_command(attachments)
         elif command == "sopranos":
             return await self._sopranos_command(attachments)
         elif command == "cheers":
@@ -3985,6 +3988,21 @@ Files are saved to your Storage.""",
         from app.services.effects_service import whoabuddy_attachments
 
         outputs, summary = await asyncio.to_thread(whoabuddy_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _feliz_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into a short MP4 set to the feliz clip: `feliz`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `feliz`."}
+
+        import asyncio
+        from app.services.effects_service import feliz_attachments
+
+        outputs, summary = await asyncio.to_thread(feliz_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
