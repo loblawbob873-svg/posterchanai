@@ -1,5 +1,9 @@
 # Bot manager (`botframework/`)
 
+> **Using the bots / command reference:** see [`COMMANDS.md`](COMMANDS.md) — how to drive each
+> bot (web, Telegram, Matrix, Pleroma, Misskey) and every command grouped by category.
+
+
 PosterChanAI bundles a full **autonomous bot framework** (formerly the separate `~/posterchan`
 repo) under [`botframework/`](../botframework), managed from **Admin → Bots**. One admin tab adds,
 edits, and toggles bots; the database is the source of truth; the app supervises the bots
