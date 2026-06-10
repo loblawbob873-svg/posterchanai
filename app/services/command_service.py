@@ -663,7 +663,7 @@ class CommandService:
     # Trailing motion tokens an effect accepts (zoom pan-out, full camera shake,
     # a gentler `medshake`, `beginshake` which shakes hard then settles, and
     # `trippy` psychedelic hue-cycle).
-    MOTION_ARGS = ("zoom", "shake", "medshake", "beginshake", "trippy", "pulse", "glow")
+    MOTION_ARGS = ("zoom", "shake", "medshake", "beginshake", "trippy", "pulse", "glow", "alive")
 
     # Effects whose output is ALREADY animated (e.g. the chimp gif overlay). The
     # zoom/shake motions freeze-and-pan a single still frame (they extract frame 1 of
@@ -820,6 +820,7 @@ class CommandService:
                             "beginshake": effects_service.apply_beginshake,
                             "pulse": effects_service.apply_pulse,
                             "glow": effects_service.apply_glow,
+                            "alive": effects_service.apply_alive,
                         }.get(_motion, effects_service.apply_zoom)
                         files = await asyncio.to_thread(_apply, files)
                     # trippy recolours frame-by-frame (keeps motion) → safe to layer

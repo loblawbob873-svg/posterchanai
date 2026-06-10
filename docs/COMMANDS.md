@@ -88,6 +88,7 @@ Append a modifier to **any** effect to animate or recolour its output. Syntax:
 | `beginshake` | Shakes hard at the start, then settles |
 | `pulse` | Rhythmic zoom in/out (bass-thump) |
 | `glow` | The glow look (colour pop + a sweeping light) over the output — e.g. `alive glow`, `dildo glow` |
+| `alive` | 3D-parallax the output (opt-in motion) — e.g. `dildo alive`, `bullethole alive`. Stamps/overlays are a STILL image by default; add this (or `zoom`/`shake`) to make them move |
 | `trippy` | Psychedelic hue-cycle — **composes on top** of any one motion above (the only stackable modifier; geometry motions don't stack with each other) |
 
 `glow` and `alive` also work as standalone effects AND compose: `alive glow` = 3D parallax with

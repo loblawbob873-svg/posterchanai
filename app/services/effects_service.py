@@ -22,18 +22,10 @@ logger = logging.getLogger(__name__)
 
 
 def _alive_or_still(still_bytes: bytes, stem: str, suffix: str) -> OutputFile:
-    """Wrap a finished still 'sticker' effect so it MOVES: run it through 3D parallax
-    and return an MP4 OutputFile. Falls back to the still JPEG if the depth model is
-    unavailable or parallax fails. Keeps amplitude subtle (the look the user preferred).
-    Used by the overlay/stamp gags (meme/dildo/poo/bullethole/gay/blacked/kosher/barked)
-    so they aren't a flat sticker; fire/blood/cum animate their own content instead."""
-    try:
-        from app.services import parallax_service
-        if parallax_service._session() is not None:
-            mp4 = parallax_service.add_parallax(still_bytes, amplitude=0.022, zoom=1.04)
-            return {"filename": f"{stem}_{suffix}.mp4", "data": mp4, "content_type": "video/mp4"}
-    except Exception as e:
-        logger.warning(f"parallax for {suffix} failed, using still: {e}")
+    """Return a stamp/overlay gag (meme/dildo/poo/bullethole/gay/blacked/kosher/barked/
+    consider) as a STILL image. Auto-animating every stamp with parallax was a bad
+    default — motion is now opt-in via the `alive` modifier (e.g. `dildo alive`) or the
+    other motion modifiers (`dildo zoom`), so these return a flat image unless asked."""
     return {"filename": f"{stem}_{suffix}.jpg", "data": still_bytes, "content_type": "image/jpeg"}
 
 
@@ -1118,7 +1110,7 @@ def _make_bullethole(h: int):
     H = W
     cx = cy = W / 2.0
     hole_r = W * 0.15
-    crater_r = hole_r * 1.95
+    crater_r = hole_r * 1.55
     tile = Image.new("RGBA", (W, H), (0, 0, 0, 0))
 
     def _blob(rmin, rmax, m=20):
@@ -1133,8 +1125,8 @@ def _make_bullethole(h: int):
     # --- pulverised crater rim: a ragged lighter ring of deformed material (the
     #     surface punched out), soft-edged and irregular so it never reads as a disc. ---
     crater = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    ImageDraw.Draw(crater).polygon(_blob(0.78, 1.18), fill=(165, 162, 160, 205))
-    crater = crater.filter(ImageFilter.GaussianBlur(max(W * 0.025, 1)))
+    ImageDraw.Draw(crater).polygon(_blob(0.78, 1.18), fill=(150, 146, 143, 90))
+    crater = crater.filter(ImageFilter.GaussianBlur(max(W * 0.05, 1.5)))
     tile.alpha_composite(crater)
 
     # --- darker bruise just inside the crater (depth toward the hole) ---
@@ -5208,6 +5200,27 @@ def apply_glow(outputs: List[OutputFile]) -> List[OutputFile]:
     composes on top of alive/zoom/etc. without killing the underlying motion."""
     from app.services.media_service import image_glow_video, glow_existing_video
     return _apply_motion(outputs, "glow", image_glow_video, glow_existing_video)
+
+
+def apply_alive(outputs: List[OutputFile]) -> List[OutputFile]:
+    """3D-parallax an effect's IMAGE output (the opt-in `alive` modifier, e.g. `dildo
+    alive`). Each image becomes a looping parallax MP4; video outputs (audio gags) are
+    left as-is (parallax needs a still). Original kept if the depth model is missing."""
+    from pathlib import Path
+    from app.services import parallax_service
+    result: List[OutputFile] = []
+    for out in outputs or []:
+        ct = (out.get("content_type") or "").lower()
+        stem = Path(out.get("filename") or "image").stem or "image"
+        if ct.startswith("image/"):
+            try:
+                mp4 = parallax_service.add_parallax(out["data"], amplitude=0.035, zoom=1.06, loops=3)
+                result.append({"filename": f"{stem}_alive.mp4", "data": mp4, "content_type": "video/mp4"})
+                continue
+            except Exception as e:
+                logger.warning(f"alive modifier failed for {stem}, keeping still: {e}")
+        result.append(out)
+    return result
 
 
 def _meme_font_path() -> str:

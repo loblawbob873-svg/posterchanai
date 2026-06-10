@@ -88,7 +88,7 @@ async def process_media(
         # Trailing motion cluster (cap 2): one geometry motion + the `trippy`
         # colour pass, either order, at the very END — so a caption word like
         # "trippy" mid-text is never mistaken for a motion.
-        _motions = ("zoom", "shake", "medshake", "beginshake", "pulse", "trippy", "glow")
+        _motions = ("zoom", "shake", "medshake", "beginshake", "pulse", "trippy", "glow", "alive")
         for _ in range(2):
             if not _low or _low[-1] not in _motions:
                 break
@@ -274,6 +274,7 @@ async def process_media(
                 "beginshake": effects_service.apply_beginshake,
                 "pulse": effects_service.apply_pulse,
                 "glow": effects_service.apply_glow,
+                "alive": effects_service.apply_alive,
             }.get(motion, effects_service.apply_zoom)
             outputs = await asyncio.to_thread(_apply, outputs)
         if trippy and outputs:
