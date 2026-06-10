@@ -623,6 +623,7 @@ class CommandService:
         "wasteland": "Turn an attached image into an MP4 set to the Teenage Wasteland intro: wasteland",
         "mixalot": "Turn an attached image into an MP4 set to the Baby Got Back clip: mixalot",
         "thug": "Turn an attached image into an MP4 set to the THUG LIFE clip: thug",
+        "feltedtables": "Turn an attached image into an MP4 set to the felted-tables clip: feltedtables",
         "node": "Remote node mgmt: node <name> <cmd> | node all <cmd> | node agent <name> <goal> | node agent all <goal> | node list | node jobs | node log <id> | node kill <id>",
         "budget": "Show your budget summary (income, unpaid bills, remaining)",
         "bills": "List your bills: bills (unpaid) | bills all | bills paid",
@@ -653,6 +654,7 @@ class CommandService:
         "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy",
         "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
         "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug",
+        "feltedtables",
     }
 
     # Trailing motion tokens an effect accepts (zoom pan-out, full camera shake,
@@ -954,6 +956,8 @@ class CommandService:
             return await self._mixalot_command(attachments)
         elif command == "thug":
             return await self._thug_command(attachments)
+        elif command == "feltedtables":
+            return await self._feltedtables_command(attachments)
         elif command == "node":
             return await self._node_command(arg, notify=node_notify)
         elif command == "budget":
@@ -4340,6 +4344,21 @@ Files are saved to your Storage.""",
         from app.services.effects_service import thug_attachments
 
         outputs, summary = await asyncio.to_thread(thug_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _feltedtables_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into an MP4 set to the felted-tables clip: `feltedtables`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `feltedtables`."}
+
+        import asyncio
+        from app.services.effects_service import feltedtables_attachments
+
+        outputs, summary = await asyncio.to_thread(feltedtables_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}

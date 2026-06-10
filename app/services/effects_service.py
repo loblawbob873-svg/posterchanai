@@ -2739,6 +2739,61 @@ def whoabuddy_attachments(
 
 
 # ---------------------------------------------------------------------------
+# Felted tables (turn an image into a short MP4 set to the felted-tables clip)
+# ---------------------------------------------------------------------------
+
+# The shipped felted-tables track (repo-relative), overridable with FELTEDTABLES_AUDIO_PATH.
+_FELTEDTABLES_AUDIO_CANDIDATES = [
+    os.environ.get("FELTEDTABLES_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "feltedtables.mp3"),
+    "/var/lib/posterchanai/assets/feltedtables.mp3",
+]
+# Cap above the ~17s clip length; -shortest ends the video at the audio end.
+_FELTEDTABLES_DURATION = 18.0
+
+
+def _feltedtables_audio_path() -> str:
+    """First existing felted-tables mp3 from the candidate list ("" if none)."""
+    for p in _FELTEDTABLES_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_feltedtables(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the felted-tables clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _feltedtables_audio_path()
+    if not audio:
+        raise RuntimeError("Felted-tables audio (assets/feltedtables.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_FELTEDTABLES_DURATION)
+
+
+def feltedtables_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a felted-tables MP4. Mirrors
+    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_feltedtables(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_feltedtables.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🎱 Felted Tables\n\n🎱 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"feltedtables failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
 # Cheers (turn an image into a short MP4 set to the Cheers theme clip — the
 # "cheers" gag)
 # ---------------------------------------------------------------------------

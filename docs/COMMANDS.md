@@ -64,7 +64,8 @@ the LLM. The bots reply with TTS via `/narrate <message>`.
 `hood`, `akbar`, `retard`, `whoabuddy`, `sopranos`, `cheers`, `munsters`, `happydays`,
 `dontwanttowait`, `strangerthings`, `adamsfamily`, `xmen`, `futurama`, `charliesangles`,
 `differentstroke`, `seinfeld`, `onepiece`, `overtaken`, `freebird`, `kanye`, `darkness`,
-`bike`, `jobs`, `ree`, `liberal`, `moving`, `harlem`, `wasteland`, `mixalot`, `thug`.
+`bike`, `jobs`, `ree`, `liberal`, `moving`, `harlem`, `wasteland`, `mixalot`, `thug`,
+`feltedtables`.
 
 ### Motion & colour modifiers
 
