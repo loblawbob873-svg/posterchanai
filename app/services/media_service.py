@@ -542,6 +542,81 @@ def image_audio_to_video(image_data: bytes, source_filename: str, audio_path: st
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+def frames_to_video(frames, fps: int = 14, loops: int = 1) -> bytes:
+    """Encode a sequence of RGB PIL frames into a silent H.264 MP4.
+
+    `frames` is one pass of full-size RGB ``PIL.Image`` frames; `loops` repeats the
+    whole pass that many times on disk (so a periodic motion encoded as one wrapping
+    cycle plays back seamlessly without relying on the player to loop the file).
+    Reuses the same HW-accel encoder autodetect (NVENC → VAAPI → libx264) as
+    compress/clip; no audio track (`-an`). Returns MP4 bytes; raises RuntimeError if
+    ffmpeg is missing, no frames are given, or every encoder fails.
+
+    Used by the animated "effect" gags (fire/blood/cum) — the effect content is
+    re-rendered per frame so the flames flicker / drips run, rather than the flat
+    still that the camera-motion modifiers (zoom/shake) move.
+    """
+    global _video_encoder_cache
+    ffmpeg = resolve_ffmpeg()
+    if not ffmpeg_available():
+        raise RuntimeError("ffmpeg is not installed on the server")
+    frames = list(frames or [])
+    if not frames:
+        raise RuntimeError("no frames to encode")
+
+    tmp_dir = tempfile.mkdtemp(prefix="media_frames_")
+    pattern = os.path.join(tmp_dir, "f_%05d.png")
+    out_path = os.path.join(tmp_dir, "output.mp4")
+    try:
+        idx = 0
+        for _ in range(max(int(loops), 1)):
+            for fr in frames:
+                fr.save(pattern % idx, format="PNG")
+                idx += 1
+
+        # Even dimensions are required by yuv420p/H.264 (odd → encoder error).
+        scale_filter = "scale=trunc(iw/2)*2:trunc(ih/2)*2"
+
+        candidates = _video_encoder_candidates(ffmpeg)
+        if _video_encoder_cache and _video_encoder_cache in candidates:
+            candidates = [_video_encoder_cache] + [c for c in candidates if c != _video_encoder_cache]
+
+        last_err = ""
+        for encoder in candidates:
+            pre, vf = [], scale_filter
+            if encoder == "h264_nvenc":
+                venc = ["-c:v", "h264_nvenc", "-preset", "p5", "-cq", str(VIDEO_CRF)]
+            elif encoder == "h264_vaapi":
+                pre = ["-vaapi_device", _render_node()]
+                vf = scale_filter + ",format=nv12,hwupload"
+                venc = ["-c:v", "h264_vaapi", "-qp", str(VIDEO_CRF)]
+            else:  # libx264
+                venc = ["-c:v", "libx264", "-preset", VIDEO_PRESET, "-crf", str(VIDEO_CRF)]
+            cmd = (
+                [ffmpeg, "-framerate", str(fps), "-i", pattern, "-vf", vf]
+                + venc
+                + ["-pix_fmt", "yuv420p", "-r", str(fps),
+                   "-an", "-movflags", "+faststart", "-y", out_path]
+            )
+            if pre:
+                cmd = [ffmpeg] + pre + cmd[1:]
+            result = subprocess.run(cmd, capture_output=True, timeout=3600, text=True)
+            if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+                if encoder != "libx264":
+                    logger.info(f"frames→video encoded with GPU encoder: {encoder}")
+                _video_encoder_cache = encoder
+                with open(out_path, "rb") as f:
+                    return f.read()
+            last_err = (result.stderr or "")[-300:]
+            logger.warning(f"frames→video encoder {encoder} failed, trying next: {last_err}")
+            if os.path.exists(out_path):
+                os.unlink(out_path)
+
+        raise RuntimeError(f"frames→video failed (tried {candidates}): {last_err}")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def image_gif_overlay_video(image_data: bytes, source_filename: str, gif_path: str,
                             duration: float = 6.0, audio_path: Optional[str] = None,
                             height_frac: float = 0.55) -> bytes:
