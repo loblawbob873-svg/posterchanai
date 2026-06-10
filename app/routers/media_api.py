@@ -76,6 +76,7 @@ async def process_media(
     # caption to the produced files after dispatch.
     arg = req.arg or ""
     motion = None
+    trippy = False
     meme_text = None
     if command not in ("compress", "clip", "convert"):
         _toks = arg.split()
@@ -84,9 +85,19 @@ async def process_media(
             _i = _low.index("meme")
             meme_text = " ".join(_toks[_i + 1:]).strip()
             _toks, _low = _toks[:_i], _low[:_i]
-        if _low and _low[-1] in ("zoom", "shake", "medshake", "beginshake", "trippy", "pulse"):
-            motion = _low[-1]
-            _toks = _toks[:-1]
+        # Trailing motion cluster (cap 2): one geometry motion + the `trippy`
+        # colour pass, either order, at the very END — so a caption word like
+        # "trippy" mid-text is never mistaken for a motion.
+        _motions = ("zoom", "shake", "medshake", "beginshake", "pulse", "trippy")
+        for _ in range(2):
+            if not _low or _low[-1] not in _motions:
+                break
+            _t = _low.pop()
+            _toks.pop()
+            if _t == "trippy":
+                trippy = True
+            elif motion is None:
+                motion = _t
         arg = " ".join(_toks)
 
     attachments = []
@@ -238,10 +249,11 @@ async def process_media(
                 "shake": effects_service.apply_shake,
                 "medshake": effects_service.apply_medshake,
                 "beginshake": effects_service.apply_beginshake,
-                "trippy": effects_service.apply_trippy,
                 "pulse": effects_service.apply_pulse,
             }.get(motion, effects_service.apply_zoom)
             outputs = await asyncio.to_thread(_apply, outputs)
+        if trippy and outputs:
+            outputs = await asyncio.to_thread(effects_service.apply_trippy, outputs)
         if meme_text and outputs:
             outputs = await asyncio.to_thread(effects_service.apply_meme_text, outputs, meme_text)
     except Exception as e:

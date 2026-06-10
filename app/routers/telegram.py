@@ -3722,20 +3722,35 @@ async def _handle_telegram_update(update: dict, db: Session):
                             _imgs = [a for a in _atts if is_image(a[0], a[2])]
                             await _send_files_result(await cb_command_service.execute_command(_eff, "", attachments=_imgs))
                         else:
+                            # Left column = motion alone; right column = the same motion
+                            # with the trippy hue-cycle layered on top (the only combo
+                            # that composes — geometry motions don't stack). 🌈 Trippy
+                            # alone + ❌ None on the last row.
                             _rows = [
                                 [
-                                    {"text": "🔍 Zoom", "callback_data": f"media:dz:{_eff}"},
-                                    {"text": "📳 Shake", "callback_data": f"media:sh:{_eff}"},
+                                    {"text": "🔍 Zoom", "callback_data": f"media:mo:dz:{_eff}"},
+                                    {"text": "🔍🌈 Zoom+", "callback_data": f"media:mo:dzt:{_eff}"},
                                 ],
                                 [
-                                    {"text": "〰️ Med shake", "callback_data": f"media:ms:{_eff}"},
-                                    {"text": "💥 Begin shake", "callback_data": f"media:bs:{_eff}"},
+                                    {"text": "📳 Shake", "callback_data": f"media:mo:sh:{_eff}"},
+                                    {"text": "📳🌈 Shake+", "callback_data": f"media:mo:sht:{_eff}"},
                                 ],
                                 [
-                                    {"text": "🌈 Trippy", "callback_data": f"media:tr:{_eff}"},
-                                    {"text": "💓 Pulse", "callback_data": f"media:pl:{_eff}"},
+                                    {"text": "〰️ Med", "callback_data": f"media:mo:ms:{_eff}"},
+                                    {"text": "〰️🌈 Med+", "callback_data": f"media:mo:mst:{_eff}"},
                                 ],
-                                [{"text": "❌ None", "callback_data": f"media:{_eff}"}],
+                                [
+                                    {"text": "💥 Begin", "callback_data": f"media:mo:bs:{_eff}"},
+                                    {"text": "💥🌈 Begin+", "callback_data": f"media:mo:bst:{_eff}"},
+                                ],
+                                [
+                                    {"text": "💓 Pulse", "callback_data": f"media:mo:pl:{_eff}"},
+                                    {"text": "💓🌈 Pulse+", "callback_data": f"media:mo:plt:{_eff}"},
+                                ],
+                                [
+                                    {"text": "🌈 Trippy", "callback_data": f"media:mo:tr:{_eff}"},
+                                    {"text": "❌ None", "callback_data": f"media:{_eff}"},
+                                ],
                             ]
                             # thug bakes its own "THUG LIFE" text — no custom caption.
                             if _eff != "thug":
@@ -3743,11 +3758,19 @@ async def _handle_telegram_update(update: dict, db: Session):
                             await telegram_service.send_message(
                                 chat_id, "✨ Add motion?", reply_markup={"inline_keyboard": _rows},
                             )
-                    elif _action[:3] in ("dz:", "sh:", "ms:", "bs:", "tr:", "pl:"):
-                        # A motion was chosen → render the effect, then transform it.
-                        _motion = {"dz": "zoom", "sh": "shake", "ms": "medshake",
-                                   "bs": "beginshake", "tr": "trippy", "pl": "pulse"}[_action[:2]]
-                        _eff = _action.split(":", 1)[1]
+                    elif _action.startswith("mo:"):
+                        # A motion (and optional trippy combo) was chosen → render the
+                        # effect, then transform it. Code maps to the command arg, e.g.
+                        # "dzt" → "zoom trippy" (zoom + trippy colours).
+                        _, _code, _eff = _action.split(":", 2)
+                        _motion = {
+                            "dz": "zoom", "dzt": "zoom trippy",
+                            "sh": "shake", "sht": "shake trippy",
+                            "ms": "medshake", "mst": "medshake trippy",
+                            "bs": "beginshake", "bst": "beginshake trippy",
+                            "pl": "pulse", "plt": "pulse trippy",
+                            "tr": "trippy",
+                        }.get(_code, "zoom")
                         if not any(is_image(fn, ct) for fn, _, ct in _atts):
                             await telegram_service.send_message(chat_id, "Nothing to do — that upload has no image.")
                         else:

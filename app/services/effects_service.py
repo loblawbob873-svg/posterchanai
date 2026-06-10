@@ -4689,9 +4689,12 @@ def apply_beginshake(outputs: List[OutputFile]) -> List[OutputFile]:
 
 
 def apply_trippy(outputs: List[OutputFile]) -> List[OutputFile]:
-    """Psychedelic hue-cycle applied to each effect output (the `trippy` arg)."""
-    from app.services.media_service import image_trippy_video, trippy_existing_video
-    return _apply_motion(outputs, "trippy", image_trippy_video, trippy_existing_video)
+    """Psychedelic hue-cycle applied to each effect output (the `trippy` arg).
+
+    Images become a hue-cycling clip; existing videos are RE-coloured frame-by-frame
+    (not frozen), so trippy composes on top of a zoom/shake/pulse motion."""
+    from app.services.media_service import image_trippy_video, recolor_existing_video
+    return _apply_motion(outputs, "trippy", image_trippy_video, recolor_existing_video)
 
 
 def apply_pulse(outputs: List[OutputFile]) -> List[OutputFile]:

@@ -940,14 +940,17 @@ def _pulse_vf(W: int, H: int, n_frames: int) -> str:
     )
 
 
+# Trippy colour cycle: rotate the hue a full turn every ~3s while the saturation
+# pulses. Shared by the still-image renderer (`_trippy_vf`) and the video recolour
+# pass (`recolor_existing_video`) so the look is identical whether trippy is used
+# alone or layered over a zoom/shake/pulse motion.
+_TRIPPY_HUE = "hue=h='mod(t*120,360)':s='1.4+0.6*sin(2*PI*t*0.5)'"
+
+
 def _trippy_vf(W: int, H: int, n_frames: int) -> str:
-    # Psychedelic colour cycle (no camera motion): rotate the hue a full turn
-    # every ~3s while the saturation pulses, so a still image churns through the
-    # rainbow. Scale to even dims first (yuv420p requires even W/H).
-    return (
-        f"scale={W}:{H},"
-        f"hue=h='mod(t*120,360)':s='1.4+0.6*sin(2*PI*t*0.5)'"
-    )
+    # Psychedelic colour cycle on a still image (no camera motion). Scale to even
+    # dims first (yuv420p requires even W/H).
+    return f"scale={W}:{H},{_TRIPPY_HUE}"
 
 
 def _shake_begin_vf(W: int, H: int, n_frames: int) -> str:
@@ -1019,14 +1022,58 @@ def beginshake_existing_video(video_data: bytes, source_filename: str = "video.m
     return _motion_existing_video(video_data, source_filename, image_beginshake_video)
 
 
-def trippy_existing_video(video_data: bytes, source_filename: str = "video.mp4") -> bytes:
-    """Apply the psychedelic hue-cycle to a still-frame effect video, keeping its audio."""
-    return _motion_existing_video(video_data, source_filename, image_trippy_video)
-
-
 def pulse_existing_video(video_data: bytes, source_filename: str = "video.mp4") -> bytes:
     """Apply the rhythmic zoom-pulse to a still-frame effect video, keeping its audio."""
     return _motion_existing_video(video_data, source_filename, image_pulse_video)
+
+
+def recolor_existing_video(video_data: bytes, source_filename: str = "video.mp4") -> bytes:
+    """Hue-cycle EVERY frame of an existing video (trippy colours) while keeping its
+    motion and audio. Unlike `_motion_existing_video` (which freezes to one frame),
+    this re-encodes the real frames — so `trippy` can layer over a zoom/shake/pulse
+    clip without killing the motion. Reuses the HW-accel encoder autodetect."""
+    global _video_encoder_cache
+    ffmpeg = resolve_ffmpeg()
+    if not ffmpeg_available():
+        raise RuntimeError("ffmpeg is not installed on the server")
+    tmp_dir = tempfile.mkdtemp(prefix="media_recolor_")
+    in_suffix = _ext(source_filename) or ".mp4"
+    in_path = os.path.join(tmp_dir, f"input{in_suffix}")
+    out_path = os.path.join(tmp_dir, "output.mp4")
+    try:
+        with open(in_path, "wb") as f:
+            f.write(video_data)
+
+        candidates = _video_encoder_candidates(ffmpeg)
+        if _video_encoder_cache and _video_encoder_cache in candidates:
+            candidates = [_video_encoder_cache] + [c for c in candidates if c != _video_encoder_cache]
+
+        last_err = ""
+        for encoder in candidates:
+            pre, vf = [], _TRIPPY_HUE + ",format=yuv420p"
+            if encoder == "h264_nvenc":
+                venc = ["-c:v", "h264_nvenc", "-preset", "p5"]
+            elif encoder == "h264_vaapi":
+                pre = ["-vaapi_device", _render_node()]
+                vf = _TRIPPY_HUE + ",format=nv12,hwupload"
+                venc = ["-c:v", "h264_vaapi"]
+            else:  # libx264
+                venc = ["-c:v", "libx264", "-preset", VIDEO_PRESET, "-crf", str(VIDEO_CRF)]
+            cmd = ([ffmpeg] + pre + ["-i", in_path, "-vf", vf] + venc
+                   + ["-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", "-y", out_path])
+            result = subprocess.run(cmd, capture_output=True, timeout=3600, text=True)
+            if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+                _video_encoder_cache = encoder
+                with open(out_path, "rb") as f:
+                    return f.read()
+            last_err = (result.stderr or "")[-300:]
+            logger.warning(f"recolor encoder {encoder} failed, trying next: {last_err}")
+            if os.path.exists(out_path):
+                os.unlink(out_path)
+
+        raise RuntimeError(f"recolor video failed (tried {candidates}): {last_err}")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------

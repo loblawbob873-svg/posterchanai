@@ -755,11 +755,24 @@ class CommandService:
                 _i = _low.index("meme")
                 _meme_text = " ".join(_toks[_i + 1:]).strip()
                 _toks, _low = _toks[:_i], _low[:_i]
+            # Trailing motion cluster: at most one geometry motion (zoom/shake/
+            # medshake/beginshake/pulse) plus the `trippy` colour pass, in either
+            # order, at the very END of the arg. Only TRAILING tokens are consumed
+            # (cap 2), so a caption word like "trippy" mid-text — e.g. `meme so
+            # trippy bro` — is never mistaken for a motion. Geometry motions don't
+            # stack (they'd fight over the crop); trippy layers on top.
             _motion = None
-            if _low and _low[-1] in self.MOTION_ARGS:
-                _motion = _low[-1]
-                _toks = _toks[:-1]
-            if _motion or _meme_text:
+            _trippy = False
+            for _ in range(2):
+                if not _low or _low[-1] not in self.MOTION_ARGS:
+                    break
+                _t = _low.pop()
+                _toks.pop()
+                if _t == "trippy":
+                    _trippy = True
+                elif _motion is None:
+                    _motion = _t
+            if _motion or _trippy or _meme_text:
                 import asyncio
                 from app.services import effects_service
                 inner = await self.execute_command(
@@ -767,18 +780,21 @@ class CommandService:
                 )
                 if isinstance(inner, dict) and inner.get("type") == "files" and inner.get("files"):
                     files = inner["files"]
-                    # zoom/shake would freeze an already-animated effect (they pan a
-                    # single still frame) — skip them for those, keep the caption.
+                    # A geometry motion would freeze an already-animated effect (it
+                    # pans a single still frame) — skip it for those, keep the rest.
                     if _motion and command not in self.ANIMATED_EFFECTS:
                         _apply = {
                             "zoom": effects_service.apply_zoom,
                             "shake": effects_service.apply_shake,
                             "medshake": effects_service.apply_medshake,
                             "beginshake": effects_service.apply_beginshake,
-                            "trippy": effects_service.apply_trippy,
                             "pulse": effects_service.apply_pulse,
                         }.get(_motion, effects_service.apply_zoom)
                         files = await asyncio.to_thread(_apply, files)
+                    # trippy recolours frame-by-frame (keeps motion) → safe to layer
+                    # on top of a geometry motion, and even on animated effects.
+                    if _trippy:
+                        files = await asyncio.to_thread(effects_service.apply_trippy, files)
                     if _meme_text:
                         files = await asyncio.to_thread(effects_service.apply_meme_text, files, _meme_text)
                     inner["files"] = files
