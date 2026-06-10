@@ -98,8 +98,15 @@ def render_parallax(rgb: np.ndarray, depth: np.ndarray, frames: int = 48,
     import cv2
     import math
     h, w = rgb.shape[:2]
-    # Centre the depth so foreground and background move in opposite senses.
-    d = depth - float(depth.mean())
+    # Anchor the parallax at the FAR plane (low depth percentile) and normalise to
+    # [0,1], so the NEAR subject is what swings while the background stays roughly put.
+    # (Mean-centring made a subject that fills the frame sit still — only the
+    # background moved; this makes the character itself the thing that moves.)
+    far = float(np.percentile(depth, 20))
+    d = np.clip(depth - far, 0.0, None)
+    dmax = float(d.max())
+    if dmax > 1e-6:
+        d = d / dmax
     base_x, base_y = np.meshgrid(np.arange(w, dtype=np.float32),
                                  np.arange(h, dtype=np.float32))
     ax = amplitude * w
