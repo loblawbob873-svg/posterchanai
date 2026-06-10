@@ -1131,6 +1131,48 @@ def image_pulse_video(image_data: bytes, source_filename: str, duration: float =
     return _render_motion_video(image_data, source_filename, _pulse_vf, duration, audio_path)
 
 
+def _glow_vf(W: int, H: int, n_frames: int) -> str:
+    """Generic "glow" enhancer: a gentle breathing zoom + a colour pop + a soft light
+    sweep travelling diagonally across the frame — makes a still photo feel alive and
+    stand out, without committing to a specific gag effect. The working resolution is
+    capped (long edge 1280) so the per-pixel `geq` light sweep stays cheap even on big
+    phone photos; the output is small and broadly playable."""
+    cap = 1280
+    if max(W, H) > cap:
+        if W >= H:
+            Wt, Ht = cap, int(round(H * cap / W))
+        else:
+            Wt, Ht = int(round(W * cap / H)), cap
+    else:
+        Wt, Ht = W, H
+    Wt = max(2, (Wt // 2) * 2)
+    Ht = max(2, (Ht // 2) * 2)
+    dur = max(0.5, n_frames / 25.0)
+    # Breathing Ken Burns: zoom oscillates 1.0..1.06 over a ~6s cycle, kept centred.
+    # Pre-upscale 2x so zoompan's integer steps don't jitter (same trick as `_zoom_vf`).
+    zexpr = "1.03+0.03*sin(2*PI*on/(25*6))"
+    zp = (f"scale={2 * Wt}:{2 * Ht},"
+          f"zoompan=z='{zexpr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+          f"d={n_frames}:s={Wt}x{Ht}:fps=25")
+    # Colour pop + crispen (luma-only unsharp so chroma doesn't get noisy).
+    pop = "eq=contrast=1.06:saturation=1.2:brightness=0.02,unsharp=5:5:0.6:5:5:0.0"
+    # Soft light sweep: add a gaussian luma band that crosses the frame once over the
+    # clip, its centre `cpos` sliding -0.2..1.2 along the normalised TL->BR diagonal.
+    # (Single-quoted expressions protect the commas inside pow()/clip() from the
+    # filtergraph parser — same as the zoompan z='max(1.0,...)' expressions above.)
+    cpos = f"(-0.2+1.4*T/{dur:.3f})"
+    band = f"exp(-pow(((X/W+Y/H)/2-{cpos})/0.16,2))"
+    sweep = (f"geq=lum='clip(lum(X,Y)+72*{band},0,255)':"
+             f"cb='cb(X,Y)':cr='cr(X,Y)'")
+    return f"{zp},{pop},{sweep}"
+
+
+def image_glow_video(image_data: bytes, source_filename: str, duration: float = 5.0,
+                     audio_path: Optional[str] = None) -> bytes:
+    """Generic "glow" enhancement clip from a still image (see `_render_motion_video`)."""
+    return _render_motion_video(image_data, source_filename, _glow_vf, duration, audio_path)
+
+
 def zoom_existing_video(video_data: bytes, source_filename: str = "video.mp4") -> bytes:
     """Apply the zoom-out camera move OVER the real frames of an effect video, keeping
     its motion (parallax/animation) + audio — no longer freezes to the first frame."""

@@ -577,6 +577,7 @@ class CommandService:
         "kosher": "Stamp a 100% KOSHER certification seal on an attached image: kosher",
         "barked": "Drop a smirking dog and #BARKED on an attached image: barked",
         "alive": "Make an attached photo come alive with 3D parallax motion: alive [subtle(default)|normal|strong]",
+        "glow": "Make an attached image stand out — gentle motion, colour pop and a sweeping light: glow",
         "hava": "Turn an attached image into a 6s MP4 set to Hava Nagila: hava",
         "indian": "Turn an attached image into a 6s MP4 set to an Indian song: indian",
         "yakety": "Turn an attached image into a 9s MP4 set to Yakety Sax: yakety",
@@ -655,7 +656,7 @@ class CommandService:
         "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy",
         "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
         "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug",
-        "feltedtables",
+        "feltedtables", "glow",
     }
 
     # Trailing motion tokens an effect accepts (zoom pan-out, full camera shake,
@@ -882,6 +883,8 @@ class CommandService:
             return await self._fire_command(attachments)
         elif command == "alive":
             return await self._alive_command(arg, attachments)
+        elif command == "glow":
+            return await self._glow_command(attachments)
         elif command == "gay":
             return await self._gay_command(attachments)
         elif command == "blacked":
@@ -3623,6 +3626,22 @@ Files are saved to your Storage.""",
         from app.services.parallax_service import alive_attachments
 
         outputs, summary = await asyncio.to_thread(alive_attachments, attachments, arg or "")
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _glow_command(self, attachments: Optional[list]) -> dict:
+        """Generic "make it stand out" enhancement: breathing zoom + colour pop + a
+        sweeping light over an attached image: `glow`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `glow`."}
+
+        import asyncio
+        from app.services.effects_service import glow_attachments
+
+        outputs, summary = await asyncio.to_thread(glow_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}

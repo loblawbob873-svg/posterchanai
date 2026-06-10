@@ -67,6 +67,11 @@ the LLM. The bots reply with TTS via `/narrate <message>`.
 `bike`, `jobs`, `ree`, `liberal`, `moving`, `harlem`, `wasteland`, `mixalot`, `thug`,
 `feltedtables`.
 
+**Enhance** (generic — no gag, just make a photo stand out): `glow` (gentle breathing zoom +
+colour pop + a soft light sweeping across → short MP4), `alive [subtle|normal|strong]` (3D
+parallax: the photo gains real depth motion). Use these when you just want a post to pop
+without picking one of the gag effects above.
+
 ### Motion & colour modifiers
 
 Append a modifier to **any** effect to animate or recolour its output. Syntax:
