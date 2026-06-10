@@ -87,10 +87,17 @@ Append a modifier to **any** effect to animate or recolour its output. Syntax:
 | `medshake` | Gentler camera shake |
 | `beginshake` | Shakes hard at the start, then settles |
 | `pulse` | Rhythmic zoom in/out (bass-thump) |
+| `glow` | The glow look (colour pop + a sweeping light) over the output — e.g. `alive glow`, `dildo glow` |
 | `trippy` | Psychedelic hue-cycle — **composes on top** of any one motion above (the only stackable modifier; geometry motions don't stack with each other) |
 
-In Telegram these are the two-column motion menu (left = motion, right = the same motion **+
-trippy**); typed combos like `dildo zoom trippy` work in the web UI, Matrix, and the fedi bots.
+`glow` and `alive` also work as standalone effects AND compose: `alive glow` = 3D parallax with
+the glow look layered on. In Telegram these are the two-column motion menu (left = motion, right =
+the same motion **+ trippy**); typed combos like `dildo zoom trippy` work in the web UI, Matrix,
+and the fedi bots.
+
+**Multiple images → one movie:** attach several images to an audio/clip effect (whoabuddy, prayer,
+sopranos, the TV themes, …) and they play as a **slideshow in upload order** over the one audio
+track. (Effects that transform each image individually — `thug`, overlays — still use the first.)
 
 A trailing `meme <text>` burns an outlined caption on last; the caption text is never mistaken
 for a modifier (only trailing modifier tokens are consumed), so `meme so trippy bro` keeps its

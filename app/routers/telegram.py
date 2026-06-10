@@ -1404,6 +1404,7 @@ def _media_action_keyboard(attachments: list, user=None) -> Optional[dict]:
         ])
         rows.append([
             {"text": "✨ Effects", "callback_data": "media:effects"},
+            {"text": "🪄 Alive (3D)", "callback_data": "media:alive"},
         ])
     if has_pdf:
         rows.append([
@@ -4110,6 +4111,14 @@ async def _handle_telegram_update(update: dict, db: Session):
                             await telegram_service.send_message(chat_id, "🙏 Prayer…")
                             _imgs = [a for a in _atts if is_image(a[0], a[2])]
                             await _send_files_result(await cb_command_service.execute_command("prayer", "", attachments=_imgs))
+                    elif _action == "alive":
+                        # 3D parallax — bring an uploaded photo to life (no caption needed).
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to animate — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(chat_id, "🪄 Bringing it alive…")
+                            _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                            await _send_files_result(await cb_command_service.execute_command("alive", "", attachments=_imgs))
                     elif _action == "sopranos":
                         # No caption needed — render the video and post it.
                         if not any(is_image(fn, ct) for fn, _, ct in _atts):

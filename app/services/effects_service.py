@@ -2013,6 +2013,7 @@ def hava_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_hava(data, filename)
@@ -2067,6 +2068,7 @@ def indian_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_indian(data, filename)
@@ -2121,6 +2123,7 @@ def yakety_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_yakety(data, filename)
@@ -2175,6 +2178,7 @@ def yamete_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_yamete(data, filename)
@@ -2231,6 +2235,7 @@ def curb_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_curb(data, filename)
@@ -2287,6 +2292,7 @@ def depressing_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_depressing(data, filename)
@@ -2341,6 +2347,7 @@ def fahh_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_fahh(data, filename)
@@ -2395,6 +2402,7 @@ def helpme_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_helpme(data, filename)
@@ -2450,6 +2458,7 @@ def gong_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_gong(data, filename)
@@ -2506,6 +2515,7 @@ def fbi_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_fbi(data, filename)
@@ -2562,6 +2572,7 @@ def redeem_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_redeem(data, filename)
@@ -2618,6 +2629,7 @@ def gigity_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_gigity(data, filename)
@@ -2674,6 +2686,7 @@ def beavis_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_beavis(data, filename)
@@ -2730,6 +2743,7 @@ def smell_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_smell(data, filename)
@@ -2785,6 +2799,7 @@ def hood_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_hood(data, filename)
@@ -2840,6 +2855,7 @@ def akbar_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_akbar(data, filename)
@@ -2896,6 +2912,7 @@ def retard_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_retard(data, filename)
@@ -2952,6 +2969,7 @@ def whoabuddy_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_whoabuddy(data, filename)
@@ -3006,6 +3024,7 @@ def prayer_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_prayer(data, filename)
@@ -3171,6 +3190,7 @@ def feltedtables_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_feltedtables(data, filename)
@@ -3227,6 +3247,7 @@ def cheers_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_cheers(data, filename)
@@ -3283,6 +3304,7 @@ def munsters_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_munsters(data, filename)
@@ -3339,6 +3361,7 @@ def happydays_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_happydays(data, filename)
@@ -3395,6 +3418,7 @@ def dontwanttowait_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_dontwanttowait(data, filename)
@@ -3451,6 +3475,7 @@ def strangerthings_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_strangerthings(data, filename)
@@ -3507,6 +3532,7 @@ def adamsfamily_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_adamsfamily(data, filename)
@@ -3563,6 +3589,7 @@ def xmen_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_xmen(data, filename)
@@ -3619,6 +3646,7 @@ def futurama_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_futurama(data, filename)
@@ -3675,6 +3703,7 @@ def charliesangles_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_charliesangles(data, filename)
@@ -3731,6 +3760,7 @@ def differentstroke_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_differentstroke(data, filename)
@@ -3787,6 +3817,7 @@ def seinfeld_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_seinfeld(data, filename)
@@ -3843,6 +3874,7 @@ def onepiece_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_onepiece(data, filename)
@@ -3899,6 +3931,7 @@ def overtaken_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_overtaken(data, filename)
@@ -3955,6 +3988,7 @@ def sopranos_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_sopranos(data, filename)
@@ -4010,6 +4044,7 @@ def freebird_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_freebird(data, filename)
@@ -4065,6 +4100,7 @@ def kanye_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_kanye(data, filename)
@@ -4120,6 +4156,7 @@ def darkness_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_darkness(data, filename)
@@ -4175,6 +4212,7 @@ def bike_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_bike(data, filename)
@@ -4230,6 +4268,7 @@ def jobs_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_jobs(data, filename)
@@ -4285,6 +4324,7 @@ def ree_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_ree(data, filename)
@@ -4340,6 +4380,7 @@ def liberal_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_liberal(data, filename)
@@ -4395,6 +4436,7 @@ def moving_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_moving(data, filename)
@@ -4607,6 +4649,7 @@ def harlem_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_harlem(data, filename)
@@ -4733,6 +4776,7 @@ def wasteland_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_wasteland(data, filename)
@@ -4788,6 +4832,7 @@ def mixalot_attachments(
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
     stem = Path(filename).stem or "image"
     try:
         result = add_mixalot(data, filename)
@@ -5145,6 +5190,16 @@ def apply_pulse(outputs: List[OutputFile]) -> List[OutputFile]:
     """Rhythmic zoom-pulse applied to each effect output (the `pulse` arg)."""
     from app.services.media_service import image_pulse_video, pulse_existing_video
     return _apply_motion(outputs, "pulse", image_pulse_video, pulse_existing_video)
+
+
+def apply_glow(outputs: List[OutputFile]) -> List[OutputFile]:
+    """Glow look applied to each effect output (the `glow` modifier, e.g. `alive glow`).
+
+    Images become the full glow clip (breathing zoom + colour pop + light sweep); existing
+    videos get the colour pop + light sweep over their real frames (no breathe), so glow
+    composes on top of alive/zoom/etc. without killing the underlying motion."""
+    from app.services.media_service import image_glow_video, glow_existing_video
+    return _apply_motion(outputs, "glow", image_glow_video, glow_existing_video)
 
 
 def _meme_font_path() -> str:

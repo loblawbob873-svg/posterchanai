@@ -515,6 +515,12 @@ def image_audio_to_video(image_data: bytes, source_filename: str, audio_path: st
     bytes; raises RuntimeError if ffmpeg is missing or every encoder fails.
     """
     global _video_encoder_cache
+    # Multiple images → slideshow them in order over the one audio track. (Callers that
+    # attach several images pass a list of (filename, bytes); a single bytes is the
+    # normal one-image path below.)
+    if isinstance(image_data, list):
+        return images_audio_to_video(image_data, audio_path, duration)
+
     ffmpeg = resolve_ffmpeg()
     if not ffmpeg_available():
         raise RuntimeError("ffmpeg is not installed on the server")
@@ -578,6 +584,118 @@ def image_audio_to_video(image_data: bytes, source_filename: str, audio_path: st
                 os.unlink(out_path)
 
         raise RuntimeError(f"image→video failed (tried {candidates}): {last_err}")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def images_audio_to_video(images: List[Tuple[str, bytes]], audio_path: str,
+                          duration: Optional[float] = None) -> bytes:
+    """Slideshow: show each image IN ORDER for an equal slice of the clip, all set to
+    one audio track → a single MP4. Used when several images are attached to an audio
+    "movie" effect (whoabuddy/prayer/sopranos/…) so all of them make the finished video.
+
+    Images come from different uploads (varying sizes), so each is letterboxed onto a
+    common canvas (the first image's even dimensions, capped to 1280 long edge) before
+    the concat demuxer joins them — mismatched sizes would otherwise fail concat. Each
+    image holds for `duration`/N seconds; `-shortest` ends the video with the audio.
+    Reuses the HW-accel encoder autodetect. Returns MP4 bytes.
+    """
+    global _video_encoder_cache
+    from io import BytesIO
+    from PIL import Image as _Img, ImageOps as _ImageOps
+    try:
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+    except Exception:
+        pass
+
+    ffmpeg = resolve_ffmpeg()
+    if not ffmpeg_available():
+        raise RuntimeError("ffmpeg is not installed on the server")
+    if not (audio_path and os.path.exists(audio_path)):
+        raise RuntimeError(f"audio track not found: {audio_path}")
+    imgs = [(fn, d) for fn, d in (images or []) if d]
+    if not imgs:
+        raise RuntimeError("no images supplied")
+    # A single image has no slideshow to make — use the normal (parallax) path.
+    if len(imgs) == 1:
+        return image_audio_to_video(imgs[0][1], imgs[0][0], audio_path, duration)
+
+    # Canvas = first image's dimensions, capped to a 1280 long edge, rounded even.
+    with _Img.open(BytesIO(imgs[0][1])) as _im0:
+        _im0 = _ImageOps.exif_transpose(_im0)
+        cw, ch = _im0.size
+    cap = 1280
+    if max(cw, ch) > cap:
+        if cw >= ch:
+            cw, ch = cap, max(2, round(ch * cap / cw))
+        else:
+            cw, ch = max(2, round(cw * cap / ch)), cap
+    cw = max(2, (cw // 2) * 2)
+    ch = max(2, (ch // 2) * 2)
+
+    tmp_dir = tempfile.mkdtemp(prefix="media_slideshow_")
+    out_path = os.path.join(tmp_dir, "output.mp4")
+    try:
+        # Letterbox each image onto the canvas (contain + black pad) so concat sees a
+        # uniform size; write sequential PNGs.
+        frame_paths = []
+        for i, (_fn, d) in enumerate(imgs):
+            with _Img.open(BytesIO(d)) as im:
+                im = _ImageOps.exif_transpose(im)
+                if im.mode != "RGB":
+                    im = im.convert("RGB")
+                canvas = _Img.new("RGB", (cw, ch), (0, 0, 0))
+                fitted = _ImageOps.contain(im, (cw, ch), _Img.LANCZOS)
+                canvas.paste(fitted, ((cw - fitted.width) // 2, (ch - fitted.height) // 2))
+                fp = os.path.join(tmp_dir, f"frame_{i:04d}.png")
+                canvas.save(fp, "PNG")
+                frame_paths.append(fp)
+
+        total = float(duration) if (duration and duration > 0) else 12.0
+        seg = max(0.6, total / len(frame_paths))
+        # concat demuxer: each frame for `seg`s. The demuxer ignores the LAST entry's
+        # duration, so repeat the final frame to give it its full hold.
+        list_path = os.path.join(tmp_dir, "list.txt")
+        with open(list_path, "w") as lf:
+            for fp in frame_paths:
+                lf.write(f"file '{fp}'\nduration {seg:.3f}\n")
+            lf.write(f"file '{frame_paths[-1]}'\n")
+
+        scale_filter = f"scale={cw}:{ch}:force_original_aspect_ratio=decrease,pad={cw}:{ch}:(ow-iw)/2:(oh-ih)/2,setsar=1"
+        candidates = _video_encoder_candidates(ffmpeg)
+        if _video_encoder_cache and _video_encoder_cache in candidates:
+            candidates = [_video_encoder_cache] + [c for c in candidates if c != _video_encoder_cache]
+
+        last_err = ""
+        for encoder in candidates:
+            pre, vf = [], scale_filter + ",format=yuv420p"
+            if encoder == "h264_nvenc":
+                venc = ["-c:v", "h264_nvenc", "-preset", "p5"]
+            elif encoder == "h264_vaapi":
+                pre = ["-vaapi_device", _render_node()]
+                vf = scale_filter + ",format=nv12,hwupload"
+                venc = ["-c:v", "h264_vaapi"]
+            else:
+                venc = ["-c:v", "libx264", "-preset", VIDEO_PRESET, "-crf", str(VIDEO_CRF)]
+            cmd = (
+                [ffmpeg, "-f", "concat", "-safe", "0", "-i", list_path, "-i", audio_path]
+                + ["-vf", vf] + venc
+                + ["-pix_fmt", "yuv420p", "-r", "25", "-c:a", "aac", "-b:a", VIDEO_AUDIO_BITRATE]
+                + (["-t", f"{total:.3f}"])
+                + ["-shortest", "-movflags", "+faststart", "-y", out_path]
+            )
+            result = subprocess.run(cmd, capture_output=True, timeout=3600, text=True)
+            if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+                _video_encoder_cache = encoder
+                with open(out_path, "rb") as f:
+                    return f.read()
+            last_err = (result.stderr or "")[-300:]
+            logger.warning(f"slideshow encoder {encoder} failed, trying next: {last_err}")
+            if os.path.exists(out_path):
+                os.unlink(out_path)
+
+        raise RuntimeError(f"slideshow video failed (tried {candidates}): {last_err}")
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -1171,6 +1289,24 @@ def image_glow_video(image_data: bytes, source_filename: str, duration: float = 
                      audio_path: Optional[str] = None) -> bytes:
     """Generic "glow" enhancement clip from a still image (see `_render_motion_video`)."""
     return _render_motion_video(image_data, source_filename, _glow_vf, duration, audio_path)
+
+
+def _glow_overlay_vf(W: int, H: int, dur: float) -> str:
+    """The glow LOOK (colour pop + a soft light sweep) WITHOUT the breathing zoom — for
+    layering over an existing clip's real frames (e.g. `alive glow`) so the underlying
+    motion/parallax is kept, the same way `trippy` recolours frames without freezing."""
+    pop = "eq=contrast=1.06:saturation=1.2:brightness=0.02,unsharp=5:5:0.6:5:5:0.0"
+    cpos = f"(-0.2+1.4*T/{max(0.5, dur):.3f})"
+    band = f"exp(-pow(((X/W+Y/H)/2-{cpos})/0.16,2))"
+    sweep = f"geq=lum='clip(lum(X,Y)+72*{band},0,255)':cb='cb(X,Y)':cr='cr(X,Y)'"
+    return f"{pop},{sweep}"
+
+
+def glow_existing_video(video_data: bytes, source_filename: str = "video.mp4") -> bytes:
+    """Apply the glow look (colour pop + light sweep) OVER the real frames of an effect
+    video, keeping its motion + audio — lets `glow` compose on top of alive/zoom/etc."""
+    return _motion_filter_video(video_data, source_filename,
+                                lambda W, H, dur, n: _glow_overlay_vf(W, H, dur))
 
 
 def zoom_existing_video(video_data: bytes, source_filename: str = "video.mp4") -> bytes:
