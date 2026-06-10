@@ -693,6 +693,20 @@ def image_gif_overlay_video(image_data: bytes, source_filename: str, gif_path: s
         with open(in_path, "wb") as f:
             f.write(image_data)
 
+        # Make the background photo MOVE (3D parallax) instead of a freeze-frame: build
+        # a short parallax loop and stream-loop it as input 0; the alpha overlay (clay /
+        # chimp) rides on top. Falls back to the still `-loop 1` image if depth is missing.
+        bg_input = ["-loop", "1", "-framerate", "12", "-i", in_path]
+        try:
+            from app.services import parallax_service
+            if parallax_service._session() is not None:
+                _ploop = os.path.join(tmp_dir, "pbg.mp4")
+                with open(_ploop, "wb") as f:
+                    f.write(parallax_service.add_parallax(image_data, amplitude=0.022, zoom=1.04))
+                bg_input = ["-stream_loop", "-1", "-i", _ploop]
+        except Exception as e:
+            logger.warning(f"parallax overlay background failed ({e}); using still")
+
         # scale2ref sizes the GIF to `height_frac` of the image height (aspect kept),
         # then overlay centres it horizontally and anchors it to the bottom edge.
         base = (
@@ -723,7 +737,7 @@ def image_gif_overlay_video(image_data: bytes, source_filename: str, gif_path: s
                 venc = ["-c:v", "libx264", "-preset", VIDEO_PRESET, "-crf", str(VIDEO_CRF)]
             cmd = (
                 [ffmpeg] + pre
-                + ["-loop", "1", "-framerate", "12", "-i", in_path]
+                + bg_input
                 + overlay_loop + ["-i", gif_path]
                 # -stream_loop -1 repeats the track to fill the whole clip duration.
                 + (["-stream_loop", "-1", "-i", audio_path] if has_audio else [])
