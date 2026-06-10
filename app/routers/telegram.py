@@ -1806,7 +1806,10 @@ async def _handle_telegram_update(update: dict, db: Session):
                             {"text": "〰️ Med shake", "callback_data": f"media:cgo:{_eff}:medshake"},
                             {"text": "💥 Begin shake", "callback_data": f"media:cgo:{_eff}:beginshake"},
                         ],
-                        [{"text": "❌ None", "callback_data": f"media:cgo:{_eff}:none"}],
+                        [
+                            {"text": "🌈 Trippy", "callback_data": f"media:cgo:{_eff}:trippy"},
+                            {"text": "❌ None", "callback_data": f"media:cgo:{_eff}:none"},
+                        ],
                     ]},
                 )
                 return {"ok": True}
@@ -3727,7 +3730,10 @@ async def _handle_telegram_update(update: dict, db: Session):
                                     {"text": "〰️ Med shake", "callback_data": f"media:ms:{_eff}"},
                                     {"text": "💥 Begin shake", "callback_data": f"media:bs:{_eff}"},
                                 ],
-                                [{"text": "❌ None", "callback_data": f"media:{_eff}"}],
+                                [
+                                    {"text": "🌈 Trippy", "callback_data": f"media:tr:{_eff}"},
+                                    {"text": "❌ None", "callback_data": f"media:{_eff}"},
+                                ],
                             ]
                             # thug bakes its own "THUG LIFE" text — no custom caption.
                             if _eff != "thug":
@@ -3735,10 +3741,10 @@ async def _handle_telegram_update(update: dict, db: Session):
                             await telegram_service.send_message(
                                 chat_id, "✨ Add motion?", reply_markup={"inline_keyboard": _rows},
                             )
-                    elif _action[:3] in ("dz:", "sh:", "ms:", "bs:"):
+                    elif _action[:3] in ("dz:", "sh:", "ms:", "bs:", "tr:"):
                         # A motion was chosen → render the effect, then transform it.
-                        _motion = {"dz": "zoom", "sh": "shake",
-                                   "ms": "medshake", "bs": "beginshake"}[_action[:2]]
+                        _motion = {"dz": "zoom", "sh": "shake", "ms": "medshake",
+                                   "bs": "beginshake", "tr": "trippy"}[_action[:2]]
                         _eff = _action.split(":", 1)[1]
                         if not any(is_image(fn, ct) for fn, _, ct in _atts):
                             await telegram_service.send_message(chat_id, "Nothing to do — that upload has no image.")
@@ -3768,7 +3774,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                         elif not any(is_image(fn, ct) for fn, _, ct in _atts):
                             await telegram_service.send_message(chat_id, "Nothing to do — that upload has no image.")
                         else:
-                            _arg = (f"{_motion} " if _motion in ("zoom", "shake", "medshake", "beginshake") else "") + f"meme {_pend['text']}"
+                            _arg = (f"{_motion} " if _motion in ("zoom", "shake", "medshake", "beginshake", "trippy") else "") + f"meme {_pend['text']}"
                             await telegram_service.send_message(chat_id, f"✨ {_eff} + caption…")
                             _imgs = [a for a in _atts if is_image(a[0], a[2])]
                             await _send_files_result(await cb_command_service.execute_command(_eff, _arg, attachments=_imgs))

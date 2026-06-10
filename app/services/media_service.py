@@ -928,6 +928,16 @@ def _shake_medium_vf(W: int, H: int, n_frames: int) -> str:
     return f"scale={sw}:{sh},crop={W}:{H}:'{xexpr}':'{yexpr}'"
 
 
+def _trippy_vf(W: int, H: int, n_frames: int) -> str:
+    # Psychedelic colour cycle (no camera motion): rotate the hue a full turn
+    # every ~3s while the saturation pulses, so a still image churns through the
+    # rainbow. Scale to even dims first (yuv420p requires even W/H).
+    return (
+        f"scale={W}:{H},"
+        f"hue=h='mod(t*120,360)':s='1.4+0.6*sin(2*PI*t*0.5)'"
+    )
+
+
 def _shake_begin_vf(W: int, H: int, n_frames: int) -> str:
     # Strong shake that decays to still: same jitter as `_shake_vf` multiplied by
     # a linear envelope that reaches 0 at the first third of the clip, so it
@@ -965,6 +975,12 @@ def image_beginshake_video(image_data: bytes, source_filename: str, duration: fl
     return _render_motion_video(image_data, source_filename, _shake_begin_vf, duration, audio_path)
 
 
+def image_trippy_video(image_data: bytes, source_filename: str, duration: float = 4.0,
+                       audio_path: Optional[str] = None) -> bytes:
+    """Psychedelic hue-cycling clip from a still image (see `_render_motion_video`)."""
+    return _render_motion_video(image_data, source_filename, _trippy_vf, duration, audio_path)
+
+
 def zoom_existing_video(video_data: bytes, source_filename: str = "video.mp4") -> bytes:
     """Apply the zoom-out motion to a still-frame effect video, keeping its audio."""
     return _motion_existing_video(video_data, source_filename, image_zoompan_video)
@@ -983,6 +999,11 @@ def medshake_existing_video(video_data: bytes, source_filename: str = "video.mp4
 def beginshake_existing_video(video_data: bytes, source_filename: str = "video.mp4") -> bytes:
     """Apply the shake-then-settle motion to a still-frame effect video, keeping its audio."""
     return _motion_existing_video(video_data, source_filename, image_beginshake_video)
+
+
+def trippy_existing_video(video_data: bytes, source_filename: str = "video.mp4") -> bytes:
+    """Apply the psychedelic hue-cycle to a still-frame effect video, keeping its audio."""
+    return _motion_existing_video(video_data, source_filename, image_trippy_video)
 
 
 # ---------------------------------------------------------------------------
