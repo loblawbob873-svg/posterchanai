@@ -1395,7 +1395,7 @@ def _glow_vf(W: int, H: int, n_frames: int) -> str:
              f"cb='cb(X,Y)':cr='cr(X,Y)'")
     # Gentle vignette so the glow reads on ANY background (a pure-white photo shows
     # nothing from the additive sweep/saturation alone — the darkened edges give it depth).
-    return f"{zp},{pop},vignette=PI/5,{sweep}"
+    return f"{zp},{pop},vignette=PI/12,{sweep}"
 
 
 def image_glow_video(image_data: bytes, source_filename: str, duration: float = 5.0,
@@ -1412,7 +1412,7 @@ def _glow_overlay_vf(W: int, H: int, dur: float) -> str:
     cpos = f"(-0.2+1.4*T/{max(0.5, dur):.3f})"
     band = f"exp(-pow(((X/W+Y/H)/2-{cpos})/0.16,2))"
     sweep = f"geq=lum='clip(lum(X,Y)+72*{band},0,255)':cb='cb(X,Y)':cr='cr(X,Y)'"
-    return f"{pop},vignette=PI/5,{sweep}"
+    return f"{pop},vignette=PI/12,{sweep}"
 
 
 def glow_existing_video(video_data: bytes, source_filename: str = "video.mp4") -> bytes:
