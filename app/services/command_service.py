@@ -576,7 +576,7 @@ class CommandService:
         "blacked": "Slap the BLACKED logo on an attached image: blacked",
         "kosher": "Stamp a 100% KOSHER certification seal on an attached image: kosher",
         "barked": "Drop a smirking dog and #BARKED on an attached image: barked",
-        "alive": "Make an attached photo come alive with 3D parallax motion: alive [subtle|normal|strong]",
+        "alive": "Make an attached photo come alive with 3D parallax motion: alive [subtle(default)|normal|strong]",
         "hava": "Turn an attached image into a 6s MP4 set to Hava Nagila: hava",
         "indian": "Turn an attached image into a 6s MP4 set to an Indian song: indian",
         "yakety": "Turn an attached image into a 9s MP4 set to Yakety Sax: yakety",

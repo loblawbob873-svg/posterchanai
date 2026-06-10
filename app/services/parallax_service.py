@@ -209,7 +209,7 @@ _INTENSITY = {
 
 def alive_attachments(attachments, arg: str = ""):
     """Make the first image attachment come alive (looping 2.5D parallax). `arg`
-    picks intensity (subtle/normal/strong); default normal. Returns
+    picks intensity (subtle/normal/strong); default subtle (it reads best). Returns
     (output_files, summary) like the effects_service processors."""
     from pathlib import Path
     from app.services.media_service import is_image, _human_size
@@ -217,9 +217,9 @@ def alive_attachments(attachments, arg: str = ""):
     images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
     if not images:
         return [], "No image — attach an image first."
-    key = (arg or "").strip().split()[0].lower() if (arg or "").strip() else "normal"
-    amp, zoom = _INTENSITY.get(key, _INTENSITY["normal"])
-    label = key if key in _INTENSITY else "normal"
+    key = (arg or "").strip().split()[0].lower() if (arg or "").strip() else "subtle"
+    amp, zoom = _INTENSITY.get(key, _INTENSITY["subtle"])
+    label = key if key in _INTENSITY else "subtle"
     filename, data, _ = images[0]
     stem = Path(filename).stem or "image"
     try:
