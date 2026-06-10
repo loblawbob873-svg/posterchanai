@@ -268,7 +268,11 @@ async def process_media(
             if end <= start:
                 return {"error": "end time must be after start time"}
             outputs, summary = await asyncio.to_thread(media_service.clip_attachment, attachments, start, end)
-        if motion and outputs:
+        # Freeze-type motions (zoom/shake/pulse/alive) would kill an already-animated effect;
+        # overlay-type motions (glow) keep the motion. Match the command-path gate.
+        from app.services.command_service import CommandService
+        if motion and outputs and (command not in CommandService.ANIMATED_EFFECTS
+                                   or motion in CommandService.OVERLAY_MOTIONS):
             _apply = {
                 "zoom": effects_service.apply_zoom,
                 "shake": effects_service.apply_shake,

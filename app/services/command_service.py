@@ -672,6 +672,11 @@ class CommandService:
     # `meme` caption is still fine (ffmpeg drawtext preserves the motion).
     ANIMATED_EFFECTS = {"chimp", "clay"}
 
+    # Overlay-type motions that recolour/relight the real frames WITHOUT freezing the clip
+    # (via *_existing_video), so they compose on already-animated effects too (like trippy).
+    # Freeze-type motions (zoom/shake/medshake/beginshake/pulse/alive) are NOT in this set.
+    OVERLAY_MOTIONS = {"glow"}
+
     # Natural language phrases that map directly to commands with arguments
     # Format: "phrase" -> ("command", "argument")
     PHRASE_COMMANDS = {}
@@ -811,9 +816,11 @@ class CommandService:
                 )
                 if isinstance(inner, dict) and inner.get("type") == "files" and inner.get("files"):
                     files = inner["files"]
-                    # A geometry motion would freeze an already-animated effect (it
-                    # pans a single still frame) — skip it for those, keep the rest.
-                    if _motion and command not in self.ANIMATED_EFFECTS:
+                    # Freeze-type motions (zoom/shake/pulse/alive) extract a single still frame,
+                    # which would kill an already-animated effect — skip those for ANIMATED_EFFECTS.
+                    # Overlay-type motions (glow) recolour/relight the real frames and KEEP the
+                    # motion (like trippy), so they're allowed on animated effects too.
+                    if _motion and (command not in self.ANIMATED_EFFECTS or _motion in self.OVERLAY_MOTIONS):
                         _apply = {
                             "zoom": effects_service.apply_zoom,
                             "shake": effects_service.apply_shake,
