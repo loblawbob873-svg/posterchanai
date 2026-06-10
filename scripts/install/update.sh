@@ -72,10 +72,14 @@ run_updates() {
         return 1
     fi
 
-    # 1) Python deps for whichever venvs exist. venv-ipex is the Intel Arc one.
+    # 1) Python deps for whichever venvs exist (the helper skips ones that don't). venv-unified
+    # is the modern Intel Arc venv (chat llama.cpp SYCL + image torch-XPU); the "1" freezes the
+    # fragile pins (torch/torchvision/transformers) so a generic upgrade can't pull a CPU torch
+    # over the XPU build. venv-ipex/venv-xpu are kept for older installs that still have them.
     _update_one_venv "venv" 0
+    _update_one_venv "venv-unified" 1
     _update_one_venv "venv-ipex" 1
-    _update_one_venv "venv-xpu" 1   # XPU image venv shares the same fragile stack
+    _update_one_venv "venv-xpu" 1
 
     # 1b) Depth model for the `alive` 3D-parallax effect (gitignored; fetch if missing
     # so existing installs gain the feature on update).
@@ -95,7 +99,7 @@ run_updates() {
     echo ""
     print_step "Restarting services"
     local restarted=0
-    for svc in posterchanai-xpu-image posterchanai-cpu posterchanai; do
+    for svc in posterchanai-cpu posterchanai-rocm posterchanai; do
         if systemctl list-unit-files 2>/dev/null | grep -q "^${svc}\.service"; then
             sudo systemctl restart "${svc}.service" 2>/dev/null && { echo "  ✓ restarted ${svc}"; restarted=1; }
         fi

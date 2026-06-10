@@ -547,8 +547,9 @@ If you prefer manual control:
 
 # For GPU acceleration, manually install llama-cpp-python:
 
-# Intel Arc (use venv-ipex for Python 3.11):
-source /opt/intel/oneapi/2025.0/oneapi-vars.sh  # or 2024.2
+# Intel Arc (unified venv-unified; torch 2.12 XPU already installed). Source oneAPI ONLY to
+# BUILD llama-cpp-python (the runtime uses torch's bundled oneAPI, not the system one):
+source /opt/intel/oneapi/setvars.sh   # full vars (compiler + mkl + tbb) for the icx/icpx build
 CMAKE_ARGS="-DGGML_SYCL=ON -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx" \
     pip install llama-cpp-python --force-reinstall --no-cache-dir
 
@@ -562,16 +563,18 @@ CMAKE_ARGS="-DGGML_HIP=ON" pip install llama-cpp-python --force-reinstall --no-c
 pip install llama-cpp-python
 ```
 
-**Important for Intel Arc:** When running manually (not via systemd), always source oneAPI first:
+**Important for Intel Arc:** at RUNTIME do **not** source a system oneAPI — torch 2.12's bundled
+runtime serves both chat and image (mixing in a system oneAPI causes a `LIBUR_LOADER` mismatch).
+The `ONEAPI_DEVICE_SELECTOR=level_zero:gpu` env var is mandatory or llama.cpp SYCL falls back to
+the CPU device. Just use the wrapper script, which sets all of this:
 ```bash
-source /opt/intel/oneapi/2025.0/oneapi-vars.sh
-source venv-ipex/bin/activate
-python run.py
+./run-intel.sh        # LD_LIBRARY_PATH=venv-unified/lib:/usr/lib64 + ONEAPI_DEVICE_SELECTOR=level_zero:gpu
 ```
-
-Or use the wrapper script which handles this automatically:
+Equivalent manual run:
 ```bash
-./run-intel.sh
+export LD_LIBRARY_PATH="$PWD/venv-unified/lib:/usr/lib64:$LD_LIBRARY_PATH"
+export ONEAPI_DEVICE_SELECTOR=level_zero:gpu ZES_ENABLE_SYSMAN=1 SYCL_CACHE_PERSISTENT=1
+venv-unified/bin/python run.py
 ```
 
 ## Running

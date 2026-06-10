@@ -34,10 +34,12 @@ setup_directories() {
 setup_python_env() {
     print_step "Setting up Python environment..."
 
-    # Intel Arc uses venv-ipex for chat (IPEX-LLM), others use venv
+    # Intel Arc uses ONE unified venv (venv-unified) for BOTH chat (llama.cpp SYCL) and
+    # native image gen (diffusers torch-XPU). Others use venv. (The old split — venv-ipex
+    # IPEX-LLM chat + venv-xpu-new image — is gone; IPEX-LLM is EOL.)
     local VENV_NAME="venv"
     if [ "$BACKEND" = "intel" ]; then
-        VENV_NAME="venv-ipex"
+        VENV_NAME="venv-unified"
     fi
 
     # Export for use by other modules
@@ -53,10 +55,13 @@ setup_python_env() {
     source "$VENV_NAME/bin/activate"
     pip install --upgrade pip -q
 
-    # Intel IPEX requires numpy<2
+    # Intel: install native PyTorch-XPU FIRST (it bundles its own oneAPI runtime), so the
+    # requirements.txt step finds torch satisfied and doesn't pull a CPU build over it. Modern
+    # stack — no IPEX (EOL after 2.8), no numpy<2 pin (torch 2.12 ships with numpy 2).
     if [ "$BACKEND" = "intel" ]; then
-        print_step "Installing numpy<2 (required for IPEX compatibility)..."
-        pip install "numpy<2" -q
+        print_step "Installing PyTorch 2.12 XPU (native, bundles oneAPI runtime)..."
+        pip install torch==2.12.0 torchvision --index-url https://download.pytorch.org/whl/xpu -q \
+            || pip install torch==2.12.0 --index-url https://download.pytorch.org/whl/xpu -q
     fi
 
     print_step "Installing Python dependencies..."
@@ -67,11 +72,6 @@ setup_python_env() {
     # bot_manager_service runs the bots with this interpreter.
     if [ -f botframework/requirements.txt ]; then
         pip install -r botframework/requirements.txt -q || print_warning "Some botframework deps failed to install"
-    fi
-
-    # Ensure numpy<2 for Intel (requirements.txt may have overwritten it)
-    if [ "$BACKEND" = "intel" ]; then
-        pip install "numpy<2" -q
     fi
 
     print_success "Base dependencies installed"
@@ -107,11 +107,11 @@ print('Whisper model ready', file=sys.stderr)
 configure_database_settings() {
     print_step "Configuring database settings..."
 
-    # Determine llm_backend value
+    # Determine llm_backend value. Intel now uses the NATIVE llama.cpp (SYCL) backend in the
+    # unified venv — not the EOL "ipex" backend.
     local DB_LLM_BACKEND="ollama"
     case "$BACKEND" in
-        intel) DB_LLM_BACKEND="ipex" ;;
-        nvidia|amd|cpu) DB_LLM_BACKEND="native" ;;
+        intel|nvidia|amd|cpu) DB_LLM_BACKEND="native" ;;
         ollama) DB_LLM_BACKEND="ollama" ;;
     esac
 
@@ -119,14 +119,22 @@ configure_database_settings() {
     if [ ! -f "posterchanai.db" ]; then
         print_step "Initializing database..."
         local VENV_PATH="venv"
-        [ "$BACKEND" = "intel" ] && VENV_PATH="venv-ipex"
+        [ "$BACKEND" = "intel" ] && VENV_PATH="venv-unified"
         "$VENV_PATH/bin/python" -c "from app.database import init_db; init_db()" 2>/dev/null || true
     fi
 
-    # Update llm_backend setting
+    # Update settings
     if [ -f "posterchanai.db" ]; then
         sqlite3 posterchanai.db "INSERT OR REPLACE INTO settings (key, value) VALUES ('llm_backend', '$DB_LLM_BACKEND');" 2>/dev/null
         print_success "LLM backend set to: $DB_LLM_BACKEND"
+        # Intel unified stack: native image gen in a per-gen subprocess so it releases VRAM
+        # back to the resident LLM on the shared GPU.
+        if [ "$BACKEND" = "intel" ] && [ "$IMAGE_BACKEND" = "native" ]; then
+            sqlite3 posterchanai.db "INSERT OR REPLACE INTO settings (key, value) VALUES ('image_backend', 'native');" 2>/dev/null
+            sqlite3 posterchanai.db "INSERT OR REPLACE INTO settings (key, value) VALUES ('image_gpu_device', 'xpu');" 2>/dev/null
+            sqlite3 posterchanai.db "INSERT OR REPLACE INTO settings (key, value) VALUES ('image_subprocess_mode', 'true');" 2>/dev/null
+            print_success "Intel: native image gen + subprocess VRAM release enabled"
+        fi
     fi
 }
 

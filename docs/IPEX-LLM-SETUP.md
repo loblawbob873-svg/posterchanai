@@ -1,6 +1,36 @@
-# IPEX-LLM Setup Guide
+# Intel Arc Setup Guide
 
-IPEX-LLM provides optimized LLM inference for Intel Arc GPUs. This guide covers installation on Gentoo, Debian/Ubuntu, and Fedora.
+> ## ⚡ UPDATED (2026-06): Unified stack — IPEX-LLM is no longer used
+>
+> Intel Arc now runs **chat + image generation from ONE venv and ONE service**, just like the
+> NVIDIA/AMD backends. The old split (a `venv-ipex` IPEX-LLM chat service on :3051 + a
+> `venv-xpu`/`venv-xpu-new` image service on :3052) is **gone** — Intel dropped IPEX-LLM
+> development after torch 2.8, and it couldn't share a process with torch-XPU image gen anyway.
+>
+> **Current Intel stack (what `install.sh` builds now):**
+>
+> | Component | Version / value | Notes |
+> |-----------|-----------------|-------|
+> | venv | **`venv-unified`** | ONE venv: chat **and** image |
+> | torch | **2.12.0+xpu** | native PyTorch-XPU; bundles its own oneAPI runtime (no system oneAPI, no IPEX) |
+> | chat backend | **`llama-cpp-python` (SYCL)** | `llm_backend=native`; built `-DGGML_SYCL=ON` |
+> | image backend | **diffusers (torch-XPU)** | `image_backend=native`, per-gen subprocess (`image_subprocess_mode=true`) frees VRAM on the shared GPU |
+> | IGC (system) | **>= 2.35.5** | `scripts/install-igc.sh`; still required for SDXL ≥768 |
+> | launcher | **`run-intel.sh`** | sets `LD_LIBRARY_PATH=venv-unified/lib:/usr/lib64` + **`ONEAPI_DEVICE_SELECTOR=level_zero:gpu`** |
+>
+> **`ONEAPI_DEVICE_SELECTOR=level_zero:gpu` is mandatory** — without it llama.cpp SYCL silently
+> selects the CPU device (~2 tok/s instead of ~19). `run-intel.sh` does **not** source a system
+> oneAPI; torch 2.12's bundled runtime serves both backends (mixing in a system oneAPI causes a
+> `LIBUR_LOADER` symbol mismatch). Docker: `--build-arg GPU=intel` bakes this in and the
+> entrypoint applies the same env when `PC_ACCEL=intel`.
+>
+> **Everything below is the LEGACY IPEX-LLM guide, kept for reference / older installs only.**
+
+---
+
+# IPEX-LLM Setup Guide (LEGACY)
+
+IPEX-LLM provided optimized LLM inference for Intel Arc GPUs. This guide covers installation on Gentoo, Debian/Ubuntu, and Fedora.
 
 ## Prerequisites
 

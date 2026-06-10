@@ -29,7 +29,7 @@ One FastAPI backend that does chat, image generation, voice, RAG over your code,
 ## Why Poster-chan?
 
 - 🏠 **Truly self-hosted** — runs on your own box, SQLite-backed, no telemetry, single-admin multi-user. Your conversations and keys never leave your network.
-- 🔌 **Bring any model** — cloud (any OpenAI-compatible API) or local: **Ollama**, **llama.cpp** (CPU/CUDA/HIP), or **IPEX-LLM** for **Intel Arc**. Round-robin load-balance across several backends.
+- 🔌 **Bring any model** — cloud (any OpenAI-compatible API) or local: **Ollama** or **llama.cpp** (CPU / CUDA / HIP / **Intel Arc SYCL**). Round-robin load-balance across several backends.
 - 🤖 **It's also a bot platform** — drive everything from **Telegram & Matrix**, and run autonomous **Pleroma / Misskey / Matrix** bots from a single admin tab.
 - 🧠 **Knows your stuff** — RAG over your git repos and folders, exposed to your IDE over **MCP**.
 - 🎨 **More than chat** — image generation, TTS/STT, website screenshots, YouTube/X summarize & download, media tools, email, news, finance, torrents — all behind one chat box.
@@ -45,7 +45,7 @@ One FastAPI backend that does chat, image generation, voice, RAG over your code,
 
 - **Streaming chat** with multiple conversations, history, and optional markdown/formatting
 - **OpenAI-compatible API** at `/v1/` for compatible clients and tools, including **function/tool calling** so agentic coding clients (e.g. opencode) can drive your local models
-- **Local or remote LLM**: Ollama, llama-cpp-python (CPU/CUDA/HIP), or IPEX-LLM (Intel Arc)
+- **Local or remote LLM**: Ollama, or llama-cpp-python (CPU / CUDA / HIP / Intel Arc SYCL)
 - **Load balancing**: round-robin across multiple chat servers
 - **Intent detection** and slash-style **commands** (e.g. `/mail`, `/image`, `/search`)
 
@@ -311,10 +311,10 @@ and Matrix have no such limit). To lift this to **~2 GB**, run a local Bot API s
 To upgrade an existing install, re-run `./install.sh` and pick **option 6 (Update)**.
 It upgrades the posterchanai Python dependencies and optionally rebuilds the local
 Telegram Bot API server (`REBUILD`), then restarts the services. On **Intel Arc**
-installs it freezes the fragile IPEX pins (`torch`, `intel-extension-for-pytorch`,
-`ipex-llm`, `numpy<2`, the transformers stack) to their installed versions first, so
-an upgrade can never move them — a conflicting upgrade is skipped rather than allowed
-to break the Arc environment.
+installs it freezes the fragile pins (`torch`/`torchvision` XPU build, the `transformers`
+stack) in the unified venv to their installed versions first, so an upgrade can never pull a
+CPU torch over the XPU build — a conflicting upgrade is skipped rather than allowed to break
+the Arc environment.
 
 > Note: `sync.sh` deploys **code** (git pull + restart); it does **not** touch Python
 > deps or the Telegram server binary. Use **option 6** for dependency upgrades.

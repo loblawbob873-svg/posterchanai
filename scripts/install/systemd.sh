@@ -23,12 +23,11 @@ setup_systemd() {
         return
     fi
 
-    # Intel Arc with native image gen gets TWO services (chat + image)
-    if [ "$BACKEND" = "intel" ] && [ "$IMAGE_BACKEND" = "native" ]; then
-        setup_intel_dual_services
-    else
-        setup_single_service
-    fi
+    # Intel Arc now runs chat (llama.cpp SYCL) + native image (diffusers torch-XPU) from ONE
+    # unified venv in ONE process (run-intel.sh), so it uses the single-service path like every
+    # other backend. (The old dual chat/image split was only needed because EOL IPEX-LLM and
+    # torch-XPU couldn't share a process — see setup_intel_dual_services below, now unused.)
+    setup_single_service
 }
 
 setup_single_service() {
@@ -58,59 +57,8 @@ setup_single_service() {
     fi
 }
 
-setup_intel_dual_services() {
-    echo ""
-    print_step "Creating Intel Arc dual-service setup..."
-    echo "  Chat service:  $SERVICE_NAME.service (port 3051)"
-    echo "  Image service: posterchanai-xpu-image.service (port 3052)"
-    echo ""
-
-    # Create chat service (IPEX-LLM)
-    print_step "Creating chat service: $SERVICE_NAME"
-    create_run_script
-    create_service_file
-    print_success "Created $SERVICE_NAME.service"
-
-    # Create image service (XPU)
-    print_step "Creating image service: posterchanai-xpu-image"
-    create_xpu_image_run_script
-    create_xpu_image_service_file
-    print_success "Created posterchanai-xpu-image.service"
-
-    sudo systemctl daemon-reload
-    print_success "Both systemd services created"
-
-    read -p "Enable and start both services now? [Y/n]: " START_NOW
-    START_NOW=${START_NOW:-Y}
-
-    if [[ "$START_NOW" =~ ^[Yy] ]]; then
-        # Start chat service
-        sudo systemctl enable $SERVICE_NAME
-        sudo systemctl start $SERVICE_NAME
-        sleep 3
-        if systemctl is-active --quiet $SERVICE_NAME; then
-            print_success "Chat service ($SERVICE_NAME) started on port 3051"
-        else
-            print_error "Chat service failed. Check: sudo journalctl -u $SERVICE_NAME -n 50"
-        fi
-
-        # Start image service
-        sudo systemctl enable posterchanai-xpu-image
-        sudo systemctl start posterchanai-xpu-image
-        sleep 3
-        if systemctl is-active --quiet posterchanai-xpu-image; then
-            print_success "Image service (posterchanai-xpu-image) started on port 3052"
-        else
-            print_error "Image service failed. Check: sudo journalctl -u posterchanai-xpu-image -n 50"
-        fi
-    fi
-
-    echo ""
-    print_step "Configure image load balancing"
-    echo "  To use the image service, add http://localhost:3052 to:"
-    echo "  Admin Settings > Image > Image Server URLs"
-    echo ""
-}
+# (Removed) setup_intel_dual_services — the Intel chat+image split (two venvs/services on
+# 3051+3052) is obsolete; Intel now runs unified in one service via setup_single_service.
 
 create_run_script() {
     local RUN_SCRIPT="$SCRIPT_DIR/run-$BACKEND.sh"
@@ -137,69 +85,25 @@ create_intel_run_script() {
     local RUN_SCRIPT="$1"
     cat > "$RUN_SCRIPT" << 'SCRIPT'
 #!/bin/bash
-# IPEX-LLM wrapper script for Intel Arc GPU
-# Sets up the environment and runs with executable stack enabled
-
-# Get script directory first (needed for LD_LIBRARY_PATH)
+# Unified Intel Arc launcher: chat (llama.cpp SYCL) + native image gen (diffusers torch-XPU)
+# from ONE venv (venv-unified: torch 2.12 XPU + llama-cpp-python SYCL + app deps). Replaces
+# the old split (venv-ipex IPEX-LLM chat / venv-xpu-new image).
+#
+# Key: do NOT source a system /opt/intel/oneapi — torch 2.12 bundles its own oneAPI runtime in
+# venv-unified/lib; mixing in a system oneAPI triggers the LIBUR_LOADER symbol mismatch.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Detect oneAPI installation paths - need both 2024.2 and 2025.0 for compatibility
-# IPEX-LLM is built against MKL 2024.2 (libmkl_sycl_blas.so.4)
-# IMPORTANT: Must include compiler/VERSION/lib for libsycl.so runtime
-ONEAPI_ROOT=""
-ONEAPI_LIB_PATHS=""
+# torch's bundled oneAPI runtime (venv-unified/lib) + system Level-Zero/IGC (lib64 or multiarch).
+export LD_LIBRARY_PATH="$SCRIPT_DIR/venv-unified/lib:/usr/lib64:/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
 
-if [ -d /opt/intel/oneapi/2025.0 ]; then
-    ONEAPI_ROOT="/opt/intel/oneapi/2025.0"
-    # Include compiler lib path for libsycl.so.8
-    ONEAPI_LIB_PATHS="/opt/intel/oneapi/compiler/2025.0/lib:/opt/intel/oneapi/2025.0/lib"
-fi
-
-# Add 2024.2 libs for IPEX compatibility (needs .so.4 versions)
-if [ -d /opt/intel/oneapi/2024.2 ]; then
-    [ -z "$ONEAPI_ROOT" ] && ONEAPI_ROOT="/opt/intel/oneapi/2024.2"
-    # Include both compiler and unified lib paths
-    ONEAPI_LIB_PATHS="${ONEAPI_LIB_PATHS:+$ONEAPI_LIB_PATHS:}/opt/intel/oneapi/compiler/2024.2/lib:/opt/intel/oneapi/2024.2/lib"
-fi
-
-if [ -z "$ONEAPI_ROOT" ] && [ -d /opt/intel/oneapi ]; then
-    ONEAPI_ROOT="/opt/intel/oneapi"
-    ONEAPI_LIB_PATHS="/opt/intel/oneapi/compiler/latest/lib:/opt/intel/oneapi/lib"
-fi
-
-if [ -z "$ONEAPI_ROOT" ]; then
-    echo "ERROR: Intel oneAPI not found in /opt/intel/oneapi" >&2
-    exit 1
-fi
-
-# Set Intel oneAPI environment explicitly
-# This is more reliable than 'source oneapi-vars.sh' in systemd contexts
-export ONEAPI_ROOT
-# Include venv-ipex/lib for MKL libraries (required for InsightFace face detection)
-# Include both oneAPI versions for library compatibility
-export LD_LIBRARY_PATH="$SCRIPT_DIR/venv-ipex/lib:$ONEAPI_LIB_PATHS:${LD_LIBRARY_PATH:-/usr/local/lib}"
-export PATH="$ONEAPI_ROOT/bin:$PATH"
-export OCL_ICD_FILENAMES="$ONEAPI_ROOT/lib/libintelocl.so"
-
-# Also source the vars script for any additional setup
-if [ -f "$ONEAPI_ROOT/oneapi-vars.sh" ]; then
-    source "$ONEAPI_ROOT/oneapi-vars.sh" --force 2>/dev/null || true
-elif [ -f "$ONEAPI_ROOT/setvars.sh" ]; then
-    source "$ONEAPI_ROOT/setvars.sh" --force 2>/dev/null || true
-fi
-
-# Preload VTune stub if available (suppresses symbol warnings)
-[ -f /usr/local/lib/libittnotify.so ] && export LD_PRELOAD=/usr/local/lib/libittnotify.so
-
-# IPEX-LLM optimizations
-export ENABLE_SDP_FUSION=1
-export SYCL_CACHE_PERSISTENT=1
-export BIGDL_LLM_XMX_DISABLED=1
+# MANDATORY for llama.cpp SYCL: without it SYCL silently selects the CPU device
+# (symptom: ~2 tok/s instead of ~19). Harmless for torch-XPU image gen.
+export ONEAPI_DEVICE_SELECTOR=level_zero:gpu
 export ZES_ENABLE_SYSMAN=1
-export TORCH_DEVICE_BACKEND_AUTOLOAD=0
+export SYCL_CACHE_PERSISTENT=1
 
 cd "$SCRIPT_DIR"
-exec setarch $(uname -m) -X "$SCRIPT_DIR/venv-ipex/bin/python" run.py "$@"
+exec "$SCRIPT_DIR/venv-unified/bin/python" run.py "$@"
 SCRIPT
 }
 
@@ -276,7 +180,7 @@ SCRIPT
 
 create_service_file() {
     local VENV_PATH="$SCRIPT_DIR/venv"
-    [ "$BACKEND" = "intel" ] && VENV_PATH="$SCRIPT_DIR/venv-ipex"
+    [ "$BACKEND" = "intel" ] && VENV_PATH="$SCRIPT_DIR/venv-unified"
 
     local RUN_SCRIPT="$SCRIPT_DIR/run-$BACKEND.sh"
 
@@ -298,7 +202,7 @@ create_intel_service_file() {
     # We only set minimal environment here to ensure the script can find basic tools
     sudo tee /etc/systemd/system/$SERVICE_NAME.service > /dev/null << EOF
 [Unit]
-Description=Posterchan AI (IPEX-LLM Intel Arc GPU)
+Description=Posterchan AI (Intel Arc GPU, unified llama.cpp SYCL + image)
 After=network.target
 
 [Service]
@@ -366,87 +270,7 @@ WantedBy=multi-user.target
 EOF
 }
 
-# Intel Arc XPU Image Service Functions
-
-create_xpu_image_run_script() {
-    local RUN_SCRIPT="$SCRIPT_DIR/run-xpu-image.sh"
-
-    cat > "$RUN_SCRIPT" << 'SCRIPT'
-#!/bin/bash
-# PyTorch XPU image-gen wrapper for Intel Arc.
-# Modern stack: torch 2.8 XPU, which BUNDLES its own oneAPI runtime (pip: intel-sycl-rt/
-# dpcpp-cpp-rt/mkl/umf). Do NOT source a system oneAPI here - it conflicts with the bundled
-# runtime. SDXL at >=768 needs system IGC >= 2.35.5 (older IGC fails oneDNN "could not create a
-# primitive"). Prefer venv-xpu-new (modern); fall back to legacy venv-xpu + oneAPI 2025.0.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-if [ -d "$SCRIPT_DIR/venv-xpu-new" ]; then
-    VENV="$SCRIPT_DIR/venv-xpu-new"
-    export LD_LIBRARY_PATH="$VENV/lib:/usr/lib64:${LD_LIBRARY_PATH:-/usr/local/lib}"
-    echo "[XPU-Image] venv=venv-xpu-new (torch 2.8 XPU, bundled oneAPI), system IGC"
-elif "$SCRIPT_DIR/venv-xpu/bin/python" -c 'import torch,sys; v=tuple(int(x) for x in torch.__version__.split("+")[0].split(".")[:2]); sys.exit(0 if v>=(2,8) else 1)' 2>/dev/null; then
-    # venv-xpu already holds torch >=2.8 (fresh modern install): no oneAPI sourcing.
-    VENV="$SCRIPT_DIR/venv-xpu"
-    export LD_LIBRARY_PATH="$VENV/lib:/usr/lib64:${LD_LIBRARY_PATH:-/usr/local/lib}"
-    echo "[XPU-Image] venv=venv-xpu (torch 2.8 XPU, bundled oneAPI), system IGC"
-else
-    # Legacy fallback: torch 2.5 + system oneAPI 2025.0
-    VENV="$SCRIPT_DIR/venv-xpu"
-    ONEAPI_ROOT="/opt/intel/oneapi/2025.0"; [ -d "$ONEAPI_ROOT" ] || ONEAPI_ROOT="/opt/intel/oneapi"
-    export ONEAPI_ROOT
-    export LD_LIBRARY_PATH="$VENV/lib:$ONEAPI_ROOT/lib:$ONEAPI_ROOT/../compiler/2025.0/lib:${LD_LIBRARY_PATH:-/usr/local/lib}"
-    export PATH="$ONEAPI_ROOT/bin:$PATH"
-    [ -f "$ONEAPI_ROOT/oneapi-vars.sh" ] && source "$ONEAPI_ROOT/oneapi-vars.sh" --force 2>/dev/null || true
-    echo "[XPU-Image] venv=venv-xpu (legacy torch 2.5 + oneAPI 2025.0)"
-fi
-
-export SYCL_CACHE_PERSISTENT=1
-export ZES_ENABLE_SYSMAN=1
-echo "[XPU-Image] Starting image service on port 3052"
-cd "$SCRIPT_DIR"
-exec "$VENV/bin/python" run.py --port 3052 "$@"
-SCRIPT
-
-    chmod +x "$RUN_SCRIPT"
-}
-
-create_xpu_image_service_file() {
-    local VENV_PATH="$SCRIPT_DIR/venv-xpu"
-    local RUN_SCRIPT="$SCRIPT_DIR/run-xpu-image.sh"
-
-    sudo tee /etc/systemd/system/posterchanai-xpu-image.service > /dev/null << EOF
-[Unit]
-Description=Posterchan AI Image Generation (Intel XPU PyTorch)
-After=network.target
-
-[Service]
-Type=simple
-User=$(whoami)
-WorkingDirectory=$SCRIPT_DIR
-
-# Minimal environment - the run script sets up oneAPI environment
-Environment="PATH=/usr/local/bin:/usr/bin:/bin"
-Environment="HOME=$HOME"
-
-# Use separate database and port for image-only instance
-Environment="POSTERCHANAI_DB=posterchanai-image.db"
-Environment="POSTERCHANAI_PORT=3052"
-
-# The run script (run-xpu-image.sh) handles oneAPI setup
-ExecStart=$RUN_SCRIPT
-
-# Quick restart - don't wait forever for stuck GPU processes
-TimeoutStopSec=10
-KillMode=mixed
-KillSignal=SIGTERM
-SendSIGKILL=yes
-
-Restart=always
-RestartSec=3
-TimeoutStartSec=120
-
-[Install]
-WantedBy=multi-user.target
-EOF
-}
+# (Removed) create_xpu_image_run_script / create_xpu_image_service_file — the separate
+# port-3052 XPU image service is obsolete. Image gen now runs in the unified service
+# (run-intel.sh → venv-unified) as a per-gen subprocess. See setup_image_deps in image.sh.
 

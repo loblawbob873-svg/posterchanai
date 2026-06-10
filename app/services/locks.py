@@ -11,9 +11,11 @@ logger = logging.getLogger(__name__)
 LOCK_DIR = "/tmp/posterchanai_locks"
 os.makedirs(LOCK_DIR, exist_ok=True)
 
-# NOTE: Do NOT clear lock files on startup - this breaks cross-process coordination
-# when multiple services (IPEX on 3051, Image on 3052) share the same GPU.
-# The fcntl.flock() lock is automatically released when the process exits or crashes.
+# NOTE: Do NOT clear lock files on startup. The cross-process file lock still guards the
+# GPU against any other process (and historically coordinated the old split chat/image
+# services). In the unified single-service stack, chat (llama.cpp) and image (a per-gen
+# subprocess) serialize on the in-process asyncio lock; the file lock is the belt-and-braces
+# cross-process layer. fcntl.flock() releases automatically when the process exits or crashes.
 
 GPU_LOCK_FILE = os.path.join(LOCK_DIR, "gpu.lock")
 CPU_LOCK_FILE = os.path.join(LOCK_DIR, "cpu.lock")  # For CPU mode (both LLM and image)

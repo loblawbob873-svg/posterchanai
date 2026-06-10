@@ -37,8 +37,16 @@ detect_gpu() {
     GPU_TYPE="cpu"
     GPU_NAME="CPU Only"
 
-    # Check for Intel GPU
-    if lspci 2>/dev/null | grep -i "VGA\|3D" | grep -qi "intel.*arc\|intel.*graphics"; then
+    # Check for Intel GPU. Match the PCI name (Arc Alchemist/Battlemage show as "Intel ... Arc"
+    # or "Intel ... Graphics"), OR fall back to the bound kernel DRM driver — i915 (Alchemist) or
+    # xe (Battlemage / Lunar Lake / newer), so newer cards are detected even if the name varies.
+    _intel_drm=""
+    for _d in /sys/class/drm/card*/device/driver; do
+        case "$(basename "$(readlink -f "$_d" 2>/dev/null)" 2>/dev/null)" in
+            i915|xe) _intel_drm=1 ;;
+        esac
+    done
+    if [ -n "$_intel_drm" ] || lspci 2>/dev/null | grep -i "VGA\|3D" | grep -qi "intel.*arc\|intel.*graphics"; then
         if command -v sycl-ls &>/dev/null || [ -f /opt/intel/oneapi/setvars.sh ] || [ -f ~/intel/oneapi/setvars.sh ]; then
             GPU_TYPE="intel"
             GPU_NAME=$(lspci | grep -i "VGA\|3D" | grep -i intel | head -1 | sed 's/.*: //')

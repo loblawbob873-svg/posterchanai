@@ -808,7 +808,7 @@ class DiffusersService:
         # torch/libsycl with another's libur_loader fails with a LIBUR_LOADER version mismatch.
         import sys
         python_path = sys.executable
-        for _v in ("venv-xpu-new", "venv-xpu"):
+        for _v in ("venv-unified", "venv-xpu-new", "venv-xpu"):
             _p = os.path.join(_repo, _v, "bin", "python")
             if os.path.exists(_p):
                 python_path = _p

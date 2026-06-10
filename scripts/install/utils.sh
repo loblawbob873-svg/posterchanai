@@ -176,11 +176,16 @@ show_help() {
 # distro repo and is required by BOTH Arc services - the 14B/long-context LLM (__spirv_GroupBroadcast)
 # and image gen >=768 (oneDNN conv). Called from the Intel LLM and image paths; skips if present.
 ensure_igc_235() {
-    if find /usr/lib64 /usr/lib -maxdepth 2 -name 'libigc.so.2.35.5*' 2>/dev/null | grep -q .; then
-        print_success "Intel Graphics Compiler 2.35.5 present"
+    # Accept IGC >= 2.35.5 (an exact match would DOWNGRADE newer cards/distros that already ship
+    # a newer IGC). Find the highest installed libigc version and version-compare it to 2.35.5.
+    local _igc
+    _igc=$(find /usr/lib64 /usr/lib -maxdepth 2 -name 'libigc.so.*.*.*' 2>/dev/null \
+           | sed -E 's/.*libigc\.so\.([0-9]+\.[0-9]+\.[0-9]+).*/\1/' | sort -V | tail -1)
+    if [ -n "$_igc" ] && [ "$(printf '%s\n2.35.5\n' "$_igc" | sort -V | head -1)" = "2.35.5" ]; then
+        print_success "Intel Graphics Compiler $_igc present (>= 2.35.5)"
         return 0
     fi
-    print_warning "Intel Graphics Compiler 2.35.5 not detected."
+    print_warning "Intel Graphics Compiler >= 2.35.5 not detected${_igc:+ (found $_igc)}."
     echo "  It unblocks the 14B/long-context LLM and image gen >=768, and is in no distro repo."
     local igc_script="$SCRIPT_DIR/scripts/install-igc.sh"
     if [ ! -x "$igc_script" ]; then

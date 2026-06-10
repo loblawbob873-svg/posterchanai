@@ -16,7 +16,7 @@ host** — Docker just exposes the device.
 | `cpu`   | nothing | — |
 | `cuda`  | NVIDIA driver + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) | `--gpus all` |
 | `rocm`  | host `amdgpu` kernel driver ([AMD docs](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/how-to/docker.html)) | `--device /dev/kfd --device /dev/dri` |
-| `intel` | host `i915` driver + render nodes | `--device /dev/dri` |
+| `intel` | host `i915` (Alchemist) or `xe` (Battlemage+) driver + render nodes | `--device /dev/dri` |
 
 The container runs as root, so it reaches the GPU render node without group flags.
 
@@ -48,7 +48,7 @@ docker run -d --gpus all -p 3051:3051 \
 docker run -d --device /dev/kfd --device /dev/dri --security-opt seccomp=unconfined \
   -p 3051:3051 -v pc-data:/var/lib/posterchanai -v pc-rag:/app/data posterchanai:rocm
 
-# Intel Arc (image gen via torch-XPU)
+# Intel Arc (unified: chat via llama.cpp SYCL + image via torch-XPU, one container)
 docker run -d --device /dev/dri -p 3051:3051 \
   -v pc-data:/var/lib/posterchanai -v pc-rag:/app/data posterchanai:intel
 ```

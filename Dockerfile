@@ -120,7 +120,7 @@ WORKDIR /app
 ARG TORCH_CUDA_INDEX=https://download.pytorch.org/whl/cu121
 ARG TORCH_ROCM_INDEX=https://download.pytorch.org/whl/rocm6.3
 ARG TORCH_XPU_INDEX=https://download.pytorch.org/whl/xpu
-ARG TORCH_XPU_VERSION=2.8.0
+ARG TORCH_XPU_VERSION=2.12.0
 # LLAMA_CPP_VERSION empty = latest (the Intel branch pins 0.3.22 below).
 ARG LLAMA_CPP_VERSION=
 # AMDGPU_TARGETS: which HIP GPU arches to build llama.cpp kernels for. Defaults to
@@ -186,6 +186,9 @@ VOLUME ["/var/lib/posterchanai", "/app/data"]
 # These only SEED first-run settings (app/database.py); change them in the admin UI
 # afterwards. Set DOWNLOAD_MODEL=0 to skip the LLM pull. For a bigger image model
 # (e.g. SDXL) on a small GPU, set POSTERCHANAI_LOW_VRAM=1 to enable model offload.
+# Persist the build accelerator so the entrypoint can apply per-GPU runtime settings
+# (e.g. Intel: the SYCL device selector + subprocess-per-image VRAM release).
+ENV PC_ACCEL=${GPU}
 ENV POSTERCHANAI_PORT=3051 \
     HF_HOME=/var/lib/posterchanai/hf \
     MIOPEN_USER_DB_PATH=/var/lib/posterchanai/miopen \

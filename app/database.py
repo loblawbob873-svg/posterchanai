@@ -417,9 +417,13 @@ def init_db():
             "image_default_height": "1024",
             "image_gpu_device": "auto",  # "auto", "cuda", "xpu", "cpu"
             "image_idle_timeout": "120",  # Seconds before unloading (0=disabled)
-            "image_subprocess_mode": "false",  # Run each image in subprocess (Intel XPU)
+            # Subprocess-per-image guarantees VRAM release when ONE GPU is shared by the
+            # resident LLM and image gen (the unified Intel stack: chat=llama.cpp SYCL +
+            # image=diffusers torch-XPU in one venv/service). Seeded from env so the Docker
+            # intel image ships it on out of the box (entrypoint sets it for GPU=intel).
+            "image_subprocess_mode": os.environ.get("POSTERCHANAI_IMAGE_SUBPROCESS_MODE", "false"),  # Intel XPU
             # VRAM management
-            "vram_mode": "shared",  # "shared" (swap models) or "dedicated" (keep both)
+            "vram_mode": os.environ.get("POSTERCHANAI_VRAM_MODE", "shared"),  # "shared" (swap models) or "dedicated" (keep both)
             "searxng_url": "https://search.poster.place",
             "torrent_site_url": "",  # TorrentGalaxy or compatible site URL
             "tts_voice": "en-GB-SoniaNeural",

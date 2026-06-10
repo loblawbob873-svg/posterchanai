@@ -33,12 +33,25 @@ if [ -z "${HSA_OVERRIDE_GFX_VERSION:-}" ] && command -v rocminfo >/dev/null 2>&1
         echo "[entrypoint] AMD $gfx -> HSA_OVERRIDE_GFX_VERSION=$HSA_OVERRIDE_GFX_VERSION"
 fi
 
-# Intel only: the SYCL-built llama.cpp needs the oneAPI runtime libraries on the
-# loader path. It is OFF by default because torch-XPU (image generation) bundles
-# its own oneAPI and the two can clash in one process — enable it with
-# SOURCE_ONEAPI=1 when you want GPU LLM rather than image gen on Intel Arc.
+# Intel (unified stack): chat (llama.cpp SYCL) + image (diffusers torch-XPU) run from ONE
+# venv/service. Both use torch-XPU's BUNDLED oneAPI runtime (/opt/venv/lib) — do NOT source
+# the system oneAPI, mixing the two triggers the LIBUR_LOADER symbol mismatch. Two musts:
+#   * ONEAPI_DEVICE_SELECTOR=level_zero:gpu — else llama.cpp SYCL silently picks the CPU
+#     device (symptom: ~2 tok/s instead of ~19).
+#   * image_subprocess_mode on — one image subprocess per gen releases VRAM on the shared GPU.
+# All overridable; matches the proven bare-metal config (run-intel.sh).
+if [ "${PC_ACCEL:-}" = "intel" ]; then
+    export LD_LIBRARY_PATH="/opt/venv/lib:/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+    export ONEAPI_DEVICE_SELECTOR="${ONEAPI_DEVICE_SELECTOR:-level_zero:gpu}"
+    export ZES_ENABLE_SYSMAN=1
+    export SYCL_CACHE_PERSISTENT=1
+    export POSTERCHANAI_IMAGE_SUBPROCESS_MODE="${POSTERCHANAI_IMAGE_SUBPROCESS_MODE:-true}"
+    echo "[entrypoint] Intel unified stack: torch-XPU runtime, ONEAPI_DEVICE_SELECTOR=$ONEAPI_DEVICE_SELECTOR, subprocess image mode"
+fi
+# (Legacy escape hatch) source system oneAPI only if explicitly asked — not needed by the
+# unified stack and known to clash with the bundled runtime.
 if [ "${SOURCE_ONEAPI:-0}" = "1" ] && [ -f /opt/intel/oneapi/setvars.sh ]; then
-    echo "[entrypoint] sourcing Intel oneAPI for SYCL llama.cpp"
+    echo "[entrypoint] sourcing Intel oneAPI for SYCL llama.cpp (SOURCE_ONEAPI=1)"
     # shellcheck disable=SC1091
     source /opt/intel/oneapi/setvars.sh >/dev/null 2>&1 || true
 fi

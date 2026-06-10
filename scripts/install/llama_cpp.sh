@@ -110,33 +110,10 @@ setup_llama_cpp_intel() {
     # Create libittnotify stub if not exists
     create_vtune_stub
 
-    # Install IPEX-LLM with cpp support (includes torch 2.2.0 and intel-extension-for-pytorch)
-    # This provides GPU-accelerated GGML inference for Intel Arc GPUs
-    echo "  Installing IPEX-LLM with cpp support..."
-    echo "  This includes PyTorch 2.2.0 and Intel Extension for PyTorch..."
-    pip install --pre --upgrade "ipex-llm[cpp]" -q
-
-    # Install compatible torchvision
-    echo "  Installing compatible torchvision..."
-    pip install torchvision==0.17.0 -q 2>/dev/null || pip install torchvision -q
-
-    # Verify IPEX installation
-    if python -c "import intel_extension_for_pytorch" 2>/dev/null; then
-        print_success "Intel Extension for PyTorch installed successfully"
-    else
-        print_warning "Intel Extension for PyTorch import failed - GPU may not be used"
-    fi
-
-    # Verify IPEX-LLM GGML
-    if python -c "from ipex_llm.ggml.model.llama import Llama" 2>/dev/null; then
-        print_success "IPEX-LLM GGML backend installed successfully"
-    else
-        print_warning "IPEX-LLM GGML not available - will fall back to llama-cpp-python"
-    fi
-
-    # Fix executable stack issue on hardened kernels (Gentoo, etc.)
-    # IPEX libraries are built with RWX stack which is blocked by default
-    fix_ipex_execstack
+    # NOTE: native PyTorch-XPU (torch 2.12) is already installed into the unified venv by
+    # setup_python_env — it is the modern replacement for the EOL IPEX-LLM stack and bundles its
+    # own oneAPI runtime. We no longer install ipex-llm/intel-extension-for-pytorch here; the
+    # Intel chat backend is llama-cpp-python (SYCL), built below into the SAME unified venv.
 
     # Install llama-cpp-python with SYCL support for Intel Arc GPU
     # This is the primary backend for GGUF models on Intel Arc
