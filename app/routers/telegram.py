@@ -1258,6 +1258,12 @@ async def _offer_social_post(chat_id: str, post_text: str, user, telegram_svc, p
     if platform_count >= 2:
         rows.append([{"text": "🚀 Post to All", "callback_data": "all:post"}])
 
+    # Glow it — render this text as a glowing neon graphic and attach it. Only for
+    # text-only posts (when no image is already attached we'd otherwise clobber); once
+    # glowed, image_bytes is set so the button won't reappear (no double-glow).
+    if image_bytes is None and (post_text or "").strip():
+        rows.append([{"text": "🌟 Glow it", "callback_data": "glow:textpost"}])
+
     rows.append([{"text": "❌ Skip", "callback_data": "mk:skip"}])
 
     await telegram_svc.send_message(
@@ -1294,6 +1300,7 @@ _POST_PROMPTS = (
     "📣 Post this to your timeline?",
     "📣 *Share this image?*", "📣 Share this image?",
     "📣 *Share this?*", "📣 Share this?",
+    "📣 *Post this glowing image?*", "📣 Post this glowing image?",
 )
 
 
@@ -5093,6 +5100,35 @@ async def _handle_telegram_update(update: dict, db: Session):
                     except Exception as nk_err:
                         logger.error(f"News social post generation error: {nk_err}", exc_info=True)
                         await telegram_service.send_message(chat_id, f"❌ Error generating post: {nk_err}")
+
+            elif data == "glow:textpost":
+                # Render the pending post text as a glowing neon graphic, then re-offer
+                # the SAME share buttons with it attached. Reuses the standard image
+                # plumbing (_geni_image_cache, which every platform post handler reads),
+                # so nothing about the existing post/share workflow changes — the text
+                # body and platform targets are untouched, just an image gets added.
+                _gp = (_misskey_post_cache.get(chat_id) or _pleroma_post_cache.get(chat_id)
+                       or _matrix_post_cache.get(chat_id))
+                if _gp in (None, _CONSUMED):
+                    _gp = _recover_post_text(callback_query) or None
+                if not _gp:
+                    await telegram_service.send_message(chat_id, "No post text to glow — generate a post first.")
+                    return {"ok": True}
+                _gu = db.query(User).filter(
+                    User.telegram_chat_id == chat_id,
+                    User.telegram_enabled == True,
+                ).first()
+                try:
+                    from app.services import effects_service as _fx
+                    _glow_png = await asyncio.to_thread(_fx.render_glow_text_card, _gp)
+                except Exception as _ge:
+                    logger.error(f"glow text card failed: {_ge}", exc_info=True)
+                    await telegram_service.send_message(chat_id, f"❌ Couldn't render the glowing text: {_ge}")
+                    return {"ok": True}
+                await telegram_service.send_photo(chat_id, _glow_png, "🌟 Glowing text preview")
+                await _offer_social_post(chat_id, _gp, _gu, telegram_service,
+                                         prompt="📣 *Post this glowing image?*", image_bytes=_glow_png)
+                return {"ok": True}
 
             elif data.startswith("mk:"):
                 action = data.split(":", 1)[1]

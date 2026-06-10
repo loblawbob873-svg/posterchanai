@@ -2998,6 +2998,74 @@ def glow_attachments(
         return [], f"❌ {filename}: {e}"
 
 
+def render_glow_text_card(text: str, size: int = 1080) -> bytes:
+    """Render `text` as glowing neon type centred on a dark gradient — a "glowing text
+    post" graphic (PNG bytes). A bright cyan halo (blurred text screened over the
+    background a couple of times for bloom) sits under a crisp near-white core. Used by
+    the Telegram post flow's 🌟 Glow button to attach a graphic to a text-only post."""
+    from PIL import Image, ImageDraw, ImageFilter, ImageChops
+    text = (text or "").strip() or " "
+    W = H = max(256, int(size))
+
+    # Dark vertical gradient (deep blue -> near-black). Build one column then stretch
+    # so it's H iterations, not W*H.
+    top, bot = (12, 16, 36), (2, 2, 7)
+    col = Image.new("RGB", (1, H))
+    cpx = col.load()
+    for y in range(H):
+        t = y / max(1, H - 1)
+        cpx[0, y] = (
+            int(top[0] + (bot[0] - top[0]) * t),
+            int(top[1] + (bot[1] - top[1]) * t),
+            int(top[2] + (bot[2] - top[2]) * t),
+        )
+    bg = col.resize((W, H))
+
+    # Pick the largest font that fits the text within the safe area.
+    margin = int(W * 0.10)
+    max_w = W - 2 * margin
+    max_h = int(H * 0.74)
+    probe = ImageDraw.Draw(bg)
+    size_px = int(H * 0.20)
+    font = _load_meme_font(size_px)
+    lines = _wrap_text_to_width(probe, text, font, max_w)
+    while size_px > 24:  # shrink until the wrapped text fits the safe area
+        font = _load_meme_font(size_px)
+        lines = _wrap_text_to_width(probe, text, font, max_w)
+        line_h = int(probe.textbbox((0, 0), "Ag", font=font)[3] * 1.18)
+        if line_h * len(lines) <= max_h and all(
+            probe.textbbox((0, 0), ln or " ", font=font)[2] <= max_w for ln in lines
+        ):
+            break
+        size_px -= max(6, size_px // 14)
+    line_h = int(probe.textbbox((0, 0), "Ag", font=font)[3] * 1.18)
+    total_h = line_h * len(lines)
+    y0 = (H - total_h) // 2
+
+    neon = (60, 210, 255)  # cyan
+    # Neon text on black → blur → screen over the bg twice for a soft bloom halo.
+    layer = Image.new("RGB", (W, H), (0, 0, 0))
+    ld = ImageDraw.Draw(layer)
+    for i, ln in enumerate(lines):
+        w = ld.textbbox((0, 0), ln or " ", font=font)[2]
+        ld.text(((W - w) // 2, y0 + i * line_h), ln, font=font, fill=neon)
+    glow = layer.filter(ImageFilter.GaussianBlur(radius=max(W * 0.012, 6)))
+    out = ImageChops.screen(bg, glow)
+    out = ImageChops.screen(out, glow)
+
+    # Crisp near-white core with a thin neon stroke so it reads as a lit sign.
+    od = ImageDraw.Draw(out)
+    stroke = max(2, size_px // 22)
+    for i, ln in enumerate(lines):
+        w = od.textbbox((0, 0), ln or " ", font=font, stroke_width=stroke)[2]
+        od.text(((W - w) // 2, y0 + i * line_h), ln, font=font,
+                fill=(235, 250, 255), stroke_width=stroke, stroke_fill=neon)
+
+    buf = io.BytesIO()
+    out.save(buf, "PNG")
+    return buf.getvalue()
+
+
 # ---------------------------------------------------------------------------
 # Felted tables (turn an image into a short MP4 set to the felted-tables clip)
 # ---------------------------------------------------------------------------
