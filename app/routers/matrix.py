@@ -596,6 +596,8 @@ async def execute_matrix_command(
             "• `mixalot` — turn an image into a Baby Got Back video.\n"
             "• `thug` — turn an image into a THUG LIFE video.\n"
             "• `feltedtables` — turn an image into a felted-tables video.\n"
+            "• `prayer` — turn an image into a prayer-clip video.\n"
+            "• `glow` — make an image pop (motion + colour + light sweep), or `glow <text>` for a glowing text post.\n"
             "  Uploads are remembered for 5 minutes while you decide.\n\n"
             "🎨 *Create & fetch*\n"
             "• `geni <prompt>` — generate an image.\n"

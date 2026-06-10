@@ -1232,7 +1232,11 @@ async def _offer_social_post(chat_id: str, post_text: str, user, telegram_svc, p
 
     platform_count = sum([has_mk, has_plr, has_mtx])
     if platform_count == 0:
-        await telegram_svc.send_message(chat_id, post_text)
+        # No platforms connected: echo the post text, but never send an EMPTY message
+        # (Telegram rejects empty text). Image-only posts — e.g. a glowing text card —
+        # have already delivered the image to the chat, so there's nothing more to say.
+        if (post_text or "").strip():
+            await telegram_svc.send_message(chat_id, post_text)
         return
 
     # Store post in all platform caches now so any button works

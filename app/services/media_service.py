@@ -1275,14 +1275,14 @@ def _probe_video_wh(path: str) -> Tuple[int, int]:
 # own motion is preserved while the zoom animates via the per-output-frame index `on`.
 # (A plain `crop`/`scale` can't animate size — ffmpeg fixes those at config time.)
 def _zoom_vf_video(W: int, H: int, dur: float) -> str:
-    # Smooth one-way Ken Burns push-in across the WHOLE clip (1.0 → 1.30), centred.
-    # An earlier sinusoidal version oscillated in/out (~5s period), which read as a
-    # "wavey" wobble rather than a zoom; a single directional zoom normalised to the
-    # clip length is unmistakably a zoom yet still gentle on long gags. The 30%
-    # magnitude keeps it clearly perceptible even on long 10-18s clips (the old slow
-    # ramp that "didn't zoom" was too subtle).
+    # Smooth one-way Ken Burns pull-BACK across the WHOLE clip: start zoomed in (1.30)
+    # and ease out to the full frame (1.0), centred — the SAME direction as the still
+    # image `zoom` (`_zoom_vf`, 1.25→1.0) so `prayer zoom` matches `dildo zoom`. An
+    # earlier sinusoidal version oscillated in/out (~5s period), which read as a "wavey"
+    # wobble rather than a zoom; the 30% magnitude stays clearly perceptible even on long
+    # 10-18s clips (the old slow 25% ramp that "didn't zoom" was too subtle).
     n = max(1, int(round(25 * dur)))
-    z = f"min(1.30,1.0+0.30*on/{n})"
+    z = f"max(1.0,1.30-0.30*on/{n})"
     return (f"scale={2 * W}:{2 * H},"
             f"zoompan=z='{z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
             f"d=1:s={W}x{H}:fps=25")
