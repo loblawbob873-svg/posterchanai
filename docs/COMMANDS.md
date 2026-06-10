@@ -97,7 +97,9 @@ and the fedi bots.
 
 **Multiple images → one movie:** attach several images to an audio/clip effect (whoabuddy, prayer,
 sopranos, the TV themes, …) and they play as a **slideshow in upload order** over the one audio
-track. (Effects that transform each image individually — `thug`, overlays — still use the first.)
+track; `alive` plays each image's own 3D-parallax orbit in order. (Effects that transform each
+image individually — `thug`, overlays — still use the first.) On Telegram, send the photos as one
+**album**; a no-caption album shows the action menu, or add a caption like `whoabuddy`.
 
 A trailing `meme <text>` burns an outlined caption on last; the caption text is never mistaken
 for a modifier (only trailing modifier tokens are consumed), so `meme so trippy bro` keeps its

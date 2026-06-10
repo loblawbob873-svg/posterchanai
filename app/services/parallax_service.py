@@ -205,6 +205,46 @@ def add_parallax(data: bytes, amplitude: float = 0.035, zoom: float = 1.06,
     return _encode(fr, fps=fps, loops=loops)
 
 
+def add_parallax_slideshow(images: list, amplitude: float = 0.035, zoom: float = 1.06,
+                           frames: int = 48, fps: int = 24) -> bytes:
+    """Several images → ONE parallax MP4: each image does its own 2.5D-parallax orbit,
+    played IN ORDER. All images are letterboxed onto a common canvas (the first image's
+    even dims, capped to `_MAXDIM`) so the frames concat into one stream. Returns MP4."""
+    import cv2
+    from PIL import Image, ImageOps
+    try:
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+    except Exception:
+        pass
+    if _session() is None:
+        raise RuntimeError("depth model unavailable")
+
+    # Canvas = first image's dims (capped, even).
+    with Image.open(io.BytesIO(images[0])) as im0:
+        im0 = ImageOps.exif_transpose(im0)
+        if max(im0.size) > _MAXDIM:
+            im0.thumbnail((_MAXDIM, _MAXDIM), Image.LANCZOS)
+        W, H = im0.size
+    W = max(2, (W // 2) * 2)
+    H = max(2, (H // 2) * 2)
+
+    all_frames = []
+    for data in images:
+        with Image.open(io.BytesIO(data)) as img:
+            img = ImageOps.exif_transpose(img)
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            canvas = Image.new("RGB", (W, H), (0, 0, 0))
+            fitted = ImageOps.contain(img, (W, H), Image.LANCZOS)
+            canvas.paste(fitted, ((W - fitted.width) // 2, (H - fitted.height) // 2))
+            rgb = np.asarray(canvas)
+        depth = estimate_depth(rgb)
+        depth = cv2.GaussianBlur(depth, (0, 0), sigmaX=max(rgb.shape[1] * 0.004, 1.0))
+        all_frames.extend(render_parallax(rgb, depth, frames=frames, amplitude=amplitude, zoom=zoom))
+    return _encode(all_frames, fps=fps, loops=1)
+
+
 # Intensity presets (amplitude as a fraction of width, + matching base zoom so the
 # stronger sway still hides its edges). Picked by the `alive` command's arg.
 _INTENSITY = {
@@ -230,9 +270,14 @@ def alive_attachments(attachments, arg: str = ""):
     filename, data, _ = images[0]
     stem = Path(filename).stem or "image"
     try:
-        result = add_parallax(data, amplitude=amp, zoom=zoom)
+        if len(images) > 1:
+            # Multiple images → each gets its own parallax orbit, played in order.
+            result = add_parallax_slideshow([d for _fn, d, _ct in images], amplitude=amp, zoom=zoom)
+            summary = f"## ✨ Alive ({label})\n\n✨ {len(images)} images: {_human_size(len(result))}"
+        else:
+            result = add_parallax(data, amplitude=amp, zoom=zoom)
+            summary = f"## ✨ Alive ({label})\n\n✨ {filename}: {_human_size(len(result))}"
         out = {"filename": f"{stem}_alive.mp4", "data": result, "content_type": "video/mp4"}
-        summary = f"## ✨ Alive ({label})\n\n✨ {filename}: {_human_size(len(result))}"
         return [out], summary
     except Exception as e:
         logger.error(f"parallax/alive failed for {filename}: {e}", exc_info=True)
