@@ -1099,7 +1099,7 @@ def process_messages():
                                  "`xmen` `futurama` `charliesangles` `differentstroke` `seinfeld` "
                                  "`onepiece` `overtaken` `freebird` `kanye` `darkness` `bike` `jobs` "
                                  "`ree` `liberal` `moving` `harlem` `wasteland` `mixalot` `thug` `feltedtables`")
-                    _opts.append("• **Enhance (make a photo pop, no gag):** `glow`")
+                    _opts.append("• **Glow:** `glow` (on an image) · `glow <text>` (a glowing neon text post)")
                     _opts.append("• **Add motion to any effect:** `zoom` `shake` `medshake` "
                                  "`beginshake` `pulse`, and/or `trippy` colours — e.g. `dildo zoom trippy`")
                 elif _is_vid:
@@ -1537,8 +1537,25 @@ def process_messages():
             # attachment off the replied-to event when nothing was cached.
             if not _media:
                 _media = _media_from_replied_event(message, room_id)
-            if not _media:
-                send_reply(message, "📎 Attach an image, video or PDF (or reply to one), then send `compress`, `clip 0:10 0:30`, `convert`, `meme <text>` or `dildo`.")
+            if not _media and lower_prompt.startswith("glow ") and prompt_text[len("glow"):].strip():
+                # `glow <text>` with no attachment → a glowing neon text-card post. (No
+                # bad-word gate — CSAM protection is for image generation, not text.)
+                print(f"→ Glow text post: {prompt_text[len('glow'):].strip()[:40]}")
+                _gsum, _gout = _call_posterchanai_media(sender, prompt_text, [])
+                import base64 as _gb64
+                _gposted = 0
+                for _f in _gout:
+                    try:
+                        _gd = _gb64.b64decode(_f["data"])
+                        if send_file_to_room(room_id, _gd, _f.get("filename", "glow.png"),
+                                              _f.get("content_type", "image/png")):
+                            _gposted += 1
+                    except Exception as _e:
+                        print(f"→ Failed to post glow image: {_e}")
+                if not _gposted:
+                    send_reply(message, _gsum or "Couldn't make that glow post.")
+            elif not _media:
+                send_reply(message, "📎 Attach an image, video or PDF (or reply to one), then send `compress`, `clip 0:10 0:30`, `convert`, `meme <text>` or `dildo`. Or `glow <text>` for a glowing text post.")
             elif lower_prompt.startswith("meme") and contains_bad_words(lower_prompt):
                 # meme bakes the user's caption into a posted image — same bad-word
                 # gate as geni (compress/clip/convert add no user text).

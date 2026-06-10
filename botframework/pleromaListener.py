@@ -112,7 +112,7 @@ _BOT_HELP_TEXT = (
     "     dontwanttowait · strangerthings · adamsfamily · xmen · futurama · charliesangles ·\n"
     "     differentstroke · seinfeld · onepiece · overtaken · freebird · kanye · darkness ·\n"
     "     bike · jobs · ree · liberal · moving · harlem · wasteland · mixalot · thug · feltedtables\n"
-    "🌟 Enhance (make a photo pop, no gag):  glow\n"
+    "🌟 Glow:  glow (on an image) · glow <text> (a glowing neon text post)\n"
     "✨ Add motion to any effect:  zoom · shake · medshake · beginshake · pulse,\n"
     "     and/or trippy colours — e.g.  dildo zoom trippy\n"
     "🗣 /narrate <message> — reply as a short TTS video\n\n"
@@ -125,7 +125,18 @@ def _handle_media_command(status, command, arg, own_acct, visibility):
     post the result file(s) back. Shared shape with the Misskey listener."""
     media = _gather_status_media(status)
     if not media:
-        send_reply(status, "📎 Attach a file to your post, then add `compress`, `clip 0:10 0:30`, `convert`, `meme <text>` or `dildo`.",
+        # `glow <text>` with no attachment → a glowing neon text-card post. (No bad-word
+        # gate — that's CSAM protection for image *generation*, not rendered text.)
+        if command == "glow" and arg.strip():
+            _gsum, _gout = process_media("glow", arg, [])
+            _gimgs = [(f["data"], f["content_type"]) for f in _gout if f["content_type"].startswith("image/")]
+            if _gimgs:
+                send_reply(status, "", own_acct=own_acct, visibility=visibility, image_bytes=_gimgs)
+            else:
+                send_reply(status, _gsum or "Couldn't make that glow post.",
+                           own_acct=own_acct, visibility=visibility)
+            return
+        send_reply(status, "📎 Attach a file to your post, then add `compress`, `clip 0:10 0:30`, `convert`, `meme <text>` or `dildo`. Or `glow <text>` for a glowing text post.",
                    own_acct=own_acct, visibility=visibility)
         return
     print(f"→ Forwarding {len(media)} file(s) for '{command}'")

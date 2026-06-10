@@ -67,10 +67,12 @@ the LLM. The bots reply with TTS via `/narrate <message>`.
 `bike`, `jobs`, `ree`, `liberal`, `moving`, `harlem`, `wasteland`, `mixalot`, `thug`,
 `feltedtables`.
 
-**Enhance** (generic — no gag, just make a photo stand out): `glow` (gentle breathing zoom +
-colour pop + a soft light sweeping across → short MP4), `alive [subtle|normal|strong]` (3D
-parallax: the photo gains real depth motion). Use these when you just want a post to pop
-without picking one of the gag effects above.
+**Enhance** (generic — no gag, just make a post stand out): `glow` (on an attached image →
+gentle breathing zoom + colour pop + a soft light sweeping across → short MP4), `glow <text>`
+(no image → a glowing neon text-card post), `alive [subtle|normal|strong]` (3D parallax: the
+photo gains real depth motion). Use these when you just want a post to pop without picking one
+of the gag effects above. On Telegram, typing `glow <text>` (or tapping 🌟 Glow it after `post`)
+offers to share the card to your connected platforms.
 
 ### Motion & colour modifiers
 

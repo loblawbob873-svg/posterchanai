@@ -276,7 +276,11 @@ async def execute_matrix_command(
     # Matrix user can use, even one not linked to a posterchanai account. Handle them
     # before the linked-account requirement below (the bot-API-key auth above is the
     # only gate they need).
-    if data.media and command_str.split()[0].lower() in (
+    _cmd0 = (command_str.split() or [""])[0].lower()
+    # `glow <text>` also works as a no-media TEXT post (renders a glowing card), so let
+    # it through this public, account-free branch even without an attachment.
+    _glow_text_post = (_cmd0 == "glow" and not data.media and len(command_str.split()) > 1)
+    if (data.media or _glow_text_post) and _cmd0 in (
         "compress", "clip", "convert", "translate", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables"
     ):
         from app.services.command_service import CommandService

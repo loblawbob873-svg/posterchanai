@@ -884,7 +884,7 @@ class CommandService:
         elif command == "alive":
             return await self._alive_command(arg, attachments)
         elif command == "glow":
-            return await self._glow_command(attachments)
+            return await self._glow_command(arg, attachments)
         elif command == "gay":
             return await self._gay_command(attachments)
         elif command == "blacked":
@@ -3630,21 +3630,29 @@ Files are saved to your Storage.""",
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
 
-    async def _glow_command(self, attachments: Optional[list]) -> dict:
-        """Generic "make it stand out" enhancement: breathing zoom + colour pop + a
-        sweeping light over an attached image: `glow`."""
+    async def _glow_command(self, arg: str, attachments: Optional[list]) -> dict:
+        """Generic "make it stand out": with an attached image → breathing zoom + colour
+        pop + a sweeping light (`glow`). With NO image but text → a glowing neon text-card
+        post (`glow <text>`)."""
         from app.services.media_service import is_image
-
-        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
-            return {"type": "text", "content": "Attach an image, then send `glow`."}
-
         import asyncio
-        from app.services.effects_service import glow_attachments
 
-        outputs, summary = await asyncio.to_thread(glow_attachments, attachments)
-        if not outputs:
-            return {"type": "text", "content": summary}
-        return {"type": "files", "content": summary, "files": outputs}
+        has_image = attachments and any(is_image(fn, ct) for fn, _, ct in attachments)
+        if has_image:
+            from app.services.effects_service import glow_attachments
+            outputs, summary = await asyncio.to_thread(glow_attachments, attachments)
+            if not outputs:
+                return {"type": "text", "content": summary}
+            return {"type": "files", "content": summary, "files": outputs}
+
+        # No image: render the text as a glowing neon card (a "glowing text post").
+        if (arg or "").strip():
+            from app.services.effects_service import render_glow_text_card
+            png = await asyncio.to_thread(render_glow_text_card, arg.strip())
+            return {"type": "files", "content": "## ✨ Glow", "files": [
+                {"filename": "glow.png", "data": png, "content_type": "image/png"},
+            ]}
+        return {"type": "text", "content": "Attach an image, or send `glow <text>` for a glowing text post."}
 
     async def _gay_command(self, attachments: Optional[list]) -> dict:
         """Stamp a big red GAY rubber stamp on an attached image: `gay`."""
