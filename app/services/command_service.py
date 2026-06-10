@@ -727,6 +727,31 @@ class CommandService:
         attachments: Optional[list] = None,
         node_notify: Optional[Callable] = None,
     ) -> dict:
+        """Execute a command, then shrink any oversized video outputs via the shared
+        `compress` feature before returning (so effects don't hand back 10 MB clips)."""
+        result = await self._execute_command_inner(
+            command, arg, last_prompt, stop_check, attachments, node_notify,
+        )
+        # Only auto-compress EFFECT outputs — not the `compress`/`clip`/`convert`/`ytdl`
+        # media tools, where the user controls quality (and `compress` already ran).
+        if (command in self.MOTION_EFFECTS and isinstance(result, dict)
+                and result.get("type") == "files" and result.get("files")):
+            import asyncio
+            from app.services import media_service
+            result["files"] = await asyncio.to_thread(
+                media_service.compress_output_videos, result["files"],
+            )
+        return result
+
+    async def _execute_command_inner(
+        self,
+        command: str,
+        arg: str,
+        last_prompt: Optional[str] = None,
+        stop_check: Optional[Callable[[], bool]] = None,
+        attachments: Optional[list] = None,
+        node_notify: Optional[Callable] = None,
+    ) -> dict:
         """Execute a command and return the result.
 
         Args:
@@ -777,7 +802,7 @@ class CommandService:
             if _motion or _trippy or _meme_text:
                 import asyncio
                 from app.services import effects_service
-                inner = await self.execute_command(
+                inner = await self._execute_command_inner(
                     command, " ".join(_toks), last_prompt, stop_check, attachments, node_notify,
                 )
                 if isinstance(inner, dict) and inner.get("type") == "files" and inner.get("files"):

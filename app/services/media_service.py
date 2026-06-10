@@ -1151,6 +1151,31 @@ def _smaller_output(
     }
 
 
+EFFECT_VIDEO_COMPRESS_THRESHOLD = 3_000_000  # bytes; bigger effect videos get compressed
+
+
+def compress_output_videos(outputs: List[OutputFile],
+                           threshold: int = EFFECT_VIDEO_COMPRESS_THRESHOLD) -> List[OutputFile]:
+    """Run each video output bigger than `threshold` through `compress_video` (the
+    same pass as the `compress` command), so an effect on a high-res photo doesn't
+    hand back a ~10 MB clip. Images and small videos pass through unchanged; the
+    original is kept on any failure. Shared by the web/Telegram command path and the
+    fedi-bot media_api path so every interface delivers compressed effect videos."""
+    result: List[OutputFile] = []
+    for f in outputs or []:
+        data = f.get("data")
+        ct = (f.get("content_type") or "").lower()
+        if ct.startswith("video/") and data and len(data) > threshold:
+            try:
+                compressed = compress_video(data, f.get("filename", "video.mp4"))
+                if compressed and len(compressed) < len(data):
+                    f = {**f, "data": compressed}
+            except Exception as e:
+                logger.warning(f"effect video compress failed, sending original: {e}")
+        result.append(f)
+    return result
+
+
 def compress_attachments(attachments: List[Tuple[str, bytes, str]]) -> Tuple[List[OutputFile], str]:
     """Compress each image/video attachment.
 

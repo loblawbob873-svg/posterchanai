@@ -258,6 +258,10 @@ async def process_media(
             outputs = await asyncio.to_thread(effects_service.apply_trippy, outputs)
         if meme_text and outputs:
             outputs = await asyncio.to_thread(effects_service.apply_meme_text, outputs, meme_text)
+        # Shrink oversized effect videos before delivery (same as the command path).
+        # Skip the media tools (compress already ran; clip/convert are user-controlled).
+        if outputs and command not in ("compress", "clip", "convert"):
+            outputs = await asyncio.to_thread(media_service.compress_output_videos, outputs)
     except Exception as e:
         logger.error(f"[MEDIA-API] {command} failed: {e}", exc_info=True)
         return {"error": str(e)}
