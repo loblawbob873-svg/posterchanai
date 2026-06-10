@@ -1097,17 +1097,23 @@ def blood_attachments(
 # Bullethole overlay (the "bullethole" gag — punch cracked holes into an image)
 # ---------------------------------------------------------------------------
 
-def _make_bullethole(h: int):
+def _make_bullethole(h: int, rng=None, grow: float = 1.0):
     """Render one bullet hole on a transparent tile (pure Pillow).
 
     A small IRREGULAR punched hole with a torn rim, surrounded by dense BRANCHING
     radial cracks and jagged concentric cracks (the dominant feature) plus only a
     very faint stress discolouration — so it reads as shattered impact, not a ball.
     Ships no image asset.
+
+    For animation: pass a seeded ``rng`` (a ``random.Random``) so the fracture
+    pattern is stable frame-to-frame, and a ``grow`` in [0,1] that scales how far the
+    cracks have radiated from the (always-present) hole — advance it across frames and
+    the glass shatters outward.
     """
     import math
-    import random
+    import random as _rnd
     from PIL import Image, ImageDraw, ImageFilter
+    random = rng if rng is not None else _rnd
 
     W = max(int(h * 1.5), 24)
     H = W
@@ -1150,9 +1156,9 @@ def _make_bullethole(h: int):
     n = random.randint(12, 18)
     for i in range(n):
         a = (i / n) * math.tau + random.uniform(-0.12, 0.12)
-        _crack(a, W * random.uniform(0.30, 0.52), max(W * 0.006, 1))
+        _crack(a, W * random.uniform(0.30, 0.52) * grow, max(W * 0.006, 1))
     for _ in range(random.randint(2, 4)):
-        ar = W * random.uniform(0.12, 0.32)
+        ar = W * random.uniform(0.12, 0.32) * grow
         st = random.uniform(0, 360)
         cd.arc([cx - ar, cy - ar, cx + ar, cy + ar], st, st + random.uniform(50, 160),
                fill=(30, 30, 33, 200), width=max(int(W * 0.004), 1))
@@ -1181,6 +1187,21 @@ def add_bulletholes(data: bytes, count: int = 0) -> bytes:
     return _scatter_overlay(data, _make_bullethole, count)
 
 
+def _bullethole_tile(size: int, seed: int, grow: float):
+    """One seeded bullet hole (stable fracture, `grow`-scaled cracks) for the animator."""
+    import random
+    return _make_bullethole(size, rng=random.Random(seed), grow=grow)
+
+
+def add_bulletholes_animated(data: bytes, count: int = 0) -> bytes:
+    """Punch bullet holes as a short MP4 — each hole's cracks shatter outward then
+    hold. Silent H.264 bytes. The holes are placed once; each frame radiates them
+    further. `start_grow` is low so frame 0 is near-bare holes that then craze."""
+    from app.services.media_service import frames_to_video
+    frames = _scatter_frames(data, _bullethole_tile, count=count, start_grow=0.04)
+    return frames_to_video(frames, fps=_SCATTER_ANIM_FPS, loops=1)
+
+
 def bullethole_attachments(
     attachments: List[Tuple[str, bytes, str]],
 ) -> Tuple[List[OutputFile], str]:
@@ -1191,8 +1212,20 @@ def bullethole_attachments(
     filename, data, _ = images[0]
     stem = Path(filename).stem or "image"
     try:
+        if _effects_animate():
+            try:
+                result = add_bulletholes_animated(data)
+                out: OutputFile = {
+                    "filename": f"{stem}_bulletholes.mp4",
+                    "data": result,
+                    "content_type": "video/mp4",
+                }
+                summary = f"## 🕳️ Bullet holes\n\n🕳️ {filename}: {_human_size(len(result))}"
+                return [out], summary
+            except Exception as e:
+                logger.warning(f"animated bulletholes failed for {filename}, using still: {e}")
         result = add_bulletholes(data)
-        out: OutputFile = {
+        out = {
             "filename": f"{stem}_bulletholes.jpg",
             "data": result,
             "content_type": "image/jpeg",
