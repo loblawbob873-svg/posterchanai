@@ -5125,7 +5125,12 @@ async def _handle_telegram_update(update: dict, db: Session):
                     logger.error(f"glow text card failed: {_ge}", exc_info=True)
                     await telegram_service.send_message(chat_id, f"❌ Couldn't render the glowing text: {_ge}")
                     return {"ok": True}
-                await telegram_service.send_photo(chat_id, _glow_png, "🌟 Glowing text preview")
+                # send_photo takes a str (URL/path/base64), not raw bytes — encode for the
+                # preview. _offer_social_post keeps the RAW bytes (the platform post
+                # handlers attach _geni_image_cache as raw image_bytes).
+                import base64 as _b64
+                await telegram_service.send_photo(
+                    chat_id, _b64.b64encode(_glow_png).decode("ascii"), "🌟 Glowing text preview")
                 await _offer_social_post(chat_id, _gp, _gu, telegram_service,
                                          prompt="📣 *Post this glowing image?*", image_bytes=_glow_png)
                 return {"ok": True}

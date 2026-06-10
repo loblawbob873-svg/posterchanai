@@ -107,6 +107,20 @@ async def process_media(
         except Exception as e:
             logger.warning(f"[MEDIA-API] bad media item {item.filename}: {e}")
     if not attachments:
+        # Text-only glow → render a glowing neon text card (no image needed). Uses the
+        # ORIGINAL req.arg (not the motion-stripped `arg`) so the full text becomes the
+        # card, even if it happens to end in a word like "zoom"/"trippy".
+        _glow_text = (req.arg or "").strip()
+        if command == "glow" and _glow_text:
+            png = await asyncio.to_thread(effects_service.render_glow_text_card, _glow_text)
+            return {
+                "summary": "## ✨ Glow",
+                "files": [{
+                    "filename": "glow.png",
+                    "data": base64.b64encode(png).decode("ascii"),
+                    "content_type": "image/png",
+                }],
+            }
         return {"error": "no media supplied"}
 
     try:
