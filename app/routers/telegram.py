@@ -3814,6 +3814,10 @@ async def _handle_telegram_update(update: dict, db: Session):
                                     {"text": "💓🌈 Pulse+", "callback_data": f"media:mo:plt:{_eff}"},
                                 ],
                                 [
+                                    {"text": "🪄 Alive (3D)", "callback_data": f"media:mo:al:{_eff}"},
+                                    {"text": "🌟 Glow", "callback_data": f"media:mo:gl:{_eff}"},
+                                ],
+                                [
                                     {"text": "🌈 Trippy", "callback_data": f"media:mo:tr:{_eff}"},
                                     {"text": "❌ None", "callback_data": f"media:mo:none:{_eff}"},
                                 ],
@@ -3833,6 +3837,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                             "ms": "medshake", "mst": "medshake trippy",
                             "bs": "beginshake", "bst": "beginshake trippy",
                             "pl": "pulse", "plt": "pulse trippy",
+                            "al": "alive", "gl": "glow",
                             "tr": "trippy", "none": "",
                         }.get(_code, "")
                         if not any(is_image(fn, ct) for fn, _, ct in _atts):
