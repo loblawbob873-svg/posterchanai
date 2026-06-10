@@ -99,6 +99,10 @@ main() {
     # Step 9: Install image dependencies (if selected)
     setup_image_deps
 
+    # Step 9b: Fetch the depth model for the `alive` 3D-parallax effect (gitignored,
+    # ~94MB). Skipped automatically if already present.
+    download_depth_model
+
     # Step 10: Setup XPU image instance for Intel Arc
     setup_xpu_image_instance
 

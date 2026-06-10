@@ -7,7 +7,7 @@
 set -e
 
 DATA_HOME="${POSTERCHANAI_DATA:-/var/lib/posterchanai}"
-mkdir -p "$DATA_HOME"/{models,torrents,tor,hf,miopen} /app/data/chromadb
+mkdir -p "$DATA_HOME"/{models,torrents,tor,hf,miopen,assets} /app/data/chromadb
 
 # Persist the sqlite DB on the data volume: the app opens ./posterchanai.db in
 # /app, so point that path at the volume (symlink target is created by sqlite on
@@ -57,6 +57,23 @@ if [ "${DOWNLOAD_MODEL:-1}" = "1" ] && [ -n "${POSTERCHANAI_MODEL_URL:-}" ] && \
             echo "[entrypoint] model download complete: $POSTERCHANAI_LLM_MODEL_PATH"
         else
             echo "[entrypoint] WARNING: model download failed; set a model in Admin → Settings or retry."
+        fi
+    ) &
+fi
+
+# Depth model for the `alive` 3D-parallax effect (~94 MB, gitignored so not baked into
+# the image). Fetched on first run into the data volume, in the BACKGROUND so startup
+# isn't blocked; the effect lights up once it lands. Skip with DOWNLOAD_DEPTH_MODEL=0.
+if [ "${DOWNLOAD_DEPTH_MODEL:-1}" = "1" ] && [ -n "${DEPTH_MODEL_URL:-}" ] && \
+   [ -n "${DEPTH_MODEL_PATH:-}" ] && [ ! -f "$DEPTH_MODEL_PATH" ]; then
+    (
+        tmp="${DEPTH_MODEL_PATH}.part"
+        echo "[entrypoint] downloading depth model (alive effect) -> $DEPTH_MODEL_PATH"
+        if curl -fL --retry 5 --retry-delay 10 -C - -o "$tmp" "$DEPTH_MODEL_URL"; then
+            mv -f "$tmp" "$DEPTH_MODEL_PATH"
+            echo "[entrypoint] depth model ready: $DEPTH_MODEL_PATH"
+        else
+            echo "[entrypoint] WARNING: depth model download failed; the 'alive' command stays disabled until it's present."
         fi
     ) &
 fi

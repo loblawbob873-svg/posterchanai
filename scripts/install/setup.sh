@@ -150,6 +150,26 @@ _download_model_file() {
     print_error "Download failed: $url"; return 1
 }
 
+# Depth-Anything V2 (small ViT-S) ONNX — powers the `alive` 3D-parallax effect.
+# Gitignored (~94 MB) so it isn't in the repo; fetch it into the checkout's assets/
+# dir (a path parallax_service.py looks in). Idempotent: skips if already present.
+DEPTH_MODEL_URL="https://huggingface.co/onnx-community/depth-anything-v2-small/resolve/main/onnx/model.onnx"
+
+download_depth_model() {
+    local dest="$SCRIPT_DIR/assets/depth_anything_v2_vits.onnx"
+    if [ -s "$dest" ]; then
+        print_success "Depth model already present (alive/parallax effect)"
+        return 0
+    fi
+    print_step "Downloading depth model for the 'alive' 3D effect (~94MB)..."
+    mkdir -p "$SCRIPT_DIR/assets"
+    if _download_model_file "$DEPTH_MODEL_URL" "$dest"; then
+        print_success "Depth model ready"
+    else
+        print_warning "Depth model download failed — the 'alive' command stays disabled until it's present at $dest"
+    fi
+}
+
 download_model() {
     print_step "Download a model?"
     echo ""

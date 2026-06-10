@@ -77,6 +77,10 @@ run_updates() {
     _update_one_venv "venv-ipex" 1
     _update_one_venv "venv-xpu" 1   # XPU image venv shares the same fragile stack
 
+    # 1b) Depth model for the `alive` 3D-parallax effect (gitignored; fetch if missing
+    # so existing installs gain the feature on update).
+    download_depth_model
+
     # 2) Telegram Bot API server (rebuild to the latest upstream).
     if command -v telegram-bot-api >/dev/null 2>&1; then
         echo ""

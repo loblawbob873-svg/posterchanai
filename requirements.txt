@@ -45,7 +45,9 @@ pytesseract>=0.3.10
 #           fallback when no system TTF is installed.
 Pillow>=10.1.0
 pillow-heif>=0.16.0
-# Face swap support
+# Face swap support; also the runtime for the `alive` 3D-parallax depth model
+# (opencv + onnxruntime + numpy run Depth-Anything V2 — see app/services/parallax_service.py;
+# the ~94MB .onnx itself is gitignored and fetched by install.sh / docker-entrypoint.sh).
 insightface>=0.7.3
 opencv-python-headless>=4.8.0
 onnxruntime>=1.16.0

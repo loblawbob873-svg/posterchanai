@@ -30,3 +30,7 @@ botframework/bots_config_export.json
 # Docs and the bot framework's own export are not needed at runtime build time
 # (source is still copied; this only trims obvious bulk)
 *.log
+
+# Depth model is fetched at runtime by docker-entrypoint.sh (keep image lean, build reproducible)
+assets/depth_anything_v2_vits.onnx
+*.onnx
