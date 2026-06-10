@@ -1404,7 +1404,6 @@ def _media_action_keyboard(attachments: list, user=None) -> Optional[dict]:
         ])
         rows.append([
             {"text": "✨ Effects", "callback_data": "media:effects"},
-            {"text": "🪄 Alive (3D)", "callback_data": "media:alive"},
         ])
     if has_pdf:
         rows.append([
@@ -1489,7 +1488,8 @@ def _media_effects_keyboard() -> dict:
             {"text": "🎨 Memes / overlays", "callback_data": "media:fxcat:memes"},
         ],
         [
-            {"text": "🌟 Glow (enhance, no gag)", "callback_data": "media:glow"},
+            {"text": "🪄 Alive (3D)", "callback_data": "media:alive"},
+            {"text": "🌟 Glow", "callback_data": "media:glow"},
         ],
         [{"text": "⬅️ Back", "callback_data": "media:back"}],
     ]}
@@ -2441,24 +2441,44 @@ async def _handle_telegram_update(update: dict, db: Session):
             # with the same media_group_id. Accumulate them before processing.
             media_group_id = message.get("media_group_id")
             if media_group_id and attachments:
-                if media_group_id not in _MEDIA_GROUP_CACHE:
-                    _MEDIA_GROUP_CACHE[media_group_id] = {
-                        "attachments": [], "text": "", "created_at": time.time()
-                    }
-                _mg = _MEDIA_GROUP_CACHE[media_group_id]
+                _mg = _MEDIA_GROUP_CACHE.setdefault(
+                    media_group_id, {"attachments": [], "text": "", "created_at": time.time()}
+                )
                 if text.strip():
-                    _mg["text"] = text  # use caption from whichever message has it
+                    _mg["text"] = text  # caption rides on whichever message has it
                 _mg["attachments"].extend(attachments)
-                # Wait briefly for remaining messages in this group to arrive
-                await asyncio.sleep(2.0)
-                # Only first handler to pop processes; others return early
+                _mg["last"] = time.time()
+                # Album photos arrive as SEPARATE webhooks and download at different
+                # speeds, so wait until the group has been QUIET for ~1.5s rather than a
+                # fixed sleep — otherwise the fastest handler popped before the others had
+                # added their image (symptom: only 1 image was used). Each late arrival
+                # bumps `last`, so this keeps waiting until the whole album is in.
+                while True:
+                    await asyncio.sleep(1.5)
+                    _cur = _MEDIA_GROUP_CACHE.get(media_group_id)
+                    if _cur is None:
+                        return {"ok": True}  # another handler already processed the group
+                    if time.time() - _cur.get("last", 0) >= 1.4:
+                        break
                 _mg_data = _MEDIA_GROUP_CACHE.pop(media_group_id, None)
                 if _mg_data is None:
                     return {"ok": True}
                 attachments = _mg_data["attachments"]
                 text = _mg_data["text"] or text
                 text_lower = text.lower().strip()
-                logger.info(f"[MEDIA-GROUP] {media_group_id}: assembled {len(attachments)} attachments, text={text!r}")
+                # Re-derive the command from the ASSEMBLED caption: the handler that wins
+                # the pop may be a caption-less photo, so the `command` parsed earlier could
+                # be None even though the album carries a caption like "whoabuddy".
+                command = None
+                arg = text
+                for cmd in commands:
+                    if text_lower.startswith(cmd + " ") or text_lower == cmd:
+                        command = cmd
+                        arg = text[len(cmd):].strip()
+                        break
+                if command:
+                    command = CommandService.COMMAND_ALIASES.get(command, command)
+                logger.info(f"[MEDIA-GROUP] {media_group_id}: assembled {len(attachments)} attachments, cmd={command}, text={text!r}")
 
             # Extract text from PDF/Office document attachments (concatenate all, not just last)
             doc_text = None
