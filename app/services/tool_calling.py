@@ -423,12 +423,44 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
             # a nudge so the agent moves on instead of looping forever.
             if tool_calls and _is_repeat_tool_call(messages, tool_calls):
                 _nm = (tool_calls[0].get("function", {}) or {}).get("name")
-                logger.warning("repeat tool call (%s) — breaking loop with a proceed nudge", _nm)
-                return ({"role": "assistant",
-                         "content": "You already ran that exact command on the previous step — its "
-                                    "result is shown above. Do NOT run it again. Assume it succeeded "
-                                    "and continue with the NEXT step, or report that you're finished."},
-                        "stop")
+                logger.warning("repeat tool call (%s) — re-steering to the next step", _nm)
+                # Re-generate with a strong 'don't repeat, do the NEXT step' instruction so the model
+                # emits a DIFFERENT action and opencode keeps going. (Returning content would make
+                # opencode treat it as a final answer and STOP.) Only fall back to a stop-nudge if it
+                # still repeats / produces nothing.
+                _steered = False
+                try:
+                    _nudge = ("The previous command already ran and SUCCEEDED (its result is above). "
+                              "Do NOT run it again. Take the NEXT step toward the goal with a different "
+                              "tool call, or report you are finished.")
+                    nt3 = [dict(m) for m in _prep_for_template(messages)]
+                    for _m in nt3:
+                        if _m.get("role") == "system":
+                            _m["content"] = ((_m.get("content") or "") + " " + _nudge + " /no_think").strip()
+                            break
+                    else:
+                        nt3.insert(0, {"role": "system", "content": _nudge + " /no_think"})
+                    try:
+                        model.reset()
+                    except Exception:
+                        pass
+                    r3 = _get_formatter(template)(messages=nt3, tools=tools)
+                    toks3 = model.tokenize(r3.prompt.encode("utf-8"), add_bos=False, special=True)
+                    raw3 = (model.create_completion(prompt=toks3, **_p).get("choices") or [{}])[0].get("text") or ""
+                    body3 = raw3.split("</think>", 1)[1].strip() if "</think>" in raw3 else raw3.strip()
+                    c3, tc3 = parse_tool_calls(body3)
+                    tc3 = _normalize_tool_names(tc3, tools)
+                    if tc3 and not _is_repeat_tool_call(messages, tc3):
+                        content, tool_calls, _steered = c3, tc3, True   # new action → opencode continues
+                    elif c3 and not tc3:
+                        content, tool_calls, _steered = c3, None, True  # a different text answer
+                except Exception as _e3:
+                    logger.warning("re-steer generation failed (%s)", _e3)
+                if not _steered:
+                    return ({"role": "assistant",
+                             "content": "You already ran that exact command (result above). Do NOT run "
+                                        "it again — continue with the next step or report done."},
+                            "stop")
             msg: Dict[str, Any] = {"role": "assistant", "content": content}
             return (({**msg, "tool_calls": tool_calls}, "tool_calls") if tool_calls else (msg, "stop"))
         except Exception as e:
