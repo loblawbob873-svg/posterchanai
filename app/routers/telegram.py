@@ -3827,11 +3827,16 @@ async def _handle_telegram_update(update: dict, db: Session):
                         if not any(is_image(fn, ct) for fn, _, ct in _atts):
                             await telegram_service.send_message(chat_id, "Nothing to do — that upload has no image.")
                         elif _eff in CommandService.ANIMATED_EFFECTS:
-                            # Already-animated effect — zoom/shake would freeze it, so
-                            # skip the motion menu and render it straight away.
-                            await telegram_service.send_message(chat_id, f"✨ {_eff}…")
-                            _imgs = [a for a in _atts if is_image(a[0], a[2])]
-                            await _send_files_result(await cb_command_service.execute_command(_eff, "", attachments=_imgs))
+                            # Already-animated effect — zoom/shake would freeze it, so skip the motion
+                            # menu, but STILL offer the caption (meme text overlays fine on the video).
+                            _effect_caption_pending[chat_id] = {"eff": _eff, "motion": "", "ts": time.time()}
+                            await telegram_service.send_message(
+                                chat_id, "📝 Add a caption?",
+                                reply_markup={"inline_keyboard": [[
+                                    {"text": "✍️ Add text", "callback_data": "media:capq:add"},
+                                    {"text": "▶️ No, render", "callback_data": "media:capq:skip"},
+                                ]]},
+                            )
                         else:
                             # Left column = motion alone; right column = the same motion
                             # with the trippy hue-cycle layered on top (the only combo
