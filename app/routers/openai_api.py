@@ -21,19 +21,20 @@ logger = logging.getLogger(__name__)
 # setting; disable with `tool_guidance_enabled=false`. Kept generic (applies to ANY tool-bearing
 # client) per the keep-proxy-generic rule.
 _DEFAULT_TOOL_GUIDANCE = (
-    "You are running on a model with a SMALL context window. To work with large files reliably:\n"
+    "You are running on a model with a SMALL context window. Read efficiently, write whole files, "
+    "and finish what you start:\n"
     "- Never read a whole file just to find something: use grep/glob to locate the exact lines, "
-    "then read with a tight offset/limit window. When several files are involved, grep across them "
-    "and read only the few relevant lines from each — do not open whole files (it overflows the "
-    "context and the answer is lost).\n"
-    "- To edit, replace the smallest unique snippet rather than rewriting the file.\n"
-    "- To create a large file, build it in small append steps, not one huge write (a too-large "
-    "write is truncated mid-function).\n"
-    "- Prefer many small, targeted tool calls; keep each tool result small.\n"
-    "- ACT, don't narrate: the moment you know what to change, MAKE the change with a tool call. "
-    "Do NOT reply with prose that explains the bug or describes what you would do — that wastes the "
-    "turn and stalls the task. Output plain text ONLY to ask the user a question or to report you "
-    "have finished. Every step toward the goal must be a tool call, not an explanation."
+    "then read with a tight offset/limit window. With several files, grep across them and read only "
+    "the few relevant lines from each — opening whole files overflows the context.\n"
+    "- Write COMPLETE, coherent files and edits. Do NOT split one file into many tiny append "
+    "steps — that produces broken, half-finished output (e.g. a stylesheet written in fragments "
+    "looks wrong). When you change something like a theme or a component, rewrite the whole "
+    "relevant block at once so the result is consistent.\n"
+    "- ACT, don't narrate, and KEEP GOING until the task is actually DONE: the moment you know what "
+    "to change, make the change with a tool call. Do not stop to explain or summarize mid-task, and "
+    "do NOT declare the task finished until every required change has actually been applied and "
+    "verified. Output plain text ONLY to ask the user a question or to report you have FULLY "
+    "finished."
 )
 
 from app.database import get_db
