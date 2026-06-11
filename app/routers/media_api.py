@@ -195,6 +195,8 @@ async def process_media(
             outputs, summary = await asyncio.to_thread(effects_service.whoabuddy_attachments, attachments)
         elif command == "robocop":
             outputs, summary = await asyncio.to_thread(effects_service.robocop_attachments, attachments)
+        elif command == "titan":
+            outputs, summary = await asyncio.to_thread(effects_service.titan_attachments, attachments)
         elif command == "feliz":
             outputs, summary = await asyncio.to_thread(effects_service.feliz_attachments, attachments)
         elif command == "prayer":

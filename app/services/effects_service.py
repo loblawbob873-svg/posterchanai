@@ -3036,6 +3036,62 @@ def robocop_attachments(
         return [], f"❌ {filename}: {e}"
 
 
+# Titan (turn an image into a short MP4 set to the "titan" clip — the
+# "titan" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped titan track (repo-relative), overridable with TITAN_AUDIO_PATH.
+_TITAN_AUDIO_CANDIDATES = [
+    os.environ.get("TITAN_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "titan.mp3"),
+    "/var/lib/posterchanai/assets/titan.mp3",
+]
+# Cap above the ~11s clip length; -shortest ends the video at the audio end.
+_TITAN_DURATION = 12.0
+
+
+def _titan_audio_path() -> str:
+    """First existing titan mp3 from the candidate list ("" if none)."""
+    for p in _TITAN_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_titan(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the titan clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _titan_audio_path()
+    if not audio:
+        raise RuntimeError("Titan audio (assets/titan.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_TITAN_DURATION)
+
+
+def titan_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a titan MP4. Mirrors
+    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_titan(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_titan.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🗿 Titan\n\n🗿 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"titan failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
 # ---------------------------------------------------------------------------
 # Feliz (turn an image into a short MP4 set to the "feliz" clip)
 # ---------------------------------------------------------------------------

@@ -928,7 +928,7 @@ def process_messages():
         # spam the room). So on a reply we only accept it when the text is one of the
         # media commands that act on the replied-to attachment (e.g. replying to a
         # posted image with `meme <text>` or `dildo`).
-        _MEDIA_REPLY_CMDS = ("compress", "clip", "convert", "translate", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "glow", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "robocop", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz")
+        _MEDIA_REPLY_CMDS = ("compress", "clip", "convert", "translate", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "glow", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "robocop", "titan", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz")
         if mentioned_users and own_user_id and own_user_id in mentioned_users:
             if not message.get("reply_to_event_id"):
                 bot_mentioned = True
@@ -1094,7 +1094,7 @@ def process_messages():
                                  "`gay` `blacked` `kosher` `barked` `consider` `chimp` `clay`")
                     _opts.append("• **Music/clip videos:** `hava` `indian` `yakety` `yamete` `curb` "
                                  "`depressing` `fahh` `helpme` `gong` `fbi` `redeem` `gigity` `beavis` "
-                                 "`smell` `hood` `akbar` `retard` `whoabuddy` `robocop` `sopranos` `cheers` "
+                                 "`smell` `hood` `akbar` `retard` `whoabuddy` `robocop` `titan` `sopranos` `cheers` "
                                  "`munsters` `happydays` `dontwanttowait` `strangerthings` `adamsfamily` "
                                  "`xmen` `futurama` `charliesangles` `differentstroke` `seinfeld` "
                                  "`onepiece` `overtaken` `freebird` `kanye` `darkness` `bike` `jobs` "
@@ -1502,6 +1502,7 @@ def process_messages():
                 or lower_prompt == "retard" or lower_prompt.startswith("retard ") \
                 or lower_prompt == "whoabuddy" or lower_prompt.startswith("whoabuddy ") \
                 or lower_prompt == "robocop" or lower_prompt.startswith("robocop ") \
+                or lower_prompt == "titan" or lower_prompt.startswith("titan ") \
                 or lower_prompt == "sopranos" or lower_prompt.startswith("sopranos ") \
                 or lower_prompt == "cheers" or lower_prompt.startswith("cheers ") \
                 or lower_prompt == "munsters" or lower_prompt.startswith("munsters ") \
@@ -1581,7 +1582,7 @@ def process_messages():
                 # For meme the image IS the result — don't also post the summary
                 # text (it would be a noisy second message). compress/clip/convert
                 # keep their summary (it reports the size change).
-                if _summary and not lower_prompt.startswith(("meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "glow", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "robocop", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz")):
+                if _summary and not lower_prompt.startswith(("meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "glow", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "robocop", "titan", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz")):
                     send_reply(message, _summary)
                 if _out_files and not _posted:
                     send_reply(message, "❌ Couldn't upload the processed file(s) to Matrix.")

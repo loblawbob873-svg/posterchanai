@@ -355,10 +355,16 @@ def _looks_like_intent_to_act(text: str) -> bool:
         return False  # a closing / completion — leave it
     if t.endswith(":"):
         return True  # announced an action then trailed off without the call (strongest tell)
-    tail = low[-160:]
-    return any(p in tail for p in ("let me ", "let's ", "i'll ", "i will ", "now i ", "next, i",
-                                   "i'm going to", "i am going to", "i need to ", "let me check",
-                                   "let me look", "let me fix", "let me run", "let me try"))
+    # Check BOTH the start and the end of the content. A narration often announces the action up
+    # front ("Now I'll create the Flask app …") then explains for a while, so the intent phrase is
+    # NOT in the tail — checking only the tail missed it and the turn dead-stopped with no code.
+    intents = ("let me ", "let's ", "i'll ", "i will ", "now i ", "next, i", "i'm going to",
+               "i am going to", "i need to ", "i'm now ", "i am now ", "first, i", "let me check",
+               "let me look", "let me fix", "let me run", "let me try")
+    for zone in (low[:170], low[-170:]):
+        if any(p in zone for p in intents):
+            return True
+    return False
 
 
 def _fit_to_context(model, template, messages, tools, reserve):
