@@ -480,7 +480,7 @@ def _parallax_audio_to_video(image_data: bytes, audio_path: str,
     `duration`). Used by image_audio_to_video so the ~40 'sound' gags get a moving
     photo + their music instead of a freeze-frame."""
     from app.services import parallax_service
-    loop_mp4 = parallax_service.add_parallax(image_data, amplitude=0.022, zoom=1.04)
+    loop_mp4 = parallax_service.add_parallax(image_data, amplitude=0.013, zoom=1.03)
     ffmpeg = resolve_ffmpeg()
     tmp_dir = tempfile.mkdtemp(prefix="media_paudio_")
     loop_path = os.path.join(tmp_dir, "loop.mp4")
@@ -638,7 +638,7 @@ def images_audio_to_video(images: List[Tuple[str, bytes]], audio_path: str,
                 _fps = 24
                 _fpi = max(24, int(round((_adur / len(imgs)) * _fps)))  # frames per image
                 _silent = parallax_service.add_parallax_slideshow(
-                    [d for _fn, d in imgs], amplitude=0.022, zoom=1.04, frames=_fpi, fps=_fps)
+                    [d for _fn, d in imgs], amplitude=0.013, zoom=1.03, frames=_fpi, fps=_fps)
                 _ptmp = tempfile.mkdtemp(prefix="media_paudio_ss_")
                 try:
                     _vp = os.path.join(_ptmp, "v.mp4")
@@ -966,7 +966,7 @@ def image_gif_overlay_video(image_data: bytes, source_filename: str, gif_path: s
             if parallax_service._session() is not None:
                 _ploop = os.path.join(tmp_dir, "pbg.mp4")
                 with open(_ploop, "wb") as f:
-                    f.write(parallax_service.add_parallax(image_data, amplitude=0.022, zoom=1.04))
+                    f.write(parallax_service.add_parallax(image_data, amplitude=0.013, zoom=1.03))
                 bg_input = ["-stream_loop", "-1", "-i", _ploop]
         except Exception as e:
             logger.warning(f"parallax overlay background failed ({e}); using still")
@@ -1412,21 +1412,21 @@ def _glow_vf(W: int, H: int, n_frames: int) -> str:
     Wt = max(2, (Wt // 2) * 2)
     Ht = max(2, (Ht // 2) * 2)
     dur = max(0.5, n_frames / 25.0)
-    # Breathing Ken Burns: zoom oscillates 1.0..1.06 over a ~6s cycle, kept centred.
+    # Breathing Ken Burns: zoom oscillates 1.0..1.04 over a ~6s cycle, kept centred (gentle).
     # Pre-upscale 2x so zoompan's integer steps don't jitter (same trick as `_zoom_vf`).
-    zexpr = "1.03+0.03*sin(2*PI*on/(25*6))"
+    zexpr = "1.02+0.02*sin(2*PI*on/(25*6))"
     zp = (f"scale={2 * Wt}:{2 * Ht},"
           f"zoompan=z='{zexpr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
           f"d={n_frames}:s={Wt}x{Ht}:fps=25")
     # Colour pop + crispen (luma-only unsharp so chroma doesn't get noisy).
-    pop = "eq=contrast=1.06:saturation=1.2:brightness=0.02,unsharp=5:5:0.6:5:5:0.0"
+    pop = "eq=contrast=1.035:saturation=1.10:brightness=0.012,unsharp=5:5:0.4:5:5:0.0"
     # Soft light sweep: add a gaussian luma band that crosses the frame once over the
     # clip, its centre `cpos` sliding -0.2..1.2 along the normalised TL->BR diagonal.
     # (Single-quoted expressions protect the commas inside pow()/clip() from the
     # filtergraph parser — same as the zoompan z='max(1.0,...)' expressions above.)
     cpos = f"(-0.2+1.4*T/{dur:.3f})"
     band = f"exp(-pow(((X/W+Y/H)/2-{cpos})/0.16,2))"
-    sweep = (f"geq=lum='clip(lum(X,Y)+72*{band},0,255)':"
+    sweep = (f"geq=lum='clip(lum(X,Y)+40*{band},0,255)':"
              f"cb='cb(X,Y)':cr='cr(X,Y)'")
     # Gentle vignette so the glow reads on ANY background (a pure-white photo shows
     # nothing from the additive sweep/saturation alone — the darkened edges give it depth).
@@ -1443,10 +1443,10 @@ def _glow_overlay_vf(W: int, H: int, dur: float) -> str:
     """The glow LOOK (colour pop + a soft light sweep) WITHOUT the breathing zoom — for
     layering over an existing clip's real frames (e.g. `alive glow`) so the underlying
     motion/parallax is kept, the same way `trippy` recolours frames without freezing."""
-    pop = "eq=contrast=1.06:saturation=1.2:brightness=0.02,unsharp=5:5:0.6:5:5:0.0"
+    pop = "eq=contrast=1.035:saturation=1.10:brightness=0.012,unsharp=5:5:0.4:5:5:0.0"
     cpos = f"(-0.2+1.4*T/{max(0.5, dur):.3f})"
     band = f"exp(-pow(((X/W+Y/H)/2-{cpos})/0.16,2))"
-    sweep = f"geq=lum='clip(lum(X,Y)+72*{band},0,255)':cb='cb(X,Y)':cr='cr(X,Y)'"
+    sweep = f"geq=lum='clip(lum(X,Y)+40*{band},0,255)':cb='cb(X,Y)':cr='cr(X,Y)'"
     return f"{pop},vignette=PI/12,{sweep}"
 
 
