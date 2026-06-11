@@ -326,7 +326,15 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
             # injected into the system turn: that makes the template signal no-think mode, so the
             # model answers directly instead of thinking-then-quitting. (Prompt surgery to close the
             # think block alone does NOT work - without the /no_think signal the model still quits.)
-            if not tool_calls and not content and "</think>" in raw:
+            if not tool_calls and not content:
+                # Empty first generation — EITHER the think block closed with a lazy end-of-turn,
+                # OR it NEVER closed (runaway reasoning that blew the token budget and dumped 20k+
+                # chars). Both used to leak: the closed case dead-stopped, the runaway case surfaced
+                # raw reasoning as "content" (opencode got rambling instead of an edit, over and
+                # over). Retry RE-RENDERED with /no_think so the model answers / tool-calls directly
+                # instead of thinking-then-quitting or rambling.
+                if "</think>" not in raw:
+                    logger.warning("runaway think (never closed, len=%d) — retrying with /no_think", len(raw))
                 nt = [dict(m) for m in _prep_for_template(messages)]
                 for _m in nt:
                     if _m.get("role") == "system":
@@ -342,9 +350,6 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
                 tool_calls = _normalize_tool_names(tool_calls, tools)
                 if not tool_calls and not content:
                     logger.warning("empty after /no_think retry; raw2[:160]=%r", raw2[:160])
-            elif not tool_calls and not content:
-                logger.warning("empty tool generation (think never closed, len=%d); raw[:300]=%r",
-                               len(raw), raw[:300])
             # Last-resort band-aid: NEVER return an empty message. An empty tool response makes the
             # LB read the node as dead and abort the already-streamed SSE -> opencode HARD-stops.
             # If retries still produced nothing usable, surface the model's own reasoning as content
