@@ -1432,6 +1432,7 @@ _FX_THEMES = [
     ("🎻 Hava", "hava"), ("🎷 Yakety", "yakety"),
     ("😬 Curb", "curb"), ("🎸 Wasteland", "wasteland"),
     ("🍑 Mixalot", "mixalot"), ("🏴‍☠️ One Piece", "onepiece"),
+    ("🤖 Robocop", "robocop"),
 ]
 _FX_SOUNDS = [
     ("🤠 Whoabuddy", "whoabuddy"), ("🕌 Akbar", "akbar"),
@@ -1447,7 +1448,7 @@ _FX_SOUNDS = [
     ("💼 Jobs", "jobs"), ("🗽 Liberal", "liberal"),
     ("📦 Moving", "moving"), ("🏎️ Overtaken", "overtaken"),
     ("🎱 Felted Tables", "feltedtables"), ("🙏 Prayer", "prayer"),
-    ("🎉 Feliz", "feliz"), ("🤖 Robocop", "robocop"),
+    ("🎉 Feliz", "feliz"),
 ]
 _FX_MEMES = [
     ("🍆 Dildo", "dildo"), ("💩 Poo", "poo"),
