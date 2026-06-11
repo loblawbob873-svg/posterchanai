@@ -29,7 +29,11 @@ _DEFAULT_TOOL_GUIDANCE = (
     "- To edit, replace the smallest unique snippet rather than rewriting the file.\n"
     "- To create a large file, build it in small append steps, not one huge write (a too-large "
     "write is truncated mid-function).\n"
-    "- Prefer many small, targeted tool calls; keep each tool result small."
+    "- Prefer many small, targeted tool calls; keep each tool result small.\n"
+    "- ACT, don't narrate: the moment you know what to change, MAKE the change with a tool call. "
+    "Do NOT reply with prose that explains the bug or describes what you would do — that wastes the "
+    "turn and stalls the task. Output plain text ONLY to ask the user a question or to report you "
+    "have finished. Every step toward the goal must be a tool call, not an explanation."
 )
 
 from app.database import get_db
