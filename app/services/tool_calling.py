@@ -14,11 +14,44 @@ Notes for future readers:
 """
 import json
 import logging
+import os
 import re
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("tool_calling")
+
+
+def _compute_needs_context_reset() -> bool:
+    """Whether to reset the llama context before EACH generation. Needed ONLY on the SYCL (Arc)
+    build of llama-cpp-python (0.3.28), which mishandles cross-request context reuse and throws a
+    "could not broadcast" error on the next create_completion otherwise. The CUDA build (nas,
+    0.3.20) has no such bug — and resetting there throws away llama.cpp's prompt-PREFIX cache,
+    forcing a full re-prefill of the whole prompt every turn (most of the per-turn latency on a
+    long session). So: reset on SYCL/Arc only. Detect SYCL via ONEAPI_DEVICE_SELECTOR, set
+    (mandatorily) only by the Arc launcher run-intel.sh. Override with LLM_RESET_EACH_GEN=0/1."""
+    ov = os.environ.get("LLM_RESET_EACH_GEN", "").strip().lower()
+    if ov in ("1", "true", "yes"):
+        return True
+    if ov in ("0", "false", "no"):
+        return False
+    return bool(os.environ.get("ONEAPI_DEVICE_SELECTOR"))
+
+
+_NEEDS_CONTEXT_RESET = _compute_needs_context_reset()
+logger.info("context reset-each-gen: %s (SYCL/Arc workaround; off on CUDA preserves prefix cache)",
+            _NEEDS_CONTEXT_RESET)
+
+
+def reset_context_if_needed(model) -> None:
+    """Reset the reused model context ONLY where required (SYCL/Arc) — a no-op on CUDA so the
+    prompt-prefix cache is preserved (much faster prefill). Safe to call before every generation."""
+    if not _NEEDS_CONTEXT_RESET:
+        return
+    try:
+        model.reset()
+    except Exception:
+        pass
 
 # JSON-Hermes form: <tool_call>{"name":...,"arguments":...}</tool_call>
 _TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
@@ -454,7 +487,7 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
             # "could not broadcast input array from shape (N,) into shape (M,)" when the next
             # prompt doesn't fit the stale buffer; a clean reset sidesteps that path.
             try:
-                model.reset()
+                reset_context_if_needed(model)
             except Exception:
                 pass
             raw = (model.create_completion(prompt=toks, **_p).get("choices") or [{}])[0].get("text") or ""
@@ -495,7 +528,7 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
                     nt.insert(0, {"role": "system", "content": "/no_think"})
                 try:
                     try:
-                        model.reset()  # clean context for the 2nd generation (SYCL reuse bug)
+                        reset_context_if_needed(model)  # clean context for the 2nd generation (SYCL reuse bug)
                     except Exception:
                         pass
                     r2 = _get_formatter(template)(messages=nt, tools=tools)
@@ -535,7 +568,7 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
                     ntp = [dict(m) for m in _prep_for_template(messages)]
                     ntp.append({"role": "user", "content": _push + " /no_think"})
                     try:
-                        model.reset()
+                        reset_context_if_needed(model)
                     except Exception:
                         pass
                     rp = _get_formatter(template)(messages=ntp, tools=tools)
@@ -574,7 +607,7 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
                         nt3 = [dict(m) for m in _prep_for_template(messages)]
                         nt3.append({"role": "user", "content": _nudge + " /no_think"})
                         try:
-                            model.reset()
+                            reset_context_if_needed(model)
                         except Exception:
                             pass
                         _p3 = dict(_p)

@@ -14,6 +14,10 @@ from typing import AsyncGenerator, Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 
 from app.models import Setting
+# Gated context-reset helper: resets only on the SYCL/Arc build that needs the crash workaround,
+# a no-op on CUDA (nas) so the prompt-prefix cache is kept (much faster prefill). tool_calling has
+# no app-level imports, so this module-level import can't create a cycle.
+from app.services.tool_calling import reset_context_if_needed
 
 # Configure logging
 logger = logging.getLogger("llama_service")
@@ -879,7 +883,7 @@ class LlamaService:
                 if use_prefill:
                     raw_prompt = self._build_no_think_prompt(messages)
                     try:  # clean context: 0.3.28 SYCL mishandles cross-request reuse (broadcast error)
-                        self._model.reset()
+                        reset_context_if_needed(self._model)
                     except Exception:
                         pass
                     result_raw = self._model.create_completion(prompt=raw_prompt, **params)
@@ -1035,7 +1039,7 @@ class LlamaService:
                             if _use_pf:
                                 _prompt = self._build_no_think_prompt(messages)
                                 try:  # clean context (SYCL 0.3.28 cross-request reuse broadcast)
-                                    self._model.reset()
+                                    reset_context_if_needed(self._model)
                                 except Exception:
                                     pass
                                 _iter = self._model.create_completion(prompt=_prompt, stream=True, **params)
@@ -1167,7 +1171,7 @@ class LlamaService:
                 if _use_pf:
                     _prompt = self._build_no_think_prompt(messages)
                     try:  # clean context (SYCL 0.3.28 cross-request reuse broadcast)
-                        self._model.reset()
+                        reset_context_if_needed(self._model)
                     except Exception:
                         pass
                     _iter = self._model.create_completion(prompt=_prompt, stream=True, **params)
