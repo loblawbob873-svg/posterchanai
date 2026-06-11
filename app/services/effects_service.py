@@ -3092,6 +3092,62 @@ def titan_attachments(
         return [], f"❌ {filename}: {e}"
 
 
+# Terminator (turn an image into a short MP4 set to the "terminator" clip — the
+# "terminator" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped terminator track (repo-relative), overridable with TERMINATOR_AUDIO_PATH.
+_TERMINATOR_AUDIO_CANDIDATES = [
+    os.environ.get("TERMINATOR_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "terminator.mp3"),
+    "/var/lib/posterchanai/assets/terminator.mp3",
+]
+# Cap above the ~14s clip length; -shortest ends the video at the audio end.
+_TERMINATOR_DURATION = 15.0
+
+
+def _terminator_audio_path() -> str:
+    """First existing terminator mp3 from the candidate list ("" if none)."""
+    for p in _TERMINATOR_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_terminator(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the terminator clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _terminator_audio_path()
+    if not audio:
+        raise RuntimeError("Terminator audio (assets/terminator.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_TERMINATOR_DURATION)
+
+
+def terminator_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a terminator MP4. Mirrors
+    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_terminator(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_terminator.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🦾 Terminator\n\n🦾 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"terminator failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
 # ---------------------------------------------------------------------------
 # Feliz (turn an image into a short MP4 set to the "feliz" clip)
 # ---------------------------------------------------------------------------

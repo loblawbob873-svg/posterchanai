@@ -598,6 +598,7 @@ class CommandService:
         "whoabuddy": "Turn an attached image into a short MP4 set to the whoa buddy clip: whoabuddy",
         "robocop": "Turn an attached image into a short MP4 set to the robocop clip: robocop",
         "titan": "Turn an attached image into a short MP4 set to the titan clip: titan",
+        "terminator": "Turn an attached image into a short MP4 set to the terminator clip: terminator",
         "feliz": "Turn an attached image into a short MP4 set to the feliz clip: feliz",
         "sopranos": "Turn an attached image into an MP4 set to the Sopranos theme clip: sopranos",
         "cheers": "Turn an attached image into an MP4 set to the Cheers theme clip: cheers",
@@ -657,7 +658,7 @@ class CommandService:
         "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay",
         "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete",
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
-        "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "robocop", "titan",
+        "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "robocop", "titan", "terminator",
         "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
         "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug",
         "feltedtables", "glow", "prayer", "alive", "feliz",
@@ -948,6 +949,8 @@ class CommandService:
             return await self._robocop_command(attachments)
         elif command == "titan":
             return await self._titan_command(attachments)
+        elif command == "terminator":
+            return await self._terminator_command(attachments)
         elif command == "feliz":
             return await self._feliz_command(attachments)
         elif command == "sopranos":
@@ -4009,6 +4012,21 @@ Files are saved to your Storage.""",
         from app.services.effects_service import titan_attachments
 
         outputs, summary = await asyncio.to_thread(titan_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _terminator_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into a short MP4 set to the terminator clip: `terminator`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `terminator`."}
+
+        import asyncio
+        from app.services.effects_service import terminator_attachments
+
+        outputs, summary = await asyncio.to_thread(terminator_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
