@@ -358,7 +358,13 @@ def _fit_to_context(model, template, messages, tools, reserve):
     head = []
     rest = list(messages)
     if rest and rest[0].get("role") == "system":
-        head, rest = [rest[0]], rest[1:]
+        head.append(rest.pop(0))
+    # PIN the first user message (the task). Dropping oldest-first can otherwise strip the ONLY user
+    # turn, and many chat templates then raise "No user query found in messages." -> hard fallback.
+    for i, m in enumerate(rest):
+        if m.get("role") == "user":
+            head.append(rest.pop(i))
+            break
     # Drop oldest turns until the prompt fits. Never start the kept tail on an orphan tool result
     # (a tool message whose assistant tool_call we just dropped) — some templates reject that.
     while rest:
