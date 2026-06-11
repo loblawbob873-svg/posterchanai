@@ -2997,6 +2997,18 @@ async def _handle_telegram_update(update: dict, db: Session):
                 _all_urls_in_text = [u for u in __import__('re').findall(r'https?://\S+', text_stripped)]
                 youtube_url = next((u for u in _all_urls_in_text if any(d in u for d in _yt_domains)), None)
 
+                # Detect an X/Twitter/Nitter status URL (downloadable via yt-dlp, no transcript so no
+                # Summary option). extract_download_urls returns the x.com-normalized form (nitter
+                # rewritten); keep the ORIGINAL url too so the bare/forwarded check works on the text.
+                _x_orig = _x_dl = None
+                if not youtube_url:
+                    from app.services.youtube_service import extract_download_urls as _edl
+                    for _u in _all_urls_in_text:
+                        _got = _edl(_u)
+                        if _got:
+                            _x_orig, _x_dl = _u, _got[0]
+                            break
+
                 # YouTube URL (bare or forwarded): ask the user what they want to do
                 if youtube_url and (is_forwarded or not text_stripped.replace(youtube_url, '').strip()):
                     logger.info(f"Telegram: YouTube URL detected, prompting action: {youtube_url}")
@@ -3025,6 +3037,36 @@ async def _handle_telegram_update(update: dict, db: Session):
                         chat_id,
                         "🎬 What would you like to do with this video?",
                         reply_markup={"inline_keyboard": yt_keyboard},
+                    )
+                    return {"ok": True}
+
+                # X/Twitter/Nitter status URL (bare or forwarded): same prompt as YouTube minus
+                # Summary (tweets have no transcript). Reuses the yt: callbacks — the cached URL is
+                # the x.com-normalized form, so MP3/Video/Post all download via yt-dlp's Twitter path.
+                if _x_dl and (is_forwarded or not text_stripped.replace(_x_orig, '').strip()):
+                    logger.info(f"Telegram: X/Nitter URL detected, prompting action: {_x_dl}")
+                    _youtube_action_cache[chat_id] = _x_dl
+
+                    _x_user_for_social = db.query(User).filter(
+                        User.telegram_chat_id == chat_id,
+                        User.telegram_enabled == True
+                    ).first()
+
+                    x_keyboard = [
+                        [
+                            {"text": "🎵 MP3",   "callback_data": "yt:mp3"},
+                            {"text": "🎬 Video", "callback_data": "yt:video"},
+                        ]
+                    ]
+                    if _has_misskey(_x_user_for_social) or _has_pleroma(_x_user_for_social) or _has_matrix(_x_user_for_social):
+                        x_keyboard.append([
+                            {"text": "📣 Post", "callback_data": "yt:post"}
+                        ])
+
+                    await telegram_service.send_message(
+                        chat_id,
+                        "🐦 What would you like to do with this post?",
+                        reply_markup={"inline_keyboard": x_keyboard},
                     )
                     return {"ok": True}
 
