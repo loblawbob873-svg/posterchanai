@@ -342,14 +342,21 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
                         break
                 else:
                     nt.insert(0, {"role": "system", "content": "/no_think"})
-                r2 = _get_formatter(template)(messages=nt, tools=tools)
-                toks2 = model.tokenize(r2.prompt.encode("utf-8"), add_bos=False, special=True)
-                raw2 = (model.create_completion(prompt=toks2, **_p).get("choices") or [{}])[0].get("text") or ""
-                body2 = raw2.split("</think>", 1)[1].strip() if "</think>" in raw2 else raw2.strip()
-                content, tool_calls = parse_tool_calls(body2)
-                tool_calls = _normalize_tool_names(tool_calls, tools)
-                if not tool_calls and not content:
-                    logger.warning("empty after /no_think retry; raw2[:160]=%r", raw2[:160])
+                try:
+                    r2 = _get_formatter(template)(messages=nt, tools=tools)
+                    toks2 = model.tokenize(r2.prompt.encode("utf-8"), add_bos=False, special=True)
+                    raw2 = (model.create_completion(prompt=toks2, **_p).get("choices") or [{}])[0].get("text") or ""
+                    body2 = raw2.split("</think>", 1)[1].strip() if "</think>" in raw2 else raw2.strip()
+                    content, tool_calls = parse_tool_calls(body2)
+                    tool_calls = _normalize_tool_names(tool_calls, tools)
+                    if not tool_calls and not content:
+                        logger.warning("empty after /no_think retry; raw2[:160]=%r", raw2[:160])
+                except Exception as _e2:
+                    # The retry's extra create_completion can hit a llama.cpp shape/state error on a
+                    # back-to-back generation. Don't let it nuke the whole native path to the hard
+                    # "couldn't generate" fallback — degrade to reasoning-as-content (just below),
+                    # which keeps the stream non-empty so opencode continues.
+                    logger.warning("/no_think retry generation failed (%s); using reasoning fallback", _e2)
             # Last-resort band-aid: NEVER return an empty message. An empty tool response makes the
             # LB read the node as dead and abort the already-streamed SSE -> opencode HARD-stops.
             # If retries still produced nothing usable, surface the model's own reasoning as content
