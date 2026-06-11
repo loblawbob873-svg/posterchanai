@@ -431,8 +431,9 @@ async def send_media_event(homeserver: str, access_token: str, room_id: str, mxc
         info: dict = {"mimetype": mime}
         if size is not None:
             info["size"] = size
-        # Element needs w/h to render an image inline rather than as a download tile (video doesn't).
-        if not is_video and w and h:
+        # Element needs w/h to SIZE the media inline — for BOTH image AND video. Without w/h a video
+        # renders cut off / wrong-sized in the timeline (the long-standing "video size cut off" bug).
+        if w and h:
             info["w"], info["h"] = w, h
         payload: dict = {
             "msgtype": "m.video" if is_video else "m.image",
@@ -490,6 +491,25 @@ async def send_image(homeserver: str, access_token: str, room_id: str,
                 w, h = _im.width, _im.height
         except Exception as _dim_err:
             logger.debug(f"Could not read image dimensions: {_dim_err}")
+    else:
+        # PIL can't open video, so ffprobe the stream w/h — Element needs them to size the video
+        # (without them it renders cut off). Mirrors the bot client's matrix_client.py probe.
+        try:
+            import tempfile as _tf, subprocess as _sp, os as _os
+            _fd, _vp = _tf.mkstemp(suffix=".mp4"); _os.close(_fd)
+            try:
+                with open(_vp, "wb") as _f:
+                    _f.write(image_bytes)
+                _r = _sp.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
+                              "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", _vp],
+                             capture_output=True, text=True, timeout=30)
+                _d = (_r.stdout or "").strip().split("x")
+                if len(_d) == 2 and _d[0].isdigit() and _d[1].isdigit():
+                    w, h = int(_d[0]), int(_d[1])
+            finally:
+                _os.unlink(_vp)
+        except Exception as _ve:
+            logger.debug(f"Could not read video dimensions: {_ve}")
     return await send_media_event(
         homeserver, access_token, room_id, mxc_uri, mime, caption=caption,
         caption_html=caption_html, w=w, h=h, size=len(image_bytes), filename=filename,
