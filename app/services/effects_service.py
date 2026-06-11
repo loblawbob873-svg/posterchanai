@@ -3158,8 +3158,10 @@ _REZE_AUDIO_CANDIDATES = [
     os.path.join(_REPO_ROOT, "assets", "reze.mp3"),
     "/var/lib/posterchanai/assets/reze.mp3",
 ]
-# Cap above the ~13s clip length; -shortest ends the video at the audio end.
-_REZE_DURATION = 14.0
+# reze uses the OVERLAY path (image_gif_overlay_video), which LOOPS the audio to fill `duration`
+# (unlike the audio-clip effects' -shortest). So keep duration AT/UNDER the clip length (~13.0s)
+# or the 13s track restarts for the last second and gets cut off (audio "repeats at the end").
+_REZE_DURATION = 13.0
 
 # Animated transparent overlay: chibi Makima + Reze dancing (ProRes 4444 .mov for clean alpha).
 _REZE_DANCE_CANDIDATES = [
