@@ -57,7 +57,25 @@ def reset_context_if_needed(model) -> None:
 _TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
 # Qwen native form: <function=NAME><parameter=KEY>VALUE</parameter>...</function>
 _FUNC_RE = re.compile(r"<function=([^>\s]+)\s*>(.*?)</function>", re.DOTALL)
-_PARAM_RE = re.compile(r"<parameter=([^>\s]+)\s*>\s*(.*?)\s*</parameter>", re.DOTALL)
+# NOTE: the value is captured VERBATIM (no surrounding `\s*`). The model's template wraps values in
+# formatting newlines (`<parameter=x>\nVALUE\n</parameter>`); we strip only those wrapper newlines in
+# `_unwrap_param_value`, NOT the indentation. The old `\s*(.*?)\s*` deleted the first line's leading
+# indentation, which made an Edit's `oldString` fail to match the file ("Could not find oldString").
+_PARAM_RE = re.compile(r"<parameter=([^>\s]+)\s*>(.*?)</parameter>", re.DOTALL)
+
+
+def _unwrap_param_value(v: str) -> str:
+    """Strip ONE leading and ONE trailing newline (the template's formatting wrapper) but preserve
+    everything else — especially leading indentation, which Edit/Write payloads need verbatim."""
+    if v.startswith("\r\n"):
+        v = v[2:]
+    elif v.startswith("\n"):
+        v = v[1:]
+    if v.endswith("\r\n"):
+        v = v[:-2]
+    elif v.endswith("\n"):
+        v = v[:-1]
+    return v
 # Alternate JSON wrapper that Qwen2.5-Coder emits: <function-calls>{...JSON...}</function-calls>
 # (also tolerates singular / underscore variants). Inner is one or more {"name","arguments"} objects.
 _FUNC_CALLS_RE = re.compile(r"<function[-_]calls?>\s*(.*?)\s*</function[-_]calls?>", re.DOTALL)
@@ -171,7 +189,7 @@ def parse_tool_calls(text: str) -> Tuple[Optional[str], List[Dict[str, Any]]]:
     # 2) Qwen native: <function=NAME><parameter=KEY>VALUE</parameter>...</function>
     if not tool_calls:
         for fm in _FUNC_RE.finditer(text):
-            args = {k.strip(): _coerce_param_value(v) for k, v in _PARAM_RE.findall(fm.group(2))}
+            args = {k.strip(): _coerce_param_value(_unwrap_param_value(v)) for k, v in _PARAM_RE.findall(fm.group(2))}
             tool_calls.append(_mk_call(fm.group(1).strip(), args, len(tool_calls)))
     # 3) <function-calls>{"name":..,"arguments":..}</function-calls> wrapper (Qwen2.5-Coder).
     if not tool_calls:
