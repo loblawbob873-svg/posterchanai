@@ -276,6 +276,37 @@ def _prep_for_template(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
+def _tool_sig(tc: Dict[str, Any]):
+    """Canonical (name, args) signature for a tool call, so a dict-args and a JSON-string-args
+    form of the SAME call compare equal."""
+    fn = tc.get("function", {}) or {}
+    args = fn.get("arguments")
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except Exception:
+            pass
+    try:
+        args = json.dumps(args, sort_keys=True)
+    except Exception:
+        args = str(args)
+    return (fn.get("name"), args)
+
+
+def _is_repeat_tool_call(messages: List[Dict[str, Any]], new_tcs: list) -> bool:
+    """True if the just-generated call duplicates the MOST RECENT prior assistant tool call —
+    i.e. the model is re-emitting the same command it already ran last turn (the pip-install
+    re-run loop). Only the immediately-preceding call is compared, so a legitimate later re-run
+    (test -> edit -> test) is NOT flagged."""
+    if not new_tcs:
+        return False
+    new_sig = _tool_sig(new_tcs[0])
+    for m in reversed(messages):
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            return any(_tool_sig(tc) == new_sig for tc in m["tool_calls"])
+    return False
+
+
 def generate_message(model, messages, tools, params, strip_thinking=None) -> Tuple[Dict[str, Any], str]:
     """Generate + parse a tool-aware response using the model's embedded chat template.
 
@@ -386,6 +417,18 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
                 content = reasoning or None
                 if content:
                     logger.warning("returning reasoning-as-content to avoid hard-stop (len=%d)", len(content))
+            # Loop-breaker: small models sometimes re-emit the SAME tool call they just ran (e.g.
+            # `pip install X` over and over, even with its result right above). If this call
+            # duplicates the immediately-preceding assistant tool call, don't run it again — return
+            # a nudge so the agent moves on instead of looping forever.
+            if tool_calls and _is_repeat_tool_call(messages, tool_calls):
+                _nm = (tool_calls[0].get("function", {}) or {}).get("name")
+                logger.warning("repeat tool call (%s) — breaking loop with a proceed nudge", _nm)
+                return ({"role": "assistant",
+                         "content": "You already ran that exact command on the previous step — its "
+                                    "result is shown above. Do NOT run it again. Assume it succeeded "
+                                    "and continue with the NEXT step, or report that you're finished."},
+                        "stop")
             msg: Dict[str, Any] = {"role": "assistant", "content": content}
             return (({**msg, "tool_calls": tool_calls}, "tool_calls") if tool_calls else (msg, "stop"))
         except Exception as e:
