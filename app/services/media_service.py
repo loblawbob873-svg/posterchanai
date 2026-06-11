@@ -480,7 +480,7 @@ def _parallax_audio_to_video(image_data: bytes, audio_path: str,
     `duration`). Used by image_audio_to_video so the ~40 'sound' gags get a moving
     photo + their music instead of a freeze-frame."""
     from app.services import parallax_service
-    loop_mp4 = parallax_service.add_parallax(image_data, amplitude=0.013, zoom=1.03)
+    loop_mp4 = parallax_service.add_parallax(image_data, amplitude=0.008, zoom=1.02)
     ffmpeg = resolve_ffmpeg()
     tmp_dir = tempfile.mkdtemp(prefix="media_paudio_")
     loop_path = os.path.join(tmp_dir, "loop.mp4")
@@ -638,7 +638,7 @@ def images_audio_to_video(images: List[Tuple[str, bytes]], audio_path: str,
                 _fps = 24
                 _fpi = max(24, int(round((_adur / len(imgs)) * _fps)))  # frames per image
                 _silent = parallax_service.add_parallax_slideshow(
-                    [d for _fn, d in imgs], amplitude=0.013, zoom=1.03, frames=_fpi, fps=_fps)
+                    [d for _fn, d in imgs], amplitude=0.008, zoom=1.02, frames=_fpi, fps=_fps)
                 _ptmp = tempfile.mkdtemp(prefix="media_paudio_ss_")
                 try:
                     _vp = os.path.join(_ptmp, "v.mp4")
@@ -966,7 +966,7 @@ def image_gif_overlay_video(image_data: bytes, source_filename: str, gif_path: s
             if parallax_service._session() is not None:
                 _ploop = os.path.join(tmp_dir, "pbg.mp4")
                 with open(_ploop, "wb") as f:
-                    f.write(parallax_service.add_parallax(image_data, amplitude=0.013, zoom=1.03))
+                    f.write(parallax_service.add_parallax(image_data, amplitude=0.008, zoom=1.02))
                 bg_input = ["-stream_loop", "-1", "-i", _ploop]
         except Exception as e:
             logger.warning(f"parallax overlay background failed ({e}); using still")
@@ -1412,9 +1412,9 @@ def _glow_vf(W: int, H: int, n_frames: int) -> str:
     Wt = max(2, (Wt // 2) * 2)
     Ht = max(2, (Ht // 2) * 2)
     dur = max(0.5, n_frames / 25.0)
-    # Breathing Ken Burns: zoom oscillates 1.0..1.04 over a ~6s cycle, kept centred (gentle).
+    # Breathing Ken Burns: zoom oscillates 1.0..1.02 over a ~6s cycle, kept centred (very gentle).
     # Pre-upscale 2x so zoompan's integer steps don't jitter (same trick as `_zoom_vf`).
-    zexpr = "1.02+0.02*sin(2*PI*on/(25*6))"
+    zexpr = "1.01+0.01*sin(2*PI*on/(25*6))"
     zp = (f"scale={2 * Wt}:{2 * Ht},"
           f"zoompan=z='{zexpr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
           f"d={n_frames}:s={Wt}x{Ht}:fps=25")
