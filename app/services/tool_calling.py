@@ -307,6 +307,27 @@ def _is_repeat_tool_call(messages: List[Dict[str, Any]], new_tcs: list) -> bool:
     return False
 
 
+def _looks_like_intent_to_act(text: str) -> bool:
+    """True if content ANNOUNCES a next action but emitted no tool call (the narrate-instead-of-act
+    stop: e.g. "Let me check the stacking context:" / "I'll fix the import …" then ends the turn).
+    Conservative: a genuine final answer or a question to the user must NOT match (those should stop)."""
+    if not text:
+        return False
+    t = text.strip()
+    if t.endswith("?"):
+        return False  # a question to the user — stopping is correct
+    low = t.lower()
+    if any(k in low[-200:] for k in ("let me know", "feel free", "anything else", "all set",
+                                     "is complete", "is now complete", "have completed", "tests pass")):
+        return False  # a closing / completion — leave it
+    if t.endswith(":"):
+        return True  # announced an action then trailed off without the call (strongest tell)
+    tail = low[-160:]
+    return any(p in tail for p in ("let me ", "let's ", "i'll ", "i will ", "now i ", "next, i",
+                                   "i'm going to", "i am going to", "i need to ", "let me check",
+                                   "let me look", "let me fix", "let me run", "let me try"))
+
+
 def _fit_to_context(model, template, messages, tools, reserve):
     """Trim the conversation so the rendered prompt fits the model's context window.
 
@@ -480,6 +501,34 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
                 content = reasoning or None
                 if content:
                     logger.warning("returning reasoning-as-content to avoid hard-stop (len=%d)", len(content))
+            # Push-to-act: the model often ANNOUNCES the next action as prose ("Let me check the
+            # stacking context:") but emits no tool call -> opencode reads content+stop as a final
+            # answer and ENDS the turn. When tools are available and the content is clearly an
+            # intent-to-act (not a question / not a completion), regenerate ONCE forcing the tool call
+            # so the agent keeps going. If it still won't emit a call, keep the prose (accept the stop).
+            if content and not tool_calls and tools and _looks_like_intent_to_act(content):
+                logger.warning("narration-only intent-to-act — pushing for the tool call")
+                try:
+                    _push = ("Do NOT explain or describe what you are about to do. Emit the tool call "
+                             "NOW to perform that next action. Output ONLY the tool call.")
+                    ntp = [dict(m) for m in _prep_for_template(messages)]
+                    ntp.append({"role": "user", "content": _push + " /no_think"})
+                    try:
+                        model.reset()
+                    except Exception:
+                        pass
+                    rp = _get_formatter(template)(messages=ntp, tools=tools)
+                    toksp = model.tokenize(rp.prompt.encode("utf-8"), add_bos=False, special=True)
+                    rawp = (model.create_completion(prompt=toksp, **_p).get("choices") or [{}])[0].get("text") or ""
+                    bodyp = rawp.split("</think>", 1)[1].strip() if "</think>" in rawp else rawp.strip()
+                    cp, tcp = parse_tool_calls(bodyp)
+                    tcp = _normalize_tool_names(tcp, tools)
+                    if tcp:
+                        content, tool_calls = (cp or None), tcp  # got the action → opencode continues
+                        logger.warning("push-to-act succeeded (%s)", (tcp[0].get("function") or {}).get("name"))
+                except Exception as _ep:
+                    logger.warning("push-to-act generation failed (%s)", _ep)
+
             # Loop-breaker: small models sometimes re-emit the SAME tool call they just ran (e.g.
             # `pip install X` over and over, even with its result right above). If this call
             # duplicates the immediately-preceding assistant tool call, don't run it again — return
