@@ -449,8 +449,13 @@ async def serve_file(
         if _local_path.exists() and _local_path.is_file():
             from mimetypes import guess_type as _gt
             _ct, _ = _gt(str(_local_path))
-            return FileResponse(str(_local_path), media_type=_ct or "application/octet-stream",
-                                headers={"Content-Disposition": f"attachment; filename={_local_path.name}"})
+            _ct = _ct or "application/octet-stream"
+            # Serve media INLINE so the web UI plays/shows it in chat (like geni); FileResponse
+            # supports HTTP Range so <video> can seek. Other files stay attachments (download).
+            _inline = _ct.startswith(("image/", "video/", "audio/"))
+            _disp = "inline" if _inline else f'attachment; filename="{_local_path.name}"'
+            return FileResponse(str(_local_path), media_type=_ct,
+                                headers={"Content-Disposition": _disp})
     except Exception:
         pass
 
@@ -1150,6 +1155,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             for _f in result.get("files", []):
                                 _fbytes = _f.get("data")
                                 _fname = _f.get("filename", "file")
+                                _fct = (_f.get("content_type") or "").lower()
                                 if not _fbytes:
                                     continue
                                 try:
@@ -1160,7 +1166,14 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                     # Encode the filename too — spaces/parens (e.g. "image (2).png")
                                     # otherwise leave a raw ")" that truncates the markdown link.
                                     _url = f"/api/files/{_q(user.username, safe='')}/{conversation_id}/{_q(_saved_name)}"
-                                    _links.append(f"[⬇️ {_fname}]({_url})")
+                                    # Embed media INLINE so it shows/plays in chat like geni; other
+                                    # files (pdf/txt/…) keep the download link.
+                                    if _fct.startswith("image/"):
+                                        _links.append(f"![{_fname}]({_url})")
+                                    elif _fct.startswith("video/"):
+                                        _links.append(f"!video[{_fname}]({_url})")
+                                    else:
+                                        _links.append(f"[⬇️ {_fname}]({_url})")
                                 except Exception as _save_err:
                                     logger.error(f"[CHAT] Failed to save output file {_fname}: {_save_err}")
                                     _links.append(f"❌ {_fname}: save failed")

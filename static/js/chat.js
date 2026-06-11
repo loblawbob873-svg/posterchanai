@@ -3311,6 +3311,15 @@ class ChatHandler {
             return `\x00IMG${index}\x00`;
         });
 
+        // Extract inline videos !video[name](url) (effect outputs like /api/files/.../x.mp4)
+        // so they play in chat instead of being a download link.
+        const videos = [];
+        processed = processed.replace(/!video\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g, (match, alt, url) => {
+            const index = videos.length;
+            videos.push({ alt: alt.trim(), url: url.trim() });
+            return `\x00VID${index}\x00`;
+        });
+
         // Extract and preserve HTML links BEFORE processing markdown (so they don't get escaped)
         const htmlLinks = [];
         processed = processed.replace(/<a\s+([^>]*?)href=["']([^"']+)["']([^>]*?)>(.*?)<\/a>/gi, (match, before, url, after, text) => {
@@ -3462,6 +3471,14 @@ class ChatHandler {
             else src = encodeURI(src);
             const safeAlt = this.escapeHtml(imgAlt);
             return `<img src="${src}" alt="${safeAlt}" class="message-inline-image" loading="lazy" style="max-width:100%;height:auto;border-radius:8px;margin:8px 0;">`;
+        });
+
+        // Restore inline videos as a <video> player (effect outputs, so they play in chat)
+        html = html.replace(/\x00VID(\d+)\x00/g, (match, index) => {
+            const vid = videos[parseInt(index)];
+            if (!vid || !vid.url) return '';
+            const src = vid.url.startsWith('/') ? vid.url : encodeURI(vid.url);
+            return `<video src="${src}" controls preload="metadata" class="message-inline-video" style="max-width:100%;height:auto;border-radius:8px;margin:8px 0;"></video>`;
         });
 
         // Restore HTML links first (before markdown links)

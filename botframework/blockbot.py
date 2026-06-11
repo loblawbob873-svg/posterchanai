@@ -614,7 +614,7 @@ def scalps(print_only=False):
         print("OpenAI configured. Trying to generate reply.")
         try:
             original_final = FINAL
-            prompt = f"Format the following blocklist data as a social media post. Use EXACTLY the usernames provided below - do NOT invent or replace any usernames. Keep all @ symbols and block counts exactly as shown. Add a brief introductory sentence and congratulate the top blockers. {FINAL}"
+            prompt = f"Format the following blocklist data as a social media post. Use EXACTLY the usernames provided below - do NOT invent or replace any usernames. Keep all @ symbols and block counts exactly as shown. Add a brief introductory sentence and congratulate the MOST-BLOCKED accounts. IMPORTANT: these accounts are the ones being blocked the most by the community — they are NOT doing the blocking. Refer to them as the most blocked / most-blocked accounts, never as 'blockers'. {FINAL}"
             msg = generate_reply(prompt)
             if not msg:
                 print("OpenAI Response is null")
@@ -688,7 +688,7 @@ def misskey_scalps(print_only=False):
         print("OpenAI configured. Trying to generate reply.")
         try:
             original_final = FINAL
-            prompt = f"Format the following blocklist data as a social media post. Use EXACTLY the usernames provided below - do NOT invent or replace any usernames. Keep all @ symbols and block counts exactly as shown. Add a brief introductory sentence and congratulate the top blockers. {FINAL}"
+            prompt = f"Format the following blocklist data as a social media post. Use EXACTLY the usernames provided below - do NOT invent or replace any usernames. Keep all @ symbols and block counts exactly as shown. Add a brief introductory sentence and congratulate the MOST-BLOCKED accounts. IMPORTANT: these accounts are the ones being blocked the most by the community — they are NOT doing the blocking. Refer to them as the most blocked / most-blocked accounts, never as 'blockers'. {FINAL}"
             msg = generate_reply(prompt)
             if not msg:
                 print("OpenAI Response is null")

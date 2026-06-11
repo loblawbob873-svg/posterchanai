@@ -5200,9 +5200,14 @@ async def _handle_telegram_update(update: dict, db: Session):
                     User.telegram_chat_id == chat_id,
                     User.telegram_enabled == True,
                 ).first()
+                # A URL baked into the glow image is useless (not clickable) — keep links OUT of
+                # the image and put them in the post body instead.
+                import re as _re
+                _glow_urls = _re.findall(r'https?://\S+', _gp)
+                _glow_text = _re.sub(r'https?://\S+', '', _gp).strip()
                 try:
                     from app.services import effects_service as _fx
-                    _glow_png = await asyncio.to_thread(_fx.render_glow_text_card, _gp)
+                    _glow_png = await asyncio.to_thread(_fx.render_glow_text_card, _glow_text or _gp)
                 except Exception as _ge:
                     logger.error(f"glow text card failed: {_ge}", exc_info=True)
                     await telegram_service.send_message(chat_id, f"❌ Couldn't render the glowing text: {_ge}")
@@ -5213,8 +5218,10 @@ async def _handle_telegram_update(update: dict, db: Session):
                 import base64 as _b64
                 await telegram_service.send_photo(
                     chat_id, _b64.b64encode(_glow_png).decode("ascii"), "🌟 Glowing text preview")
-                # Empty body: the text is now the image, so don't also post it as text.
-                await _offer_social_post(chat_id, "", _gu, telegram_service,
+                # The glowing TEXT is now the image; keep any link(s) in the post body so they
+                # stay clickable (don't re-post the text — it's in the image).
+                _glow_body = "\n".join(_glow_urls)
+                await _offer_social_post(chat_id, _glow_body, _gu, telegram_service,
                                          prompt="📣 *Post this glowing image?*", image_bytes=_glow_png)
                 return {"ok": True}
 
