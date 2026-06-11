@@ -359,23 +359,38 @@ def _fit_to_context(model, template, messages, tools, reserve):
     rest = list(messages)
     if rest and rest[0].get("role") == "system":
         head.append(rest.pop(0))
-    # PIN the first user message (the task). Dropping oldest-first can otherwise strip the ONLY user
-    # turn, and many chat templates then raise "No user query found in messages." -> hard fallback.
-    for i, m in enumerate(rest):
-        if m.get("role") == "user":
-            head.append(rest.pop(i))
-            break
-    # Drop oldest turns until the prompt fits. Never start the kept tail on an orphan tool result
-    # (a tool message whose assistant tool_call we just dropped) — some templates reject that.
-    while rest:
-        while rest and rest[0].get("role") == "tool":
-            rest = rest[1:]
+    # Trim oldest ASSISTANT/TOOL turns only — NEVER a user message. The user's messages carry the
+    # task and every mid-session correction; dropping them is why a long session stops "listening".
+    # An assistant tool_call is dropped together with its following tool result(s) so we never leave
+    # an orphan (tool result without its call / call without result), which some templates reject.
+    def _oldest_droppable_span(msgs):
+        for k, m in enumerate(msgs):
+            if m.get("role") == "user":
+                continue
+            span = 1
+            if m.get("role") == "assistant" and m.get("tool_calls"):
+                j = k + 1
+                while j < len(msgs) and msgs[j].get("role") == "tool":
+                    span += 1
+                    j += 1
+            return k, span
+        return None, 0
+
+    guard = 0
+    while guard < len(messages) + 5:
+        guard += 1
         try:
-            if not rest or _ntok(head + rest) <= budget:
+            if _ntok(head + rest) <= budget:
                 break
         except Exception:
             break
-        rest = rest[1:]
+        k, span = _oldest_droppable_span(rest)
+        if k is None:  # only user messages left — stop (better an over-budget retry than losing them)
+            break
+        del rest[k:k + span]
+    # Never start the kept tail on an orphan tool result.
+    while rest and rest[0].get("role") == "tool":
+        rest.pop(0)
     trimmed = head + rest
     # Pathological: a single recent turn (e.g. a huge file read) alone exceeds the budget. Truncate
     # the largest tool result's content so we still fit instead of hard-failing.
