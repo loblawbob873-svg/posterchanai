@@ -624,6 +624,41 @@ def images_audio_to_video(images: List[Tuple[str, bytes]], audio_path: str,
     if len(imgs) == 1 and audio_path:
         return image_audio_to_video(imgs[0][1], imgs[0][0], audio_path, duration)
 
+    # Multi-image WITH audio: parallax EACH image (so audio "movie" effects come alive with
+    # several images, matching the single-image path) and mux the audio. Each image's parallax
+    # orbit is sized to its time slice so the whole thing runs the length of the audio. Falls
+    # back to the static-hold slideshow below if the depth model is missing or parallax fails.
+    if audio_path:
+        try:
+            from app.services import parallax_service
+            if parallax_service._session() is not None:
+                _adur = _probe_duration(audio_path)
+                if not _adur or _adur <= 0:
+                    _adur = float(duration) if (duration and duration > 0) else 12.0
+                _fps = 24
+                _fpi = max(24, int(round((_adur / len(imgs)) * _fps)))  # frames per image
+                _silent = parallax_service.add_parallax_slideshow(
+                    [d for _fn, d in imgs], amplitude=0.022, zoom=1.04, frames=_fpi, fps=_fps)
+                _ptmp = tempfile.mkdtemp(prefix="media_paudio_ss_")
+                try:
+                    _vp = os.path.join(_ptmp, "v.mp4")
+                    _op = os.path.join(_ptmp, "out.mp4")
+                    with open(_vp, "wb") as _f:
+                        _f.write(_silent)
+                    _cmd = [ffmpeg, "-i", _vp, "-i", audio_path,
+                            "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy",
+                            "-c:a", "aac", "-b:a", VIDEO_AUDIO_BITRATE,
+                            "-shortest", "-movflags", "+faststart", "-y", _op]
+                    _r = subprocess.run(_cmd, capture_output=True, timeout=1800, text=True)
+                    if _r.returncode == 0 and os.path.exists(_op) and os.path.getsize(_op) > 0:
+                        with open(_op, "rb") as _f:
+                            return _f.read()
+                    logger.warning(f"parallax-slideshow audio mux failed, using static slideshow: {(_r.stderr or '')[-200:]}")
+                finally:
+                    shutil.rmtree(_ptmp, ignore_errors=True)
+        except Exception as _e:
+            logger.warning(f"parallax slideshow unavailable ({_e}); using static slideshow")
+
     # Canvas = first image's dimensions, capped to a 1280 long edge, rounded even.
     with _Img.open(BytesIO(imgs[0][1])) as _im0:
         _im0 = _ImageOps.exif_transpose(_im0)
