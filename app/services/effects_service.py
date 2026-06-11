@@ -4490,7 +4490,7 @@ _BIKE_AUDIO_CANDIDATES = [
     "/var/lib/posterchanai/assets/bike.mp3",
 ]
 # Cap above the ~12s clip length; -shortest ends the video at the audio end.
-_BIKE_DURATION = 13.0
+_BIKE_DURATION = 11.0
 
 
 def _bike_audio_path() -> str:
