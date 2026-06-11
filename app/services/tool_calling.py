@@ -492,33 +492,38 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
                 # opencode treat it as a final answer and STOP.) Only fall back to a stop-nudge if it
                 # still repeats / produces nothing.
                 _steered = False
-                try:
-                    _nudge = ("The previous command already ran and SUCCEEDED (its result is above). "
-                              "Do NOT run it again. Take the NEXT step toward the goal with a different "
-                              "tool call, or report you are finished.")
-                    nt3 = [dict(m) for m in _prep_for_template(messages)]
-                    for _m in nt3:
-                        if _m.get("role") == "system":
-                            _m["content"] = ((_m.get("content") or "") + " " + _nudge + " /no_think").strip()
-                            break
-                    else:
-                        nt3.insert(0, {"role": "system", "content": _nudge + " /no_think"})
+                # The nudge goes in as a TRAILING turn (right after the duplicated result) so it's the
+                # most-recent context, not buried in the system prompt; and we regenerate at ESCALATING
+                # temperature, because at opencode's low temp the model just greedily reproduces the
+                # identical call. Higher temp shakes it onto a different next action.
+                _nudge = ("STOP. The previous command already ran and its result is shown above. Running "
+                          "it again is forbidden and useless. Do something DIFFERENT now: take the NEXT "
+                          "step toward the goal with a different command, or say you are finished.")
+                for _temp in (0.85, 1.1):
                     try:
-                        model.reset()
-                    except Exception:
-                        pass
-                    r3 = _get_formatter(template)(messages=nt3, tools=tools)
-                    toks3 = model.tokenize(r3.prompt.encode("utf-8"), add_bos=False, special=True)
-                    raw3 = (model.create_completion(prompt=toks3, **_p).get("choices") or [{}])[0].get("text") or ""
-                    body3 = raw3.split("</think>", 1)[1].strip() if "</think>" in raw3 else raw3.strip()
-                    c3, tc3 = parse_tool_calls(body3)
-                    tc3 = _normalize_tool_names(tc3, tools)
-                    if tc3 and not _is_repeat_tool_call(messages, tc3):
-                        content, tool_calls, _steered = c3, tc3, True   # new action → opencode continues
-                    elif c3 and not tc3:
-                        content, tool_calls, _steered = c3, None, True  # a different text answer
-                except Exception as _e3:
-                    logger.warning("re-steer generation failed (%s)", _e3)
+                        nt3 = [dict(m) for m in _prep_for_template(messages)]
+                        nt3.append({"role": "user", "content": _nudge + " /no_think"})
+                        try:
+                            model.reset()
+                        except Exception:
+                            pass
+                        _p3 = dict(_p)
+                        _p3["temperature"] = _temp
+                        r3 = _get_formatter(template)(messages=nt3, tools=tools)
+                        toks3 = model.tokenize(r3.prompt.encode("utf-8"), add_bos=False, special=True)
+                        raw3 = (model.create_completion(prompt=toks3, **_p3).get("choices") or [{}])[0].get("text") or ""
+                        body3 = raw3.split("</think>", 1)[1].strip() if "</think>" in raw3 else raw3.strip()
+                        c3, tc3 = parse_tool_calls(body3)
+                        tc3 = _normalize_tool_names(tc3, tools)
+                        if tc3 and not _is_repeat_tool_call(messages, tc3):
+                            content, tool_calls, _steered = c3, tc3, True   # new action → opencode continues
+                            break
+                        if c3 and not tc3:
+                            content, tool_calls, _steered = c3, None, True  # a different text answer
+                            break
+                    except Exception as _e3:
+                        logger.warning("re-steer generation failed (temp=%s: %s)", _temp, _e3)
+                logger.warning("re-steer %s for repeat %s", "succeeded" if _steered else "exhausted", _nm)
                 if not _steered:
                     return ({"role": "assistant",
                              "content": "You already ran that exact command (result above). Do NOT run "
