@@ -5571,13 +5571,16 @@ def apply_meme_text(outputs: List[OutputFile], text: str) -> List[OutputFile]:
 # `<effect> char <name>` (parsed alongside meme/motion). Maps a name → a transparent asset in
 # assets/characters/. Animated (.mov) for video outputs; static frame for image outputs.
 _CHARACTERS = {
-    "animegirl": "animegirl.mov", "girl": "animegirl.mov", "anime": "animegirl.mov", "waifu": "animegirl.mov",
+    "animegirl": "animegirl.mov", "girl": "animegirl.mov", "anime": "animegirl.mov",
+    "waifu": "animegirl.mov", "schoolgirl": "animegirl.mov",
+    "pepe": "pepe.png", "frog": "pepe.png",
+    "trump": "trump.png", "donald": "trump.png",
     "cow": "cow.png", "moo": "cow.png",
     "boobs": "boobs.png", "boob": "boobs.png", "tits": "boobs.png",
     "panties": "panties.png", "panty": "panties.png",
 }
 # Canonical names (for menus/help), dedup-ordered.
-CHARACTER_NAMES = ["animegirl", "cow", "boobs", "panties"]
+CHARACTER_NAMES = ["animegirl", "pepe", "trump", "cow", "boobs", "panties"]
 _CHARS_DIR_CANDIDATES = [
     os.path.join(_REPO_ROOT, "assets", "characters"),
     "/var/lib/posterchanai/assets/characters",

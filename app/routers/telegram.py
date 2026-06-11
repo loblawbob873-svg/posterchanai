@@ -1342,7 +1342,9 @@ _effect_char_pending: dict = {}
 def _character_prompt_keyboard() -> dict:
     """Buttons to pick a bottom-right character (or skip). Drives the media:chr:<name> callback."""
     return {"inline_keyboard": [
-        [{"text": "🧍 Anime Girl", "callback_data": "media:chr:animegirl"},
+        [{"text": "🧍 Schoolgirl", "callback_data": "media:chr:animegirl"},
+         {"text": "🐸 Pepe", "callback_data": "media:chr:pepe"}],
+        [{"text": "🇺🇸 Trump", "callback_data": "media:chr:trump"},
          {"text": "🐄 Cow", "callback_data": "media:chr:cow"}],
         [{"text": "🍈 Boobs", "callback_data": "media:chr:boobs"},
          {"text": "🩲 Panties", "callback_data": "media:chr:panties"}],
