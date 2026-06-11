@@ -306,6 +306,14 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
             _sc = _eos_stopping_criteria(model)
             if _sc is not None:
                 _p["stopping_criteria"] = _sc
+            # Reset the reused model's context before generating. The SYCL (Arc) build of
+            # llama-cpp-python 0.3.28 mishandles cross-request context reuse and throws
+            # "could not broadcast input array from shape (N,) into shape (M,)" when the next
+            # prompt doesn't fit the stale buffer; a clean reset sidesteps that path.
+            try:
+                model.reset()
+            except Exception:
+                pass
             raw = (model.create_completion(prompt=toks, **_p).get("choices") or [{}])[0].get("text") or ""
             # Generation starts inside the template's pre-filled "<think>" block.
             if "</think>" in raw:
@@ -343,6 +351,10 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
                 else:
                     nt.insert(0, {"role": "system", "content": "/no_think"})
                 try:
+                    try:
+                        model.reset()  # clean context for the 2nd generation (SYCL reuse bug)
+                    except Exception:
+                        pass
                     r2 = _get_formatter(template)(messages=nt, tools=tools)
                     toks2 = model.tokenize(r2.prompt.encode("utf-8"), add_bos=False, special=True)
                     raw2 = (model.create_completion(prompt=toks2, **_p).get("choices") or [{}])[0].get("text") or ""

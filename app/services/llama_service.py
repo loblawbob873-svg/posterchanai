@@ -878,6 +878,10 @@ class LlamaService:
             try:
                 if use_prefill:
                     raw_prompt = self._build_no_think_prompt(messages)
+                    try:  # clean context: 0.3.28 SYCL mishandles cross-request reuse (broadcast error)
+                        self._model.reset()
+                    except Exception:
+                        pass
                     result_raw = self._model.create_completion(prompt=raw_prompt, **params)
                     content = result_raw["choices"][0]["text"]
                     content = self.strip_thinking_tags(content)
@@ -1030,6 +1034,10 @@ class LlamaService:
                                 return
                             if _use_pf:
                                 _prompt = self._build_no_think_prompt(messages)
+                                try:  # clean context (SYCL 0.3.28 cross-request reuse broadcast)
+                                    self._model.reset()
+                                except Exception:
+                                    pass
                                 _iter = self._model.create_completion(prompt=_prompt, stream=True, **params)
                                 def _get_delta(c):
                                     t = c.get("choices", [{}])[0].get("text", "")
@@ -1158,6 +1166,10 @@ class LlamaService:
             try:
                 if _use_pf:
                     _prompt = self._build_no_think_prompt(messages)
+                    try:  # clean context (SYCL 0.3.28 cross-request reuse broadcast)
+                        self._model.reset()
+                    except Exception:
+                        pass
                     _iter = self._model.create_completion(prompt=_prompt, stream=True, **params)
                     def _tok(c): return c.get("choices", [{}])[0].get("text", "")
                 else:
