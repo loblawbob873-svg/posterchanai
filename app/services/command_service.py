@@ -840,6 +840,17 @@ class CommandService:
         if command in self.MOTION_EFFECTS and arg:
             _toks = arg.split()
             _low = [t.lower() for t in _toks]
+            # `char <name>` (anywhere) → overlay a cute character bottom-right. Parsed FIRST (before
+            # `meme`, which consumes to the end) and only consumed when <name> is a real character,
+            # so the word "char" inside a caption is never mistaken for the modifier.
+            from app.services import effects_service as _fx_chk
+            _character = None
+            if "char" in _low:
+                _ci = _low.index("char")
+                if _ci + 1 < len(_toks) and _fx_chk._character_path(_toks[_ci + 1]):
+                    _character = _toks[_ci + 1].lower()
+                    _toks = _toks[:_ci] + _toks[_ci + 2:]
+                    _low = [t.lower() for t in _toks]
             _meme_text = None
             # `meme` only acts as a trailing subcommand for OTHER effects — not for
             # the meme effect itself (its whole arg is the caption) nor thug (which
@@ -865,7 +876,7 @@ class CommandService:
                     _trippy = True
                 elif _motion is None:
                     _motion = _t
-            if _motion or _trippy or _meme_text:
+            if _motion or _trippy or _meme_text or _character:
                 import asyncio
                 from app.services import effects_service
                 inner = await self._execute_command_inner(
@@ -892,6 +903,8 @@ class CommandService:
                     # on top of a geometry motion, and even on animated effects.
                     if _trippy:
                         files = await asyncio.to_thread(effects_service.apply_trippy, files)
+                    if _character:
+                        files = await asyncio.to_thread(effects_service.apply_character, files, _character)
                     if _meme_text:
                         files = await asyncio.to_thread(effects_service.apply_meme_text, files, _meme_text)
                     inner["files"] = files

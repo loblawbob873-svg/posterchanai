@@ -800,6 +800,71 @@ def _concat_video_clips(videos: List[bytes]) -> bytes:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+def overlay_corner_character(video_data: bytes, source_filename: str, char_path: str,
+                             height_frac: float = 0.34, margin_frac: float = 0.025) -> bytes:
+    """Composite a transparent character (static PNG or animated .mov/.gif with alpha) into the
+    BOTTOM-RIGHT of a video, scaled to `height_frac` of the video height. Keeps the video's audio.
+    Best-effort: returns the original bytes on any failure."""
+    global _video_encoder_cache
+    ffmpeg = resolve_ffmpeg()
+    if not ffmpeg_available() or not video_data or not char_path or not os.path.exists(char_path):
+        return video_data
+    tmp = tempfile.mkdtemp(prefix="media_char_")
+    try:
+        vin = os.path.join(tmp, "in.mp4")
+        with open(vin, "wb") as f:
+            f.write(video_data)
+        W = _probe_width(vin); H = _probe_height(vin)
+        if not (W and H):
+            return video_data
+        ch = max(2, int(H * height_frac))
+        mw = int(W * margin_frac); mh = int(H * margin_frac)
+        low = char_path.lower()
+        if low.endswith(".gif"):
+            char_loop = ["-ignore_loop", "0"]
+        elif low.endswith((".mov", ".webm", ".mp4")):
+            char_loop = ["-stream_loop", "-1"]
+        else:                       # static image
+            char_loop = ["-loop", "1"]
+        base_fc = (f"[1:v]scale=-1:{ch}:flags=lanczos[ov];"
+                   f"[0:v][ov]overlay=W-w-{mw}:H-h-{mh}:shortest=1[vc]")
+        candidates = _video_encoder_candidates(ffmpeg)
+        if _video_encoder_cache and _video_encoder_cache in candidates:
+            candidates = [_video_encoder_cache] + [c for c in candidates if c != _video_encoder_cache]
+        out_path = os.path.join(tmp, "out.mp4")
+        last_err = ""
+        for encoder in candidates:
+            pre = []
+            if encoder == "h264_vaapi":
+                pre = ["-vaapi_device", _render_node()]
+                fc = base_fc + ";[vc]format=nv12,hwupload[vout]"
+                venc = ["-c:v", "h264_vaapi"]
+            elif encoder == "h264_nvenc":
+                fc = base_fc + ";[vc]format=yuv420p[vout]"
+                venc = ["-c:v", "h264_nvenc", "-preset", "p5"]
+            else:
+                fc = base_fc + ";[vc]format=yuv420p[vout]"
+                venc = ["-c:v", "libx264", "-preset", VIDEO_PRESET, "-crf", str(VIDEO_CRF)]
+            cmd = ([ffmpeg, "-y", "-i", vin] + char_loop + ["-i", char_path,
+                    "-filter_complex", fc, "-map", "[vout]", "-map", "0:a?"] + venc
+                   + ["-c:a", "copy", "-movflags", "+faststart", out_path])
+            r = subprocess.run(cmd, capture_output=True, timeout=600, text=True)
+            if r.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+                _video_encoder_cache = encoder
+                with open(out_path, "rb") as f:
+                    return f.read()
+            last_err = (r.stderr or "")[-300:]
+            if os.path.exists(out_path):
+                os.unlink(out_path)
+        logger.warning(f"overlay_corner_character failed (tried {candidates}); original: {last_err}")
+        return video_data
+    except Exception as e:
+        logger.warning(f"overlay_corner_character error ({e}); returning original")
+        return video_data
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 # --- TikTok-style branding outro (appended to effect videos) -----------------
 _REPO_ROOT_MS = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _OUTRO_LOGO = os.path.join(_REPO_ROOT_MS, "static", "icon-512.png")

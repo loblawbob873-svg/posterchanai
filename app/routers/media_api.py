@@ -100,9 +100,17 @@ async def process_media(
     motion = None
     trippy = False
     meme_text = None
+    character = None
     if command not in ("compress", "clip", "convert"):
         _toks = arg.split()
         _low = [t.lower() for t in _toks]
+        # `char <name>` (anywhere) → overlay a character; parse before `meme` (which eats to end).
+        if "char" in _low:
+            _ci = _low.index("char")
+            if _ci + 1 < len(_toks) and effects_service._character_path(_toks[_ci + 1]):
+                character = _toks[_ci + 1].lower()
+                _toks = _toks[:_ci] + _toks[_ci + 2:]
+                _low = [t.lower() for t in _toks]
         if command not in ("meme", "thug") and "meme" in _low:
             _i = _low.index("meme")
             meme_text = " ".join(_toks[_i + 1:]).strip()
@@ -315,6 +323,8 @@ async def process_media(
             outputs = await asyncio.to_thread(_apply, outputs)
         if trippy and outputs:
             outputs = await asyncio.to_thread(effects_service.apply_trippy, outputs)
+        if character and outputs:
+            outputs = await asyncio.to_thread(effects_service.apply_character, outputs, character)
         if meme_text and outputs:
             outputs = await asyncio.to_thread(effects_service.apply_meme_text, outputs, meme_text)
         # Shrink oversized effect videos before delivery (same as the command path).
