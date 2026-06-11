@@ -307,6 +307,64 @@ def _is_repeat_tool_call(messages: List[Dict[str, Any]], new_tcs: list) -> bool:
     return False
 
 
+def _fit_to_context(model, template, messages, tools, reserve):
+    """Trim the conversation so the rendered prompt fits the model's context window.
+
+    A long agentic session (opencode keeps the full history) can render to MORE tokens than the
+    context window (e.g. 32399 > 32256), which makes the template/tokenize path raise BEFORE any
+    generation -> the whole native tool path falls to the hard "couldn't generate" fallback. We
+    instead drop the OLDEST turns (keeping a leading system turn + as many recent turns as fit),
+    so the agent degrades gracefully and keeps going. Returns the (possibly trimmed) message list;
+    on any error returns the input unchanged (the caller's try/except still guards it)."""
+    try:
+        n_ctx = int(model.n_ctx())
+    except Exception:
+        return messages
+    budget = n_ctx - max(int(reserve or 0), 512)
+    if budget <= 0:
+        return messages
+
+    def _ntok(msgs):
+        r = _get_formatter(template)(messages=_prep_for_template(msgs), tools=tools)
+        return len(model.tokenize(r.prompt.encode("utf-8"), add_bos=False, special=True))
+
+    try:
+        if _ntok(messages) <= budget:
+            return messages
+    except Exception:
+        return messages
+
+    head = []
+    rest = list(messages)
+    if rest and rest[0].get("role") == "system":
+        head, rest = [rest[0]], rest[1:]
+    # Drop oldest turns until the prompt fits. Never start the kept tail on an orphan tool result
+    # (a tool message whose assistant tool_call we just dropped) — some templates reject that.
+    while rest:
+        while rest and rest[0].get("role") == "tool":
+            rest = rest[1:]
+        try:
+            if not rest or _ntok(head + rest) <= budget:
+                break
+        except Exception:
+            break
+        rest = rest[1:]
+    trimmed = head + rest
+    # Pathological: a single recent turn (e.g. a huge file read) alone exceeds the budget. Truncate
+    # the largest tool result's content so we still fit instead of hard-failing.
+    try:
+        if _ntok(trimmed) > budget:
+            biggest = max((m for m in trimmed if m.get("role") == "tool" and isinstance(m.get("content"), str)),
+                          key=lambda m: len(m["content"]), default=None)
+            if biggest is not None and len(biggest["content"]) > 4000:
+                keep = max(2000, len(biggest["content"]) - (len(biggest["content"]) // 2))
+                biggest["content"] = biggest["content"][:keep] + "\n…[truncated to fit context]"
+    except Exception:
+        pass
+    logger.warning("trimmed conversation to fit context (%d -> %d messages)", len(messages), len(trimmed))
+    return trimmed
+
+
 def generate_message(model, messages, tools, params, strip_thinking=None) -> Tuple[Dict[str, Any], str]:
     """Generate + parse a tool-aware response using the model's embedded chat template.
 
@@ -334,6 +392,11 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
     template = (getattr(model, "metadata", None) or {}).get("tokenizer.chat_template")
     if template:
         try:
+            # Trim the oldest turns if the full history would overflow the context window, so a long
+            # session degrades gracefully instead of raising "Requested tokens exceed context window"
+            # and falling to the hard "couldn't generate" fallback. All downstream re-renders
+            # (/no_think retry, re-steer) use this fitted list via `messages`.
+            messages = _fit_to_context(model, template, messages, tools, (params or {}).get("max_tokens"))
             r = _get_formatter(template)(messages=_prep_for_template(messages), tools=tools)
             stops = list(getattr(r, "stop", None) or [])
             if "<|im_end|>" not in stops:
