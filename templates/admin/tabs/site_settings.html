@@ -1,6 +1,17 @@
 <!-- Site Settings Tab -->
 <div class="tab-content" id="tab-site">
     <fieldset>
+        <legend>Effects</legend>
+        <div class="form-group">
+            <label for="effect_outro_enabled">Append "made with PosterChanAI" end-card to effect videos</label>
+            <select id="effect_outro_enabled" name="effect_outro_enabled">
+                <option value="true">Enabled</option>
+                <option value="false">Disabled</option>
+            </select>
+            <small>TikTok-style outro: avatar + @username (web UI / Telegram / Matrix) or a static card (bot-posted effects).</small>
+        </div>
+    </fieldset>
+    <fieldset>
         <legend>Load Balancing</legend>
         <div class="form-group">
             <label for="chat_server_urls">Chat Server URLs</label>

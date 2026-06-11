@@ -754,7 +754,46 @@ class CommandService:
             result["files"] = await asyncio.to_thread(
                 media_service.compress_output_videos, result["files"],
             )
+        # TikTok-style branding end-card on effect VIDEOS: per-user avatar/@username + the
+        # PosterChan mascot + "made with PosterChanAI". Gated by `effect_outro_enabled` (default on).
+        if ((command in self.MOTION_EFFECTS or command in self.ANIMATED_EFFECTS)
+                and isinstance(result, dict) and result.get("type") == "files" and result.get("files")):
+            import asyncio
+            result["files"] = await asyncio.to_thread(self._brand_effect_videos, result["files"])
         return result
+
+    def _brand_effect_videos(self, files: list) -> list:
+        """Append the PosterChanAI end-card to each video output (per-user avatar + @username when
+        known). Best-effort: any failure leaves the original file untouched."""
+        from app.models import Setting
+        from app.services import media_service
+        try:
+            s = self.db.query(Setting).filter(Setting.key == "effect_outro_enabled").first()
+            if s and str(s.value).strip().lower() in ("false", "0", "no", "off"):
+                return files
+        except Exception:
+            pass
+        username = getattr(self.user, "username", None) if self.user else None
+        avatar_bytes = None
+        try:
+            if username:
+                from app.services.storage_service import get_storage_service
+                ap = get_storage_service(self.db).get_avatar_path(username)
+                if ap and ap.exists():
+                    avatar_bytes = ap.read_bytes()
+        except Exception:
+            avatar_bytes = None
+        out = []
+        for f in files:
+            try:
+                if isinstance(f, dict) and f.get("content_type") == "video/mp4" and f.get("data"):
+                    f = {**f, "data": media_service.append_outro(
+                        f["data"], f.get("filename", "video.mp4"),
+                        username=username, avatar_bytes=avatar_bytes)}
+            except Exception as e:
+                logger.warning(f"outro branding failed for {f.get('filename') if isinstance(f, dict) else '?'}: {e}")
+            out.append(f)
+        return out
 
     async def _execute_command_inner(
         self,

@@ -59,6 +59,28 @@ class PostCardRequest(BaseModel):
     avatar: Optional[MediaItem] = None  # pre-fetched profile picture, embedded as a data: URI
 
 
+def _brand_static_videos(outputs: list, db: Session) -> list:
+    """Append the STATIC PosterChanAI end-card to each video output (bot path — no user context).
+    Gated by `effect_outro_enabled`; best-effort (failure leaves the file untouched)."""
+    from app.models import Setting
+    try:
+        s = db.query(Setting).filter(Setting.key == "effect_outro_enabled").first()
+        if s and str(s.value).strip().lower() in ("false", "0", "no", "off"):
+            return outputs
+    except Exception:
+        pass
+    out = []
+    for f in (outputs or []):
+        try:
+            if isinstance(f, dict) and f.get("content_type") == "video/mp4" and f.get("data"):
+                f = {**f, "data": media_service.append_outro(
+                    f["data"], f.get("filename", "video.mp4"), username=None, avatar_bytes=None)}
+        except Exception as e:
+            logger.warning(f"[MEDIA-API] outro branding failed: {e}")
+        out.append(f)
+    return out
+
+
 @router.post("/process")
 async def process_media(
     req: MediaProcessRequest,
@@ -299,6 +321,10 @@ async def process_media(
         # Skip the media tools (compress already ran; clip/convert are user-controlled).
         if outputs and command not in ("compress", "clip", "convert"):
             outputs = await asyncio.to_thread(media_service.compress_output_videos, outputs)
+        # TikTok-style branding end-card. The bot media endpoint is identity-agnostic, so this is the
+        # STATIC "made with PosterChanAI" card (no per-user avatar/@username). Gated, best-effort.
+        if outputs and command not in ("compress", "clip", "convert"):
+            outputs = await asyncio.to_thread(_brand_static_videos, outputs, db)
     except Exception as e:
         logger.error(f"[MEDIA-API] {command} failed: {e}", exc_info=True)
         return {"error": str(e)}

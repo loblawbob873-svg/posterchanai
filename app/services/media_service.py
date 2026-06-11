@@ -800,6 +800,177 @@ def _concat_video_clips(videos: List[bytes]) -> bytes:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+# --- TikTok-style branding outro (appended to effect videos) -----------------
+_REPO_ROOT_MS = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_OUTRO_LOGO = os.path.join(_REPO_ROOT_MS, "static", "icon-512.png")
+_OUTRO_FONT_CANDIDATES = [
+    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/liberation-fonts/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
+]
+
+
+def _outro_font(sz: int):
+    from PIL import ImageFont
+    for p in _OUTRO_FONT_CANDIDATES:
+        if os.path.exists(p):
+            try:
+                return ImageFont.truetype(p, sz)
+            except Exception:
+                pass
+    try:
+        return ImageFont.load_default(sz)
+    except TypeError:
+        return ImageFont.load_default()
+
+
+def render_outro_card(W: int, H: int, username: Optional[str] = None, avatar=None):
+    """The branded end-card image (PosterChan mascot + 'made with PosterChanAI', plus the user's
+    avatar + @username when known). `avatar` is an optional PIL Image."""
+    from PIL import Image, ImageDraw, ImageOps
+    W = max(2, int(W)); H = max(2, int(H))
+    bg = (20, 22, 38)  # match the mascot's navy so the logo blends seamlessly
+    img = Image.new("RGB", (W, H), bg)
+    d = ImageDraw.Draw(img)
+    for y in range(H):  # subtle vertical gradient
+        f = y / H
+        d.line([(0, y), (W, y)], fill=(int(bg[0] + 10 * f), int(bg[1] + 8 * f), int(bg[2] + 18 * f)))
+    cx = W // 2
+
+    def _ctext(yy, t, font, fill):
+        bb = d.textbbox((0, 0), t, font=font)
+        d.text((cx - (bb[2] - bb[0]) / 2, yy), t, font=font, fill=fill)
+        return (bb[3] - bb[1])
+
+    y = int(H * 0.09)
+    if username:
+        av_r = int(min(W, H) * 0.11)
+        if avatar is not None:
+            try:
+                a = ImageOps.fit(avatar.convert("RGB"), (av_r * 2, av_r * 2))
+                m = Image.new("L", (av_r * 2, av_r * 2), 0)
+                ImageDraw.Draw(m).ellipse([0, 0, av_r * 2, av_r * 2], fill=255)
+                img.paste(a, (cx - av_r, y), m)
+            except Exception:
+                avatar = None
+        if avatar is None:
+            d.ellipse([cx - av_r, y, cx + av_r, y + av_r * 2], fill=(70, 60, 100))
+            _ctext(y + int(av_r * 0.5), username[:1].upper(), _outro_font(int(av_r * 1.0)), (235, 235, 250))
+        d.ellipse([cx - av_r, y, cx + av_r, y + av_r * 2], outline=(255, 170, 60), width=max(3, W // 180))
+        y += av_r * 2 + int(H * 0.02)
+        y += _ctext(y, f"@{username}", _outro_font(int(H * 0.05)), (245, 245, 255)) + int(H * 0.03)
+
+    if os.path.exists(_OUTRO_LOGO):
+        try:
+            from PIL import Image as _I
+            lg = _I.open(_OUTRO_LOGO).convert("RGBA")
+            lh = int(H * (0.40 if username else 0.50)); lw = int(lg.width * lh / lg.height)
+            lg = lg.resize((max(1, lw), max(1, lh)))
+            img.paste(lg, (cx - lw // 2, y), lg)
+            y += lh + int(H * 0.015)
+        except Exception:
+            pass
+    _ctext(y, "made with", _outro_font(int(H * 0.036)), (170, 175, 200)); y += int(H * 0.048)
+    _ctext(y, "PosterChanAI", _outro_font(int(H * 0.068)), (255, 170, 60))
+    return img
+
+
+def _probe_has_audio(path: str) -> bool:
+    try:
+        r = subprocess.run([resolve_ffmpeg().replace("ffmpeg", "ffprobe"), "-v", "error",
+                            "-select_streams", "a", "-show_entries", "stream=index",
+                            "-of", "csv=p=0", path], capture_output=True, text=True, timeout=30)
+        return bool((r.stdout or "").strip())
+    except Exception:
+        return False
+
+
+def append_outro(video_data: bytes, source_filename: str = "video.mp4",
+                 username: Optional[str] = None, avatar_bytes: Optional[bytes] = None,
+                 duration: float = 2.6) -> bytes:
+    """Append a ~2.6s branded end-card (TikTok-style) to an effect video. Per-user avatar/@username
+    when provided, else a static 'made with PosterChanAI' card. Returns the original bytes unchanged
+    on any failure (so branding never breaks an effect)."""
+    global _video_encoder_cache
+    ffmpeg = resolve_ffmpeg()
+    if not ffmpeg_available() or not video_data:
+        return video_data
+    tmp = tempfile.mkdtemp(prefix="media_outro_")
+    try:
+        vin = os.path.join(tmp, "in.mp4")
+        with open(vin, "wb") as f:
+            f.write(video_data)
+        W = _probe_width(vin); H = _probe_height(vin)
+        if not (W and H):
+            return video_data
+        W -= W % 2; H -= H % 2
+        has_audio = _probe_has_audio(vin)
+        vdur = _probe_duration(vin) or 6.0
+        from PIL import Image as _Image
+        avatar = None
+        if avatar_bytes:
+            try:
+                avatar = _Image.open(io.BytesIO(avatar_bytes))
+            except Exception:
+                avatar = None
+        card = render_outro_card(W, H, username, avatar)
+        cpath = os.path.join(tmp, "card.png"); card.save(cpath)
+        out_path = os.path.join(tmp, "out.mp4")
+        sr = 44100
+
+        inputs = ["-i", vin, "-loop", "1", "-t", f"{duration:.3f}", "-i", cpath,
+                  "-f", "lavfi", "-t", f"{duration:.3f}", "-i", f"anullsrc=r={sr}:cl=stereo"]
+        if has_audio:
+            a0src = "[0:a]"
+        else:
+            inputs += ["-f", "lavfi", "-t", f"{max(vdur, 0.1):.3f}", "-i", f"anullsrc=r={sr}:cl=stereo"]
+            a0src = "[3:a]"
+        vf = f"scale={W}:{H}:force_original_aspect_ratio=disable,setsar=1,fps=30"
+        base_fc = (
+            f"[0:v]{vf}[v0];"
+            f"[1:v]{vf},fade=t=in:st=0:d=0.4[v1];"
+            f"{a0src}aresample={sr},aformat=channel_layouts=stereo[a0];"
+            f"[2:a]aresample={sr},aformat=channel_layouts=stereo[a1];"
+            f"[v0][a0][v1][a1]concat=n=2:v=1:a=1[vc][aout]"
+        )
+        candidates = _video_encoder_candidates(ffmpeg)
+        if _video_encoder_cache and _video_encoder_cache in candidates:
+            candidates = [_video_encoder_cache] + [c for c in candidates if c != _video_encoder_cache]
+        last_err = ""
+        for encoder in candidates:
+            pre = []
+            if encoder == "h264_vaapi":
+                pre = ["-vaapi_device", _render_node()]
+                fc = base_fc + ";[vc]format=nv12,hwupload[vout]"
+                venc = ["-c:v", "h264_vaapi"]
+            elif encoder == "h264_nvenc":
+                fc = base_fc + ";[vc]format=yuv420p[vout]"
+                venc = ["-c:v", "h264_nvenc", "-preset", "p5"]
+            else:
+                fc = base_fc + ";[vc]format=yuv420p[vout]"
+                venc = ["-c:v", "libx264", "-preset", VIDEO_PRESET, "-crf", str(VIDEO_CRF)]
+            cmd = ([ffmpeg, "-y"] + pre + inputs + ["-filter_complex", fc,
+                    "-map", "[vout]", "-map", "[aout]"] + venc
+                   + ["-c:a", "aac", "-b:a", VIDEO_AUDIO_BITRATE, "-movflags", "+faststart", out_path])
+            r = subprocess.run(cmd, capture_output=True, timeout=600, text=True)
+            if r.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+                _video_encoder_cache = encoder
+                with open(out_path, "rb") as f:
+                    return f.read()
+            last_err = (r.stderr or "")[-300:]
+            if os.path.exists(out_path):
+                os.unlink(out_path)
+        logger.warning(f"append_outro failed (tried {candidates}); returning original: {last_err}")
+        return video_data
+    except Exception as e:
+        logger.warning(f"append_outro error ({e}); returning original")
+        return video_data
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def images_glow_video(images: List[Tuple[str, bytes]], per_image: float = 4.0) -> bytes:
     """Several images → ONE glowing clip: each image gets the FULL glow (breathing zoom +
     colour pop + light sweep) for `per_image`s, played IN ORDER. Each image is letterboxed

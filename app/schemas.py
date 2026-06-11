@@ -141,6 +141,9 @@ class SettingsResponse(BaseModel):
     # own AGENTS.md. Empty tool_guidance_text => the built-in default in openai_api._DEFAULT_TOOL_GUIDANCE.
     tool_guidance_enabled: str = "true"
     tool_guidance_text: str = ""
+    # Append the TikTok-style "made with PosterChanAI" end-card to effect videos (per-user
+    # avatar/@username in the web UI / Telegram / Matrix; static card for bot-posted effects).
+    effect_outro_enabled: str = "true"
     ollama_stop: str = ""
     ollama_seed: str = ""
     ollama_mirostat: str = "0"
