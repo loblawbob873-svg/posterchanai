@@ -2310,7 +2310,9 @@ _FAHH_AUDIO_CANDIDATES = [
     os.path.join(_REPO_ROOT, "assets", "fahh.mp3"),
     "/var/lib/posterchanai/assets/fahh.mp3",
 ]
-_FAHH_DURATION = 5.0
+# fahh.mp3 is ~3.24s and ends with a little musical sting — cap the output to drop the last
+# ~0.8s so it ends right after the "fahh" (image_audio_to_video applies this as a hard -t cut).
+_FAHH_DURATION = 2.4
 
 
 def _fahh_audio_path() -> str:
@@ -2974,6 +2976,63 @@ def whoabuddy_attachments(
         return [out], summary
     except Exception as e:
         logger.error(f"whoabuddy failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Robocop (turn an image into a short MP4 set to the "robocop" clip — the
+# "robocop" gag)
+# ---------------------------------------------------------------------------
+
+# The shipped robocop track (repo-relative), overridable with ROBOCOP_AUDIO_PATH.
+_ROBOCOP_AUDIO_CANDIDATES = [
+    os.environ.get("ROBOCOP_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "robocop.mp3"),
+    "/var/lib/posterchanai/assets/robocop.mp3",
+]
+# Cap above the ~12s clip length; -shortest ends the video at the audio end.
+_ROBOCOP_DURATION = 13.0
+
+
+def _robocop_audio_path() -> str:
+    """First existing robocop mp3 from the candidate list ("" if none)."""
+    for p in _ROBOCOP_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_robocop(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the robocop clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _robocop_audio_path()
+    if not audio:
+        raise RuntimeError("Robocop audio (assets/robocop.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_ROBOCOP_DURATION)
+
+
+def robocop_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a robocop MP4. Mirrors
+    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_robocop(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_robocop.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🤖 Robocop\n\n🤖 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"robocop failed for {filename}: {e}", exc_info=True)
         return [], f"❌ {filename}: {e}"
 
 

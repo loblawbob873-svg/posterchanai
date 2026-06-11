@@ -596,6 +596,7 @@ class CommandService:
         "akbar": "Turn an attached image into a short MP4 set to the akbar clip: akbar",
         "retard": "Turn an attached image into a short MP4 set to the retard-alert clip: retard",
         "whoabuddy": "Turn an attached image into a short MP4 set to the whoa buddy clip: whoabuddy",
+        "robocop": "Turn an attached image into a short MP4 set to the robocop clip: robocop",
         "feliz": "Turn an attached image into a short MP4 set to the feliz clip: feliz",
         "sopranos": "Turn an attached image into an MP4 set to the Sopranos theme clip: sopranos",
         "cheers": "Turn an attached image into an MP4 set to the Cheers theme clip: cheers",
@@ -655,7 +656,7 @@ class CommandService:
         "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay",
         "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete",
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
-        "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy",
+        "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "robocop",
         "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
         "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug",
         "feltedtables", "glow", "prayer", "alive", "feliz",
@@ -942,6 +943,8 @@ class CommandService:
             return await self._retard_command(attachments)
         elif command == "whoabuddy":
             return await self._whoabuddy_command(attachments)
+        elif command == "robocop":
+            return await self._robocop_command(attachments)
         elif command == "feliz":
             return await self._feliz_command(attachments)
         elif command == "sopranos":
@@ -3973,6 +3976,21 @@ Files are saved to your Storage.""",
         from app.services.effects_service import whoabuddy_attachments
 
         outputs, summary = await asyncio.to_thread(whoabuddy_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _robocop_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into a short MP4 set to the robocop clip: `robocop`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `robocop`."}
+
+        import asyncio
+        from app.services.effects_service import robocop_attachments
+
+        outputs, summary = await asyncio.to_thread(robocop_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
