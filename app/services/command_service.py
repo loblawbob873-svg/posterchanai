@@ -674,7 +674,7 @@ class CommandService:
     # zoom/shake motions freeze-and-pan a single still frame (they extract frame 1 of
     # the effect video), which would kill a real animation — so skip them here. A
     # `meme` caption is still fine (ffmpeg drawtext preserves the motion).
-    ANIMATED_EFFECTS = {"chimp", "clay"}
+    ANIMATED_EFFECTS = {"chimp", "clay", "reze"}
 
     # Overlay-type motions that recolour/relight the real frames WITHOUT freezing the clip
     # (via *_existing_video), so they compose on already-animated effects too (like trippy).

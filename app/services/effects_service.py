@@ -3161,6 +3161,13 @@ _REZE_AUDIO_CANDIDATES = [
 # Cap above the ~13s clip length; -shortest ends the video at the audio end.
 _REZE_DURATION = 14.0
 
+# Animated transparent overlay: chibi Makima + Reze dancing (ProRes 4444 .mov for clean alpha).
+_REZE_DANCE_CANDIDATES = [
+    os.environ.get("REZE_DANCE_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "reze_dance.mov"),
+    "/var/lib/posterchanai/assets/reze_dance.mov",
+]
+
 
 def _reze_audio_path() -> str:
     """First existing reze mp3 from the candidate list ("" if none)."""
@@ -3170,13 +3177,28 @@ def _reze_audio_path() -> str:
     return ""
 
 
+def _reze_dance_path() -> str:
+    """First existing reze dance overlay (.mov) from the candidate list ("" if none)."""
+    for p in _REZE_DANCE_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
 def add_reze(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
-    """Turn a still image into a short MP4 playing the reze clip over it. MP4 bytes."""
-    from app.services.media_service import image_audio_to_video
+    """Composite the chibi Makima+Reze dance overlay onto the image, set to the reze clip. MP4 bytes.
+    An ANIMATED overlay effect (like chimp/clay) — the transparent dance loops over the image."""
+    from app.services.media_service import image_gif_overlay_video
+    if isinstance(image_data, list):  # reze is single-image (overlay), not a slideshow
+        image_data = image_data[0][1]
     audio = _reze_audio_path()
     if not audio:
         raise RuntimeError("Reze audio (assets/reze.mp3) is missing on the server")
-    return image_audio_to_video(image_data, source_filename, audio, duration=_REZE_DURATION)
+    overlay = _reze_dance_path()
+    if not overlay:
+        raise RuntimeError("Reze dance overlay (assets/reze_dance.mov) is missing on the server")
+    return image_gif_overlay_video(image_data, source_filename, overlay,
+                                   duration=_REZE_DURATION, audio_path=audio, height_frac=0.5)
 
 
 def reze_attachments(
