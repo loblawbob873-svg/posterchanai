@@ -388,9 +388,24 @@ class LibtorrentService:
     def _process_alerts(self):
         """Process libtorrent alerts in background with detailed logging."""
         proxy_check_counter = 0
+        resume_save_counter = 0
         proxy_was_down = False
 
         while self._running:
+            # Periodic resume-data save (~every 30s = 15 * 2s). Without this, resume data was only
+            # saved on a clean shutdown — so a kill/restart (or our frequent deploys) dropped every
+            # torrent added since the last save. Now a restart loses at most ~30s of progress, never
+            # the torrents themselves (they re-add from .resume on next start).
+            resume_save_counter += 1
+            if resume_save_counter >= 15:
+                resume_save_counter = 0
+                for _ih, _h in list(self.torrents.items()):
+                    try:
+                        if _h.is_valid():
+                            _h.save_resume_data(lt.torrent_handle.save_info_dict)
+                    except Exception as e:
+                        logger.debug(f"[BT] periodic resume request failed for {_ih}: {e}")
+
             # Periodic proxy check - every 60 iterations (~30 seconds)
             proxy_check_counter += 1
             if proxy_check_counter >= 60:
@@ -425,6 +440,21 @@ class LibtorrentService:
             alerts = self.session.pop_alerts()
             for alert in alerts:
                 alert_type = type(alert).__name__
+
+                # Resume-data saves (periodic + shutdown): write the .resume file as the alert
+                # arrives, so persistence happens continuously in the background — not only in the
+                # shutdown-only _save_resume_data (which raced the loop and saved partial state).
+                if isinstance(alert, lt.save_resume_data_alert):
+                    try:
+                        info_hash = str(alert.handle.info_hash())
+                        (self.resume_dir / f"{info_hash}.resume").write_bytes(
+                            lt.write_resume_data_buf(alert.params))
+                    except Exception as e:
+                        logger.error(f"[BT] Failed to write resume data: {e}")
+                    continue
+                elif isinstance(alert, lt.save_resume_data_failed_alert):
+                    logger.debug(f"[BT] Resume save failed: {getattr(alert, 'error', '')}")
+                    continue
 
                 # Torrent lifecycle events
                 if isinstance(alert, lt.torrent_finished_alert):
