@@ -245,7 +245,14 @@ def _prep_for_template(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             c = mm.get("content")
             if isinstance(c, list):
                 c = " ".join(p.get("text", "") for p in c if isinstance(p, dict))
-            mm["content"] = (c or "").strip() or "(command completed successfully, no output)"
+            _txt = (c or "").strip()
+            # Treat a TRULY-empty result AND common "no output" placeholders (opencode renders a
+            # silent command as the literal "(no output)") as an explicit success. Otherwise a small
+            # model reads the blank/placeholder as failure and re-runs the same command forever
+            # (the pip-install / mkdir loop).
+            if not _txt or _txt.lower().strip("().") in ("no output", "empty", "no stdout", "command produced no output"):
+                _txt = "(command completed successfully, no output)"
+            mm["content"] = _txt
             out.append(mm)
             continue
         c = mm.get("content")
