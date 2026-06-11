@@ -82,8 +82,29 @@ def _sanitize_url(url: str) -> str:
     return "".join(c for c in url if c in _URL_SAFE_CHARS)
 
 
+# Nitter is a Twitter front-end with many (volatile) instances. yt-dlp has NO nitter extractor,
+# but a nitter status URL has the same /<user>/status/<id> path as Twitter — so we rewrite the host
+# to x.com and let yt-dlp's Twitter extractor download it. Detect nitter by hostname: any host with
+# "nitter" in it, plus well-known non-"nitter"-named aliases.
+_NITTER_KNOWN_HOSTS = {"xcancel.com", "twiiit.com", "nitter.net", "lightbrd.com"}
+
+
+def _looks_like_nitter_host(host: str) -> bool:
+    host = (host or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return "nitter" in host or host in _NITTER_KNOWN_HOSTS
+
+
+def _nitter_to_x(host: str, path: str) -> str:
+    """Rewrite a nitter status URL to the equivalent canonical x.com URL (yt-dlp downloads it as
+    Twitter). `path` is the captured '<user>/status/<id>' portion."""
+    return f"https://x.com/{path}"
+
+
 def extract_download_urls(text: str) -> list[str]:
-    """Extract YouTube and X (Twitter) URLs from text for yt-dlp download. Supports ytdl/ytdlp for both."""
+    """Extract YouTube, X (Twitter), and Nitter URLs from text for yt-dlp download. Nitter links are
+    rewritten to x.com so yt-dlp's Twitter extractor handles them. Supports ytdl/ytdlp for all."""
     urls = []
     # YouTube (same as extract_youtube_urls)
     urls.extend(extract_youtube_urls(text))
@@ -94,7 +115,26 @@ def extract_download_urls(text: str) -> list[str]:
         sanitized = _sanitize_url(u)
         if sanitized and sanitized not in urls:
             urls.append(sanitized)
+    # Nitter (any instance): /<user>/status/<id> path, rewritten to x.com.
+    nitter_pattern = r'https?://([^/\s]+)/(\w+/status/[0-9]+)'
+    for host, path in re.findall(nitter_pattern, text):
+        if _looks_like_nitter_host(host):
+            rewritten = _nitter_to_x(host, path)
+            if rewritten not in urls:
+                urls.append(rewritten)
     return urls
+
+
+def normalize_download_url(url: str) -> str:
+    """Rewrite a single Nitter status URL to its canonical x.com form (yt-dlp has no Nitter
+    extractor); return any other URL unchanged. Applied at the download entry points so callers
+    that bypass extract_download_urls (e.g. the bot-facing /ytdl endpoint) still resolve Nitter."""
+    if not url:
+        return url
+    m = re.match(r'https?://([^/\s]+)/(\w+/status/[0-9]+)', url.strip())
+    if m and _looks_like_nitter_host(m.group(1)):
+        return _nitter_to_x(m.group(1), m.group(2))
+    return url
 
 
 def _sanitize_filename_for_storage(filename: str) -> str:
@@ -220,6 +260,7 @@ def download_as_video(
     Returns:
         DownloadResult with success status and file info
     """
+    url = normalize_download_url(url)  # Nitter -> x.com (no-op for other URLs)
     if output_dir is None:
         output_dir = tempfile.mkdtemp(prefix='ytdl_video_')
 
@@ -421,6 +462,7 @@ def download_as_mp3(
     Returns:
         DownloadResult with success status and file info
     """
+    url = normalize_download_url(url)  # Nitter -> x.com (no-op for other URLs)
     if output_dir is None:
         output_dir = tempfile.mkdtemp(prefix='ytdl_')
 
@@ -909,7 +951,7 @@ def download_ytdl_bytes(
     {"ok": True, "filename", "mime", "data": <raw bytes>} or
     {"ok": False, "error": <str>}.
     """
-    url = (url or "").strip()
+    url = normalize_download_url((url or "").strip())  # Nitter -> x.com (no-op for other URLs)
     if not url:
         return {"ok": False, "error": "url is required"}
     if not check_ytdlp_available():

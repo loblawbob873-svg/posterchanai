@@ -554,7 +554,7 @@ class CommandService:
         "images": "Image search: images <query>",
         "geni": "Generate image: geni <prompt>",
         "yt": "YouTube search: yt <query>",
-        "ytdl": "Download YouTube or X: ytdl <url> (MP3 default), ytdl mp3/video <url>. For video, add clip <start> <end> and/or compress, e.g. ytdl video <url> clip 0:10 0:30 compress",
+        "ytdl": "Download YouTube, X, or Nitter: ytdl <url> (MP3 default), ytdl mp3/video <url>. For video, add clip <start> <end> and/or compress, e.g. ytdl video <url> clip 0:10 0:30 compress",
         "torrents": "Torrent search: torrents <query>",
         "nyaa": "Anime torrents: nyaa <query>",
         "dailynews": "Web news: dailynews <source>",
@@ -1380,19 +1380,19 @@ Example: `yt https://youtube.com/watch?v=...`""",
         if not arg:
             return {
                 "type": "text",
-                "content": """## YouTube / X (Twitter) Download
+                "content": """## YouTube / X (Twitter) / Nitter Download
 
 **Usage:**
 - `ytdl <url>` - Download as MP3 to Music (default)
 - `ytdl mp3 <url>` - Download as MP3 to Music
 - `ytdl video <url>` - Download as video (MP4) to folder
 
-**Supported:** YouTube, X.com (Twitter) links.
+**Supported:** YouTube, X.com (Twitter), and Nitter links (any instance; resolved via X.com).
 
 **Examples:**
 - `ytdl https://youtube.com/watch?v=...` - Download as MP3
 - `ytdl video https://x.com/i/status/123...` - Download X video
-- `ytdl https://x.com/user/status/123...` - Download as MP3
+- `ytdl https://nitter.net/user/status/123...` - Download a Nitter post (as MP3)
 
 Files are saved to your Storage.""",
             }
@@ -1420,7 +1420,7 @@ Files are saved to your Storage.""",
 
         urls = extract_download_urls(url_arg)
         if not urls:
-            return {"type": "text", "content": "Could not find a valid YouTube or X (Twitter) URL. Example: `ytdl https://x.com/i/status/123` or `ytdl https://youtube.com/watch?v=...`"}
+            return {"type": "text", "content": "Could not find a valid YouTube, X (Twitter), or Nitter URL. Example: `ytdl https://x.com/i/status/123`, `ytdl https://nitter.net/user/status/123`, or `ytdl https://youtube.com/watch?v=...`"}
 
         target_url = urls[0]
         if as_mp3:
