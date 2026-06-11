@@ -775,14 +775,28 @@ class CommandService:
             pass
         username = getattr(self.user, "username", None) if self.user else None
         avatar_bytes = None
-        try:
-            if username:
+        if username and getattr(self.user, "avatar", None):
+            # Try a local read first; avatars usually live on the storage server (another node), so
+            # fall back to the instance's own /api/auth/avatar/<username> endpoint, which transparently
+            # serves local OR proxies to the storage server. (That's why the avatar was missing before
+            # — get_avatar_path only finds it on the storage node.)
+            try:
                 from app.services.storage_service import get_storage_service
                 ap = get_storage_service(self.db).get_avatar_path(username)
                 if ap and ap.exists():
                     avatar_bytes = ap.read_bytes()
-        except Exception:
-            avatar_bytes = None
+            except Exception:
+                avatar_bytes = None
+            if not avatar_bytes:
+                try:
+                    import os as _os, httpx as _httpx
+                    _port = _os.environ.get("POSTERCHANAI_PORT", "3051")
+                    _r = _httpx.get(f"http://127.0.0.1:{_port}/api/auth/avatar/{username}",
+                                    headers={"X-Posterchanai-Load-Balanced": "true"}, timeout=8.0)
+                    if _r.status_code == 200 and _r.content and _r.headers.get("content-type", "").startswith("image"):
+                        avatar_bytes = _r.content
+                except Exception:
+                    avatar_bytes = None
         out = []
         for f in files:
             try:
