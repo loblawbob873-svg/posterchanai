@@ -5488,41 +5488,44 @@ def _locate_mouth(image_data: bytes):
 
 
 def _draw_blue_paint(im, cx, cy, mw):
-    """Smear drippy blue paint over the mouth at ``(cx, cy)``, sized to mouth width
-    ``mw``. Draws on an RGBA overlay (irregular blue smear + downward tapering drips
-    with rounded droplets + a wet highlight), then composites. Returns an RGB image."""
+    """Smear wet blue paint AROUND the mouth at ``(cx, cy)`` (sized to mouth width
+    ``mw``) with drips running down — then punch the mouth opening clear so the lips
+    and teeth stay visible. Draws on an RGBA overlay, then composites. Returns RGB."""
+    import math
     import random
     from PIL import Image, ImageDraw, ImageFilter
     rng = random.Random(int(cx * 131 + cy * 17 + mw))   # stable per-face, varied look
     W, H = im.size
-    BLUE = (24, 92, 226, 255)
-    DARK = (12, 48, 150, 255)
-    # Keep the smear "around the mouth": ~1.6x the mouth width, not the whole lower
-    # face (insightface returns a large mouth-corner distance on tight close-ups).
-    half_w = mw * 0.8
-    half_h = mw * 0.45
+    BLUE = (24, 92, 226, 235)
+    DARK = (12, 48, 150, 235)
+    # The mouth opening to KEEP visible (lips + teeth): a touch wider/taller than the
+    # detected mouth so the whole lip line shows through.
+    mhw = mw * 0.62
+    mhh = mw * 0.32
+    # The paint frames the mouth — a blobby ring on the skin around the lips. Kept
+    # tight vertically so it hugs the lips instead of riding up onto the nose.
+    ring_rx = mw * 0.9
+    ring_ry = mw * 0.5
 
     overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(overlay)
-    # Darker base under the smear for depth, then a cluster of overlapping blue
-    # ellipses across the mouth for an irregular, painted edge.
-    d.ellipse([cx - half_w, cy - half_h * 0.4, cx + half_w, cy + half_h * 1.1], fill=DARK)
-    n = 7
+    # Darker undertone ring for depth, then a blobby blue ring on top for an
+    # irregular painted edge that hugs the lips without covering the opening.
+    d.ellipse([cx - ring_rx, cy - ring_ry, cx + ring_rx, cy + ring_ry], fill=DARK)
+    n = 18
     for i in range(n):
-        t = i / (n - 1) - 0.5
-        ex = cx + t * half_w * 1.1 + rng.uniform(-mw * 0.08, mw * 0.08)
-        ey = cy + rng.uniform(-mw * 0.1, mw * 0.1)
-        rw = half_w * rng.uniform(0.35, 0.6)
-        rh = half_h * rng.uniform(0.7, 1.1)
-        d.ellipse([ex - rw, ey - rh, ex + rw, ey + rh], fill=BLUE)
+        a = (i / n) * 2 * math.pi
+        px = cx + math.cos(a) * ring_rx * rng.uniform(0.85, 1.12)
+        py = cy + math.sin(a) * ring_ry * rng.uniform(0.85, 1.18)
+        r = mw * rng.uniform(0.14, 0.28)
+        d.ellipse([px - r, py - r, px + r, py + r], fill=BLUE)
 
-    # Drips: a few tapering streaks running down with a rounded droplet head, plus
-    # the odd detached droplet below.
-    for _ in range(rng.randint(4, 6)):
-        dx = cx + rng.uniform(-half_w, half_w)
-        top = cy + rng.uniform(-mw * 0.1, half_h * 0.6)
-        length = mw * rng.uniform(0.8, 2.6)
-        top_r = mw * rng.uniform(0.10, 0.18)
+    # Drips running DOWN from the lower lip + corners — the main wet-paint feature.
+    for _ in range(rng.randint(5, 8)):
+        dx = cx + rng.uniform(-ring_rx, ring_rx)
+        top = cy + mhh * rng.uniform(0.5, 1.1)          # start at/below the lower lip
+        length = mw * rng.uniform(1.0, 3.0)
+        top_r = mw * rng.uniform(0.07, 0.15)
         bot_r = top_r * rng.uniform(0.4, 0.7)
         d.polygon([(dx - top_r, top), (dx + top_r, top),
                    (dx + bot_r, top + length), (dx - bot_r, top + length)], fill=BLUE)
@@ -5533,17 +5536,24 @@ def _draw_blue_paint(im, cx, cy, mw):
             dy2 = top + length + dr * 1.4 + mw * rng.uniform(0.2, 0.8)
             d.ellipse([dx - dd, dy2 - dd, dx + dd, dy2 + dd], fill=BLUE)
 
-    overlay = overlay.filter(ImageFilter.GaussianBlur(max(1, int(mw * 0.04))))  # wet softening
+    overlay = overlay.filter(ImageFilter.GaussianBlur(max(1, int(mw * 0.05))))  # wet softening
 
-    # Wet highlight: a soft lighter streak on the upper-left of the smear.
+    # Wet highlight: a soft arc of sheen along the lower-right of the paint ring.
     hl = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    ImageDraw.Draw(hl).ellipse(
-        [cx - half_w * 0.5, cy - half_h * 0.7, cx - half_w * 0.1, cy - half_h * 0.1],
-        fill=(150, 200, 255, 150))
-    hl = hl.filter(ImageFilter.GaussianBlur(max(1, int(mw * 0.06))))
+    ImageDraw.Draw(hl).arc(
+        [cx - ring_rx, cy - ring_ry, cx + ring_rx, cy + ring_ry],
+        20, 150, fill=(170, 210, 255, 180), width=max(2, int(mw * 0.07)))
+    hl = hl.filter(ImageFilter.GaussianBlur(max(1, int(mw * 0.04))))
 
     base = Image.alpha_composite(im.convert("RGBA"), overlay)
     base = Image.alpha_composite(base, hl)
+
+    # Punch the mouth opening back through everything so the lips + teeth stay
+    # visible (paste with a soft elliptical mask of the ORIGINAL pixels).
+    mask = Image.new("L", (W, H), 0)
+    ImageDraw.Draw(mask).ellipse([cx - mhw, cy - mhh, cx + mhw, cy + mhh], fill=255)
+    mask = mask.filter(ImageFilter.GaussianBlur(max(1, int(mw * 0.06))))
+    base.paste(im.convert("RGBA"), (0, 0), mask)
     return base.convert("RGB")
 
 
