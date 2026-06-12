@@ -288,17 +288,36 @@ class LibtorrentService:
             return
 
         count = 0
+        resumed = 0
+        paused = 0
         for resume_file in self.resume_dir.glob("*.resume"):
             try:
                 resume_data = resume_file.read_bytes()
                 params = lt.read_resume_data(resume_data)
                 params.save_path = str(self.download_dir)
 
+                # libtorrent encodes the paused flag into the resume data, so a torrent the user
+                # paused before the restart was saved paused. Honour that saved state instead of
+                # blindly resuming everything (the old behaviour forced every torrent back to
+                # "running" on restart, losing the user's paused state). Apply it explicitly after
+                # the add so the result doesn't depend on libtorrent's default flag merging.
+                was_paused = bool(params.flags & lt.torrent_flags.paused)
+
                 handle = self.session.add_torrent(params)
                 info_hash = str(handle.info_hash())
                 self.torrents[info_hash] = handle
                 count += 1
-                logger.debug(f"[BT] Restored torrent: {info_hash}")
+
+                if handle.is_valid():
+                    if was_paused:
+                        handle.unset_flags(lt.torrent_flags.auto_managed)
+                        handle.pause()
+                        paused += 1
+                    else:
+                        handle.set_flags(lt.torrent_flags.auto_managed)
+                        handle.resume()
+                        resumed += 1
+                logger.debug(f"[BT] Restored torrent ({'paused' if was_paused else 'running'}): {info_hash}")
             except Exception as e:
                 logger.error(f"[BT] Failed to load resume data from {resume_file}: {e}")
                 # Remove corrupted resume file
@@ -308,19 +327,8 @@ class LibtorrentService:
                     pass
 
         if count > 0:
-            logger.info(f"[BT] Restored {count} torrents from resume data")
             self._update_numbering()
-            # Auto-resume all torrents on startup
-            resumed = 0
-            for info_hash, handle in self.torrents.items():
-                try:
-                    if handle.is_valid():
-                        handle.resume()
-                        resumed += 1
-                except Exception as e:
-                    logger.error(f"[BT] Failed to resume {info_hash}: {e}")
-            if resumed > 0:
-                logger.info(f"[BT] Auto-resumed {resumed} torrents")
+            logger.info(f"[BT] Restored {count} torrents from resume data ({resumed} running, {paused} paused)")
 
     def _check_proxy(self, host: str, port: int, timeout: int = 5) -> bool:
         """Verify proxy is reachable and responding."""
@@ -670,6 +678,12 @@ class LibtorrentService:
             # Disable auto-manage so session doesn't resume it
             handle.unset_flags(lt.torrent_flags.auto_managed)
             handle.pause()
+            # Persist the paused state now so a restart within the ~30s periodic-save window still
+            # brings it back paused (the alert handler writes the .resume file when this completes).
+            try:
+                handle.save_resume_data(lt.torrent_handle.save_info_dict)
+            except Exception as e:
+                logger.debug(f"[BT] resume-data request after pause failed: {e}")
             logger.info(f"[BT] Paused torrent: {handle.status().name}")
             return True
         return False
@@ -684,6 +698,11 @@ class LibtorrentService:
             handle.resume()
             # Re-enable auto-manage
             handle.set_flags(lt.torrent_flags.auto_managed)
+            # Persist the running state now so a restart soon after still brings it back running.
+            try:
+                handle.save_resume_data(lt.torrent_handle.save_info_dict)
+            except Exception as e:
+                logger.debug(f"[BT] resume-data request after resume failed: {e}")
             logger.info(f"[BT] Resumed torrent: {handle.status().name}")
             return True
         return False

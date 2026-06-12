@@ -142,6 +142,16 @@ def _coerce_param_value(v: str) -> Any:
     s = (v or "").strip()
     if not s:
         return v
+    # Python-style bool/None literals: the model sometimes emits True/False/None where JSON wants
+    # true/false/null, so json.loads rejects them and the value reaches the client as the WRONG type
+    # (a boolean param like Edit's replaceAll arrives as the string "True" -> the client's schema
+    # rejects it: ``Expected boolean, got "True"``). Map them back to real types. Same accepted
+    # tradeoff as the numeric/array coercion below: a param whose intended STRING value is exactly
+    # "True"/"False"/"None" is vanishingly rare vs. a real bool/None param emitted Python-style.
+    if s in ("True", "False"):
+        return s == "True"
+    if s == "None":
+        return None
     try:
         parsed = json.loads(s)
     except Exception:
