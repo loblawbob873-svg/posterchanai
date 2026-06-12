@@ -327,18 +327,14 @@ class LoadBalancer:
         if not self.servers:
             raise ValueError("No servers configured for load balancing")
 
-        # Round-robin primary pick (preserves load distribution), then fail over to the OTHER
-        # servers if a node yields no usable content. A degraded backend that returns an EMPTY
-        # completion (HTTP 200, finish_reason=stop, zero content/tool_calls) must NOT be passed
-        # through to the client — agentic clients (opencode) would just stop. So we BUFFER each
-        # server's output until its first real content/tool_call chunk, and only commit (start
-        # yielding) once the response is proven non-empty; otherwise we discard and try the next
-        # server. Only when every server is empty/unreachable do we raise -> local fallback.
-        primary = await get_healthy_server(self.servers)
-        if not primary:
+        # Simple round-robin selection - use all servers including self
+        server = await get_healthy_server(self.servers)
+        if not server:
             logger.warning("No healthy remote servers - signaling to use local")
             raise NoHealthyServersError("No healthy remote servers available")
-        candidates = [primary] + [s for s in self.servers if s != primary]
+
+        start_time = time.time()
+        logger.info(f"[LOAD BALANCER] STREAM REQUEST to {server} | model={self.model} | messages={len(messages)} | temp={temperature} | all_servers={self.servers}")
 
         request_body = {
             "model": self.model,
@@ -356,125 +352,123 @@ class LoadBalancer:
         if tool_choice is not None:
             request_body["tool_choice"] = tool_choice
 
-        import json
-        last_reason = "all servers empty/failed"
-        for attempt_idx, server in enumerate(candidates):
-            start_time = time.time()
-            logger.info(f"[LOAD BALANCER] STREAM REQUEST to {server} (attempt {attempt_idx+1}/{len(candidates)}) | model={self.model} | messages={len(messages)} | temp={temperature} | all_servers={self.servers}")
-            produced = False          # have we yielded real content to the client yet?
-            pending = []              # SSE lines buffered until first content (then flushed)
-            chunk_count = 0
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
-                    async with client.stream(
-                        "POST",
-                        f"{server}/v1/chat/completions",
-                        headers=self.headers,
-                        json=request_body
-                    ) as response:
-                        logger.info(f"STREAM RESPONSE from {server} | status={response.status_code} | time={time.time()-start_time:.2f}s")
-                        response.raise_for_status()
+                async with client.stream(
+                    "POST",
+                    f"{server}/v1/chat/completions",
+                    headers=self.headers,
+                    json=request_body
+                ) as response:
+                    logger.info(f"STREAM RESPONSE from {server} | status={response.status_code} | headers={dict(response.headers)} | time={time.time()-start_time:.2f}s")
+                    response.raise_for_status()
+                    
+                    # Check content-type to verify it's a stream
+                    content_type = response.headers.get("content-type", "")
+                    if "text/event-stream" not in content_type and "stream" not in content_type.lower():
+                        logger.warning(f"STREAM WARNING from {server} | Unexpected content-type: {content_type}")
 
-                        content_type = response.headers.get("content-type", "")
-                        if "text/event-stream" not in content_type and "stream" not in content_type.lower():
-                            logger.warning(f"STREAM WARNING from {server} | Unexpected content-type: {content_type}")
-
-                        async for line in response.aiter_lines():
-                            line = line.strip()
-                            if not line:
-                                continue
-                            if not line.startswith("data: "):
-                                logger.debug(f"STREAM non-data line from {server}: {line[:100]}")
-                                continue
+                    chunk_count = 0
+                    content_chunk_count = 0  # Count chunks that actually have content
+                    first_chunk_time = None
+                    empty_stream = True
+                    non_data_lines = []
+                    error_detected = False
+                    async for line in response.aiter_lines():
+                        line = line.strip()
+                        if not line:
+                            continue
+                        if line.startswith("data: "):
                             chunk_count += 1
+                            empty_stream = False
+                            if first_chunk_time is None:
+                                first_chunk_time = time.time()
+                                logger.info(f"[LOAD BALANCER] STREAM first chunk from {server} after {first_chunk_time - start_time:.2f}s")
+                            
+                            # Check if this chunk has actual content (not just [DONE] or empty)
                             data_str = line[6:].strip()
-                            is_content = False
                             if data_str and data_str != "[DONE]":
                                 try:
+                                    import json
                                     data = json.loads(data_str)
+                                    # Check if there's actual content in the chunk
                                     if data.get("choices") and len(data["choices"]) > 0:
                                         delta = data["choices"][0].get("delta", {})
-                                        # Count text content AND tool_calls (a function call has no
-                                        # text content but is a valid, non-empty response).
-                                        if delta.get("content") or delta.get("tool_calls"):
-                                            is_content = True
+                                        content = delta.get("content", "")
+                                        # A tool-call response has no text content - count tool_calls
+                                        # too, otherwise a valid function call is misread as "empty"
+                                        # and the stream is aborted (opencode just stops).
+                                        if content or delta.get("tool_calls"):
+                                            content_chunk_count += 1
+                                            if content_chunk_count == 1:
+                                                logger.info(f"[LOAD BALANCER] First content chunk from {server}: {repr((content or 'tool_call')[:50])}")
+                                    # Log errors from remote server and raise exception to trigger fallback
                                     if "error" in data:
                                         error_msg = data.get('error', {})
                                         error_text = error_msg.get('message', str(error_msg)) if isinstance(error_msg, dict) else str(error_msg)
                                         logger.error(f"[LOAD BALANCER] Error in response from {server}: {error_text}")
+                                        error_detected = True
+                                        # Raise exception to trigger fallback to local
                                         raise NoHealthyServersError(f"Server {server} returned error: {error_text}")
-                                except json.JSONDecodeError:
+                                except json.JSONDecodeError as e:
                                     logger.warning(f"[LOAD BALANCER] Failed to parse chunk from {server}: {data_str[:100]}")
-                                except NoHealthyServersError:
-                                    raise
                                 except Exception as e:
                                     logger.warning(f"[LOAD BALANCER] Error processing chunk from {server}: {e}")
+                            
+                            # Ensure proper SSE format with \n\n
+                            yield line + "\n\n" if not line.endswith("\n\n") else line
+                        else:
+                            # Collect non-data lines for debugging
+                            non_data_lines.append(line[:100])
+                            logger.debug(f"STREAM non-data line from {server}: {line[:100]}")
 
-                            out = line if line.endswith("\n\n") else line + "\n\n"
-                            if produced:
-                                yield out
-                            else:
-                                pending.append(out)
-                                if is_content:
-                                    # First proven content from this server: commit it. Flush the
-                                    # buffered prefix (role delta etc.) then switch to pass-through.
-                                    produced = True
-                                    logger.info(f"[LOAD BALANCER] First content chunk from {server} after {time.time()-start_time:.2f}s — committing")
-                                    for b in pending:
-                                        yield b
-                                    pending = []
+                    total_time = time.time() - start_time
+                    if chunk_count == 0:
+                        # Log details about what we received (or didn't receive) at debug level
+                        if non_data_lines:
+                            logger.warning(f"STREAM COMPLETE from {server} | chunks=0 | Received {len(non_data_lines)} non-data lines: {non_data_lines[:3]}")
+                        else:
+                            logger.warning(f"STREAM COMPLETE from {server} | chunks=0 | No data lines received (empty response body), falling back to local")
+                        # Don't mark as unhealthy immediately - remote may be processing but stream format issue
+                        # Instead, raise exception to trigger fallback to local, but keep server in rotation
+                        # Use a simple message - this is expected behavior, fallback is automatic
+                        raise NoHealthyServersError("")
+                    elif content_chunk_count == 0:
+                        # Got chunks but no actual content - server returned empty response
+                        logger.warning(f"STREAM COMPLETE from {server} | chunks={chunk_count} but content_chunks=0 | Server returned empty content, falling back to local")
+                        raise NoHealthyServersError("Server returned empty content")
+                    else:
+                        logger.info(f"STREAM COMPLETE from {server} | chunks={chunk_count} | content_chunks={content_chunk_count} | total_time={total_time:.2f}s")
+                        # Mark as healthy if we got content chunks
+                        async with _health_lock:
+                            _server_health[server] = (True, time.time())
 
-                        if produced:
-                            logger.info(f"STREAM COMPLETE from {server} | chunks={chunk_count} | committed | total_time={time.time()-start_time:.2f}s")
-                            async with _health_lock:
-                                _server_health[server] = (True, time.time())
-                            return  # success — generator ends cleanly
-                        # Stream ended with no content — mark this node unhealthy so the
-                        # round-robin stops picking it as primary (auto-recovers after
-                        # HEALTH_CHECK_INTERVAL), and fail over to the next server now.
-                        await mark_server_unhealthy_async(server)
-                        logger.warning(f"STREAM EMPTY from {server} | chunks={chunk_count}, content=0 | marked unhealthy, failing over to next server")
-                        last_reason = "empty content"
-                        continue
-
-            except NoHealthyServersError as e:
-                if produced:
-                    raise  # already streamed real content — cannot retry without corrupting output
-                last_reason = str(e) or "server error"
-                logger.warning(f"[LOAD BALANCER] {server} unusable ({last_reason}), trying next server")
-                continue
-            except httpx.ConnectError:
-                if produced:
-                    raise
+            except NoHealthyServersError:
+                # Re-raise to trigger fallback to local
+                raise
+            except httpx.ConnectError as e:
+                logger.info(f"STREAM CONNECTION ERROR from {server} | Server unreachable (may be down or network issue), falling back to local")
                 await mark_server_unhealthy_async(server)
-                last_reason = f"{server} unreachable"
-                logger.info(f"STREAM CONNECTION ERROR from {server} | unreachable, trying next server")
-                continue
-            except httpx.TimeoutException:
-                if produced:
-                    raise
+                raise NoHealthyServersError(f"Server {server} is unreachable (falling back to local)")
+            except httpx.TimeoutException as e:
+                logger.info(f"STREAM TIMEOUT from {server} | Request timed out, falling back to local")
                 await mark_server_unhealthy_async(server)
-                last_reason = f"{server} timed out"
-                logger.info(f"STREAM TIMEOUT from {server} | trying next server")
-                continue
+                raise NoHealthyServersError(f"Server {server} timed out (falling back to local)")
             except httpx.HTTPStatusError as e:
-                if produced:
-                    raise
+                error_body = ""
+                try:
+                    error_body = e.response.text[:500]
+                except Exception:
+                    pass
+                logger.error(f"STREAM ERROR from {server} | status={e.response.status_code} | body={error_body}")
                 await mark_server_unhealthy_async(server)
-                last_reason = f"{server} returned {e.response.status_code}"
-                logger.error(f"STREAM ERROR from {server} | status={e.response.status_code} | trying next server")
-                continue
+                # Re-raise to trigger fallback to local instead of yielding error
+                raise NoHealthyServersError(f"Server {server} returned {e.response.status_code}")
             except Exception as e:
-                if produced:
-                    raise
+                logger.info(f"STREAM EXCEPTION from {server} | {type(e).__name__}: {str(e)[:100]} | falling back to local")
                 await mark_server_unhealthy_async(server)
-                last_reason = f"{type(e).__name__} from {server}"
-                logger.info(f"STREAM EXCEPTION from {server} | {type(e).__name__}: {str(e)[:100]} | trying next server")
-                continue
-
-        # Every candidate was empty/unreachable — let the caller fall back to local inference.
-        logger.warning(f"[LOAD BALANCER] all servers exhausted ({last_reason}) - falling back to local")
-        raise NoHealthyServersError(last_reason)
+                # Re-raise to trigger fallback to local instead of yielding error
+                raise NoHealthyServersError(f"Stream error from {server}: {str(e)[:100]}")
 
     async def chat(
         self,
