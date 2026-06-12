@@ -281,7 +281,7 @@ async def execute_matrix_command(
     # it through this public, account-free branch even without an attachment.
     _glow_text_post = (_cmd0 == "glow" and not data.media and len(command_str.split()) > 1)
     if (data.media or _glow_text_post) and _cmd0 in (
-        "compress", "clip", "convert", "translate", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz"
+        "compress", "clip", "convert", "translate", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz"
     ):
         from app.services.command_service import CommandService
         _media_svc = CommandService(db, user=user)
@@ -547,6 +547,7 @@ async def execute_matrix_command(
             "• `gay` — stamp a big red GAY on an image.\n"
             "• `blacked` — slap the BLACKED logo on an image.\n"
             "• `kosher` — stamp a 100% KOSHER seal on an image.\n"
+            "• `blue` — drip blue paint around the mouth, then KOSHER.\n"
             "• `barked` — drop a smirking dog + #BARKED on an image.\n"
             "• `hava` — turn an image into a 6s Hava Nagila video.\n"
             "• `indian` — turn an image into a 6s Indian-song video.\n"

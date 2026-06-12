@@ -5422,6 +5422,179 @@ def thug_attachments(
 
 
 # ---------------------------------------------------------------------------
+# Blue (drippy blue paint smeared around the mouth — the "blue" effect). Reuses
+# the THUG face detection (InsightFace mouth landmarks first, then the haar(real)+
+# lbp(anime) cascades) so the paint lands on real photos AND flat anime art.
+# ---------------------------------------------------------------------------
+
+def _locate_mouth(image_data: bytes):
+    """Return ``(cx, cy, mouth_w)`` for the largest face's mouth, or ``None``.
+    InsightFace gives the exact mouth corners; the haar(real)+lbp(anime) cascade
+    fallback estimates the mouth from the face box + eye line (anime mouths sit
+    much higher), mirroring the THUG overlay so it works on photos and anime."""
+    try:
+        import cv2
+        import numpy as np
+        import math
+        from PIL import Image, ImageOps
+    except Exception as e:
+        logger.warning(f"blue: cv2/PIL unavailable ({e}); skipping")
+        return None
+
+    # Preferred: InsightFace 5-pt landmarks (le, re, nose, left-mouth, right-mouth).
+    app = _insightface_app()
+    if app is not None:
+        try:
+            with Image.open(io.BytesIO(image_data)) as im0:
+                im = ImageOps.exif_transpose(im0).convert("RGB")
+            bgr = cv2.cvtColor(np.asarray(im), cv2.COLOR_RGB2BGR)
+            dets = app.get(bgr)
+            if dets:
+                f = max(dets, key=lambda d: (d.bbox[2] - d.bbox[0]) * (d.bbox[3] - d.bbox[1]))
+                if getattr(f, "kps", None) is not None and len(f.kps) >= 5:
+                    lm, rm = f.kps[3], f.kps[4]
+                    cx, cy = (lm[0] + rm[0]) / 2, (lm[1] + rm[1]) / 2
+                    mw = max(8.0, math.hypot(rm[0] - lm[0], rm[1] - lm[1]))
+                    return (cx, cy, mw)
+        except Exception as e:
+            logger.warning(f"blue: insightface path failed, falling back: {e}")
+
+    # Fallback: cascade face box + eye line (same anchoring as the thug overlay).
+    try:
+        with Image.open(io.BytesIO(image_data)) as im:
+            im = ImageOps.exif_transpose(im).convert("RGB")
+            gray = cv2.cvtColor(np.asarray(im), cv2.COLOR_RGB2GRAY)
+            faces = _detect_thug_faces(gray, cv2.equalizeHist(gray), im.width, im.height)
+            if not faces:
+                return None
+            x, y, w, h, kind = max(faces, key=lambda f: f[2] * f[3])
+            eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_eye.xml")
+            eye_cy = None
+            if not eye_cascade.empty():
+                eyes = eye_cascade.detectMultiScale(
+                    gray[y:y + h, x:x + w], scaleFactor=1.05, minNeighbors=3,
+                    minSize=(max(8, int(w * 0.10)), max(6, int(h * 0.06))),
+                )
+                eyes = [e for e in eyes if (e[1] + e[3] / 2) < 0.6 * h]  # drop nostril/mouth hits
+                if len(eyes):
+                    eye_cy = y + sum(e[1] + e[3] / 2 for e in eyes) / len(eyes)
+            if eye_cy is None:
+                eye_cy = y + (0.42 if kind == "anime" else 0.40) * h
+            mouth_y = eye_cy + (0.21 if kind == "anime" else 0.38) * h
+            return (x + 0.5 * w, mouth_y, max(8.0, w * 0.42))
+    except Exception as e:
+        logger.warning(f"blue: cascade path failed: {e}")
+    return None
+
+
+def _draw_blue_paint(im, cx, cy, mw):
+    """Smear drippy blue paint over the mouth at ``(cx, cy)``, sized to mouth width
+    ``mw``. Draws on an RGBA overlay (irregular blue smear + downward tapering drips
+    with rounded droplets + a wet highlight), then composites. Returns an RGB image."""
+    import random
+    from PIL import Image, ImageDraw, ImageFilter
+    rng = random.Random(int(cx * 131 + cy * 17 + mw))   # stable per-face, varied look
+    W, H = im.size
+    BLUE = (24, 92, 226, 255)
+    DARK = (12, 48, 150, 255)
+    # Keep the smear "around the mouth": ~1.6x the mouth width, not the whole lower
+    # face (insightface returns a large mouth-corner distance on tight close-ups).
+    half_w = mw * 0.8
+    half_h = mw * 0.45
+
+    overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(overlay)
+    # Darker base under the smear for depth, then a cluster of overlapping blue
+    # ellipses across the mouth for an irregular, painted edge.
+    d.ellipse([cx - half_w, cy - half_h * 0.4, cx + half_w, cy + half_h * 1.1], fill=DARK)
+    n = 7
+    for i in range(n):
+        t = i / (n - 1) - 0.5
+        ex = cx + t * half_w * 1.1 + rng.uniform(-mw * 0.08, mw * 0.08)
+        ey = cy + rng.uniform(-mw * 0.1, mw * 0.1)
+        rw = half_w * rng.uniform(0.35, 0.6)
+        rh = half_h * rng.uniform(0.7, 1.1)
+        d.ellipse([ex - rw, ey - rh, ex + rw, ey + rh], fill=BLUE)
+
+    # Drips: a few tapering streaks running down with a rounded droplet head, plus
+    # the odd detached droplet below.
+    for _ in range(rng.randint(4, 6)):
+        dx = cx + rng.uniform(-half_w, half_w)
+        top = cy + rng.uniform(-mw * 0.1, half_h * 0.6)
+        length = mw * rng.uniform(0.8, 2.6)
+        top_r = mw * rng.uniform(0.10, 0.18)
+        bot_r = top_r * rng.uniform(0.4, 0.7)
+        d.polygon([(dx - top_r, top), (dx + top_r, top),
+                   (dx + bot_r, top + length), (dx - bot_r, top + length)], fill=BLUE)
+        dr = bot_r * rng.uniform(1.3, 2.0)
+        d.ellipse([dx - dr, top + length - dr * 0.6, dx + dr, top + length + dr * 1.4], fill=BLUE)
+        if rng.random() < 0.5:
+            dd = dr * rng.uniform(0.3, 0.5)
+            dy2 = top + length + dr * 1.4 + mw * rng.uniform(0.2, 0.8)
+            d.ellipse([dx - dd, dy2 - dd, dx + dd, dy2 + dd], fill=BLUE)
+
+    overlay = overlay.filter(ImageFilter.GaussianBlur(max(1, int(mw * 0.04))))  # wet softening
+
+    # Wet highlight: a soft lighter streak on the upper-left of the smear.
+    hl = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(hl).ellipse(
+        [cx - half_w * 0.5, cy - half_h * 0.7, cx - half_w * 0.1, cy - half_h * 0.1],
+        fill=(150, 200, 255, 150))
+    hl = hl.filter(ImageFilter.GaussianBlur(max(1, int(mw * 0.06))))
+
+    base = Image.alpha_composite(im.convert("RGBA"), overlay)
+    base = Image.alpha_composite(base, hl)
+    return base.convert("RGB")
+
+
+def add_blue(image_data: bytes) -> bytes:
+    """Detect the (largest) face's mouth and smear drippy blue paint around it.
+    Works on photos (InsightFace/haar) and anime art (lbp cascade). Returns JPEG;
+    on no detectable face or any error, returns the original image unchanged."""
+    from PIL import Image, ImageOps
+    loc = _locate_mouth(image_data)
+    if loc is None:
+        logger.info("blue: no face/mouth detected; returning original")
+        return image_data
+    try:
+        with Image.open(io.BytesIO(image_data)) as im0:
+            im = ImageOps.exif_transpose(im0).convert("RGB")
+        cx, cy, mw = loc
+        out_img = _draw_blue_paint(im, cx, cy, mw)
+        out = io.BytesIO()
+        out_img.save(out, format="JPEG", quality=92)
+        return out.getvalue()
+    except Exception as e:
+        logger.warning(f"blue paint failed, using bare image: {e}")
+        return image_data
+
+
+def blue_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Smear drippy blue paint around the mouth of the first image attachment.
+    Mirrors consider_attachments (image output, shared delivery path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_blue(data)
+        # Then stamp the KOSHER seal over the painted image (both are image->image).
+        try:
+            result = add_kosher(result)
+        except Exception as e:
+            logger.warning(f"blue: kosher stamp failed, keeping painted image: {e}")
+        out = _alive_or_still(result, stem, "blue")
+        summary = f"## 🔵 Blue\n\n🔵 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"blue failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+# ---------------------------------------------------------------------------
 # Motion subcommands (trailing arg, e.g. `dildo zoom` / `dildo shake`) — applied
 # to ANY effect's output: an image becomes a short motion video; an audio/video
 # effect keeps its audio while its still frame moves.

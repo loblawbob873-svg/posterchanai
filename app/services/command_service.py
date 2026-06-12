@@ -575,6 +575,7 @@ class CommandService:
         "gay": "Stamp a big red GAY rubber stamp on an attached image: gay",
         "blacked": "Slap the BLACKED logo on an attached image: blacked",
         "kosher": "Stamp a 100% KOSHER certification seal on an attached image: kosher",
+        "blue": "Smear dripping blue paint around the mouth (then stamp KOSHER) on an attached image: blue",
         "barked": "Drop a smirking dog and #BARKED on an attached image: barked",
         "alive": "Make an attached photo come alive with 3D parallax motion: alive [subtle(default)|normal|strong]",
         "glow": "Make an attached image stand out — gentle motion, colour pop and a sweeping light: glow",
@@ -657,7 +658,7 @@ class CommandService:
     # `shake` camera shake of the output).
     MOTION_EFFECTS = {
         "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay",
-        "blacked", "kosher", "barked", "hava", "indian", "yakety", "yamete",
+        "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete",
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
         "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "robocop", "titan", "terminator", "reze",
         "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
@@ -974,6 +975,8 @@ class CommandService:
             return await self._blacked_command(attachments)
         elif command == "kosher":
             return await self._kosher_command(attachments)
+        elif command == "blue":
+            return await self._blue_command(attachments)
         elif command == "barked":
             return await self._barked_command(attachments)
         elif command == "hava":
@@ -3766,6 +3769,21 @@ Files are saved to your Storage.""",
         from app.services.effects_service import kosher_attachments
 
         outputs, summary = await asyncio.to_thread(kosher_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _blue_command(self, attachments: Optional[list]) -> dict:
+        """Smear dripping blue paint around the mouth then stamp KOSHER: `blue`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `blue`."}
+
+        import asyncio
+        from app.services.effects_service import blue_attachments
+
+        outputs, summary = await asyncio.to_thread(blue_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
