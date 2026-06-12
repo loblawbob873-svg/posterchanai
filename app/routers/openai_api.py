@@ -34,7 +34,13 @@ _DEFAULT_TOOL_GUIDANCE = (
     "to change, make the change with a tool call. Do not stop to explain or summarize mid-task, and "
     "do NOT declare the task finished until every required change has actually been applied and "
     "verified. Output plain text ONLY to ask the user a question or to report you have FULLY "
-    "finished."
+    "finished.\n"
+    "- \"Verified\" means you RAN it — not that it merely compiles or reads back right. After writing "
+    "code that DOES something (a server, an endpoint, a save/DB path), execute it end to end before "
+    "finishing: start it and exercise the REAL flow (e.g. run the app and curl the create/save/load "
+    "routes), confirming each returns success AND the data actually persists across a reload. Code "
+    "that imports cleanly still fails at runtime — a wrong API call, a missing import, an un-created "
+    "table — so reproduce and FIX any such error before you declare the task done."
 )
 
 from app.database import get_db
