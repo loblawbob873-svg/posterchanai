@@ -265,6 +265,63 @@ def _compute_autofit_gpu_layers(model_path: str, file_size: int, n_ctx: int, n_b
                  f"{fit}/{int(n_layer)} GPU layers, ctx {n_ctx} preserved (config unchanged)")
 
 
+def _compute_autofit_ctx(model_path: str, file_size: int, flash_attn: bool = False,
+                         n_batch: int = 512, ctx_floor: int = 4096, ctx_cap: int = 131072):
+    """Pick the largest context window that fits THIS GPU's VRAM at full layers.
+
+    Used when ``ollama_num_ctx`` is "auto" (the default): a self-hosted user on a 6GB card
+    gets a small full-GPU window; a 24GB card gets a large one — without anyone hand-tuning
+    per machine. Mirrors ``_compute_autofit_gpu_layers``' memory model so that whatever ctx we
+    pick here, the layer-autofit then confirms "full GPU" (same weights+KV+buffer estimate).
+    Result is clamped to ``[ctx_floor, min(model train ctx, ctx_cap)]`` and rounded down to a
+    2048 multiple. Falls back to a safe small window when VRAM/metadata can't be read.
+    """
+    free_mb = _detect_free_vram_mb()
+    if not free_mb:
+        return ctx_floor * 2  # VRAM unknown: conservative 8192
+
+    meta = _read_gguf_metadata(model_path)
+
+    def find(suffix: str):
+        for k, v in meta.items():
+            if k.endswith('.' + suffix):
+                return v
+        return None
+
+    n_layer = find('block_count')
+    n_head_kv = find('attention.head_count_kv')
+    n_head = find('attention.head_count')
+    n_embd = find('embedding_length')
+    head_dim_fallback = (n_embd / n_head) if (n_embd and n_head) else None
+    k_len = find('attention.key_length') or head_dim_fallback
+    v_len = find('attention.value_length') or k_len
+    train_ctx = find('context_length') or ctx_cap
+
+    if not (n_layer and n_head_kv and k_len and v_len):
+        return ctx_floor * 2  # can't size precisely; safe small window
+
+    weights_mb = file_size / (1024 * 1024)
+    compute_mb = (n_batch * n_embd * 2 / (1024 * 1024)) * 96.0 if n_embd else 0.0
+    buffer_mb = 700.0 + compute_mb
+    usable_mb = free_mb * 0.94
+
+    # f16 KV per token (same basis as the layer-autofit). Flash attention stores it more
+    # compactly -> scale to match (see _compute_autofit_gpu_layers).
+    kv_per_tok_mb = n_layer * n_head_kv * (k_len + v_len) * 2 / (1024 * 1024)
+    if flash_attn:
+        kv_per_tok_mb *= 0.5
+
+    avail_for_kv = usable_mb - weights_mb - buffer_mb
+    if avail_for_kv <= 0 or kv_per_tok_mb <= 0:
+        return ctx_floor  # weights alone barely fit; smallest window
+
+    max_ctx = int(avail_for_kv / kv_per_tok_mb)
+    cap = min(int(train_ctx), ctx_cap)
+    max_ctx = max(ctx_floor, min(max_ctx, cap))
+    max_ctx = (max_ctx // 2048) * 2048  # round down to a clean multiple
+    return max(ctx_floor, max_ctx)
+
+
 def resolve_model_path(requested: Optional[str], default_path: str) -> str:
     """Map a client-requested model name to a local .gguf path.
 
@@ -315,16 +372,24 @@ class LlamaService:
         self.model_path = get_setting("llm_model_path", "/home/verita84/models/model.gguf")
         self.default_model = get_setting("ollama_model", "native")
 
-        # Context and generation settings
-        # Only update num_ctx if model not loaded yet (preserve actual loaded value)
-        configured_num_ctx = int(get_setting("ollama_num_ctx", "4096"))
-        logger.info(f"[LLAMA] _load_settings: configured_num_ctx={configured_num_ctx}, _model is None: {self._model is None}")
-        
-        # Only update num_ctx when model not loaded (avoid triggering reloads)
+        # Context size: "auto" (the default) sizes the window to fit this GPU at full layers;
+        # an explicit integer is used verbatim. "auto" is resolved at model-load time (needs the
+        # model's KV dims + free VRAM), so here we only flag it and keep a safe fallback so the
+        # not-yet-loaded state has a sane value.
+        raw_ctx = get_setting("ollama_num_ctx", "auto").strip().lower()
+        self._auto_ctx = raw_ctx in ("auto", "0", "")
+        configured_num_ctx = 8192 if self._auto_ctx else int(raw_ctx)
+        logger.info(f"[LLAMA] _load_settings: configured_num_ctx={'auto' if self._auto_ctx else configured_num_ctx}, _model is None: {self._model is None}")
+
+        # Only update num_ctx when model not loaded (avoid triggering reloads). For auto this is
+        # just a pre-load fallback; the loader overwrites it with the VRAM-fitted value.
         if self._model is None:
             self.num_ctx = configured_num_ctx
-        
-        self._configured_num_ctx = configured_num_ctx
+
+        # For auto, leave _configured_num_ctx tracking the resolved value (set by the loader) so
+        # the reload-detection in _ensure_model_loaded doesn't see a phantom change every request.
+        if not self._auto_ctx:
+            self._configured_num_ctx = configured_num_ctx
         self.num_predict = int(get_setting("ollama_num_predict", "2048"))
 
         # GPU settings
@@ -464,7 +529,17 @@ class LlamaService:
             # Initialize CUDA backend before loading model
             llama_cpp_lib.llama_backend_init()
 
-            # Use admin-configured context size
+            # Resolve "auto" context now that the model's KV dims + this GPU's free VRAM are
+            # known: size the window to fit this card at full layers. Pin _configured_num_ctx to
+            # the resolved value so reload-detection doesn't see a phantom change each request.
+            if getattr(self, "_auto_ctx", False) and not self.cpu_mode:
+                fitted = _compute_autofit_ctx(resolved_path, file_size, flash_attn=self.flash_attn)
+                logger.info(f"  [auto-ctx] sized context to {fitted} for this GPU "
+                            f"(flash_attn={self.flash_attn})")
+                self.num_ctx = fitted
+                self._configured_num_ctx = fitted
+
+            # Use admin-configured (or auto-fitted) context size
             logger.info(f"  Using context size: {self.num_ctx}")
 
             # Determine GPU layers - force 0 if CPU mode enabled

@@ -129,7 +129,7 @@ class SettingsResponse(BaseModel):
     ollama_top_p: str = "0.9"
     ollama_top_k: str = "40"
     ollama_repeat_penalty: str = "1.1"
-    ollama_num_ctx: str = "16384"
+    ollama_num_ctx: str = "auto"  # "auto" sizes the window to fit the detected GPU; or an explicit int
     ollama_num_predict: str = "8192"
     # Separate, higher output cap used ONLY when a request carries tools (agentic coding clients
     # like opencode emit whole-file writes as one tool call - the lower num_predict cap truncates
