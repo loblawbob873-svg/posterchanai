@@ -33,7 +33,10 @@ ARG GPU=cpu
 ARG CPU_BASE=ubuntu:24.04
 ARG CUDA_BASE=nvidia/cuda:12.4.1-devel-ubuntu24.04
 ARG ROCM_BASE=ubuntu:24.04
-ARG INTEL_BASE=intel/oneapi-basekit:2025.0.1-0-devel-ubuntu24.04
+# Use oneAPI 2025.2+ : the 2025.0 SYCL compiler has a codegen bug that makes the Arc emit EMPTY
+# generations for thinking-mode/code prompts (verified 2026-06; 2025.2 fixes it and ships
+# work_group_static.hpp so no source patches are needed). Override INTEL_BASE if this tag moves.
+ARG INTEL_BASE=intel/oneapi-basekit:2025.2.2-0-devel-ubuntu24.04
 
 FROM ${CPU_BASE}   AS base-cpu
 FROM ${CUDA_BASE}  AS base-cuda
