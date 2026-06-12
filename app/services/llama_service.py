@@ -185,7 +185,8 @@ def _detect_free_vram_mb() -> Optional[int]:
     return None
 
 
-def _compute_autofit_gpu_layers(model_path: str, file_size: int, n_ctx: int, n_batch: int = 512):
+def _compute_autofit_gpu_layers(model_path: str, file_size: int, n_ctx: int, n_batch: int = 512,
+                                flash_attn: bool = False):
     """Decide GPU layers for a model when admin left llm_gpu_layers at -1 ("all").
 
     Returns (gpu_layers, reason). gpu_layers == -1 means "fits, keep all on GPU /
@@ -238,6 +239,14 @@ def _compute_autofit_gpu_layers(model_path: str, file_size: int, n_ctx: int, n_b
     if n_layer and n_head_kv and k_len and v_len:
         kv_bytes = n_layer * n_ctx * n_head_kv * (k_len + v_len) * 2  # K+V cache, f16
         kv_mb = kv_bytes / (1024 * 1024)
+        # Flash attention stores the KV cache far more compactly than the raw f16 figure: on a
+        # 3060 (FA on) this model's measured non-weight VRAM @32k was ~1.25 GB vs the 4.0 GB f16
+        # estimate (~0.25x). Without accounting for that, FA-enabled cards look "full" and the
+        # autotuner needlessly offloads layers to CPU as context grows. Scale the reserve by 0.5
+        # when FA is on — below the f16 figure but well above the measured 0.25x, so we free the
+        # phantom headroom while keeping margin against the first-matmul OOM the buffer guards.
+        if flash_attn:
+            kv_mb *= 0.5
 
     if kv_mb is None or not n_layer:
         # Insufficient metadata for a precise split; only the load fallback can help.
@@ -467,7 +476,7 @@ class LlamaService:
             # the configured context size fixed.
             if not self.cpu_mode and self.n_gpu_layers == -1:
                 autofit_layers, autofit_reason = _compute_autofit_gpu_layers(
-                    resolved_path, file_size, self.num_ctx)
+                    resolved_path, file_size, self.num_ctx, flash_attn=self.flash_attn)
                 logger.info(f"  [autofit] {autofit_reason}")
                 gpu_layers = autofit_layers
             logger.info(f"  GPU layers: {gpu_layers} (CPU mode: {self.cpu_mode})")
