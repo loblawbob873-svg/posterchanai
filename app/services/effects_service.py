@@ -5491,41 +5491,41 @@ def _draw_blue_paint(im, cx, cy, mw):
     """Smear wet blue paint AROUND the mouth at ``(cx, cy)`` (sized to mouth width
     ``mw``) with drips running down — then punch the mouth opening clear so the lips
     and teeth stay visible. Draws on an RGBA overlay, then composites. Returns RGB."""
-    import math
     import random
     from PIL import Image, ImageDraw, ImageFilter
     rng = random.Random(int(cx * 131 + cy * 17 + mw))   # stable per-face, varied look
     W, H = im.size
     BLUE = (24, 92, 226, 235)
     DARK = (12, 48, 150, 235)
-    # The mouth opening to KEEP visible (lips + teeth): a touch wider/taller than the
-    # detected mouth so the whole lip line shows through.
-    mhw = mw * 0.62
-    mhh = mw * 0.32
-    # The paint frames the mouth — a blobby ring on the skin around the lips. Kept
-    # tight vertically so it hugs the lips instead of riding up onto the nose.
-    ring_rx = mw * 0.9
-    ring_ry = mw * 0.5
+    # Mouth opening to KEEP visible (lips + teeth).
+    mhw = mw * 0.55
+    mhh = mw * 0.26
+    # Paint stays ON the lips: a tight horizontal band along the lip line, no taller
+    # than the mouth and biased slightly downward — so it never climbs onto the nose.
+    band_hw = mw * 0.72
+    band_hh = mw * 0.30
+    pcy = cy + mhh * 0.3
 
     overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(overlay)
-    # Darker undertone ring for depth, then a blobby blue ring on top for an
-    # irregular painted edge that hugs the lips without covering the opening.
-    d.ellipse([cx - ring_rx, cy - ring_ry, cx + ring_rx, cy + ring_ry], fill=DARK)
-    n = 18
+    # Dark undertone, then blobby blue smudged along the lip line for an irregular edge.
+    d.ellipse([cx - band_hw, pcy - band_hh, cx + band_hw, pcy + band_hh], fill=DARK)
+    n = 11
     for i in range(n):
-        a = (i / n) * 2 * math.pi
-        px = cx + math.cos(a) * ring_rx * rng.uniform(0.85, 1.12)
-        py = cy + math.sin(a) * ring_ry * rng.uniform(0.85, 1.18)
-        r = mw * rng.uniform(0.14, 0.28)
-        d.ellipse([px - r, py - r, px + r, py + r], fill=BLUE)
+        t = i / (n - 1) - 0.5
+        ex = cx + t * band_hw * 1.9 + rng.uniform(-mw * 0.05, mw * 0.05)
+        ey = pcy + rng.uniform(-band_hh * 0.4, band_hh * 0.5)
+        rw = mw * rng.uniform(0.12, 0.20)
+        rh = band_hh * rng.uniform(0.7, 1.05)
+        d.ellipse([ex - rw, ey - rh, ex + rw, ey + rh], fill=BLUE)
 
-    # Drips running DOWN from the lower lip + corners — the main wet-paint feature.
-    for _ in range(rng.randint(5, 8)):
-        dx = cx + rng.uniform(-ring_rx, ring_rx)
-        top = cy + mhh * rng.uniform(0.5, 1.1)          # start at/below the lower lip
-        length = mw * rng.uniform(1.0, 3.0)
-        top_r = mw * rng.uniform(0.07, 0.15)
+    # Drips running DOWN FROM the mouth — the main wet-paint feature. They originate
+    # at the lower lip and stream onto the chin.
+    for _ in range(rng.randint(6, 9)):
+        dx = cx + rng.uniform(-band_hw, band_hw)
+        top = cy + mhh * rng.uniform(0.5, 1.0)          # start at the lower lip
+        length = mw * rng.uniform(1.2, 3.2)
+        top_r = mw * rng.uniform(0.06, 0.13)
         bot_r = top_r * rng.uniform(0.4, 0.7)
         d.polygon([(dx - top_r, top), (dx + top_r, top),
                    (dx + bot_r, top + length), (dx - bot_r, top + length)], fill=BLUE)
@@ -5536,14 +5536,14 @@ def _draw_blue_paint(im, cx, cy, mw):
             dy2 = top + length + dr * 1.4 + mw * rng.uniform(0.2, 0.8)
             d.ellipse([dx - dd, dy2 - dd, dx + dd, dy2 + dd], fill=BLUE)
 
-    overlay = overlay.filter(ImageFilter.GaussianBlur(max(1, int(mw * 0.05))))  # wet softening
+    overlay = overlay.filter(ImageFilter.GaussianBlur(max(1, int(mw * 0.04))))  # wet softening
 
-    # Wet highlight: a soft arc of sheen along the lower-right of the paint ring.
+    # Wet sheen along the lip band.
     hl = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     ImageDraw.Draw(hl).arc(
-        [cx - ring_rx, cy - ring_ry, cx + ring_rx, cy + ring_ry],
-        20, 150, fill=(170, 210, 255, 180), width=max(2, int(mw * 0.07)))
-    hl = hl.filter(ImageFilter.GaussianBlur(max(1, int(mw * 0.04))))
+        [cx - band_hw, pcy - band_hh, cx + band_hw, pcy + band_hh],
+        20, 160, fill=(170, 210, 255, 170), width=max(2, int(mw * 0.05)))
+    hl = hl.filter(ImageFilter.GaussianBlur(max(1, int(mw * 0.03))))
 
     base = Image.alpha_composite(im.convert("RGBA"), overlay)
     base = Image.alpha_composite(base, hl)
