@@ -987,6 +987,9 @@ class LlamaService:
                         "object": "chat.completion",
                     }
                 else:
+                    # SYCL/Arc: reset the reused context before the chat path too (the prefill and
+                    # tools paths already do; without it cross-request reuse can yield empty output).
+                    reset_context_if_needed(self._model)
                     result = self._model.create_chat_completion(messages=messages, **params)
                     # content is None when the model returns tool_calls - only strip text.
                     _msg = result["choices"][0]["message"]
@@ -1131,6 +1134,7 @@ class LlamaService:
                                     t = c.get("choices", [{}])[0].get("text", "")
                                     return {"content": t} if t else None
                             else:
+                                reset_context_if_needed(self._model)  # SYCL/Arc: clean context for the chat path
                                 _iter = self._model.create_chat_completion(messages=messages, stream=True, **params)
                                 def _get_delta(c):
                                     return c.get("choices", [{}])[0].get("delta") or None
@@ -1261,6 +1265,7 @@ class LlamaService:
                     _iter = self._model.create_completion(prompt=_prompt, stream=True, **params)
                     def _tok(c): return c.get("choices", [{}])[0].get("text", "")
                 else:
+                    reset_context_if_needed(self._model)  # SYCL/Arc: clean context for the chat path
                     _iter = self._model.create_chat_completion(messages=messages, stream=True, **params)
                     def _tok(c): return c.get("choices", [{}])[0].get("delta", {}).get("content", "")
                 for chunk in _iter:
