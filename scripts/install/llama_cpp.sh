@@ -125,6 +125,12 @@ setup_llama_cpp_intel() {
     # PIN 0.3.22: >=0.3.23 needs oneAPI 2025.1+ headers (work_group_static.hpp) which break the
     # 2025.0 / ipex 2.5.10 stack, AND eagerly JIT kernels that abort on older IGC. 0.3.22 + IGC
     # 2.35.5 is the proven-working Arc combo (runs 9B and the 14B). See docs/IPEX-LLM-SETUP.md.
+    #
+    # UPGRADE PATH (verified 2026-06 on the unified stack): with oneAPI **2025.2**, build **0.3.28**
+    # instead — 2025.2 ships work_group_static.hpp (no stub needed) AND fixes a 2025.0 SYCL codegen
+    # bug that made the Arc emit EMPTY generations for thinking-mode/code prompts (the tools/opencode
+    # path especially). If a 2025.2 icx/icpx is available, prefer 0.3.28 built with it, no patches.
+    # The 0.3.22/2025.0 build below stays as the conservative fallback for older oneAPI.
     CMAKE_ARGS="-DGGML_SYCL=ON -DCMAKE_C_COMPILER=$ONEAPI_ROOT/bin/icx -DCMAKE_CXX_COMPILER=$ONEAPI_ROOT/bin/icpx" \
         pip install llama-cpp-python==0.3.22 --force-reinstall --no-cache-dir -q || {
         print_warning "SYCL build failed, installing pre-built (may be CPU-only)..."

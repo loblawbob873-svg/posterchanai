@@ -81,20 +81,23 @@ if [ "$ONEAPI_FOUND" -eq 0 ]; then
     exit 1
 fi
 
-# Resolve icx/icpx full paths (cmake needs them explicit for SYCL builds)
-if command -v icx &>/dev/null && command -v icpx &>/dev/null; then
-    ICX="$(command -v icx)"
-    ICPX="$(command -v icpx)"
-else
-    # Fallback: search under known compiler dirs
-    for CBIN in /opt/intel/oneapi/compiler/latest/bin /opt/intel/oneapi/compiler/2025.0/bin /opt/intel/oneapi/compiler/2024.2/bin; do
-        if [ -x "$CBIN/icx" ] && [ -x "$CBIN/icpx" ]; then
-            ICX="$CBIN/icx"
-            ICPX="$CBIN/icpx"
-            break
-        fi
-    done
+# Resolve icx/icpx full paths (cmake needs them explicit for SYCL builds).
+# PREFER 2025.2+: the oneAPI 2025.0 SYCL compiler has a codegen bug that makes the Arc emit EMPTY
+# generations for many thinking-mode/code prompts (verified 2026-06; rebuilding the SAME 0.3.28 with
+# 2025.2 fixed it). 2025.2 also ships the headers the 2025.0 patches below stub in, so on 2025.2 the
+# work_group_static.hpp stub is NOT needed. Search newest-first.
+for CBIN in /opt/intel/oneapi/compiler/2025.2/bin /opt/intel/oneapi/compiler/2025.1/bin \
+            /opt/intel/oneapi/compiler/latest/bin /opt/intel/oneapi/compiler/2025.0/bin \
+            /opt/intel/oneapi/compiler/2024.2/bin; do
+    if [ -x "$CBIN/icx" ] && [ -x "$CBIN/icpx" ]; then
+        ICX="$CBIN/icx"; ICPX="$CBIN/icpx"; break
+    fi
+done
+# Last resort: whatever's on PATH
+if [ -z "$ICX" ] && command -v icx &>/dev/null && command -v icpx &>/dev/null; then
+    ICX="$(command -v icx)"; ICPX="$(command -v icpx)"
 fi
+echo "Using SYCL compiler: $ICPX"
 
 if [ -z "$ICX" ] || [ -z "$ICPX" ]; then
     echo "ERROR: icx/icpx not found after sourcing oneAPI environment."
