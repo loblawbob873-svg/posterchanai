@@ -124,7 +124,8 @@ ARG TORCH_CUDA_INDEX=https://download.pytorch.org/whl/cu121
 ARG TORCH_ROCM_INDEX=https://download.pytorch.org/whl/rocm6.3
 ARG TORCH_XPU_INDEX=https://download.pytorch.org/whl/xpu
 ARG TORCH_XPU_VERSION=2.12.0
-# LLAMA_CPP_VERSION empty = latest (the Intel branch pins 0.3.22 below).
+# LLAMA_CPP_VERSION empty = latest. Intel branch pins 0.3.28 below (built with the 2025.2 base's
+# icx/icpx — fixes the 2025.0 SYCL codegen empty-gen bug; 2025.2 ships the headers 0.3.28 needs).
 ARG LLAMA_CPP_VERSION=
 # AMDGPU_TARGETS: which HIP GPU arches to build llama.cpp kernels for. Defaults to
 # common consumer RDNA2/RDNA3 (RX 6000/7000) so the image runs on most AMD cards
@@ -155,8 +156,8 @@ RUN set -eux; \
           || pip install "torch==${TORCH_XPU_VERSION}" --index-url "$TORCH_XPU_INDEX" ; \
         bash -c 'source /opt/intel/oneapi/setvars.sh >/dev/null 2>&1; \
           CMAKE_ARGS="-DGGML_SYCL=ON -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx" \
-            pip install "llama-cpp-python==${LLAMA_CPP_VERSION:-0.3.22}"' \
-        || pip install "llama-cpp-python==${LLAMA_CPP_VERSION:-0.3.22}" ; \
+            pip install "llama-cpp-python==${LLAMA_CPP_VERSION:-0.3.28}"' \
+        || pip install "llama-cpp-python==${LLAMA_CPP_VERSION:-0.3.28}" ; \
         ;; \
       *) echo "Unknown GPU '$GPU' (use cpu|cuda|rocm|intel)"; exit 1 ;; \
     esac
