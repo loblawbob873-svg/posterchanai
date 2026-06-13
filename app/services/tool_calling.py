@@ -30,6 +30,12 @@ _PARAM_RE = re.compile(r"<parameter=([^>\s]+)\s*>\s*(.*?)\s*</parameter>", re.DO
 _FUNC_CALLS_RE = re.compile(r"<function[-_]calls?>\s*(.*?)\s*</function[-_]calls?>", re.DOTALL)
 # Any <tool_call>...</tool_call> block (either form) - for stripping from content.
 _ANY_TOOL_CALL_RE = re.compile(r"<tool_call>.*?</tool_call>", re.DOTALL)
+# Markdown-fenced JSON tool call: ```json {"name":..,"arguments":..} ``` — OpenAI-style instruct
+# models (Qwen2.5-Coder-Instruct etc.) wrap the call in a code fence instead of <tool_call>/<function=>.
+_MD_FENCE_RE = re.compile(r"```(?:json|tool_call|tool_code)?\s*\n?(.*?)```", re.DOTALL | re.IGNORECASE)
+# Fenced JSON block that actually carries a tool call (has a "name") - for stripping from content.
+_MD_TOOL_FENCE_RE = re.compile(r"```(?:json|tool_call|tool_code)?\s*\n?\{.*?\"name\".*?\}\s*```",
+                               re.DOTALL | re.IGNORECASE)
 
 
 def _iter_json_objects(s: str) -> List[Any]:
@@ -148,6 +154,17 @@ def parse_tool_calls(text: str) -> Tuple[Optional[str], List[Dict[str, Any]]]:
                     tool_calls.append(_mk_call(obj.get("name"),
                                                obj.get("arguments", obj.get("parameters", {})),
                                                len(tool_calls)))
+    # 4) Markdown-fenced / bare JSON: ```json {"name":..,"arguments":..} ``` — OpenAI-style instruct
+    #    models (Qwen2.5-Coder-Instruct) fence the call instead of using <tool_call>/<function=>.
+    #    Prefer fenced blocks (don't grab a JSON example buried in prose); fall back to whole text.
+    if not tool_calls:
+        fenced = _MD_FENCE_RE.findall(text)
+        for src in (fenced or [text]):
+            for obj in _iter_json_objects(src):
+                if isinstance(obj, dict) and obj.get("name") and ("arguments" in obj or "parameters" in obj):
+                    tool_calls.append(_mk_call(obj.get("name"),
+                                               obj.get("arguments", obj.get("parameters", {})),
+                                               len(tool_calls)))
     if not tool_calls:
         return text, []
     # Small models sometimes degenerate into repeating the same call many times (e.g. 296
@@ -167,7 +184,8 @@ def parse_tool_calls(text: str) -> Tuple[Optional[str], List[Dict[str, Any]]]:
     # Strip any tool-call block (all forms) from the visible content.
     content = _ANY_TOOL_CALL_RE.sub("", text)
     content = _FUNC_RE.sub("", content)
-    content = _FUNC_CALLS_RE.sub("", content).strip()
+    content = _FUNC_CALLS_RE.sub("", content)
+    content = _MD_TOOL_FENCE_RE.sub("", content).strip()
     return (content or None), tool_calls
 
 
