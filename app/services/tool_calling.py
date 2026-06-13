@@ -107,6 +107,31 @@ def _repair_path_args(args: Any) -> Any:
     return args
 
 
+# Narrate-instead-of-act detection: content that reads like the model was ABOUT to act (a botched/
+# truncated tool-call tag, a trailing "next step:" colon, or an intent phrase) rather than giving a
+# final answer. Used only to decide whether to regenerate forcing the call (push-to-act) — and only
+# when NO call was parsed, so it can never affect a valid call.
+_ORPHAN_TAG_RE = re.compile(r"</?(?:tool_call|function|parameter)\b|<function=|<parameter=", re.IGNORECASE)
+_INTENT_PHRASE_RE = re.compile(
+    r"(?:^|\n|[.\s])(?:let me|i'?ll|i will|i'?m going to|i am going to|i need to|i should|"
+    r"now i'?m|now i'?ll|let's|first,? i|next,? i)\b", re.IGNORECASE)
+
+
+def _looks_like_intent_to_act(content: str) -> bool:
+    """True if content reads like the model was about to act, not finishing. False for a plain
+    answer or a question (so push-to-act never regenerates over legitimate final text)."""
+    if not content:
+        return False
+    s = content.strip()
+    if s.endswith("?"):            # a question to the user is a real answer
+        return False
+    if _ORPHAN_TAG_RE.search(s):   # a botched/truncated tool-call tag = it tried to call
+        return True
+    if s.endswith(":"):           # "Let me check X:" hand-off to an action
+        return True
+    return bool(_INTENT_PHRASE_RE.search(s[:180]) or _INTENT_PHRASE_RE.search(s[-180:]))
+
+
 def _mk_call(name, args, idx):
     args = _repair_path_args(args)
     if not isinstance(args, str):
@@ -429,6 +454,39 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
                 tool_calls = _normalize_tool_names(tool_calls, tools)
                 if not tool_calls and not content:
                     logger.warning("empty after /no_think retry; raw2[:160]=%r", raw2[:160])
+            # Minimal push-to-act (narrate-instead-of-act): the model produced PROSE that reads like
+            # it was about to act (intent phrase / "next step:" / a botched-truncated tool-call tag)
+            # but emitted NO parseable call -> opencode reads content+stop as a final answer and HALTS.
+            # Regenerate ONCE forcing the call (/no_think + an explicit "emit ONLY the tool call now").
+            # STRICTLY ADDITIVE & cannot repeat the 8f2c6c8d regression: it runs ONLY when no call was
+            # parsed (never touches a valid call) and KEEPS the original content if the regen still
+            # yields nothing — so it can only ADD a recovered action, never make things worse.
+            if tools and content and not tool_calls and _looks_like_intent_to_act(content):
+                logger.warning("narration-only intent-to-act — pushing for the tool call (len=%d)", len(content))
+                try:
+                    push = ("You started to act but did NOT emit a complete tool call. Emit the tool "
+                            "call NOW and output ONLY the tool call — no explanation, no prose. /no_think")
+                    nt = [dict(m) for m in _prep_for_template(messages)]
+                    for _m in nt:
+                        if _m.get("role") == "system":
+                            _m["content"] = ((_m.get("content") or "") + "\n" + push).strip()
+                            break
+                    else:
+                        nt.insert(0, {"role": "system", "content": push})
+                    r3 = _get_formatter(template)(messages=nt, tools=tools)
+                    toks3 = model.tokenize(r3.prompt.encode("utf-8"), add_bos=False, special=True)
+                    raw3 = (model.create_completion(prompt=toks3, **_p).get("choices") or [{}])[0].get("text") or ""
+                    body3 = raw3.split("</think>", 1)[1].strip() if "</think>" in raw3 else raw3.strip()
+                    c3, tc3 = parse_tool_calls(body3)
+                    tc3 = _normalize_tool_names(tc3, tools)
+                    if tc3:
+                        logger.warning("push-to-act succeeded (%s)",
+                                       ",".join(t["function"]["name"] for t in tc3))
+                        content, tool_calls = c3, tc3   # now acting; the obsolete narration is dropped
+                    else:
+                        logger.info("push-to-act produced no call; keeping original content")
+                except Exception as e:
+                    logger.warning("push-to-act failed (%s); keeping original content", e)
             # Last-resort band-aid: NEVER return an empty message. An empty tool response makes the
             # LB read the node as dead and abort the already-streamed SSE -> opencode HARD-stops.
             # If retries still produced nothing usable, surface the model's own reasoning as content
