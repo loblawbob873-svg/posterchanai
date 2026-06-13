@@ -277,7 +277,8 @@ def _compute_autofit_gpu_layers(model_path: str, file_size: int, n_ctx: int, n_b
 
 
 def _compute_autofit_ctx(model_path: str, file_size: int, flash_attn: bool = False,
-                         n_batch: int = 512, ctx_floor: int = 4096, ctx_cap: int = 131072):
+                         n_batch: int = 512, ctx_floor: int = 4096, ctx_cap: int = 131072,
+                         offload_ctx_target: int = 16384):
     """Pick the largest context window that fits THIS GPU's VRAM at full layers.
 
     Used when ``ollama_num_ctx`` is "auto" (the default): a self-hosted user on a 6GB card
@@ -286,6 +287,12 @@ def _compute_autofit_ctx(model_path: str, file_size: int, flash_attn: bool = Fal
     pick here, the layer-autofit then confirms "full GPU" (same weights+KV+buffer estimate).
     Result is clamped to ``[ctx_floor, min(model train ctx, ctx_cap)]`` and rounded down to a
     2048 multiple. Falls back to a safe small window when VRAM/metadata can't be read.
+
+    When the model is *larger* than this GPU's VRAM (weights won't fit at full layers), the
+    "fits at full layers" math goes negative. Rather than flooring to ``ctx_floor`` (which left
+    30B-class models at 4096 — too small for an agent/tool preamble), target ``offload_ctx_target``
+    and let the layer-autofit spill weights to CPU to pay for it: those layers are offloaded
+    regardless, and the KV for the few GPU-resident layers is cheap.
     """
     free_mb = _detect_free_vram_mb()
     if not free_mb:
@@ -322,12 +329,19 @@ def _compute_autofit_ctx(model_path: str, file_size: int, flash_attn: bool = Fal
     if flash_attn:
         kv_per_tok_mb *= 0.5
 
+    cap = min(int(train_ctx), ctx_cap)
+    if kv_per_tok_mb <= 0:
+        return ctx_floor  # can't size KV; smallest window
+
     avail_for_kv = usable_mb - weights_mb - buffer_mb
-    if avail_for_kv <= 0 or kv_per_tok_mb <= 0:
-        return ctx_floor  # weights alone barely fit; smallest window
+    if avail_for_kv <= 0:
+        # Model is bigger than this GPU: weights get partially offloaded to CPU by the
+        # layer-autofit no matter what, so flooring ctx here buys nothing. Target a usable
+        # agentic window and let the layer-autofit trade GPU layers to fit its KV.
+        target = max(ctx_floor, min(offload_ctx_target, cap))
+        return (target // 2048) * 2048
 
     max_ctx = int(avail_for_kv / kv_per_tok_mb)
-    cap = min(int(train_ctx), ctx_cap)
     max_ctx = max(ctx_floor, min(max_ctx, cap))
     max_ctx = (max_ctx // 2048) * 2048  # round down to a clean multiple
     return max(ctx_floor, max_ctx)
@@ -972,7 +986,9 @@ class LlamaService:
         _model_lower = _os.path.basename(target_path or self.model_path).lower()
         # The raw-prompt prefill path can't carry tools, so fall back to the chat path
         # (function-calling handler) whenever tool definitions are present.
-        use_prefill = self.disable_thinking and "qwen3" in _model_lower and not kwargs.get("tools")
+        # "coder" = non-thinking Qwen3 (Qwen3-Coder); the <think></think> prefill makes it emit
+        # an immediate stop -> empty output. Only thinking-capable qwen3 models need the prefill.
+        use_prefill = self.disable_thinking and "qwen3" in _model_lower and "coder" not in _model_lower and not kwargs.get("tools")
         with _get_inference_semaphore(self.max_concurrent):
             try:
                 if use_prefill:
@@ -1121,7 +1137,7 @@ class LlamaService:
                     last_token_time = time.time()
                     _mlower = _os.path.basename(target_path).lower()
                     # Tools can't go through the raw-prompt prefill path - use the chat path.
-                    _use_pf = self.disable_thinking and "qwen3" in _mlower and not params.get("tools")
+                    _use_pf = self.disable_thinking and "qwen3" in _mlower and "coder" not in _mlower and not params.get("tools")
 
                     with _get_inference_semaphore(self.max_concurrent):
                         try:
@@ -1264,7 +1280,7 @@ class LlamaService:
         last_token_time = time.time()
 
         _mlower = _os.path.basename(self.model_path).lower()
-        _use_pf = self.disable_thinking and "qwen3" in _mlower
+        _use_pf = self.disable_thinking and "qwen3" in _mlower and "coder" not in _mlower
         with _get_inference_semaphore(self.max_concurrent):
             try:
                 if _use_pf:
