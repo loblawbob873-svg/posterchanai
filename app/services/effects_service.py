@@ -13,6 +13,8 @@ import io
 import logging
 import os
 import re
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import List, Tuple
 
@@ -2310,9 +2312,10 @@ _FAHH_AUDIO_CANDIDATES = [
     os.path.join(_REPO_ROOT, "assets", "fahh.mp3"),
     "/var/lib/posterchanai/assets/fahh.mp3",
 ]
-# fahh.mp3 is ~3.24s and ends with a little musical sting — cap the output to drop the last
-# ~0.8s so it ends right after the "fahh" (image_audio_to_video applies this as a hard -t cut).
-_FAHH_DURATION = 2.4
+# fahh.mp3 is only ~3.24s, which made the effect feel too fast/short — hold it for a full 5s.
+# The audio is padded with trailing silence to _FAHH_DURATION so image_audio_to_video's -shortest
+# ends the video at 5s (the moving photo keeps going) instead of stopping when the short clip does.
+_FAHH_DURATION = 5.0
 
 
 def _fahh_audio_path() -> str:
@@ -2323,13 +2326,42 @@ def _fahh_audio_path() -> str:
     return ""
 
 
+def _pad_audio_to_duration(audio_path: str, seconds: float) -> str:
+    """Return a temp mp3 of `audio_path` padded with trailing silence to `seconds`, so a video
+    muxed with ffmpeg's -shortest lasts the full duration instead of ending with the short clip.
+    Caller deletes the temp file; falls back to the original path on any failure."""
+    from app.services.media_service import resolve_ffmpeg, ffmpeg_available
+    if not ffmpeg_available():
+        return audio_path
+    fd, out_path = tempfile.mkstemp(prefix="fahh_pad_", suffix=".mp3")
+    os.close(fd)
+    cmd = [resolve_ffmpeg(), "-i", audio_path, "-af", "apad", "-t", f"{seconds:.3f}",
+           "-c:a", "libmp3lame", "-y", out_path]
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=120, text=True)
+        if r.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+            return out_path
+        logger.warning(f"fahh audio pad failed: {(r.stderr or '')[-200:]}")
+    except Exception as e:
+        logger.warning(f"fahh audio pad error: {e}")
+    if os.path.exists(out_path):
+        os.unlink(out_path)
+    return audio_path
+
+
 def add_fahh(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
-    """Turn a still image into a short MP4 playing the fahh clip over it. MP4 bytes."""
+    """Turn a still image into a 5s MP4 playing the fahh clip (padded with trailing silence so the
+    moving photo holds for the full 5s before the outro watermark) over it. MP4 bytes."""
     from app.services.media_service import image_audio_to_video
     audio = _fahh_audio_path()
     if not audio:
         raise RuntimeError("Fahh audio (assets/fahh.mp3) is missing on the server")
-    return image_audio_to_video(image_data, source_filename, audio, duration=_FAHH_DURATION)
+    padded = _pad_audio_to_duration(audio, _FAHH_DURATION)
+    try:
+        return image_audio_to_video(image_data, source_filename, padded, duration=_FAHH_DURATION)
+    finally:
+        if padded != audio and os.path.exists(padded):
+            os.unlink(padded)
 
 
 def fahh_attachments(
