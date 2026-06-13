@@ -168,22 +168,27 @@ download_depth_model() {
 download_model() {
     print_step "Download a model?"
     echo ""
-    echo "  Models this project is tuned for (GGUF Q4_K_M, ~5.6GB each):"
+    echo "  Lightweight models this project is tuned for (GGUF Q4_K_M, ~5.6GB each):"
     echo "  1. Qwen3.5-9B-Claude-Code  - agentic coding / opencode (reliable tool calls)"
     echo "  2. Qwen3.5-9B-abliterated  - general chat (uncensored); the default model"
-    echo "  3. Both (recommended)"
+    echo "  3. Both (recommended for an 8GB GPU / general use)"
+    echo ""
+    echo "  Best agentic coder (needs a 12GB+ GPU; partial CPU offload below ~18GB VRAM):"
+    echo "  4. Qwen3-Coder-30B-A3B-Instruct (IQ4_XS, ~16GB) - MoE, ~3B active. Far stronger"
+    echo "     at multi-step tool use; reliably 1-shots small apps. Point opencode at this."
     echo ""
     echo "  Image model (SDXL): cyberrealisticXL_v100.safetensors - download from CivitAI"
     echo "  (search 'CyberRealistic XL') and drop it in the models dir. Not auto-downloaded"
     echo "  because CivitAI requires an account token."
     echo ""
-    read -p "Download a starter LLM? [1/2/3/n]: " DOWNLOAD_MODEL
+    read -p "Download a starter LLM? [1/2/3/4/n]: " DOWNLOAD_MODEL
 
     local MODELS_PATH="/var/lib/posterchanai/models"
     mkdir -p "$MODELS_PATH" 2>/dev/null || true
     # Verified HF repos with these exact filenames (the ones running in production).
     local CC_URL="https://huggingface.co/empero-ai/Qwen3.5-9B-Claude-Code-GGUF/resolve/main/Qwen3.5-9B-Claude-Code-Q4_K_M.gguf"
     local AB_URL="https://huggingface.co/lukey03/Qwen3.5-9B-abliterated-GGUF/resolve/main/Qwen3.5-9B-abliterated-Q4_K_M.gguf"
+    local CODER_URL="https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF/resolve/main/Qwen3-Coder-30B-A3B-Instruct-IQ4_XS.gguf"
 
     case "$DOWNLOAD_MODEL" in
         1)  _download_model_file "$CC_URL" "$MODELS_PATH/Qwen3.5-9B-Claude-Code-Q4_K_M.gguf" ;;
@@ -192,11 +197,14 @@ download_model() {
             _download_model_file "$AB_URL" "$MODELS_PATH/Qwen3.5-9B-abliterated-Q4_K_M.gguf"
             _download_model_file "$CC_URL" "$MODELS_PATH/Qwen3.5-9B-Claude-Code-Q4_K_M.gguf"
             ;;
+        4)  _download_model_file "$CODER_URL" "$MODELS_PATH/Qwen3-Coder-30B-A3B-Instruct-IQ4_XS.gguf" ;;
         *)  return ;;
     esac
     echo ""
     echo "  Configure in Admin Settings > LLM Model Path (default: the abliterated model)."
-    echo "  Point opencode (its own config) at Qwen3.5-9B-Claude-Code for agentic coding."
+    echo "  For agentic coding, point opencode (its own config) at Qwen3-Coder-30B-A3B if you"
+    echo "  downloaded it (best), otherwise Qwen3.5-9B-Claude-Code. With a 12-16GB GPU the 30B"
+    echo "  auto-fits context via partial CPU offload - leave ollama_num_ctx on 'auto'."
 }
 
 setup_mcp_server() {

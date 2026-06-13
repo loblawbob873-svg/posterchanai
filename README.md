@@ -45,6 +45,7 @@ One FastAPI backend that does chat, image generation, voice, RAG over your code,
 
 - **Streaming chat** with multiple conversations, history, and optional markdown/formatting
 - **OpenAI-compatible API** at `/v1/` for compatible clients and tools, including **function/tool calling** so agentic coding clients (e.g. opencode) can drive your local models
+  - **Recommended coding model:** [Qwen3-Coder-30B-A3B-Instruct](https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF) (`IQ4_XS`, MoE ~3B active, ~16GB) — by far the most reliable local model here for multi-step agentic builds; it 1-shots small apps where 8–14B models stall. Needs a 12GB+ GPU (partial CPU offload on 12–16GB cards; leave `ollama_num_ctx` on `auto`). For smaller GPUs, `Qwen3.5-9B-Claude-Code` is the lightweight fallback.
 - **Local or remote LLM**: Ollama, or llama-cpp-python (CPU / CUDA / HIP / Intel Arc SYCL)
 - **Load balancing**: round-robin across multiple chat servers
 - **Intent detection** and slash-style **commands** (e.g. `/mail`, `/image`, `/search`)
