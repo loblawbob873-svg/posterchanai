@@ -289,7 +289,7 @@ def extract_prompt_from_image(image_bytes):
         return None
 
 
-def process_media(command, arg, media):
+def process_media(command, arg, media, brand_handle=None, brand_avatar=None):
     """Run a compress/clip/convert operation on the posterchanai backend.
 
     `media` is a list of (filename, data_bytes, content_type) tuples. Returns
@@ -298,6 +298,10 @@ def process_media(command, arg, media):
     (error_message, []). Shared by the Misskey and Pleroma listeners (and mirrors
     what the Matrix listener does via /api/matrix/command) so all three reuse the
     backend's single HW-accelerated ffmpeg/Pillow path.
+
+    `brand_handle` (the fediverse poster's @handle) and `brand_avatar`
+    ((bytes, content_type) of their profile pic) personalize the effect's outro
+    end-card; omit them for the static "made with PosterChanAI" card.
     """
     url = f"{POSTERCHANAI_API_ENDPOINT}/api/media/process"
     body = {
@@ -312,6 +316,14 @@ def process_media(command, arg, media):
             for (fn, data, ct) in (media or [])
         ],
     }
+    if brand_handle:
+        body["brand_handle"] = brand_handle
+    if brand_avatar and brand_avatar[0]:
+        body["brand_avatar"] = {
+            "filename": "avatar",
+            "data": base64.b64encode(brand_avatar[0]).decode("ascii"),
+            "content_type": brand_avatar[1] or "",
+        }
     data = json.dumps(body).encode("utf-8")
     try:
         req = request.Request(url, data=data, headers=_get_auth_headers(), method="POST")

@@ -37,6 +37,12 @@ class MediaProcessRequest(BaseModel):
     command: str
     arg: Optional[str] = ""
     media: List[MediaItem] = []
+    # Optional branding identity for the outro end-card: the fediverse poster who
+    # invoked the effect. `brand_handle` is shown as @handle (already in fediverse
+    # form — bare for local users, user@host for remote); `brand_avatar` is their
+    # profile picture. Absent → the static "made with PosterChanAI" card.
+    brand_handle: Optional[str] = None
+    brand_avatar: Optional[MediaItem] = None
 
 
 class ScreenshotRequest(BaseModel):
@@ -59,9 +65,12 @@ class PostCardRequest(BaseModel):
     avatar: Optional[MediaItem] = None  # pre-fetched profile picture, embedded as a data: URI
 
 
-def _brand_static_videos(outputs: list, db: Session) -> list:
-    """Append the STATIC PosterChanAI end-card to each video output (bot path — no user context).
-    Gated by `effect_outro_enabled`; best-effort (failure leaves the file untouched)."""
+def _brand_videos(outputs: list, db: Session,
+                  username: Optional[str] = None, avatar_bytes: Optional[bytes] = None) -> list:
+    """Append the PosterChanAI end-card to each video output. When `username` is given (the
+    fediverse poster who invoked the effect), it's a per-user card with their @handle + avatar;
+    otherwise the STATIC "made with PosterChanAI" card. Gated by `effect_outro_enabled`;
+    best-effort (failure leaves the file untouched)."""
     from app.models import Setting
     try:
         s = db.query(Setting).filter(Setting.key == "effect_outro_enabled").first()
@@ -74,7 +83,8 @@ def _brand_static_videos(outputs: list, db: Session) -> list:
         try:
             if isinstance(f, dict) and f.get("content_type") == "video/mp4" and f.get("data"):
                 f = {**f, "data": media_service.append_outro(
-                    f["data"], f.get("filename", "video.mp4"), username=None, avatar_bytes=None)}
+                    f["data"], f.get("filename", "video.mp4"),
+                    username=username, avatar_bytes=avatar_bytes)}
         except Exception as e:
             logger.warning(f"[MEDIA-API] outro branding failed: {e}")
         out.append(f)
@@ -333,10 +343,19 @@ async def process_media(
         # Skip the media tools (compress already ran; clip/convert are user-controlled).
         if outputs and command not in ("compress", "clip", "convert"):
             outputs = await asyncio.to_thread(media_service.compress_output_videos, outputs)
-        # TikTok-style branding end-card. The bot media endpoint is identity-agnostic, so this is the
-        # STATIC "made with PosterChanAI" card (no per-user avatar/@username). Gated, best-effort.
+        # TikTok-style branding end-card. If the caller supplied the fediverse poster's
+        # identity (brand_handle/brand_avatar), it's a per-user card with their @handle +
+        # avatar; otherwise the STATIC "made with PosterChanAI" card. Gated, best-effort.
         if outputs and command not in ("compress", "clip", "convert"):
-            outputs = await asyncio.to_thread(_brand_static_videos, outputs, db)
+            _brand_avatar_bytes = None
+            if req.brand_avatar and req.brand_avatar.data:
+                try:
+                    _brand_avatar_bytes = base64.b64decode(req.brand_avatar.data)
+                except Exception:
+                    _brand_avatar_bytes = None
+            outputs = await asyncio.to_thread(
+                _brand_videos, outputs, db,
+                (req.brand_handle or "").strip() or None, _brand_avatar_bytes)
     except Exception as e:
         logger.error(f"[MEDIA-API] {command} failed: {e}", exc_info=True)
         return {"error": str(e)}

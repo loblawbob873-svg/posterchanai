@@ -120,15 +120,33 @@ _BOT_HELP_TEXT = (
 )
 
 
+def _sender_brand(status):
+    """The fediverse poster's identity for the effect outro end-card: (handle, avatar).
+    `handle` is their `acct` (bare for local users, user@host for remote — already the
+    form we want to print as @handle); `avatar` is (bytes, content_type) or None."""
+    acct = (status.get("account", {}) or {}).get("acct") or None
+    avatar = None
+    av_url = (status.get("account", {}) or {}).get("avatar")
+    if av_url:
+        try:
+            data = download_image_from_url(av_url, timeout=30)
+            if data:
+                avatar = (data, "")
+        except Exception:
+            avatar = None
+    return acct, avatar
+
+
 def _handle_media_command(status, command, arg, own_acct, visibility):
     """Run compress/clip/convert/meme on a status's attachment(s) via the backend and
     post the result file(s) back. Shared shape with the Misskey listener."""
+    brand_handle, brand_avatar = _sender_brand(status)
     media = _gather_status_media(status)
     if not media:
         # `glow <text>` with no attachment → a glowing neon text-card post. (No bad-word
         # gate — that's CSAM protection for image *generation*, not rendered text.)
         if command == "glow" and arg.strip():
-            _gsum, _gout = process_media("glow", arg, [])
+            _gsum, _gout = process_media("glow", arg, [], brand_handle, brand_avatar)
             _gimgs = [(f["data"], f["content_type"]) for f in _gout if f["content_type"].startswith("image/")]
             if _gimgs:
                 send_reply(status, "", own_acct=own_acct, visibility=visibility, image_bytes=_gimgs)
@@ -140,7 +158,7 @@ def _handle_media_command(status, command, arg, own_acct, visibility):
                    own_acct=own_acct, visibility=visibility)
         return
     print(f"→ Forwarding {len(media)} file(s) for '{command}'")
-    summary, out_files = process_media(command, arg, media)
+    summary, out_files = process_media(command, arg, media, brand_handle, brand_avatar)
     # Fediverse media is images/video only — route ALL outputs by type; flag the rest.
     image_outs = [(f["data"], f["content_type"]) for f in out_files if f["content_type"].startswith("image/")]
     video_outs = [f["data"] for f in out_files if f["content_type"].startswith("video/")]
