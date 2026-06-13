@@ -925,7 +925,16 @@ def render_outro_card(W: int, H: int, username: Optional[str] = None, avatar=Non
             _ctext(y + int(av_r * 0.5), username[:1].upper(), _outro_font(int(av_r * 1.0)), (235, 235, 250))
         d.ellipse([cx - av_r, y, cx + av_r, y + av_r * 2], outline=(255, 170, 60), width=max(3, W // 180))
         y += av_r * 2 + int(H * 0.02)
-        y += _ctext(y, f"@{username}", _outro_font(int(H * 0.05)), (245, 245, 255)) + int(H * 0.03)
+        # Shrink the handle to fit the card width — fediverse handles (user@instance) are long
+        # and would otherwise run off both edges.
+        handle = f"@{username}"
+        max_w = int(W * 0.92)
+        fsz = int(H * 0.05)
+        while fsz > int(H * 0.022):
+            if (lambda bb: bb[2] - bb[0])(d.textbbox((0, 0), handle, font=_outro_font(fsz))) <= max_w:
+                break
+            fsz -= 2
+        y += _ctext(y, handle, _outro_font(fsz), (245, 245, 255)) + int(H * 0.03)
 
     if os.path.exists(_OUTRO_LOGO):
         try:

@@ -764,8 +764,10 @@ class CommandService:
         return result
 
     def _brand_effect_videos(self, files: list) -> list:
-        """Append the PosterChanAI end-card to each video output (per-user avatar + @username when
-        known). Best-effort: any failure leaves the original file untouched."""
+        """Append the GENERIC PosterChanAI end-card to each video output. Effects invoked from the
+        web UI / Telegram brand WITHOUT any user info (the static 'made with PosterChanAI' card) —
+        only fediverse mentions carry the poster's avatar/@username (done in the media API path).
+        Best-effort: any failure leaves the original file untouched."""
         from app.models import Setting
         from app.services import media_service
         try:
@@ -774,37 +776,13 @@ class CommandService:
                 return files
         except Exception:
             pass
-        username = getattr(self.user, "username", None) if self.user else None
-        avatar_bytes = None
-        if username and getattr(self.user, "avatar", None):
-            # Try a local read first; avatars usually live on the storage server (another node), so
-            # fall back to the instance's own /api/auth/avatar/<username> endpoint, which transparently
-            # serves local OR proxies to the storage server. (That's why the avatar was missing before
-            # — get_avatar_path only finds it on the storage node.)
-            try:
-                from app.services.storage_service import get_storage_service
-                ap = get_storage_service(self.db).get_avatar_path(username)
-                if ap and ap.exists():
-                    avatar_bytes = ap.read_bytes()
-            except Exception:
-                avatar_bytes = None
-            if not avatar_bytes:
-                try:
-                    import os as _os, httpx as _httpx
-                    _port = _os.environ.get("POSTERCHANAI_PORT", "3051")
-                    _r = _httpx.get(f"http://127.0.0.1:{_port}/api/auth/avatar/{username}",
-                                    headers={"X-Posterchanai-Load-Balanced": "true"}, timeout=8.0)
-                    if _r.status_code == 200 and _r.content and _r.headers.get("content-type", "").startswith("image"):
-                        avatar_bytes = _r.content
-                except Exception:
-                    avatar_bytes = None
         out = []
         for f in files:
             try:
                 if isinstance(f, dict) and f.get("content_type") == "video/mp4" and f.get("data"):
                     f = {**f, "data": media_service.append_outro(
                         f["data"], f.get("filename", "video.mp4"),
-                        username=username, avatar_bytes=avatar_bytes)}
+                        username=None, avatar_bytes=None)}
             except Exception as e:
                 logger.warning(f"outro branding failed for {f.get('filename') if isinstance(f, dict) else '?'}: {e}")
             out.append(f)
