@@ -28,7 +28,16 @@ _PARAM_RE = re.compile(r"<parameter=([^>\s]+)\s*>\s*(.*?)\s*</parameter>", re.DO
 # Alternate JSON wrapper that Qwen2.5-Coder emits: <function-calls>{...JSON...}</function-calls>
 # (also tolerates singular / underscore variants). Inner is one or more {"name","arguments"} objects.
 _FUNC_CALLS_RE = re.compile(r"<function[-_]calls?>\s*(.*?)\s*</function[-_]calls?>", re.DOTALL)
-# Any <tool_call>...</tool_call> block (either form) - for stripping from content.
+# Nested-tag form some models emit instead of JSON/<function=> inside the <tool_call> wrapper:
+# <tool_call><tool>NAME</tool><input>ARGS</input></tool_call>. Name tag: tool|tool_name|name|
+# function; args tag: input|arguments|args|parameters. ARGS body is JSON or key=value pairs.
+# Without this the block isn't recognized as a call and falls through as prose -> the agent
+# (opencode) renders it as text and silently does nothing.
+_TOOL_TAG_RE = re.compile(
+    r"<tool_call>\s*<(?:tool|tool_name|name|function)>\s*(.*?)\s*</(?:tool|tool_name|name|function)>\s*"
+    r"<(?:input|arguments|args|parameters)>(.*?)</(?:input|arguments|args|parameters)>\s*</tool_call>",
+    re.DOTALL | re.IGNORECASE)
+# Any <tool_call>...</tool_call> block (any form) - for stripping from content.
 _ANY_TOOL_CALL_RE = re.compile(r"<tool_call>.*?</tool_call>", re.DOTALL)
 # Markdown-fenced JSON tool call: ```json {"name":..,"arguments":..} ``` — OpenAI-style instruct
 # models (Qwen2.5-Coder-Instruct etc.) wrap the call in a code fence instead of <tool_call>/<function=>.
@@ -104,6 +113,30 @@ def _coerce_param_value(v: str) -> Any:
     return v if isinstance(parsed, str) else parsed
 
 
+def _parse_tag_args(body: str) -> Any:
+    """Decode the args body of a nested-tag tool call (the <input>/<arguments>/... payload).
+
+    The body is either a JSON object or newline/space-separated ``key=value`` pairs (the form
+    the model emits with this schema, e.g. ``pattern=Sy|=== path=foo``). A value runs until the
+    next whitespace-delimited ``key=`` marker, so values may contain spaces and ``=`` (a regex,
+    a path). Empty values are dropped (the model trailing off), and literals (numbers/arrays) are
+    decoded via the same coercion the native ``<parameter=>`` form uses."""
+    body = (body or "").strip()
+    if not body:
+        return {}
+    for obj in _iter_json_objects(body):
+        if isinstance(obj, dict):
+            return obj
+    args: Dict[str, Any] = {}
+    markers = list(re.finditer(r"(?:^|\s)([A-Za-z_]\w*)\s*=", body))
+    for i, m in enumerate(markers):
+        end = markers[i + 1].start() if i + 1 < len(markers) else len(body)
+        val = body[m.end():end].strip()
+        if val:
+            args[m.group(1)] = _coerce_param_value(val)
+    return args
+
+
 # Models trained on other agent toolsets emit these names; map them to the equivalent the
 # client actually provided (only applied when the target IS in the provided tools, so it can
 # only rescue a call the client would otherwise reject - never breaks a valid one).
@@ -141,6 +174,12 @@ def parse_tool_calls(text: str) -> Tuple[Optional[str], List[Dict[str, Any]]]:
         except Exception:
             continue
         tool_calls.append(_mk_call(obj.get("name"), obj.get("arguments", {}), len(tool_calls)))
+    # 1b) Nested-tag: <tool_call><tool>NAME</tool><input>ARGS</input></tool_call>. Some models emit
+    #     this instead of JSON/<function=> inside the wrapper; without it the call falls through as
+    #     prose and the agent silently does nothing.
+    if not tool_calls:
+        for tm in _TOOL_TAG_RE.finditer(text):
+            tool_calls.append(_mk_call(tm.group(1).strip(), _parse_tag_args(tm.group(2)), len(tool_calls)))
     # 2) Qwen native: <function=NAME><parameter=KEY>VALUE</parameter>...</function>
     if not tool_calls:
         for fm in _FUNC_RE.finditer(text):
