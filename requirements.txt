@@ -110,10 +110,12 @@ faster-whisper>=1.0.0
 #   Debian/Ubuntu: apt install chromium  (or install google-chrome-stable)
 # Firefox's `--screenshot` mode is still used as a fallback if Chrome is absent.
 
-# Built-in torrent client (optional - requires system libtorrent-rasterbar)
-# Install system package first:
-#   Gentoo: emerge net-libs/libtorrent-rasterbar
-#   Debian/Ubuntu: apt install python3-libtorrent
-#   Then create venv with: python -m venv venv --system-site-packages
-# libtorrent>=2.0.0  # Commented - use system package instead
+# Built-in torrent client (optional). Prefer the PyPI manylinux wheel — it's self-contained
+# (bundles boost) and matches the venv's Python ABI. The old "use the system package + venv
+# --system-site-packages" approach SILENTLY BREAKS when the system Python is upgraded past the
+# venv's (e.g. nas: system went to 3.14, libtorrent built for 3.14 only, but the venv is 3.13 ->
+# ImportError -> "Torrent client not configured"). The wheel avoids that version-skew entirely.
+# Fallback system packages: Gentoo `emerge net-libs/libtorrent-rasterbar`, Debian
+# `apt install python3-libtorrent` (then create the venv with --system-site-packages).
+libtorrent>=2.0.0
 torpy

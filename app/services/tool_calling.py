@@ -86,7 +86,29 @@ def _iter_json_objects(s: str) -> List[Any]:
     return objs
 
 
+# Filesystem roots an absolute path can start with; used to repair a path arg the model emitted
+# with the leading slash dropped ("home/u/x" -> "/home/u/x"), the common small-model slip that
+# makes a glob/read/edit silently resolve against the wrong cwd and find nothing.
+_ABS_ROOT_RE = re.compile(r"^(?:home|usr|etc|var|opt|tmp|root|mnt|srv|Users)/")
+# Argument keys that name a filesystem path (so a content/command/pattern value that merely starts
+# with "home/" is never rewritten — only genuine path args are repaired).
+_PATH_KEY_RE = re.compile(r"path|dir|directory|file|cwd|filename", re.IGNORECASE)
+
+
+def _repair_path_args(args: Any) -> Any:
+    """Prepend the dropped leading '/' on a path-typed argument whose value clearly names an
+    absolute path (starts with a real fs root). Only touches keys that name a path/dir/file, so a
+    content/command/pattern value is never rewritten. No-op for anything that isn't an args dict."""
+    if not isinstance(args, dict):
+        return args
+    for k, v in list(args.items()):
+        if isinstance(v, str) and _PATH_KEY_RE.search(k) and _ABS_ROOT_RE.match(v):
+            args[k] = "/" + v
+    return args
+
+
 def _mk_call(name, args, idx):
+    args = _repair_path_args(args)
     if not isinstance(args, str):
         args = json.dumps(args, ensure_ascii=False)
     return {"id": f"call_{uuid.uuid4().hex[:8]}", "type": "function",
@@ -377,13 +399,21 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
                 _, tool_calls = parse_tool_calls(raw)
                 content = None
             tool_calls = _normalize_tool_names(tool_calls, tools)
-            # The model sometimes closes </think> then ends the turn WITHOUT emitting the answer /
-            # tool_call (lazy end-of-turn) -> empty message -> the LB reads the node as dead and
-            # aborts the already-streamed SSE -> opencode stops. Retry by RE-RENDERING with /no_think
-            # injected into the system turn: that makes the template signal no-think mode, so the
-            # model answers directly instead of thinking-then-quitting. (Prompt surgery to close the
-            # think block alone does NOT work - without the /no_think signal the model still quits.)
-            if not tool_calls and not content and "</think>" in raw:
+            # An empty result (no tool_call, no content) -> empty message -> the LB reads the node as
+            # dead and aborts the already-streamed SSE -> opencode HARD-stops. It has TWO causes, both
+            # fixed the same way: (a) the model closed </think> then ended the turn without an answer/
+            # tool_call (lazy end-of-turn); (b) the model ran away thinking and NEVER closed </think>,
+            # blowing its whole token budget on reasoning before emitting the tool_call (raw is all
+            # reasoning — the len=6088 "tried to make a fix but then just stopped" case). Re-render
+            # with /no_think injected into the system turn so the model SKIPS the think block and spends
+            # its budget on the actual tool_call instead of thinking-then-quitting (or thinking forever).
+            # (Prompt surgery to close the think block alone does NOT work — without the /no_think signal
+            # the model still quits.) Previously only (a) retried; (b) fell straight to the reasoning-as-
+            # content band-aid, so the agent got prose and no action — what the user saw as "it stopped".
+            if not tool_calls and not content:
+                if "</think>" not in raw:
+                    logger.warning("empty tool generation (think never closed, len=%d); retrying /no_think",
+                                   len(raw))
                 nt = [dict(m) for m in _prep_for_template(messages)]
                 for _m in nt:
                     if _m.get("role") == "system":
@@ -399,9 +429,6 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
                 tool_calls = _normalize_tool_names(tool_calls, tools)
                 if not tool_calls and not content:
                     logger.warning("empty after /no_think retry; raw2[:160]=%r", raw2[:160])
-            elif not tool_calls and not content:
-                logger.warning("empty tool generation (think never closed, len=%d); raw[:300]=%r",
-                               len(raw), raw[:300])
             # Last-resort band-aid: NEVER return an empty message. An empty tool response makes the
             # LB read the node as dead and abort the already-streamed SSE -> opencode HARD-stops.
             # If retries still produced nothing usable, surface the model's own reasoning as content
