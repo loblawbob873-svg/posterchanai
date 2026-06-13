@@ -62,6 +62,17 @@ def _idle_check_loop():
     global _llama_instance, _last_used
     while not _idle_check_stop.wait(30):  # Check every 30 seconds
         if _llama_instance is not None and _llama_instance._model is not None:
+            # NEVER unload while a request is in flight. A single long generation (huge context →
+            # slow prefill, or a rambling agentic step) can run LONGER than the idle window, and
+            # `_last_used` is only refreshed when a generation COMPLETES — so without this guard the
+            # idle clock goes stale mid-stream and we unload the model out from under the live
+            # request, dropping the connection (client sees RemoteProtocolError and "just stops").
+            # `_pending_requests` brackets the whole generation (inc at start, dec in finally), so
+            # >0 means a stream is still running; skip this tick and re-check in 30s.
+            with _request_counter_lock:
+                pending = _pending_requests
+            if pending > 0:
+                continue
             idle_time = time.time() - _last_used
             timeout = _llama_instance._idle_timeout
             if timeout > 0 and idle_time > timeout:
