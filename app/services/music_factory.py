@@ -11,8 +11,9 @@ Mirrors `image_factory` EXACTLY, including cross-node behaviour:
   `GPUResourceLock` (so chat, image AND music all QUEUE on one GPU lock) plus the VRAM swap
   (`vram_manager.prepare_for_music` unloads our LLM/image first).
 
-`_music_gen_lock` additionally serializes music on this node so concurrent requests queue instead
-of stacking generations onto one GPU. Wired for the web UI + Telegram only.
+Concurrent requests fan out across DIFFERENT nodes in parallel (one song per GPU); each node
+serializes its own GPU via the shared `GPUResourceLock` (so two songs landing on the same node
+queue there, not OOM). No dispatcher-wide lock. Wired for the web UI + Telegram only.
 """
 import asyncio
 import base64
@@ -34,12 +35,6 @@ _LOCAL = "__local__"
 # image LB alternates local/remote).
 _rr_index = 0
 _rr_lock = asyncio.Lock()
-
-# Serialize music generation so concurrent requests QUEUE instead of piling onto one ACE-Step GPU
-# and OOMing (a song needs most of a 12-16GB card). Like image gen is serialized by the GPU lock.
-# Per-process; the single port-3051 instance is the only producer.
-_music_gen_lock = asyncio.Lock()
-
 
 def parse_music_server_urls(raw: str) -> List[str]:
     """Parse the comma/newline-separated music_server_urls setting into a clean list."""
@@ -132,25 +127,24 @@ async def generate_music_for_user(
     ext = fmt
     last_err: Optional[Exception] = None
 
-    # Serialize: one song at a time on this node (a song needs most of the GPU; concurrent gens OOM).
-    # Queues like image gen does on the GPU lock.
-    if _music_gen_lock.locked():
-        logger.info("[music] another song is generating — queued")
-    async with _music_gen_lock:
-        for cand in candidates:
-            try:
-                if cand == _LOCAL:
-                    audio_bytes, ext = await _generate_local(db, cfg, prompt, lyrics, duration, steps, timeout, fmt)
-                else:
-                    logger.info(f"[music] generating on remote node {cand}")
-                    audio_bytes, ext = await _generate_on_node(cand, prompt, lyrics, duration, steps, timeout, fmt)
-                break
-            except MusicError as e:
-                last_err = e
-                logger.warning(f"[music] node {cand} failed: {e}; trying next")
-            except Exception as e:
-                logger.error(f"[music] node {cand} unexpected error: {e}", exc_info=True)
-                last_err = MusicError(f"Music generation error: {e}")
+    # NO dispatcher-wide lock here: concurrent requests must be free to fan out across DIFFERENT
+    # nodes in parallel (one song per GPU). Per-GPU serialization (and OOM protection) is handled
+    # ON each node — the local path takes the shared GPUResourceLock + prepare_for_music, and a
+    # remote node's /api/generate-music does the same on its side. So 2 requests → nas + Arc at once.
+    for cand in candidates:
+        try:
+            if cand == _LOCAL:
+                audio_bytes, ext = await _generate_local(db, cfg, prompt, lyrics, duration, steps, timeout, fmt)
+            else:
+                logger.info(f"[music] generating on remote node {cand}")
+                audio_bytes, ext = await _generate_on_node(cand, prompt, lyrics, duration, steps, timeout, fmt)
+            break
+        except MusicError as e:
+            last_err = e
+            logger.warning(f"[music] node {cand} failed: {e}; trying next")
+        except Exception as e:
+            logger.error(f"[music] node {cand} unexpected error: {e}", exc_info=True)
+            last_err = MusicError(f"Music generation error: {e}")
 
     if audio_bytes is None:
         raise last_err or MusicError("Music generation failed on all nodes.")
