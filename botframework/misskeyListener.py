@@ -198,7 +198,16 @@ from image_backend import generate_image_bytes
 # Persistent sets to track processed mentions and replied notes
 _processed_mention_ids = set()
 _replied_note_ids = set()
-_PROCESSED_IDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".processed_misskey_ids")
+def _state_suffix() -> str:
+    """Per-account suffix so multiple bot ACCOUNTS don't share (and clobber) one dedup file.
+    Keyed by the access token (unique per account); multiple PROCESSES of the SAME account still
+    share that account's file + flock. Assumes a deployment may run several Misskey bots."""
+    import hashlib
+    key = (MISSKEY_ACCESS_TOKEN or MISSKEY_USERNAME or "").strip()
+    return hashlib.sha1(key.encode()).hexdigest()[:10] if key else "default"
+
+_PROCESSED_IDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                   f".processed_misskey_ids_{_state_suffix()}")
 _MAX_TRACKED_IDS = 5000  # Limit set sizes to prevent memory growth
 
 import fcntl
@@ -207,8 +216,15 @@ _LOCK_FILE = _PROCESSED_IDS_FILE + ".lock"
 def _load_processed_ids():
     """Load processed IDs from file on startup"""
     global _processed_mention_ids, _replied_note_ids
+    path = _PROCESSED_IDS_FILE
+    if not os.path.exists(path):
+        # One-time migration: seed from the legacy shared file (pre per-account split) so the first
+        # poll after the upgrade doesn't re-reply to recent mentions.
+        legacy = os.path.join(os.path.dirname(path), ".processed_misskey_ids")
+        if os.path.exists(legacy):
+            path = legacy
     try:
-        with open(_PROCESSED_IDS_FILE, "r") as f:
+        with open(path, "r") as f:
             for line in f:
                 line = line.strip()
                 if line.startswith("m:"):
@@ -228,22 +244,25 @@ def _save_processed_ids():
     if len(_replied_note_ids) > _MAX_TRACKED_IDS:
         _replied_note_ids = set(sorted(_replied_note_ids)[-_MAX_TRACKED_IDS:])
 
-    # Use atomic write: write to temp file, then rename
-    temp_file = _PROCESSED_IDS_FILE + ".tmp"
+    # Atomic write via a UNIQUE temp file (mkstemp) → os.replace, so concurrent writers (multiple
+    # processes of this account) never collide on a shared ".tmp".
+    import tempfile
+    temp_file = None
     try:
-        with open(temp_file, "w") as f:
+        fd, temp_file = tempfile.mkstemp(dir=os.path.dirname(_PROCESSED_IDS_FILE), prefix=".mids_tmp_")
+        with os.fdopen(fd, "w") as f:
             for mid in _processed_mention_ids:
                 f.write(f"m:{mid}\n")
             for nid in _replied_note_ids:
                 f.write(f"n:{nid}\n")
-        os.rename(temp_file, _PROCESSED_IDS_FILE)  # Atomic on POSIX
+        os.replace(temp_file, _PROCESSED_IDS_FILE)  # atomic on POSIX
     except Exception as e:
         print(f"[ERROR] Failed to save processed IDs: {e}", flush=True)
-        # Clean up temp file - use try/except directly to avoid TOCTOU race
-        try:
-            os.remove(temp_file)
-        except (OSError, FileNotFoundError):
-            pass
+        if temp_file:
+            try:
+                os.remove(temp_file)
+            except OSError:
+                pass
 
 def _try_claim_note(note_id):
     """

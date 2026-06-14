@@ -188,14 +188,31 @@ def _handle_media_command(status, command, arg, own_acct, visibility):
 # Persistent sets to track processed notifications and replied statuses
 _processed_notification_ids = set()
 _replied_status_ids = set()  # Track status IDs we've already replied to
-_PROCESSED_IDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".processed_pleroma_ids")
+def _state_suffix() -> str:
+    """Per-account suffix so multiple bot ACCOUNTS don't share (and clobber) one dedup file.
+    Keyed by the access token (unique per account); multiple PROCESSES of the SAME account still
+    share that account's file + flock and coordinate correctly. Falls back to username, then a
+    fixed name. Assumes a deployment may run several Pleroma bots side by side."""
+    import hashlib
+    key = (PLEROMA_ACCESS_TOKEN or PLEROMA_USERNAME or "").strip()
+    return hashlib.sha1(key.encode()).hexdigest()[:10] if key else "default"
+
+_PROCESSED_IDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                   f".processed_pleroma_ids_{_state_suffix()}")
 _MAX_TRACKED_IDS = 5000  # Limit set sizes to prevent memory growth
 
 def _load_processed_ids():
     """Load processed IDs from file on startup"""
     global _processed_notification_ids, _replied_status_ids
+    path = _PROCESSED_IDS_FILE
+    if not os.path.exists(path):
+        # One-time migration: seed from the legacy shared file (pre per-account split) so the first
+        # poll after the upgrade doesn't re-reply to mentions from the last 2 minutes.
+        legacy = os.path.join(os.path.dirname(path), ".processed_pleroma_ids")
+        if os.path.exists(legacy):
+            path = legacy
     try:
-        with open(_PROCESSED_IDS_FILE, "r") as f:
+        with open(path, "r") as f:
             for line in f:
                 line = line.strip()
                 if line.startswith("n:"):
@@ -215,22 +232,26 @@ def _save_processed_ids():
     if len(_replied_status_ids) > _MAX_TRACKED_IDS:
         _replied_status_ids = set(sorted(_replied_status_ids)[-_MAX_TRACKED_IDS:])
 
-    # Use atomic write: write to temp file, then rename
-    temp_file = _PROCESSED_IDS_FILE + ".tmp"
+    # Atomic write via a UNIQUE temp file (mkstemp) → os.replace. A unique temp name means
+    # concurrent writers (multiple processes of this account) never collide on a shared ".tmp"
+    # (the old fixed name caused the "rename: No such file" race when two writers overlapped).
+    import tempfile
+    temp_file = None
     try:
-        with open(temp_file, "w") as f:
+        fd, temp_file = tempfile.mkstemp(dir=os.path.dirname(_PROCESSED_IDS_FILE), prefix=".pids_tmp_")
+        with os.fdopen(fd, "w") as f:
             for nid in _processed_notification_ids:
                 f.write(f"n:{nid}\n")
             for sid in _replied_status_ids:
                 f.write(f"s:{sid}\n")
-        os.rename(temp_file, _PROCESSED_IDS_FILE)  # Atomic on POSIX
+        os.replace(temp_file, _PROCESSED_IDS_FILE)  # atomic on POSIX
     except Exception as e:
         print(f"[ERROR] Failed to save processed IDs: {e}", flush=True)
-        # Clean up temp file - use try/except directly to avoid TOCTOU race
-        try:
-            os.remove(temp_file)
-        except (OSError, FileNotFoundError):
-            pass
+        if temp_file:
+            try:
+                os.remove(temp_file)
+            except OSError:
+                pass
 
 import fcntl
 _LOCK_FILE = _PROCESSED_IDS_FILE + ".lock"
