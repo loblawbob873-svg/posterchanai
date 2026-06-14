@@ -371,13 +371,17 @@ def _compute_autofit_ctx(model_path: str, file_size: int, flash_attn: bool = Fal
             ram_for_kv = max(0.0, (free_ram_mb - weights_overflow_mb) * ram_kv_fraction)
             target = int(ram_for_kv / kv_per_tok_mb) if ram_for_kv > 0 else ctx_floor
             target = min(target, offload_ctx_cap, cap)
-        # VRAM ceiling: even with weights/KV offloaded, the GPU-resident layers' KV and the
-        # attention/compute scratch (which grows with the window) still live in VRAM. A purely
-        # RAM-sized window OOMs the backend mid-matmul and crashes the process (observed: 64k on a
-        # 16GB Arc died with UR_RESULT_ERROR_OUT_OF_HOST_MEMORY at OP MUL). So also clamp by what
-        # VRAM can carry — ~offload_vram_tok_per_mb tokens per free MB (16384 ran fine at ~16GB,
-        # 65536 was fatal; 1.5 keeps margin and scales down on smaller cards).
-        target = min(target, int(free_mb * offload_vram_tok_per_mb))
+        # VRAM ceiling — only WITHOUT flash attention. Without FA the GPU-resident layers' KV and
+        # the attention/compute scratch (which grows with the window) stay in VRAM uncompressed; a
+        # purely RAM-sized window then OOMs the backend mid-matmul and crashes the process (observed:
+        # 64k on a 16GB Arc/SYCL, FA off, died with UR_RESULT_ERROR_OUT_OF_HOST_MEMORY at OP MUL). So
+        # clamp by what VRAM can carry — ~offload_vram_tok_per_mb tokens per free MB (16384 ran fine
+        # at ~16GB, 65536 was fatal; 1.5 keeps margin and scales down on smaller cards). With FA on,
+        # the KV/scratch is compact enough that the RAM-sized window is safe (observed: a 12GB 3060
+        # with FA loads & serves 65536 fine), so clamping there would needlessly starve agentic
+        # sessions — skip it and let the RAM/cap bound apply.
+        if not flash_attn:
+            target = min(target, int(free_mb * offload_vram_tok_per_mb))
         target = max(ctx_floor, target)
         return (target // 2048) * 2048
 
