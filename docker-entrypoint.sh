@@ -91,4 +91,23 @@ if [ "${DOWNLOAD_DEPTH_MODEL:-1}" = "1" ] && [ -n "${DEPTH_MODEL_URL:-}" ] && \
     ) &
 fi
 
+# u2net ONNX for the `removebackground` command (rembg). ~176MB; fetched on first run into the
+# data volume (rembg's U2NET_HOME) in the BACKGROUND. rembg would otherwise fetch it lazily on
+# the first removebackground; pre-fetching means the first call doesn't stall. Skip with
+# DOWNLOAD_U2NET_MODEL=0.
+if [ "${DOWNLOAD_U2NET_MODEL:-1}" = "1" ] && [ -n "${U2NET_MODEL_URL:-}" ] && \
+   [ -n "${U2NET_HOME:-}" ] && [ ! -f "$U2NET_HOME/u2net.onnx" ]; then
+    (
+        mkdir -p "$U2NET_HOME"
+        tmp="$U2NET_HOME/u2net.onnx.part"
+        echo "[entrypoint] downloading background-removal model (removebackground) -> $U2NET_HOME/u2net.onnx"
+        if curl -fL --retry 5 --retry-delay 10 -C - -o "$tmp" "$U2NET_MODEL_URL"; then
+            mv -f "$tmp" "$U2NET_HOME/u2net.onnx"
+            echo "[entrypoint] background-removal model ready: $U2NET_HOME/u2net.onnx"
+        else
+            echo "[entrypoint] WARNING: u2net download failed; removebackground fetches it on first use instead."
+        fi
+    ) &
+fi
+
 exec "$@"

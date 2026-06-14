@@ -115,6 +115,10 @@ main() {
     # ~94MB). Skipped automatically if already present.
     download_depth_model
 
+    # Step 9c: Fetch the u2net model for the `removebackground` command (~176MB).
+    # Skipped automatically if already present.
+    download_u2net_model
+
     # Step 10: Setup XPU image instance for Intel Arc
     setup_xpu_image_instance
 

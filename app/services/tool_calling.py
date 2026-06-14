@@ -405,11 +405,28 @@ def _prep_for_template(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
-def generate_message(model, messages, tools, params, strip_thinking=None) -> Tuple[Dict[str, Any], str]:
+def _inject_no_think_system(msgs: list) -> list:
+    """Append ' /no_think' to the system turn (or prepend one), so a non-thinking model SKIPS the
+    template's <think> prefill. Mutates and returns msgs."""
+    for _m in msgs:
+        if _m.get("role") == "system":
+            if "/no_think" not in (_m.get("content") or ""):
+                _m["content"] = ((_m.get("content") or "") + " /no_think").strip()
+            return msgs
+    msgs.insert(0, {"role": "system", "content": "/no_think"})
+    return msgs
+
+
+def generate_message(model, messages, tools, params, strip_thinking=None, disable_thinking=False) -> Tuple[Dict[str, Any], str]:
     """Generate + parse a tool-aware response using the model's embedded chat template.
 
     Returns (openai_message_dict, finish_reason). ``params`` must NOT contain tools/tool_choice.
     Falls back to a plain chat completion only if the model has no embedded template.
+
+    ``disable_thinking``: inject /no_think on the FIRST render so a non-thinking model (e.g.
+    Qwen3-Coder) skips the template's <think> prefill — otherwise it opens <think>, never closes it
+    ("empty tool generation, think never closed"), and we burn a whole pass before the /no_think
+    retry. Skipping it up front turns the common case from 3 LLM passes per tool call into 1.
     """
     # Conversation-shape trace for diagnosing tool-loop issues (whether tool results are conveyed
     # vs. the model re-doing steps blindly). Kept at DEBUG so it doesn't spam the journal.
@@ -432,7 +449,10 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
     template = (getattr(model, "metadata", None) or {}).get("tokenizer.chat_template")
     if template:
         try:
-            r = _get_formatter(template)(messages=_prep_for_template(messages), tools=tools)
+            _msgs0 = _prep_for_template(messages)
+            if disable_thinking:
+                _inject_no_think_system(_msgs0)
+            r = _get_formatter(template)(messages=_msgs0, tools=tools)
             stops = list(getattr(r, "stop", None) or [])
             if "<|im_end|>" not in stops:
                 stops.append("<|im_end|>")

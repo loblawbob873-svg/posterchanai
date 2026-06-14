@@ -175,6 +175,25 @@ download_depth_model() {
     fi
 }
 
+# u2net ONNX — powers the `removebackground` command (rembg). rembg fetches this on first use
+# into ~/.u2net/; pre-fetch it here so the first removebackground doesn't stall. Idempotent.
+U2NET_MODEL_URL="https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx"
+
+download_u2net_model() {
+    local dest="${U2NET_HOME:-$HOME/.u2net}/u2net.onnx"
+    if [ -s "$dest" ]; then
+        print_success "Background-removal model already present (removebackground)"
+        return 0
+    fi
+    print_step "Downloading background-removal model for 'removebackground' (~176MB)..."
+    mkdir -p "$(dirname "$dest")"
+    if _download_model_file "$U2NET_MODEL_URL" "$dest"; then
+        print_success "Background-removal model ready"
+    else
+        print_warning "u2net download failed — 'removebackground' fetches it on first use instead (at $dest)"
+    fi
+}
+
 download_model() {
     print_step "Download a model?"
     echo ""

@@ -1761,6 +1761,7 @@ fieldset legend {
 }
 #userSettingsModal .modal-content,
 #ragModal .modal-content,
+#translateModal .modal-content,
 #calendarModal .modal-content {
     max-height: min(90vh, calc(100vh - 40px)) !important;
     flex-shrink: 0 !important;
@@ -1770,11 +1771,13 @@ fieldset legend {
 }
 #userSettingsModal .modal-header,
 #ragModal .modal-header,
+#translateModal .modal-header,
 #calendarModal .modal-header {
     flex-shrink: 0 !important;
 }
 #userSettingsModal .modal-body,
 #ragModal .modal-body,
+#translateModal .modal-body,
 #calendarModal .modal-body {
     flex: 1 !important;
     min-height: 0 !important;

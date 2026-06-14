@@ -566,6 +566,7 @@ class CommandService:
         "translate": "Translate: translate <text> to <lang>",
         "4chan": "4chan browser: 4chan [g|pol|h] - view catalog",
         "compress": "Compress attached image(s) or video(s)",
+        "removebackground": "Remove the background from an attached image (transparent PNG): removebackground",
         "clip": "Clip an attached video: clip <start> <end> (e.g. clip 0:10 0:30)",
         "convert": "Convert image(s) to PDF or a PDF to images",
         "flashcards": "Make an interactive multiple-choice study quiz from an attached PDF, image, or slide deck",
@@ -660,6 +661,9 @@ class CommandService:
         "flashcard": "flashcards",
         "study": "flashcards",
         "quiz": "flashcards",
+        "removebg": "removebackground",
+        "rmbg": "removebackground",
+        "nobg": "removebackground",
     }
 
     # Effects that accept a trailing motion arg (`zoom` Ken Burns pan-out or
@@ -933,6 +937,8 @@ class CommandService:
             return await self._4chan_command(arg)
         elif command == "compress":
             return await self._compress_command(attachments)
+        elif command == "removebackground":
+            return await self._removebackground_command(attachments)
         elif command == "clip":
             return await self._clip_command(arg, attachments)
         elif command == "convert":
@@ -3601,6 +3607,21 @@ Files are saved to your Storage.""",
 
         # ffmpeg transcodes can block; run off the event loop.
         outputs, summary = await asyncio.to_thread(compress_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _removebackground_command(self, attachments: Optional[list]) -> dict:
+        """Remove the background from attached image(s), returning transparent PNG(s)."""
+        if not attachments:
+            return {
+                "type": "text",
+                "content": "Attach an image, then send `removebackground` to cut out the background.",
+            }
+        import asyncio
+        from app.services.media_service import remove_background_attachments
+        # rembg/onnxruntime can block; run off the event loop.
+        outputs, summary = await asyncio.to_thread(remove_background_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}

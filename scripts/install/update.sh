@@ -87,6 +87,10 @@ run_updates() {
     # so existing installs gain the feature on update).
     download_depth_model
 
+    # 1b2) u2net model for the `removebackground` command (fetch if missing so existing
+    # installs gain the feature on update).
+    download_u2net_model
+
     # 1c) ACE-Step music server (if installed): git pull + uv sync + re-swap torch + restart.
     update_music_server
 

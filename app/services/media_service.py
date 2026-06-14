@@ -2122,6 +2122,33 @@ def compress_attachments(attachments: List[Tuple[str, bytes, str]]) -> Tuple[Lis
     return outputs, summary
 
 
+def remove_background_attachments(attachments: List[Tuple[str, bytes, str]]) -> Tuple[List[OutputFile], str]:
+    """Remove the background from each attached IMAGE, returning a transparent PNG.
+
+    Uses rembg (u2net ONNX via onnxruntime; the ~170MB model auto-downloads to ~/.u2net on first
+    use). Non-image attachments are skipped. Returns (output_files, summary_text)."""
+    outputs: List[OutputFile] = []
+    notes: List[str] = []
+    try:
+        from rembg import remove as _rembg_remove
+    except Exception as e:
+        return [], f"Background removal isn't available — `rembg` not installed ({e}). Install it (requirements.txt)."
+    for filename, data, content_type in attachments:
+        if not is_image(filename, content_type):
+            notes.append(f"⏭️ {filename}: not an image — skipped")
+            continue
+        stem = Path(filename).stem or "image"
+        try:
+            cut = _rembg_remove(data)  # PNG with alpha channel (transparent background)
+            outputs.append({"filename": f"{stem}_nobg.png", "data": cut, "content_type": "image/png"})
+            notes.append(f"✂️ {filename}: background removed → {stem}_nobg.png")
+        except Exception as e:
+            logger.warning(f"remove_background failed for {filename}: {e}", exc_info=True)
+            notes.append(f"❌ {filename}: background removal failed ({e})")
+    summary = "## ✂️ Background Removal\n\n" + "\n".join(notes) if notes else "Attach an image to remove its background."
+    return outputs, summary
+
+
 def convert_attachments(
     attachments: List[Tuple[str, bytes, str]],
     target: str = "",

@@ -54,6 +54,8 @@ onnxruntime>=1.16.0
 # Used directly by parallax_service (depth post-processing / warp grids). Already a
 # transitive dep of opencv/onnxruntime/torch; listed explicitly since we import it.
 numpy
+# Background removal for the `removebackground` command (u2net ONNX via onnxruntime, above).
+rembg>=2.0.50
 # Native LLM inference (requires compilation with GPU flags - see README)
 # llama-cpp-python>=0.2.90
 

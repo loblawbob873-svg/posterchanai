@@ -1008,7 +1008,7 @@ class LlamaService:
                     # Qwen/Hermes tool-calling: inject tools, plain-chatml generate, parse.
                     from app.services.tool_calling import generate_message
                     _tools = params.pop("tools"); params.pop("tool_choice", None)
-                    _m, _finish = generate_message(self._model, messages, _tools, params, self.strip_thinking_tags)
+                    _m, _finish = generate_message(self._model, messages, _tools, params, self.strip_thinking_tags, self.disable_thinking)
                     result = {
                         "choices": [{"message": _m, "finish_reason": _finish}],
                         "object": "chat.completion",
@@ -1146,7 +1146,7 @@ class LlamaService:
                                 # then synthesize SSE chunks (tool_calls can't be streamed live).
                                 from app.services.tool_calling import generate_message, tool_sse_chunks
                                 _tools = params.pop("tools"); params.pop("tool_choice", None)
-                                msg, finish = generate_message(self._model, messages, _tools, params, self.strip_thinking_tags)
+                                msg, finish = generate_message(self._model, messages, _tools, params, self.strip_thinking_tags, self.disable_thinking)
                                 for _line in tool_sse_chunks(completion_id, created, model_name, msg, finish):
                                     loop.call_soon_threadsafe(queue.put_nowait, _line)
                                 return
