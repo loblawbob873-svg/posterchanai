@@ -39,13 +39,11 @@ setup_music_server() {
       "$UV_BIN" sync ) || { print_error "uv sync failed — see https://github.com/ace-step/ACE-Step-1.5"; return 1; }
 
     # --- GPU backend: CUDA works as-is; XPU/ROCm need a torch swap + soundfile fallback ----------
-    local GPU_KIND="cuda" SVC_ENV=""
+    local GPU_KIND="cuda"
     if command -v nvidia-smi >/dev/null 2>&1; then
         GPU_KIND="cuda"
-        SVC_ENV="Environment=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
     elif [ -e /dev/dri/renderD128 ] && (lspci 2>/dev/null | grep -qi "Intel.*\(Arc\|Graphics\)"); then
         GPU_KIND="xpu"
-        SVC_ENV="Environment=ONEAPI_DEVICE_SELECTOR=level_zero:gpu"
     elif command -v rocminfo >/dev/null 2>&1 || (lspci 2>/dev/null | grep -qi "AMD/ATI"); then
         GPU_KIND="rocm"
     fi
@@ -62,6 +60,22 @@ setup_music_server() {
         _music_apply_soundfile_patch "$CLONE_DIR"
     fi
 
+    # Per-GPU service environment. NOTE: we run .venv/bin/acestep-api DIRECTLY (not `uv run`) —
+    # `uv run` re-syncs to uv.lock (CUDA torch) on every launch and would silently revert the
+    # XPU/ROCm torch swap back to CUDA → CPU fallback (no GPU activity).
+    local PYVER; PYVER="$("$CLONE_DIR/.venv/bin/python" -c 'import sys;print(f"python{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo python3.12)"
+    local TORCH_LIB="${CLONE_DIR}/.venv/lib/${PYVER}/site-packages/torch/lib"
+    local SVC_ENV=""
+    case "$GPU_KIND" in
+        cuda) SVC_ENV="Environment=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" ;;
+        xpu)  SVC_ENV="Environment=ONEAPI_DEVICE_SELECTOR=level_zero:gpu
+Environment=ZES_ENABLE_SYSMAN=1
+Environment=SYCL_CACHE_PERSISTENT=1
+Environment=ACESTEP_DEVICE=xpu
+Environment=LD_LIBRARY_PATH=${TORCH_LIB}:/usr/lib64" ;;
+        rocm) SVC_ENV="Environment=LD_LIBRARY_PATH=${TORCH_LIB}:/usr/lib64" ;;
+    esac
+
     # --- systemd service (persistent; auto-restart) --------------------------
     print_step "Installing acestep.service (systemd)..."
     sudo tee /etc/systemd/system/acestep.service >/dev/null <<UNIT
@@ -73,11 +87,11 @@ After=network.target
 Type=simple
 User=${SVC_USER}
 WorkingDirectory=${CLONE_DIR}
-Environment=PATH=${HOME}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin:/opt/cuda/bin
+Environment=PATH=${CLONE_DIR}/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin:/opt/cuda/bin
 Environment=ACESTEP_API_HOST=0.0.0.0
 Environment=ACESTEP_API_PORT=${ACESTEP_PORT:-8001}
 ${SVC_ENV}
-ExecStart=${HOME}/.local/bin/uv run acestep-api
+ExecStart=${CLONE_DIR}/.venv/bin/acestep-api
 Restart=on-failure
 RestartSec=10
 

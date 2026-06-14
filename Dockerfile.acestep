@@ -48,4 +48,6 @@ RUN if [ -n "$TORCH_INDEX" ]; then \
 
 EXPOSE 8001
 # Models auto-download on first request into ~/.cache/huggingface (mount it as a volume to persist).
-CMD ["uv", "run", "acestep-api"]
+# Run the venv entrypoint DIRECTLY: `uv run` re-syncs to uv.lock (CUDA torch) on launch and would
+# revert a ROCm/XPU torch swap back to CUDA → CPU fallback. `.venv` is created by `uv sync` above.
+CMD ["/opt/ace-step/.venv/bin/acestep-api"]
