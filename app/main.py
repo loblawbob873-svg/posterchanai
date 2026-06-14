@@ -173,6 +173,27 @@ async def startup():
         init_db()
         from app.database import SessionLocal
 
+        # Turnkey Docker music: when POSTERCHANAI_MUSIC=1 (the compose `music` profile sets this),
+        # auto-enable music and point it at the acestep container — only seeding keys the admin
+        # hasn't already set, so UI changes win. Lets `docker compose --profile music` generate a
+        # song with no manual config.
+        if os.environ.get("POSTERCHANAI_MUSIC", "0") == "1":
+            try:
+                from app.models import Setting
+                _db = SessionLocal()
+                _defaults = {
+                    "music_enabled": "true",
+                    "music_api_base": os.environ.get("POSTERCHANAI_ACESTEP_URL", "http://acestep:8001"),
+                }
+                for _k, _v in _defaults.items():
+                    if not _db.query(Setting).filter(Setting.key == _k).first():
+                        _db.add(Setting(key=_k, value=_v))
+                _db.commit()
+                _db.close()
+                logging.info("Music (ACE-Step) auto-configured from POSTERCHANAI_MUSIC env")
+            except Exception as e:
+                logging.error(f"Error seeding music settings: {e}")
+
         # Start health check if enabled (in background, don't block startup)
         try:
             from app.services.health_check import start_health_check

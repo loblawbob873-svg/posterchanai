@@ -5,6 +5,7 @@
 # Global variables set by selection
 INSTALL_LLM=0
 INSTALL_IMAGE=0
+INSTALL_MUSIC=0            # optional ACE-Step music server (musicgeni)
 INSTALL_TELEGRAM_BOTAPI=0  # optional local Telegram Bot API server (large files)
 TELEGRAM_ONLY=0            # option 5: set up ONLY the Bot API server (add-on)
 UPDATE_ONLY=0             # option 6: update deps + Telegram server, then exit
@@ -91,6 +92,15 @@ select_components() {
             INSTALL_TELEGRAM_BOTAPI=1
             echo -e "  ${GREEN}✓ Will set up the local Telegram Bot API server${NC}"
         fi
+    fi
+
+    # Offer the ACE-Step music server (musicgeni) on any GPU install. It's a separate, heavy
+    # add-on (own venv via uv, multi-GB model, systemd service), so it's opt-in.
+    echo ""
+    read -p "Set up music generation (ACE-Step / musicgeni)? Separate GPU service, ~9GB model [y/N]: " WANT_MUSIC
+    if [[ "$WANT_MUSIC" =~ ^[Yy] ]]; then
+        INSTALL_MUSIC=1
+        echo -e "  ${GREEN}✓ Will set up the ACE-Step music server${NC}"
     fi
 }
 

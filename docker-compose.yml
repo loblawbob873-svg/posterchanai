@@ -14,6 +14,10 @@ x-common: &common
     - "${POSTERCHANAI_PORT:-3051}:3051"
   environment:
     - POSTERCHANAI_PORT=3051
+    # Turnkey music: set POSTERCHANAI_MUSIC=1 (with `--profile music`) and the app auto-enables
+    # music pointed at the acestep container — no manual Admin config needed.
+    - POSTERCHANAI_MUSIC=${POSTERCHANAI_MUSIC:-0}
+    - POSTERCHANAI_ACESTEP_URL=${POSTERCHANAI_ACESTEP_URL:-http://acestep:8001}
   volumes:
     - pc-data:/var/lib/posterchanai
     - pc-rag:/app/data
@@ -74,12 +78,15 @@ services:
     environment:
       - POSTERCHANAI_PORT=3051
       - SOURCE_ONEAPI=0
+      - POSTERCHANAI_MUSIC=${POSTERCHANAI_MUSIC:-0}
+      - POSTERCHANAI_ACESTEP_URL=${POSTERCHANAI_ACESTEP_URL:-http://acestep:8001}
 
   # Optional ACE-Step music server (the `musicgeni` command). Runs as its OWN service because
   # ACE-Step needs Python 3.11–3.12 and a conflicting dependency stack; the app talks to it over
-  # HTTP. Opt in by ADDING the `music` profile to any backend profile, e.g.:
-  #   docker compose --profile cuda --profile music up -d --build
-  # Then in Admin → Music: enable music and set the Local Server URL to http://acestep:8001.
+  # HTTP. TURNKEY — one command auto-enables music + points the app at this container:
+  #   POSTERCHANAI_MUSIC=1 docker compose --profile cuda --profile music up -d --build
+  # (POSTERCHANAI_MUSIC=1 makes the app seed music_enabled + music_api_base=http://acestep:8001 on
+  # startup; without it you can still enable music manually in Admin → Music.)
   # NVIDIA only (needs nvidia-container-toolkit on the host); the turbo model fits a 12 GB GPU and
   # auto-downloads on first request into the pc-acestep volume (first song is slower). Pin a repo
   # ref with ACESTEP_REF if upstream changes.

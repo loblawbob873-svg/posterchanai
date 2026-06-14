@@ -106,6 +106,11 @@ main() {
     # Step 9: Install image dependencies (if selected)
     setup_image_deps
 
+    # Step 9a: Music generation (ACE-Step) add-on, if selected. Separate service via uv + systemd.
+    if [ "$INSTALL_MUSIC" = "1" ]; then
+        setup_music_server || print_warning "Music server setup did not complete; you can retry with ./install.sh --music"
+    fi
+
     # Step 9b: Fetch the depth model for the `alive` 3D-parallax effect (gitignored,
     # ~94MB). Skipped automatically if already present.
     download_depth_model
