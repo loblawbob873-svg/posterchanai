@@ -1140,10 +1140,12 @@ def make_music_video(audio_data: bytes, audio_ext: str = "mp3", title: str = "",
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def make_generated_video(frames, fps: int = 16, add_outro: bool = True, title: str = "") -> bytes:
+def make_generated_video(frames, fps: int = 16, add_outro: bool = True, title: str = "",
+                         upscale_height: int = 0) -> bytes:
     """Assemble generated video frames (list of HxWx3 uint8 numpy arrays / PIL images) into a branded
-    MP4: encode the frames, then append the same end-card "watermark" outro music uses. Returns mp4
-    bytes, or b'' on failure (caller falls back). Mirrors make_music_video's branding flow."""
+    MP4: encode the frames (optionally lanczos-upscaling to `upscale_height` for 720p/1080p output),
+    then append the same end-card "watermark" outro music uses. Returns mp4 bytes, or b'' on failure
+    (caller falls back). Mirrors make_music_video's branding flow."""
     import numpy as _np
     from PIL import Image as _Image
     ffmpeg = resolve_ffmpeg()
@@ -1151,6 +1153,7 @@ def make_generated_video(frames, fps: int = 16, add_outro: bool = True, title: s
         return b""
     tmp = tempfile.mkdtemp(prefix="media_genvid_")
     try:
+        src_h = None
         for i, fr in enumerate(frames):
             img = fr if isinstance(fr, _Image.Image) else _Image.fromarray(_np.asarray(fr).astype("uint8"))
             if img.mode != "RGB":
@@ -1159,10 +1162,16 @@ def make_generated_video(frames, fps: int = 16, add_outro: bool = True, title: s
             w, h = img.size
             if w % 2 or h % 2:
                 img = img.crop((0, 0, w - (w % 2), h - (h % 2)))
+            src_h = img.size[1]
             img.save(os.path.join(tmp, f"f{i:05d}.png"))
         out = os.path.join(tmp, "out.mp4")
+        # Upscale the finished clip to the requested output height (the 1.3B model only renders ~480p
+        # natively). -2 keeps aspect + even width. Only UP, never down.
+        vf = []
+        if upscale_height and src_h and int(upscale_height) > src_h:
+            vf = ["-vf", f"scale=-2:{int(upscale_height)}:flags=lanczos"]
         cmd = [ffmpeg, "-y", "-framerate", str(max(1, int(fps))),
-               "-i", os.path.join(tmp, "f%05d.png"),
+               "-i", os.path.join(tmp, "f%05d.png")] + vf + [
                "-c:v", "libx264", "-preset", VIDEO_PRESET, "-crf", str(VIDEO_CRF),
                "-pix_fmt", "yuv420p", "-movflags", "+faststart", out]
         r = subprocess.run(cmd, capture_output=True, timeout=600, text=True)

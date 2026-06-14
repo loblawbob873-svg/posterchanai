@@ -25,6 +25,11 @@ _image_generation_lock = asyncio.Lock()
 _gpu_lock_base = asyncio.Lock()
 _gpu_lock_holder = None
 
+# Max time a request will WAIT to acquire the GPU lock before failing. Must exceed the longest
+# single GPU hold: a multi-second video clip (Wan) can hold the GPU ~5 min, so the old 180s made any
+# chat/image/video request queued behind a video gen fail. 630s covers it.
+GPU_LOCK_WAIT_TIMEOUT = 630.0
+
 
 def _try_acquire_file_lock(lock_file: str) -> Optional[int]:
     """Try to acquire file lock without blocking. Returns fd if acquired, None otherwise."""
@@ -102,17 +107,18 @@ class GPUResourceLock:
         if _gpu_lock_holder:
             logger.info(f"[{lock_name}-LOCK] {self.request_type} request{' ' + self.request_id if self.request_id else ''} waiting (held by {_gpu_lock_holder})")
         
-        # 180s timeout — thinking models can hold the GPU for 90-120s (think + respond)
+        # Wait long enough to cover the longest GPU hold (a multi-second video clip ~5 min), so
+        # requests queued behind a video gen don't spuriously fail.
         try:
-            await asyncio.wait_for(_gpu_lock_base.acquire(), timeout=180.0)
+            await asyncio.wait_for(_gpu_lock_base.acquire(), timeout=GPU_LOCK_WAIT_TIMEOUT)
         except asyncio.TimeoutError:
-            logger.error(f"[{lock_name}-LOCK] Timeout acquiring in-process lock after 180s (held by {_gpu_lock_holder})")
-            raise TimeoutError(f"Failed to acquire {lock_name} lock within 180 seconds, currently held by: {_gpu_lock_holder}")
+            logger.error(f"[{lock_name}-LOCK] Timeout acquiring in-process lock after {GPU_LOCK_WAIT_TIMEOUT:.0f}s (held by {_gpu_lock_holder})")
+            raise TimeoutError(f"Failed to acquire {lock_name} lock within {GPU_LOCK_WAIT_TIMEOUT:.0f} seconds, currently held by: {_gpu_lock_holder}")
         
         # Now acquire file lock (cross-process) - we're the only one in this process trying
         logger.info(f"[{lock_name}-LOCK] {self.request_type} request{' ' + self.request_id if self.request_id else ''} acquired in-process lock, waiting for file lock...")
         try:
-            self._file_lock_fd = await _acquire_file_lock_async(self._lock_file)
+            self._file_lock_fd = await _acquire_file_lock_async(self._lock_file, max_retries=int(GPU_LOCK_WAIT_TIMEOUT / 0.5))
         except BaseException as e:
             # Release async lock if file lock fails (includes CancelledError from task cancellation)
             _gpu_lock_holder = None

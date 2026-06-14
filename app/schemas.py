@@ -118,11 +118,15 @@ class SettingsResponse(BaseModel):
     video_server_urls: str = ""  # Comma-separated REMOTE posterchanai nodes for load balancing
     video_gpu_device: str = "auto"  # "auto"/"cuda"/"xpu"/"cpu" — picks the GPU vs CPU lock locally
     video_model: str = "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"  # HF id / local path of the diffusers model
-    video_width: str = "832"  # output width  (multiple of 16)
-    video_height: str = "480"  # output height (multiple of 16)
+    video_width: str = "832"  # GENERATION width  (multiple of 16). Wan2.1-1.3B is a 480p model.
+    video_height: str = "480"  # GENERATION height (multiple of 16)
+    video_upscale_height: str = "720"  # upscale the finished clip to this height (0/native = none).
+    # The 1.3B model only generates ~480p well; this lanczos-upscales the output to 720p/1080p
+    # (cheap, no extra VRAM). For TRUE native 720p you'd need the Wan 14B model (more VRAM).
     video_num_frames: str = "49"  # frames (Wan: 4k+1). Arc 16GB is tight — cap lower there.
+    video_max_frames: str = "81"  # hard ceiling (clamp) — model maxes ~81 (5s); >this OOMs 16GB
     video_fps: str = "16"  # playback fps for the assembled mp4
-    video_default_steps: str = "25"  # diffusion steps
+    video_default_steps: str = "32"  # diffusion steps
     video_guidance: str = "5.0"  # classifier-free guidance scale
     video_timeout: str = "600000"  # video request timeout in ms
     video_watermark_enabled: str = "true"  # append the branded end-card outro to the clip

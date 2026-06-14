@@ -67,7 +67,8 @@ def _get_settings(db: Session) -> dict:
         "width": _i("video_width", 832),
         "height": _i("video_height", 480),
         "num_frames": _i("video_num_frames", 49),
-        "fps": _i("video_fps", 16),
+        "max_frames": _i("video_max_frames", 81),  # hard ceiling — Wan1.3B tops out ~81 (5s) and
+        "fps": _i("video_fps", 16),               # 16GB OOMs beyond that; clamp to avoid the footgun
         "steps": _i("video_default_steps", 25),
         "guidance": _f("video_guidance", 5.0),
         "idle_timeout": _i("video_idle_timeout", DEFAULT_IDLE_TIMEOUT),
@@ -183,6 +184,12 @@ class VideoService:
         w = _r16(width or cfg["width"])
         h = _r16(height or cfg["height"])
         nf = int(num_frames or cfg["num_frames"])
+        # Clamp to the model/VRAM ceiling so an over-large frame count fails fast & clearly instead
+        # of OOMing the GPU (Wan1.3B is a ~5s/81-frame model; 16GB can't hold more).
+        max_nf = max(5, int(cfg["max_frames"]))
+        if nf > max_nf:
+            logger.warning(f"num_frames {nf} exceeds max {max_nf}; clamping (model/VRAM ceiling)")
+            nf = max_nf
         nf = max(5, nf - ((nf - 1) % 4))
         st = int(steps or cfg["steps"])
         gs = float(guidance if guidance is not None else cfg["guidance"])

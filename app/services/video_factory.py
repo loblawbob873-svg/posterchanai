@@ -52,6 +52,7 @@ def _factory_settings(db: Session) -> dict:
         "device": s.get("video_gpu_device", "auto") or "auto",
         "timeout": _i("video_timeout", 600000) / 1000.0,
         "watermark": str(s.get("video_watermark_enabled", "true")).lower() != "false",
+        "upscale_height": _i("video_upscale_height", 720),
     }
 
 
@@ -78,7 +79,9 @@ async def _generate_local(db: Session, cfg: dict, prompt: str, negative: str) ->
         frames, fps = await asyncio.to_thread(service.generate, db, prompt, negative)
         if not frames:
             raise VideoError("Video generation produced no frames.")
-        mp4 = await asyncio.to_thread(media_service.make_generated_video, frames, fps, cfg["watermark"], "")
+        mp4 = await asyncio.to_thread(
+            media_service.make_generated_video, frames, fps, cfg["watermark"], "", cfg["upscale_height"]
+        )
         if not mp4:
             raise VideoError("Failed to assemble the video file (is ffmpeg installed?).")
         return mp4

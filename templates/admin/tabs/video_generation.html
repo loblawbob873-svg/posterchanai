@@ -55,21 +55,35 @@
         <legend>Output</legend>
         <div class="form-row">
             <div class="form-group">
-                <label for="video_width">Width</label>
+                <label for="video_width">Generation Width</label>
                 <input type="number" id="video_width" name="video_width" value="832" min="128" max="1280" step="16">
-                <small>Multiple of 16.</small>
+                <small>Multiple of 16. Wan2.1-1.3B is a <strong>480p</strong> model — 832×480 is its
+                    native resolution. Generating higher natively risks OOM and looks worse.</small>
             </div>
             <div class="form-group">
-                <label for="video_height">Height</label>
+                <label for="video_height">Generation Height</label>
                 <input type="number" id="video_height" name="video_height" value="480" min="128" max="1280" step="16">
                 <small>Multiple of 16.</small>
             </div>
         </div>
+        <div class="form-group">
+            <label for="video_upscale_height">Output Resolution (upscale)</label>
+            <select id="video_upscale_height" name="video_upscale_height">
+                <option value="0">Native (no upscale)</option>
+                <option value="720" selected>720p (1280×720)</option>
+                <option value="1080">1080p (1920×1080)</option>
+                <option value="1440">1440p (2560×1440)</option>
+            </select>
+            <small>Lanczos-upscales the finished clip to this height — cheap, no extra VRAM. The
+                1.3B model only renders ~480p natively, so this is how you get a 720p/1080p file.
+                For TRUE native detail at 720p you'd need the Wan 14B model (much more VRAM).</small>
+        </div>
         <div class="form-row">
             <div class="form-group">
                 <label for="video_num_frames">Frames</label>
-                <input type="number" id="video_num_frames" name="video_num_frames" value="49" min="5" max="161">
-                <small>Wan uses 4k+1 (e.g. 33, 49, 81). On the 16&nbsp;GB Arc keep this low.</small>
+                <input type="number" id="video_num_frames" name="video_num_frames" value="49" min="5" max="81">
+                <small>Wan uses 4k+1 (e.g. 33, 49, 81). Clip length = frames ÷ fps. <strong>Hard max
+                    ~81 (≈5s)</strong> — the model can't do more and 16&nbsp;GB OOMs above it.</small>
             </div>
             <div class="form-group">
                 <label for="video_fps">Playback FPS</label>
@@ -79,7 +93,7 @@
         <div class="form-row">
             <div class="form-group">
                 <label for="video_default_steps">Diffusion Steps</label>
-                <input type="number" id="video_default_steps" name="video_default_steps" value="25" min="1" max="100">
+                <input type="number" id="video_default_steps" name="video_default_steps" value="32" min="1" max="100">
             </div>
             <div class="form-group">
                 <label for="video_guidance">Guidance Scale</label>
