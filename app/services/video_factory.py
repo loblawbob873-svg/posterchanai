@@ -123,6 +123,11 @@ async def generate_video_for_user(
         )
 
     if local_only:
+        # A forwarded request (from another node's LB). If THIS node has local video disabled (e.g.
+        # its GPU is owned by the music server / other work), refuse so the caller falls back instead
+        # of OOMing here.
+        if not cfg["local_enabled"]:
+            raise VideoError("Local video generation is disabled on this node.")
         candidates = [_LOCAL]
     else:
         candidates = parse_video_server_urls(cfg["server_urls"])
