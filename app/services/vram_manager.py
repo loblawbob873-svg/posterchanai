@@ -66,6 +66,9 @@ def _ensure_music_server(db: Session):
     s = safe_query_settings(db)
     if str(s.get("video_free_music", "false")).lower() != "true":
         return
+    # A stop sends SIGTERM (acestep exits 143), leaving the unit "failed" — clear that so `start`
+    # reliably brings it back.
+    _music_service_ctl(db, "reset-failed")
     _music_service_ctl(db, "start")
     import socket, time as _t
     from urllib.parse import urlparse
