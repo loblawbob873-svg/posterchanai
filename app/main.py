@@ -179,7 +179,6 @@ async def startup():
         # song with no manual config.
         if os.environ.get("POSTERCHANAI_MUSIC", "0") == "1":
             try:
-                from app.models import Setting
                 _db = SessionLocal()
                 _defaults = {
                     "music_enabled": "true",
