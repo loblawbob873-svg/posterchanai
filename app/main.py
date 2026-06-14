@@ -19,7 +19,7 @@ logging.basicConfig(
 from app.database import init_db, get_db
 from app.auth import get_current_user_optional, get_current_user, create_access_token
 from app.models import User, VerificationToken, Setting
-from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, media_api, news, rag, mail, torrent, storage, files
+from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, media_api, news, rag, mail, torrent, storage, files, music_api
 from app.routers import fourchan, youtube_thumb, bots
 from app.routers.telegram import router as telegram_router
 from app.routers.misskey import router as misskey_router
@@ -144,6 +144,7 @@ app.include_router(admin.router)
 app.include_router(tts.router)
 app.include_router(stt.router)
 app.include_router(image_api.router)
+app.include_router(music_api.router)
 app.include_router(media_api.router)
 app.include_router(news.router)
 app.include_router(rag.router)

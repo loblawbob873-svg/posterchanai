@@ -62,6 +62,8 @@ def build_request_body(cfg: dict, prompt: str, lyrics: str = "",
         "audio_duration": duration if duration is not None else cfg["duration"],
         "inference_steps": steps if steps is not None else cfg["steps"],
         "format": cfg["fmt"],
+        # One take per request — ACE-Step defaults to 2, which doubles VRAM and can OOM a 12GB GPU.
+        "batch_size": 1,
     }
     if cfg["model"]:
         body["model"] = cfg["model"]
