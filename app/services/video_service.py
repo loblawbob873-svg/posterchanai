@@ -64,6 +64,7 @@ def _get_settings(db: Session) -> dict:
         "local_enabled": str(s.get("video_local_enabled", "true")).lower() == "true",
         "model": s.get("video_model", "Wan-AI/Wan2.1-T2V-1.3B-Diffusers") or "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
         "device": s.get("video_gpu_device", "auto") or "auto",
+        "cpu_offload": str(s.get("video_cpu_offload", "false")).lower() == "true",
         "width": _i("video_width", 832),
         "height": _i("video_height", 480),
         "num_frames": _i("video_num_frames", 49),
@@ -125,19 +126,24 @@ class VideoService:
             if self._pipe is not None:
                 self.unload_model()
             import torch
-            from diffusers import WanPipeline, AutoencoderKLWan
+            from diffusers import DiffusionPipeline
             device = self._resolve_device(cfg["device"])
             self._device = device
             logger.info(f"Loading video model {model_id} on {device} ...")
             t0 = time.time()
-            # VAE in bf16 (the Arc fp32-conv3d OOM fix); transformer in bf16. CPU stays fp32.
-            vae_dtype = torch.float32 if device == "cpu" else torch.bfloat16
+            # GENERIC loader: DiffusionPipeline.from_pretrained auto-selects the right pipeline class
+            # from the model's config (Wan / LTX / CogVideoX / …), so `video_model` can be ANY
+            # diffusers text-to-video model. Everything (incl. the VAE) loads in bf16 — that's the
+            # Arc fp32-conv3d OOM fix, and it halves VRAM everywhere. CPU stays fp32.
             dtype = torch.float32 if device == "cpu" else torch.bfloat16
-            vae = AutoencoderKLWan.from_pretrained(model_id, subfolder="vae", torch_dtype=vae_dtype)
-            pipe = WanPipeline.from_pretrained(model_id, vae=vae, torch_dtype=dtype)
-            if device != "cpu":
+            pipe = DiffusionPipeline.from_pretrained(model_id, torch_dtype=dtype)
+            if device != "cpu" and cfg.get("cpu_offload"):
+                # For big models (e.g. CogVideoX-5B) that don't fit fully in VRAM: keep weights in
+                # system RAM and stream layers to the GPU on demand. Slower, but fits.
+                pipe.enable_model_cpu_offload(device=device)
+            elif device != "cpu":
                 pipe = pipe.to(device)
-            # Tiled VAE decode keeps peak memory in budget (REQUIRED on the 16GB Arc).
+            # Tiled VAE decode keeps peak memory in budget (REQUIRED on the 16GB Arc / 12GB nas).
             try:
                 pipe.vae.enable_tiling()
             except Exception:

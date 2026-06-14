@@ -118,6 +118,8 @@ class SettingsResponse(BaseModel):
     video_server_urls: str = ""  # Comma-separated REMOTE posterchanai nodes for load balancing
     video_gpu_device: str = "auto"  # "auto"/"cuda"/"xpu"/"cpu" — picks the GPU vs CPU lock locally
     video_model: str = "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"  # HF id / local path of the diffusers model
+    video_cpu_offload: str = "false"  # stream weights from RAM (fits big models like CogVideoX-5B on
+    # a 16GB GPU; much slower). Needed for 10s/HD models that don't fit fully in VRAM.
     video_width: str = "832"  # GENERATION width  (multiple of 16). Wan2.1-1.3B is a 480p model.
     video_height: str = "480"  # GENERATION height (multiple of 16)
     video_upscale_height: str = "720"  # upscale the finished clip to this height (0/native = none).
