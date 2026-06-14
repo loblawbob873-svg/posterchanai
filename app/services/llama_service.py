@@ -296,7 +296,7 @@ def _compute_autofit_gpu_layers(model_path: str, file_size: int, n_ctx: int, n_b
 def _compute_autofit_ctx(model_path: str, file_size: int, flash_attn: bool = False,
                          n_batch: int = 512, ctx_floor: int = 4096, ctx_cap: int = 131072,
                          offload_ctx_target: int = 16384, offload_ctx_cap: int = 65536,
-                         ram_kv_fraction: float = 0.5):
+                         ram_kv_fraction: float = 0.5, offload_vram_tok_per_mb: float = 1.5):
     """Pick the largest context window that fits THIS GPU's VRAM at full layers.
 
     Used when ``ollama_num_ctx`` is "auto" (the default): a self-hosted user on a 6GB card
@@ -371,6 +371,13 @@ def _compute_autofit_ctx(model_path: str, file_size: int, flash_attn: bool = Fal
             ram_for_kv = max(0.0, (free_ram_mb - weights_overflow_mb) * ram_kv_fraction)
             target = int(ram_for_kv / kv_per_tok_mb) if ram_for_kv > 0 else ctx_floor
             target = min(target, offload_ctx_cap, cap)
+        # VRAM ceiling: even with weights/KV offloaded, the GPU-resident layers' KV and the
+        # attention/compute scratch (which grows with the window) still live in VRAM. A purely
+        # RAM-sized window OOMs the backend mid-matmul and crashes the process (observed: 64k on a
+        # 16GB Arc died with UR_RESULT_ERROR_OUT_OF_HOST_MEMORY at OP MUL). So also clamp by what
+        # VRAM can carry — ~offload_vram_tok_per_mb tokens per free MB (16384 ran fine at ~16GB,
+        # 65536 was fatal; 1.5 keeps margin and scales down on smaller cards).
+        target = min(target, int(free_mb * offload_vram_tok_per_mb))
         target = max(ctx_floor, target)
         return (target // 2048) * 2048
 
