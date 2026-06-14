@@ -194,6 +194,25 @@ async def startup():
             except Exception as e:
                 logging.error(f"Error seeding music settings: {e}")
 
+        # Turnkey Docker video: when POSTERCHANAI_VIDEO=1, auto-enable native text-to-video and
+        # (optionally) point video_model at POSTERCHANAI_VIDEO_MODEL. The model auto-downloads to
+        # HF_HOME on first use (persisted on the data volume). Only seeds keys the admin hasn't set.
+        if os.environ.get("POSTERCHANAI_VIDEO", "0") == "1":
+            try:
+                _db = SessionLocal()
+                _vdefaults = {"video_enabled": "true", "video_local_enabled": "true"}
+                _vm = os.environ.get("POSTERCHANAI_VIDEO_MODEL")
+                if _vm:
+                    _vdefaults["video_model"] = _vm
+                for _k, _v in _vdefaults.items():
+                    if not _db.query(Setting).filter(Setting.key == _k).first():
+                        _db.add(Setting(key=_k, value=_v))
+                _db.commit()
+                _db.close()
+                logging.info("Video generation auto-configured from POSTERCHANAI_VIDEO env")
+            except Exception as e:
+                logging.error(f"Error seeding video settings: {e}")
+
         # Start health check if enabled (in background, don't block startup)
         try:
             from app.services.health_check import start_health_check

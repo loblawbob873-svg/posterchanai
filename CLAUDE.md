@@ -163,6 +163,22 @@ open a fresh `SessionLocal` and capture any needed config up front.
   is **`task_id_list`** (not `task_ids`), and its `result` is a **JSON-encoded string** whose items
   carry `file: "/v1/audio?path=..."`. Deployed: nas.lan (RTX 3060, CUDA) serves music; the Arc
   (server1) can't easily host it (XPU torch swap breaks ACE-Step's CUDA-pinned torchvision/audio ABI).
+- **Video generation** (`videogeni` command; `app/services/video_service.py` + `video_factory.py` +
+  `app/routers/video_api.py`): text-to-video, **NATIVE in-process diffusers** (unlike music — LTX/Wan/
+  CogVideoX are stock diffusers pipelines on the SAME torch stack as image gen, so no separate
+  server). `video_service` is the generator (generic `DiffusionPipeline.from_pretrained` → any T2V
+  model via the `video_model` setting), `video_factory` mirrors `music_factory` for node→node LB over
+  `video_server_urls`+local with the shared `GPUResourceLock` + `vram_manager.prepare_for_video` swap.
+  Output is a branded MP4 (`media_service.make_generated_video` → frames→mp4 + generic `append_outro`
+  watermark + optional lanczos upscale to `video_upscale_height`). Web UI + Telegram only (NOT fedi
+  bots). Portability: stock diffusers + SDPA only — NO flash-attn/xformers/fp8/GGUF (break Arc/ROCm).
+  **Arc(XPU) gotcha:** Wan VAE conv3d OOMs in fp32 → load VAE bf16 + `enable_tiling()`; CPU-offload
+  does NOT work on XPU (CUDA-only), so Arc is limited to models that fit fully (Wan-1.3B on 16GB).
+  Frames clamp to `video_max_frames` (per-node VRAM cap) to avoid OOM. **Deployed:** server1/Arc =
+  primary (Wan-1.3B, 49f); nas/3060 = secondary via offload, and since music+video share nas's 12GB,
+  `video_free_music=true` makes a video render stop `acestep` (sudo systemctl) to reclaim VRAM,
+  restarting it for music. New dep: `sentencepiece` (T5 tokenizer). Turn-key: `./install.sh --video`,
+  Docker `POSTERCHANAI_VIDEO=1`. See `docs/VIDEO.md`.
 - **Finance (Budget Manager)** (`app/services/finance_service.py`; `budget`/`bills`/`pay`/`addbill`
   commands): thin async client for the self-hosted Budget Manager Flask app's `/api/v1/*`
   (summary/bills/add/pay), reached at the global `finance_api_base` setting (default

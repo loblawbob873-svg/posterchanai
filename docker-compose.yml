@@ -18,6 +18,11 @@ x-common: &common
     # music pointed at the acestep container — no manual Admin config needed.
     - POSTERCHANAI_MUSIC=${POSTERCHANAI_MUSIC:-0}
     - POSTERCHANAI_ACESTEP_URL=${POSTERCHANAI_ACESTEP_URL:-http://acestep:8001}
+    # Turnkey video: set POSTERCHANAI_VIDEO=1 and the app auto-enables native text-to-video
+    # (Wan2.1-1.3B by default; override with POSTERCHANAI_VIDEO_MODEL). Model auto-downloads to
+    # the persisted HF cache on first use. Needs a GPU profile (cuda/rocm/intel).
+    - POSTERCHANAI_VIDEO=${POSTERCHANAI_VIDEO:-0}
+    - POSTERCHANAI_VIDEO_MODEL=${POSTERCHANAI_VIDEO_MODEL:-}
   volumes:
     - pc-data:/var/lib/posterchanai
     - pc-rag:/app/data
