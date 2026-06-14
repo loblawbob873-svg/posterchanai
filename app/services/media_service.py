@@ -904,6 +904,18 @@ def render_outro_card(W: int, H: int, username: Optional[str] = None, avatar=Non
         d.line([(0, y), (W, y)], fill=(int(bg[0] + 10 * f), int(bg[1] + 8 * f), int(bg[2] + 18 * f)))
     cx = W // 2
 
+    def _fit(t, target, frac=0.90, floor=8):
+        """Largest font up to `target` px whose rendered width fits `frac` of the card width.
+        Every text line goes through this so nothing runs off the edges on narrow/tall
+        (vertical phone) cards — where height-derived font sizes would otherwise overflow."""
+        sz = int(target); mw = int(W * frac)
+        while sz > floor:
+            bb = d.textbbox((0, 0), t, font=_outro_font(sz))
+            if (bb[2] - bb[0]) <= mw:
+                break
+            sz -= 2
+        return _outro_font(sz)
+
     def _ctext(yy, t, font, fill):
         bb = d.textbbox((0, 0), t, font=font)
         d.text((cx - (bb[2] - bb[0]) / 2, yy), t, font=font, fill=fill)
@@ -925,29 +937,24 @@ def render_outro_card(W: int, H: int, username: Optional[str] = None, avatar=Non
             _ctext(y + int(av_r * 0.5), username[:1].upper(), _outro_font(int(av_r * 1.0)), (235, 235, 250))
         d.ellipse([cx - av_r, y, cx + av_r, y + av_r * 2], outline=(255, 170, 60), width=max(3, W // 180))
         y += av_r * 2 + int(H * 0.02)
-        # Shrink the handle to fit the card width — fediverse handles (user@instance) are long
-        # and would otherwise run off both edges.
-        handle = f"@{username}"
-        max_w = int(W * 0.92)
-        fsz = int(H * 0.05)
-        while fsz > int(H * 0.022):
-            if (lambda bb: bb[2] - bb[0])(d.textbbox((0, 0), handle, font=_outro_font(fsz))) <= max_w:
-                break
-            fsz -= 2
-        y += _ctext(y, handle, _outro_font(fsz), (245, 245, 255)) + int(H * 0.03)
+        y += _ctext(y, f"@{username}", _fit(f"@{username}", int(H * 0.05)), (245, 245, 255)) + int(H * 0.03)
 
     if os.path.exists(_OUTRO_LOGO):
         try:
             from PIL import Image as _I
             lg = _I.open(_OUTRO_LOGO).convert("RGBA")
             lh = int(H * (0.40 if username else 0.50)); lw = int(lg.width * lh / lg.height)
+            # Cap the logo to the card width too (tall-narrow cards) — scale by height first,
+            # then shrink to fit width if needed, preserving aspect.
+            if lw > int(W * 0.6):
+                lw = int(W * 0.6); lh = int(lg.height * lw / lg.width)
             lg = lg.resize((max(1, lw), max(1, lh)))
             img.paste(lg, (cx - lw // 2, y), lg)
             y += lh + int(H * 0.015)
         except Exception:
             pass
-    _ctext(y, "made with", _outro_font(int(H * 0.036)), (170, 175, 200)); y += int(H * 0.048)
-    _ctext(y, "PosterChanAI", _outro_font(int(H * 0.068)), (255, 170, 60))
+    _ctext(y, "made with", _fit("made with", int(H * 0.036)), (170, 175, 200)); y += int(H * 0.048)
+    _ctext(y, "PosterChanAI", _fit("PosterChanAI", int(H * 0.068)), (255, 170, 60))
     return img
 
 
