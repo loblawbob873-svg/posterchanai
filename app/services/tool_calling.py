@@ -462,7 +462,8 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
             # parsed (never touches a valid call) and KEEPS the original content if the regen still
             # yields nothing — so it can only ADD a recovered action, never make things worse.
             if tools and content and not tool_calls and _looks_like_intent_to_act(content):
-                logger.warning("narration-only intent-to-act — pushing for the tool call (len=%d)", len(content))
+                logger.warning("narration-only intent-to-act — pushing for the tool call (len=%d); content[:500]=%r",
+                               len(content), content[:500])
                 try:
                     push = ("You started to act but did NOT emit a complete tool call. Emit the tool "
                             "call NOW and output ONLY the tool call — no explanation, no prose. /no_think")
@@ -484,7 +485,10 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
                                        ",".join(t["function"]["name"] for t in tc3))
                         content, tool_calls = c3, tc3   # now acting; the obsolete narration is dropped
                     else:
-                        logger.info("push-to-act produced no call; keeping original content")
+                        # DIAG: capture what the model actually emitted so we can tell genuine prose
+                        # from a malformed/unparsed tool call (fixable in parse_tool_calls).
+                        logger.warning("push-to-act produced no call; keeping original content. "
+                                       "body3[:500]=%r", (body3 or "")[:500])
                 except Exception as e:
                     logger.warning("push-to-act failed (%s); keeping original content", e)
             # Last-resort band-aid: NEVER return an empty message. An empty tool response makes the
