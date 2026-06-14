@@ -502,6 +502,10 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
                 if content:
                     logger.warning("returning reasoning-as-content to avoid hard-stop (len=%d)", len(content))
             msg: Dict[str, Any] = {"role": "assistant", "content": content}
+            # DIAG: when we return WITHOUT a tool call but tools were offered, log what we're handing
+            # opencode (prose vs a malformed Write call) so the right fix is clear.
+            if tools and not tool_calls:
+                logger.warning("RETURNING NO TOOL CALL with tools present; content[:600]=%r", (content or "")[:600])
             return (({**msg, "tool_calls": tool_calls}, "tool_calls") if tool_calls else (msg, "stop"))
         except Exception as e:
             logger.warning("native-template tool path failed (%s); using fallback", e)
