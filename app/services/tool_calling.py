@@ -475,10 +475,19 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
                     else:
                         nt.insert(0, {"role": "system", "content": push})
                     r3 = _get_formatter(template)(messages=nt, tools=tools)
-                    toks3 = model.tokenize(r3.prompt.encode("utf-8"), add_bos=False, special=True)
+                    # PREFILL the response with a closed think + an open <tool_call>, forcing the model
+                    # to CONTINUE a tool call (filling in the args it already worked out) instead of
+                    # restarting with prose. The template opens the assistant turn inside <think>, so
+                    # close it first. The model continues with the call body; we prepend the tag back.
+                    prompt3 = r3.prompt
+                    if prompt3.rstrip().endswith("<think>"):
+                        prompt3 = prompt3.rstrip()[: -len("<think>")] + "<think></think>\n\n<tool_call>\n"
+                    else:
+                        prompt3 = prompt3 + "\n<tool_call>\n"
+                    toks3 = model.tokenize(prompt3.encode("utf-8"), add_bos=False, special=True)
                     raw3 = (model.create_completion(prompt=toks3, **_p).get("choices") or [{}])[0].get("text") or ""
-                    body3 = raw3.split("</think>", 1)[1].strip() if "</think>" in raw3 else raw3.strip()
-                    c3, tc3 = parse_tool_calls(body3)
+                    # Reconstruct the full call: the prefilled "<tool_call>" + the model's continuation.
+                    c3, tc3 = parse_tool_calls("<tool_call>\n" + raw3)
                     tc3 = _normalize_tool_names(tc3, tools)
                     if tc3:
                         logger.warning("push-to-act succeeded (%s)",
