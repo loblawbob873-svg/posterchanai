@@ -2131,6 +2131,7 @@ def remove_background_attachments(attachments: List[Tuple[str, bytes, str]]) -> 
     notes: List[str] = []
     try:
         from rembg import remove as _rembg_remove
+        from PIL import Image
     except Exception as e:
         return [], f"Background removal isn't available — `rembg` not installed ({e}). Install it (requirements.txt)."
     for filename, data, content_type in attachments:
@@ -2139,9 +2140,16 @@ def remove_background_attachments(attachments: List[Tuple[str, bytes, str]]) -> 
             continue
         stem = Path(filename).stem or "image"
         try:
-            cut = _rembg_remove(data)  # PNG with alpha channel (transparent background)
+            cut = _rembg_remove(data)  # rembg returns a PNG with the background cut out
+            # Force a real RGBA alpha channel + re-encode as PNG, so the background is
+            # genuinely transparent regardless of the rembg session's default output mode.
+            with Image.open(io.BytesIO(cut)) as _im:
+                _rgba = _im.convert("RGBA")
+            _buf = io.BytesIO()
+            _rgba.save(_buf, format="PNG")
+            cut = _buf.getvalue()
             outputs.append({"filename": f"{stem}_nobg.png", "data": cut, "content_type": "image/png"})
-            notes.append(f"✂️ {filename}: background removed → {stem}_nobg.png")
+            notes.append(f"✂️ {filename}: background removed → transparent {stem}_nobg.png")
         except Exception as e:
             logger.warning(f"remove_background failed for {filename}: {e}", exc_info=True)
             notes.append(f"❌ {filename}: background removal failed ({e})")
