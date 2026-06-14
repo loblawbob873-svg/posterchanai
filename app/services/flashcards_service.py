@@ -114,7 +114,14 @@ def _coerce_card(item: dict) -> Optional[dict]:
     distractors = item.get("distractors") or item.get("options") or item.get("wrong") or []
     if not isinstance(distractors, list):
         distractors = []
-    distractors = [str(x).strip() for x in distractors if str(x).strip() and str(x).strip() != answer]
+    # Dedup against the answer AND each other so options never repeat.
+    _seen, _clean = set(), []
+    for x in distractors:
+        xs = str(x).strip()
+        if xs and xs != answer and xs not in _seen:
+            _seen.add(xs)
+            _clean.append(xs)
+    distractors = _clean
     explanation = str(item.get("explanation") or item.get("back") or item.get("a") or "").strip()
     if not question or not answer or len(distractors) < 1:
         return None
@@ -151,17 +158,48 @@ def _parse_cards_json(raw: str) -> List[dict]:
             cards = [c for c in (_coerce_card(i) for i in data) if c]
             if cards:
                 return cards
-    # Truncated array / trailing garbage → recover individual objects (cards have no nested {}).
+    # Truncated array / trailing garbage → recover each complete top-level {...} object. Brace- and
+    # string-aware so it survives nested braces (e.g. LaTeX \frac{}{}) and braces inside strings.
     cards = []
-    for mo in re.finditer(r"\{[^{}]*\}", s, re.DOTALL):
+    for obj_str in _iter_json_objects(s):
         try:
-            obj = json.loads(mo.group(0))
+            obj = json.loads(obj_str)
         except Exception:
             continue
         c = _coerce_card(obj)
         if c:
             cards.append(c)
     return cards
+
+
+def _iter_json_objects(s: str):
+    """Yield each top-level {...} substring from `s`, tracking string literals and nesting depth so
+    braces inside strings or nested objects don't split an object early."""
+    depth = 0
+    start = None
+    in_str = False
+    esc = False
+    for i, ch in enumerate(s):
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}" and depth > 0:
+            depth -= 1
+            if depth == 0 and start is not None:
+                yield s[start:i + 1]
+                start = None
 
 
 async def generate_flashcards(text: str, chat_service, max_cards: int = MAX_CARDS) -> List[dict]:
