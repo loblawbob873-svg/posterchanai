@@ -8,6 +8,7 @@ Modes:
 - image_only: keep image model loaded, LLM uses an external/remote server
 """
 import logging
+import subprocess
 import threading
 from typing import Optional, Literal
 from sqlalchemy.orm import Session
@@ -38,6 +39,46 @@ def _unload_native_video(db: Session):
             service.unload_model()
     except Exception as e:
         logger.error(f"Error unloading video model: {e}")
+
+
+def _music_service_ctl(db: Session, action: str):
+    """Stop/start the co-located ACE-Step music server (a SEPARATE process holding several GB) so it
+    participates in the GPU VRAM swap. The in-process swap can't free another process's VRAM, so on a
+    node where music + video/image share ONE GPU (e.g. a 12GB card) we stop the service to make room
+    for the (large) video model, and start it again for music. Gated by the `video_free_music`
+    setting (default off — other nodes unaffected). Needs passwordless sudo for `systemctl`."""
+    from app.database import safe_query_settings
+    s = safe_query_settings(db)
+    if str(s.get("video_free_music", "false")).lower() != "true":
+        return
+    svc = s.get("music_service_name", "acestep") or "acestep"
+    try:
+        r = subprocess.run(["sudo", "-n", "systemctl", action, svc], timeout=40, capture_output=True, text=True)
+        logger.info(f"music server: systemctl {action} {svc} (rc={r.returncode})")
+    except Exception as e:
+        logger.error(f"music service {action} failed: {e}")
+
+
+def _ensure_music_server(db: Session):
+    """Start the co-located music server (if managed) and wait for its port, so the first music gen
+    after a video render doesn't race acestep coming back up. No-op unless `video_free_music` is on."""
+    from app.database import safe_query_settings
+    s = safe_query_settings(db)
+    if str(s.get("video_free_music", "false")).lower() != "true":
+        return
+    _music_service_ctl(db, "start")
+    import socket, time as _t
+    from urllib.parse import urlparse
+    u = urlparse(s.get("music_api_base", "http://localhost:8001") or "http://localhost:8001")
+    host, port = (u.hostname or "localhost"), (u.port or 8001)
+    deadline = _t.time() + 90
+    while _t.time() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=3):
+                return
+        except Exception:
+            _t.sleep(2)
+    logger.warning("music server did not come up within 90s after start")
 
 
 def _get_vram_settings(db: Session) -> dict:
@@ -158,6 +199,10 @@ def prepare_for_music(db: Session) -> bool:
     music_factory so only one model uses the GPU at a time."""
     global _current_mode
 
+    # If video previously stopped the music server (video_free_music), bring it back up and wait for
+    # it before we generate against it. No-op unless managed.
+    _ensure_music_server(db)
+
     settings = _get_vram_settings(db)
     vram_mode = settings["vram_mode"]
 
@@ -201,6 +246,10 @@ def prepare_for_video(db: Session) -> bool:
 
     settings = _get_vram_settings(db)
     vram_mode = settings["vram_mode"]
+
+    # Free the co-located music server's VRAM (stop acestep) so the large video model fits. Gated by
+    # video_free_music; no-op elsewhere. Done regardless of vram_mode (acestep is a separate process).
+    _music_service_ctl(db, "stop")
 
     if vram_mode == "dedicated":
         _current_mode = "video"
