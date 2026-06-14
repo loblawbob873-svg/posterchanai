@@ -565,6 +565,7 @@ class CommandService:
         "compress": "Compress attached image(s) or video(s)",
         "clip": "Clip an attached video: clip <start> <end> (e.g. clip 0:10 0:30)",
         "convert": "Convert image(s) to PDF or a PDF to images",
+        "flashcards": "Make an interactive multiple-choice study quiz from an attached PDF, image, or slide deck",
         "meme": "Add outlined white meme text to an attached image: meme <text>",
         "dildo": "Scatter dildos all over an attached image: dildo",
         "poo": "Scatter poop all over an attached image: poo",
@@ -652,6 +653,10 @@ class CommandService:
         "finance": "budget",
         "shot": "screenshot",
         "ss": "screenshot",
+        "cards": "flashcards",
+        "flashcard": "flashcards",
+        "study": "flashcards",
+        "quiz": "flashcards",
     }
 
     # Effects that accept a trailing motion arg (`zoom` Ken Burns pan-out or
@@ -927,6 +932,8 @@ class CommandService:
             return await self._clip_command(arg, attachments)
         elif command == "convert":
             return await self._convert_command(arg, attachments)
+        elif command == "flashcards":
+            return await self._flashcards_command(attachments)
         elif command == "meme":
             return await self._meme_command(arg, attachments)
         elif command == "dildo":
@@ -3538,6 +3545,38 @@ Files are saved to your Storage.""",
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
+
+    async def _flashcards_command(self, attachments: Optional[list]) -> dict:
+        """Build an interactive multiple-choice study quiz from an attached PDF / image / slide
+        deck / doc. Returns a `flashcards` result the web UI and Telegram render interactively."""
+        if not attachments:
+            return {
+                "type": "text",
+                "content": (
+                    "Attach a PDF, image, or slide deck (PPTX/DOCX), then send `flashcards` to "
+                    "generate an interactive multiple-choice study quiz."
+                ),
+            }
+        import asyncio
+        from app.services import flashcards_service
+
+        text, label, img_only = await asyncio.to_thread(
+            flashcards_service.extract_source_text, attachments)
+        if not text or not text.strip():
+            return {"type": "text", "content": "Couldn't read any text from that file to study from."}
+        cards = await flashcards_service.generate_flashcards(text, self.chat_service)
+        if not cards:
+            return {"type": "text", "content": "Couldn't generate flashcards from that document — try a clearer or more text-rich file."}
+        note = ("⚠️ This came from an image (OCR), so the text may be imperfect — a text PDF or "
+                "slide deck gives better cards.") if img_only else ""
+        return {
+            "type": "flashcards",
+            "title": label,
+            "source": label,
+            "cards": cards,
+            "note": note,
+            "content": f"🎴 {len(cards)} flashcards from {label}",
+        }
 
     async def _meme_command(self, arg: str, attachments: Optional[list]) -> dict:
         """Add outlined white meme text to an attached image: `meme <text>`."""

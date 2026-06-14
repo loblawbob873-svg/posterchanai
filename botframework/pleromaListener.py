@@ -78,9 +78,16 @@ def _gather_status_media(status):
     """Download media attached to a status (or its parent) for a media command.
     Returns a list of (filename, data_bytes, content_type) tuples."""
     attachments = list(status.get("media_attachments") or [])
-    if not attachments and status.get("in_reply_to_id"):
-        parent = get_status(status["in_reply_to_id"]) or {}
+    # Walk UP the reply chain to the nearest ancestor with media — the user often replies to the
+    # bot's own (media-less) message, not directly to the image post, so checking only the
+    # immediate parent missed it and re-showed the help (the "curb"/effect-on-thread-image bug).
+    parent_id = status.get("in_reply_to_id")
+    hops = 0
+    while not attachments and parent_id and hops < 5:
+        parent = get_status(parent_id) or {}
         attachments = list(parent.get("media_attachments") or [])
+        parent_id = parent.get("in_reply_to_id")
+        hops += 1
     media = []
     for att in attachments:
         url = att.get("url")

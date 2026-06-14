@@ -80,12 +80,21 @@ def _gather_note_media(note):
     files — using the embedded `reply` if present, otherwise fetching the parent by
     `replyId` (mentions/notifications don't always embed the parent's files)."""
     files = list(note.get("files") or [])
-    if not files:
-        parent = note.get("reply")
-        if not (isinstance(parent, dict) and parent.get("files")) and note.get("replyId"):
-            parent = get_note(note["replyId"]) or parent
-        if isinstance(parent, dict):
-            files = list(parent.get("files") or [])
+    # embedded parent first (cheap), then walk UP the reply chain to the nearest ancestor with
+    # files — the user often replies to the bot's own (file-less) message, not directly to the
+    # image note, so checking only the immediate parent missed it (the "curb" bug). The
+    # immediate-parent case still resolves on the first hop, so direct replies keep working.
+    if not files and isinstance(note.get("reply"), dict):
+        files = list(note["reply"].get("files") or [])
+    cur = note
+    hops = 0
+    while not files and cur.get("replyId") and hops < 5:
+        parent = get_note(cur["replyId"])
+        if not parent:
+            break
+        files = list(parent.get("files") or [])
+        cur = parent
+        hops += 1
     media = []
     for f in files:
         url = f.get("url")

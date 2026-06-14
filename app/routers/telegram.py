@@ -1281,6 +1281,11 @@ _youtube_action_cache: dict = {}
 _media_action_cache: dict = {}
 _MEDIA_ACTION_TTL = 600  # seconds
 
+# Interactive flashcards deck, per chat: chat_id → {"title", "cards", "idx", "answered"(list),
+# "score", "ts"}. Ephemeral (no DB); expires after _FLASHCARD_TTL.
+_flashcard_decks_cache: dict = {}
+_FLASHCARD_TTL = 1800  # 30 min
+
 # Interactive "✂️ Clip video" flow: after the user taps Clip we ForceReply for a
 # start time, then an end time. State for the two-step prompt lives here, keyed by
 # chat_id → {"start": float, "ts": float}; the source video stays in the media cache.
@@ -1402,6 +1407,8 @@ def _media_action_keyboard(attachments: list, user=None) -> Optional[dict]:
     has_image = any(is_image(fn, ct) for fn, _, ct in attachments)
     has_video = any(is_video(fn, ct) for fn, _, ct in attachments)
     has_pdf = any(is_pdf(fn, ct) for fn, _, ct in attachments)
+    has_doc = any((fn or "").lower().endswith((".pptx", ".docx", ".xlsx", ".ppt", ".doc"))
+                  for fn, _, ct in attachments)
 
     _social = bool(user and (_has_misskey(user) or _has_pleroma(user) or _has_matrix(user)))
     rows = []
@@ -1428,10 +1435,58 @@ def _media_action_keyboard(attachments: list, user=None) -> Optional[dict]:
             {"text": "📝 Summarize", "callback_data": "media:summarize"},
             {"text": "🌐 Translate", "callback_data": "media:translate"},
         ])
+    # Study material (PDF / image / slide deck / doc) → interactive flashcards quiz.
+    if has_pdf or has_image or has_doc:
+        rows.append([{"text": "🎴 Flashcards", "callback_data": "media:fc"}])
     # Offer posting an image or video to connected social platforms.
     if _social and (has_image or has_video):
         rows.append([{"text": "📣 Post to social", "callback_data": "media:post"}])
     return {"inline_keyboard": rows} if rows else None
+
+
+_FC_LETTERS = ["A", "B", "C", "D", "E"]
+
+
+def _flashcard_keyboard(deck: dict) -> dict:
+    """Inline keyboard for the current flashcard. Question face → one button per option
+    (`fc:ans:<i>`); both faces → Prev/Next nav + Restart. State lives in the deck cache,
+    so callback_data stays tiny."""
+    from app.services.flashcards_service import _strip_latex
+    idx = deck["idx"]; cards = deck["cards"]; total = len(cards)
+    card = cards[idx]; answered = deck["answered"][idx]
+    rows = []
+    if answered is None:
+        for i, opt in enumerate(card.get("options", [])):
+            letter = _FC_LETTERS[i] if i < len(_FC_LETTERS) else "•"
+            rows.append([{"text": f"{letter}. {_strip_latex(opt)}"[:60], "callback_data": f"fc:ans:{i}"}])
+    nav = []
+    if idx > 0:
+        nav.append({"text": "◀ Prev", "callback_data": "fc:prev"})
+    if idx < total - 1:
+        nav.append({"text": "Next ▶", "callback_data": "fc:next"})
+    if nav:
+        rows.append(nav)
+    rows.append([{"text": f"↻ Restart  ·  Score {deck.get('score', 0)}/{sum(1 for a in deck['answered'] if a is not None)}",
+                  "callback_data": "fc:restart"}])
+    return {"inline_keyboard": rows}
+
+
+async def _send_flashcard(chat_id: str, deck: dict, message_id=None):
+    """Render + send (new) or edit-in-place the deck's current card as a PNG."""
+    import base64 as _b64
+    from app.services import flashcards_service
+    idx = deck["idx"]; total = len(deck["cards"]); card = deck["cards"][idx]
+    answered = deck["answered"][idx]
+    png = await asyncio.to_thread(
+        flashcards_service.render_card_png, deck.get("title", "Flashcards"),
+        idx, total, card, answered is not None, answered)
+    kb = _flashcard_keyboard(deck)
+    if message_id is None:
+        res = await telegram_service.send_photo(chat_id, _b64.b64encode(png).decode(), None, reply_markup=kb)
+        if res.get("ok"):
+            deck["message_id"] = res.get("result", {}).get("message_id")
+    else:
+        await telegram_service.edit_message_media_photo(chat_id, message_id, png, reply_markup=kb)
 
 
 # Effect catalog grouped into the three Effects categories. Each entry is
@@ -2081,7 +2136,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "flashcards", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -2313,7 +2368,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
+            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "flashcards", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -2542,7 +2597,7 @@ async def _handle_telegram_update(update: dict, db: Session):
 
             # If we have images, always run OCR for later use
             # (skip for compress/convert — they operate on the raw file, not its text)
-            if has_images and attachments and command not in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz"):
+            if has_images and attachments and command not in ("compress", "clip", "convert", "flashcards", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz"):
                 for filename, file_data, content_type in attachments:
                     if content_type.startswith("image/"):
                         import base64
@@ -2589,7 +2644,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Attachment too large for Telegram to hand to the bot (20 MB cap).
             # Handle here so it works whether or not a command caption was given,
             # instead of falling through to the chat model.
-            if oversized_attachment and command in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", None):
+            if oversized_attachment and command in ("compress", "clip", "convert", "flashcards", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", None):
                 _ov_name, _ov_size = oversized_attachment
                 _cap_mb = TELEGRAM_MAX_DOWNLOAD_BYTES / (1024 * 1024)
                 if telegram_service.is_local_api:
@@ -3503,6 +3558,25 @@ async def _handle_telegram_update(update: dict, db: Session):
                             chat_id, _geni_caption, _geni_user, telegram_service,
                             prompt="📣 *Share this image?*", image_bytes=_geni_bytes
                         )
+            elif response_type == "flashcards":
+                # Interactive multiple-choice study quiz — store the deck per chat and send card 0
+                # as a PNG with answer buttons; fc: callbacks navigate/reveal in place.
+                _fc_cards = result.get("cards") or []
+                if not _fc_cards:
+                    await telegram_service.send_message(chat_id, response_content or "Couldn't make flashcards.")
+                else:
+                    if result.get("note"):
+                        await telegram_service.send_message(chat_id, result["note"])
+                    _deck = {
+                        "title": result.get("title") or "Flashcards",
+                        "cards": _fc_cards,
+                        "idx": 0,
+                        "answered": [None] * len(_fc_cards),
+                        "score": 0,
+                        "ts": time.time(),
+                    }
+                    _flashcard_decks_cache[chat_id] = _deck
+                    await _send_flashcard(chat_id, _deck)
             elif response_type == "search":
                 # Send AI summary, then append top result links
                 search_results = result.get("results", [])
@@ -3697,6 +3771,71 @@ async def _handle_telegram_update(update: dict, db: Session):
                         await _offer_ytdl_share(chat_id, _fn, _vbytes, db)
                 finally:
                     shutil.rmtree(_tmpdir, ignore_errors=True)
+                return {"ok": True}
+
+            elif data == "media:fc":
+                # 🎴 Flashcards button on an uploaded file → build the quiz from the cached upload.
+                cb_user = db.query(User).filter(
+                    User.telegram_chat_id == chat_id,
+                    User.telegram_enabled == True
+                ).first()
+                if not cb_user:
+                    await telegram_service.send_message(chat_id, "Your Telegram account is not linked.")
+                    return {"ok": True}
+                _entry = _media_action_cache.get(chat_id)
+                if not _entry or (time.time() - _entry.get("ts", 0)) > _MEDIA_ACTION_TTL:
+                    _media_action_cache.pop(chat_id, None)
+                    await telegram_service.send_message(chat_id, "⏳ That upload expired — please send the file again.")
+                    return {"ok": True}
+                await telegram_service.send_message(chat_id, "🎴 Generating flashcards…")
+                _res = await CommandService(db, user=cb_user).execute_command(
+                    "flashcards", "", attachments=_entry["attachments"])
+                if _res.get("type") == "flashcards" and _res.get("cards"):
+                    if _res.get("note"):
+                        await telegram_service.send_message(chat_id, _res["note"])
+                    _deck = {"title": _res.get("title") or "Flashcards", "cards": _res["cards"],
+                             "idx": 0, "answered": [None] * len(_res["cards"]), "score": 0, "ts": time.time()}
+                    _flashcard_decks_cache[chat_id] = _deck
+                    await _send_flashcard(chat_id, _deck)
+                else:
+                    await telegram_service.send_message(chat_id, _res.get("content") or "Couldn't make flashcards from that file.")
+                return {"ok": True}
+
+            elif data.startswith("fc:"):
+                # Flashcard quiz navigation/answer. State lives in _flashcard_decks_cache[chat_id].
+                _deck = _flashcard_decks_cache.get(chat_id)
+                _mid = (callback_query.get("message") or {}).get("message_id")
+                if not _deck or (time.time() - _deck.get("ts", 0)) > _FLASHCARD_TTL:
+                    _flashcard_decks_cache.pop(chat_id, None)
+                    await telegram_service.answer_callback_query(
+                        callback_query_id, "This quiz expired — send the file again.", show_alert=True)
+                    return {"ok": True}
+                _deck["ts"] = time.time()
+                _parts = data.split(":")
+                _act = _parts[1] if len(_parts) > 1 else ""
+                _total = len(_deck["cards"])
+                if _act == "ans":
+                    _idx = _deck["idx"]
+                    try:
+                        _opt = int(_parts[2])
+                    except (IndexError, ValueError):
+                        _opt = -1
+                    if _deck["answered"][_idx] is None and 0 <= _opt < len(_deck["cards"][_idx].get("options", [])):
+                        _deck["answered"][_idx] = _opt
+                        if _opt == _deck["cards"][_idx].get("correct"):
+                            _deck["score"] += 1
+                        await _send_flashcard(chat_id, _deck, message_id=_mid)
+                elif _act == "next" and _deck["idx"] < _total - 1:
+                    _deck["idx"] += 1
+                    await _send_flashcard(chat_id, _deck, message_id=_mid)
+                elif _act == "prev" and _deck["idx"] > 0:
+                    _deck["idx"] -= 1
+                    await _send_flashcard(chat_id, _deck, message_id=_mid)
+                elif _act == "restart":
+                    _deck["idx"] = 0
+                    _deck["score"] = 0
+                    _deck["answered"] = [None] * _total
+                    await _send_flashcard(chat_id, _deck, message_id=_mid)
                 return {"ok": True}
 
             elif data.startswith("media:"):

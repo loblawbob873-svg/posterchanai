@@ -1839,6 +1839,117 @@ class ChatHandler {
         return encodeURI(url);
     }
 
+    // --- Interactive multiple-choice flashcards (study tool) ---------------------------
+    renderFlashcardShell(deckId, data) {
+        const title = (data.title || 'Flashcards');
+        const noteHtml = data.note ? `<div class="fc-note"></div>` : '';
+        return `
+        <div class="flashcard-deck" id="${deckId}">
+            <div class="fc-head"><span class="fc-title">🎴 </span><span class="fc-progress"></span></div>
+            ${noteHtml}
+            <div class="fc-card">
+                <div class="fc-q"></div>
+                <div class="fc-options"></div>
+                <div class="fc-explain" hidden></div>
+            </div>
+            <div class="fc-controls">
+                <button class="fc-prev" type="button">◀ Prev</button>
+                <span class="fc-score"></span>
+                <button class="fc-restart" type="button">↻ Restart</button>
+                <button class="fc-next" type="button">Next ▶</button>
+            </div>
+        </div>`;
+    }
+
+    renderMath(el) {
+        if (window.renderMathInElement) {
+            try {
+                window.renderMathInElement(el, {
+                    delimiters: [
+                        { left: '$$', right: '$$', display: true },
+                        { left: '$', right: '$', display: false },
+                    ],
+                    throwOnError: false,
+                });
+            } catch (e) { /* leave raw text */ }
+        }
+    }
+
+    initFlashcards(messageEl, deckId, data) {
+        const root = messageEl.querySelector('#' + deckId);
+        if (!root) return;
+        const cards = data.cards;
+        const total = cards.length;
+        const state = { idx: 0, answered: new Array(total).fill(null), score: 0 };
+        const letters = ['A', 'B', 'C', 'D', 'E'];
+
+        const qEl = root.querySelector('.fc-q');
+        const optsEl = root.querySelector('.fc-options');
+        const explainEl = root.querySelector('.fc-explain');
+        const progEl = root.querySelector('.fc-progress');
+        const scoreEl = root.querySelector('.fc-score');
+        const titleEl = root.querySelector('.fc-title');
+        const noteEl = root.querySelector('.fc-note');
+        const prevBtn = root.querySelector('.fc-prev');
+        const nextBtn = root.querySelector('.fc-next');
+        const restartBtn = root.querySelector('.fc-restart');
+
+        titleEl.textContent = '🎴 ' + (data.title || 'Flashcards');
+        if (noteEl && data.note) noteEl.textContent = data.note;
+
+        const setText = (el, t) => { el.textContent = (t == null ? '' : String(t)); this.renderMath(el); };
+
+        const render = () => {
+            const card = cards[state.idx];
+            const picked = state.answered[state.idx];
+            progEl.textContent = `${state.idx + 1}/${total}`;
+            setText(qEl, card.question);
+            optsEl.innerHTML = '';
+            (card.options || []).forEach((opt, i) => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'fc-opt';
+                btn.textContent = `${letters[i] || '•'}. ${opt}`;
+                this.renderMath(btn);
+                if (picked != null) {
+                    btn.disabled = true;
+                    if (i === card.correct) btn.classList.add('fc-correct');
+                    else if (i === picked) btn.classList.add('fc-wrong');
+                } else {
+                    btn.addEventListener('click', () => {
+                        if (state.answered[state.idx] != null) return;
+                        state.answered[state.idx] = i;
+                        if (i === card.correct) state.score++;
+                        render();
+                    });
+                }
+                optsEl.appendChild(btn);
+            });
+            if (picked != null && card.explanation) {
+                explainEl.hidden = false;
+                explainEl.innerHTML = '<strong>Why:</strong> ';
+                const span = document.createElement('span');
+                span.textContent = card.explanation;
+                explainEl.appendChild(span);
+                this.renderMath(explainEl);
+            } else {
+                explainEl.hidden = true;
+                explainEl.innerHTML = '';
+            }
+            const done = state.answered.filter(a => a != null).length;
+            scoreEl.textContent = `Score ${state.score}/${done}`;
+            prevBtn.disabled = state.idx === 0;
+            nextBtn.disabled = state.idx >= total - 1;
+        };
+
+        prevBtn.addEventListener('click', () => { if (state.idx > 0) { state.idx--; render(); } });
+        nextBtn.addEventListener('click', () => { if (state.idx < total - 1) { state.idx++; render(); } });
+        restartBtn.addEventListener('click', () => {
+            state.idx = 0; state.score = 0; state.answered = new Array(total).fill(null); render();
+        });
+        render();
+    }
+
     handleCommandResponse(data) {
         // Always hide typing indicator and reset button first
         this.hideTypingIndicator();
@@ -2035,6 +2146,10 @@ class ChatHandler {
                     htmlPreview: html.substring(0, 1000)
                 });
             }
+        } else if (data.type === 'flashcards' && Array.isArray(data.cards) && data.cards.length) {
+            const deckId = 'fcdeck_' + Date.now();
+            html = contentHtml + this.renderFlashcardShell(deckId, data);
+            this._pendingFlashcards = { deckId, data };
         } else if (data.type === 'text' && data.content && data.content.includes('🔍 **Search Results:**')) {
             html = contentHtml;
         } else if (data.type === '4chan') {
@@ -2045,6 +2160,11 @@ class ChatHandler {
         }
 
         const messageEl = this.addMessage('assistant', html, true);
+
+        if (data.type === 'flashcards' && this._pendingFlashcards && messageEl) {
+            this.initFlashcards(messageEl, this._pendingFlashcards.deckId, this._pendingFlashcards.data);
+            this._pendingFlashcards = null;
+        }
 
         if (data.type === '4chan' && data.board && typeof window.openFourchanModal === 'function') {
             setTimeout(() => window.openFourchanModal(data.board), 100);

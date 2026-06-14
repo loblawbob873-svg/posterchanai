@@ -374,6 +374,35 @@ class TelegramService:
             logger.error(f"Failed to edit message: {e}")
             return {"ok": False, "error": str(e)}
 
+    async def edit_message_media_photo(self, chat_id: str, message_id: int, photo_bytes: bytes,
+                                       caption: str = None, reply_markup: dict = None,
+                                       parse_mode: str = "") -> dict:
+        """Replace an existing message's photo in place (editMessageMedia) with new PNG bytes.
+        Used for the flashcards image-card navigation (flip / next / prev)."""
+        import json
+        if not self.bot_token:
+            return {"ok": False, "error": "Bot token not configured"}
+        url = f"{self.api_base}{self.bot_token}/editMessageMedia"
+        media = {"type": "photo", "media": "attach://photo"}
+        if caption:
+            media["caption"] = _clamp_caption(caption)
+            if parse_mode:
+                media["parse_mode"] = parse_mode
+        data = {"chat_id": str(chat_id), "message_id": str(message_id), "media": json.dumps(media)}
+        if reply_markup:
+            data["reply_markup"] = json.dumps(reply_markup)
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                response = await client.post(
+                    url, data=data, files={"photo": ("card.png", photo_bytes, "image/png")})
+                result = response.json()
+                if not result.get("ok") and "not modified" in str(result.get("description", "")).lower():
+                    return {"ok": True, "not_modified": True}
+                return result
+        except Exception as e:
+            logger.error(f"Failed to edit message media: {e}")
+            return {"ok": False, "error": str(e)}
+
     async def get_file(self, file_id: str) -> dict:
         """Get file information from Telegram."""
         if not self.bot_token:

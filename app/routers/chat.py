@@ -83,6 +83,23 @@ def build_media_attachments(images, image_data, pdfs, pdf_data, documents, docum
         except Exception as e:
             logger.warning(f"[MEDIA] skipping bad PDF attachment: {e}")
 
+    # Office docs / slide decks (docx/pptx/xlsx) — used by `flashcards` (text extraction).
+    if documents:
+        for doc in documents:
+            b64 = doc.get("base64") if isinstance(doc, dict) else doc
+            name = doc.get("filename", "document") if isinstance(doc, dict) else "document"
+            ct = doc.get("type", "") if isinstance(doc, dict) else ""
+            if b64:
+                try:
+                    out.append((name, base64.b64decode(b64), ct or "application/octet-stream"))
+                except Exception as e:
+                    logger.warning(f"[MEDIA] skipping bad document attachment: {e}")
+    elif document_data:
+        try:
+            out.append(("document", base64.b64decode(document_data), "application/octet-stream"))
+        except Exception as e:
+            logger.warning(f"[MEDIA] skipping bad document attachment: {e}")
+
     if videos:
         for vid in videos:
             b64 = vid.get("base64") if isinstance(vid, dict) else vid
@@ -1063,7 +1080,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             # compress/clip/convert/translate operate on raw file bytes
                             # (translate OCRs an uploaded image/PDF and translates the text)
                             media_attachments = None
-                            if command in ("compress", "clip", "convert", "translate", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz"):
+                            if command in ("compress", "clip", "convert", "translate", "flashcards", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz"):
                                 media_attachments = build_media_attachments(
                                     images, image_data, pdfs, pdf_data,
                                     documents, document_data, videos
