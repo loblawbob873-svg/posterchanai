@@ -27,7 +27,7 @@ from app.services.media_service import is_image, is_pdf, _outro_font
 
 logger = logging.getLogger(__name__)
 
-MAX_CARDS = 12
+MAX_CARDS = 40
 _MAX_SOURCE_CHARS = 40000
 _OPTION_LETTERS = ["A", "B", "C", "D", "E"]
 
@@ -104,52 +104,64 @@ def _build_user_prompt(text: str, max_cards: int) -> str:
     )
 
 
+def _coerce_card(item: dict) -> Optional[dict]:
+    """Turn one parsed object into a card dict {question, options[shuffled], correct, explanation,
+    math}, or None if it's missing the essentials."""
+    if not isinstance(item, dict):
+        return None
+    question = str(item.get("question") or item.get("front") or item.get("q") or "").strip()
+    answer = str(item.get("answer") or item.get("correct") or "").strip()
+    distractors = item.get("distractors") or item.get("options") or item.get("wrong") or []
+    if not isinstance(distractors, list):
+        distractors = []
+    distractors = [str(x).strip() for x in distractors if str(x).strip() and str(x).strip() != answer]
+    explanation = str(item.get("explanation") or item.get("back") or item.get("a") or "").strip()
+    if not question or not answer or len(distractors) < 1:
+        return None
+    options = [answer] + distractors[:4]
+    random.shuffle(options)
+    return {
+        "question": question,
+        "options": options,
+        "correct": options.index(answer),
+        "explanation": explanation or answer,
+        "math": bool(item.get("math", False)),
+    }
+
+
 def _parse_cards_json(raw: str) -> List[dict]:
-    """Tolerantly parse the model's reply into quiz cards. Handles code fences and surrounding
-    prose; falls back to the first [...] block. Each card → {question, options[], correct,
-    explanation, math} with options shuffled and `correct` the index of the right one."""
+    """Tolerantly parse the model's reply into quiz cards. Handles code fences/prose and the first
+    [...] block; if the array is TRUNCATED (large decks exceed the token budget) it recovers each
+    complete {...} object individually so a cut-off response still yields all finished cards."""
     if not raw:
         return []
     s = raw.strip()
     if s.startswith("```"):
         s = re.sub(r"^```[a-zA-Z]*\n?", "", s)
         s = re.sub(r"\n?```$", "", s).strip()
-    candidates = [s]
     m = re.search(r"\[.*\]", s, re.DOTALL)
-    if m:
-        candidates.append(m.group(0))
-    for cand in candidates:
+    for cand in [s, m.group(0) if m else None]:
+        if not cand:
+            continue
         try:
             data = json.loads(cand)
         except Exception:
             continue
-        if not isinstance(data, list):
+        if isinstance(data, list):
+            cards = [c for c in (_coerce_card(i) for i in data) if c]
+            if cards:
+                return cards
+    # Truncated array / trailing garbage → recover individual objects (cards have no nested {}).
+    cards = []
+    for mo in re.finditer(r"\{[^{}]*\}", s, re.DOTALL):
+        try:
+            obj = json.loads(mo.group(0))
+        except Exception:
             continue
-        cards = []
-        for item in data:
-            if not isinstance(item, dict):
-                continue
-            question = str(item.get("question") or item.get("front") or item.get("q") or "").strip()
-            answer = str(item.get("answer") or item.get("correct") or "").strip()
-            distractors = item.get("distractors") or item.get("options") or item.get("wrong") or []
-            if not isinstance(distractors, list):
-                distractors = []
-            distractors = [str(x).strip() for x in distractors if str(x).strip() and str(x).strip() != answer]
-            explanation = str(item.get("explanation") or item.get("back") or item.get("a") or "").strip()
-            if not question or not answer or len(distractors) < 1:
-                continue
-            options = [answer] + distractors[:4]
-            random.shuffle(options)
-            cards.append({
-                "question": question,
-                "options": options,
-                "correct": options.index(answer),
-                "explanation": explanation or answer,
-                "math": bool(item.get("math", False)),
-            })
-        if cards:
-            return cards
-    return []
+        c = _coerce_card(obj)
+        if c:
+            cards.append(c)
+    return cards
 
 
 async def generate_flashcards(text: str, chat_service, max_cards: int = MAX_CARDS) -> List[dict]:
@@ -162,6 +174,13 @@ async def generate_flashcards(text: str, chat_service, max_cards: int = MAX_CARD
         {"role": "system", "content": _SYSTEM_PROMPT},
         {"role": "user", "content": _build_user_prompt(text, max_cards)},
     ]
+    # A full MC card is ~80-120 output tokens; a big deck (up to MAX_CARDS) blows past the default
+    # 2048 and gets truncated mid-JSON. Give it headroom (the parser also recovers truncated decks).
+    try:
+        chat_service.num_predict = max(getattr(chat_service, "num_predict", 2048) or 2048,
+                                       min(8000, max_cards * 130 + 800))
+    except Exception:
+        pass
     try:
         reply = await chat_service.chat(messages)
     except Exception as e:

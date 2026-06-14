@@ -3563,6 +3563,11 @@ Files are saved to your Storage.""",
         text, label, img_only = await asyncio.to_thread(
             flashcards_service.extract_source_text, attachments)
         if not text or not text.strip():
+            if img_only:
+                return {"type": "text", "content": (
+                    "Couldn't read text from that image. If it's a screenshot sent as a Telegram "
+                    "*photo*, Telegram compressed it — re-send it as a **file/document** "
+                    "(uncompressed) for OCR, or use a text PDF/slide deck for best results.")}
             return {"type": "text", "content": "Couldn't read any text from that file to study from."}
         cards = await flashcards_service.generate_flashcards(text, self.chat_service)
         if not cards:
