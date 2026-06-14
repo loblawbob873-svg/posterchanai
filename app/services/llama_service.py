@@ -196,6 +196,23 @@ def _detect_free_vram_mb() -> Optional[int]:
     return None
 
 
+def _detect_free_ram_mb() -> Optional[int]:
+    """Best-effort free system-RAM detection (Linux ``/proc/meminfo`` MemAvailable).
+
+    Used to size the agentic context window when a model is larger than VRAM: the overflow
+    weights and their KV cache spill to system RAM, so RAM — not VRAM — is the real ceiling
+    in that case. Returns available MB, or None if it can't be read.
+    """
+    try:
+        with open('/proc/meminfo') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) // 1024  # kB -> MB
+    except Exception:
+        pass
+    return None
+
+
 def _compute_autofit_gpu_layers(model_path: str, file_size: int, n_ctx: int, n_batch: int = 512,
                                 flash_attn: bool = False):
     """Decide GPU layers for a model when admin left llm_gpu_layers at -1 ("all").
@@ -278,7 +295,8 @@ def _compute_autofit_gpu_layers(model_path: str, file_size: int, n_ctx: int, n_b
 
 def _compute_autofit_ctx(model_path: str, file_size: int, flash_attn: bool = False,
                          n_batch: int = 512, ctx_floor: int = 4096, ctx_cap: int = 131072,
-                         offload_ctx_target: int = 16384):
+                         offload_ctx_target: int = 16384, offload_ctx_cap: int = 65536,
+                         ram_kv_fraction: float = 0.5):
     """Pick the largest context window that fits THIS GPU's VRAM at full layers.
 
     Used when ``ollama_num_ctx`` is "auto" (the default): a self-hosted user on a 6GB card
@@ -289,10 +307,15 @@ def _compute_autofit_ctx(model_path: str, file_size: int, flash_attn: bool = Fal
     2048 multiple. Falls back to a safe small window when VRAM/metadata can't be read.
 
     When the model is *larger* than this GPU's VRAM (weights won't fit at full layers), the
-    "fits at full layers" math goes negative. Rather than flooring to ``ctx_floor`` (which left
-    30B-class models at 4096 — too small for an agent/tool preamble), target ``offload_ctx_target``
-    and let the layer-autofit spill weights to CPU to pay for it: those layers are offloaded
-    regardless, and the KV for the few GPU-resident layers is cheap.
+    "fits at full layers" math goes negative. The layer-autofit spills the overflow weights to
+    system RAM, and the KV cache for those CPU-resident layers lives in RAM too — so the largest
+    usable (agentic) window in this case is bounded by **system RAM, not VRAM**. So instead of a
+    fixed guess (which left every machine at 16384 regardless of size — too small for opencode's
+    large reads/writes on a roomy box, needlessly ambitious on a memory-starved one), size the
+    window to what this host can actually hold: (free RAM − overflow weights) × ``ram_kv_fraction``
+    worth of KV, clamped to ``offload_ctx_cap``. This auto-scales with the machine — a small-VRAM
+    /big-RAM node still gets a big agentic window; a tiny box stays modest. Falls back to
+    ``offload_ctx_target`` only when free RAM can't be read.
     """
     free_mb = _detect_free_vram_mb()
     if not free_mb:
@@ -335,10 +358,20 @@ def _compute_autofit_ctx(model_path: str, file_size: int, flash_attn: bool = Fal
 
     avail_for_kv = usable_mb - weights_mb - buffer_mb
     if avail_for_kv <= 0:
-        # Model is bigger than this GPU: weights get partially offloaded to CPU by the
-        # layer-autofit no matter what, so flooring ctx here buys nothing. Target a usable
-        # agentic window and let the layer-autofit trade GPU layers to fit its KV.
-        target = max(ctx_floor, min(offload_ctx_target, cap))
+        # Model is bigger than this GPU: the layer-autofit spills overflow weights to system
+        # RAM, and the KV for those CPU-resident layers lives in RAM too — so the agentic
+        # window is bounded by RAM here, not VRAM. Size it to what this host can hold so it
+        # auto-scales with the machine (see docstring), falling back to the fixed target only
+        # when free RAM is unreadable.
+        weights_overflow_mb = weights_mb - max(0.0, usable_mb - buffer_mb)
+        free_ram_mb = _detect_free_ram_mb()
+        if not free_ram_mb:
+            target = min(offload_ctx_target, cap)
+        else:
+            ram_for_kv = max(0.0, (free_ram_mb - weights_overflow_mb) * ram_kv_fraction)
+            target = int(ram_for_kv / kv_per_tok_mb) if ram_for_kv > 0 else ctx_floor
+            target = min(target, offload_ctx_cap, cap)
+        target = max(ctx_floor, target)
         return (target // 2048) * 2048
 
     max_ctx = int(avail_for_kv / kv_per_tok_mb)
