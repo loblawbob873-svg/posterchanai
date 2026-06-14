@@ -43,8 +43,10 @@ ARG TORCH_INDEX=""
 RUN if [ -n "$TORCH_INDEX" ]; then \
         uv pip install --reinstall torch torchvision torchaudio --index-url "$TORCH_INDEX" && \
         (uv pip uninstall torchcodec || true) && \
-        uv run python /tmp/acestep_soundfile_patch.py /opt/ace-step ; \
+        python3 /tmp/acestep_soundfile_patch.py /opt/ace-step ; \
     fi
+# (the patch step uses plain python3 — `uv run` would re-sync the venv to uv.lock and revert the
+#  torch swap above back to CUDA. The runtime CMD uses .venv/bin directly for the same reason.)
 
 EXPOSE 8001
 # Models auto-download on first request into ~/.cache/huggingface (mount it as a volume to persist).
