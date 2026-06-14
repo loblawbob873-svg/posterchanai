@@ -32,7 +32,7 @@ One FastAPI backend that does chat, image generation, voice, RAG over your code,
 - 🔌 **Bring any model** — cloud (any OpenAI-compatible API) or local: **Ollama** or **llama.cpp** (CPU / CUDA / HIP / **Intel Arc SYCL**). Round-robin load-balance across several backends.
 - 🤖 **It's also a bot platform** — drive everything from **Telegram & Matrix**, and run autonomous **Pleroma / Misskey / Matrix** bots from a single admin tab.
 - 🧠 **Knows your stuff** — RAG over your git repos and folders, exposed to your IDE over **MCP**.
-- 🎨 **More than chat** — image generation, TTS/STT, website screenshots, YouTube/X summarize & download, media tools, email, news, finance, torrents — all behind one chat box.
+- 🎨 **More than chat** — image generation, TTS/STT, website screenshots, YouTube/X summarize & download, media tools, interactive study flashcards, email, news, finance, torrents — all behind one chat box.
 - 🛠️ **Hackable & honest** — thin routers, services for logic, an interactive installer, and an OpenAI-compatible `/v1/` endpoint that agentic coding clients (e.g. opencode) can drive against your local models.
 
 > Point any OpenAI-compatible tool at `http://your-box:3051/v1/` and you've got a private, function-calling-capable model server. Open the web UI and you've got a full assistant. Link a bot and it's in your pocket.
@@ -71,6 +71,7 @@ One FastAPI backend that does chat, image generation, voice, RAG over your code,
 - **Torrents**: built-in torrent client plus **TorrentGalaxy** search and **nyaa.si** anime search (`torrents`, `nyaa`)
 - **File storage** per user and per conversation; file manager in the UI
 - **Media tools**: upload a file and `compress` it (image/video — H.264 with GPU acceleration when available), `clip <start> <end>` a video to a time span, or `convert` images↔PDF — all shared across the web UI, Telegram, and Matrix
+- **Flashcards (study tool)**: upload a **PDF, image, slide deck (PPTX) or Word doc (DOCX)** and send `flashcards` (or `cards`/`study`/`quiz`) to generate an **interactive multiple-choice quiz** — the LLM writes the questions, options and explanations (math problems include worked steps). The web UI shows animated cards with instant ✓/✗ feedback and KaTeX-rendered math; Telegram shows image cards with answer buttons (tap **🎴 Flashcards** after uploading) and a running score. Text PDFs/slides work best; image OCR is weaker (on Telegram, send screenshots as a *file*, not a compressed photo)
 
 ### Bots & social
 

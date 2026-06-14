@@ -53,6 +53,22 @@ the LLM. The bots reply with TTS via `/narrate <message>`.
 | `compress` | Shrink an attached image or video |
 | `clip <start> <end>` | Trim an attached video, e.g. `clip 0:10 0:30` |
 | `convert` | Images → PDF, or a PDF → images |
+| `flashcards` | Turn an attached PDF, image, slide deck (PPTX) or Word doc (DOCX) into an interactive multiple-choice study quiz (aliases: `cards`, `study`, `quiz`) |
+
+### Flashcards (study tool)
+
+Attach study material and send `flashcards` to generate a multiple-choice quiz from it (the LLM
+writes the questions, answer options and explanations; math problems show the answer **plus
+worked steps**). Cards are ephemeral — they aren't saved.
+
+- **Web UI:** animated cards — click an option for instant ✓/✗ + explanation, then Prev/Next/Shuffle.
+  Equations render with KaTeX (self-hosted).
+- **Telegram:** upload the file and tap **🎴 Flashcards** (or send the file captioned `flashcards`).
+  You get an image card with answer buttons; tap an answer to reveal ✓/✗ + explanation, then
+  ◀ Prev / Next ▶ / ↻ Restart, with a running score.
+- **Inputs:** PDF, images (OCR), PPTX slides, DOCX/XLSX. Text PDFs/slides give the best results.
+  Images rely on OCR, which is unreliable on dense screenshots. **On Telegram, send a screenshot as
+  a *file/document*, not as a photo** — photos are compressed and OCR will read nothing.
 
 ## Image effects (attach an image)
 
