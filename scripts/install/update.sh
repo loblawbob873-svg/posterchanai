@@ -87,6 +87,9 @@ run_updates() {
     # so existing installs gain the feature on update).
     download_depth_model
 
+    # 1c) ACE-Step music server (if installed): git pull + uv sync + re-swap torch + restart.
+    update_music_server
+
     # 2) Telegram Bot API server (rebuild to the latest upstream).
     if command -v telegram-bot-api >/dev/null 2>&1; then
         echo ""

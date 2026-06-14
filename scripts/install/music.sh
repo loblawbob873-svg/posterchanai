@@ -51,7 +51,9 @@ setup_music_server() {
 
     if [ "$GPU_KIND" != "cuda" ]; then
         local TORCH_INDEX="${MUSIC_TORCH_INDEX:-https://download.pytorch.org/whl/xpu}"
-        [ "$GPU_KIND" = "rocm" ] && TORCH_INDEX="${MUSIC_TORCH_INDEX:-https://download.pytorch.org/whl/rocm6.2}"
+        # ROCm 6.3+ ships torch>=2.7 (rocm6.2 tops out at 2.5.1, too old for ACE-Step — it needs
+        # torch.int1 from 2.6+). Override with MUSIC_TORCH_INDEX for a different ROCm runtime.
+        [ "$GPU_KIND" = "rocm" ] && TORCH_INDEX="${MUSIC_TORCH_INDEX:-https://download.pytorch.org/whl/rocm6.3}"
         print_step "Swapping torch+vision+audio to $GPU_KIND build (one resolve, matched ABI)..."
         ( cd "$CLONE_DIR" && "$UV_BIN" pip install --reinstall torch torchvision torchaudio --index-url "$TORCH_INDEX" ) \
             || print_warning "torch $GPU_KIND swap had issues — check $TORCH_INDEX"
@@ -116,4 +118,38 @@ _music_apply_soundfile_patch() {
     print_step "Patching ACE-Step audio save for non-CUDA (torchcodec-free)..."
     python3 "${SCRIPT_DIR}/scripts/acestep_soundfile_patch.py" "$clone" \
         || print_warning "soundfile patch did not apply cleanly (upstream may have changed)"
+}
+
+# Update an existing ACE-Step install (installer option 6 / run_updates): refresh the code
+# (git pull) + deps (uv sync), re-apply the non-CUDA torch swap + soundfile patch (uv sync reverts
+# torch to the locked CUDA build), then restart the service. Models are versioned by name and
+# auto-(re)download on demand, so a component update doesn't need a separate model fetch. No-op if
+# ACE-Step isn't installed on this host.
+update_music_server() {
+    local CLONE_DIR="${ACESTEP_DIR:-$HOME/ACE-Step-1.5}"
+    if [ ! -d "$CLONE_DIR" ] || ! systemctl list-unit-files 2>/dev/null | grep -q '^acestep\.service'; then
+        return 0  # ACE-Step not installed here
+    fi
+    print_step "Updating ACE-Step music server (git pull + uv sync)..."
+    export PATH="$HOME/.local/bin:$PATH"
+    local UV_BIN; UV_BIN="$(command -v uv || echo "$HOME/.local/bin/uv")"
+    ( cd "$CLONE_DIR" && git pull --ff-only 2>&1 | tail -2 && "$UV_BIN" sync ) \
+        || { print_warning "ACE-Step update (git/uv sync) had issues"; return 1; }
+
+    # Re-detect GPU; uv sync reset torch to the CUDA lock, so re-swap for XPU/ROCm.
+    local GPU_KIND="cuda"
+    if command -v nvidia-smi >/dev/null 2>&1; then GPU_KIND="cuda"
+    elif [ -e /dev/dri/renderD128 ] && (lspci 2>/dev/null | grep -qi "Intel.*\(Arc\|Graphics\)"); then GPU_KIND="xpu"
+    elif command -v rocminfo >/dev/null 2>&1 || (lspci 2>/dev/null | grep -qi "AMD/ATI"); then GPU_KIND="rocm"; fi
+    if [ "$GPU_KIND" != "cuda" ]; then
+        local TORCH_INDEX="${MUSIC_TORCH_INDEX:-https://download.pytorch.org/whl/xpu}"
+        [ "$GPU_KIND" = "rocm" ] && TORCH_INDEX="${MUSIC_TORCH_INDEX:-https://download.pytorch.org/whl/rocm6.3}"
+        ( cd "$CLONE_DIR" && "$UV_BIN" pip install --reinstall torch torchvision torchaudio --index-url "$TORCH_INDEX" \
+            && ( "$UV_BIN" pip uninstall torchcodec >/dev/null 2>&1 || true ) ) \
+            || print_warning "torch $GPU_KIND re-swap had issues"
+        _music_apply_soundfile_patch "$CLONE_DIR"
+    fi
+
+    sudo systemctl restart acestep.service 2>/dev/null && echo "  ✓ acestep.service restarted (updated)" \
+        || print_warning "Could not restart acestep.service"
 }

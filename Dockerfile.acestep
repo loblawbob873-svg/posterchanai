@@ -12,7 +12,8 @@
 # driver via nvidia-container-toolkit). For AMD ROCm / Intel XPU, pass TORCH_INDEX — the build then
 # swaps to a matched torch+vision+audio trio, drops torchcodec (CUDA-only) and patches ACE-Step's
 # audio save to use soundfile (torchcodec-free), e.g.:
-#   docker build -f Dockerfile.acestep --build-arg TORCH_INDEX=https://download.pytorch.org/whl/rocm6.2 -t posterchanai-acestep:rocm .
+#   docker build -f Dockerfile.acestep --build-arg TORCH_INDEX=https://download.pytorch.org/whl/rocm6.3 -t posterchanai-acestep:rocm .
+#   (use rocm6.3+ — rocm6.2 ships torch 2.5.1, too old for ACE-Step which needs torch>=2.6)
 #   docker build -f Dockerfile.acestep --build-arg TORCH_INDEX=https://download.pytorch.org/whl/xpu   -t posterchanai-acestep:xpu  .
 FROM python:3.12-slim
 
