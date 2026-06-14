@@ -96,29 +96,10 @@ UNIT
 }
 
 # Patch ACE-Step's audio save to use soundfile instead of torchaudio.save (which routes through the
-# CUDA-only torchcodec on torchaudio>=2.9). Idempotent. Best-effort: warns if upstream changed.
+# CUDA-only torchcodec on torchaudio>=2.9). Uses the shared scripts/acestep_soundfile_patch.py.
 _music_apply_soundfile_patch() {
     local clone="$1"
     print_step "Patching ACE-Step audio save for non-CUDA (torchcodec-free)..."
-    "${HOME}/.local/bin/uv" run --project "$clone" python - "$clone" <<'PYEOF' || python3 - "$clone" <<'PYEOF2'
-import sys, pathlib
-f = pathlib.Path(sys.argv[1]) / "acestep" / "audio_utils.py"
-s = f.read_text()
-if "PATCH (PosterChanAI)" in s:
-    print("already patched"); sys.exit(0)
-old1 = ("            torchaudio.save(\n"
-        "                str(temp_wav_path),\n"
-        "                tensor_to_save,\n"
-        "                int(target_sample_rate),\n"
-        "                channels_first=True,\n"
-        "                backend='soundfile',\n"
-        "            )")
-new1 = ("            # PATCH (PosterChanAI): soundfile instead of torchaudio.save (torchcodec-free).\n"
-        "            import soundfile as _sf\n"
-        "            _sf.write(str(temp_wav_path), tensor_to_save.transpose(0, 1).cpu().numpy(), int(target_sample_rate))")
-n = s.count(old1); s = s.replace(old1, new1)
-f.write_text(s)
-print(f"patched _save_mp3: {n} block(s)" if n else "WARN: _save_mp3 block not found (upstream changed)")
-PYEOF
-PYEOF2
+    python3 "${SCRIPT_DIR}/scripts/acestep_soundfile_patch.py" "$clone" \
+        || print_warning "soundfile patch did not apply cleanly (upstream may have changed)"
 }
