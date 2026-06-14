@@ -1,14 +1,16 @@
 <!-- Video Generation Tab -->
 <div class="tab-content" id="tab-video">
     <fieldset>
-        <legend>Video Generation (Wan2.1 — native diffusers)</legend>
+        <legend>Video Generation (native diffusers — any text-to-video model)</legend>
         <p class="vram-info">
             Text-to-video runs <strong>natively in-process</strong> on this box's GPU (like image
             generation, not a separate server), so it shares the same GPU lock and VRAM model-swap:
             chat, image, music and video all <strong>queue as one GPU task at a time</strong>.
             Works on NVIDIA (CUDA), Intel Arc (XPU) and AMD (ROCm). Available in the web UI and
             Telegram via <code>videogeni &lt;prompt&gt; [| negative]</code>.
-            <strong>Arc 16&nbsp;GB is memory-tight</strong> — keep frames/resolution modest there.
+            <strong>Every knob below is yours to tune for your GPU</strong> — the defaults target a
+            12–16&nbsp;GB card; with 24&nbsp;GB+ you can run bigger models, higher resolution and
+            longer clips (raise the model + frames + max-frames + resolution accordingly).
         </p>
         <div class="form-group">
             <label class="checkbox-label">
@@ -45,9 +47,27 @@
         <div class="form-group">
             <label for="video_model">Video Model</label>
             <input type="text" id="video_model" name="video_model" placeholder="Wan-AI/Wan2.1-T2V-1.3B-Diffusers">
-            <small>HF id or local path of the diffusers text-to-video model. Default
-                <code>Wan-AI/Wan2.1-T2V-1.3B-Diffusers</code> (~27&nbsp;GB, fits a 12–16&nbsp;GB GPU).
+            <small>HF id or local path of <strong>any</strong> diffusers text-to-video model — the
+                loader auto-detects the pipeline. The model auto-downloads on first use.
+                Pick for your VRAM:
+                <ul style="margin:4px 0 0 16px;">
+                    <li><strong>12–16&nbsp;GB:</strong> <code>Wan-AI/Wan2.1-T2V-1.3B-Diffusers</code>
+                        (~3s) or <code>THUDM/CogVideoX-5b</code> (~6s, better quality, needs offload)</li>
+                    <li><strong>24&nbsp;GB:</strong> <code>THUDM/CogVideoX1.5-5B</code> (10s, 768p) or
+                        higher-res Wan</li>
+                    <li><strong>40&nbsp;GB+:</strong> <code>Wan-AI/Wan2.1-T2V-14B-Diffusers</code>
+                        (true HD)</li>
+                </ul>
                 Stay on stock diffusers (Wan/LTX/CogVideoX) for Arc/ROCm portability — no fp8/GGUF.</small>
+        </div>
+        <div class="form-group">
+            <label class="checkbox-label">
+                <input type="checkbox" id="video_cpu_offload" name="video_cpu_offload">
+                <span>CPU offload (fit big models on small VRAM)</span>
+            </label>
+            <small>Streams model weights from system RAM to the GPU on demand, so a model that won't
+                fit fully in VRAM still runs — <strong>much slower</strong>. Turn ON for big models on
+                a 16&nbsp;GB card (e.g. CogVideoX-5B); leave OFF on a 24&nbsp;GB+ card for full speed.</small>
         </div>
     </fieldset>
 
@@ -56,13 +76,13 @@
         <div class="form-row">
             <div class="form-group">
                 <label for="video_width">Generation Width</label>
-                <input type="number" id="video_width" name="video_width" value="832" min="128" max="1280" step="16">
-                <small>Multiple of 16. Wan2.1-1.3B is a <strong>480p</strong> model — 832×480 is its
-                    native resolution. Generating higher natively risks OOM and looks worse.</small>
+                <input type="number" id="video_width" name="video_width" value="832" min="128" max="2048" step="16">
+                <small>Multiple of 16. Use the model's native resolution (Wan-1.3B / CogVideoX-5B =
+                    ~480p; CogVideoX-1.5 = 768p). Higher = more VRAM; raise it on bigger cards.</small>
             </div>
             <div class="form-group">
                 <label for="video_height">Generation Height</label>
-                <input type="number" id="video_height" name="video_height" value="480" min="128" max="1280" step="16">
+                <input type="number" id="video_height" name="video_height" value="480" min="128" max="2048" step="16">
                 <small>Multiple of 16.</small>
             </div>
         </div>
@@ -74,20 +94,28 @@
                 <option value="1080">1080p (1920×1080)</option>
                 <option value="1440">1440p (2560×1440)</option>
             </select>
-            <small>Lanczos-upscales the finished clip to this height — cheap, no extra VRAM. The
-                1.3B model only renders ~480p natively, so this is how you get a 720p/1080p file.
-                For TRUE native detail at 720p you'd need the Wan 14B model (much more VRAM).</small>
+            <small>Lanczos-upscales the finished clip to this height — cheap, no extra VRAM. Use it
+                when the model renders below your target (e.g. a 480p model → 720p/1080p file). Set to
+                <em>Native</em> if the model already generates at/above your target resolution.</small>
         </div>
         <div class="form-row">
             <div class="form-group">
                 <label for="video_num_frames">Frames</label>
-                <input type="number" id="video_num_frames" name="video_num_frames" value="49" min="5" max="81">
-                <small>Wan uses 4k+1 (e.g. 33, 49, 81). Clip length = frames ÷ fps. <strong>Hard max
-                    ~81 (≈5s)</strong> — the model can't do more and 16&nbsp;GB OOMs above it.</small>
+                <input type="number" id="video_num_frames" name="video_num_frames" value="49" min="5" max="513">
+                <small>Clip length = frames ÷ fps. Wan/LTX use 4k+1 (33, 49, 81…); CogVideoX uses
+                    49/81/161. Default 49. Raise for longer clips if your VRAM allows.</small>
+            </div>
+            <div class="form-group">
+                <label for="video_max_frames">Max Frames (safety cap)</label>
+                <input type="number" id="video_max_frames" name="video_max_frames" value="49" min="5" max="513">
+                <small>Hard ceiling — a request above this is clamped instead of OOMing the GPU. Set
+                    to the most your card can render (16&nbsp;GB ≈ 49; 24&nbsp;GB ≈ 161 for 10s).</small>
             </div>
             <div class="form-group">
                 <label for="video_fps">Playback FPS</label>
-                <input type="number" id="video_fps" name="video_fps" value="16" min="4" max="30">
+                <input type="number" id="video_fps" name="video_fps" value="16" min="4" max="60">
+                <small>Use the model's native fps (Wan/LTX 16, CogVideoX 8). Higher without
+                    interpolation just speeds up motion.</small>
             </div>
         </div>
         <div class="form-row">
