@@ -143,6 +143,27 @@ def _looks_like_intent_to_act(content: str) -> bool:
     return bool(_INTENT_PHRASE_RE.search(s[:180]) or _INTENT_PHRASE_RE.search(s[-180:]))
 
 
+# Strong task-completion language. Used (only when the model ALREADY acted this conversation) to let
+# it conclude with a final answer instead of being force-pushed into yet another redundant call —
+# which otherwise loops opencode on "<none> retrying" after the work is already done.
+_COMPLETION_RE = re.compile(
+    r"\b(?:successfully (?:created|updated|configured|reloaded|tested|applied|completed|written|saved)|"
+    r"(?:tested and reloaded|reloaded|completed|created|updated|configured) successfully|"
+    r"has been (?:created|updated|tested|reloaded|configured|saved|applied|written)|"
+    r"have been (?:made|applied|created|updated|saved)|"
+    r"all (?:the )?changes (?:have been|are)\b|task (?:is )?complete|completed the task)\b",
+    re.IGNORECASE)
+
+
+def _has_prior_tool_calls(messages) -> bool:
+    """True if the model already emitted a tool call earlier in THIS conversation — i.e. it has
+    actually acted, so a 'I did X successfully' summary is a real conclusion, not a hallucination."""
+    for m in (messages or []):
+        if isinstance(m, dict) and m.get("role") == "assistant" and m.get("tool_calls"):
+            return True
+    return False
+
+
 def _mk_call(name, args, idx):
     args = _repair_path_args(args)
     if not isinstance(args, str):
@@ -472,7 +493,18 @@ def generate_message(model, messages, tools, params, strip_thinking=None) -> Tup
             # STRICTLY ADDITIVE & cannot repeat the 8f2c6c8d regression: it runs ONLY when no call was
             # parsed (never touches a valid call) and KEEPS the original content if the regen still
             # yields nothing — so it can only ADD a recovered action, never make things worse.
-            if tools and content and not tool_calls and _looks_like_intent_to_act(content):
+            # Conclusion guard: if the model ALREADY acted this turn-chain and is now summarizing
+            # completion ("…reloaded successfully" ± a dangling empty <tool_call>), let it FINISH —
+            # return the summary as the final answer instead of force-pushing another redundant call,
+            # which loops opencode on "<none> retrying" after the job is done. Only applies when it
+            # actually acted; a bare claim with no prior tool call still gets forced below.
+            if (tools and content and not tool_calls
+                    and _has_prior_tool_calls(messages) and _COMPLETION_RE.search(content)):
+                _stripped = _ORPHAN_TAG_RE.sub("", content).rstrip(" >\n\t").strip()  # drop dangling <tool_call>
+                content = _stripped or content
+                logger.info("task-completion summary after prior action — returning final answer "
+                            "(no forced call), len=%d", len(content))
+            elif tools and content and not tool_calls and _looks_like_intent_to_act(content):
                 logger.warning("narration-only intent-to-act — pushing for the tool call (len=%d); content[:500]=%r",
                                len(content), content[:500])
                 try:
