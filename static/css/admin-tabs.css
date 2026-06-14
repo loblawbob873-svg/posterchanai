@@ -4,13 +4,15 @@
 /* Tab styles */
 .admin-tabs {
     display: flex;
+    flex-wrap: wrap;        /* let tabs wrap to a second row instead of overflowing the panel */
     gap: 4px;
+    row-gap: 0;
     margin-bottom: 20px;
     border-bottom: 2px solid var(--border-color);
     padding-bottom: 0;
 }
 .tab-btn {
-    padding: 12px 24px;
+    padding: 12px 18px;
     background: transparent;
     border: none;
     color: var(--text-secondary);
