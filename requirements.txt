@@ -119,3 +119,8 @@ faster-whisper>=1.0.0
 # `apt install python3-libtorrent` (then create the venv with --system-site-packages).
 libtorrent>=2.0.0
 torpy
+
+# Music generation (musicgeni) needs NOTHING extra here — the app only uses httpx (above) to talk
+# to a separate ACE-Step REST server. ACE-Step is NOT on PyPI and conflicts with this venv, so it
+# is installed on its own: `./install.sh --music` (uv + git clone) or the Docker `acestep` service
+# (Dockerfile.acestep). See docs/MUSIC.md.

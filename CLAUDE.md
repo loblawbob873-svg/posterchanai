@@ -147,6 +147,22 @@ open a fresh `SessionLocal` and capture any needed config up front.
 
 ## Notable features
 
+- **Music generation** (`musicgeni` command; `app/services/music_service.py` +
+  `music_factory.py`): text-to-song via a self-hosted **ACE-Step 1.5** REST server (`acestep-api`).
+  ACE-Step needs Python 3.11–3.12 and a conflicting torch stack and is **not on PyPI**, so it runs
+  as a SEPARATE process (installed by `./install.sh --music` via uv+git-clone, or the Docker
+  `acestep` service) and the app is just an HTTP client — like `image_server_urls`/`finance_api_base`.
+  `music_factory` mirrors `image_factory`: round-robin LB over `music_server_urls`, and the local
+  `music_api_base` path takes the shared `GPUResourceLock` + `vram_manager.prepare_for_music()`
+  (one GPU task at a time, swap LLM/image out). **Output is a branded MP4**, not raw audio:
+  `media_service.make_music_video` puts the song over a generic PosterChan background
+  (`render_music_background`) then appends the `append_outro` end-card ("watermark"); result type
+  `generated_video` (falls back to `generated_audio` if ffmpeg is missing). **Vocals** need lyrics,
+  so with no `| lyrics` the LLM auto-writes them (`_music_write_lyrics`); `instrumental` skips that.
+  Web UI + Telegram only (NOT the fedi bots — abuse surface). REST gotchas: `/query_result` field
+  is **`task_id_list`** (not `task_ids`), and its `result` is a **JSON-encoded string** whose items
+  carry `file: "/v1/audio?path=..."`. Deployed: nas.lan (RTX 3060, CUDA) serves music; the Arc
+  (server1) can't easily host it (XPU torch swap breaks ACE-Step's CUDA-pinned torchvision/audio ABI).
 - **Finance (Budget Manager)** (`app/services/finance_service.py`; `budget`/`bills`/`pay`/`addbill`
   commands): thin async client for the self-hosted Budget Manager Flask app's `/api/v1/*`
   (summary/bills/add/pay), reached at the global `finance_api_base` setting (default

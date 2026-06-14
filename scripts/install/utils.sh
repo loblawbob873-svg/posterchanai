@@ -152,6 +152,7 @@ show_help() {
     echo "Options:"
     echo "  --help, -h       Show this help message"
     echo "  --packages       Show required packages for your distro"
+    echo "  --music          Set up the ACE-Step music server (venv-music) for musicgeni"
     echo ""
     echo "Installation Types:"
     echo "  Full Stack       LLM + Image Generation (recommended)"

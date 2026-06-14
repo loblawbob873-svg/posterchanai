@@ -45,9 +45,19 @@ setup_python_env() {
     # Export for use by other modules
     export CHAT_VENV_NAME="$VENV_NAME"
 
+    # Pin the venv to Python 3.13 when available. The main app + image stack (torch-XPU 2.12 /
+    # CUDA torch 2.5+) all support 3.13, and the prebuilt `libtorrent` wheel is cp313 — so building
+    # the venv with a bare `python3` is risky on nodes whose system default has drifted (e.g.
+    # nas.lan went to 3.14, where the cp313 libtorrent wheel won't load). Prefer 3.13, then 3.12,
+    # then whatever `python3` is.
+    local PYBIN="python3"
+    for cand in python3.13 python3.12; do
+        if command -v "$cand" >/dev/null 2>&1; then PYBIN="$cand"; break; fi
+    done
+
     if [ ! -d "$VENV_NAME" ]; then
-        python3 -m venv "$VENV_NAME"
-        print_success "Created virtual environment: $VENV_NAME"
+        "$PYBIN" -m venv "$VENV_NAME"
+        print_success "Created virtual environment: $VENV_NAME ($($PYBIN --version 2>&1))"
     else
         print_success "Virtual environment exists: $VENV_NAME"
     fi

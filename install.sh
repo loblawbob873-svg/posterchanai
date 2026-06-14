@@ -32,6 +32,7 @@ source "$INSTALL_DIR/systemd.sh"
 source "$INSTALL_DIR/setup.sh"
 source "$INSTALL_DIR/telegram_botapi.sh"
 source "$INSTALL_DIR/update.sh"
+source "$INSTALL_DIR/music.sh"
 
 # Handle --help and --packages options
 if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
@@ -46,6 +47,12 @@ if [ "$1" = "--packages" ]; then
     echo ""
     show_install_instructions
     exit 0
+fi
+
+# Add-on: set up just the ACE-Step music server (venv-music) against an existing install.
+if [ "$1" = "--music" ]; then
+    setup_music_server
+    exit $?
 fi
 
 # =============================================================================

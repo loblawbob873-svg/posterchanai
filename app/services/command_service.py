@@ -11,6 +11,8 @@ from app.routers.news import fetch_news_from_source, get_user_news_sources
 from app.services.chat_service import ChatService
 from app.services.proxy_image_cache import register as proxy_image_register
 from app.services.image_factory import generate_image_for_user
+from app.services import music_factory
+from app.services.music_service import MusicError
 from app.services.mail_service import (
     archive_message,
     delete_all_messages,
@@ -553,6 +555,7 @@ class CommandService:
         "search": "Web search: search <query>",
         "images": "Image search: images <query>",
         "geni": "Generate image: geni <prompt>",
+        "musicgeni": "Generate a song: musicgeni <style prompt> [| lyrics]",
         "yt": "YouTube search: yt <query>",
         "ytdl": "Download YouTube, X, or Nitter: ytdl <url> (MP3 default), ytdl mp3/video <url>. For video, add clip <start> <end> and/or compress, e.g. ytdl video <url> clip 0:10 0:30 compress",
         "torrents": "Torrent search: torrents <query>",
@@ -904,6 +907,8 @@ class CommandService:
             return await self._files_command(arg)
         elif command == "geni":
             return await self._geni_command(arg, stop_check)
+        elif command == "musicgeni":
+            return await self._musicgeni_command(arg, stop_check)
         elif command == "yt":
             return await self._youtube_command(arg)
         elif command == "ytdl":
@@ -1348,6 +1353,118 @@ class CommandService:
             "type": "generated_image",
             "content": f"Generated image for: {prompt}",
             "image": image_data,
+            "prompt": prompt,
+        }
+
+    async def _music_write_lyrics(self, request: str) -> tuple:
+        """Turn a natural-language song request into (style_caption, lyrics) via the LLM, so
+        `musicgeni` produces vocals. Falls back to (request, "") — instrumental — on any error."""
+        messages = [
+            {"role": "system", "content": (
+                "You write songs for a music-generation model. From the user's request, produce a "
+                "song. Respond EXACTLY in this format and nothing else:\n"
+                "STYLE: <one line: genre, mood, tempo, instrumentation, and vocal type>\n"
+                "LYRICS:\n"
+                "<lyrics using [verse], [chorus], [bridge] section tags; concise, ~24 lines max, "
+                "suitable for a short song>")},
+            {"role": "user", "content": (request or "")[:2000]},
+        ]
+        _orig_np = self.chat_service.num_predict
+        self.chat_service.num_predict = max(_orig_np, 4096)
+        try:
+            out = (await self.chat_service.chat(messages) or "").strip()
+        except Exception as e:
+            logger.warning(f"[music] lyric generation failed, going instrumental: {e}")
+            return request, ""
+        finally:
+            self.chat_service.num_predict = _orig_np
+
+        # Parse "STYLE: ...\nLYRICS:\n..."; fall back to using the request as style + output as lyrics.
+        style, lyrics = request, ""
+        low = out.lower()
+        if "lyrics:" in low:
+            head, _, body = out.partition("\n")
+            li = low.find("lyrics:")
+            lyrics = out[li + len("lyrics:"):].strip()
+            si = low.find("style:")
+            if si != -1 and si < li:
+                style = out[si + len("style:"):li].strip().splitlines()[0].strip() or request
+        else:
+            lyrics = out
+        return style, lyrics
+
+    async def _musicgeni_command(self, arg: str, stop_check: Optional[callable] = None) -> dict:
+        """Generate a song via the ACE-Step server. `musicgeni <style prompt> [| lyrics]`.
+
+        Returns the shared `generated_audio` shape so the web UI renders an <audio> player and
+        Telegram sends it via send_audio. Wired for web UI + Telegram only (not the fedi bots)."""
+        if not arg or not arg.strip():
+            return {
+                "type": "text",
+                "content": "Please provide a prompt. Example: `musicgeni upbeat synthwave, driving bassline` "
+                           "or `musicgeni dreamy pop ballad | first verse lyrics here`",
+            }
+
+        # `musicgeni <style> | <lyrics>` — explicit lyrics after a `|`. With no `|`, auto-write
+        # lyrics from the request via the LLM so songs have vocals (unless it's clearly meant to be
+        # instrumental, or the user typed a bare `|` for an explicit instrumental).
+        has_pipe = "|" in arg
+        prompt, _, lyrics = arg.partition("|")
+        prompt = prompt.strip()
+        lyrics = lyrics.strip()
+        instrumental = any(k in prompt.lower() for k in ("instrumental", "no vocals", "no lyrics"))
+        if not has_pipe and not instrumental:
+            prompt, lyrics = await self._music_write_lyrics(prompt)
+
+        if stop_check and stop_check():
+            return {"type": "text", "content": "Generation cancelled."}
+
+        try:
+            logger.info(f"Generating music with style: {prompt[:100]}... (lyrics: {len(lyrics)} chars)")
+            audio_bytes, ext = await music_factory.generate_music_for_user(
+                db=self.db, prompt=prompt, lyrics=lyrics,
+            )
+        except MusicError as e:
+            return {"type": "text", "content": f"🎵 {e}"}
+        except Exception as e:
+            logger.error(f"Music generation exception: {e}", exc_info=True)
+            return {"type": "text", "content": f"Music generation error: {str(e)}\n\nCheck logs for details."}
+
+        if stop_check and stop_check():
+            return {"type": "text", "content": "Generation cancelled."}
+
+        import base64 as _b64
+        import asyncio as _asyncio
+        from app.services import media_service
+        from app.models import Setting
+
+        # Wrap the song in a branded video: a generic PosterChan background for the song's
+        # duration, then the end-card "watermark" outro. music_watermark_enabled gates the outro.
+        wm = self.db.query(Setting).filter(Setting.key == "music_watermark_enabled").first()
+        add_outro = (wm.value if wm else "true").lower() != "false"
+        try:
+            # Background shows only PosterChan branding — NOT the prompt (title="").
+            video_bytes = await _asyncio.to_thread(
+                media_service.make_music_video, audio_bytes, ext, "", 1280, 720, add_outro
+            )
+        except Exception as e:
+            logger.warning(f"music video wrap failed, falling back to audio: {e}")
+            video_bytes = b""
+
+        if video_bytes:
+            return {
+                "type": "generated_video",
+                "content": f"Generated song for: {prompt}",
+                "video": _b64.b64encode(video_bytes).decode(),
+                "format": "mp4",
+                "prompt": prompt,
+            }
+        # Fallback: deliver the raw audio if video wrapping wasn't possible (e.g. no ffmpeg).
+        return {
+            "type": "generated_audio",
+            "content": f"Generated song for: {prompt}",
+            "audio": _b64.b64encode(audio_bytes).decode(),
+            "format": ext,
             "prompt": prompt,
         }
 

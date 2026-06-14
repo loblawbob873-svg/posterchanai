@@ -1,0 +1,95 @@
+<!-- Music Generation Tab -->
+<div class="tab-content" id="tab-music">
+    <fieldset>
+        <legend>Music Generation (ACE-Step)</legend>
+        <p class="vram-info">
+            ACE-Step needs its own Python 3.11–3.12 environment, so it runs as a <strong>separate
+            service</strong> (the <code>acestep-api</code> REST server) and PosterChanAI talks to it
+            over HTTP — like the Budget Manager and the external image servers. Start it with
+            <code>install.sh</code> (option) or the Docker <code>acestep</code> service, then point
+            the URL below at it. Generation is available in the web UI and Telegram via
+            <code>musicgeni &lt;style prompt&gt; [| lyrics]</code>.
+        </p>
+        <div class="form-group">
+            <label class="checkbox-label">
+                <input type="checkbox" id="music_enabled" name="music_enabled">
+                <span>Enable music generation</span>
+            </label>
+            <small>Off by default. When off, <code>musicgeni</code> returns a friendly notice.</small>
+        </div>
+        <div class="form-group">
+            <label for="music_api_base">Local ACE-Step Server URL</label>
+            <input type="text" id="music_api_base" name="music_api_base" placeholder="http://localhost:8001">
+            <small>The <strong>local</strong> <code>acestep-api</code> server (shares this box's GPU).
+                Requests to it take the shared GPU lock and swap the LLM/image model out of VRAM
+                first — one GPU task at a time, exactly like image generation.</small>
+        </div>
+        <div class="form-group">
+            <label for="music_server_urls">Remote Music Servers (load balancing)</label>
+            <input type="text" id="music_server_urls" name="music_server_urls" placeholder="http://node2:8001, http://node3:8001">
+            <small>Optional comma-separated ACE-Step servers on OTHER nodes. Tried round-robin
+                (no local GPU lock); falls back to the local server above. Same pattern as Image
+                Server URLs.</small>
+        </div>
+        <div class="form-group">
+            <label for="music_gpu_device">Local GPU Device</label>
+            <select id="music_gpu_device" name="music_gpu_device">
+                <option value="auto">Auto-detect</option>
+                <option value="cuda">CUDA (NVIDIA/AMD)</option>
+                <option value="xpu">XPU (Intel Arc)</option>
+                <option value="cpu">CPU</option>
+            </select>
+            <small>Which lock the local server uses (GPU vs CPU). Set CPU only if the local
+                ACE-Step runs on CPU, so it doesn't needlessly block GPU chat/image.</small>
+        </div>
+        <div class="form-group">
+            <label for="music_model">Music Model</label>
+            <input type="text" id="music_model" name="music_model" placeholder="acestep-v15-turbo">
+            <small>DiT model name/path passed to the server (e.g. <code>acestep-v15-turbo</code> for
+                fast 8-step generation, <code>acestep-v15-base</code> for quality). Fits a 12&nbsp;GB
+                GPU. Leave empty to use the server's default.</small>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="music_default_duration">Default Duration (seconds)</label>
+                <input type="number" id="music_default_duration" name="music_default_duration" value="60" min="10" max="600">
+            </div>
+            <div class="form-group">
+                <label for="music_default_steps">Diffusion Steps</label>
+                <input type="number" id="music_default_steps" name="music_default_steps" value="8" min="1" max="200">
+                <small>Turbo ≈ 8; base up to ~200 (slower, higher quality).</small>
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="music_format">Output Format</label>
+                <select id="music_format" name="music_format">
+                    <option value="mp3" selected>MP3</option>
+                    <option value="wav">WAV</option>
+                    <option value="flac">FLAC</option>
+                    <option value="opus">Opus</option>
+                    <option value="aac">AAC</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="music_timeout">Timeout (ms)</label>
+                <input type="number" id="music_timeout" name="music_timeout" value="300000">
+                <small>Max time to wait for a song to render.</small>
+            </div>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Output &amp; Watermark</legend>
+        <p class="vram-info">Each song is delivered as a branded <strong>video</strong>: the song plays
+            over a generic PosterChan background, then the branded end-card outro (the same
+            "watermark" used on effect videos) is appended.</p>
+        <div class="form-group">
+            <label class="checkbox-label">
+                <input type="checkbox" id="music_watermark_enabled" name="music_watermark_enabled">
+                <span>Append the branded end-card watermark to each song video</span>
+            </label>
+            <small>When off, the song video has the background but no end-card.</small>
+        </div>
+    </fieldset>
+</div>

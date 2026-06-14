@@ -23,7 +23,7 @@ if not logger.handlers:
     logger.addHandler(handler)
 
 # Global state
-_current_mode: Optional[Literal["llm", "image"]] = None
+_current_mode: Optional[Literal["llm", "image", "music"]] = None
 _swap_lock = threading.Lock()
 
 
@@ -130,6 +130,49 @@ def prepare_for_image(db: Session) -> bool:
         _ensure_image_loaded(db)
         _current_mode = "image"
         logger.info("VRAM ready for image generation")
+        return True
+
+
+def prepare_for_music(db: Session) -> bool:
+    """Prepare VRAM for LOCAL music generation (an ACE-Step server co-located on this GPU).
+
+    Music runs in a SEPARATE process (the acestep REST server), so unlike the LLM/image we can't
+    load/unload its model from here — it manages (and idle-unloads) its own weights. What we CAN
+    do, in shared mode, is unload OUR in-process LLM and image models to free VRAM for it. No-op
+    in dedicated mode (assumes enough VRAM / a separate GPU). Always paired with the GPU lock in
+    music_factory so only one model uses the GPU at a time."""
+    global _current_mode
+
+    settings = _get_vram_settings(db)
+    vram_mode = settings["vram_mode"]
+
+    if vram_mode == "dedicated":
+        _current_mode = "music"
+        return True
+
+    # Shared (and the llm_only/image_only single-purpose modes): free our own models so the
+    # co-located music server has room.
+    with _swap_lock:
+        if _current_mode == "music":
+            return True
+        try:
+            from app.services.llama_service import get_llama_service
+            service = get_llama_service(db)
+            if service._model is not None:
+                logger.info("Unloading LLM to free VRAM for music generation...")
+                service.unload_model()
+        except Exception as e:
+            logger.error(f"Error unloading LLM for music: {e}")
+        try:
+            from app.services.diffusers_service import get_diffusers_service
+            service = get_diffusers_service(db)
+            if service.is_loaded():
+                logger.info("Unloading image model to free VRAM for music generation...")
+                service.unload_model()
+        except Exception as e:
+            logger.error(f"Error unloading image model for music: {e}")
+        _current_mode = "music"
+        logger.info("VRAM ready for music generation")
         return True
 
 

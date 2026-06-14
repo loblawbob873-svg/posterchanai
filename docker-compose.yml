@@ -75,6 +75,36 @@ services:
       - POSTERCHANAI_PORT=3051
       - SOURCE_ONEAPI=0
 
+  # Optional ACE-Step music server (the `musicgeni` command). Runs as its OWN service because
+  # ACE-Step needs Python 3.11–3.12 and a conflicting dependency stack; the app talks to it over
+  # HTTP. Opt in by ADDING the `music` profile to any backend profile, e.g.:
+  #   docker compose --profile cuda --profile music up -d --build
+  # Then in Admin → Music: enable music and set the Local Server URL to http://acestep:8001.
+  # NVIDIA only (needs nvidia-container-toolkit on the host); the turbo model fits a 12 GB GPU and
+  # auto-downloads on first request into the pc-acestep volume (first song is slower). Pin a repo
+  # ref with ACESTEP_REF if upstream changes.
+  acestep:
+    profiles: ["music"]
+    image: posterchanai-acestep:${TAG:-local}
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Dockerfile.acestep
+      args:
+        ACESTEP_REF: ${ACESTEP_REF:-main}
+    ports:
+      - "${ACESTEP_PORT:-8001}:8001"
+    volumes:
+      - pc-acestep:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: ["gpu"]
+
 volumes:
   pc-data:
   pc-rag:
+  pc-acestep:

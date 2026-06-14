@@ -1052,6 +1052,94 @@ def append_outro(video_data: bytes, source_filename: str = "video.mp4",
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def render_music_background(W: int, H: int, title: str = ""):
+    """A generic branded backdrop for music videos: the PosterChan logo + 'PosterChanAI' on a dark
+    gradient, with an optional song-title/prompt line. Gives the song some visuals BEFORE the
+    branded end-card outro (the 'watermark'). Distinct from `render_outro_card`."""
+    from PIL import Image, ImageDraw
+    W = max(2, int(W)); H = max(2, int(H))
+    bg = (20, 22, 38)
+    img = Image.new("RGB", (W, H), bg)
+    d = ImageDraw.Draw(img)
+    for y in range(H):  # subtle vertical gradient
+        f = y / H
+        d.line([(0, y), (W, y)], fill=(int(bg[0] + 12 * f), int(bg[1] + 6 * f), int(bg[2] + 26 * f)))
+    cx = W // 2
+
+    def _fit(t, target, frac=0.9, floor=8):
+        sz = int(target); mw = int(W * frac)
+        while sz > floor:
+            bb = d.textbbox((0, 0), t, font=_outro_font(sz))
+            if (bb[2] - bb[0]) <= mw:
+                break
+            sz -= 2
+        return _outro_font(sz)
+
+    def _ctext(yy, t, font, fill):
+        bb = d.textbbox((0, 0), t, font=font)
+        d.text((cx - (bb[2] - bb[0]) / 2, yy), t, font=font, fill=fill)
+        return bb[3] - bb[1]
+
+    y = int(H * 0.16)
+    if os.path.exists(_OUTRO_LOGO):
+        try:
+            lg = Image.open(_OUTRO_LOGO).convert("RGBA")
+            lh = int(H * 0.42); lw = int(lg.width * lh / lg.height)
+            if lw > int(W * 0.5):
+                lw = int(W * 0.5); lh = int(lg.height * lw / lg.width)
+            lg = lg.resize((max(1, lw), max(1, lh)))
+            img.paste(lg, (cx - lw // 2, y), lg)
+            y += lh + int(H * 0.03)
+        except Exception:
+            pass
+    _ctext(y, "PosterChanAI", _fit("PosterChanAI", int(H * 0.10)), (255, 170, 60))
+    y += int(H * 0.12)
+    if title:
+        t = title if len(title) <= 60 else title[:57] + "..."
+        _ctext(y, t, _fit(t, int(H * 0.05)), (210, 212, 230))
+    return img
+
+
+def make_music_video(audio_data: bytes, audio_ext: str = "mp3", title: str = "",
+                     W: int = 1280, H: int = 720, add_outro: bool = True) -> bytes:
+    """Wrap a generated song in a branded video: a generic PosterChan background shown for the
+    song's full duration with the song as the audio track, then the branded end-card outro (the
+    'watermark') appended. Returns mp4 bytes, or b'' on failure (caller falls back to raw audio)."""
+    ffmpeg = resolve_ffmpeg()
+    if not ffmpeg_available() or not audio_data:
+        return b""
+    tmp = tempfile.mkdtemp(prefix="media_musicvid_")
+    try:
+        ain = os.path.join(tmp, f"song.{(audio_ext or 'mp3')}")
+        with open(ain, "wb") as f:
+            f.write(audio_data)
+        W -= W % 2; H -= H % 2
+        bgp = os.path.join(tmp, "bg.png")
+        render_music_background(W, H, title).save(bgp)
+        out = os.path.join(tmp, "out.mp4")
+        # Still image looped for the song's length (-shortest stops at audio end). libx264
+        # -tune stillimage is ideal/cheap here — no HW encoder needed for one static frame.
+        cmd = [ffmpeg, "-y", "-loop", "1", "-i", bgp, "-i", ain,
+               "-c:v", "libx264", "-tune", "stillimage", "-preset", VIDEO_PRESET,
+               "-crf", str(VIDEO_CRF), "-pix_fmt", "yuv420p",
+               "-c:a", "aac", "-b:a", "192k", "-shortest",
+               "-movflags", "+faststart", out]
+        r = subprocess.run(cmd, capture_output=True, timeout=900, text=True)
+        if r.returncode != 0 or not os.path.exists(out) or os.path.getsize(out) == 0:
+            logger.warning(f"make_music_video failed: {(r.stderr or '')[-300:]}")
+            return b""
+        with open(out, "rb") as f:
+            vid = f.read()
+        if add_outro:
+            vid = append_outro(vid, "music.mp4")
+        return vid
+    except Exception as e:
+        logger.warning(f"make_music_video error ({e})")
+        return b""
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def images_glow_video(images: List[Tuple[str, bytes]], per_image: float = 4.0) -> bytes:
     """Several images → ONE glowing clip: each image gets the FULL glow (breathing zoom +
     colour pop + light sweep) for `per_image`s, played IN ORDER. Each image is letterboxed

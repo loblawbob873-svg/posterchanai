@@ -2033,6 +2033,42 @@ class ChatHandler {
                     window.mascotController.onResponse(true);
                 }
             }
+        } else if (data.type === 'generated_video') {
+            if (!data.video) {
+                html = contentHtml || '<p>Music generation failed: No video data received</p>';
+            } else {
+                const src = `data:video/mp4;base64,${data.video}`;
+                html = contentHtml;
+                html += `<div class="video-wrapper">
+                    <video controls src="${src}" class="generated-video" style="max-width:100%;border-radius:8px;"></video>
+                    <div class="video-actions">
+                        <a class="btn-action" href="${src}" download="song.mp4" title="Download">⬇️</a>
+                    </div>
+                </div>`;
+                if (window.mascotController) {
+                    window.mascotController.onResponse(true);
+                }
+            }
+        } else if (data.type === 'generated_audio') {
+            if (!data.audio) {
+                html = contentHtml || '<p>Music generation failed: No audio data received</p>';
+            } else {
+                const fmt = (data.format || 'mp3').toLowerCase();
+                const mime = ({mp3: 'audio/mpeg', wav: 'audio/wav', flac: 'audio/flac',
+                               opus: 'audio/ogg', aac: 'audio/aac'})[fmt] || 'audio/mpeg';
+                const src = `data:${mime};base64,${data.audio}`;
+                const dlName = 'song.' + fmt;
+                html = contentHtml;
+                html += `<div class="audio-wrapper">
+                    <audio controls src="${src}" class="generated-audio"></audio>
+                    <div class="audio-actions">
+                        <a class="btn-action" href="${src}" download="${dlName}" title="Download">⬇️</a>
+                    </div>
+                </div>`;
+                if (window.mascotController) {
+                    window.mascotController.onResponse(true);
+                }
+            }
         } else if (data.type === 'search' && data.results) {
             html = contentHtml;
             html += '<div class="search-results">';

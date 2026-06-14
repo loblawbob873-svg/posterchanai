@@ -99,6 +99,19 @@ class SettingsResponse(BaseModel):
     image_gpu_device: str = "auto"  # "auto", "cuda", "xpu", "cpu"
     image_idle_timeout: str = "120"  # Seconds before unloading image model (0=disabled)
     image_subprocess_mode: str = "false"  # Run each image in subprocess for VRAM release (Intel XPU)
+    # Music generation (ACE-Step). ACE-Step needs its own Python 3.11-3.12 env and ships a REST
+    # server, so it runs as a SEPARATE service and the app talks to it over HTTP (like
+    # finance_api_base / image_server_urls). Wired for web UI + Telegram only (not the fedi bots).
+    music_enabled: str = "false"
+    music_api_base: str = "http://localhost:8001"  # LOCAL ACE-Step server (co-located on this GPU)
+    music_server_urls: str = ""  # Comma-separated REMOTE ACE-Step servers for load balancing
+    music_gpu_device: str = "auto"  # "auto"/"cuda"/"xpu"/"cpu" — picks the GPU vs CPU lock locally
+    music_model: str = ""  # DiT model name/path, e.g. acestep-v15-turbo (blank = server default)
+    music_default_duration: str = "180"  # seconds (ACE-Step range 10-600)
+    music_default_steps: str = "8"  # diffusion steps (turbo ~8, base up to ~200)
+    music_format: str = "mp3"  # mp3 | wav | flac | opus | aac
+    music_timeout: str = "300000"  # music request timeout in ms (mirrors image_timeout)
+    music_watermark_enabled: str = "true"  # append the branded end-card outro to the song video
     # VRAM management
     vram_mode: str = "shared"  # "shared" (swap models) or "dedicated" (keep both)
     searxng_url: str = ""

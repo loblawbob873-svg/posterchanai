@@ -54,6 +54,7 @@ One FastAPI backend that does chat, image generation, voice, RAG over your code,
 
 - **Text-to-speech (TTS)** and **speech-to-text (STT)**; Edge TTS and configurable backends
 - **Image generation**: ComfyUI (external) or native diffusers (SDXL); multiple image servers supported
+- **Music generation** (`musicgeni`): text-to-song via a self-hosted [ACE-Step](https://github.com/ace-step/ACE-Step-1.5) server (fits a 12 GB GPU); load-balanced + VRAM-swapped like image gen, with a spoken watermark. Web UI + Telegram. See [docs/MUSIC.md](docs/MUSIC.md)
 - **Website screenshots**: full-page capture with the `screenshot <url>` command (also `shot` / `ss`) — works in the web UI, Telegram, and Matrix. Uses headless Chrome (JS-aware, so SPAs render), Firefox fallback (see [Requirements](#requirements)).
 - **YouTube / X**: summarize a video **from its transcript** (so summaries and link-posts reflect the actual content, not the page), grab thumbnails, or **download** audio (MP3) / video with the `ytdl` command — in the web UI, Telegram, Matrix, Misskey, and Pleroma. A video download can be trimmed and/or shrunk in one command (`ytdl video <url> clip 0:10 0:30 compress`); Telegram also offers these as buttons after the download
 

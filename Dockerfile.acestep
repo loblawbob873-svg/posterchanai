@@ -1,0 +1,41 @@
+# ACE-Step music server for PosterChanAI's `musicgeni` command.
+#
+# Separate image from the main app: ACE-Step 1.5 needs Python 3.11–3.12 and a torch/transformers
+# stack that conflicts with PosterChanAI's venv, and it ships a REST server (`acestep-api`). The
+# app talks to it over HTTP (app/services/music_service.py) — same arrangement as the external
+# image servers and the Budget Manager.
+#
+# ACE-Step is NOT on PyPI; it's installed from its git repo with `uv` (its own recommended
+# installer, which also provisions Python 3.12). torch comes from `uv sync` as a CUDA wheel that
+# bundles the CUDA runtime, so the container only needs the host NVIDIA driver at runtime
+# (nvidia-container-toolkit + `--gpus`/the compose `acestep` deploy reservation). The turbo DiT
+# model fits a 12 GB GPU (e.g. RTX 3060) and auto-downloads on first request into the mounted HF
+# cache volume.
+#
+# NOTE: ACE-Step's repo can change between releases; if the build fails, check
+# https://github.com/ace-step/ACE-Step-1.5 and adjust ACESTEP_REF.
+FROM python:3.12-slim
+
+ENV ACESTEP_API_HOST=0.0.0.0 \
+    ACESTEP_API_PORT=8001 \
+    UV_LINK_MODE=copy \
+    HF_HUB_ENABLE_HF_TRANSFER=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/root/.local/bin:${PATH}"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git ffmpeg ca-certificates curl && \
+    rm -rf /var/lib/apt/lists/*
+
+# uv (ACE-Step's recommended installer; provisions Python 3.12 + resolves the locked deps).
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
+ARG ACESTEP_REF=main
+RUN git clone --depth 1 --branch "${ACESTEP_REF}" https://github.com/ace-step/ACE-Step-1.5.git /opt/ace-step \
+    || git clone --depth 1 https://github.com/ace-step/ACE-Step-1.5.git /opt/ace-step
+WORKDIR /opt/ace-step
+RUN uv sync
+
+EXPOSE 8001
+# Models auto-download on first request into ~/.cache/huggingface (mount it as a volume to persist).
+CMD ["uv", "run", "acestep-api"]

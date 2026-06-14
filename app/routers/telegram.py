@@ -2136,7 +2136,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "flashcards", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
+            commands = ["help", "new", "ytdl", "geni", "musicgeni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "flashcards", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -2368,7 +2368,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "flashcards", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
+            commands = ["help", "new", "ytdl", "geni", "musicgeni", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "compress", "clip", "convert", "flashcards", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -3558,6 +3558,55 @@ async def _handle_telegram_update(update: dict, db: Session):
                             chat_id, _geni_caption, _geni_user, telegram_service,
                             prompt="📣 *Share this image?*", image_bytes=_geni_bytes
                         )
+            elif response_type == "generated_video" and result.get("video"):
+                # Generated song wrapped as a branded MP4 (musicgeni): decode to a temp file and
+                # send as a Telegram video.
+                import base64 as _mv_b64, tempfile as _mv_tmp, os as _mv_os
+                _mv_path = None
+                try:
+                    _mv_bytes = _mv_b64.b64decode(result["video"])
+                    fd, _mv_path = _mv_tmp.mkstemp(prefix="tg_music_", suffix=".mp4")
+                    with _mv_os.fdopen(fd, "wb") as _f:
+                        _f.write(_mv_bytes)
+                    _mv_res = await telegram_service.send_video(chat_id, _mv_path, caption=response_content)
+                    if not _mv_res.get("ok"):
+                        logger.error(f"Failed to send generated music video: {_mv_res}")
+                        await telegram_service.send_message(chat_id, f"{response_content}\n\n(Song failed to send)")
+                except Exception as _mv_err:
+                    logger.error(f"Generated music video send error: {_mv_err}", exc_info=True)
+                    await telegram_service.send_message(chat_id, "🎵 Couldn't deliver the generated song.")
+                finally:
+                    if _mv_path and _mv_os.path.exists(_mv_path):
+                        try:
+                            _mv_os.unlink(_mv_path)
+                        except Exception:
+                            pass
+            elif response_type == "generated_audio" and result.get("audio"):
+                # Generated song (musicgeni): decode the base64 audio to a temp file and send it
+                # as a Telegram audio message.
+                import base64 as _mg_b64, tempfile as _mg_tmp, os as _mg_os
+                _mg_fmt = (result.get("format") or "mp3").lower()
+                _mg_path = None
+                try:
+                    _mg_bytes = _mg_b64.b64decode(result["audio"])
+                    fd, _mg_path = _mg_tmp.mkstemp(prefix="tg_music_", suffix="." + _mg_fmt)
+                    with _mg_os.fdopen(fd, "wb") as _f:
+                        _f.write(_mg_bytes)
+                    _mg_res = await telegram_service.send_audio(
+                        chat_id, _mg_path, title="PosterChanAI", caption=response_content,
+                    )
+                    if not _mg_res.get("ok"):
+                        logger.error(f"Failed to send generated audio: {_mg_res}")
+                        await telegram_service.send_message(chat_id, f"{response_content}\n\n(Song failed to send)")
+                except Exception as _mg_err:
+                    logger.error(f"Generated audio send error: {_mg_err}", exc_info=True)
+                    await telegram_service.send_message(chat_id, "🎵 Couldn't deliver the generated song.")
+                finally:
+                    if _mg_path and _mg_os.path.exists(_mg_path):
+                        try:
+                            _mg_os.unlink(_mg_path)
+                        except Exception:
+                            pass
             elif response_type == "flashcards":
                 # Interactive multiple-choice study quiz — store the deck per chat and send card 0
                 # as a PNG with answer buttons; fc: callbacks navigate/reveal in place.
