@@ -45,18 +45,24 @@ generating two takes per request).
 
 ## Load balancing, locking & VRAM swap (same as image gen)
 
-`music_factory` mirrors `image_factory`:
+`music_factory` mirrors `image_factory`, **node→node**:
 
-- **Remote servers** — `music_server_urls` (Admin → Music): comma-separated ACE-Step servers on
-  other nodes, tried round-robin. No local GPU lock (they own their own GPUs).
-- **Local server** — `music_api_base`: a co-located ACE-Step server. Requests to it take the shared
-  `GPUResourceLock` (so only one GPU task runs at a time — chat, image, *or* music) and
-  `vram_manager.prepare_for_music()` swaps the LLM/image model out of VRAM first. Skipped in
-  `dedicated` VRAM mode.
+- **`music_server_urls`** (Admin → Music) = OTHER posterchanai NODES (e.g. `http://nas.lan:3051`),
+  not acestep servers. They're called via their `/api/generate-music` endpoint, which runs that
+  node's own local generation — so the remote node frees ITS GPU (`prepare_for_music`) before its
+  acestep generates. This is the same node→node pattern image gen uses (`/api/generate-image`).
+- **`music_api_base`** = this node's own acestep server (`http://localhost:8001`). The local path
+  takes the shared `GPUResourceLock` (so chat, image AND music all QUEUE on one GPU) and runs
+  `vram_manager.prepare_for_music()` (unloads our LLM/image first).
 
-> **Per-node config:** each node's **Local** URL should be its own `localhost:8001`, and its
-> **Remote** list should contain the *other* nodes — never itself (that would bypass the local GPU
-> lock/swap).
+Each request **round-robins across [remote nodes…, local]**, so songs spread over every node; a
+failed node falls through to the next (and finally local). `_music_gen_lock` serializes music per
+node so concurrent requests queue instead of OOMing one GPU. A node may safely list **itself** in
+`music_server_urls` (a self-call just generates locally) — no loops.
+
+> **Critical:** a single 12–16 GB GPU can't hold the chat/image models AND an acestep generation at
+> once. That's why the local path **unloads** (`prepare_for_music`) and everything **queues** on the
+> shared GPU lock — one model on the GPU at a time. acestep loads its model on demand (idle ≈ 0.5 GB).
 
 ## Setup
 
@@ -66,17 +72,18 @@ generating two takes per request).
 ./install.sh --music
 ```
 
-Installs `uv` (user-local), clones ACE-Step, and runs `uv sync` (provisions Python 3.12 + a CUDA
-torch wheel + all deps). Start the server:
+This installs `uv`, clones ACE-Step, runs `uv sync`, and installs a **persistent `acestep.service`
+systemd unit** (auto-start, auto-restart). It's GPU-aware:
 
-```bash
-cd ~/ACE-Step-1.5 && ACESTEP_API_HOST=0.0.0.0 ACESTEP_API_PORT=8001 uv run acestep-api
-```
+- **NVIDIA/CUDA** — works out of the box (torchcodec works).
+- **Intel XPU / AMD ROCm** — it reinstalls a matched `torch`+`torchvision`+`torchaudio` from the
+  XPU/ROCm index, **drops torchcodec** (CUDA-only) and patches ACE-Step's audio save to use
+  `soundfile` (torchcodec-free). Override the index with `MUSIC_TORCH_INDEX`.
 
-The DiT model auto-downloads on the first song. **NVIDIA/CUDA works out of the box.** For AMD ROCm
-or Intel XPU, reinstall torch from the matching index after `uv sync` (and matching
-`torchvision`/`torchaudio` — ACE-Step pins CUDA-era versions, so a plain torch swap can break the
-`torchvision`/`torchaudio` ABI).
+The DiT model auto-downloads on the first song. Manage with
+`systemctl status/restart acestep.service` and `journalctl -u acestep.service -f`. Then in
+**Admin → Music**: enable music, set Local Server URL to `http://localhost:8001`, and set Remote
+Music Servers to your other nodes (e.g. `http://nas.lan:3051`) to load-balance.
 
 ### Docker
 

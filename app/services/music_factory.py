@@ -17,7 +17,6 @@ of stacking generations onto one GPU. Wired for the web UI + Telegram only.
 import asyncio
 import base64
 import logging
-from itertools import cycle
 from typing import List, Optional, Tuple
 
 import httpx
@@ -28,14 +27,17 @@ from app.services.music_service import MusicError
 
 logger = logging.getLogger("music_factory")
 
-# Round-robin state for remote music servers (mirrors image_load_balancer's cycle).
-_music_server_cycle: Optional[cycle] = None
-_music_server_list: List[str] = []
-_music_cycle_lock = asyncio.Lock()
+# This node's own acestep server is a rotation candidate alongside remote nodes.
+_LOCAL = "__local__"
+
+# Round-robin index across [remote nodes…, local] so music spreads over BOTH machines (like the
+# image LB alternates local/remote).
+_rr_index = 0
+_rr_lock = asyncio.Lock()
 
 # Serialize music generation so concurrent requests QUEUE instead of piling onto one ACE-Step GPU
-# and OOMing (the music server's GPU is small — 12GB — and a song needs most of it). Like image gen
-# is serialized by the GPU lock. Per-process; the single port-3051 instance is the only producer.
+# and OOMing (a song needs most of a 12-16GB card). Like image gen is serialized by the GPU lock.
+# Per-process; the single port-3051 instance is the only producer.
 _music_gen_lock = asyncio.Lock()
 
 
@@ -47,16 +49,30 @@ def parse_music_server_urls(raw: str) -> List[str]:
     return [p for p in parts if p]
 
 
-async def _next_server(servers: List[str]) -> Optional[str]:
-    """Simple round-robin selection across the configured remote servers."""
-    global _music_server_cycle, _music_server_list
-    if not servers:
-        return None
-    async with _music_cycle_lock:
-        if _music_server_cycle is None or tuple(_music_server_list) != tuple(servers):
-            _music_server_list = list(servers)
-            _music_server_cycle = cycle(_music_server_list)
-        return next(_music_server_cycle)
+async def _rotated(candidates: List[str]) -> List[str]:
+    """Return `candidates` rotated by a global round-robin index, so each call starts at a different
+    node. On failure the caller falls through to the rest of the list."""
+    global _rr_index
+    if not candidates:
+        return []
+    async with _rr_lock:
+        start = _rr_index % len(candidates)
+        _rr_index = (_rr_index + 1) % len(candidates)
+    return candidates[start:] + candidates[:start]
+
+
+async def _generate_local(db: Session, cfg: dict, prompt: str, lyrics: str, duration, steps,
+                          timeout: float, fmt: str) -> Tuple[bytes, str]:
+    """Generate on THIS node's acestep server under the shared GPU lock + VRAM swap (frees our
+    LLM/image first), so chat/image/music all queue on one GPU."""
+    from app.services.locks import GPUResourceLock
+    from app.services.vram_manager import prepare_for_music
+    cpu_mode = cfg["device"] == "cpu"
+    body = music_service.build_request_body(cfg, prompt, lyrics, duration, steps)
+    async with GPUResourceLock("Music", f"prompt={prompt[:30]}...", cpu_mode=cpu_mode):
+        prepare_for_music(db)
+        logger.info(f"[music] generating on local acestep {cfg['base_url']}")
+        return await music_service.generate_once(cfg["base_url"], body, timeout, fmt)
 
 
 async def _generate_on_node(node_url: str, prompt: str, lyrics: str, duration, steps,
@@ -103,45 +119,37 @@ async def generate_music_for_user(
 
     timeout = cfg["timeout"]
     fmt = cfg["fmt"]
-    servers = [] if local_only else parse_music_server_urls(cfg["server_urls"])
+
+    # Round-robin across remote nodes AND this node's local acestep, so songs spread over both
+    # machines. A forwarded request (/api/generate-music) is local_only — it generates HERE.
+    if local_only:
+        candidates = [_LOCAL]
+    else:
+        candidates = parse_music_server_urls(cfg["server_urls"]) + [_LOCAL]
+    candidates = await _rotated(candidates)
 
     audio_bytes: Optional[bytes] = None
     ext = fmt
     last_err: Optional[Exception] = None
 
-    # Serialize: one song at a time on this node (a music GPU is small; concurrent gens OOM it).
+    # Serialize: one song at a time on this node (a song needs most of the GPU; concurrent gens OOM).
     # Queues like image gen does on the GPU lock.
     if _music_gen_lock.locked():
         logger.info("[music] another song is generating — queued")
     async with _music_gen_lock:
-        # 1) Remote nodes first (round-robin). Each runs its OWN VRAM swap via /api/generate-music.
-        for _ in range(len(servers)):
-            node = await _next_server(servers)
-            if not node:
-                break
+        for cand in candidates:
             try:
-                logger.info(f"[music] generating on remote node {node}")
-                audio_bytes, ext = await _generate_on_node(node, prompt, lyrics, duration, steps, timeout, fmt)
+                if cand == _LOCAL:
+                    audio_bytes, ext = await _generate_local(db, cfg, prompt, lyrics, duration, steps, timeout, fmt)
+                else:
+                    logger.info(f"[music] generating on remote node {cand}")
+                    audio_bytes, ext = await _generate_on_node(cand, prompt, lyrics, duration, steps, timeout, fmt)
                 break
             except MusicError as e:
                 last_err = e
-                logger.warning(f"[music] remote node {node} failed: {e}; trying next")
-
-        # 2) Local acestep server on THIS node: shared GPU lock + VRAM swap (frees our LLM/image).
-        if audio_bytes is None:
-            cpu_mode = cfg["device"] == "cpu"
-            body = music_service.build_request_body(cfg, prompt, lyrics, duration, steps)
-            try:
-                from app.services.locks import GPUResourceLock
-                from app.services.vram_manager import prepare_for_music
-                async with GPUResourceLock("Music", f"prompt={prompt[:30]}...", cpu_mode=cpu_mode):
-                    prepare_for_music(db)
-                    logger.info(f"[music] generating on local acestep {cfg['base_url']}")
-                    audio_bytes, ext = await music_service.generate_once(cfg["base_url"], body, timeout, fmt)
-            except MusicError as e:
-                last_err = e
+                logger.warning(f"[music] node {cand} failed: {e}; trying next")
             except Exception as e:
-                logger.error(f"[music] local generation error: {e}", exc_info=True)
+                logger.error(f"[music] node {cand} unexpected error: {e}", exc_info=True)
                 last_err = MusicError(f"Music generation error: {e}")
 
     if audio_bytes is None:
