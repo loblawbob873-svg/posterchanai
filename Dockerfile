@@ -166,11 +166,12 @@ RUN set -eux; \
 # Copy just the requirement files first so this layer caches across source edits.
 # requirements.txt = the web app (FastAPI, Pillow, chromadb, sentence-transformers,
 # faster-whisper, insightface/onnxruntime …). botframework adds the bot deps.
-# diffusers stack = native image generation (transformers pinned <5 for SDXL).
+# diffusers stack = native image generation (transformers pinned <5 for SDXL) AND text-to-video
+# (videogeni — Wan2.1/LTX/CogVideoX); sentencepiece is REQUIRED for the T5 video text-encoder.
 COPY requirements.txt /tmp/requirements.txt
 COPY botframework/requirements.txt /tmp/requirements-bot.txt
 RUN pip install -r /tmp/requirements.txt -r /tmp/requirements-bot.txt \
-    && pip install "transformers<5" diffusers accelerate safetensors huggingface_hub
+    && pip install "transformers<5" diffusers accelerate safetensors huggingface_hub sentencepiece ftfy
 
 # --- app source ---------------------------------------------------------------
 COPY . /app

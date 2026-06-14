@@ -1,0 +1,108 @@
+<!-- Video Generation Tab -->
+<div class="tab-content" id="tab-video">
+    <fieldset>
+        <legend>Video Generation (Wan2.1 — native diffusers)</legend>
+        <p class="vram-info">
+            Text-to-video runs <strong>natively in-process</strong> on this box's GPU (like image
+            generation, not a separate server), so it shares the same GPU lock and VRAM model-swap:
+            chat, image, music and video all <strong>queue as one GPU task at a time</strong>.
+            Works on NVIDIA (CUDA), Intel Arc (XPU) and AMD (ROCm). Available in the web UI and
+            Telegram via <code>videogeni &lt;prompt&gt; [| negative]</code>.
+            <strong>Arc 16&nbsp;GB is memory-tight</strong> — keep frames/resolution modest there.
+        </p>
+        <div class="form-group">
+            <label class="checkbox-label">
+                <input type="checkbox" id="video_enabled" name="video_enabled">
+                <span>Enable video generation</span>
+            </label>
+            <small>Off by default. When off, <code>videogeni</code> returns a friendly notice.</small>
+        </div>
+        <div class="form-group">
+            <label class="checkbox-label">
+                <input type="checkbox" id="video_local_enabled" name="video_local_enabled">
+                <span>Generate on this server's GPU</span>
+            </label>
+            <small>The native diffusers path on this node. Turn off to make this node forward to
+                remote nodes only (e.g. an Arc box that can't fit a clip).</small>
+        </div>
+        <div class="form-group">
+            <label for="video_server_urls">Remote Video Servers (load balancing)</label>
+            <input type="text" id="video_server_urls" name="video_server_urls" placeholder="http://node2:3051, http://node3:3051">
+            <small>Optional comma-separated OTHER posterchanai nodes. Tried round-robin via their
+                <code>/api/generate-video</code> (each frees its own GPU first); falls back to the
+                local GPU above. Same pattern as Image/Music Server URLs.</small>
+        </div>
+        <div class="form-group">
+            <label for="video_gpu_device">Local GPU Device</label>
+            <select id="video_gpu_device" name="video_gpu_device">
+                <option value="auto">Auto-detect</option>
+                <option value="cuda">CUDA (NVIDIA/AMD)</option>
+                <option value="xpu">XPU (Intel Arc)</option>
+                <option value="cpu">CPU</option>
+            </select>
+            <small>Which lock the local generation uses (GPU vs CPU).</small>
+        </div>
+        <div class="form-group">
+            <label for="video_model">Video Model</label>
+            <input type="text" id="video_model" name="video_model" placeholder="Wan-AI/Wan2.1-T2V-1.3B-Diffusers">
+            <small>HF id or local path of the diffusers text-to-video model. Default
+                <code>Wan-AI/Wan2.1-T2V-1.3B-Diffusers</code> (~27&nbsp;GB, fits a 12–16&nbsp;GB GPU).
+                Stay on stock diffusers (Wan/LTX/CogVideoX) for Arc/ROCm portability — no fp8/GGUF.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Output</legend>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="video_width">Width</label>
+                <input type="number" id="video_width" name="video_width" value="832" min="128" max="1280" step="16">
+                <small>Multiple of 16.</small>
+            </div>
+            <div class="form-group">
+                <label for="video_height">Height</label>
+                <input type="number" id="video_height" name="video_height" value="480" min="128" max="1280" step="16">
+                <small>Multiple of 16.</small>
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="video_num_frames">Frames</label>
+                <input type="number" id="video_num_frames" name="video_num_frames" value="49" min="5" max="161">
+                <small>Wan uses 4k+1 (e.g. 33, 49, 81). On the 16&nbsp;GB Arc keep this low.</small>
+            </div>
+            <div class="form-group">
+                <label for="video_fps">Playback FPS</label>
+                <input type="number" id="video_fps" name="video_fps" value="16" min="4" max="30">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="video_default_steps">Diffusion Steps</label>
+                <input type="number" id="video_default_steps" name="video_default_steps" value="25" min="1" max="100">
+            </div>
+            <div class="form-group">
+                <label for="video_guidance">Guidance Scale</label>
+                <input type="number" id="video_guidance" name="video_guidance" value="5.0" min="1" max="15" step="0.5">
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="video_timeout">Timeout (ms)</label>
+            <input type="number" id="video_timeout" name="video_timeout" value="600000">
+            <small>Max time to wait for a clip to render.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Output &amp; Watermark</legend>
+        <p class="vram-info">Each clip is delivered as a branded MP4 with the same end-card outro
+            (the "watermark") used on effect/music videos.</p>
+        <div class="form-group">
+            <label class="checkbox-label">
+                <input type="checkbox" id="video_watermark_enabled" name="video_watermark_enabled">
+                <span>Append the branded end-card watermark to each clip</span>
+            </label>
+            <small>When off, the clip is delivered with no end-card.</small>
+        </div>
+    </fieldset>
+</div>

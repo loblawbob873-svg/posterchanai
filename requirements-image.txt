@@ -20,3 +20,8 @@ transformers>=4.40.0,<5
 accelerate>=0.28.0
 safetensors>=0.4.0
 pillow
+# Text-to-video (videogeni — Wan2.1/LTX/CogVideoX via diffusers, same venv as image gen):
+#   sentencepiece is REQUIRED — the T5/umT5 text-encoder tokenizer won't load without it.
+#   ftfy is optional prompt cleanup. (protobuf is already pulled in transitively.)
+sentencepiece
+ftfy

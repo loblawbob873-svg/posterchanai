@@ -13,6 +13,8 @@ from app.services.proxy_image_cache import register as proxy_image_register
 from app.services.image_factory import generate_image_for_user
 from app.services import music_factory
 from app.services.music_service import MusicError
+from app.services import video_factory
+from app.services.video_service import VideoError
 from app.services.mail_service import (
     archive_message,
     delete_all_messages,
@@ -556,6 +558,7 @@ class CommandService:
         "images": "Image search: images <query>",
         "geni": "Generate image: geni <prompt>",
         "musicgeni": "Generate a song: musicgeni <style prompt> [| lyrics]",
+        "videogeni": "Generate a short video: videogeni <prompt>",
         "yt": "YouTube search: yt <query>",
         "ytdl": "Download YouTube, X, or Nitter: ytdl <url> (MP3 default), ytdl mp3/video <url>. For video, add clip <start> <end> and/or compress, e.g. ytdl video <url> clip 0:10 0:30 compress",
         "torrents": "Torrent search: torrents <query>",
@@ -913,6 +916,8 @@ class CommandService:
             return await self._geni_command(arg, stop_check)
         elif command == "musicgeni":
             return await self._musicgeni_command(arg, stop_check)
+        elif command == "videogeni":
+            return await self._videogeni_command(arg, stop_check)
         elif command == "yt":
             return await self._youtube_command(arg)
         elif command == "ytdl":
@@ -1471,6 +1476,47 @@ class CommandService:
             "content": f"Generated song for: {prompt}",
             "audio": _b64.b64encode(audio_bytes).decode(),
             "format": ext,
+            "prompt": prompt,
+        }
+
+    async def _videogeni_command(self, arg: str, stop_check: Optional[callable] = None) -> dict:
+        """Generate a short video via the native diffusers Wan pipeline. `videogeni <prompt>`.
+
+        Returns the shared `generated_video` shape so the web UI renders a <video> player and
+        Telegram sends it via send_video. Wired for web UI + Telegram only (not the fedi bots)."""
+        if not arg or not arg.strip():
+            return {
+                "type": "text",
+                "content": "Please provide a prompt. Example: `videogeni a red fox running through snow, cinematic`",
+            }
+        # `videogeni <prompt> | <negative>` — optional negative prompt after a `|`.
+        prompt, _, negative = arg.partition("|")
+        prompt = prompt.strip()
+        negative = negative.strip()
+
+        if stop_check and stop_check():
+            return {"type": "text", "content": "Generation cancelled."}
+
+        try:
+            logger.info(f"Generating video: {prompt[:100]}...")
+            video_bytes = await video_factory.generate_video_for_user(
+                db=self.db, prompt=prompt, negative_prompt=negative,
+            )
+        except VideoError as e:
+            return {"type": "text", "content": f"🎬 {e}"}
+        except Exception as e:
+            logger.error(f"Video generation exception: {e}", exc_info=True)
+            return {"type": "text", "content": f"Video generation error: {str(e)}\n\nCheck logs for details."}
+
+        if stop_check and stop_check():
+            return {"type": "text", "content": "Generation cancelled."}
+
+        import base64 as _b64
+        return {
+            "type": "generated_video",
+            "content": f"Generated video for: {prompt}",
+            "video": _b64.b64encode(video_bytes).decode(),
+            "format": "mp4",
             "prompt": prompt,
         }
 

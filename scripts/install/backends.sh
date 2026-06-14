@@ -6,6 +6,7 @@
 INSTALL_LLM=0
 INSTALL_IMAGE=0
 INSTALL_MUSIC=0            # optional ACE-Step music server (musicgeni)
+INSTALL_VIDEO=0            # optional native text-to-video deps (videogeni)
 INSTALL_TELEGRAM_BOTAPI=0  # optional local Telegram Bot API server (large files)
 TELEGRAM_ONLY=0            # option 5: set up ONLY the Bot API server (add-on)
 UPDATE_ONLY=0             # option 6: update deps + Telegram server, then exit
@@ -101,6 +102,15 @@ select_components() {
     if [[ "$WANT_MUSIC" =~ ^[Yy] ]]; then
         INSTALL_MUSIC=1
         echo -e "  ${GREEN}✓ Will set up the ACE-Step music server${NC}"
+    fi
+
+    # Offer text-to-video (videogeni). NATIVE diffusers — rides the image venv (no separate service),
+    # just adds a couple deps + an optional model prefetch. Works on CUDA/Arc-XPU/ROCm.
+    echo ""
+    read -p "Set up video generation (videogeni)? Native diffusers, shares the image GPU, ~27GB model [y/N]: " WANT_VIDEO
+    if [[ "$WANT_VIDEO" =~ ^[Yy] ]]; then
+        INSTALL_VIDEO=1
+        echo -e "  ${GREEN}✓ Will install video generation deps${NC}"
     fi
 }
 

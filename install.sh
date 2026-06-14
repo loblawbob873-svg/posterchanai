@@ -33,6 +33,7 @@ source "$INSTALL_DIR/setup.sh"
 source "$INSTALL_DIR/telegram_botapi.sh"
 source "$INSTALL_DIR/update.sh"
 source "$INSTALL_DIR/music.sh"
+source "$INSTALL_DIR/video.sh"
 
 # Handle --help and --packages options
 if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
@@ -52,6 +53,12 @@ fi
 # Add-on: set up just the ACE-Step music server (venv-music) against an existing install.
 if [ "$1" = "--music" ]; then
     setup_music_server
+    exit $?
+fi
+
+# Add-on: install just the video generation (videogeni) deps into the existing image venv.
+if [ "$1" = "--video" ]; then
+    setup_video_deps
     exit $?
 fi
 
@@ -109,6 +116,12 @@ main() {
     # Step 9a: Music generation (ACE-Step) add-on, if selected. Separate service via uv + systemd.
     if [ "$INSTALL_MUSIC" = "1" ]; then
         setup_music_server || print_warning "Music server setup did not complete; you can retry with ./install.sh --music"
+    fi
+
+    # Step 9a2: Video generation (videogeni) deps, if selected. Native diffusers — rides the image
+    # venv (no separate service); just adds sentencepiece/ftfy + optional model prefetch.
+    if [ "$INSTALL_VIDEO" = "1" ]; then
+        setup_video_deps || print_warning "Video setup did not complete; you can retry with ./install.sh --video"
     fi
 
     # Step 9b: Fetch the depth model for the `alive` 3D-parallax effect (gitignored,

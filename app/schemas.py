@@ -112,6 +112,20 @@ class SettingsResponse(BaseModel):
     music_format: str = "mp3"  # mp3 | wav | flac | opus | aac
     music_timeout: str = "300000"  # music request timeout in ms (mirrors image_timeout)
     music_watermark_enabled: str = "true"  # append the branded end-card outro to the song video
+    # Video generation (videogeni — NATIVE in-process diffusers, like image gen; mirrors music LB)
+    video_enabled: str = "false"
+    video_local_enabled: str = "true"  # generate on THIS node's GPU (the native diffusers path)
+    video_server_urls: str = ""  # Comma-separated REMOTE posterchanai nodes for load balancing
+    video_gpu_device: str = "auto"  # "auto"/"cuda"/"xpu"/"cpu" — picks the GPU vs CPU lock locally
+    video_model: str = "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"  # HF id / local path of the diffusers model
+    video_width: str = "832"  # output width  (multiple of 16)
+    video_height: str = "480"  # output height (multiple of 16)
+    video_num_frames: str = "49"  # frames (Wan: 4k+1). Arc 16GB is tight — cap lower there.
+    video_fps: str = "16"  # playback fps for the assembled mp4
+    video_default_steps: str = "25"  # diffusion steps
+    video_guidance: str = "5.0"  # classifier-free guidance scale
+    video_timeout: str = "600000"  # video request timeout in ms
+    video_watermark_enabled: str = "true"  # append the branded end-card outro to the clip
     # VRAM management
     vram_mode: str = "shared"  # "shared" (swap models) or "dedicated" (keep both)
     searxng_url: str = ""

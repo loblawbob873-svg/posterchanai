@@ -23,8 +23,21 @@ if not logger.handlers:
     logger.addHandler(handler)
 
 # Global state
-_current_mode: Optional[Literal["llm", "image", "music"]] = None
+_current_mode: Optional[Literal["llm", "image", "music", "video"]] = None
 _swap_lock = threading.Lock()
+
+
+def _unload_native_video(db: Session):
+    """Free the in-process video-generation model (Wan/diffusers) if it's loaded. Called whenever we
+    swap to another GPU task so video never co-resides with LLM/image."""
+    try:
+        from app.services.video_service import get_video_service
+        service = get_video_service(db)
+        if service.is_loaded():
+            logger.info("Unloading video model to free VRAM...")
+            service.unload_model()
+    except Exception as e:
+        logger.error(f"Error unloading video model: {e}")
 
 
 def _get_vram_settings(db: Session) -> dict:
@@ -84,6 +97,7 @@ def prepare_for_llm(db: Session) -> bool:
         except Exception as e:
             logger.error(f"Error unloading image model: {e}")
 
+        _unload_native_video(db)
         _ensure_llm_loaded(db)
         _current_mode = "llm"
         logger.info("VRAM ready for LLM")
@@ -127,6 +141,7 @@ def prepare_for_image(db: Session) -> bool:
         except Exception as e:
             logger.error(f"Error unloading LLM: {e}")
 
+        _unload_native_video(db)
         _ensure_image_loaded(db)
         _current_mode = "image"
         logger.info("VRAM ready for image generation")
@@ -171,8 +186,49 @@ def prepare_for_music(db: Session) -> bool:
                 service.unload_model()
         except Exception as e:
             logger.error(f"Error unloading image model for music: {e}")
+        _unload_native_video(db)
         _current_mode = "music"
         logger.info("VRAM ready for music generation")
+        return True
+
+
+def prepare_for_video(db: Session) -> bool:
+    """Prepare VRAM for LOCAL (native, in-process) video generation. Mirrors prepare_for_image: in
+    shared mode, unloads the LLM and image models first so the Wan/diffusers video model has the GPU
+    to itself. Always paired with the shared GPUResourceLock in video_factory so only one GPU task
+    runs at a time. No-op model-unloading in dedicated mode."""
+    global _current_mode
+
+    settings = _get_vram_settings(db)
+    vram_mode = settings["vram_mode"]
+
+    if vram_mode == "dedicated":
+        _current_mode = "video"
+        return True
+
+    # Shared (and the single-purpose llm_only/image_only modes): free our other in-process models so
+    # the video model has room. The video model itself loads on-demand inside video_service.generate.
+    with _swap_lock:
+        if _current_mode == "video":
+            return True
+        try:
+            from app.services.llama_service import get_llama_service
+            service = get_llama_service(db)
+            if service._model is not None:
+                logger.info("Unloading LLM to free VRAM for video generation...")
+                service.unload_model()
+        except Exception as e:
+            logger.error(f"Error unloading LLM for video: {e}")
+        try:
+            from app.services.diffusers_service import get_diffusers_service
+            service = get_diffusers_service(db)
+            if service.is_loaded():
+                logger.info("Unloading image model to free VRAM for video generation...")
+                service.unload_model()
+        except Exception as e:
+            logger.error(f"Error unloading image model for video: {e}")
+        _current_mode = "video"
+        logger.info("VRAM ready for video generation")
         return True
 
 

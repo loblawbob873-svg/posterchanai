@@ -1140,6 +1140,47 @@ def make_music_video(audio_data: bytes, audio_ext: str = "mp3", title: str = "",
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def make_generated_video(frames, fps: int = 16, add_outro: bool = True, title: str = "") -> bytes:
+    """Assemble generated video frames (list of HxWx3 uint8 numpy arrays / PIL images) into a branded
+    MP4: encode the frames, then append the same end-card "watermark" outro music uses. Returns mp4
+    bytes, or b'' on failure (caller falls back). Mirrors make_music_video's branding flow."""
+    import numpy as _np
+    from PIL import Image as _Image
+    ffmpeg = resolve_ffmpeg()
+    if not ffmpeg_available() or not frames:
+        return b""
+    tmp = tempfile.mkdtemp(prefix="media_genvid_")
+    try:
+        for i, fr in enumerate(frames):
+            img = fr if isinstance(fr, _Image.Image) else _Image.fromarray(_np.asarray(fr).astype("uint8"))
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            # pad to even dims (libx264/yuv420p requires it)
+            w, h = img.size
+            if w % 2 or h % 2:
+                img = img.crop((0, 0, w - (w % 2), h - (h % 2)))
+            img.save(os.path.join(tmp, f"f{i:05d}.png"))
+        out = os.path.join(tmp, "out.mp4")
+        cmd = [ffmpeg, "-y", "-framerate", str(max(1, int(fps))),
+               "-i", os.path.join(tmp, "f%05d.png"),
+               "-c:v", "libx264", "-preset", VIDEO_PRESET, "-crf", str(VIDEO_CRF),
+               "-pix_fmt", "yuv420p", "-movflags", "+faststart", out]
+        r = subprocess.run(cmd, capture_output=True, timeout=600, text=True)
+        if r.returncode != 0 or not os.path.exists(out) or os.path.getsize(out) == 0:
+            logger.warning(f"make_generated_video encode failed: {(r.stderr or '')[-300:]}")
+            return b""
+        with open(out, "rb") as f:
+            vid = f.read()
+        if add_outro:
+            vid = append_outro(vid, "video.mp4")
+        return vid
+    except Exception as e:
+        logger.warning(f"make_generated_video error ({e})")
+        return b""
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def images_glow_video(images: List[Tuple[str, bytes]], per_image: float = 4.0) -> bytes:
     """Several images → ONE glowing clip: each image gets the FULL glow (breathing zoom +
     colour pop + light sweep) for `per_image`s, played IN ORDER. Each image is letterboxed

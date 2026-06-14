@@ -34,6 +34,7 @@ the LLM. The bots reply with TTS via `/narrate <message>`.
 | `4chan [g\|pol\|h]` | 4chan catalog browser |
 | `geni <prompt>` | Generate an image |
 | `musicgeni <style prompt> [\| lyrics]` | Generate a song (ACE-Step). Web UI + Telegram only. See [MUSIC.md](MUSIC.md) |
+| `videogeni <prompt> [\| negative]` | Generate a short video (native diffusers Wan2.1). Web UI + Telegram only. Configure in Admin → Video |
 | `screenshot <url>` | Full-page website screenshot (aliases `shot`, `ss`) |
 
 ## Productivity & system

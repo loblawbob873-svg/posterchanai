@@ -16,6 +16,7 @@ setup_image_deps() {
         source "$SCRIPT_DIR/$VENV_NAME/bin/activate"
         print_step "Installing native image deps into the unified venv ($VENV_NAME)..."
         pip install "transformers<5" "diffusers>=0.38.0" accelerate safetensors -q
+        pip install sentencepiece ftfy -q  # text-to-video (videogeni) T5 tokenizer + prompt cleanup
         pip install onnxruntime huggingface_hub insightface opencv-python-headless -q \
             || print_warning "face-detection deps partially failed (optional)"
         deactivate
@@ -44,8 +45,9 @@ setup_image_deps() {
 
     print_step "Installing native image generation dependencies..."
 
-    # Install diffusers/transformers/accelerate
+    # Install diffusers/transformers/accelerate (+ video text-to-video deps)
     pip install diffusers transformers accelerate safetensors -q
+    pip install sentencepiece ftfy -q  # text-to-video (videogeni) T5 tokenizer + prompt cleanup
     print_success "Diffusers installed"
 
     # Install GPU-specific PyTorch
