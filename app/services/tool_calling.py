@@ -115,14 +115,25 @@ _ORPHAN_TAG_RE = re.compile(r"</?(?:tool_call|function|parameter)\b|<function=|<
 _INTENT_PHRASE_RE = re.compile(
     r"(?:^|\n|[.\s])(?:let me|i'?ll|i will|i'?m going to|i am going to|i need to|i should|"
     r"now i'?m|now i'?ll|let's|first,? i|next,? i)\b", re.IGNORECASE)
+# Model CLAIMS it performed a file op ("I've created the config file at /tmp/x.conf …") but emitted
+# no tool call — a hallucinated completion. In an agentic turn (tools offered) that means it should
+# have called write/edit and didn't, so we force the call. Matches even with a trailing question
+# ("…Would you like me to install it?"), which otherwise reads as a real answer.
+_CLAIMED_ACTION_RE = re.compile(
+    r"\bi(?:'?ve|\s+have)?\s+(?:created|wrote|written|added|updated|saved|modified|generated|made|"
+    r"configured|edited|set up)\b[^.\n]{0,80}(?:file|config|configuration|\.[A-Za-z0-9]{1,5}\b|/[\w./-]+)",
+    re.IGNORECASE)
 
 
 def _looks_like_intent_to_act(content: str) -> bool:
-    """True if content reads like the model was about to act, not finishing. False for a plain
-    answer or a question (so push-to-act never regenerates over legitimate final text)."""
+    """True if content reads like the model was about to act (or claims it did) rather than giving a
+    final answer. False for a plain answer or a bare question (so push-to-act never regenerates over
+    legitimate final text)."""
     if not content:
         return False
     s = content.strip()
+    if _CLAIMED_ACTION_RE.search(s):  # claims a file op but emitted no call -> force the call
+        return True
     if s.endswith("?"):            # a question to the user is a real answer
         return False
     if _ORPHAN_TAG_RE.search(s):   # a botched/truncated tool-call tag = it tried to call
