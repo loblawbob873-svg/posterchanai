@@ -82,10 +82,14 @@ def _gather_status_media(status):
     # bot's own (media-less) message, not directly to the image post, so checking only the
     # immediate parent missed it and re-showed the help (the "curb"/effect-on-thread-image bug).
     parent_id = status.get("in_reply_to_id")
+    print(f"[DEBUG] gather: own_media={len(attachments)} in_reply_to_id={parent_id} "
+          f"status_id={status.get('id')} visibility={status.get('visibility')}", flush=True)
     hops = 0
     while not attachments and parent_id and hops < 5:
         parent = get_status(parent_id) or {}
         attachments = list(parent.get("media_attachments") or [])
+        print(f"[DEBUG] gather hop {hops}: parent_id={parent_id} fetched={bool(parent)} "
+              f"parent_media={len(attachments)} next={parent.get('in_reply_to_id')}", flush=True)
         parent_id = parent.get("in_reply_to_id")
         hops += 1
     media = []
