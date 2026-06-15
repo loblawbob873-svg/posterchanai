@@ -1499,13 +1499,18 @@ class CommandService:
                 "content": "Please provide a message. Example: `narrate tell me a fun fact`",
             }
 
-        # Generate an AI reply, kept short and clean so it reads well aloud.
+        # Use the admin-configured persona (ollama_system_prompt) as the base, same as the normal
+        # chat path, then append TTS-mode guidance so the reply reads cleanly aloud.
+        system_prompt = self.chat_service.system_prompt.replace(
+            "{{CURRENT_DATE}}", datetime.utcnow().strftime("%Y-%m-%d")
+        )
+        system_prompt += (
+            "\n\nYour reply will be read aloud as speech. Answer in 1-4 short, natural sentences. "
+            "Do NOT use emojis, hashtags, markdown, URLs, code blocks, or special formatting — "
+            "plain spoken English only."
+        )
         messages = [
-            {"role": "system", "content": (
-                "You are a helpful assistant whose reply will be read aloud as speech. "
-                "Answer in 1-4 short, natural sentences. Do NOT use emojis, hashtags, markdown, "
-                "URLs, code blocks, or special formatting — plain spoken English only."
-            )},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": arg.strip()},
         ]
         reply_text = await self.chat_service.chat(messages)
