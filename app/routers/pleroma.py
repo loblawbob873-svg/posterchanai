@@ -160,9 +160,13 @@ async def disconnect_pleroma(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Remove Pleroma credentials from the user account."""
+    """Remove Pleroma credentials from the user account.
+
+    Fully clears per-platform state so nothing stale survives a disconnect (the
+    notification cursor included) — a later reconnect starts clean."""
     current_user.pleroma_enabled = False
     current_user.pleroma_instance_url = None
     current_user.pleroma_access_token = None
+    current_user.pleroma_notif_since = None
     db.commit()
     return {"ok": True}

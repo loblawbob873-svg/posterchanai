@@ -129,9 +129,13 @@ async def disconnect_misskey(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Remove Misskey credentials from the user's account."""
+    """Remove Misskey credentials from the user's account.
+
+    Fully clears per-platform state (notification cursor included) so nothing stale
+    survives a disconnect and a later reconnect starts clean."""
     current_user.misskey_enabled = False
     current_user.misskey_instance_url = None
     current_user.misskey_api_token = None
+    current_user.misskey_notif_since = None
     db.commit()
     return {"ok": True, "message": "Misskey account disconnected"}

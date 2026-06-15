@@ -605,6 +605,7 @@ class CommandService:
         "akbar": "Turn an attached image into a short MP4 set to the akbar clip: akbar",
         "retard": "Turn an attached image into a short MP4 set to the retard-alert clip: retard",
         "whoabuddy": "Turn an attached image into a short MP4 set to the whoa buddy clip: whoabuddy",
+        "seth": "Turn an attached image into a short MP4 set to the seth clip: seth",
         "robocop": "Turn an attached image into a short MP4 set to the robocop clip: robocop",
         "titan": "Turn an attached image into a short MP4 set to the titan clip: titan",
         "terminator": "Turn an attached image into a short MP4 set to the terminator clip: terminator",
@@ -675,7 +676,7 @@ class CommandService:
         "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay",
         "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete",
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
-        "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "robocop", "titan", "terminator", "reze",
+        "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze",
         "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
         "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug",
         "feltedtables", "glow", "prayer", "alive", "feliz",
@@ -1016,6 +1017,8 @@ class CommandService:
             return await self._retard_command(attachments)
         elif command == "whoabuddy":
             return await self._whoabuddy_command(attachments)
+        elif command == "seth":
+            return await self._seth_command(attachments)
         elif command == "robocop":
             return await self._robocop_command(attachments)
         elif command == "titan":
@@ -4275,6 +4278,21 @@ Files are saved to your Storage.""",
         from app.services.effects_service import whoabuddy_attachments
 
         outputs, summary = await asyncio.to_thread(whoabuddy_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _seth_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into a short MP4 set to the seth clip: `seth`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `seth`."}
+
+        import asyncio
+        from app.services.effects_service import seth_attachments
+
+        outputs, summary = await asyncio.to_thread(seth_attachments, attachments)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}

@@ -281,7 +281,7 @@ async def execute_matrix_command(
     # it through this public, account-free branch even without an attachment.
     _glow_text_post = (_cmd0 == "glow" and not data.media and len(command_str.split()) > 1)
     if (data.media or _glow_text_post) and _cmd0 in (
-        "compress", "clip", "convert", "translate", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz"
+        "compress", "clip", "convert", "translate", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz"
     ):
         from app.services.command_service import CommandService
         _media_svc = CommandService(db, user=user)
@@ -567,6 +567,7 @@ async def execute_matrix_command(
             "• `akbar` — turn an image into an akbar video.\n"
             "• `retard` — turn an image into a retard-alert video.\n"
             "• `whoabuddy` — turn an image into a whoa buddy video.\n"
+            "• `seth` — turn an image into a seth video.\n"
             "• `robocop` — turn an image into a robocop video.\n"
             "• `titan` — turn an image into a titan video.\n"
             "• `terminator` — turn an image into a terminator video.\n"
