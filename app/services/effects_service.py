@@ -3020,8 +3020,9 @@ _SETH_AUDIO_CANDIDATES = [
     os.path.join(_REPO_ROOT, "assets", "seth.mp3"),
     "/var/lib/posterchanai/assets/seth.mp3",
 ]
-# Cap above the ~13s clip length; -shortest ends the video at the audio end.
-_SETH_DURATION = 14.0
+# The seth source video is mostly silence with a ~3.3s sound burst; clip is just that audio.
+# Cap above the ~3.4s clip length; -shortest ends the video at the audio end.
+_SETH_DURATION = 4.0
 
 
 def _seth_audio_path() -> str:
