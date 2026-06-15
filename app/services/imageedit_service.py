@@ -76,7 +76,10 @@ def _get_settings(db: Session) -> dict:
 def _idle_loop():
     while not _idle_stop.wait(30):
         inst = _instance
-        if inst and inst._pipe is not None and inst._last_used:
+        # Never unload while an edit is in flight (the worker thread holds _pipe across a long
+        # generate that isn't under _load_lock) — that race moves weights to CPU mid-run and yields
+        # "weight is on cpu, different from ... cuda:0". Guard on _pending like the LLM idle-unloader.
+        if inst and inst._pipe is not None and inst._last_used and inst._pending == 0:
             if time.time() - inst._last_used > inst._idle_timeout:
                 logger.info("Idle timeout reached — unloading edit model")
                 inst.unload_model()
@@ -97,6 +100,7 @@ class ImageEditService:
         self._device: Optional[str] = None
         self._idle_timeout = DEFAULT_IDLE_TIMEOUT
         self._last_used = 0.0
+        self._pending = 0  # in-flight generate count; idle loop won't unload while >0 (race guard)
         _start_idle()
 
     def is_loaded(self) -> bool:
@@ -175,54 +179,60 @@ class ImageEditService:
         """Edit `image_bytes` per `instruction`, returns PNG bytes. Blocking — call via the factory's
         thread + GPU lock."""
         cfg = _get_settings(db)
-        self.load_model(db)
-        import torch
+        # Mark an edit in flight for the WHOLE load+inference span so the idle loop can't unload the
+        # model to CPU underneath us (the device-mismatch race).
+        self._pending += 1
         try:
-            img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        except Exception as e:
-            raise ImageEditError(f"Couldn't read the input image: {e}")
-        # Clamp the longest side so a huge upload doesn't OOM / take forever (the GPUs are tight).
-        ms = max(64, int(cfg["max_side"]))
-        if max(img.size) > ms:
-            img.thumbnail((ms, ms))
-        st = int(steps or cfg["steps"])
-        gs = float(guidance if guidance is not None else cfg["guidance"])
-        igs = float(img_guidance if img_guidance is not None else cfg["img_guidance"])
-        # OmniGen references the input image via the <img><|image_1|></img> placeholder in the prompt.
-        prompt = f"<img><|image_1|></img> {instruction.strip()}"
-        logger.info(f"Editing {img.size} steps={st} on {self._device}: {instruction[:60]}")
-        t0 = time.time()
-        try:
-            result = self._pipe(
-                prompt=prompt,
-                input_images=[img],
-                guidance_scale=gs,
-                img_guidance_scale=igs,
-                num_inference_steps=st,
-                # Honour the configured max side: OmniGen otherwise caps the input at its internal
-                # default (1024), so a higher regeni_max_side would silently have no effect.
-                max_input_image_size=ms,
-                use_input_image_size_as_output=True,
-            )
-        except Exception as e:
-            msg = str(e)
-            if "OUT_OF" in msg or "out of memory" in msg.lower() or "OutOfMemory" in msg:
-                raise ImageEditError(
-                    "Ran out of GPU memory editing the image. Try a smaller image or lower "
-                    "regeni_max_side in Admin → Image."
+            self.load_model(db)
+            import torch
+            try:
+                img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            except Exception as e:
+                raise ImageEditError(f"Couldn't read the input image: {e}")
+            # Clamp the longest side so a huge upload doesn't OOM / take forever (the GPUs are tight).
+            ms = max(64, int(cfg["max_side"]))
+            if max(img.size) > ms:
+                img.thumbnail((ms, ms))
+            st = int(steps or cfg["steps"])
+            gs = float(guidance if guidance is not None else cfg["guidance"])
+            igs = float(img_guidance if img_guidance is not None else cfg["img_guidance"])
+            # OmniGen references the input image via the <img><|image_1|></img> placeholder in the prompt.
+            prompt = f"<img><|image_1|></img> {instruction.strip()}"
+            logger.info(f"Editing {img.size} steps={st} on {self._device}: {instruction[:60]}")
+            t0 = time.time()
+            try:
+                result = self._pipe(
+                    prompt=prompt,
+                    input_images=[img],
+                    guidance_scale=gs,
+                    img_guidance_scale=igs,
+                    num_inference_steps=st,
+                    # Honour the configured max side: OmniGen otherwise caps the input at its internal
+                    # default (1024), so a higher regeni_max_side would silently have no effect.
+                    max_input_image_size=ms,
+                    use_input_image_size_as_output=True,
                 )
-            raise ImageEditError(f"Image edit failed: {e}")
-        self._last_used = time.time()
-        # Guard against an empty/None images list (safety filter / pipeline edge case) so callers get
-        # a clean error rather than a raw IndexError.
-        imgs = getattr(result, "images", None)
-        if not imgs:
-            raise ImageEditError("The edit model returned no image.")
-        out_img = imgs[0]
-        buf = io.BytesIO()
-        out_img.save(buf, format="PNG")
-        logger.info(f"Edited image in {time.time() - t0:.0f}s")
-        return buf.getvalue()
+            except Exception as e:
+                msg = str(e)
+                if "OUT_OF" in msg or "out of memory" in msg.lower() or "OutOfMemory" in msg:
+                    raise ImageEditError(
+                        "Ran out of GPU memory editing the image. Try a smaller image or lower "
+                        "regeni_max_side in Admin → Image."
+                    )
+                raise ImageEditError(f"Image edit failed: {e}")
+            self._last_used = time.time()
+            # Guard against an empty/None images list (safety filter / pipeline edge case) so callers
+            # get a clean error rather than a raw IndexError.
+            imgs = getattr(result, "images", None)
+            if not imgs:
+                raise ImageEditError("The edit model returned no image.")
+            out_img = imgs[0]
+            buf = io.BytesIO()
+            out_img.save(buf, format="PNG")
+            logger.info(f"Edited image in {time.time() - t0:.0f}s")
+            return buf.getvalue()
+        finally:
+            self._pending -= 1
 
 
 def get_imageedit_service(db: Session) -> ImageEditService:
