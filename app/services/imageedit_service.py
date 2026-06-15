@@ -161,15 +161,17 @@ class ImageEditService:
         return device_setting
 
     def _ensure_seg(self):
-        if self._seg is not None:
+        # Guard on BOTH so a mid-load failure (OOM during .to()) can't leave a half-state where _seg
+        # looks loaded but _seg_proc is None → "'NoneType' object is not callable" in _segment.
+        if self._seg is not None and self._seg_proc is not None:
             return
-        import torch
         from transformers import CLIPSegProcessor, CLIPSegForImageSegmentation
         logger.info("Loading CLIPSeg segmentation model ...")
-        self._seg_proc = CLIPSegProcessor.from_pretrained(SEG_MODEL)
+        proc = CLIPSegProcessor.from_pretrained(SEG_MODEL)
         seg = CLIPSegForImageSegmentation.from_pretrained(SEG_MODEL).eval()
         if self._device != "cpu":
             seg = seg.to(self._device)
+        self._seg_proc = proc  # assign both only after both succeed
         self._seg = seg
 
     def _ensure_pipe(self, model_path: str):
@@ -224,8 +226,8 @@ class ImageEditService:
                     self._seg.to("cpu")
                 except Exception:
                     pass
-                self._seg = None
-                self._seg_proc = None
+            self._seg = None
+            self._seg_proc = None  # always clear both together (no half-state)
             gc.collect()
             try:
                 import torch
