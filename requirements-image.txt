@@ -25,10 +25,3 @@ pillow
 #   ftfy is optional prompt cleanup. (protobuf is already pulled in transitively.)
 sentencepiece
 ftfy
-# Image editing (regeni — text-grounded auto-mask + SDXL inpaint, same venv as image gen):
-#   NO new pip deps — CLIPSeg is a `transformers` model (CLIPSegForImageSegmentation) and inpaint is
-#   diffusers' StableDiffusionXLInpaintPipeline; both are covered by the diffusers/transformers above.
-#   It reuses the geni SDXL checkpoints (image_model_path / image_anime_model_path) — no edit model to
-#   download except the small ~1.2GB CLIPSeg model (CIDAS/clipseg-rd64-refined, auto-downloads on
-#   first use; `./install.sh --regeni` can prefetch it). Portable: stock diffusers/transformers + SDPA,
-#   runs on CUDA / Intel XPU / AMD ROCm. NO flash-attn/fp8/GGUF.

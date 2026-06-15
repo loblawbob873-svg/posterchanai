@@ -179,23 +179,6 @@ open a fresh `SessionLocal` and capture any needed config up front.
   `video_free_music=true` makes a video render stop `acestep` (sudo systemctl) to reclaim VRAM,
   restarting it for music. New dep: `sentencepiece` (T5 tokenizer). Turn-key: `./install.sh --video`,
   Docker `POSTERCHANAI_VIDEO=1`. See `docs/VIDEO.md`.
-- **Image editing** (`regeni` command; `app/services/imageedit_service.py` + `imageedit_factory.py` +
-  `app/routers/imageedit_api.py`): edit an uploaded image by text WITHOUT a manual mask. **CLIPSeg**
-  (`CIDAS/clipseg-rd64-refined`, a `transformers` segmentation model) turns the named region from the
-  instruction into a mask, then **SDXL inpaint** (`StableDiffusionXLInpaintPipeline`) regenerates just
-  that region. **Reuses the geni SDXL checkpoints** (`image_model_path`/`image_anime_model_path`) —
-  the `_is_anime_prompt` keyword set (shared with image gen) picks the anime model when the
-  instruction mentions/looks anime. Mirrors `videogeni`'s factory (shared `GPUResourceLock("ImageEdit")`
-  + `prepare_for_imageedit` VRAM swap + node→node LB over `regeni_server_urls`). **Why this design:**
-  it's the only PORTABLE editor (CUDA/XPU/ROCm) that fits 12-16GB — CLIPSeg+SDXL use small CLIP text
-  encoders, whereas every SOTA editor (Qwen-Edit/Flux.2-Klein/LongCat/OmniGen2) ships a 7-8B Qwen/T5
-  text encoder that won't fit the 16GB Arc (offload is broken on XPU). Strong at recolour/replace/remove
-  within a region (background/hair/eyes/clothing/objects); weak at big pose/structure changes (the mask
-  constrains shape) and on wispy regions (CLIPSeg coarseness — better on real photos than anime). Web
-  UI + Telegram (incl. the "🪄 Edit (AI)" upload button) + Matrix + Pleroma (CSAM-gated instruction).
-  Instruction parser → `(mask_target, inpaint_prompt)`; tune via `regeni_strength`/`regeni_mask_*`.
-  NO new pip deps (CLIPSeg=transformers, inpaint=diffusers). Turn-key: `./install.sh --regeni`, Docker
-  `POSTERCHANAI_REGENI=1`.
 - **Finance (Budget Manager)** (`app/services/finance_service.py`; `budget`/`bills`/`pay`/`addbill`
   commands): thin async client for the self-hosted Budget Manager Flask app's `/api/v1/*`
   (summary/bills/add/pay), reached at the global `finance_api_base` setting (default

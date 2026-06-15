@@ -24,7 +24,7 @@ if not logger.handlers:
     logger.addHandler(handler)
 
 # Global state
-_current_mode: Optional[Literal["llm", "image", "music", "video", "imageedit"]] = None
+_current_mode: Optional[Literal["llm", "image", "music", "video"]] = None
 _swap_lock = threading.Lock()
 
 
@@ -39,19 +39,6 @@ def _unload_native_video(db: Session):
             service.unload_model()
     except Exception as e:
         logger.error(f"Error unloading video model: {e}")
-
-
-def _unload_native_imageedit(db: Session):
-    """Free the in-process image-edit model (OmniGen/diffusers, `regeni`) if it's loaded. Called
-    whenever we swap to another GPU task so the edit model never co-resides with LLM/image/video."""
-    try:
-        from app.services.imageedit_service import get_imageedit_service
-        service = get_imageedit_service(db)
-        if service.is_loaded():
-            logger.info("Unloading image-edit model to free VRAM...")
-            service.unload_model()
-    except Exception as e:
-        logger.error(f"Error unloading image-edit model: {e}")
 
 
 def _music_service_ctl(db: Session, action: str):
@@ -155,7 +142,6 @@ def prepare_for_llm(db: Session) -> bool:
             logger.error(f"Error unloading image model: {e}")
 
         _unload_native_video(db)
-        _unload_native_imageedit(db)
         _ensure_llm_loaded(db)
         _current_mode = "llm"
         logger.info("VRAM ready for LLM")
@@ -200,7 +186,6 @@ def prepare_for_image(db: Session) -> bool:
             logger.error(f"Error unloading LLM: {e}")
 
         _unload_native_video(db)
-        _unload_native_imageedit(db)
         _ensure_image_loaded(db)
         _current_mode = "image"
         logger.info("VRAM ready for image generation")
@@ -250,7 +235,6 @@ def prepare_for_music(db: Session) -> bool:
         except Exception as e:
             logger.error(f"Error unloading image model for music: {e}")
         _unload_native_video(db)
-        _unload_native_imageedit(db)
         _current_mode = "music"
         logger.info("VRAM ready for music generation")
         return True
@@ -295,54 +279,8 @@ def prepare_for_video(db: Session) -> bool:
                 service.unload_model()
         except Exception as e:
             logger.error(f"Error unloading image model for video: {e}")
-        _unload_native_imageedit(db)
         _current_mode = "video"
         logger.info("VRAM ready for video generation")
-        return True
-
-
-def prepare_for_imageedit(db: Session) -> bool:
-    """Prepare VRAM for LOCAL (native, in-process) image editing (`regeni`, OmniGen/diffusers).
-    Mirrors prepare_for_video: in shared mode, unloads the LLM, image and video models first so the
-    edit model has the GPU to itself. Always paired with the shared GPUResourceLock in
-    imageedit_factory so only one GPU task runs at a time. No-op model-unloading in dedicated mode."""
-    global _current_mode
-
-    settings = _get_vram_settings(db)
-    vram_mode = settings["vram_mode"]
-
-    # Free the co-located music server's VRAM (stop acestep) so the edit model fits. Gated by
-    # video_free_music; no-op elsewhere. Done regardless of vram_mode (acestep is a separate process).
-    _music_service_ctl(db, "stop")
-
-    if vram_mode == "dedicated":
-        _current_mode = "imageedit"
-        return True
-
-    # Shared (and the single-purpose llm_only/image_only modes): free our other in-process models so
-    # the edit model has room. The edit model itself loads on-demand inside imageedit_service.generate.
-    with _swap_lock:
-        if _current_mode == "imageedit":
-            return True
-        try:
-            from app.services.llama_service import get_llama_service
-            service = get_llama_service(db)
-            if service._model is not None:
-                logger.info("Unloading LLM to free VRAM for image editing...")
-                service.unload_model()
-        except Exception as e:
-            logger.error(f"Error unloading LLM for image editing: {e}")
-        try:
-            from app.services.diffusers_service import get_diffusers_service
-            service = get_diffusers_service(db)
-            if service.is_loaded():
-                logger.info("Unloading image model to free VRAM for image editing...")
-                service.unload_model()
-        except Exception as e:
-            logger.error(f"Error unloading image model for image editing: {e}")
-        _unload_native_video(db)
-        _current_mode = "imageedit"
-        logger.info("VRAM ready for image editing")
         return True
 
 
@@ -386,17 +324,9 @@ def get_vram_status(db: Session) -> dict:
     except Exception:
         pass
 
-    imageedit_loaded = False
-    try:
-        from app.services.imageedit_service import get_imageedit_service
-        imageedit_loaded = get_imageedit_service(db).is_loaded()
-    except Exception:
-        pass
-
     return {
         "vram_mode": settings["vram_mode"],
         "current_mode": _current_mode,
         "llm_loaded": llm_loaded,
         "image_loaded": image_loaded,
-        "imageedit_loaded": imageedit_loaded,
     }

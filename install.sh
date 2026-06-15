@@ -34,7 +34,6 @@ source "$INSTALL_DIR/telegram_botapi.sh"
 source "$INSTALL_DIR/update.sh"
 source "$INSTALL_DIR/music.sh"
 source "$INSTALL_DIR/video.sh"
-source "$INSTALL_DIR/regeni.sh"
 
 # Handle --help and --packages options
 if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
@@ -60,12 +59,6 @@ fi
 # Add-on: install just the video generation (videogeni) deps into the existing image venv.
 if [ "$1" = "--video" ]; then
     setup_video_deps
-    exit $?
-fi
-
-# Add-on: install just the image editing (regeni) deps into the existing image venv.
-if [ "$1" = "--regeni" ]; then
-    setup_regeni_deps
     exit $?
 fi
 
@@ -129,12 +122,6 @@ main() {
     # venv (no separate service); just adds sentencepiece/ftfy + optional model prefetch.
     if [ "$INSTALL_VIDEO" = "1" ]; then
         setup_video_deps || print_warning "Video setup did not complete; you can retry with ./install.sh --video"
-    fi
-
-    # Step 9a3: Image editing (regeni) deps, if selected. Native diffusers — rides the image venv
-    # (no separate service, no extra deps beyond the stack); optional ~9GB model prefetch.
-    if [ "$INSTALL_REGENI" = "1" ]; then
-        setup_regeni_deps || print_warning "Image-edit setup did not complete; you can retry with ./install.sh --regeni"
     fi
 
     # Step 9b: Fetch the depth model for the `alive` 3D-parallax effect (gitignored,

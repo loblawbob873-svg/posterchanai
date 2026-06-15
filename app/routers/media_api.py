@@ -100,7 +100,7 @@ async def process_media(
 ):
     """Run a compress/clip/convert/meme/dildo/poo/cum/blood/bullethole/fire/gay/blacked/kosher/barked operation on the supplied attachments."""
     command = (req.command or "").strip().lower()
-    if command not in ("compress", "clip", "convert", "meme", "regeni", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz"):
+    if command not in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz"):
         return {"error": f"unsupported command '{command}'"}
 
     # Trailing subcommands on an effect: <effect> [zoom|shake] [meme <text>]
@@ -111,7 +111,7 @@ async def process_media(
     trippy = False
     meme_text = None
     character = None
-    if command not in ("compress", "clip", "convert", "regeni"):
+    if command not in ("compress", "clip", "convert"):
         _toks = arg.split()
         _low = [t.lower() for t in _toks]
         # `char <name>` (anywhere) → overlay a character; parse before `meme` (which eats to end).
@@ -168,22 +168,6 @@ async def process_media(
             outputs, summary = await asyncio.to_thread(media_service.compress_attachments, attachments)
         elif command == "convert":
             outputs, summary = await asyncio.to_thread(media_service.convert_attachments, attachments, req.arg or "")
-        elif command == "regeni":
-            # Instruction-based image edit (OmniGen) — routed through the LB factory + GPU lock.
-            from app.services.imageedit_factory import edit_image_for_user
-            from app.services.imageedit_service import ImageEditError
-            instr = (req.arg or "").strip()
-            if not instr:
-                return {"error": "regeni needs an instruction, e.g. 'regeni change her hair to red'"}
-            _img = next((a for a in attachments if media_service.is_image(a[0], a[2])), None)
-            if _img is None:
-                return {"error": "regeni needs an image attachment"}
-            try:
-                png = await edit_image_for_user(db=db, image_bytes=_img[1], instruction=instr)
-            except ImageEditError as e:
-                return {"error": str(e)}
-            outputs = [{"filename": "regeni.png", "data": png, "content_type": "image/png"}]
-            summary = "## ✨ Edited"
         elif command == "meme":
             if not arg.strip():
                 return {"error": "meme needs caption text, e.g. 'meme top text'"}
@@ -359,12 +343,12 @@ async def process_media(
             outputs = await asyncio.to_thread(effects_service.apply_meme_text, outputs, meme_text)
         # Shrink oversized effect videos before delivery (same as the command path).
         # Skip the media tools (compress already ran; clip/convert are user-controlled).
-        if outputs and command not in ("compress", "clip", "convert", "regeni"):
+        if outputs and command not in ("compress", "clip", "convert"):
             outputs = await asyncio.to_thread(media_service.compress_output_videos, outputs)
         # TikTok-style branding end-card. If the caller supplied the fediverse poster's
         # identity (brand_handle/brand_avatar), it's a per-user card with their @handle +
         # avatar; otherwise the STATIC "made with PosterChanAI" card. Gated, best-effort.
-        if outputs and command not in ("compress", "clip", "convert", "regeni"):
+        if outputs and command not in ("compress", "clip", "convert"):
             _brand_avatar_bytes = None
             if req.brand_avatar and req.brand_avatar.data:
                 try:
