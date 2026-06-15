@@ -45,6 +45,9 @@ _REGION_WORDS = [
     "shoes", "hat", "cap", "glasses", "sunglasses", "tie", "scarf", "gloves", "socks",
 ]
 _ANIME_WORDS = ["anime", "manga", "waifu", "chibi", "kawaii", "moe", "2d", "cel-shaded", "cartoon"]
+# Targets that ARE the face — don't face-protect these (the edit is meant to touch the face).
+_FACE_FEATURES = {"face", "eye", "eyes", "lips", "mouth", "nose", "skin", "beard", "eyebrow",
+                  "eyebrows", "cheek", "cheeks", "chin", "teeth", "freckles", "makeup"}
 
 _instance: Optional["ImageEditService"] = None
 _executor = ThreadPoolExecutor(max_workers=1)
@@ -241,16 +244,14 @@ class ImageEditService:
             reset_vram_mode()
             logger.info("Edit models unloaded")
 
-    def _segment(self, img: Image.Image, target: str, cfg: dict) -> Image.Image:
-        """CLIPSeg: text target -> a soft binary mask (PIL 'L') the size of `img`."""
+    def _clipseg_prob(self, img: Image.Image, phrases) -> np.ndarray:
+        """Max-pool CLIPSeg over a few phrasings → an HxW uint8 probability map the size of `img`.
+        CLIPSeg is coarse (352px), so "X"/"the X" catch different pixels."""
         import torch
         W, H = img.size
-        # Union a couple of phrasings — CLIPSeg is coarse (352px), so "the X" / "X" catch different
-        # pixels; max-pooling them gives fuller coverage of the region.
-        prompts = [target] if target.lower().startswith("the ") else [target, f"the {target}"]
         acc = None
         with torch.no_grad():
-            for p in prompts:
+            for p in phrases:
                 si = self._seg_proc(text=[p], images=[img], return_tensors="pt")
                 if self._device != "cpu":
                     si = {k: v.to(self._device) for k, v in si.items()}
@@ -260,12 +261,24 @@ class ImageEditService:
                     pr = pr[0]
                 pr = np.array(Image.fromarray((pr * 255).astype("uint8")).resize((W, H)))
                 acc = pr if acc is None else np.maximum(acc, pr)
-        prob = acc
+        return acc
+
+    def _segment(self, img: Image.Image, target: str, cfg: dict) -> Image.Image:
+        """CLIPSeg: text target -> a soft binary mask (PIL 'L') the size of `img`."""
+        prompts = [target] if target.lower().startswith("the ") else [target, f"the {target}"]
+        prob = self._clipseg_prob(img, prompts)
         mask = ((prob > cfg["mask_threshold"]).astype("uint8")) * 255
         mask_img = Image.fromarray(mask)
         d = max(1, int(cfg["mask_dilate"]))
         if d > 1:
             mask_img = mask_img.filter(ImageFilter.MaxFilter(d if d % 2 else d + 1))
+        # Protect the face from NON-face edits: subtract the face core so a hair/background/clothing
+        # edit at strength ~1.0 can't repaint (and distort) the face — the common failure.
+        if target.lower() not in _FACE_FEATURES:
+            face = self._clipseg_prob(img, ["face", "the face"])
+            arr = np.array(mask_img)
+            arr[face > 110] = 0  # 110/255 = confident face core only
+            mask_img = Image.fromarray(arr)
         return mask_img.filter(ImageFilter.GaussianBlur(6))  # soft edges → seamless inpaint
 
     def generate(self, db: Session, image_bytes: bytes, instruction: str,
