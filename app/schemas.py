@@ -135,18 +135,20 @@ class SettingsResponse(BaseModel):
     video_guidance: str = "5.0"  # classifier-free guidance scale
     video_timeout: str = "600000"  # video request timeout in ms
     video_watermark_enabled: str = "true"  # append the branded end-card outro to the clip
-    # Image editing (regeni — OmniGen v1 instruction editing: image + text → edited image, maskless)
+    # Image editing (regeni — text-grounded auto-mask (CLIPSeg) + SDXL inpaint; reuses the geni SDXL
+    # models, picks the anime one when the instruction looks anime). Portable (CUDA/XPU/ROCm).
     regeni_enabled: str = "false"
     regeni_local_enabled: str = "true"  # edit on THIS node's GPU (the native diffusers path)
     regeni_server_urls: str = ""  # Comma-separated REMOTE posterchanai nodes for load balancing
     regeni_gpu_device: str = "auto"  # "auto"/"cuda"/"xpu"/"cpu" — picks the GPU vs CPU lock locally
-    regeni_model: str = "Shitao/OmniGen-v1-diffusers"  # HF id / local path of the diffusers edit model
-    regeni_steps: str = "25"  # diffusion steps (OmniGen: ~25 is the quality/speed sweet spot)
-    regeni_guidance: str = "2.0"  # text guidance scale
-    regeni_img_guidance: str = "1.6"  # input-image guidance scale (OmniGen edit: 1.2–2.0)
+    regeni_steps: str = "30"  # SDXL inpaint diffusion steps
+    regeni_strength: str = "0.99"  # inpaint strength (1.0 = fully regenerate the masked region; lower keeps more of the original)
+    regeni_guidance: str = "7.0"  # SDXL classifier-free guidance scale
+    regeni_mask_threshold: str = "35"  # CLIPSeg probability cutoff 0-255 (lower = larger mask)
+    regeni_mask_dilate: str = "19"  # px to grow the mask so it covers the whole region
     regeni_max_side: str = "1024"  # clamp the input image's longest side (keeps VRAM/time in budget)
     regeni_timeout: str = "300000"  # edit request timeout in ms
-    regeni_idle_timeout: str = "300"  # unload the edit model after this many seconds idle
+    regeni_idle_timeout: str = "300"  # unload the edit models after this many seconds idle
     # VRAM management
     vram_mode: str = "shared"  # "shared" (swap models) or "dedicated" (keep both)
     searxng_url: str = ""

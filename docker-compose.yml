@@ -23,11 +23,10 @@ x-common: &common
     # the persisted HF cache on first use. Needs a GPU profile (cuda/rocm/intel).
     - POSTERCHANAI_VIDEO=${POSTERCHANAI_VIDEO:-0}
     - POSTERCHANAI_VIDEO_MODEL=${POSTERCHANAI_VIDEO_MODEL:-}
-    # Turnkey image editing: set POSTERCHANAI_REGENI=1 and the app auto-enables native instruction
-    # editing (regeni / OmniGen v1 by default; override with POSTERCHANAI_REGENI_MODEL). ~9GB model
-    # auto-downloads to the persisted HF cache on first use. Needs a GPU profile (cuda/rocm/intel).
+    # Turnkey image editing: set POSTERCHANAI_REGENI=1 and the app auto-enables regeni (text-grounded
+    # auto-mask + SDXL inpaint). It REUSES the geni SDXL model — no separate edit model. Only the
+    # small CLIPSeg mask model (~1.2GB) auto-downloads on first use. Portable (cuda/rocm/intel).
     - POSTERCHANAI_REGENI=${POSTERCHANAI_REGENI:-0}
-    - POSTERCHANAI_REGENI_MODEL=${POSTERCHANAI_REGENI_MODEL:-}
   volumes:
     - pc-data:/var/lib/posterchanai
     - pc-rag:/app/data

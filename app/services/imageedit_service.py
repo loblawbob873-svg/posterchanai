@@ -1,29 +1,30 @@
-"""Native instruction-based image-editing service (diffusers OmniGen v1), mirroring video_service.
+"""Native instruction image-editing service: text-grounded auto-mask (CLIPSeg) + SDXL inpaint.
 
-Like image/video gen, this runs IN-PROCESS on the same torch stack (CUDA / Intel XPU / ROCm) — NOT
-a separate HTTP server. OmniGen v1 (`OmniGenPipeline`) is a single unified ~3.8B transformer that
-takes an input image + a natural-language instruction and returns an edited image (maskless, no
-strength dial). It's a stock `diffusers` pipeline, so it shares this venv, the shared
-`GPUResourceLock`, and the `vram_manager` model-swap. The factory (`imageedit_factory.py`) owns the
-load-balancing + GPU lock; this module is just the generator (load → edit → idle-unload).
+`regeni <instruction>` edits an uploaded image WITHOUT a manual mask: CLIPSeg turns the named region
+("hair", "background", "the shirt", "eyes") into a mask from text, then SDXL inpaint regenerates just
+that region from the instruction. This is the PORTABLE editor — SDXL + CLIPSeg use small CLIP text
+encoders (not a 7-8B LLM encoder), so the whole thing is ~8GB and runs on CUDA, Intel XPU and ROCm,
+fitting a 16GB Arc / 12GB card with no offload. It reuses the SAME SDXL checkpoints the web UI uses
+for `geni` (`image_model_path` / `image_anime_model_path`); when the instruction mentions/looks like
+anime, it loads the anime model (the `_is_anime_prompt` keyword set, shared with image gen).
 
-Why OmniGen v1 and not a SOTA editor: the good editors (LongCat/OmniGen2/Qwen-Edit) ship a ~16GB
-Qwen2.5-VL/T5 text encoder that fits neither the 16GB Arc (offload is broken on XPU) nor the 12GB
-nas. OmniGen v1 has NO separate large encoder — verified peak ~9.3GB on the Arc XPU (no offload),
-so it runs on both cards. `regeni_model` is a setting so a SOTA model can replace it on bigger GPUs.
+Strengths: recolour / replace / remove within a region (background, hair colour, eye colour, clothing,
+objects). Weakness: big structural/pose changes (the mask constrains the shape). Shares the app's GPU
+lock + VRAM swap via the factory.
 
-Portability rule (must run on Arc XPU + CUDA + ROCm): stock diffusers + torch SDPA — NO
-flash-attn / xformers / fp8 / GGUF (CUDA-pinned, break Arc/ROCm).
+Portability rule: stock diffusers/transformers + torch SDPA only — NO flash-attn/fp8/GGUF.
 """
 import gc
 import io
 import logging
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional
+from typing import Optional, Tuple
 
-from PIL import Image
+import numpy as np
+from PIL import Image, ImageFilter
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger("imageedit_service")
@@ -34,17 +35,26 @@ if not logger.handlers:
     handler.setFormatter(logging.Formatter('%(asctime)s [REGENI] %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
     logger.addHandler(handler)
 
-DEFAULT_IDLE_TIMEOUT = 300  # unload the edit model after 5 min idle
+DEFAULT_IDLE_TIMEOUT = 300
+SEG_MODEL = "CIDAS/clipseg-rd64-refined"
+# Regions CLIPSeg segments reliably; also used as the fallback target scan when no "change X to Y"
+# pattern matches. "background" is handled specially (it's the inverse of the foreground subject).
+_REGION_WORDS = [
+    "background", "hair", "eyes", "eye", "face", "skin", "lips", "mouth", "nose", "beard",
+    "shirt", "dress", "jacket", "hoodie", "coat", "shorts", "pants", "trousers", "skirt",
+    "shoes", "hat", "cap", "glasses", "sunglasses", "tie", "scarf", "gloves", "socks",
+]
+_ANIME_WORDS = ["anime", "manga", "waifu", "chibi", "kawaii", "moe", "2d", "cel-shaded", "cartoon"]
 
 _instance: Optional["ImageEditService"] = None
-_executor = ThreadPoolExecutor(max_workers=1)  # one GPU task at a time (the GPU lock enforces this too)
+_executor = ThreadPoolExecutor(max_workers=1)
 _load_lock = threading.Lock()
 _idle_thread: Optional[threading.Thread] = None
 _idle_stop = threading.Event()
 
 
 class ImageEditError(Exception):
-    """User-facing image-edit error (disabled, bad config, OOM, runtime error)."""
+    """User-facing image-edit error (disabled, bad config, no target, OOM, runtime error)."""
 
 
 def _get_settings(db: Session) -> dict:
@@ -63,25 +73,56 @@ def _get_settings(db: Session) -> dict:
     return {
         "enabled": str(s.get("regeni_enabled", "false")).lower() == "true",
         "local_enabled": str(s.get("regeni_local_enabled", "true")).lower() == "true",
-        "model": s.get("regeni_model", "Shitao/OmniGen-v1-diffusers") or "Shitao/OmniGen-v1-diffusers",
+        "model_path": s.get("image_model_path", "") or "",
+        "anime_model_path": s.get("image_anime_model_path", "") or "",
         "device": s.get("regeni_gpu_device", "auto") or "auto",
-        "steps": _i("regeni_steps", 25),
-        "guidance": _f("regeni_guidance", 2.0),
-        "img_guidance": _f("regeni_img_guidance", 1.6),
+        "steps": _i("regeni_steps", 30),
+        "strength": _f("regeni_strength", 0.99),
+        "guidance": _f("regeni_guidance", 7.0),
+        "mask_threshold": _i("regeni_mask_threshold", 35),   # 0-255 on the CLIPSeg probability map
+        "mask_dilate": _i("regeni_mask_dilate", 19),         # px to grow the mask (covers the whole region)
         "max_side": _i("regeni_max_side", 1024),
         "idle_timeout": _i("regeni_idle_timeout", DEFAULT_IDLE_TIMEOUT),
     }
 
 
+def _parse_instruction(instruction: str) -> Tuple[Optional[str], str]:
+    """Split an edit instruction into (mask_target, inpaint_prompt). Tries the natural
+    "change/make/replace/turn [the] <target> to/into/with <desc>" shape first; falls back to scanning
+    for a known region word. Returns (None, _) if no region could be identified."""
+    text = instruction.strip()
+    m = re.search(
+        r"\b(?:change|make|replace|turn|swap|give|set|recolou?r|paint)\b\s+"
+        r"(?:the|her|his|their|its|a|an)?\s*(?P<target>.+?)\s+"
+        r"(?:to|into|with|as)\s+(?P<desc>.+)$",
+        text, re.IGNORECASE,
+    )
+    if m:
+        target = re.sub(r"'s$", "", m.group("target").strip())  # drop a possessive 's, keep plurals
+        desc = m.group("desc").strip()
+        # The inpaint prompt describes what the region BECOMES; include the region noun for context.
+        prompt = f"{desc} {target}" if target.split()[-1] not in desc.lower() else desc
+        return target, prompt
+    # Fallback: first known region word present → mask it, inpaint with the whole instruction.
+    low = text.lower()
+    for w in _REGION_WORDS:
+        if re.search(rf"\b{re.escape(w)}\b", low):
+            return w, text
+    return None, text
+
+
+def _is_anime(instruction: str) -> bool:
+    low = instruction.lower()
+    return any(w in low for w in _ANIME_WORDS)
+
+
 def _idle_loop():
     while not _idle_stop.wait(30):
         inst = _instance
-        # Never unload while an edit is in flight (the worker thread holds _pipe across a long
-        # generate that isn't under _load_lock) — that race moves weights to CPU mid-run and yields
-        # "weight is on cpu, different from ... cuda:0". Guard on _pending like the LLM idle-unloader.
+        # Never unload mid-edit (the worker holds the pipe across a generate not under _load_lock).
         if inst and inst._pipe is not None and inst._last_used and inst._pending == 0:
             if time.time() - inst._last_used > inst._idle_timeout:
-                logger.info("Idle timeout reached — unloading edit model")
+                logger.info("Idle timeout reached — unloading edit models")
                 inst.unload_model()
 
 
@@ -95,16 +136,18 @@ def _start_idle():
 
 class ImageEditService:
     def __init__(self):
-        self._pipe = None
-        self._model_id: Optional[str] = None
+        self._pipe = None              # SDXL inpaint pipeline (model-swappable)
+        self._pipe_model: Optional[str] = None  # which checkpoint the pipe holds
+        self._seg = None               # CLIPSeg model (persistent, small)
+        self._seg_proc = None
         self._device: Optional[str] = None
         self._idle_timeout = DEFAULT_IDLE_TIMEOUT
         self._last_used = 0.0
-        self._pending = 0  # in-flight generate count; idle loop won't unload while >0 (race guard)
+        self._pending = 0
         _start_idle()
 
     def is_loaded(self) -> bool:
-        return self._pipe is not None
+        return self._pipe is not None or self._seg is not None
 
     def _resolve_device(self, device_setting: str) -> str:
         from app.services.diffusers_service import detect_device
@@ -117,49 +160,72 @@ class ImageEditService:
             return detect_device()
         return device_setting
 
+    def _ensure_seg(self):
+        if self._seg is not None:
+            return
+        import torch
+        from transformers import CLIPSegProcessor, CLIPSegForImageSegmentation
+        logger.info("Loading CLIPSeg segmentation model ...")
+        self._seg_proc = CLIPSegProcessor.from_pretrained(SEG_MODEL)
+        seg = CLIPSegForImageSegmentation.from_pretrained(SEG_MODEL).eval()
+        if self._device != "cpu":
+            seg = seg.to(self._device)
+        self._seg = seg
+
+    def _ensure_pipe(self, model_path: str):
+        """Load the SDXL inpaint pipeline for `model_path` (swapping if a different checkpoint is up)."""
+        if self._pipe is not None and self._pipe_model == model_path:
+            return
+        import torch
+        from diffusers import StableDiffusionXLInpaintPipeline
+        if self._pipe is not None:
+            self._unload_pipe()
+        dtype = torch.float32 if self._device == "cpu" else torch.bfloat16
+        logger.info(f"Loading SDXL inpaint pipeline {model_path} on {self._device} ...")
+        t0 = time.time()
+        pipe = StableDiffusionXLInpaintPipeline.from_single_file(
+            model_path, torch_dtype=dtype, use_safetensors=model_path.endswith(".safetensors"))
+        if self._device != "cpu":
+            pipe = pipe.to(self._device)
+        try:
+            pipe.vae.enable_tiling()
+        except Exception:
+            pass
+        self._pipe = pipe
+        self._pipe_model = model_path
+        logger.info(f"Inpaint pipeline loaded in {time.time() - t0:.0f}s")
+
     def load_model(self, db: Session):
         cfg = _get_settings(db)
         self._idle_timeout = cfg["idle_timeout"]
-        model_id = cfg["model"]
         with _load_lock:
-            if self._pipe is not None and self._model_id == model_id:
-                return
-            if self._pipe is not None:
-                self.unload_model()
-            import torch
-            from diffusers import OmniGenPipeline
-            device = self._resolve_device(cfg["device"])
-            self._device = device
-            logger.info(f"Loading edit model {model_id} on {device} ...")
-            t0 = time.time()
-            dtype = torch.float32 if device == "cpu" else torch.bfloat16
-            pipe = OmniGenPipeline.from_pretrained(model_id, torch_dtype=dtype)
-            # OmniGen v1 is ~9GB on the GPU — fits the 16GB Arc / 12GB nas fully, so load DIRECT (no
-            # CPU offload: offload is broken on XPU and unnecessary here). Tiled VAE keeps peak down.
-            if device != "cpu":
-                pipe = pipe.to(device)
-            try:
-                pipe.vae.enable_tiling()
-            except Exception:
-                pass
-            self._pipe = pipe
-            self._model_id = model_id
-            # Mark loaded as "used" now so a model that loads but whose first generate fails (e.g.
-            # repeated OOM) still idle-unloads instead of pinning VRAM forever (the idle loop gates
-            # on `_last_used` being truthy).
+            if self._device is None:
+                self._device = self._resolve_device(cfg["device"])
+            self._ensure_seg()
             self._last_used = time.time()
-            logger.info(f"Edit model loaded in {time.time() - t0:.0f}s")
+
+    def _unload_pipe(self):
+        if self._pipe is None:
+            return
+        try:
+            self._pipe.to("cpu")
+        except Exception:
+            pass
+        self._pipe = None
+        self._pipe_model = None
 
     def unload_model(self):
         with _load_lock:
-            if self._pipe is None:
+            if self._pipe is None and self._seg is None:
                 return
-            try:
-                self._pipe.to("cpu")
-            except Exception:
-                pass
-            self._pipe = None
-            self._model_id = None
+            self._unload_pipe()
+            if self._seg is not None:
+                try:
+                    self._seg.to("cpu")
+                except Exception:
+                    pass
+                self._seg = None
+                self._seg_proc = None
             gc.collect()
             try:
                 import torch
@@ -171,64 +237,100 @@ class ImageEditService:
                 pass
             from app.services.vram_manager import reset_vram_mode
             reset_vram_mode()
-            logger.info("Edit model unloaded")
+            logger.info("Edit models unloaded")
+
+    def _segment(self, img: Image.Image, target: str, cfg: dict) -> Image.Image:
+        """CLIPSeg: text target -> a soft binary mask (PIL 'L') the size of `img`."""
+        import torch
+        W, H = img.size
+        # Union a couple of phrasings — CLIPSeg is coarse (352px), so "the X" / "X" catch different
+        # pixels; max-pooling them gives fuller coverage of the region.
+        prompts = [target] if target.lower().startswith("the ") else [target, f"the {target}"]
+        acc = None
+        with torch.no_grad():
+            for p in prompts:
+                si = self._seg_proc(text=[p], images=[img], return_tensors="pt")
+                if self._device != "cpu":
+                    si = {k: v.to(self._device) for k, v in si.items()}
+                logits = self._seg(**si).logits
+                pr = torch.sigmoid(logits).squeeze().float().cpu().numpy()
+                if pr.ndim != 2:
+                    pr = pr[0]
+                pr = np.array(Image.fromarray((pr * 255).astype("uint8")).resize((W, H)))
+                acc = pr if acc is None else np.maximum(acc, pr)
+        prob = acc
+        mask = ((prob > cfg["mask_threshold"]).astype("uint8")) * 255
+        mask_img = Image.fromarray(mask)
+        d = max(1, int(cfg["mask_dilate"]))
+        if d > 1:
+            mask_img = mask_img.filter(ImageFilter.MaxFilter(d if d % 2 else d + 1))
+        return mask_img.filter(ImageFilter.GaussianBlur(6))  # soft edges → seamless inpaint
 
     def generate(self, db: Session, image_bytes: bytes, instruction: str,
-                 steps: Optional[int] = None, guidance: Optional[float] = None,
-                 img_guidance: Optional[float] = None) -> bytes:
-        """Edit `image_bytes` per `instruction`, returns PNG bytes. Blocking — call via the factory's
-        thread + GPU lock."""
+                 steps: Optional[int] = None) -> bytes:
+        """Edit `image_bytes` per `instruction` via auto-mask + SDXL inpaint. Returns PNG bytes.
+        Blocking — call via the factory's thread + GPU lock."""
         cfg = _get_settings(db)
-        # Mark an edit in flight for the WHOLE load+inference span so the idle loop can't unload the
-        # model to CPU underneath us (the device-mismatch race).
+        target, prompt = _parse_instruction(instruction)
+        # Anime keywords steer MODEL choice, not content — strip them from the inpaint prompt so they
+        # don't pollute it ("blue, anime hair" → "blue hair").
+        prompt = re.sub(r"[, ]*\b(" + "|".join(_ANIME_WORDS) + r")\b", "", prompt, flags=re.IGNORECASE).strip(" ,")
+        if not target:
+            raise ImageEditError(
+                "Tell me which part to change, e.g. `change the background to a beach`, "
+                "`change her hair to red`, or `change the eyes to green`.")
+        # Pick the webui SDXL model: anime checkpoint when the instruction looks anime (and one is set).
+        use_anime = _is_anime(instruction) and bool(cfg["anime_model_path"])
+        model_path = cfg["anime_model_path"] if use_anime else cfg["model_path"]
+        if not model_path:
+            raise ImageEditError("No SDXL image model is configured (set it in Admin → Image).")
+
         self._pending += 1
         try:
             self.load_model(db)
+            self._ensure_pipe(model_path)
             import torch
             try:
                 img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
             except Exception as e:
                 raise ImageEditError(f"Couldn't read the input image: {e}")
-            # Clamp the longest side so a huge upload doesn't OOM / take forever (the GPUs are tight).
             ms = max(64, int(cfg["max_side"]))
             if max(img.size) > ms:
                 img.thumbnail((ms, ms))
-            st = int(steps or cfg["steps"])
-            gs = float(guidance if guidance is not None else cfg["guidance"])
-            igs = float(img_guidance if img_guidance is not None else cfg["img_guidance"])
-            # OmniGen references the input image via the <img><|image_1|></img> placeholder in the prompt.
-            prompt = f"<img><|image_1|></img> {instruction.strip()}"
-            logger.info(f"Editing {img.size} steps={st} on {self._device}: {instruction[:60]}")
+            # SDXL wants dims divisible by 8.
+            W, H = img.size
+            W, H = W - (W % 8), H - (H % 8)
+            img = img.crop((0, 0, W, H))
+
             t0 = time.time()
+            mask = self._segment(img, target, cfg)
+            cov = (np.array(mask) > 10).mean() * 100
+            logger.info(f"mask '{target}' = {cov:.1f}% ({'anime' if use_anime else 'base'} model) "
+                        f"on {self._device}: {instruction[:50]}")
+            if cov < 0.3:
+                raise ImageEditError(
+                    f"Couldn't find '{target}' in the image to edit. Try naming a clearer region "
+                    f"(e.g. background, hair, eyes, shirt).")
             try:
-                result = self._pipe(
+                out = self._pipe(
                     prompt=prompt,
-                    input_images=[img],
-                    guidance_scale=gs,
-                    img_guidance_scale=igs,
-                    num_inference_steps=st,
-                    # Honour the configured max side: OmniGen otherwise caps the input at its internal
-                    # default (1024), so a higher regeni_max_side would silently have no effect.
-                    max_input_image_size=ms,
-                    use_input_image_size_as_output=True,
-                )
+                    negative_prompt="lowres, bad anatomy, deformed, blurry, watermark",
+                    image=img, mask_image=mask,
+                    strength=float(cfg["strength"]),
+                    num_inference_steps=int(steps or cfg["steps"]),
+                    guidance_scale=float(cfg["guidance"]),
+                    height=H, width=W,
+                ).images[0]
             except Exception as e:
                 msg = str(e)
                 if "OUT_OF" in msg or "out of memory" in msg.lower() or "OutOfMemory" in msg:
                     raise ImageEditError(
                         "Ran out of GPU memory editing the image. Try a smaller image or lower "
-                        "regeni_max_side in Admin → Image."
-                    )
+                        "regeni_max_side in Admin → Image.")
                 raise ImageEditError(f"Image edit failed: {e}")
             self._last_used = time.time()
-            # Guard against an empty/None images list (safety filter / pipeline edge case) so callers
-            # get a clean error rather than a raw IndexError.
-            imgs = getattr(result, "images", None)
-            if not imgs:
-                raise ImageEditError("The edit model returned no image.")
-            out_img = imgs[0]
             buf = io.BytesIO()
-            out_img.save(buf, format="PNG")
+            out.save(buf, format="PNG")
             logger.info(f"Edited image in {time.time() - t0:.0f}s")
             return buf.getvalue()
         finally:

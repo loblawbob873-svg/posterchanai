@@ -214,17 +214,13 @@ async def startup():
             except Exception as e:
                 logging.error(f"Error seeding video settings: {e}")
 
-        # Turnkey Docker image editing: when POSTERCHANAI_REGENI=1, auto-enable native instruction
-        # editing (regeni) and (optionally) point regeni_model at POSTERCHANAI_REGENI_MODEL. The
-        # model auto-downloads to HF_HOME on first use. Only seeds keys the admin hasn't set.
+        # Turnkey Docker image editing: when POSTERCHANAI_REGENI=1, auto-enable regeni (auto-mask +
+        # SDXL inpaint). It reuses the geni SDXL model — no edit model to configure. Only seeds keys
+        # the admin hasn't set.
         if os.environ.get("POSTERCHANAI_REGENI", "0") == "1":
             try:
                 _db = SessionLocal()
-                _rdefaults = {"regeni_enabled": "true", "regeni_local_enabled": "true"}
-                _rm = os.environ.get("POSTERCHANAI_REGENI_MODEL")
-                if _rm:
-                    _rdefaults["regeni_model"] = _rm
-                for _k, _v in _rdefaults.items():
+                for _k, _v in {"regeni_enabled": "true", "regeni_local_enabled": "true"}.items():
                     if not _db.query(Setting).filter(Setting.key == _k).first():
                         _db.add(Setting(key=_k, value=_v))
                 _db.commit()

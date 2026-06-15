@@ -1,18 +1,18 @@
 #!/bin/bash
 # Image editing (regeni) setup module for install.sh.  Run via:  ./install.sh --regeni
 #
-# Like videogeni, instruction editing runs NATIVELY in-process on the SAME diffusers/torch stack as
-# image generation — OmniGen v1 is a stock `diffusers` pipeline (OmniGenPipeline, shipped in
-# diffusers>=0.38.0). So there's no extra venv or service and NO new deps beyond the image stack
-# (transformers + sentencepiece, already required for video). We just ensure the stack is present
-# and optionally pre-fetch the ~9GB model. Editing shares the app's GPU lock + VRAM swap
-# (prepare_for_imageedit) and load-balances to other nodes via /api/edit-image.
+# regeni = text-grounded auto-mask (CLIPSeg) + SDXL inpaint. It runs NATIVELY in-process on the SAME
+# diffusers/torch stack as image generation and REUSES the geni SDXL checkpoints (image_model_path /
+# image_anime_model_path) — there's no separate edit model. So there are NO new pip deps: CLIPSeg is
+# a `transformers` model and inpaint is diffusers' StableDiffusionXLInpaintPipeline, both already in
+# the image venv. We just make sure the stack is present and optionally prefetch the small (~1.2GB)
+# CLIPSeg model. Editing shares the app's GPU lock + VRAM swap and load-balances via /api/edit-image.
 #
-# Why OmniGen v1 (not a SOTA editor): the good editors (LongCat/OmniGen2/Qwen-Edit) ship a ~16GB
-# Qwen2.5-VL text encoder that fits neither a 16GB Arc (offload is broken on XPU) nor a 12GB card.
-# OmniGen v1 has no separate large encoder — ~9GB total, fits both, runs on CUDA + Intel XPU.
+# Why this design: SDXL + CLIPSeg use small CLIP text encoders (not a 7-8B LLM encoder), so the whole
+# thing is ~8GB and is PORTABLE across CUDA, Intel XPU and AMD ROCm — it fits a 16GB Arc / 12GB card
+# with no offload, where every big editor (Qwen-Edit/Flux.2/LongCat) does not.
 #
-# Portability: stock diffusers + torch SDPA only — NO flash-attn/xformers/fp8/GGUF (CUDA-pinned).
+# Portability: stock diffusers/transformers + torch SDPA only — NO flash-attn/fp8/GGUF.
 
 # Pick the venv that holds the diffusers/image stack (intel = venv-unified; otherwise venv).
 _regeni_pick_venv() {
@@ -24,62 +24,35 @@ _regeni_pick_venv() {
 }
 
 setup_regeni_deps() {
-    print_step "Installing image editing (regeni) dependencies..."
+    print_step "Setting up image editing (regeni)..."
     local VENV_NAME
     VENV_NAME="$(_regeni_pick_venv)" || { print_warning "No image/diffusers venv found — run the image-generation install first, then ./install.sh --regeni"; return 1; }
     print_step "Using venv: $VENV_NAME"
     source "$SCRIPT_DIR/$VENV_NAME/bin/activate"
 
-    # The diffusers stack (shared with native image gen). diffusers>=0.38.0 ships OmniGenPipeline;
-    # transformers<5 for SDXL compatibility; sentencepiece for the Phi-3 tokenizer.
-    pip install "transformers<5" "diffusers>=0.38.0" accelerate safetensors sentencepiece -q \
+    # The diffusers/transformers stack (shared with native image gen). CLIPSeg + SDXL inpaint need no
+    # extra packages — just ensure the stack is present.
+    pip install "transformers<5" "diffusers>=0.38.0" accelerate safetensors -q \
         || print_warning "diffusers stack install had issues"
+    print_success "Image-edit deps present (CLIPSeg + SDXL inpaint — no extra packages)"
 
-    # torchvision IS REQUIRED: diffusers only binds OmniGen's multimodal processor when
-    # is_torchvision_available() is true (else a runtime "OmniGenMultiModalProcessor is not defined").
-    # Install the torchvision matching THIS venv's torch build, from the SAME wheel index, WITHOUT
-    # touching torch (--no-deps) so we never drag in a mismatched torch.
-    if python -c "from diffusers.utils import is_torchvision_available; import sys; sys.exit(0 if is_torchvision_available() else 1)" 2>/dev/null; then
-        print_success "torchvision present (OmniGen multimodal processor will load)"
-    else
-        print_step "torchvision missing — installing the wheel matching your torch build..."
-        local TV_INDEX
-        TV_INDEX="$(python - <<'PY'
-import torch
-v = torch.__version__  # e.g. 2.11.0+cu130 / 2.8.0+xpu / 2.4.1+rocm6.1
-tag = v.split('+')[-1] if '+' in v else ''
-base = "https://download.pytorch.org/whl/"
-if tag.startswith('cu') or tag.startswith('xpu') or tag.startswith('rocm'):
-    print(base + tag)
-else:
-    print("")  # CPU/unknown — let pip resolve from PyPI
-PY
-)"
-        if [ -n "$TV_INDEX" ]; then
-            pip install torchvision --index-url "$TV_INDEX" --no-deps -q \
-                || print_warning "torchvision install from $TV_INDEX failed — install it manually (must match torch)"
-        else
-            pip install torchvision --no-deps -q || print_warning "torchvision install failed"
-        fi
-        python -c "from diffusers.utils import is_torchvision_available; assert is_torchvision_available()" 2>/dev/null \
-            && print_success "torchvision installed" \
-            || print_error "torchvision still not detected — regeni will fail until it's installed to match torch"
+    # regeni reuses your geni SDXL models — warn if none is configured yet.
+    if [ -d "$SCRIPT_DIR/models" ] && ! ls "$SCRIPT_DIR/models"/*.safetensors >/dev/null 2>&1; then
+        print_warning "No SDXL model found in ./models — regeni reuses the geni Image Model (set it in Admin -> Image)."
     fi
 
-    # Optional: pre-fetch the model (~9GB) so the first regeni isn't a long download. Otherwise
-    # diffusers auto-downloads it to HF_HOME on first use (like the image model).
-    local MODEL="${REGENI_MODEL:-Shitao/OmniGen-v1-diffusers}"
-    local DL_REGENI="${REGENI_PREFETCH:-}"
-    if [ -z "$DL_REGENI" ]; then
-        read -p "Pre-download the edit model now ($MODEL, ~9GB)? It downloads on first regeni otherwise. [y/N]: " DL_REGENI
+    # Prefetch the small CLIPSeg segmentation model (~1.2GB) so the first regeni isn't a download.
+    local DL="${REGENI_PREFETCH:-}"
+    if [ -z "$DL" ]; then
+        read -p "Pre-download the CLIPSeg mask model now (~1.2GB)? It downloads on first regeni otherwise. [Y/n]: " DL
     fi
-    if [[ "$DL_REGENI" =~ ^[Yy] ]]; then
-        print_step "Downloading $MODEL into the Hugging Face cache..."
-        python -c "from huggingface_hub import snapshot_download; snapshot_download('$MODEL')" \
-            && print_success "Edit model cached" \
-            || print_warning "Model prefetch failed — it will download on first use instead"
+    if [[ ! "$DL" =~ ^[Nn] ]]; then
+        print_step "Downloading CIDAS/clipseg-rd64-refined ..."
+        python -c "from huggingface_hub import snapshot_download; snapshot_download('CIDAS/clipseg-rd64-refined')" \
+            && print_success "CLIPSeg cached" \
+            || print_warning "CLIPSeg prefetch failed — it will download on first use instead"
     fi
     deactivate
-    print_success "Image editing ready — enable it in Admin -> Image and use 'regeni <instruction>'"
+    print_success "Image editing ready — enable it in Admin -> Image and use 'regeni <instruction>' (e.g. 'change the background to a beach')"
     return 0
 }
