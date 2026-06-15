@@ -31,10 +31,40 @@ setup_regeni_deps() {
     source "$SCRIPT_DIR/$VENV_NAME/bin/activate"
 
     # The diffusers stack (shared with native image gen). diffusers>=0.38.0 ships OmniGenPipeline;
-    # transformers<5 for SDXL compatibility; sentencepiece for the Phi-3 tokenizer. No regeni-only deps.
+    # transformers<5 for SDXL compatibility; sentencepiece for the Phi-3 tokenizer.
     pip install "transformers<5" "diffusers>=0.38.0" accelerate safetensors sentencepiece -q \
         || print_warning "diffusers stack install had issues"
-    print_success "Image-edit deps present (diffusers ships OmniGenPipeline — no extra deps)"
+
+    # torchvision IS REQUIRED: diffusers only binds OmniGen's multimodal processor when
+    # is_torchvision_available() is true (else a runtime "OmniGenMultiModalProcessor is not defined").
+    # Install the torchvision matching THIS venv's torch build, from the SAME wheel index, WITHOUT
+    # touching torch (--no-deps) so we never drag in a mismatched torch.
+    if python -c "from diffusers.utils import is_torchvision_available; import sys; sys.exit(0 if is_torchvision_available() else 1)" 2>/dev/null; then
+        print_success "torchvision present (OmniGen multimodal processor will load)"
+    else
+        print_step "torchvision missing — installing the wheel matching your torch build..."
+        local TV_INDEX
+        TV_INDEX="$(python - <<'PY'
+import torch
+v = torch.__version__  # e.g. 2.11.0+cu130 / 2.8.0+xpu / 2.4.1+rocm6.1
+tag = v.split('+')[-1] if '+' in v else ''
+base = "https://download.pytorch.org/whl/"
+if tag.startswith('cu') or tag.startswith('xpu') or tag.startswith('rocm'):
+    print(base + tag)
+else:
+    print("")  # CPU/unknown — let pip resolve from PyPI
+PY
+)"
+        if [ -n "$TV_INDEX" ]; then
+            pip install torchvision --index-url "$TV_INDEX" --no-deps -q \
+                || print_warning "torchvision install from $TV_INDEX failed — install it manually (must match torch)"
+        else
+            pip install torchvision --no-deps -q || print_warning "torchvision install failed"
+        fi
+        python -c "from diffusers.utils import is_torchvision_available; assert is_torchvision_available()" 2>/dev/null \
+            && print_success "torchvision installed" \
+            || print_error "torchvision still not detected — regeni will fail until it's installed to match torch"
+    fi
 
     # Optional: pre-fetch the model (~9GB) so the first regeni isn't a long download. Otherwise
     # diffusers auto-downloads it to HF_HOME on first use (like the image model).

@@ -26,6 +26,14 @@ pillow
 sentencepiece
 ftfy
 # Image editing (regeni — OmniGen v1 via diffusers' OmniGenPipeline, same venv as image gen):
-#   NO new deps — diffusers>=0.38.0 ships OmniGenPipeline; the Phi-3 text path uses transformers +
-#   sentencepiece (already above). NO flash-attn (CUDA-pinned; breaks Arc/ROCm — runs fine without).
-#   ~9GB on the GPU, fits a 16GB Arc / 12GB card with no offload. See docs / Admin → Image.
+#   Needs diffusers>=0.38.0 (ships OmniGenPipeline) + the Phi-3 text path (transformers +
+#   sentencepiece, already above). NO flash-attn (CUDA-pinned; breaks Arc/ROCm — runs fine without).
+#   ~9GB on the GPU, fits a 16GB Arc / 12GB card with no offload.
+#   **torchvision IS REQUIRED**: diffusers only binds OmniGen's multimodal processor when
+#   `is_torchvision_available()` is true — without it you get a runtime
+#   `NameError: name 'OmniGenMultiModalProcessor' is not defined`. Install the torchvision that
+#   MATCHES your torch build FROM THE SAME INDEX as torch (do NOT `pip install torchvision` bare —
+#   it can drag in a mismatched torch). Examples:
+#     XPU:  pip install torchvision --index-url https://download.pytorch.org/whl/xpu
+#     CUDA: pip install torchvision --index-url https://download.pytorch.org/whl/cu130   (match cuXXX)
+#   (`./install.sh --regeni` checks for it and installs the matching wheel.)
