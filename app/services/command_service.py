@@ -559,6 +559,7 @@ class CommandService:
         "geni": "Generate image: geni <prompt>",
         "musicgeni": "Generate a song: musicgeni <style prompt> [| lyrics]",
         "videogeni": "Generate a short video: videogeni <prompt>",
+        "narrate": "Reply as a spoken (TTS) audio message: narrate <message>",
         "yt": "YouTube search: yt <query>",
         "ytdl": "Download YouTube, X, or Nitter: ytdl <url> (MP3 default), ytdl mp3/video <url>. For video, add clip <start> <end> and/or compress, e.g. ytdl video <url> clip 0:10 0:30 compress",
         "torrents": "Torrent search: torrents <query>",
@@ -919,6 +920,8 @@ class CommandService:
             return await self._musicgeni_command(arg, stop_check)
         elif command == "videogeni":
             return await self._videogeni_command(arg, stop_check)
+        elif command == "narrate":
+            return await self._narrate_command(arg, stop_check)
         elif command == "yt":
             return await self._youtube_command(arg)
         elif command == "ytdl":
@@ -1480,6 +1483,76 @@ class CommandService:
             "audio": _b64.b64encode(audio_bytes).decode(),
             "format": ext,
             "prompt": prompt,
+        }
+
+    async def _narrate_command(self, arg: str, stop_check: Optional[callable] = None) -> dict:
+        """Reply as a spoken TTS message wrapped in a branded MP4. `narrate <message>`.
+
+        Generates an AI reply (instructed to be clean/spoken — no emojis/hashtags/markdown),
+        speaks it via TTSService, then wraps the audio in a branded PosterChan video with the
+        end-card outro 'watermark' (same `make_music_video` path as musicgeni). Returns the shared
+        `generated_video` shape (web UI renders <video>, Telegram sends via send_video); falls back
+        to `generated_audio`, then plain text, if TTS/ffmpeg are unavailable."""
+        if not arg or not arg.strip():
+            return {
+                "type": "text",
+                "content": "Please provide a message. Example: `narrate tell me a fun fact`",
+            }
+
+        # Generate an AI reply, kept short and clean so it reads well aloud.
+        messages = [
+            {"role": "system", "content": (
+                "You are a helpful assistant whose reply will be read aloud as speech. "
+                "Answer in 1-4 short, natural sentences. Do NOT use emojis, hashtags, markdown, "
+                "URLs, code blocks, or special formatting — plain spoken English only."
+            )},
+            {"role": "user", "content": arg.strip()},
+        ]
+        reply_text = await self.chat_service.chat(messages)
+        if not reply_text or reply_text.startswith("Error:"):
+            return {"type": "text", "content": reply_text or "Failed to generate a reply."}
+        reply_text = reply_text.strip()
+
+        if stop_check and stop_check():
+            return {"type": "text", "content": "Cancelled."}
+
+        # Speak the reply (edge-tts → base64 MP3).
+        from app.services.tts_service import TTSService
+        audio_b64 = await TTSService(self.db).generate_speech(reply_text)
+        if not audio_b64:
+            # TTS unavailable — at least return the text reply.
+            return {"type": "text", "content": reply_text}
+
+        import base64 as _b64
+        import asyncio as _asyncio
+        from app.services import media_service
+
+        audio_bytes = _b64.b64decode(audio_b64)
+        # Wrap the speech in a branded video with the end-card outro 'watermark' (title="" → only
+        # PosterChan branding on the background), mirroring musicgeni's make_music_video path.
+        try:
+            video_bytes = await _asyncio.to_thread(
+                media_service.make_music_video, audio_bytes, "mp3", "", 1280, 720, True
+            )
+        except Exception as e:
+            logger.warning(f"narrate video wrap failed, falling back to audio: {e}")
+            video_bytes = b""
+
+        if video_bytes:
+            return {
+                "type": "generated_video",
+                "content": reply_text,
+                "video": _b64.b64encode(video_bytes).decode(),
+                "format": "mp4",
+                "prompt": arg.strip(),
+            }
+        # Fallback: deliver the raw speech audio if video wrapping wasn't possible (e.g. no ffmpeg).
+        return {
+            "type": "generated_audio",
+            "content": reply_text,
+            "audio": audio_b64,
+            "format": "mp3",
+            "prompt": arg.strip(),
         }
 
     async def _videogeni_command(self, arg: str, stop_check: Optional[callable] = None) -> dict:
