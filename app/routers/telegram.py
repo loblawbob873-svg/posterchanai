@@ -1330,6 +1330,7 @@ def _recover_post_text(callback_query: dict) -> str:
 # After tapping "🖼 Meme" on an image upload, ForceReply for the caption text; the
 # source image stays in the media cache and is captioned when the reply arrives.
 _MEME_PROMPT = "🖼 Meme — reply with the caption text to add:"
+_REGENI_PROMPT = "🪄 AI edit — reply with the change you want (e.g. give her red sunglasses):"
 # After picking a motion then "✍️ Add text", ForceReply for the caption; the chosen
 # effect + motion + the cached upload are remembered, and on the reply the effect
 # renders with the motion and the caption burned on.
@@ -1428,6 +1429,9 @@ def _media_action_keyboard(attachments: list, user=None) -> Optional[dict]:
         ])
         rows.append([
             {"text": "✂️ Remove background", "callback_data": "media:removebackground"},
+        ])
+        rows.append([
+            {"text": "🪄 Edit (AI)", "callback_data": "media:regeni"},
         ])
         rows.append([
             {"text": "✨ Effects", "callback_data": "media:effects"},
@@ -1912,6 +1916,44 @@ async def _handle_telegram_update(update: dict, db: Session):
                     await telegram_service.send_message(chat_id, f"❌ Meme failed: {_meme_err}")
                 return {"ok": True}
 
+            # Reply to the "🪄 AI edit" prompt → run regeni on the cached image with the instruction.
+            if reply_from.get("is_bot") and reply_text.strip() == _REGENI_PROMPT:
+                from app.services.media_service import is_image
+                _entry = _media_action_cache.get(chat_id)
+                if not _entry or (time.time() - _entry.get("ts", 0)) > _MEDIA_ACTION_TTL:
+                    _media_action_cache.pop(chat_id, None)
+                    await telegram_service.send_message(chat_id, "⏳ That upload expired — please send the image again.")
+                    return {"ok": True}
+                _instruction = text.strip()
+                if not _instruction:
+                    await telegram_service.send_message(
+                        chat_id, "⚠️ Empty instruction. " + _REGENI_PROMPT,
+                        reply_markup={"force_reply": True, "selective": True,
+                                      "input_field_placeholder": "change the shirt to red"},
+                    )
+                    return {"ok": True}
+                _regeni_user = db.query(User).filter(
+                    User.telegram_chat_id == chat_id,
+                    User.telegram_enabled == True
+                ).first()
+                if not _regeni_user:
+                    await telegram_service.send_message(chat_id, "Your Telegram account is not linked.")
+                    return {"ok": True}
+                _atts = [a for a in _entry["attachments"] if is_image(a[0], a[2])]
+                await telegram_service.send_message(chat_id, "🪄 Editing…")
+                try:
+                    _res = await CommandService(db, user=_regeni_user).execute_command(
+                        "regeni", _instruction, attachments=_atts
+                    )
+                    if _res.get("type") == "files":
+                        await _deliver_files_result(chat_id, _regeni_user, _res, offer_share=True)
+                    else:
+                        await telegram_service.send_message(chat_id, _res.get("content", "Done."))
+                except Exception as _regeni_err:
+                    logger.error(f"regeni failed: {_regeni_err}", exc_info=True)
+                    await telegram_service.send_message(chat_id, f"❌ Edit failed: {_regeni_err}")
+                return {"ok": True}
+
             # Reply to the effect caption prompt → the motion was already chosen (held in
             # _effect_caption_pending["motion"]); render the effect with motion + caption.
             if reply_from.get("is_bot") and reply_text.strip() == _EFFECT_CAPTION_PROMPT:
@@ -2140,7 +2182,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "musicgeni", "videogeni", "narrate", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "removebackground", "compress", "clip", "convert", "flashcards", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
+            commands = ["help", "new", "ytdl", "geni", "musicgeni", "videogeni", "narrate", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "removebackground", "regeni", "compress", "clip", "convert", "flashcards", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -2372,7 +2414,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "musicgeni", "videogeni", "narrate", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "removebackground", "compress", "clip", "convert", "flashcards", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
+            commands = ["help", "new", "ytdl", "geni", "musicgeni", "videogeni", "narrate", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "removebackground", "regeni", "compress", "clip", "convert", "flashcards", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -2601,7 +2643,7 @@ async def _handle_telegram_update(update: dict, db: Session):
 
             # If we have images, always run OCR for later use
             # (skip for compress/convert — they operate on the raw file, not its text)
-            if has_images and attachments and command not in ("compress", "removebackground", "clip", "convert", "flashcards", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz"):
+            if has_images and attachments and command not in ("compress", "removebackground", "regeni", "clip", "convert", "flashcards", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz"):
                 for filename, file_data, content_type in attachments:
                     if content_type.startswith("image/"):
                         import base64
@@ -2648,7 +2690,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Attachment too large for Telegram to hand to the bot (20 MB cap).
             # Handle here so it works whether or not a command caption was given,
             # instead of falling through to the chat model.
-            if oversized_attachment and command in ("compress", "removebackground", "clip", "convert", "flashcards", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", None):
+            if oversized_attachment and command in ("compress", "removebackground", "regeni", "clip", "convert", "flashcards", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", None):
                 _ov_name, _ov_size = oversized_attachment
                 _cap_mb = TELEGRAM_MAX_DOWNLOAD_BYTES / (1024 * 1024)
                 if telegram_service.is_local_api:
@@ -3947,6 +3989,17 @@ async def _handle_telegram_update(update: dict, db: Session):
                         _imgs = [a for a in _atts if is_image(a[0], a[2])]
                         await telegram_service.send_message(chat_id, "✂️ Removing background…")
                         await _send_files_result(await cb_command_service.execute_command("removebackground", "", attachments=_imgs), offer_share=False)
+                    elif _action == "regeni":
+                        # regeni needs an instruction → ask for it via ForceReply; the cached image
+                        # is edited when the reply arrives (see _REGENI_PROMPT routing).
+                        if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                            await telegram_service.send_message(chat_id, "Nothing to edit — that upload has no image.")
+                        else:
+                            await telegram_service.send_message(
+                                chat_id, _REGENI_PROMPT,
+                                reply_markup={"force_reply": True, "selective": True,
+                                              "input_field_placeholder": "change the shirt to red"},
+                            )
                     elif _action == "topdf":
                         _imgs = [a for a in _atts if is_image(a[0], a[2])]
                         await _send_files_result(await cb_command_service.execute_command("convert", "pdf", attachments=_imgs), offer_share=False)

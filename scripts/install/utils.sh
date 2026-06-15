@@ -153,6 +153,8 @@ show_help() {
     echo "  --help, -h       Show this help message"
     echo "  --packages       Show required packages for your distro"
     echo "  --music          Set up the ACE-Step music server (venv-music) for musicgeni"
+    echo "  --video          Add native text-to-video (videogeni) deps to the image venv"
+    echo "  --regeni         Add native instruction image-editing (regeni) deps to the image venv"
     echo ""
     echo "Installation Types:"
     echo "  Full Stack       LLM + Image Generation (recommended)"

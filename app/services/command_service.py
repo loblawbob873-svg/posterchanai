@@ -571,6 +571,7 @@ class CommandService:
         "4chan": "4chan browser: 4chan [g|pol|h] - view catalog",
         "compress": "Compress attached image(s) or video(s)",
         "removebackground": "Remove the background from an attached image (transparent PNG): removebackground",
+        "regeni": "Edit an attached image with a text instruction: regeni <instruction> (e.g. regeni give her red sunglasses)",
         "clip": "Clip an attached video: clip <start> <end> (e.g. clip 0:10 0:30)",
         "convert": "Convert image(s) to PDF or a PDF to images",
         "flashcards": "Make an interactive multiple-choice study quiz from an attached PDF, image, or slide deck",
@@ -669,6 +670,8 @@ class CommandService:
         "removebg": "removebackground",
         "rmbg": "removebackground",
         "nobg": "removebackground",
+        "imgedit": "regeni",
+        "reedit": "regeni",
     }
 
     # Effects that accept a trailing motion arg (`zoom` Ken Burns pan-out or
@@ -948,6 +951,8 @@ class CommandService:
             return await self._compress_command(attachments)
         elif command == "removebackground":
             return await self._removebackground_command(attachments)
+        elif command == "regeni":
+            return await self._regeni_command(arg, attachments)
         elif command == "clip":
             return await self._clip_command(arg, attachments)
         elif command == "convert":
@@ -3752,6 +3757,38 @@ Files are saved to your Storage.""",
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
+
+    async def _regeni_command(self, arg: str, attachments: Optional[list]) -> dict:
+        """Edit an attached image with a natural-language instruction (OmniGen, maskless):
+        `regeni <instruction>` — e.g. `regeni change her hair to red`. Routed through
+        imageedit_factory (node→node LB + shared GPU lock + VRAM swap)."""
+        from pathlib import Path
+        from app.services.media_service import is_image
+        from app.services.imageedit_factory import edit_image_for_user
+        from app.services.imageedit_service import ImageEditError
+
+        img = next((a for a in (attachments or []) if is_image(a[0], a[2])), None)
+        if img is None:
+            return {
+                "type": "text",
+                "content": "Attach an image, then send `regeni <instruction>` — e.g. `regeni give her red sunglasses`.",
+            }
+        if not (arg or "").strip():
+            return {
+                "type": "text",
+                "content": "Usage: `regeni <instruction>` — describe the edit, e.g. `regeni change the shirt to red`.",
+            }
+        filename, data, _ct = img
+        try:
+            png = await edit_image_for_user(db=self.db, image_bytes=data, instruction=arg.strip())
+        except ImageEditError as e:
+            return {"type": "text", "content": f"❌ {e}"}
+        except Exception as e:
+            logger.error(f"regeni failed: {e}", exc_info=True)
+            return {"type": "text", "content": f"Image edit error: {e}"}
+        stem = Path(filename).stem or "image"
+        out = {"filename": f"{stem}_regeni.png", "data": png, "content_type": "image/png"}
+        return {"type": "files", "content": f"## ✨ Edited\n\n✨ {arg.strip()}", "files": [out]}
 
     async def _clip_command(self, arg: str, attachments: Optional[list]) -> dict:
         """Trim an attached video to a [start, end] span: `clip <start> <end>`.

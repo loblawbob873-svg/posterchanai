@@ -25,3 +25,7 @@ pillow
 #   ftfy is optional prompt cleanup. (protobuf is already pulled in transitively.)
 sentencepiece
 ftfy
+# Image editing (regeni — OmniGen v1 via diffusers' OmniGenPipeline, same venv as image gen):
+#   NO new deps — diffusers>=0.38.0 ships OmniGenPipeline; the Phi-3 text path uses transformers +
+#   sentencepiece (already above). NO flash-attn (CUDA-pinned; breaks Arc/ROCm — runs fine without).
+#   ~9GB on the GPU, fits a 16GB Arc / 12GB card with no offload. See docs / Admin → Image.

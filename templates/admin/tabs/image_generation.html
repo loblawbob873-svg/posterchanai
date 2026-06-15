@@ -131,4 +131,89 @@
             <button type="button" id="refreshImageQueueBtn" class="btn-secondary">Refresh Status</button>
         </div>
     </fieldset>
+
+    <fieldset>
+        <legend>Image Editing (regeni — instruction editing, native diffusers)</legend>
+        <p class="vram-info">
+            Edit an uploaded image from a text instruction (<code>regeni change her hair to red</code>)
+            — maskless, no strength dial. Runs <strong>natively in-process</strong> on this box's GPU
+            (shares the GPU lock + VRAM swap: chat/image/music/video/edit all
+            <strong>queue as one GPU task at a time per node</strong>). Default model is
+            <code>OmniGen v1</code> (~9&nbsp;GB, fits a 16&nbsp;GB Arc / 12&nbsp;GB card with no
+            offload; runs on CUDA + Intel XPU). Available in the web UI, Telegram, Matrix and the
+            Pleroma bot. Editing an uploaded photo is an abuse surface — keep this off unless you want
+            it; the Pleroma path applies the CSAM/bad-word gate to the instruction.
+        </p>
+        <div class="form-group">
+            <label class="checkbox-label">
+                <input type="checkbox" id="regeni_enabled" name="regeni_enabled">
+                <span>Enable image editing (regeni)</span>
+            </label>
+            <small>Off by default. When off, <code>regeni</code> returns a friendly notice.</small>
+        </div>
+        <div class="form-group">
+            <label class="checkbox-label">
+                <input type="checkbox" id="regeni_local_enabled" name="regeni_local_enabled">
+                <span>Edit on this server's GPU</span>
+            </label>
+            <small>The native diffusers path on this node. Turn off to forward to remote nodes only.</small>
+        </div>
+        <div class="form-group">
+            <label for="regeni_server_urls">Remote Edit Servers (load balancing)</label>
+            <input type="text" id="regeni_server_urls" name="regeni_server_urls" placeholder="http://node2:3051, http://node3:3051">
+            <small>Optional comma-separated OTHER posterchanai nodes. Tried round-robin via their
+                <code>/api/edit-image</code> (each frees its own GPU first); falls back to the local
+                GPU. Same pattern as Image/Video Server URLs.</small>
+        </div>
+        <div class="form-group">
+            <label for="regeni_gpu_device">Local GPU Device</label>
+            <select id="regeni_gpu_device" name="regeni_gpu_device">
+                <option value="auto">Auto-detect</option>
+                <option value="cuda">CUDA (NVIDIA/AMD)</option>
+                <option value="xpu">XPU (Intel Arc)</option>
+                <option value="cpu">CPU</option>
+            </select>
+            <small>Which lock the local edit uses (GPU vs CPU).</small>
+        </div>
+        <div class="form-group">
+            <label for="regeni_model">Edit Model</label>
+            <input type="text" id="regeni_model" name="regeni_model" placeholder="Shitao/OmniGen-v1-diffusers">
+            <small>HF id or local path of the diffusers instruction-edit model. Default
+                <code>Shitao/OmniGen-v1-diffusers</code> (unified ~3.8B, no separate large text
+                encoder, fits both cards). A SOTA editor (LongCat/Qwen-Edit) needs a 24&nbsp;GB+ GPU —
+                swap the id here once you have one. Stay on stock diffusers for Arc/ROCm portability.</small>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="regeni_steps">Diffusion Steps</label>
+                <input type="number" id="regeni_steps" name="regeni_steps" value="25" min="1" max="100">
+                <small>OmniGen: ~25 is the quality/speed sweet spot (≈73s on a 16GB Arc).</small>
+            </div>
+            <div class="form-group">
+                <label for="regeni_guidance">Text Guidance</label>
+                <input type="number" id="regeni_guidance" name="regeni_guidance" value="2.0" min="1" max="10" step="0.5">
+            </div>
+            <div class="form-group">
+                <label for="regeni_img_guidance">Image Guidance</label>
+                <input type="number" id="regeni_img_guidance" name="regeni_img_guidance" value="1.6" min="1" max="3" step="0.1">
+                <small>OmniGen edit: 1.2–2.0. Higher = closer to the original image.</small>
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="regeni_max_side">Max Input Side (px)</label>
+                <input type="number" id="regeni_max_side" name="regeni_max_side" value="1024" min="256" max="2048" step="64">
+                <small>Clamp the uploaded image's longest side to keep VRAM/time in budget.</small>
+            </div>
+            <div class="form-group">
+                <label for="regeni_timeout">Timeout (ms)</label>
+                <input type="number" id="regeni_timeout" name="regeni_timeout" value="300000">
+            </div>
+            <div class="form-group">
+                <label for="regeni_idle_timeout">Idle Unload (s)</label>
+                <input type="number" id="regeni_idle_timeout" name="regeni_idle_timeout" value="300" min="30">
+                <small>Unload the edit model after this many seconds idle.</small>
+            </div>
+        </div>
+    </fieldset>
 </div>

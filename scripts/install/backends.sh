@@ -7,6 +7,7 @@ INSTALL_LLM=0
 INSTALL_IMAGE=0
 INSTALL_MUSIC=0            # optional ACE-Step music server (musicgeni)
 INSTALL_VIDEO=0            # optional native text-to-video deps (videogeni)
+INSTALL_REGENI=0          # optional native instruction image-editing deps (regeni)
 INSTALL_TELEGRAM_BOTAPI=0  # optional local Telegram Bot API server (large files)
 TELEGRAM_ONLY=0            # option 5: set up ONLY the Bot API server (add-on)
 UPDATE_ONLY=0             # option 6: update deps + Telegram server, then exit
@@ -111,6 +112,15 @@ select_components() {
     if [[ "$WANT_VIDEO" =~ ^[Yy] ]]; then
         INSTALL_VIDEO=1
         echo -e "  ${GREEN}✓ Will install video generation deps${NC}"
+    fi
+
+    # Offer instruction image editing (regeni). NATIVE diffusers (OmniGen v1) — rides the image venv,
+    # no extra deps beyond the stack, ~9GB model. Works on CUDA/Arc-XPU/ROCm (fits 12-16GB).
+    echo ""
+    read -p "Set up image editing (regeni)? Native diffusers, shares the image GPU, ~9GB model [y/N]: " WANT_REGENI
+    if [[ "$WANT_REGENI" =~ ^[Yy] ]]; then
+        INSTALL_REGENI=1
+        echo -e "  ${GREEN}✓ Will install image editing deps${NC}"
     fi
 }
 

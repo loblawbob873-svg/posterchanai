@@ -111,7 +111,7 @@ _YTDL_COOLDOWN_SECONDS = 30
 _BOT_HELP_TEXT = (
     "🤖 Poster-Chan — @mention me with any of these:\n\n"
     "🔎 Info:  search <q> · images <q> · news <source> · geni <prompt> · screenshot <url>\n"
-    "📥 Media (attach a file):  compress · clip <start> <end> · convert (img↔PDF)\n"
+    "📥 Media (attach a file):  compress · clip <start> <end> · convert (img↔PDF) · regeni <edit>\n"
     "     ytdl <url> = audio, ytdl video <url> = video — add clip 0:10 0:30 and/or compress\n"
     "🖼 Image stamps (attach an image):  meme <text> · dildo · poo · cum · blood ·\n"
     "     bullethole · fire · gay · blacked · kosher · blue · barked · consider · chimp · clay\n"
@@ -416,17 +416,19 @@ def process_notifications():
             # Handle media commands (compress/clip/convert/meme) on an attached file.
             lower_prompt = prompt_text.lower()
             _media_cmd = None
-            for _c in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz"):
+            for _c in ("compress", "clip", "convert", "meme", "regeni", "dildo", "poo", "cum", "blood", "bullethole", "fire", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz"):
                 if lower_prompt == _c or lower_prompt.startswith(_c + " "):
                     _media_cmd = _c
                     break
             if _media_cmd:
                 _media_arg = prompt_text[len(_media_cmd):].strip()
-                # meme bakes the user's caption into a publicly-posted image, so it
-                # gets the same bad-word gate as geni (compress/clip/convert add no text).
-                if _media_cmd == "meme" and contains_bad:
-                    print(f"[DEBUG] BLOCKED: meme caption contains bad words")
-                    send_reply(status, "I cannot add that text to an image.",
+                # meme/regeni bake the user's text (caption / edit instruction) into a
+                # publicly-posted image of someone's upload, so they get the same bad-word
+                # gate as geni (compress/clip/convert add no text). regeni edits a real photo,
+                # so the CSAM gate matters most here.
+                if _media_cmd in ("meme", "regeni") and contains_bad:
+                    print(f"[DEBUG] BLOCKED: {_media_cmd} text contains bad words")
+                    send_reply(status, "I cannot apply that to an image.",
                                own_acct=own_acct, visibility=visibility)
                 else:
                     _handle_media_command(status, _media_cmd, _media_arg, own_acct, visibility)
