@@ -272,12 +272,15 @@ class ImageEditService:
         d = max(1, int(cfg["mask_dilate"]))
         if d > 1:
             mask_img = mask_img.filter(ImageFilter.MaxFilter(d if d % 2 else d + 1))
-        # Protect the face from NON-face edits: subtract the face core so a hair/background/clothing
-        # edit at strength ~1.0 can't repaint (and distort) the face — the common failure.
+        # Protect the face from NON-face edits: a coarse CLIPSeg "hair"/clothing mask bleeds over the
+        # face, and at strength ~1.0 the inpaint then regenerates the face into a DIFFERENT person.
+        # So carve out the whole face/skin generously (low threshold + grow it) before inpainting.
         if target.lower() not in _FACE_FEATURES:
-            face = self._clipseg_prob(img, ["face", "the face"])
+            face = self._clipseg_prob(img, ["face", "skin", "the face"])
+            face_mask = ((face > 50).astype("uint8")) * 255           # generous face/skin area
+            face_mask = np.array(Image.fromarray(face_mask).filter(ImageFilter.MaxFilter(23)))  # grow margin
             arr = np.array(mask_img)
-            arr[face > 110] = 0  # 110/255 = confident face core only
+            arr[face_mask > 0] = 0
             mask_img = Image.fromarray(arr)
         return mask_img.filter(ImageFilter.GaussianBlur(6))  # soft edges → seamless inpaint
 
