@@ -576,6 +576,7 @@ class CommandService:
         "convert": "Convert image(s) to PDF or a PDF to images",
         "ocr": "Read the text out of an attached image or PDF (OCR, no translation): ocr",
         "flashcards": "Make an interactive multiple-choice study quiz from an attached PDF/image/slide deck, or a URL: flashcards <url>",
+        "post": "Share text (and an optional attached image) to your connected Misskey/Pleroma: post <text>",
         "meme": "Add outlined white meme text to an attached image: meme <text>",
         "dildo": "Scatter dildos all over an attached image: dildo",
         "poo": "Scatter poop all over an attached image: poo",
@@ -673,6 +674,7 @@ class CommandService:
         "nobg": "removebackground",
         "readtext": "ocr",
         "read": "ocr",
+        "share": "post",
     }
 
     # Effects that accept a trailing motion arg (`zoom` Ken Burns pan-out or
@@ -960,6 +962,8 @@ class CommandService:
             return await self._flashcards_command(arg, attachments)
         elif command == "ocr":
             return await self._ocr_command(attachments)
+        elif command == "post":
+            return await self._post_command(arg, attachments)
         elif command == "meme":
             return await self._meme_command(arg, attachments)
         elif command == "dildo":
@@ -1785,13 +1789,30 @@ Files are saved to your Storage.""",
             }
 
         if as_mp3:
-            logger.info(f"[ytdl] Command: mp3 url={target_url!r} user_id={self.user.id}")
+            import asyncio
+            logger.info(f"[ytdl] Command: mp3 inline url={target_url!r} user_id={self.user.id}")
+            # Deliver the MP3 INLINE (a playable/clickable audio item in chat), like the clipped
+            # video. Fall back to saving in Storage when it's too big to hold/serve inline.
+            res = await asyncio.to_thread(download_ytdl_bytes, target_url, video=False)
+            if res.get("ok"):
+                return {
+                    "type": "files",
+                    "content": "🎵 Audio",
+                    "files": [{
+                        "filename": res["filename"],
+                        "data": res["data"],
+                        "content_type": res.get("mime", "audio/mpeg"),
+                    }],
+                }
+            # Too large / failed → save to Storage and return the link (original behavior).
+            logger.info(f"[ytdl] mp3 inline fell back to storage: {res.get('error')}")
             result = await download_mp3_and_save_to_storage(
                 url=target_url,
                 user_id=self.user.id,
                 db=self.db,
                 subfolder="Music",
             )
+            return {"type": "text", "content": format_download_result(result)}
         else:
             logger.info(f"[ytdl] Command: video url={target_url!r} user_id={self.user.id}")
             result = await download_video_and_save_to_storage(
@@ -3881,6 +3902,70 @@ Files are saved to your Storage.""",
         if not text:
             return {"type": "text", "content": "Couldn't read any text from that file."}
         return {"type": "text", "content": text}
+
+    async def _post_command(self, arg: str, attachments: Optional[list]) -> dict:
+        """Share text (and an optional attached image) to the user's connected fediverse accounts —
+        the web/Matrix equivalent of the Telegram 📣 Post flow. Posts to every connected platform
+        (Misskey + Pleroma); no-op with a clear message when none are connected."""
+        import base64 as _b64
+        from app.services.media_service import is_image
+
+        user = self.user
+        if user is None:
+            return {"type": "text", "content": "Sign in to post to social."}
+
+        # Connected-platform detection mirrors the Telegram helpers (_has_misskey/_has_pleroma).
+        has_mk = bool(getattr(user, "misskey_enabled", False)
+                      and getattr(user, "misskey_instance_url", None)
+                      and getattr(user, "misskey_api_token", None))
+        has_plr = bool(getattr(user, "pleroma_enabled", False)
+                       and getattr(user, "pleroma_instance_url", None)
+                       and getattr(user, "pleroma_access_token", None))
+        if not (has_mk or has_plr):
+            return {"type": "text", "content": (
+                "No social platforms connected. Connect Misskey or Pleroma in **Settings → "
+                "Social** first, then `post <text>`.")}
+
+        text = (arg or "").strip()
+
+        # First attached image (if any) rides along with the post.
+        img_bytes = None
+        img_mime = "image/png"
+        for fn, data, ct in (attachments or []):
+            if is_image(fn, ct):
+                try:
+                    img_bytes = data if isinstance(data, (bytes, bytearray)) else _b64.b64decode(data)
+                except Exception:
+                    img_bytes = None
+                img_mime = ct or "image/png"
+                break
+
+        if not text and not img_bytes:
+            return {"type": "text", "content": (
+                "Usage: `post <text>` — optionally attach an image to share it too. Goes to your "
+                "connected Misskey/Pleroma.")}
+
+        results = []
+        if has_mk:
+            try:
+                from app.services.misskey_service import post_note
+                await post_note(user.misskey_instance_url, user.misskey_api_token, text,
+                                image_bytes=img_bytes, image_mime=img_mime)
+                results.append("✅ Misskey")
+            except Exception as e:
+                logger.error(f"[post] Misskey failed: {e}", exc_info=True)
+                results.append(f"❌ Misskey: {e}")
+        if has_plr:
+            try:
+                from app.services.pleroma_service import post_status
+                await post_status(user.pleroma_instance_url, user.pleroma_access_token, text,
+                                  image_bytes=img_bytes, image_mime=img_mime)
+                results.append("✅ Pleroma")
+            except Exception as e:
+                logger.error(f"[post] Pleroma failed: {e}", exc_info=True)
+                results.append(f"❌ Pleroma: {e}")
+
+        return {"type": "text", "content": "📣 **Post**\n" + "\n".join(results)}
 
     async def _flashcards_command(self, arg: str, attachments: Optional[list]) -> dict:
         """Build an interactive multiple-choice study quiz from an attached PDF / image / slide

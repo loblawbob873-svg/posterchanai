@@ -1188,6 +1188,7 @@ class ChatHandler {
                 mkBtn('🌐 Translate', 'translate to english', { selectToken: 'english', title: 'OCR then translate (edit the language, then Enter)' });
                 mkBtn('🎴 Flashcards', 'flashcards', { submit: true, title: 'Build a study quiz from the file' });
                 mkBtn('✨ Effects', '', { onClick: () => this.toggleEffectsRow(bar), title: 'Apply a video effect' });
+                mkBtn('📣 Post', 'post ', { selectToken: '', title: 'Share this image to your connected social accounts (add a caption, then Enter)' });
             } else if (hasPdf) {
                 mkBtn('🖼 To images', 'convert images', { submit: true, title: 'One PNG per page' });
                 mkBtn('🔤 Read text', 'ocr', { submit: true, title: 'OCR — read the text out of the PDF' });
@@ -1204,30 +1205,68 @@ class ChatHandler {
         }
     }
 
-    // Reveal a sub-row of no-arg image→video effects under the action bar (toggles on repeat click).
+    // Reveal the full image→video effects picker under the action bar (toggles on repeat click).
+    // Mirrors the Telegram effects keyboard (_FX_THEMES / _FX_SOUNDS / _FX_MEMES + Alive/Glow).
     toggleEffectsRow(bar) {
         const existing = bar.parentElement.querySelector('.attachment-effects');
         if (existing) { existing.remove(); return; }
-        const row = document.createElement('div');
-        row.className = 'attachment-effects';
-        row.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;width:100%;align-items:center;justify-content:center;margin-top:4px;';
-        const effects = [
-            ['💫 Glow', 'glow'], ['🫧 Alive', 'alive'], ['🔥 Fire', 'fire'],
-            ['🩸 Blood', 'blood'], ['🖼 Meme', 'meme'],
+        // [label, command]. `meme` takes a caption (pre-fill); everything else runs immediately.
+        const groups = [
+            ['✨ Basic', [['🪄 Alive (3D)', 'alive'], ['🌟 Glow', 'glow']]],
+            ['🎨 Memes / overlays', [
+                ['🖼 Meme', 'meme'], ['🍆 Dildo', 'dildo'], ['💩 Poo', 'poo'], ['💦 Cum', 'cum'],
+                ['🩸 Blood', 'blood'], ['🔥 Fire', 'fire'], ['🕳️ Bullet holes', 'bullethole'],
+                ['🏳️‍🌈 Gay', 'gay'], ['🥷 Blacked', 'blacked'], ['✡️ Kosher', 'kosher'],
+                ['🤔 Consider', 'consider'], ['🐵 Chimp', 'chimp'], ['🗣️ Clay', 'clay'],
+                ['😎 Thug', 'thug'], ['🔵 Blue', 'blue'],
+            ]],
+            ['📺 TV/Movie Themes', [
+                ['🇮🇹 Sopranos', 'sopranos'], ['🍻 Cheers', 'cheers'], ['🧛 Munsters', 'munsters'],
+                ['😃 Happy Days', 'happydays'], ["🌊 Don't Wait", 'dontwanttowait'],
+                ['🔦 Stranger Things', 'strangerthings'], ['🖤 Addams Family', 'adamsfamily'],
+                ['❌ X-Men', 'xmen'], ['🚀 Futurama', 'futurama'],
+                ["👼 Charlie's Angels", 'charliesangles'], ["🌍 Diff'rent Strokes", 'differentstroke'],
+                ['🎤 Seinfeld', 'seinfeld'], ['🦅 Freebird', 'freebird'], ['🕺 Harlem', 'harlem'],
+                ['🎻 Hava', 'hava'], ['🎷 Yakety', 'yakety'], ['😬 Curb', 'curb'],
+                ['🎸 Wasteland', 'wasteland'], ['🍑 Mixalot', 'mixalot'], ['🏴‍☠️ One Piece', 'onepiece'],
+                ['🤖 Robocop', 'robocop'], ['🗿 Titan', 'titan'], ['🦾 Terminator', 'terminator'],
+                ['💣 Reze', 'reze'],
+            ]],
+            ['🔊 Sound clips', [
+                ['🤠 Whoabuddy', 'whoabuddy'], ['🎬 Seth', 'seth'], ['🕌 Akbar', 'akbar'],
+                ['⚠️ Retard', 'retard'], ['🔔 Gong', 'gong'], ['🚨 FBI', 'fbi'], ['💳 Redeem', 'redeem'],
+                ['😏 Gigity', 'gigity'], ['🤤 Beavis', 'beavis'], ['👃 Smell', 'smell'], ['🏚️ Hood', 'hood'],
+                ['🇮🇳 Indian', 'indian'], ['🛑 Yamete', 'yamete'], ['😢 Depressing', 'depressing'],
+                ['🌀 Fahh', 'fahh'], ['🆘 Helpme', 'helpme'], ['🐶 Barked', 'barked'], ['😡 Ree', 'ree'],
+                ['🐻 Kanye', 'kanye'], ['🌑 Darkness', 'darkness'], ['🚲 Bike', 'bike'], ['💼 Jobs', 'jobs'],
+                ['🗽 Liberal', 'liberal'], ['📦 Moving', 'moving'], ['🏎️ Overtaken', 'overtaken'],
+                ['🎱 Felted Tables', 'feltedtables'], ['🙏 Prayer', 'prayer'], ['🎉 Feliz', 'feliz'],
+            ]],
         ];
-        effects.forEach(([label, cmd]) => {
-            const b = document.createElement('button');
-            b.type = 'button';
-            b.className = 'attachment-action';
-            b.textContent = label;
-            b.style.cssText = 'padding:4px 10px;border-radius:14px;border:1px solid var(--border-color,#ccc);background:transparent;color:inherit;cursor:pointer;font-size:0.85em;white-space:nowrap;';
-            // `meme` needs a caption; pre-fill so the user types it. The rest run immediately.
-            b.onclick = (cmd === 'meme')
-                ? () => this.prefillAttachmentAction('meme ', '')
-                : () => this.runAttachmentAction(cmd);
-            row.appendChild(b);
+        const wrap = document.createElement('div');
+        wrap.className = 'attachment-effects';
+        wrap.style.cssText = 'display:flex;flex-direction:column;gap:6px;width:100%;margin-top:6px;max-height:240px;overflow-y:auto;';
+        groups.forEach(([title, effects]) => {
+            const header = document.createElement('div');
+            header.textContent = title;
+            header.style.cssText = 'font-size:0.78em;opacity:0.7;width:100%;margin-top:2px;';
+            wrap.appendChild(header);
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;width:100%;';
+            effects.forEach(([label, cmd]) => {
+                const b = document.createElement('button');
+                b.type = 'button';
+                b.className = 'attachment-action';
+                b.textContent = label;
+                b.style.cssText = 'padding:4px 10px;border-radius:14px;border:1px solid var(--border-color,#ccc);background:transparent;color:inherit;cursor:pointer;font-size:0.85em;white-space:nowrap;';
+                b.onclick = (cmd === 'meme')
+                    ? () => this.prefillAttachmentAction('meme ', '')
+                    : () => this.runAttachmentAction(cmd);
+                row.appendChild(b);
+            });
+            wrap.appendChild(row);
         });
-        bar.parentElement.appendChild(row);
+        bar.parentElement.appendChild(wrap);
     }
 
     // Show a link-action bar (Telegram parity) when the composer holds a single bare URL and
@@ -1257,6 +1296,7 @@ class ChatHandler {
                 ['🎵 MP3', `ytdl ${url}`, 'Download the audio as an MP3'],
                 ['🎬 Movie', `ytdl video ${url}`, 'Download the full video'],
                 ['✂️ Clip', `ytdl video ${url} clip 0:00 0:30`, 'Download just a trimmed section (edit start/end, then Enter)', '0:00 0:30'],
+                ['📣 Post', `post ${url}`, 'Share this link to your connected social accounts'],
             ];
         } else if (isX) {
             // Tweets have no transcript, so no Summary — just download (like the Telegram X menu).
@@ -1264,12 +1304,14 @@ class ChatHandler {
                 ['🎵 MP3', `ytdl ${url}`, 'Download the audio as an MP3'],
                 ['🎬 Video', `ytdl video ${url}`, 'Download the full video'],
                 ['✂️ Clip', `ytdl video ${url} clip 0:00 0:30`, 'Download just a trimmed section (edit start/end, then Enter)', '0:00 0:30'],
+                ['📣 Post', `post ${url}`, 'Share this link to your connected social accounts'],
             ];
         } else {
             actions = [
                 ['📋 Summary', `Summarize this page: ${url}`, 'Fetch the page and summarize it'],
                 ['📸 Screenshot', `screenshot ${url}`, 'Capture a screenshot of the page'],
                 ['🎴 Flashcards', `flashcards ${url}`, 'Build a study quiz from the page'],
+                ['📣 Post', `post ${url}`, 'Share this link to your connected social accounts'],
             ];
         }
         actions.forEach(([label, cmd, title, selectToken]) => {
@@ -3622,6 +3664,15 @@ class ChatHandler {
             return `\x00VID${index}\x00`;
         });
 
+        // Extract inline audio !audio[name](url) (e.g. a downloaded/clipped MP3) so it plays in
+        // chat with a download link instead of being a bare link.
+        const audios = [];
+        processed = processed.replace(/!audio\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g, (match, alt, url) => {
+            const index = audios.length;
+            audios.push({ alt: alt.trim(), url: url.trim() });
+            return `\x00AUD${index}\x00`;
+        });
+
         // Extract and preserve HTML links BEFORE processing markdown (so they don't get escaped)
         const htmlLinks = [];
         processed = processed.replace(/<a\s+([^>]*?)href=["']([^"']+)["']([^>]*?)>(.*?)<\/a>/gi, (match, before, url, after, text) => {
@@ -3781,6 +3832,18 @@ class ChatHandler {
             if (!vid || !vid.url) return '';
             const src = vid.url.startsWith('/') ? vid.url : encodeURI(vid.url);
             return `<video src="${src}" controls preload="metadata" class="message-inline-video" style="max-width:100%;height:auto;border-radius:8px;margin:8px 0;"></video>`;
+        });
+
+        // Restore inline audio as an <audio> player + a download link (downloaded MP3s).
+        html = html.replace(/\x00AUD(\d+)\x00/g, (match, index) => {
+            const aud = audios[parseInt(index)];
+            if (!aud || !aud.url) return '';
+            const src = aud.url.startsWith('/') ? aud.url : encodeURI(aud.url);
+            const name = this.escapeHtml(aud.alt || 'audio');
+            return `<div class="audio-wrapper" style="margin:8px 0;">
+                <audio src="${src}" controls preload="metadata" class="generated-audio" style="max-width:100%;"></audio>
+                <a class="btn-action" href="${src}" download="${name}" title="Download" style="margin-left:8px;">⬇️</a>
+            </div>`;
         });
 
         // Restore HTML links first (before markdown links)
