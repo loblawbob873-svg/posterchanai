@@ -1762,8 +1762,7 @@ fieldset legend {
 }
 #userSettingsModal .modal-content,
 #translateModal .modal-content,
-#calendarModal .modal-content,
-#newsModal .modal-content {
+#calendarModal .modal-content {
     max-height: min(90vh, calc(100vh - 40px)) !important;
     flex-shrink: 0 !important;
     display: flex !important;
@@ -1772,16 +1771,22 @@ fieldset legend {
 }
 #userSettingsModal .modal-header,
 #translateModal .modal-header,
-#calendarModal .modal-header,
-#newsModal .modal-header {
+#calendarModal .modal-header {
     flex-shrink: 0 !important;
 }
 #userSettingsModal .modal-body,
 #translateModal .modal-body,
-#calendarModal .modal-body,
-#newsModal .modal-body {
+#calendarModal .modal-body {
     flex: 1 !important;
     min-height: 0 !important;
+    overflow-y: auto !important;
+}
+/* News modal: a compact, content-sized box (NOT stretched to full height — its short list of
+   source buttons must not leave wasted space below). Plain block layout, capped + scrollable. */
+#newsModal .modal-content {
+    height: auto !important;
+    max-height: 85vh !important;
+    display: block !important;
     overflow-y: auto !important;
 }
 
