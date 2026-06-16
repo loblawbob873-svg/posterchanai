@@ -1007,6 +1007,10 @@ router = APIRouter(prefix="/api/telegram", tags=["telegram"])
 # max-id (Telegram can re-deliver updates after downtime).
 _seen_update_ids: set = set()
 _MAX_SEEN_IDS = 500  # Keep a bounded window; Telegram won't replay further back
+# Also dedup by (chat_id, message_id). A single user message can arrive under TWO different
+# update_ids when more than one bot delivers to this webhook URL (each bot has its own update_id
+# counter), which the update_id set can't catch → double replies. message_id is unique per chat.
+_seen_msg_keys: set = set()
 
 # Pending Misskey posts: chat_id → post_text (cleared once confirmed or cancelled)
 _misskey_post_cache: dict = {}
@@ -1755,7 +1759,7 @@ async def telegram_webhook(update: dict, background_tasks: BackgroundTasks):
     in-memory; the background task opens its own session), and depending on `get_db` here meant a
     drained connection pool would block the ACK → Telegram would replay its backlog.
     """
-    global _seen_update_ids
+    global _seen_update_ids, _seen_msg_keys
     update_id = update.get("update_id", 0)
     if update_id in _seen_update_ids:
         logger.info(f"Skipping duplicate update_id: {update_id}")
@@ -1764,6 +1768,19 @@ async def telegram_webhook(update: dict, background_tasks: BackgroundTasks):
     if len(_seen_update_ids) > _MAX_SEEN_IDS:
         # Trim oldest entries — update_ids are monotonically increasing
         _seen_update_ids = set(sorted(_seen_update_ids)[-_MAX_SEEN_IDS:])
+
+    # Dedup the SAME user message arriving under a different update_id (multi-bot delivery to this
+    # webhook URL) — without this it would be processed twice → duplicate replies.
+    msg = update.get("message") or update.get("edited_message")
+    if msg and msg.get("message_id") is not None:
+        mkey = ((msg.get("chat") or {}).get("id"), msg.get("message_id"))
+        if mkey in _seen_msg_keys:
+            logger.info(f"Skipping duplicate message {mkey} (arrived under a 2nd update_id)")
+            return {"ok": True}
+        _seen_msg_keys.add(mkey)
+        if len(_seen_msg_keys) > _MAX_SEEN_IDS:
+            # Keep the newest by message_id (monotonic per chat)
+            _seen_msg_keys = set(sorted(_seen_msg_keys, key=lambda k: k[1] or 0)[-_MAX_SEEN_IDS:])
 
     # Acknowledge immediately — processing may take longer than Telegram's 60s timeout
     background_tasks.add_task(_process_telegram_update, update)
