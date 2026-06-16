@@ -20,14 +20,15 @@ def anime_eye(d, cx, cy, kind, hairshade):
     d.ellipse(box, fill=(255,255,255,255))            # sclera
     ir = [cx-16, cy-20, cx+16, cy+24]                  # tall iris
     if kind == "makima":
-        d.ellipse(ir, fill=(243,205,70,255))
-        d.chord(ir, 180, 360, fill=(196,120,34,255))   # darker top
-        for r, c in [(14,(190,110,30,255)),(11,(247,210,80,255)),(8,(190,110,30,255)),(5,(247,210,80,255))]:
-            d.ellipse([cx-r, cy-r, cx+r, cy+r], outline=c, width=2)   # swirl rings
+        d.ellipse(ir, fill=(248,213,66,255))            # yellow base
+        d.chord(ir, 180, 360, fill=(233,190,42,255))    # slightly deeper yellow top
+        for r in [14, 11, 8, 5]:
+            d.ellipse([cx-r, cy-r, cx+r, cy+r], outline=(206,42,38,255), width=3)   # RED swirl rings
     else:
         d.ellipse(ir, fill=(126,206,150,255))
         d.chord(ir, 180, 360, fill=(46,134,92,255))     # darker top
-    d.ellipse([cx-6, cy-10, cx+6, cy+12], fill=(34,24,22,255))         # pupil
+    if kind != "makima":
+        d.ellipse([cx-6, cy-10, cx+6, cy+12], fill=(34,24,22,255))     # pupil (reze only; makima = swirl, no pupil)
     d.ellipse([cx-11, cy-17, cx-2, cy-6], fill=(255,255,255,240))      # big highlight
     d.ellipse([cx+4, cy+7, cx+10, cy+13], fill=(255,255,255,170))      # small highlight
     d.arc([cx-ew, cy-eh+2, cx+ew, cy+eh], 184, 356, fill=(38,26,28,255), width=5)  # upper lash
