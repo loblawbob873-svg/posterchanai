@@ -1202,8 +1202,11 @@ class CommandService:
             return {"type": "text", "content": "Please provide a search query. Example: `search latest AI news`"}
 
         clean_query, categories, time_range = self.search_service.detect_search_intent(query)
+        # News pulls more candidates so the newest-first sort + recency window have a deeper pool to
+        # surface the latest from; general search stays tight for a focused summary.
+        _limit = 8 if categories == "news" else 5
         results = await self.search_service.web_search(
-            clean_query, limit=5, categories=categories, time_range=time_range
+            clean_query, limit=_limit, categories=categories, time_range=time_range
         )
         # Fall back to a plain general search if a category search came up empty.
         if not results and (categories or time_range):
@@ -1212,17 +1215,22 @@ class CommandService:
             return {"type": "text", "content": f"No results found for: {query}"}
 
         scope = f" ({categories})" if categories else ""
-        # Format results for AI summarization
+        is_news = categories == "news"
+        # Format results for AI summarization (include the publish date so the model can lead with
+        # the most recent for news — results are already sorted newest-first by the search service).
         context = f"Search results for '{clean_query}'{scope}:\n\n"
         for i, r in enumerate(results, 1):
-            context += f"{i}. **{r['title']}**\n{r['url']}\n{r['content']}\n\n"
+            _pub = f" (published {r['published']})" if r.get("published") else ""
+            context += f"{i}. **{r['title']}**{_pub}\n{r['url']}\n{r['content']}\n\n"
 
+        _sys = "You are a helpful assistant. Summarize the search results concisely and highlight key information."
+        if is_news:
+            _sys = ("You are a news assistant. The results are sorted newest-first. Lead with the "
+                    "LATEST developments, mention each item's date when available, and don't invent "
+                    "facts that aren't in the results.")
         # Get AI summary
         messages = [
-            {
-                "role": "system",
-                "content": "You are a helpful assistant. Summarize the search results concisely and highlight key information.",
-            },
+            {"role": "system", "content": _sys},
             {"role": "user", "content": context},
         ]
         summary = await self.chat_service.chat(messages)

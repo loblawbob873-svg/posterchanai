@@ -120,6 +120,10 @@ class SearchService:
         if time_range:
             params["time_range"] = time_range
 
+        # News is time-sensitive: sort the most-recent first (SearXNG returns `publishedDate` for
+        # news results but doesn't globally sort by it). Other categories keep relevance order.
+        sort_recent = (categories == "news")
+
         async with httpx.AsyncClient(timeout=30) as client:
             try:
                 response = await client.get(
@@ -128,12 +132,34 @@ class SearchService:
                 )
                 response.raise_for_status()
                 data = response.json()
-                results = data.get("results", [])[:limit]
+                results = data.get("results", [])
+
+                if sort_recent:
+                    from datetime import datetime, timezone as _tz
+
+                    def _pub(r):
+                        d = r.get("publishedDate")
+                        if not d:
+                            return None
+                        try:
+                            dt = datetime.fromisoformat(str(d).replace("Z", "+00:00"))
+                            return dt if dt.tzinfo else dt.replace(tzinfo=_tz.utc)
+                        except Exception:
+                            return None
+                    # Sort the FULL list (before trimming) so the newest survive: dated newest-first,
+                    # then undated results in their original (relevance) order.
+                    dated = [r for r in results if _pub(r) is not None]
+                    undated = [r for r in results if _pub(r) is None]
+                    dated.sort(key=_pub, reverse=True)
+                    results = dated + undated
+
+                results = results[:limit]
                 return [
                     {
                         "title": r.get("title", ""),
                         "url": r.get("url", ""),
-                        "content": r.get("content", "")[:300] if r.get("content") else ""
+                        "content": r.get("content", "")[:300] if r.get("content") else "",
+                        "published": r.get("publishedDate", "") or "",
                     }
                     for r in results
                 ]
@@ -230,6 +256,15 @@ class SearchService:
             if any(kw in lowered for kw in keywords):
                 time_range = tr
                 break
+
+        # "latest"/"recent"/"now" imply recency without a specific window → bias to the past week.
+        if time_range is None and any(kw in lowered for kw in (" latest ", " recent ", " right now ", " just now ")):
+            time_range = "week"
+
+        # News with no explicit window: default to the past month so stale articles drop off while
+        # the newest-first sort (in web_search) surfaces the freshest. Keeps news "by latest".
+        if categories == "news" and time_range is None:
+            time_range = "month"
 
         return query.strip(), categories, time_range
 
