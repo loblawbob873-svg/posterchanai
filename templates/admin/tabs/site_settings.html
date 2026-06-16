@@ -244,6 +244,21 @@ newsweek.com|Newsweek"></textarea>
     </fieldset>
 
     <fieldset>
+        <legend>HTTP Proxy (outbound)</legend>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="bt_proxy_host">HTTP Proxy Host</label>
+                <input type="text" id="bt_proxy_host" name="bt_proxy_host" placeholder="127.0.0.1">
+            </div>
+            <div class="form-group">
+                <label for="bt_proxy_port">Proxy Port</label>
+                <input type="number" id="bt_proxy_port" name="bt_proxy_port" value="8118" min="1" max="65535">
+            </div>
+        </div>
+        <small style="display:block; margin-top:8px;">Shared outbound HTTP proxy (e.g. Privoxy &rarr; Tor). Used by the built-in torrent client <strong>and</strong> Nitter feeds, 4chan, and SearX fetches. Required for torrents and Nitter.</small>
+    </fieldset>
+
+    <fieldset>
         <legend>Built-in Torrent Client (libtorrent)</legend>
         <div class="form-group">
             <label for="bt_enabled">
@@ -260,16 +275,6 @@ newsweek.com|Newsweek"></textarea>
             <label for="bt_download_dir">Download Directory</label>
             <input type="text" id="bt_download_dir" name="bt_download_dir" placeholder="/var/lib/posterchanai/torrents">
             <small>Where downloaded torrents are saved (local server only)</small>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label for="bt_proxy_host">HTTP Proxy Host (required)</label>
-                <input type="text" id="bt_proxy_host" name="bt_proxy_host" placeholder="127.0.0.1">
-            </div>
-            <div class="form-group">
-                <label for="bt_proxy_port">Proxy Port</label>
-                <input type="number" id="bt_proxy_port" name="bt_proxy_port" value="8118" min="1" max="65535">
-            </div>
         </div>
         <div class="form-group">
             <label for="bt_listen_port">BitTorrent Listen Port</label>
