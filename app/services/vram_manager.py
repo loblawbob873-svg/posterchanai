@@ -155,6 +155,11 @@ def prepare_for_image(db: Session) -> bool:
     """
     global _current_mode
 
+    # Free the co-located ACE-Step music server's VRAM (stop acestep) so the image model fits on a
+    # shared GPU — mirrors prepare_for_video. Gated by video_free_music; no-op elsewhere. acestep is
+    # restarted on the next music gen (prepare_for_music → _ensure_music_server).
+    _music_service_ctl(db, "stop")
+
     settings = _get_vram_settings(db)
     vram_mode = settings["vram_mode"]
 
