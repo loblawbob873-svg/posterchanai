@@ -40,7 +40,7 @@ def draw_char(img, cx, base_y, bob, arm, kind):
     if kind == "makima":
         hair = (208, 46, 40, 255); hi = (240, 110, 95, 255); hsh = (150, 30, 28, 255)
     else:
-        hair = (150, 110, 184, 255); hi = (196, 165, 222, 255); hsh = (108, 74, 140, 255)
+        hair = (74, 44, 96, 255); hi = (120, 86, 150, 255); hsh = (48, 28, 64, 255)   # dark purple
 
     # back hair
     ell(d, cx, cy+8, 62, 66, hair, hair, 0)
@@ -69,12 +69,17 @@ def draw_char(img, cx, base_y, bob, arm, kind):
     top = cy + 57
     if kind == "makima":
         d.rounded_rectangle([cx-30, top, cx+30, top+78], radius=12, fill=(246,246,250,255), outline=LINE, width=3)
-        d.line([cx, top+6, cx, top+70], fill=(120,120,130,255), width=2)
+        # collar V + necktie (white shirt + dark tie)
+        tie = (54, 46, 60, 255)
+        d.polygon([(cx-12, top),(cx, top+14),(cx+12, top)], fill=(252,252,255,255), outline=LINE)
+        d.polygon([(cx-6, top+4),(cx+6, top+4),(cx+4, top+14),(cx-4, top+14)], fill=tie, outline=LINE)   # knot
+        d.polygon([(cx-5, top+14),(cx+5, top+14),(cx+7, top+58),(cx, top+66),(cx-7, top+58)], fill=tie, outline=LINE)  # blade
         for lx in (cx-13, cx+13):
             d.rounded_rectangle([lx-7, top+78, lx+7, top+128], radius=5, fill=(46,46,54,255), outline=LINE, width=2)
     else:
         black = (32, 32, 38, 255)
-        d.rounded_rectangle([cx-26, top, cx+26, top+46], radius=10, fill=black, outline=LINE, width=3)
+        # WHITE sleeveless shirt (anime-accurate) + black bow tie + black skirt
+        d.rounded_rectangle([cx-26, top, cx+26, top+46], radius=10, fill=(247,247,250,255), outline=LINE, width=3)
         d.polygon([(cx-17, top+3),(cx-2, top+12),(cx-17, top+21)], fill=black, outline=LINE)
         d.polygon([(cx+17, top+3),(cx+2, top+12),(cx+17, top+21)], fill=black, outline=LINE)
         d.ellipse([cx-4, top+8, cx+4, top+16], fill=black, outline=LINE)
