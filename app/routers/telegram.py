@@ -1011,6 +1011,8 @@ _MAX_SEEN_IDS = 500  # Keep a bounded window; Telegram won't replay further back
 # update_ids when more than one bot delivers to this webhook URL (each bot has its own update_id
 # counter), which the update_id set can't catch → double replies. message_id is unique per chat.
 _seen_msg_keys: set = set()
+# Same problem for button taps: dedup callback_query by its unique id (else every tap runs twice).
+_seen_cq_ids: set = set()
 
 # Pending Misskey posts: chat_id → post_text (cleared once confirmed or cancelled)
 _misskey_post_cache: dict = {}
@@ -1765,7 +1767,7 @@ async def telegram_webhook(update: dict, background_tasks: BackgroundTasks):
     in-memory; the background task opens its own session), and depending on `get_db` here meant a
     drained connection pool would block the ACK → Telegram would replay its backlog.
     """
-    global _seen_update_ids, _seen_msg_keys
+    global _seen_update_ids, _seen_msg_keys, _seen_cq_ids
     update_id = update.get("update_id", 0)
     if update_id in _seen_update_ids:
         logger.info(f"Skipping duplicate update_id: {update_id}")
@@ -1787,6 +1789,19 @@ async def telegram_webhook(update: dict, background_tasks: BackgroundTasks):
         if len(_seen_msg_keys) > _MAX_SEEN_IDS:
             # Keep the newest by message_id (monotonic per chat)
             _seen_msg_keys = set(sorted(_seen_msg_keys, key=lambda k: k[1] or 0)[-_MAX_SEEN_IDS:])
+
+    # Dedup button taps too: the multi-bot delivery doubles callback_query updates (same callback
+    # `id` under two update_ids), which the update_id set can't catch → every tap (flashcards
+    # answers, effect picks, etc.) would run TWICE. callback_query.id is unique per tap.
+    cq = update.get("callback_query")
+    if cq and cq.get("id"):
+        cqid = cq["id"]
+        if cqid in _seen_cq_ids:
+            logger.info(f"Skipping duplicate callback {cqid} (arrived under a 2nd update_id)")
+            return {"ok": True}
+        _seen_cq_ids.add(cqid)
+        if len(_seen_cq_ids) > _MAX_SEEN_IDS:
+            _seen_cq_ids = set(list(_seen_cq_ids)[-_MAX_SEEN_IDS:])
 
     # Acknowledge immediately — processing may take longer than Telegram's 60s timeout
     background_tasks.add_task(_process_telegram_update, update)
