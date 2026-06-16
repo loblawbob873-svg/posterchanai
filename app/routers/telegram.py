@@ -1077,13 +1077,41 @@ async def _send_png_as_document(chat_id: str, image_b64: str, caption: str = Non
 
 
 async def _send_screenshot(chat_id: str, image_b64: str, caption: str) -> None:
-    """Deliver a screenshot document-first (full resolution — Telegram compresses photos
-    to an unreadable size for tall pages), falling back to a photo, then plain text.
+    """Deliver a screenshot as a PDF — full resolution and uncompressed (Telegram squashes photos
+    of tall pages to an unreadable size); a PDF also previews inline on mobile and feeds the PDF
+    tools. Falls back to a PNG document, then a photo, then plain text.
 
-    Then cache the full-res PNG and offer one-tap 🔤 Read text / 🌐 Translate buttons, so
-    the user can OCR/translate the capture WITHOUT re-uploading it (a re-uploaded photo is
-    compressed too small to read)."""
-    sent = await _send_png_as_document(chat_id, image_b64, caption)
+    Then cache the full-res PNG and offer one-tap 🔤 Read text / 🌐 Translate buttons, so the user
+    can OCR/translate the capture WITHOUT re-uploading it (a re-uploaded photo is compressed too
+    small to read)."""
+    import base64 as _b64, time as _t
+    # Decode the PNG once: used for the PDF, the document fallback, and the OCR cache.
+    png = image_b64
+    if isinstance(png, str):
+        if png.startswith("data:image"):
+            png = png.split(",", 1)[1]
+        png = _b64.b64decode(png)
+
+    sent = False
+    try:
+        # Build the PDF with PyMuPDF (LOSSLESS — Flate), NOT Pillow's PDF save which re-encodes the
+        # image as JPEG (lossy) and would blur the website text / break OCR. One page sized to the
+        # capture, so a tall full-page screenshot is a single crisp, scrollable page.
+        def _png_to_pdf(b: bytes) -> bytes:
+            import fitz  # PyMuPDF
+            src = fitz.open(stream=b, filetype="png")
+            try:
+                return src.convert_to_pdf()
+            finally:
+                src.close()
+        pdf = await asyncio.to_thread(_png_to_pdf, png)
+        res = await telegram_service.send_document_bytes(
+            chat_id, pdf, "screenshot.pdf", caption, content_type="application/pdf")
+        sent = bool(res.get("ok"))
+    except Exception as e:
+        logger.warning(f"[screenshot] PDF build/send failed, falling back to PNG document: {e}")
+    if not sent:
+        sent = await _send_png_as_document(chat_id, png, caption)
     if not sent:
         photo_result = await telegram_service.send_photo(chat_id, image_b64, caption)
         sent = photo_result.get("ok", False)
@@ -1092,12 +1120,6 @@ async def _send_screenshot(chat_id: str, image_b64: str, caption: str) -> None:
             return
 
     try:
-        import base64 as _b64, time as _t
-        png = image_b64
-        if isinstance(png, str):
-            if png.startswith("data:image"):
-                png = png.split(",", 1)[1]
-            png = _b64.b64decode(png)
         _media_action_cache[chat_id] = {"attachments": [("screenshot.png", png, "image/png")], "ts": _t.time()}
         await telegram_service.send_message(
             chat_id,
