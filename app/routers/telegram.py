@@ -687,7 +687,7 @@ _HELP_SECTIONS = {
     "pins": (
         "📌 *Pinned Searches*\n\n"
         "Save searches you run often, then re-run them with one tap:\n\n"
-        "• `pin canon city news`\n"
+        "• `pin ai news`\n"
         "• `pin latest xrp news and price`\n\n"
         "Send `pins` to see your saved searches — each has a 🔍 Run and a 🗑️ Delete button\\."
     ),
@@ -3873,7 +3873,15 @@ async def _handle_telegram_update(update: dict, db: Session):
                         else:
                             await telegram_service.send_message(chat_id, f"🔍 Searching: {s.query}", parse_mode="")
                             _res = await CommandService(db, user=cb_user).execute_command("search", s.query)
-                            await telegram_service.send_message(chat_id, _res.get("content", "(no results)"), parse_mode="")
+                            # Send the AI summary PLUS the source links so it's clearly grounded in a
+                            # real web search (matches the web UI, which shows the result list too).
+                            _msg = _res.get("content", "") or "(no summary)"
+                            _results = _res.get("results") or []
+                            if _results:
+                                _msg += "\n\n🔗 Sources:"
+                                for _i, _r in enumerate(_results[:5], 1):
+                                    _msg += f"\n{_i}. {_r.get('title', 'link')}\n{_r.get('url', '')}"
+                            await telegram_service.send_message(chat_id, _msg, parse_mode="")
                 return {"ok": True}
 
             if data.startswith("t:"):

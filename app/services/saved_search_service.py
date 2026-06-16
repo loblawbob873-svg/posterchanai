@@ -1,6 +1,6 @@
 """Pinned/saved searches — the `pin` command.
 
-A user saves a search query (`pin canon city news`); `pins` lists them with clickable Run / Delete.
+A user saves a search query (`pin ai news`); `pins` lists them with clickable Run / Delete.
 Running one just executes `search <query>`. No scheduler/time component (unlike reminders) — plain
 CRUD shared by the web UI and Telegram."""
 import logging

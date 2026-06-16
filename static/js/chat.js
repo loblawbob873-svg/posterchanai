@@ -1,5 +1,5 @@
 // Chat Handler
-console.log('[PosterChanAI] chat.js build v42 loaded');
+console.log('[PosterChanAI] chat.js build v43 loaded');
 class ChatHandler {
     constructor() {
         this.ws = null;
@@ -3798,11 +3798,34 @@ class ChatHandler {
             return;
         }
 
+        // Structured responses (search, etc.) arrive as an HTML string — emailing the raw HTML
+        // gives an empty/garbled message. Extract readable text + any source links so the email
+        // always has real content.
+        let emailText = content || '';
+        if (/<[a-z][\s\S]*>/i.test(emailText)) {
+            const tmp = document.createElement('div');
+            tmp.innerHTML = emailText;
+            const links = [...tmp.querySelectorAll('a[href]')]
+                .map(a => a.getAttribute('href'))
+                .filter(h => h && /^https?:\/\//i.test(h));
+            const textPart = (tmp.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
+            const uniqueLinks = [...new Set(links)];
+            emailText = textPart;
+            if (uniqueLinks.length) {
+                emailText += '\n\nSources:\n' + uniqueLinks.map((u, i) => `${i + 1}. ${u}`).join('\n');
+            }
+        }
+        emailText = (emailText || '').trim();
+        if (!emailText) {
+            this.showToast('Nothing to email in this response');
+            return;
+        }
+
         try {
             const response = await csrfFetch('/api/chat/email-response', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ content: content })
+                body: JSON.stringify({ content: emailText })
             });
 
             if (response.ok) {

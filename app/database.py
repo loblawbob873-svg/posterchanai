@@ -377,6 +377,47 @@ def _run_migrations():
             except Exception as e:
                 logger.warning(f"[MIGRATE] Failed to create proxy_image_cache: {e}")
 
+    # Reminders (`remind` command) — explicit, idempotent creation on existing DBs so the feature
+    # works after an upgrade without a manual step (create_all also makes it; this is the documented
+    # migration path, like proxy_image_cache above).
+    with engine.connect() as conn:
+        try:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS reminders (
+                    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    text TEXT NOT NULL,
+                    due_at DATETIME NOT NULL,
+                    status VARCHAR(20) DEFAULT 'pending',
+                    created_at DATETIME,
+                    delivered_at DATETIME,
+                    FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_reminders_user_id ON reminders (user_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_reminders_status ON reminders (status)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_reminders_due_at ON reminders (due_at)"))
+            conn.commit()
+        except Exception as e:
+            logger.warning(f"[MIGRATE] Failed to ensure reminders table: {e}")
+
+    # Pinned/saved searches (`pin`/`pins` command).
+    with engine.connect() as conn:
+        try:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS saved_searches (
+                    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    query TEXT NOT NULL,
+                    created_at DATETIME,
+                    FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_saved_searches_user_id ON saved_searches (user_id)"))
+            conn.commit()
+        except Exception as e:
+            logger.warning(f"[MIGRATE] Failed to ensure saved_searches table: {e}")
+
 
 def init_db():
     from app.models import User, Conversation, Message, Setting, ProxyImageCache, SocialReplyMap, Bot, Reminder, SavedSearch  # noqa: F401 - registers tables for create_all

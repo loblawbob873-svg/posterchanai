@@ -4077,7 +4077,7 @@ Files are saved to your Storage.""",
         if not items:
             return {"type": "text", "content": (
                 "You have no pinned searches yet. Save one with `pin <query>` — "
-                "e.g. `pin canon city news`.")}
+                "e.g. `pin ai news`.")}
         payload = [{"id": s.id, "query": s.query} for s in items]
         lines = "\n".join(f"• {s.query} _(id {s.id})_" for s in items)
         return {

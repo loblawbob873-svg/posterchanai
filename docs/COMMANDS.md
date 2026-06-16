@@ -44,7 +44,7 @@ the LLM. The bots reply with TTS via `/narrate <message>`.
 | `mail <to> [subject] <body>` | Send email |
 | `remind <what> <when>` | Set a reminder in natural language — e.g. `remind open the oven in 10m`, `remind me next tuesday to call mom`. The LLM parses the time (exact relative phrases like `in 10s` parse directly); you're alerted in the web UI (full-screen pop-up) and on Telegram (if linked). Timezone is auto-detected from your browser (IANA, DST-aware) — no setup. |
 | `reminders` | List your pending reminders, each with a clickable **Cancel** (web buttons / Telegram inline keyboard). Also `remind cancel <id>`. |
-| `pin <query>` | Save (pin) a search you run often — e.g. `pin canon city news`, `pin latest xrp news and price`. |
+| `pin <query>` | Save (pin) a search you run often — e.g. `pin ai news`, `pin latest xrp news and price`. |
 | `pins` | List your pinned searches, each with **Run** ▶ and **Delete** 🗑️ (web buttons / Telegram inline keyboard). Also `pin delete <id>`. Aliases: `savedsearches`, `saved`. |
 | `translate <text> to <lang>` | Translate text |
 | `files <query>` | Search your stored files |
