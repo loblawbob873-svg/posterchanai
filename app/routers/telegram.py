@@ -1123,10 +1123,11 @@ async def _send_screenshot(chat_id: str, image_b64: str, caption: str) -> None:
         _media_action_cache[chat_id] = {"attachments": [("screenshot.png", png, "image/png")], "ts": _t.time()}
         await telegram_service.send_message(
             chat_id,
-            "Want the text? Tap below — reads the full-resolution capture (no re-upload needed):",
+            "Do more with this capture? Tap below — uses the full-resolution image (no re-upload needed):",
             reply_markup={"inline_keyboard": [[
                 {"text": "🔤 Read text", "callback_data": "media:ocr"},
                 {"text": "🌐 Translate", "callback_data": "media:translate"},
+                {"text": "🎴 Flashcards", "callback_data": "media:fc"},
             ]]},
         )
     except Exception as _e:
