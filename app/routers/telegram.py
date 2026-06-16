@@ -3242,6 +3242,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                                     [
                                         {"text": "📋 Summary",    "callback_data": "lnk:summary"},
                                         {"text": "📸 Screenshot", "callback_data": "lnk:screenshot"},
+                                        {"text": "🎴 Flashcards", "callback_data": "lnk:flashcards"},
                                     ],
                                     [
                                         {"text": "📣 Post",   "callback_data": "lnk:post"},
@@ -3441,6 +3442,7 @@ async def _handle_telegram_update(update: dict, db: Session):
                                     [
                                         {"text": "📋 Summary",    "callback_data": "lnk:summary"},
                                         {"text": "📸 Screenshot", "callback_data": "lnk:screenshot"},
+                                        {"text": "🎴 Flashcards", "callback_data": "lnk:flashcards"},
                                     ],
                                     [
                                         {"text": "📣 Post",   "callback_data": "lnk:post"},
@@ -5304,6 +5306,33 @@ async def _handle_telegram_update(update: dict, db: Session):
                         await telegram_service.send_message(chat_id, "Timed out fetching or summarizing the link.")
                     except Exception as lnk_err:
                         logger.error(f"Link summary error: {lnk_err}", exc_info=True)
+                        await telegram_service.send_message(chat_id, f"Error: {lnk_err}")
+
+                elif action == "flashcards":
+                    # Flashcards from the page's REAL fetched text (same source as Summary) — never
+                    # OCR a screenshot, so proper nouns/numbers stay correct (no hallucination).
+                    if not lnk_user:
+                        await telegram_service.send_message(chat_id, "Your Telegram account is not linked.")
+                        return {"ok": True}
+                    await telegram_service.send_message(chat_id, "🎴 Reading the page and generating flashcards…")
+                    try:
+                        from app.services import flashcards_service
+                        title, content, err = await _link_content_for_llm(db, cached_url)
+                        if not content:
+                            # No real text (e.g. a JS-only page or a video) — refuse rather than invent.
+                            await telegram_service.send_message(chat_id, f"Couldn't read that link to make flashcards. ({err})")
+                            return {"ok": True}
+                        src = f"{title}\n\n{content}" if title else content
+                        cards = await flashcards_service.generate_flashcards(src, ChatService(db, user=lnk_user))
+                        if cards:
+                            _deck = {"title": title or "Flashcards", "cards": cards, "idx": 0,
+                                     "answered": [None] * len(cards), "score": 0, "ts": time.time()}
+                            _flashcard_decks_cache[chat_id] = _deck
+                            await _send_flashcard(chat_id, _deck)
+                        else:
+                            await telegram_service.send_message(chat_id, "Couldn't make flashcards from that page.")
+                    except Exception as lnk_err:
+                        logger.error(f"Link flashcards error: {lnk_err}", exc_info=True)
                         await telegram_service.send_message(chat_id, f"Error: {lnk_err}")
 
                 elif action == "post":
