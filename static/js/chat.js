@@ -1,5 +1,5 @@
 // Chat Handler
-console.log('[PosterChanAI] chat.js build v38 loaded');
+console.log('[PosterChanAI] chat.js build v39 loaded');
 class ChatHandler {
     constructor() {
         this.ws = null;
@@ -70,6 +70,11 @@ class ChatHandler {
 
         // Load mail accounts for autocomplete
         this.loadMailAccountsForAutocomplete();
+        // Load settings on startup so the 📣 Post buttons gate correctly (hasSocialAccount) without
+        // waiting for the settings modal to be opened.
+        this.loadUserSettings();
+        // Report the browser timezone so natural-language reminders parse/display in local time.
+        this.reportTimezone();
         // Notes autocomplete removed
 
         // Enter to send (Shift+Enter for new line)
@@ -660,6 +665,18 @@ class ChatHandler {
             console.error('Error deleting mail account:', e);
             alert('Error deleting account');
         }
+    }
+
+    // Report the browser's UTC offset (minutes east of UTC) so reminders use the user's local time.
+    async reportTimezone() {
+        try {
+            const offsetMinutes = -new Date().getTimezoneOffset();  // east-of-UTC, e.g. UTC+2 → 120
+            await csrfFetch('/api/auth/timezone', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ offset_minutes: offsetMinutes })
+            });
+        } catch (e) { /* non-critical */ }
     }
 
     async loadUserSettings() {
@@ -3655,9 +3672,11 @@ class ChatHandler {
         // recipient would get a message with no attachment (the reported bug).
         const fileUrls = [...content.matchAll(/\/api\/files\/[^\s)\]"']+/g)].map(m => m[0]);
         const filePaths = fileUrls.map(u => {
-            // /api/files/<username>/<conv>/<name> → storage path relative to the user root: <conv>/<name>
+            // /api/files/<username>/<conv>/<name> is served from <user_root>/chat/<conv>/<name>,
+            // so the email endpoint (which resolves paths under the user root) needs chat/<conv>/<name>.
             const parts = decodeURIComponent(u.replace(/^https?:\/\/[^/]+/, '')).split('/').filter(Boolean);
-            return parts.slice(3).join('/');  // drop 'api', 'files', '<username>'
+            const rest = parts.slice(3);  // drop 'api','files','<username>' → [<conv>, <name>]
+            return rest.length ? 'chat/' + rest.join('/') : '';
         }).filter(Boolean);
 
         if (filePaths.length > 0) {

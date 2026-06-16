@@ -381,6 +381,32 @@ def toggle_api_key(
 
 # ============== User Settings ==============
 
+@router.post("/timezone")
+def set_user_timezone(
+    data: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Store the user's UTC offset (minutes east of UTC, from the browser) so natural-language
+    reminders are parsed and displayed in their local time, not UTC."""
+    from app.models import UserSetting
+    try:
+        offset = int(data.get("offset_minutes"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="offset_minutes (int) required")
+    offset = max(-840, min(840, offset))  # clamp to ±14h
+    s = db.query(UserSetting).filter(
+        UserSetting.user_id == current_user.id,
+        UserSetting.key == "tz_offset_minutes"
+    ).first()
+    if s:
+        s.value = str(offset)
+    else:
+        db.add(UserSetting(user_id=current_user.id, key="tz_offset_minutes", value=str(offset)))
+    db.commit()
+    return {"ok": True, "offset_minutes": offset}
+
+
 @router.get("/settings", response_model=UserSettingsResponse)
 def get_user_settings(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Get current user's settings including custom AI service configuration"""

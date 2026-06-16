@@ -675,11 +675,23 @@ def _help_main_keyboard() -> dict:
                 {"text": "💰 Finance",     "callback_data": "help:finance"},
                 {"text": "📸 Screenshot",  "callback_data": "prompt:screenshot"},
             ],
+            [
+                {"text": "⏰ Reminders",   "callback_data": "help:reminders"},
+            ],
         ]
     }
 
 
 _HELP_SECTIONS = {
+    "reminders": (
+        "⏰ *Reminders*\n\n"
+        "Set a reminder in plain language — I work out the time and ping you here "
+        "\\(and in the web UI\\):\n\n"
+        "• `remind open the oven in 10m`\n"
+        "• `remind me next tuesday to call mom`\n\n"
+        "Send `reminders` to list your pending ones, each with a 🗑️ Cancel button\\. "
+        "You can also `remind cancel <id>`\\."
+    ),
     "finance": (
         "💰 *Finance — Budget Manager*\n\n"
         "Connect your account in the web UI \\(Settings → Finance\\), then send `/finance` "

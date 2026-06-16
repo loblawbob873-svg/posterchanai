@@ -1748,10 +1748,11 @@ fieldset legend {
     overflow: auto;
 }
 
-/* User Settings, RAG & Calendar modals: stack above chat header (10002), prevent cut-off */
+/* User Settings, RAG, Calendar & News modals: stack above chat header (10002), prevent cut-off */
 #userSettingsModal.modal,
 #ragModal.modal,
-#calendarModal.modal {
+#calendarModal.modal,
+#newsModal.modal {
     z-index: 10050 !important;
     align-items: flex-start !important;
     justify-content: center !important;
