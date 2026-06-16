@@ -91,6 +91,9 @@ feedparser>=6.0.0
 # Date/time helpers
 python-dateutil>=2.8.0
 pytz>=2024.1
+# IANA tz database for stdlib zoneinfo (reminders use the user's auto-detected timezone). No-op
+# where the OS already ships a tz db; provides one on slim images that don't.
+tzdata>=2024.1
 
 # WebDAV support removed
 cheroot>=10.0.0,<12.0.0

@@ -42,7 +42,7 @@ the LLM. The bots reply with TTS via `/narrate <message>`.
 | Command | What it does |
 |---|---|
 | `mail <to> [subject] <body>` | Send email |
-| `remind <what> <when>` | Set a reminder in natural language — e.g. `remind open the oven in 10m`, `remind me next tuesday to call mom`. The LLM parses the time; you're alerted in the web UI (always) and on Telegram (if linked). |
+| `remind <what> <when>` | Set a reminder in natural language — e.g. `remind open the oven in 10m`, `remind me next tuesday to call mom`. The LLM parses the time (exact relative phrases like `in 10s` parse directly); you're alerted in the web UI (full-screen pop-up) and on Telegram (if linked). Timezone is auto-detected from your browser (IANA, DST-aware) — no setup. |
 | `reminders` | List your pending reminders, each with a clickable **Cancel** (web buttons / Telegram inline keyboard). Also `remind cancel <id>`. |
 | `translate <text> to <lang>` | Translate text |
 | `files <query>` | Search your stored files |
