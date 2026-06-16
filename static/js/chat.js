@@ -1304,9 +1304,9 @@ class ChatHandler {
                 b.className = 'attachment-action';
                 b.textContent = label;
                 b.style.cssText = 'padding:4px 10px;border-radius:14px;border:1px solid var(--border-color,#ccc);background:transparent;color:inherit;cursor:pointer;font-size:0.85em;white-space:nowrap;';
-                b.onclick = (cmd === 'meme')
-                    ? () => this.prefillAttachmentAction('meme ', '')
-                    : () => this.runAttachmentAction(cmd);
+                // Every effect opens an options panel offering an OPTIONAL caption and an
+                // OPTIONAL character overlay, mirroring Telegram's post-effect prompts.
+                b.onclick = () => this.promptEffectOptions(cmd, label, wrap);
                 row.appendChild(b);
             });
             wrap.appendChild(row);
@@ -1318,6 +1318,92 @@ class ChatHandler {
         } else {
             host.appendChild(wrap);
         }
+    }
+
+    // After tapping an effect, show an options panel with an OPTIONAL caption and an OPTIONAL
+    // character overlay (Telegram parity: "add a caption" then "add a character"). Builds the
+    // combined command the shared CommandService already understands:
+    //   <effect> [char <name>] [meme <caption>]   (for the `meme` effect the caption is the bare arg)
+    promptEffectOptions(cmd, label, pickerWrap) {
+        const host = pickerWrap ? pickerWrap.parentElement : null;
+        if (pickerWrap) pickerWrap.remove();
+        const panel = document.createElement('div');
+        panel.className = 'attachment-effects';
+        panel.style.cssText = 'display:flex;flex-direction:column;gap:8px;width:100%;margin-top:6px;border:1px solid var(--border-color,#ccc);border-radius:8px;padding:10px;';
+
+        const title = document.createElement('div');
+        title.textContent = `${label} — options (both optional)`;
+        title.style.cssText = 'font-size:0.85em;opacity:0.85;font-weight:600;';
+        panel.appendChild(title);
+
+        // --- optional caption ---
+        const capLabel = document.createElement('div');
+        capLabel.textContent = '✍️ Add a caption';
+        capLabel.style.cssText = 'font-size:0.78em;opacity:0.7;';
+        panel.appendChild(capLabel);
+        const cap = document.createElement('input');
+        cap.type = 'text';
+        cap.placeholder = 'Caption text (leave blank for none)';
+        cap.style.cssText = 'width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border-color,#ccc);background:transparent;color:inherit;font-size:0.85em;';
+        panel.appendChild(cap);
+
+        // --- optional character ---
+        const chrLabel = document.createElement('div');
+        chrLabel.textContent = '🧍 Add a character';
+        chrLabel.style.cssText = 'font-size:0.78em;opacity:0.7;margin-top:2px;';
+        panel.appendChild(chrLabel);
+        const chrRow = document.createElement('div');
+        chrRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;width:100%;';
+        let selectedChar = '';
+        const chars = [
+            ['▶️ None', ''], ['🧍 Schoolgirl', 'animegirl'], ['🐸 Pepe', 'pepe'],
+            ['🇺🇸 Trump', 'trump'], ['🐄 Cow', 'cow'], ['🍈 Boobs', 'boobs'], ['🩲 Panties', 'panties'],
+        ];
+        const chrBtns = [];
+        const paint = () => chrBtns.forEach(([btn, val]) => {
+            btn.style.background = (val === selectedChar) ? 'var(--accent-color,#4a9eff)' : 'transparent';
+            btn.style.color = (val === selectedChar) ? '#fff' : 'inherit';
+        });
+        chars.forEach(([clabel, val]) => {
+            const cb = document.createElement('button');
+            cb.type = 'button';
+            cb.textContent = clabel;
+            cb.style.cssText = 'padding:4px 10px;border-radius:14px;border:1px solid var(--border-color,#ccc);background:transparent;color:inherit;cursor:pointer;font-size:0.85em;white-space:nowrap;';
+            cb.onclick = () => { selectedChar = val; paint(); };
+            chrRow.appendChild(cb);
+            chrBtns.push([cb, val]);
+        });
+        panel.appendChild(chrRow);
+        paint();
+
+        // --- actions ---
+        const actions = document.createElement('div');
+        actions.style.cssText = 'display:flex;gap:8px;margin-top:4px;';
+        const apply = document.createElement('button');
+        apply.type = 'button';
+        apply.textContent = '✅ Apply';
+        apply.style.cssText = 'padding:5px 14px;border-radius:14px;border:1px solid var(--border-color,#ccc);background:var(--accent-color,#4a9eff);color:#fff;cursor:pointer;font-size:0.85em;';
+        apply.onclick = () => {
+            let c = cmd;
+            if (selectedChar) c += ` char ${selectedChar}`;
+            const text = cap.value.trim();
+            if (text) c += (cmd === 'meme') ? ` ${text}` : ` meme ${text}`;
+            panel.remove();
+            this.runAttachmentAction(c);
+        };
+        const cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.textContent = '✕ Back';
+        cancel.style.cssText = 'padding:5px 14px;border-radius:14px;border:1px solid var(--border-color,#ccc);background:transparent;color:inherit;cursor:pointer;font-size:0.85em;';
+        cancel.onclick = () => { panel.remove(); };
+        actions.appendChild(apply);
+        actions.appendChild(cancel);
+        panel.appendChild(actions);
+
+        const anchor = document.getElementById('uploadPreview');
+        if (anchor) anchor.insertAdjacentElement('afterend', panel);
+        else if (host) host.appendChild(panel);
+        cap.focus();
     }
 
     // Show a link-action bar (Telegram parity) when the composer holds a single bare URL and
