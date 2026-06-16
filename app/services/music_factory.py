@@ -37,12 +37,13 @@ _rr_index = 0
 _rr_lock = asyncio.Lock()
 
 def parse_music_server_urls(raw: str) -> List[str]:
-    """Parse the comma/newline list of nodes (bare IPs or full URLs) into normalized node URLs."""
+    """Parse the unified node list (bare IPs or URLs) into normalized peer URLs, EXCLUDING this node
+    (it's already represented by _LOCAL — keeping its own IP here would forward music to itself and
+    starve real peers like nas in the rotation)."""
     if not raw:
         return []
-    from app.services.load_balancer import normalize_node_url
-    parts = [p for chunk in raw.splitlines() for p in chunk.split(",")]
-    return [n for p in parts if (n := normalize_node_url(p))]
+    from app.services.load_balancer import parse_server_urls
+    return parse_server_urls(raw, exclude_self=True)
 
 
 async def _rotated(candidates: List[str]) -> List[str]:

@@ -151,7 +151,12 @@ async def generate_image_with_load_balancing(
     # was sent here precisely to run on this node's GPU).
     allow_local = local_only or (vram_mode != "llm_only")
     # A forwarded (local_only) request must NOT re-balance, or it loops node→node.
-    remote = [] if local_only else parse_image_server_urls(server_urls)
+    # exclude_self=True: THIS node is already represented by _LOCAL, so its own IP must be dropped
+    # from the peer list — otherwise self is a candidate twice and the rotation wastes a slot
+    # forwarding to itself instead of reaching real peers (e.g. nas). parse_server_urls has the
+    # robust local-IP detection (ip addr / outbound-socket), so it reliably drops this node's IP.
+    from app.services.load_balancer import parse_server_urls
+    remote = [] if local_only else parse_server_urls(server_urls, exclude_self=True)
 
     candidates = ([_LOCAL] if allow_local else []) + remote
     if not candidates:
