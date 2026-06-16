@@ -74,7 +74,10 @@ _BLACKED_FONT_CANDIDATES = [
     "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
 ]
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# This module lives at app/services/effects_service/_common.py, so the repo root is FOUR
+# levels up (_common.py -> effects_service -> services -> app -> repo). (Was three before the
+# effects_service.py monolith became this package.)
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 _HAVA_AUDIO_CANDIDATES = [
     os.environ.get("HAVA_AUDIO_PATH", ""),
     os.path.join(_REPO_ROOT, "assets", "hava.mp3"),
