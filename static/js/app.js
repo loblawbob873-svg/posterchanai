@@ -497,12 +497,23 @@ class App {
             }
         }
 
+        // Update the Generate dropdown button state/label (Image/Music/Video all live under it).
+        const generateDropdownBtn = document.getElementById('generateDropdownBtn');
+        if (generateDropdownBtn) {
+            const genLabels = { 'geni': '🖼️ Image ▾', 'musicgeni': '🎵 Music ▾', 'videogeni': '🎬 Video ▾' };
+            const isGenMode = mode in genLabels;
+            generateDropdownBtn.classList.toggle('active', isGenMode);
+            generateDropdownBtn.textContent = isGenMode ? genLabels[mode] : '✨ Generate ▾';
+        }
+
         // Update placeholder
         const placeholders = {
             '': 'Type a message...',
             'search': 'Enter search query...',
             'images': 'Search for images...',
-            'geni': 'Describe the image to generate...'
+            'geni': 'Describe the image to generate...',
+            'musicgeni': 'Describe the song to generate (add | lyrics, or "instrumental")...',
+            'videogeni': 'Describe the video to generate...'
         };
         this.messageInput.placeholder = placeholders[mode] || 'Type a message...';
         this.messageInput.focus();

@@ -102,7 +102,14 @@ function openPhotoGalleryNow() {
                 <button class="dropdown-item cmd-item" data-cmd="nyaa">🐱 Nyaa</button>
             </div>
         </div>
-        <button class="quick-btn mode-btn" data-mode="geni">✨ Generate</button>
+        <div class="quick-btn-dropdown">
+            <button class="quick-btn dropdown-toggle" id="generateDropdownBtn">✨ Generate ▾</button>
+            <div class="dropdown-menu" id="generateDropdownMenu">
+                <button class="dropdown-item mode-btn" data-mode="geni">🖼️ Image</button>
+                <button class="dropdown-item mode-btn" data-mode="musicgeni">🎵 Music</button>
+                <button class="dropdown-item mode-btn" data-mode="videogeni">🎬 Video</button>
+            </div>
+        </div>
         <button class="quick-btn" id="translateBtn">🌍 Translate</button>
     </div>
 
