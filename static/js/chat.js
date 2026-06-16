@@ -1,5 +1,5 @@
 // Chat Handler
-console.log('[PosterChanAI] chat.js build v39 loaded');
+console.log('[PosterChanAI] chat.js build v40 loaded');
 class ChatHandler {
     constructor() {
         this.ws = null;
@@ -1957,20 +1957,56 @@ class ChatHandler {
         }
     }
 
-    // A reminder fired while the user is connected — surface it immediately (toast + a browser
-    // notification if permitted). It's also persisted to the "⏰ Reminders" conversation server-side.
+    // A reminder fired while the user is connected — surface it BIG and unmissable: a full-screen
+    // overlay card (plus a browser notification + a beep). Also persisted to the "⏰ Reminders"
+    // conversation server-side.
     handleReminderPush(data) {
-        const text = (data && data.content) ? String(data.content) : '⏰ Reminder';
-        this.showToast(text);
+        const body = (data && data.content) ? String(data.content).replace(/^⏰ Reminder:\s*/, '') : 'Reminder';
+        this.showReminderOverlay(body);
         try {
             if (window.Notification && Notification.permission === 'granted') {
-                new Notification('⏰ Reminder', { body: text.replace(/^⏰ Reminder:\s*/, '') });
+                new Notification('⏰ Reminder', { body });
             } else if (window.Notification && Notification.permission !== 'denied') {
                 Notification.requestPermission().then(p => {
-                    if (p === 'granted') new Notification('⏰ Reminder', { body: text.replace(/^⏰ Reminder:\s*/, '') });
+                    if (p === 'granted') new Notification('⏰ Reminder', { body });
                 });
             }
         } catch (e) { /* notifications unsupported */ }
+        // Short attention beep (best-effort; ignored if audio is blocked).
+        try {
+            const ac = new (window.AudioContext || window.webkitAudioContext)();
+            const osc = ac.createOscillator(); const gain = ac.createGain();
+            osc.connect(gain); gain.connect(ac.destination);
+            osc.type = 'sine'; osc.frequency.value = 880; gain.gain.value = 0.15;
+            osc.start(); osc.stop(ac.currentTime + 0.25);
+        } catch (e) { /* no audio */ }
+    }
+
+    // Big centered, pulsing reminder card that demands attention until dismissed.
+    showReminderOverlay(text) {
+        const existing = document.getElementById('reminderOverlay');
+        if (existing) existing.remove();
+        if (!document.getElementById('reminderOverlayStyle')) {
+            const st = document.createElement('style');
+            st.id = 'reminderOverlayStyle';
+            st.textContent = '@keyframes reminderPulse{0%,100%{box-shadow:0 0 40px 6px rgba(0,255,255,0.55)}50%{box-shadow:0 0 70px 16px rgba(255,0,128,0.7)}}';
+            document.head.appendChild(st);
+        }
+        const overlay = document.createElement('div');
+        overlay.id = 'reminderOverlay';
+        overlay.style.cssText = 'position:fixed;inset:0;z-index:20000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.78);backdrop-filter:blur(5px);padding:20px;';
+        const card = document.createElement('div');
+        card.style.cssText = 'max-width:560px;width:100%;text-align:center;background:var(--bg-secondary,#15151f);border:2px solid var(--accent,#00ffff);border-radius:16px;padding:36px 28px;animation:reminderPulse 1.4s ease-in-out infinite;';
+        card.innerHTML = `
+            <div style="font-size:4em;line-height:1;">⏰</div>
+            <div style="font-size:1em;letter-spacing:4px;opacity:0.7;margin-top:6px;">REMINDER</div>
+            <div style="font-size:1.7em;font-weight:700;margin:20px 0 26px;word-break:break-word;">${this.escapeHtml(text)}</div>
+            <button type="button" id="reminderDismissBtn" style="padding:12px 28px;font-size:1.1em;border:none;border-radius:10px;background:var(--accent,#00ffff);color:#000;font-weight:700;cursor:pointer;">Dismiss</button>`;
+        overlay.appendChild(card);
+        const close = () => overlay.remove();
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+        card.querySelector('#reminderDismissBtn').addEventListener('click', close);
+        document.body.appendChild(overlay);
     }
 
     handleStreamChunk(content) {

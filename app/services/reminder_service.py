@@ -240,12 +240,14 @@ async def deliver(db: Session, reminder: Reminder) -> None:
     except Exception as e:
         logger.info(f"live push skipped: {e}")
 
-    # Telegram (only if configured for this user).
+    # Telegram (only if configured for this user). Plain parse_mode + a bold, bordered banner so it
+    # stands out in the chat list (and avoids Markdown parse errors on arbitrary reminder text).
     if getattr(user, "telegram_enabled", False) and getattr(user, "telegram_chat_id", None):
         try:
             from app.services.telegram_service import telegram_service, configure_from_settings
             configure_from_settings(db)
-            await telegram_service.send_message(user.telegram_chat_id, body)
+            tg_body = f"🔔🔔🔔 REMINDER 🔔🔔🔔\n━━━━━━━━━━━━━━\n⏰ {reminder.text}\n━━━━━━━━━━━━━━"
+            await telegram_service.send_message(user.telegram_chat_id, tg_body, parse_mode="")
         except Exception as e:
             logger.warning(f"telegram delivery failed for user {user.id}: {e}")
 
@@ -253,23 +255,33 @@ async def deliver(db: Session, reminder: Reminder) -> None:
 # --------------------------------------------------------------------------- scheduler
 
 async def poll_once(db: Session) -> None:
-    """Fire any reminders whose due time has passed."""
+    """Fire any reminders whose due time has passed — each EXACTLY once.
+
+    Each row is *claimed* with an atomic conditional UPDATE (pending → done) BEFORE delivery, so a
+    reminder can never be delivered twice — even if a poll overlaps, the process restarts, or the
+    row is somehow seen again, only the single UPDATE that flips it off "pending" wins and proceeds.
+    (Trade-off: if delivery itself errored after the claim we'd skip it rather than risk a double —
+    the web-UI insert is the reliable part and Telegram failures are caught inside `deliver`.)"""
     now = datetime.utcnow()
-    due = (db.query(Reminder)
-           .filter(Reminder.status == "pending", Reminder.due_at <= now)
-           .order_by(Reminder.due_at.asc())
-           .limit(50)
-           .all())
-    for r in due:
+    due_ids = [r.id for r in (db.query(Reminder.id)
+                              .filter(Reminder.status == "pending", Reminder.due_at <= now)
+                              .order_by(Reminder.due_at.asc())
+                              .limit(50)
+                              .all())]
+    for rid in due_ids:
+        claimed = (db.query(Reminder)
+                   .filter(Reminder.id == rid, Reminder.status == "pending")
+                   .update({"status": "done", "delivered_at": datetime.utcnow()},
+                           synchronize_session=False))
+        db.commit()
+        if not claimed:
+            continue  # another claim already took it — never deliver twice
+        r = db.query(Reminder).filter(Reminder.id == rid).first()
         try:
             await deliver(db, r)
-            r.status = "done"
-            r.delivered_at = datetime.utcnow()
-            db.commit()
-            logger.info(f"delivered reminder #{r.id} to user {r.user_id}")
+            logger.info(f"delivered reminder #{rid} to user {r.user_id}")
         except Exception as e:
-            logger.warning(f"failed to deliver reminder #{r.id}: {e}")
-            db.rollback()
+            logger.warning(f"failed to deliver reminder #{rid} (already marked done, won't retry): {e}")
 
 
 _scheduler = None
