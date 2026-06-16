@@ -47,6 +47,7 @@ from app.services.youtube_service import (
     check_ytdlp_available,
     download_video_and_save_to_storage,
     download_mp3_and_save_to_storage,
+    download_ytdl_bytes,
     extract_download_urls,
     extract_youtube_urls,
     format_download_result,
@@ -1719,9 +1720,25 @@ Files are saved to your Storage.""",
         if not check_ytdlp_available():
             return {"type": "text", "content": "❌ yt-dlp not installed. Install with: `pip install yt-dlp`"}
 
-        # Parse: "ytdl video <url>" | "ytdl mp3 <url>" | "ytdl <url>" (default = MP3)
-        parts = arg.strip().split(maxsplit=1)
-        first = parts[0].lower()
+        # Parse: "ytdl video <url>" | "ytdl mp3 <url>" | "ytdl <url>" (default = MP3), plus optional
+        # trailing `clip <start> <end>` and/or `compress` modifiers (video only) — same syntax as
+        # the bot ytdl endpoints. When clip/compress is present we trim/shrink and deliver the
+        # result INLINE in the chat (like the standalone `clip` command), instead of saving to
+        # storage and returning a link.
+        import re as _re
+        full = arg.strip()
+        # Pull off the clip/compress modifiers so they don't confuse URL/mode parsing.
+        clip_str = None
+        m = _re.search(r'\bclip\s+(\S+)\s+(\S+)', full, _re.IGNORECASE)
+        if m:
+            clip_str = f"{m.group(1)} {m.group(2)}"
+            full = (full[:m.start()] + full[m.end():]).strip()
+        want_compress = bool(_re.search(r'\bcompress\b', full, _re.IGNORECASE))
+        if want_compress:
+            full = _re.sub(r'\bcompress\b', '', full, flags=_re.IGNORECASE).strip()
+
+        parts = full.split(maxsplit=1)
+        first = parts[0].lower() if parts else ""
         if first == "video":
             url_arg = parts[1] if len(parts) > 1 else ""
             if not url_arg:
@@ -1733,14 +1750,40 @@ Files are saved to your Storage.""",
                 return {"type": "text", "content": "Usage: `ytdl mp3 <url>`\n\nExample: `ytdl mp3 https://youtube.com/watch?v=...`"}
             as_mp3 = True
         else:
-            url_arg = arg
+            url_arg = full
             as_mp3 = True  # default: MP3
+
+        # clip/compress only make sense for video.
+        if (clip_str or want_compress):
+            as_mp3 = False
 
         urls = extract_download_urls(url_arg)
         if not urls:
             return {"type": "text", "content": "Could not find a valid YouTube, X (Twitter), or Nitter URL. Example: `ytdl https://x.com/i/status/123`, `ytdl https://nitter.net/user/status/123`, or `ytdl https://youtube.com/watch?v=...`"}
 
         target_url = urls[0]
+
+        # Inline delivery path: a trimmed/compressed video goes straight into the chat (like the
+        # `clip` command), not to storage.
+        if clip_str or want_compress:
+            import asyncio
+            logger.info(f"[ytdl] Command: inline video url={target_url!r} clip={clip_str!r} compress={want_compress} user_id={self.user.id}")
+            res = await asyncio.to_thread(
+                download_ytdl_bytes, target_url, video=True, clip=clip_str, compress=want_compress,
+            )
+            if not res.get("ok"):
+                return {"type": "text", "content": f"❌ {res.get('error', 'download failed')}"}
+            summary = "✂️ Clipped video" if clip_str else "🗜 Compressed video"
+            return {
+                "type": "files",
+                "content": summary,
+                "files": [{
+                    "filename": res["filename"],
+                    "data": res["data"],
+                    "content_type": res.get("mime", "video/mp4"),
+                }],
+            }
+
         if as_mp3:
             logger.info(f"[ytdl] Command: mp3 url={target_url!r} user_id={self.user.id}")
             result = await download_mp3_and_save_to_storage(

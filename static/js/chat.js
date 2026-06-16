@@ -1248,18 +1248,22 @@ class ChatHandler {
         // gets the generic page actions. ytdl handles YouTube, X/Twitter and Nitter.
         const isYouTube = /(?:youtube\.com\/|youtu\.be\/)/i.test(url);
         const isX = /\/\/[^/]*(?:x\.com|twitter\.com|nitter)/i.test(url);
+        // A 4th element = a token to pre-select for editing (timecodes) instead of auto-submitting,
+        // so the user can trim the download (`ytdl video <url> clip <start> <end>`) before sending.
         let actions;
         if (isYouTube) {
             actions = [
                 ['📋 Summary', `yt ${url}`, 'Summarize the video from its transcript'],
                 ['🎵 MP3', `ytdl ${url}`, 'Download the audio as an MP3'],
-                ['🎬 Movie', `ytdl video ${url}`, 'Download the video'],
+                ['🎬 Movie', `ytdl video ${url}`, 'Download the full video'],
+                ['✂️ Clip', `ytdl video ${url} clip 0:00 0:30`, 'Download just a trimmed section (edit start/end, then Enter)', '0:00 0:30'],
             ];
         } else if (isX) {
             // Tweets have no transcript, so no Summary — just download (like the Telegram X menu).
             actions = [
                 ['🎵 MP3', `ytdl ${url}`, 'Download the audio as an MP3'],
-                ['🎬 Video', `ytdl video ${url}`, 'Download the video'],
+                ['🎬 Video', `ytdl video ${url}`, 'Download the full video'],
+                ['✂️ Clip', `ytdl video ${url} clip 0:00 0:30`, 'Download just a trimmed section (edit start/end, then Enter)', '0:00 0:30'],
             ];
         } else {
             actions = [
@@ -1268,14 +1272,16 @@ class ChatHandler {
                 ['🎴 Flashcards', `flashcards ${url}`, 'Build a study quiz from the page'],
             ];
         }
-        actions.forEach(([label, cmd, title]) => {
+        actions.forEach(([label, cmd, title, selectToken]) => {
             const b = document.createElement('button');
             b.type = 'button';
             b.className = 'attachment-action';
             b.textContent = label;
             b.title = title;
             b.style.cssText = 'padding:4px 10px;border-radius:14px;border:1px solid var(--border-color,#ccc);background:transparent;color:inherit;cursor:pointer;font-size:0.85em;white-space:nowrap;';
-            b.onclick = () => this.runAttachmentAction(cmd);
+            b.onclick = selectToken
+                ? () => this.prefillAttachmentAction(cmd, selectToken)
+                : () => this.runAttachmentAction(cmd);
             bar.appendChild(b);
         });
     }
