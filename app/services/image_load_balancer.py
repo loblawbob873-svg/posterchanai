@@ -178,8 +178,10 @@ def parse_image_server_urls(urls_string: str, exclude_self: bool = False, curren
             logger.warning(f"[IMAGE LOAD BALANCER] Skipping empty URL after sanitization")
             continue
 
-        if not (url.startswith('http://') or url.startswith('https://')):
-            logger.warning(f"Skipping invalid URL (missing protocol): {url}")
+        # Accept bare IPs/hosts as well as full URLs — normalize to http://<host>:<port>.
+        from app.services.load_balancer import normalize_node_url
+        url = normalize_node_url(url)
+        if not url:
             continue
 
         # Check if URL points to THIS instance (same host AND same port)

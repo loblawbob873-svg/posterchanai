@@ -37,11 +37,12 @@ _rr_index = 0
 _rr_lock = asyncio.Lock()
 
 def parse_music_server_urls(raw: str) -> List[str]:
-    """Parse the comma/newline-separated server-URL list (chat_server_urls) into a clean list."""
+    """Parse the comma/newline list of nodes (bare IPs or full URLs) into normalized node URLs."""
     if not raw:
         return []
-    parts = [p.strip().rstrip("/") for chunk in raw.splitlines() for p in chunk.split(",")]
-    return [p for p in parts if p]
+    from app.services.load_balancer import normalize_node_url
+    parts = [p for chunk in raw.splitlines() for p in chunk.split(",")]
+    return [n for p in parts if (n := normalize_node_url(p))]
 
 
 async def _rotated(candidates: List[str]) -> List[str]:

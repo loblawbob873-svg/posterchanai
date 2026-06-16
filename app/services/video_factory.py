@@ -31,10 +31,12 @@ _rr_lock = asyncio.Lock()
 
 
 def parse_video_server_urls(raw: str) -> List[str]:
+    """Parse the comma/newline list of nodes (bare IPs or full URLs) into normalized node URLs."""
     if not raw:
         return []
-    parts = [p.strip().rstrip("/") for chunk in raw.splitlines() for p in chunk.split(",")]
-    return [p for p in parts if p]
+    from app.services.load_balancer import normalize_node_url
+    parts = [p for chunk in raw.splitlines() for p in chunk.split(",")]
+    return [n for p in parts if (n := normalize_node_url(p))]
 
 
 def _factory_settings(db: Session) -> dict:

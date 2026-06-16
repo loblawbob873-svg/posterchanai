@@ -4,6 +4,7 @@ Image generation is always native diffusers (torch-XPU/CUDA/HIP/CPU). Integrates
 VRAM manager for model swapping on a shared GPU, and supports load balancing across multiple
 posterchanai nodes (the unified chat_server_urls list).
 """
+import asyncio
 import logging
 from typing import Optional, Protocol, runtime_checkable, TYPE_CHECKING
 from sqlalchemy.orm import Session
@@ -20,6 +21,24 @@ if TYPE_CHECKING:
     from app.models import User
 
 logger = logging.getLogger("image_factory")
+
+# This node's own GPU is a rotation candidate alongside remote nodes (mirrors music/video factories).
+_LOCAL = "__local__"
+# Round-robin index across [remote nodes…, local] so images spread over ALL GPUs incl. this one,
+# instead of always forwarding to peers and only using local as a fallback.
+_rr_index = 0
+_rr_lock = asyncio.Lock()
+
+
+async def _rotated(candidates: list) -> list:
+    """Rotate `candidates` by a global round-robin index so each call starts at a different node."""
+    global _rr_index
+    if not candidates:
+        return []
+    async with _rr_lock:
+        start = _rr_index % len(candidates)
+        _rr_index = (_rr_index + 1) % len(candidates)
+    return candidates[start:] + candidates[:start]
 
 
 @runtime_checkable
@@ -54,6 +73,52 @@ def get_image_load_balancer(db: Session) -> Optional[ImageLoadBalancer]:
     return None
 
 
+async def _generate_image_local(db: Session, settings: dict, prompt: str, negative_prompt: str,
+                                width, height, steps, cfg) -> Optional[str]:
+    """Generate on THIS node's GPU under the shared GPU lock + VRAM swap. Returns base64 or None."""
+    # Determine CPU vs GPU mode for the lock WITHOUT initializing a GPU here: this is the parent
+    # process that forks the image subprocess, and a GPU (CUDA/XPU) context initialized in the
+    # parent corrupts the child's GPU state. Use the configured device, not detect_device().
+    image_cpu_mode = settings.get("image_gpu_device", "auto") == "cpu"
+    from app.services.locks import GPUResourceLock, image_generation_lock
+    async with GPUResourceLock("Image", f"prompt={prompt[:30]}...", cpu_mode=image_cpu_mode):
+        async with image_generation_lock:
+            prepare_vram_for_image(db)
+            backend = get_image_backend(db)
+            logger.info(f"[IMAGE] local backend generating: {prompt[:50]}...")
+            return await backend.generate_image(
+                prompt=prompt, negative_prompt=negative_prompt,
+                width=width, height=height, steps=steps, cfg=cfg,
+            )
+
+
+async def _generate_image_on_node(node_url: str, timeout: float, prompt: str, negative_prompt: str,
+                                  width, height, steps, cfg) -> Optional[str]:
+    """Forward to another posterchanai node's /api/generate-image (server-to-server). That node runs
+    its OWN local path (local_only: GPU lock + VRAM swap). Returns base64, or None to try the next."""
+    import httpx
+    payload = {"prompt": prompt, "negative_prompt": negative_prompt}
+    if width is not None:
+        payload["width"] = width
+    if height is not None:
+        payload["height"] = height
+    if steps is not None:
+        payload["steps"] = steps
+    if cfg is not None:
+        payload["cfg"] = cfg
+    headers = {"X-Posterchanai-Load-Balanced": "true"}
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        r = await client.post(f"{node_url}/api/generate-image", json=payload, headers=headers)
+    if r.status_code >= 400:
+        logger.warning(f"[IMAGE] node {node_url} returned HTTP {r.status_code}")
+        return None
+    data = r.json()
+    if data.get("error"):
+        logger.warning(f"[IMAGE] node {node_url} error: {data['error']}")
+        return None
+    return data.get("image")
+
+
 async def generate_image_with_load_balancing(
     db: Session,
     prompt: str,
@@ -65,190 +130,49 @@ async def generate_image_with_load_balancing(
     local_only: bool = False,
 ) -> Optional[str]:
     """
-    Generate image with load balancing support.
-    Alternates between local and remote servers if load balancing is configured.
-    Remote requests run in parallel; local requests are serialized via lock.
-    If vram_mode is 'llm_only', always uses remote servers.
+    Generate an image with node→node load balancing. Round-robins across [remote nodes…, local] so
+    images spread over ALL GPUs (incl. this one), exactly like music/video — NOT "remote first, local
+    only as a fallback" (which bypassed this node's GPU and piled load onto peers).
     `local_only` skips remote nodes (set by the /api/generate-image endpoint for server-to-server
-    requests so a forwarded request generates HERE instead of bouncing onward — the unified
-    chat_server_urls list is populated on every node, so without this a forwarded request would
-    ping-pong between nodes). Returns base64 encoded image or None.
+    requests so a forwarded request generates HERE instead of bouncing onward → no node→node loop).
+    If vram_mode is 'llm_only', local generation is skipped (remote only). Returns base64 or None.
     """
-    from app.services.locks import image_generation_lock
-
-    # Query settings from database
     settings = {s.key: s.value for s in db.query(Setting).all()}
-    # Single unified load-balancing list (Site → Load Balancing) drives chat/image/music/video.
-    # A forwarded (local_only) request must NOT re-balance, or it loops node→node.
     server_urls = settings.get("chat_server_urls", "")
     vram_mode = settings.get("vram_mode", "shared")
-    servers = [] if local_only else parse_image_server_urls(server_urls)
+    timeout = int(settings.get("image_timeout", "300000")) / 1000
 
-    # If vram_mode is llm_only, always use remote servers (no local image generation) — but a
-    # forwarded request still generates locally (it was sent here precisely to run on this GPU).
-    force_remote = (vram_mode == "llm_only") and not local_only
-    
-    if force_remote and not servers:
-        logger.error("[IMAGE] vram_mode is 'llm_only' but no image servers configured")
+    # llm_only keeps the LLM resident → no local image gen, UNLESS this is a forwarded request (which
+    # was sent here precisely to run on this node's GPU).
+    allow_local = local_only or (vram_mode != "llm_only")
+    # A forwarded (local_only) request must NOT re-balance, or it loops node→node.
+    remote = [] if local_only else parse_image_server_urls(server_urls)
+
+    candidates = ([_LOCAL] if allow_local else []) + remote
+    if not candidates:
+        logger.error("[IMAGE] No candidates (vram_mode 'llm_only' with no servers configured)")
         return None
+    candidates = await _rotated(candidates)
+    logger.info(f"[IMAGE] candidates (round-robin): {candidates}")
 
-    # If remote image servers are configured, use load balancing
-    # Simple round-robin: select one server and make request
-    logger.info(f"[IMAGE] Checking load balancing: servers={servers}, len={len(servers) if servers else 0}, force_remote={force_remote}")
-    if servers:
-        from app.services.image_load_balancer import get_healthy_image_server
-        
-        timeout = int(settings.get("image_timeout", "300000")) / 1000
-        selected_server = await get_healthy_image_server(servers)
-        logger.info(f"[IMAGE] Load balancer returned: {selected_server}")
-        
-        if selected_server:
-            # Make HTTP request to selected server (round-robin)
-            logger.info(f"[IMAGE] Load balancer selected: {selected_server} (from {len(servers)} server(s): {servers})")
-            import httpx
-            payload = {
-                "prompt": prompt,
-                "negative_prompt": negative_prompt,
-            }
-            if width is not None:
-                payload["width"] = width
-            if height is not None:
-                payload["height"] = height
-            if steps is not None:
-                payload["steps"] = steps
-            if cfg is not None:
-                payload["cfg"] = cfg
-            
-            # Server-to-server requests don't need authentication - use load-balanced header
-            headers = {}
-            headers["X-Posterchanai-Load-Balanced"] = "true"
-            logger.debug(f"[IMAGE] Sending load-balanced request to {selected_server} (no auth required)")
-            
-            try:
-                async with httpx.AsyncClient(timeout=timeout) as client:
-                    logger.info(f"[IMAGE] Request to {selected_server} with prompt: {prompt[:50]}... (headers: {list(headers.keys())})")
-                    response = await client.post(
-                        f"{selected_server}/api/generate-image",
-                        json=payload,
-                        headers=headers
-                    )
-                    
-                    logger.info(f"[IMAGE] Response from {selected_server}: status={response.status_code}")
-                    
-                    if response.status_code == 401:
-                        error_body = response.text[:500] if hasattr(response, 'text') else ""
-                        logger.error(f"[IMAGE] ERROR from {selected_server} | Authentication failed (401) - Response: {error_body}")
-                        logger.error(f"[IMAGE] Load-balanced header sent: {headers.get('X-Posterchanai-Load-Balanced')}")
-                        # Fall through to local backend
-                    else:
-                        try:
-                            response.raise_for_status()
-                            result = response.json()
-                            
-                            if result.get("error"):
-                                logger.error(f"[IMAGE] ERROR from {selected_server} | error={result['error']}")
-                                # Fall through to local backend
-                            else:
-                                image_data = result.get("image")
-                                if image_data:
-                                    logger.info(f"[IMAGE] SUCCESS from {selected_server} ({len(image_data)} chars)")
-                                    return image_data
-                                else:
-                                    logger.error(f"[IMAGE] ERROR from {selected_server} | no image in response")
-                                    # Fall through to local backend
-                        except httpx.HTTPStatusError:
-                            # Will be caught by outer exception handler
-                            raise
-            except httpx.HTTPStatusError as e:
-                error_text = e.response.text[:500] if hasattr(e.response, 'text') else str(e)
-                logger.error(f"[IMAGE] HTTP error from {selected_server}: {e.response.status_code} - {error_text}")
-                # Fall through to local backend
-            except httpx.TimeoutException:
-                logger.error(f"[IMAGE] Timeout from {selected_server} (timeout={timeout}s)")
-                # Fall through to local backend
-            except Exception as e:
-                logger.error(f"[IMAGE] Failed from {selected_server}: {type(e).__name__}: {e}", exc_info=True)
-                # Fall through to local backend
-
-    # Use local backend with GPU/CPU LOCK to prevent resource overload
-    # This handles: no remote servers configured, remote request failed, or when "self" is selected by load balancer
-    # Skip local if vram_mode is llm_only (force_remote)
-    if force_remote:
-        logger.warning("[IMAGE] vram_mode is 'llm_only' - skipping local generation, will try fallback to all remote servers")
-        result = None
-    else:
-        logger.info("Using local backend for image generation (serialized with GPU/CPU lock)")
-        result = None
+    last_err: Optional[Exception] = None
+    for cand in candidates:
         try:
-            # Determine CPU vs GPU mode for the lock WITHOUT initializing a GPU here: this is the
-            # parent process that forks the image subprocess, and a GPU (CUDA/XPU) context
-            # initialized in the parent corrupts the child's GPU state (generation crashes at the
-            # first compute step). Use the configured device instead of detect_device().
-            image_device = settings.get("image_gpu_device", "auto")
-            image_cpu_mode = image_device == "cpu"
-            
-            # Use shared GPU/CPU lock to prevent LLM and image from running simultaneously
-            from app.services.locks import GPUResourceLock, image_generation_lock
-            async with GPUResourceLock("Image", f"prompt={prompt[:30]}...", cpu_mode=image_cpu_mode):
-                async with image_generation_lock:
-                    prepare_vram_for_image(db)
-                    backend = get_image_backend(db)
-                    logger.info(f"Calling backend.generate_image with prompt: {prompt[:50]}...")
-                    logger.info(f"Backend type: {type(backend).__name__}")
-                    result = await backend.generate_image(
-                        prompt=prompt,
-                        negative_prompt=negative_prompt,
-                        width=width,
-                        height=height,
-                        steps=steps,
-                        cfg=cfg,
-                    )
-                    if result:
-                        logger.info(f"Local backend returned image ({len(result) if result else 0} chars)")
-                    else:
-                        logger.error(f"Local backend returned None (generation failed - backend returned no result)")
-                        # Try to get more info about why it failed
-                        try:
-                            backend_info = get_image_backend_info(db)
-                            logger.error(f"Backend info: {backend_info}")
-                        except Exception as info_e:
-                            logger.debug(f"Could not get backend info: {info_e}")
+            if cand == _LOCAL:
+                result = await _generate_image_local(db, settings, prompt, negative_prompt, width, height, steps, cfg)
+            else:
+                logger.info(f"[IMAGE] forwarding to remote node {cand}")
+                result = await _generate_image_on_node(cand, timeout, prompt, negative_prompt, width, height, steps, cfg)
+            if result:
+                logger.info(f"[IMAGE] SUCCESS from {cand} ({len(result)} chars)")
+                return result
+            logger.warning(f"[IMAGE] {cand} produced no image; trying next")
         except Exception as e:
-            logger.error(f"Local image generation failed with exception: {type(e).__name__}: {e}", exc_info=True)
-            result = None
+            last_err = e
+            logger.warning(f"[IMAGE] {cand} failed: {type(e).__name__}: {e}; trying next")
 
-    # Fallback to remote if local failed and remote servers are available
-    if result is None and servers:
-        logger.warning("Local image generation failed, falling back to remote server")
-        timeout = int(settings.get("image_timeout", "300000")) / 1000
-        
-        # Server-to-server fallback - no authentication needed
-        try:
-            load_balancer = ImageLoadBalancer(servers, timeout=timeout)
-            return await load_balancer.generate_image(
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                width=width,
-                height=height,
-                steps=steps,
-                cfg=cfg,
-            )
-        except NoHealthyImageServersError as e:
-            logger.error(f"[IMAGE] All remote servers failed in fallback: {e}")
-            logger.error(f"[IMAGE] Tried {len(servers)} server(s): {servers}")
-            return None
-        except Exception as e:
-            logger.error(f"[IMAGE] Fallback to remote server failed: {type(e).__name__}: {e}", exc_info=True)
-            return None
-
-    if result is None:
-        logger.error(f"[IMAGE] All image generation attempts failed - local and remote")
-        # Log configuration for debugging
-        settings = {s.key: s.value for s in db.query(Setting).all()}
-        logger.error(f"[IMAGE] Config - chat_server_urls: {settings.get('chat_server_urls', '')}, "
-                    f"vram_mode: {settings.get('vram_mode', 'shared')}")
-    
-    return result
+    logger.error(f"[IMAGE] All image attempts failed (candidates={candidates}, last_err={last_err})")
+    return None
 
 
 def get_image_backend(db: Session) -> ImageBackend:

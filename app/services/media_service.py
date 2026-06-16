@@ -954,7 +954,7 @@ def render_outro_card(W: int, H: int, username: Optional[str] = None, avatar=Non
         except Exception:
             pass
     _ctext(y, "made with", _fit("made with", int(H * 0.036)), (170, 175, 200)); y += int(H * 0.048)
-    _ctext(y, "PosterChanAI", _fit("PosterChanAI", int(H * 0.068)), (255, 170, 60))
+    _ctext(y, "PosterChan AI", _fit("PosterChan AI", int(H * 0.068)), (255, 170, 60))
     return img
 
 
@@ -1092,7 +1092,7 @@ def render_music_background(W: int, H: int, title: str = ""):
             y += lh + int(H * 0.03)
         except Exception:
             pass
-    _ctext(y, "PosterChanAI", _fit("PosterChanAI", int(H * 0.10)), (255, 170, 60))
+    _ctext(y, "PosterChan AI", _fit("PosterChan AI", int(H * 0.10)), (255, 170, 60))
     y += int(H * 0.12)
     if title:
         t = title if len(title) <= 60 else title[:57] + "..."

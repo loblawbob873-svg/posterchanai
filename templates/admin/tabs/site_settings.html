@@ -14,17 +14,13 @@
     <fieldset>
         <legend>Load Balancing</legend>
         <div class="form-group">
-            <label for="chat_server_urls">Server URLs</label>
-            <input type="text" id="chat_server_urls" name="chat_server_urls" placeholder="http://192.168.0.85:3051, http://nas.lan:3051">
-            <small>Comma-separated posterchanai node URLs. This <strong>one</strong> list load-balances
-                <strong>all</strong> GPU work — chat, image, music and video — round-robin between this
-                server and the listed nodes (each node frees its own GPU first). Local URLs on different
-                ports (e.g., <code>localhost:3052</code>) are allowed for dual-instance setups.</small>
-        </div>
-        <div class="form-group" style="margin-top: 12px; padding: 10px; background: #1a1a2e; border: 1px solid #2a2a3e; border-radius: 6px;">
-            <small style="color: #aaa; display: block;">
-                <strong style="color: #4a9eff;">📌 Tip:</strong> When using load balancing, configure <strong>Storage → Storage Server URL</strong> below to proxy file requests to a designated storage node.
-            </small>
+            <label for="chat_server_urls">Server IPs</label>
+            <input type="text" id="chat_server_urls" name="chat_server_urls" placeholder="192.168.0.2, 192.168.0.85">
+            <small>Comma-separated node <strong>IPs</strong> (the posterchanai port is assumed). This
+                <strong>one</strong> list load-balances <strong>all</strong> GPU work — chat, image, music
+                and video — round-robin between this server and the listed nodes (each node frees its own
+                GPU first). Full URLs (e.g. <code>http://localhost:3052</code>) are still accepted for
+                non-default ports / dual-instance setups.</small>
         </div>
     </fieldset>
 
@@ -106,20 +102,16 @@
             </label>
             <small>Enable if you get SSL CERTIFICATE_VERIFY_FAILED or hostname mismatch (e.g. behind a proxy/firewall). Less secure; use only when needed.</small>
         </div>
-    </fieldset>
-
-    <fieldset>
-        <legend>Load Balancing</legend>
         <div class="form-group" style="padding: 12px; background: #1a1a2e; border: 1px solid #2a2a3e; border-radius: 6px;">
-            <strong style="color: #4a9eff;">ℹ️ Load Balancing</strong>
+            <strong style="color: #4a9eff;">ℹ️ Load-balanced storage</strong>
             <p style="margin: 8px 0 0 0; color: #aaa; font-size: 0.9em; line-height: 1.5;">
-                For load-balanced setups, configure <strong>Storage Server URL</strong> to proxy file requests to a designated storage node.
-                This avoids requiring shared filesystem (NFS) - one node handles storage, others proxy requests to it.
+                For load-balanced setups, set <strong>Storage Server URL</strong> to proxy file requests to a designated storage node.
+                This avoids requiring a shared filesystem (NFS) — one node handles storage, the others proxy requests to it.
             </p>
             <p style="margin: 8px 0 0 0; color: #888; font-size: 0.85em;">
                 <strong>Setup:</strong><br>
-                • Storage node: Leave <code>storage_server_url</code> empty, set <code>upload_path</code> to local directory<br>
-                • Client nodes: Set <code>storage_server_url</code> to storage node URL (e.g., <code>http://192.168.0.10:3051</code>)
+                • Storage node: leave <code>storage_server_url</code> empty, set <code>upload_path</code> to a local directory<br>
+                • Client nodes: set <code>storage_server_url</code> to the storage node (e.g. <code>192.168.0.10</code>)
             </p>
         </div>
     </fieldset>

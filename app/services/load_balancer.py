@@ -179,11 +179,28 @@ def sanitize_server_url(url: str) -> str:
     return sanitized.strip()
 
 
-def parse_server_urls(urls_string: str, exclude_self: bool = False, current_port: int = 3051) -> List[str]:
-    """Parse comma-separated server URLs into a list.
+def normalize_node_url(entry: str) -> str:
+    """Normalize a node entry to a full URL. Accepts a bare IP/host ("192.168.0.2"), a host:port
+    ("192.168.0.2:3051" / "localhost:3052"), or a full http(s):// URL. Bare entries are assumed to be
+    posterchanai nodes: prefixed with http:// and given the posterchanai port (POSTERCHANAI_PORT,
+    default 3051) when no port is present. Returns "" for blank input."""
+    import os
+    e = (entry or "").strip().rstrip("/")
+    if not e:
+        return ""
+    if "://" not in e:
+        if ":" not in e:
+            e = f"{e}:{os.environ.get('POSTERCHANAI_PORT', '3051')}"
+        e = "http://" + e
+    return e
 
-    If exclude_self is True, removes URLs pointing to THIS instance (same host AND port).
-    URLs on different ports (like localhost:3052) are kept.
+
+def parse_server_urls(urls_string: str, exclude_self: bool = False, current_port: int = 3051) -> List[str]:
+    """Parse comma-separated server entries into a list of full URLs.
+
+    Entries may be bare IPs/hosts ("192.168.0.2"), host:port, or full URLs — all normalized via
+    normalize_node_url. If exclude_self is True, removes URLs pointing to THIS instance (same host
+    AND port). URLs on different ports (like localhost:3052) are kept.
     """
     import os
     import socket
@@ -250,8 +267,9 @@ def parse_server_urls(urls_string: str, exclude_self: bool = False, current_port
             logger.warning(f"[LOAD BALANCER] Skipping empty URL after sanitization")
             continue
 
-        if not (url.startswith('http://') or url.startswith('https://')):
-            logger.warning(f"Skipping invalid URL (missing protocol): {url}")
+        # Accept bare IPs/hosts as well as full URLs — normalize to http://<host>:<port>.
+        url = normalize_node_url(url)
+        if not url:
             continue
 
         # Check if URL points to THIS instance (same host AND same port)
