@@ -98,6 +98,7 @@ class ChatHandler {
         this.messageInput.addEventListener('input', () => {
             this.messageInput.style.height = 'auto';
             this.messageInput.style.height = Math.min(this.messageInput.scrollHeight, 120) + 'px';
+            this.updateLinkActionBar();
         });
 
         // File input change
@@ -1151,29 +1152,132 @@ class ChatHandler {
             attachmentsList.appendChild(item);
         });
 
-        // Quick action: translate the OCR'd text of an attached image/PDF.
-        if (this.uploadedImages.length > 0 || this.uploadedPDFs.length > 0) {
-            const action = document.createElement('button');
-            action.type = 'button';
-            action.className = 'attachment-action';
-            action.textContent = '🌐 Translate';
-            action.title = 'OCR the attachment and translate it (edit the language, then Enter)';
-            action.style.cssText = 'align-self:center;padding:4px 10px;border-radius:14px;border:1px solid var(--border-color,#ccc);background:transparent;color:inherit;cursor:pointer;font-size:0.85em;white-space:nowrap;';
-            action.onclick = () => window.chatHandler.translateAttachment();
-            attachmentsList.appendChild(action);
+        // Interactive action buttons (Telegram parity): attach a file and pick an action instead
+        // of auto-sending to the LLM. Buttons map to commands in the chat.py attachment allowlist.
+        const hasImage = this.uploadedImages.length > 0;
+        const hasPdf = this.uploadedPDFs.length > 0;
+        const hasVideo = this.uploadedVideos.length > 0;
+        const hasDoc = this.uploadedDocuments.length > 0;
+
+        if (hasImage || hasPdf || hasVideo || hasDoc) {
+            const bar = document.createElement('div');
+            bar.className = 'attachment-actions';
+            bar.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;width:100%;align-items:center;justify-content:center;margin-top:4px;';
+
+            // `submit:true` runs the command immediately; otherwise we pre-fill the composer and
+            // let the user edit an argument (language/timecodes/caption) before pressing Enter.
+            const mkBtn = (label, cmd, opts = {}) => {
+                const b = document.createElement('button');
+                b.type = 'button';
+                b.className = 'attachment-action';
+                b.textContent = label;
+                if (opts.title) b.title = opts.title;
+                b.style.cssText = 'padding:4px 10px;border-radius:14px;border:1px solid var(--border-color,#ccc);background:transparent;color:inherit;cursor:pointer;font-size:0.85em;white-space:nowrap;';
+                b.onclick = opts.onClick ? opts.onClick
+                    : (opts.submit ? () => this.runAttachmentAction(cmd)
+                                   : () => this.prefillAttachmentAction(cmd, opts.selectToken));
+                bar.appendChild(b);
+                return b;
+            };
+
+            if (hasImage) {
+                mkBtn('🗜 Compress', 'compress', { submit: true, title: 'Shrink the image file size' });
+                mkBtn('✂️ Remove BG', 'removebackground', { submit: true, title: 'Cut out the background' });
+                mkBtn('📄 To PDF', 'convert pdf', { submit: true, title: 'Combine image(s) into a PDF' });
+                mkBtn('🔤 Read text', 'ocr', { submit: true, title: 'OCR — read the text out of the image' });
+                mkBtn('🌐 Translate', 'translate to english', { selectToken: 'english', title: 'OCR then translate (edit the language, then Enter)' });
+                mkBtn('🎴 Flashcards', 'flashcards', { submit: true, title: 'Build a study quiz from the file' });
+                mkBtn('✨ Effects', '', { onClick: () => this.toggleEffectsRow(bar), title: 'Apply a video effect' });
+            } else if (hasPdf) {
+                mkBtn('🖼 To images', 'convert images', { submit: true, title: 'One PNG per page' });
+                mkBtn('🔤 Read text', 'ocr', { submit: true, title: 'OCR — read the text out of the PDF' });
+                mkBtn('🌐 Translate', 'translate to english', { selectToken: 'english', title: 'OCR then translate (edit the language, then Enter)' });
+                mkBtn('🎴 Flashcards', 'flashcards', { submit: true, title: 'Build a study quiz from the PDF' });
+            } else if (hasVideo) {
+                mkBtn('🗜 Compress', 'compress', { submit: true, title: 'Shrink the video file size' });
+                mkBtn('✂️ Clip', 'clip 00:00 00:10', { selectToken: '00:00 00:10', title: 'Trim the video (edit start/end, then Enter)' });
+            } else if (hasDoc) {
+                mkBtn('🎴 Flashcards', 'flashcards', { submit: true, title: 'Build a study quiz from the document' });
+            }
+
+            attachmentsList.appendChild(bar);
         }
     }
 
-    // Prefill the composer with a translate command (keeping the attachment) so the
-    // user can pick a language and send. Routes through the `translate` command, which
-    // OCRs the upload and translates the full text.
-    translateAttachment() {
-        if (this.messageInput) {
-            this.messageInput.value = 'translate to english';
-            this.messageInput.focus();
-            // Select "english" so the user can type another language and hit Enter.
-            const v = this.messageInput.value;
-            this.messageInput.setSelectionRange(v.length - 'english'.length, v.length);
+    // Reveal a sub-row of no-arg image→video effects under the action bar (toggles on repeat click).
+    toggleEffectsRow(bar) {
+        const existing = bar.parentElement.querySelector('.attachment-effects');
+        if (existing) { existing.remove(); return; }
+        const row = document.createElement('div');
+        row.className = 'attachment-effects';
+        row.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;width:100%;align-items:center;justify-content:center;margin-top:4px;';
+        const effects = [
+            ['💫 Glow', 'glow'], ['🫧 Alive', 'alive'], ['🔥 Fire', 'fire'],
+            ['🩸 Blood', 'blood'], ['🖼 Meme', 'meme'],
+        ];
+        effects.forEach(([label, cmd]) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'attachment-action';
+            b.textContent = label;
+            b.style.cssText = 'padding:4px 10px;border-radius:14px;border:1px solid var(--border-color,#ccc);background:transparent;color:inherit;cursor:pointer;font-size:0.85em;white-space:nowrap;';
+            // `meme` needs a caption; pre-fill so the user types it. The rest run immediately.
+            b.onclick = (cmd === 'meme')
+                ? () => this.prefillAttachmentAction('meme ', '')
+                : () => this.runAttachmentAction(cmd);
+            row.appendChild(b);
+        });
+        bar.parentElement.appendChild(row);
+    }
+
+    // Show a link-action bar (Telegram parity) when the composer holds a single bare URL and
+    // nothing else — paste a link → pick Summary / Screenshot / Flashcards instead of just chatting.
+    updateLinkActionBar() {
+        const bar = document.getElementById('linkActions');
+        if (!bar) return;
+        const text = (this.messageInput ? this.messageInput.value : '').trim();
+        const urlMatch = text.match(/^https?:\/\/\S+$/i);
+        if (!urlMatch) {
+            if (bar.style.display !== 'none') { bar.style.display = 'none'; bar.innerHTML = ''; }
+            return;
+        }
+        const url = urlMatch[0];
+        bar.innerHTML = '';
+        bar.style.display = 'flex';
+        const actions = [
+            ['📋 Summary', `Summarize this page: ${url}`, 'Fetch the page and summarize it'],
+            ['📸 Screenshot', `screenshot ${url}`, 'Capture a screenshot of the page'],
+            ['🎴 Flashcards', `flashcards ${url}`, 'Build a study quiz from the page'],
+        ];
+        actions.forEach(([label, cmd, title]) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'attachment-action';
+            b.textContent = label;
+            b.title = title;
+            b.style.cssText = 'padding:4px 10px;border-radius:14px;border:1px solid var(--border-color,#ccc);background:transparent;color:inherit;cursor:pointer;font-size:0.85em;white-space:nowrap;';
+            b.onclick = () => this.runAttachmentAction(cmd);
+            bar.appendChild(b);
+        });
+    }
+
+    // Run an attachment action: set the command and send (the staged attachment rides along).
+    runAttachmentAction(cmd) {
+        if (!this.messageInput) return;
+        this.messageInput.value = cmd;
+        this.sendMessage();
+    }
+
+    // Pre-fill the composer with a command (keeping the attachment) so the user can edit an
+    // argument — language, timecodes, a caption — before pressing Enter to send.
+    prefillAttachmentAction(cmd, selectToken) {
+        if (!this.messageInput) return;
+        this.messageInput.value = cmd;
+        this.messageInput.focus();
+        if (selectToken && cmd.endsWith(selectToken)) {
+            this.messageInput.setSelectionRange(cmd.length - selectToken.length, cmd.length);
+        } else {
+            this.messageInput.setSelectionRange(cmd.length, cmd.length);
         }
     }
 
@@ -1305,6 +1409,15 @@ class ChatHandler {
                               this.uploadedDocuments.length > 0 || this.uploadedVideos.length > 0 ||
                               this.uploadedFiles.length > 0;
         if (!content && !hasAttachments) return;
+        // Interactive parity with Telegram: a bare attachment (no text) does NOT auto-route to the
+        // LLM — the user picks an action from the buttons above the composer, or types a question.
+        // Plain text files have no action buttons, so they still pass through to the LLM as before.
+        if (!content && hasAttachments &&
+            (this.uploadedImages.length > 0 || this.uploadedPDFs.length > 0 ||
+             this.uploadedVideos.length > 0 || this.uploadedDocuments.length > 0)) {
+            this.showToast('Pick an action above, or type a question to ask the AI');
+            return;
+        }
 
         // Save to message history for up arrow recall
         this.saveToHistory(displayContent);
@@ -1374,6 +1487,7 @@ class ChatHandler {
         // Clear input
         this.messageInput.value = '';
         this.messageInput.style.height = 'auto';
+        this.updateLinkActionBar();
 
         // Notify mascot
         if (window.mascotController) {

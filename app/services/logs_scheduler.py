@@ -137,12 +137,14 @@ def get_logs_settings(db=None) -> dict:
 
 
 def selected_nodes(db) -> dict:
-    """Return {name: target} for the nodes to include in the report.
-
-    Always offers a synthetic ``local`` node (the host running posterchanai) alongside the
-    configured Remote Node Management nodes. ``logs_nodes`` (if set) narrows the selection by
-    name; empty means "all of them"."""
-    available = {"local": "local", **node_service.get_nodes(db)}
+    """Return {name: target} for the nodes to include in the report — just the Remote Node
+    Management nodes (Admin → Services). No synthetic ``local``: this host is already one of those
+    entries (its own LB IP), so adding ``local`` reported it twice. A node that points back at THIS
+    host runs locally (no SSH-to-self). ``logs_nodes`` (if set) narrows by name; empty = all."""
+    available = {
+        name: ("local" if node_service.is_local_target(target) else target)
+        for name, target in node_service.get_nodes(db).items()
+    }
     chosen = get_logs_settings(db)["nodes"]
     if not chosen:
         return available

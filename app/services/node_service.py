@@ -74,6 +74,34 @@ def get_nodes(db: Session) -> dict[str, str]:
     return nodes
 
 
+def _local_host_ids() -> set:
+    """Names/IPs that identify THIS host (for collapsing a node that points back at ourselves)."""
+    import socket
+    ids = {"localhost", "127.0.0.1", "0.0.0.0", "::1", ""}
+    try:
+        hostname = socket.gethostname()
+        ids.add(hostname.lower())
+        ids.add(socket.getfqdn().lower())
+        ids.add(socket.gethostbyname(hostname))
+        for info in socket.getaddrinfo(hostname, None):
+            ip = info[4][0]
+            if ip and not ip.startswith("::"):
+                ids.add(ip)
+    except Exception:
+        pass
+    return ids
+
+
+def is_local_target(target: str) -> bool:
+    """True if an SSH-style target (``user@host``/``host``/``local``/empty) is this machine.
+    Used to dedupe a Remote Node Management entry that points at our own LB IP against ``local``."""
+    t = (target or "").strip().lower()
+    if not t or t == "local":
+        return True
+    host = t.split("@", 1)[-1].split(":", 1)[0].strip()
+    return host in _local_host_ids()
+
+
 def user_allowed(db: Session, user: Optional["User"]) -> bool:
     """Feature must be enabled AND the user must be an admin or in the allowlist."""
     if user is None or not is_enabled(db):

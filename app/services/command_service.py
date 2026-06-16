@@ -573,7 +573,8 @@ class CommandService:
         "removebackground": "Remove the background from an attached image (transparent PNG): removebackground",
         "clip": "Clip an attached video: clip <start> <end> (e.g. clip 0:10 0:30)",
         "convert": "Convert image(s) to PDF or a PDF to images",
-        "flashcards": "Make an interactive multiple-choice study quiz from an attached PDF, image, or slide deck",
+        "ocr": "Read the text out of an attached image or PDF (OCR, no translation): ocr",
+        "flashcards": "Make an interactive multiple-choice study quiz from an attached PDF/image/slide deck, or a URL: flashcards <url>",
         "meme": "Add outlined white meme text to an attached image: meme <text>",
         "dildo": "Scatter dildos all over an attached image: dildo",
         "poo": "Scatter poop all over an attached image: poo",
@@ -669,6 +670,8 @@ class CommandService:
         "removebg": "removebackground",
         "rmbg": "removebackground",
         "nobg": "removebackground",
+        "readtext": "ocr",
+        "read": "ocr",
     }
 
     # Effects that accept a trailing motion arg (`zoom` Ken Burns pan-out or
@@ -953,7 +956,9 @@ class CommandService:
         elif command == "convert":
             return await self._convert_command(arg, attachments)
         elif command == "flashcards":
-            return await self._flashcards_command(attachments)
+            return await self._flashcards_command(arg, attachments)
+        elif command == "ocr":
+            return await self._ocr_command(attachments)
         elif command == "meme":
             return await self._meme_command(arg, attachments)
         elif command == "dildo":
@@ -3811,19 +3816,63 @@ Files are saved to your Storage.""",
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
 
-    async def _flashcards_command(self, attachments: Optional[list]) -> dict:
+    async def _ocr_command(self, attachments: Optional[list]) -> dict:
+        """Read the text out of attached image(s)/PDF(s) via OCR — no translation. Mirrors the
+        Telegram `media:ocr` flow so the web 🔤 Read text button has a command to run."""
+        import base64 as _b64
+        from app.services.document_service import extract_image_text, extract_pdf_text
+        from app.services.media_service import is_image, is_pdf
+        if not attachments:
+            return {"type": "text", "content": "Attach an image or PDF, then send `ocr` to read its text."}
+        parts = []
+        for fn, data, ct in attachments:
+            try:
+                b64 = _b64.b64encode(data).decode() if isinstance(data, (bytes, bytearray)) else data
+            except Exception:
+                continue
+            if is_pdf(fn, ct):
+                parts.append(extract_pdf_text(b64) or "")
+            elif is_image(fn, ct):
+                parts.append(extract_image_text(b64) or "")
+        text = "\n\n".join(p for p in parts if p and p.strip()).strip()
+        if not text:
+            return {"type": "text", "content": "Couldn't read any text from that file."}
+        return {"type": "text", "content": text}
+
+    async def _flashcards_command(self, arg: str, attachments: Optional[list]) -> dict:
         """Build an interactive multiple-choice study quiz from an attached PDF / image / slide
-        deck / doc. Returns a `flashcards` result the web UI and Telegram render interactively."""
+        deck / doc, OR from a URL's fetched text (`flashcards <url>` — clean text, no OCR, so proper
+        nouns stay correct). Returns a `flashcards` result the web UI and Telegram render."""
+        import asyncio
+        from app.services import flashcards_service
+
+        # URL path: use the page's real fetched text (same source as summarize / translate <url>),
+        # never an OCR'd screenshot — accurate names/numbers and more cards.
+        urls = self.search_service.extract_urls(arg or "")
+        if urls and not attachments:
+            try:
+                fetched = await self.search_service.fetch_urls([urls[0]], max_urls=1)
+            except Exception as e:
+                return {"type": "text", "content": f"Couldn't fetch {urls[0]}: {e}"}
+            if not fetched or fetched[0].get("error") or not fetched[0].get("content"):
+                err = (fetched[0].get("error") if fetched else None) or "no readable text found"
+                return {"type": "text", "content": f"Couldn't read that page to make flashcards: {err}"}
+            title = fetched[0].get("title", "") or "Flashcards"
+            body = (f"{title}\n\n" if title else "") + fetched[0]["content"]
+            cards = await flashcards_service.generate_flashcards(body, self.chat_service)
+            if not cards:
+                return {"type": "text", "content": "Couldn't generate flashcards from that page."}
+            return {"type": "flashcards", "title": title, "source": title, "cards": cards,
+                    "note": "", "content": f"🎴 {len(cards)} flashcards from {title}"}
+
         if not attachments:
             return {
                 "type": "text",
                 "content": (
-                    "Attach a PDF, image, or slide deck (PPTX/DOCX), then send `flashcards` to "
-                    "generate an interactive multiple-choice study quiz."
+                    "Attach a PDF, image, or slide deck (PPTX/DOCX) — or send `flashcards <url>` — "
+                    "to generate an interactive multiple-choice study quiz."
                 ),
             }
-        import asyncio
-        from app.services import flashcards_service
 
         text, label, img_only = await asyncio.to_thread(
             flashcards_service.extract_source_text, attachments)
