@@ -1,0 +1,1155 @@
+"""Auto-split from the original effects_service.py monolith. No behavior change."""
+from ._common import List, OutputFile, Path, Tuple, _AKBAR_AUDIO_CANDIDATES, _AKBAR_DURATION, _BEAVIS_AUDIO_CANDIDATES, _BEAVIS_DURATION, _CHEERS_AUDIO_CANDIDATES, _CHEERS_DURATION, _CURB_AUDIO_CANDIDATES, _CURB_DURATION, _DEPRESSING_AUDIO_CANDIDATES, _DEPRESSING_DURATION, _FAHH_AUDIO_CANDIDATES, _FAHH_DURATION, _FBI_AUDIO_CANDIDATES, _FBI_DURATION, _FELIZ_AUDIO_CANDIDATES, _FELIZ_DURATION, _FELTEDTABLES_AUDIO_CANDIDATES, _FELTEDTABLES_DURATION, _GIGITY_AUDIO_CANDIDATES, _GIGITY_DURATION, _GONG_AUDIO_CANDIDATES, _GONG_DURATION, _HAVA_AUDIO_CANDIDATES, _HAVA_DURATION, _HELPME_AUDIO_CANDIDATES, _HELPME_DURATION, _HOOD_AUDIO_CANDIDATES, _HOOD_DURATION, _INDIAN_AUDIO_CANDIDATES, _INDIAN_DURATION, _PRAYER_AUDIO_CANDIDATES, _PRAYER_DURATION, _REDEEM_AUDIO_CANDIDATES, _REDEEM_DURATION, _RETARD_AUDIO_CANDIDATES, _RETARD_DURATION, _REZE_AUDIO_CANDIDATES, _REZE_DANCE_CANDIDATES, _REZE_DURATION, _ROBOCOP_AUDIO_CANDIDATES, _ROBOCOP_DURATION, _SETH_AUDIO_CANDIDATES, _SETH_DURATION, _SMELL_AUDIO_CANDIDATES, _SMELL_DURATION, _TERMINATOR_AUDIO_CANDIDATES, _TERMINATOR_DURATION, _TITAN_AUDIO_CANDIDATES, _TITAN_DURATION, _WHOABUDDY_AUDIO_CANDIDATES, _WHOABUDDY_DURATION, _YAKETY_AUDIO_CANDIDATES, _YAKETY_DURATION, _YAMETE_AUDIO_CANDIDATES, _YAMETE_DURATION, _human_size, _pad_audio_to_duration, is_image, logger, os
+
+def _hava_audio_path() -> str:
+    """First existing Hava Nagila mp3 from the candidate list ("" if none)."""
+    for p in _HAVA_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_hava(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a 6-second MP4 playing Hava Nagila over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _hava_audio_path()
+    if not audio:
+        raise RuntimeError("Hava Nagila audio (assets/hava.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_HAVA_DURATION)
+
+
+def hava_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a Hava Nagila MP4. Mirrors gay_attachments,
+    but the output is a video (so the bots route it through their video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_hava(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_hava.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🎻 Hava\n\n🎻 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"hava failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _indian_audio_path() -> str:
+    """First existing Indian-song mp3 from the candidate list ("" if none)."""
+    for p in _INDIAN_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_indian(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a 6-second MP4 playing the Indian song over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _indian_audio_path()
+    if not audio:
+        raise RuntimeError("Indian audio (assets/indian.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_INDIAN_DURATION)
+
+
+def indian_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into an Indian-song MP4. Mirrors hava_attachments
+    (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_indian(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_indian.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🇮🇳 Indian\n\n🇮🇳 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"indian failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _yakety_audio_path() -> str:
+    """First existing Yakety Sax mp3 from the candidate list ("" if none)."""
+    for p in _YAKETY_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_yakety(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a 9-second MP4 playing Yakety Sax over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _yakety_audio_path()
+    if not audio:
+        raise RuntimeError("Yakety Sax audio (assets/yakety.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_YAKETY_DURATION)
+
+
+def yakety_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a Yakety Sax MP4. Mirrors hava_attachments
+    (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_yakety(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_yakety.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🎷 Yakety Sax\n\n🎷 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"yakety failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _yamete_audio_path() -> str:
+    """First existing Yamete mp3 from the candidate list ("" if none)."""
+    for p in _YAMETE_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_yamete(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a 6-second MP4 playing the yamete clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _yamete_audio_path()
+    if not audio:
+        raise RuntimeError("Yamete audio (assets/yamete.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_YAMETE_DURATION)
+
+
+def yamete_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a yamete MP4. Mirrors hava_attachments
+    (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_yamete(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_yamete.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🛑 Yamete\n\n🛑 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"yamete failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _curb_audio_path() -> str:
+    """First existing Curb theme mp3 from the candidate list ("" if none)."""
+    for p in _CURB_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_curb(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into an MP4 playing the Curb theme over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _curb_audio_path()
+    if not audio:
+        raise RuntimeError("Curb theme audio (assets/curb.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_CURB_DURATION)
+
+
+def curb_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a Curb Your Enthusiasm MP4. Mirrors
+    yamete_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_curb(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_curb.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 😬 Curb\n\n😬 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"curb failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _depressing_audio_path() -> str:
+    """First existing depressing mp3 from the candidate list ("" if none)."""
+    for p in _DEPRESSING_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_depressing(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a 10s MP4 playing the depressing track over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _depressing_audio_path()
+    if not audio:
+        raise RuntimeError("Depressing audio (assets/depressing.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_DEPRESSING_DURATION)
+
+
+def depressing_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a depressing 10s MP4. Mirrors
+    curb_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_depressing(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_depressing.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 😢 Depressing\n\n😢 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"depressing failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _fahh_audio_path() -> str:
+    """First existing fahh mp3 from the candidate list ("" if none)."""
+    for p in _FAHH_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_fahh(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a 5s MP4 playing the fahh clip (padded with trailing silence so the
+    moving photo holds for the full 5s before the outro watermark) over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _fahh_audio_path()
+    if not audio:
+        raise RuntimeError("Fahh audio (assets/fahh.mp3) is missing on the server")
+    padded = _pad_audio_to_duration(audio, _FAHH_DURATION)
+    try:
+        return image_audio_to_video(image_data, source_filename, padded, duration=_FAHH_DURATION)
+    finally:
+        if padded != audio and os.path.exists(padded):
+            os.unlink(padded)
+
+
+def fahh_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a fahh MP4. Mirrors
+    depressing_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_fahh(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_fahh.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🌀 Fahh\n\n🌀 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"fahh failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _helpme_audio_path() -> str:
+    """First existing helpme mp3 from the candidate list ("" if none)."""
+    for p in _HELPME_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_helpme(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a 5s MP4 playing the helpme clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _helpme_audio_path()
+    if not audio:
+        raise RuntimeError("Helpme audio (assets/helpme.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_HELPME_DURATION)
+
+
+def helpme_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a helpme 5s MP4. Mirrors
+    fahh_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_helpme(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_helpme.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🆘 Helpme\n\n🆘 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"helpme failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _gong_audio_path() -> str:
+    """First existing gong mp3 from the candidate list ("" if none)."""
+    for p in _GONG_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_gong(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the gong clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _gong_audio_path()
+    if not audio:
+        raise RuntimeError("Gong audio (assets/gong.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_GONG_DURATION)
+
+
+def gong_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a gong MP4. Mirrors
+    helpme_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_gong(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_gong.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🔔 Gong\n\n🔔 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"gong failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _fbi_audio_path() -> str:
+    """First existing fbi mp3 from the candidate list ("" if none)."""
+    for p in _FBI_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_fbi(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the FBI clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _fbi_audio_path()
+    if not audio:
+        raise RuntimeError("FBI audio (assets/fbi.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_FBI_DURATION)
+
+
+def fbi_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into an FBI MP4. Mirrors
+    gong_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_fbi(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_fbi.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🚨 FBI\n\n🚨 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"fbi failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _redeem_audio_path() -> str:
+    """First existing redeem mp3 from the candidate list ("" if none)."""
+    for p in _REDEEM_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_redeem(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the redeem clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _redeem_audio_path()
+    if not audio:
+        raise RuntimeError("Redeem audio (assets/redeem.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_REDEEM_DURATION)
+
+
+def redeem_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a redeem MP4. Mirrors
+    fbi_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_redeem(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_redeem.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 💳 Redeem\n\n💳 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"redeem failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _gigity_audio_path() -> str:
+    """First existing gigity mp3 from the candidate list ("" if none)."""
+    for p in _GIGITY_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_gigity(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the gigity clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _gigity_audio_path()
+    if not audio:
+        raise RuntimeError("Gigity audio (assets/gigity.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_GIGITY_DURATION)
+
+
+def gigity_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a gigity MP4. Mirrors
+    redeem_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_gigity(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_gigity.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 😏 Gigity\n\n😏 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"gigity failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _beavis_audio_path() -> str:
+    """First existing beavis mp3 from the candidate list ("" if none)."""
+    for p in _BEAVIS_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_beavis(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the beavis laugh over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _beavis_audio_path()
+    if not audio:
+        raise RuntimeError("Beavis audio (assets/beavis.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_BEAVIS_DURATION)
+
+
+def beavis_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a beavis MP4. Mirrors
+    gigity_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_beavis(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_beavis.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🤤 Beavis\n\n🤤 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"beavis failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _smell_audio_path() -> str:
+    """First existing smell mp3 from the candidate list ("" if none)."""
+    for p in _SMELL_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_smell(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the smell clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _smell_audio_path()
+    if not audio:
+        raise RuntimeError("Smell audio (assets/smell.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_SMELL_DURATION)
+
+
+def smell_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a smell MP4. Mirrors
+    beavis_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_smell(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_smell.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 👃 Smell\n\n👃 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"smell failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _hood_audio_path() -> str:
+    """First existing hood mp3 from the candidate list ("" if none)."""
+    for p in _HOOD_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_hood(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a 10s MP4 playing the hood clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _hood_audio_path()
+    if not audio:
+        raise RuntimeError("Hood audio (assets/hood.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_HOOD_DURATION)
+
+
+def hood_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a hood 10s MP4. Mirrors
+    smell_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_hood(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_hood.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🏚️ Hood\n\n🏚️ {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"hood failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _akbar_audio_path() -> str:
+    """First existing akbar mp3 from the candidate list ("" if none)."""
+    for p in _AKBAR_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_akbar(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the akbar clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _akbar_audio_path()
+    if not audio:
+        raise RuntimeError("Akbar audio (assets/akbar.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_AKBAR_DURATION)
+
+
+def akbar_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into an akbar MP4. Mirrors
+    hood_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_akbar(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_akbar.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🕌 Akbar\n\n🕌 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"akbar failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _retard_audio_path() -> str:
+    """First existing retard mp3 from the candidate list ("" if none)."""
+    for p in _RETARD_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_retard(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the retard clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _retard_audio_path()
+    if not audio:
+        raise RuntimeError("Retard audio (assets/retard.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_RETARD_DURATION)
+
+
+def retard_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a retard MP4. Mirrors
+    akbar_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_retard(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_retard.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## ⚠️ Retard\n\n⚠️ {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"retard failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _whoabuddy_audio_path() -> str:
+    """First existing whoabuddy mp3 from the candidate list ("" if none)."""
+    for p in _WHOABUDDY_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_whoabuddy(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the whoabuddy clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _whoabuddy_audio_path()
+    if not audio:
+        raise RuntimeError("Whoabuddy audio (assets/whoabuddy.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_WHOABUDDY_DURATION)
+
+
+def whoabuddy_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a whoabuddy MP4. Mirrors
+    retard_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_whoabuddy(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_whoabuddy.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🤠 Whoabuddy\n\n🤠 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"whoabuddy failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _seth_audio_path() -> str:
+    """First existing seth mp3 from the candidate list ("" if none)."""
+    for p in _SETH_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_seth(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the seth clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _seth_audio_path()
+    if not audio:
+        raise RuntimeError("Seth audio (assets/seth.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_SETH_DURATION)
+
+
+def seth_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a seth MP4. Mirrors
+    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_seth(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_seth.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🎬 Seth\n\n🎬 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"seth failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _robocop_audio_path() -> str:
+    """First existing robocop mp3 from the candidate list ("" if none)."""
+    for p in _ROBOCOP_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_robocop(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the robocop clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _robocop_audio_path()
+    if not audio:
+        raise RuntimeError("Robocop audio (assets/robocop.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_ROBOCOP_DURATION)
+
+
+def robocop_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a robocop MP4. Mirrors
+    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_robocop(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_robocop.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🤖 Robocop\n\n🤖 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"robocop failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _titan_audio_path() -> str:
+    """First existing titan mp3 from the candidate list ("" if none)."""
+    for p in _TITAN_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_titan(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the titan clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _titan_audio_path()
+    if not audio:
+        raise RuntimeError("Titan audio (assets/titan.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_TITAN_DURATION)
+
+
+def titan_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a titan MP4. Mirrors
+    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_titan(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_titan.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🗿 Titan\n\n🗿 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"titan failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _terminator_audio_path() -> str:
+    """First existing terminator mp3 from the candidate list ("" if none)."""
+    for p in _TERMINATOR_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_terminator(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the terminator clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _terminator_audio_path()
+    if not audio:
+        raise RuntimeError("Terminator audio (assets/terminator.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_TERMINATOR_DURATION)
+
+
+def terminator_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a terminator MP4. Mirrors
+    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_terminator(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_terminator.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🦾 Terminator\n\n🦾 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"terminator failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _reze_audio_path() -> str:
+    """First existing reze mp3 from the candidate list ("" if none)."""
+    for p in _REZE_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def _reze_dance_path() -> str:
+    """First existing reze dance overlay (.mov) from the candidate list ("" if none)."""
+    for p in _REZE_DANCE_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_reze(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Composite the chibi Makima+Reze dance overlay onto the image, set to the reze clip. MP4 bytes.
+    An ANIMATED overlay effect (like chimp/clay) — the transparent dance loops over the image."""
+    from app.services.media_service import image_gif_overlay_video
+    if isinstance(image_data, list):  # reze is single-image (overlay), not a slideshow
+        image_data = image_data[0][1]
+    audio = _reze_audio_path()
+    if not audio:
+        raise RuntimeError("Reze audio (assets/reze.mp3) is missing on the server")
+    overlay = _reze_dance_path()
+    if not overlay:
+        raise RuntimeError("Reze dance overlay (assets/reze_dance.mov) is missing on the server")
+    return image_gif_overlay_video(image_data, source_filename, overlay,
+                                   duration=_REZE_DURATION, audio_path=audio, height_frac=0.5)
+
+
+def reze_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a reze MP4. Mirrors
+    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_reze(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_reze.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 💣 Reze\n\n💣 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"reze failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _feliz_audio_path() -> str:
+    """First existing feliz mp3 from the candidate list ("" if none)."""
+    for p in _FELIZ_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_feliz(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the feliz clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _feliz_audio_path()
+    if not audio:
+        raise RuntimeError("Feliz audio (assets/feliz.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_FELIZ_DURATION)
+
+
+def feliz_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a feliz MP4. Mirrors
+    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_feliz(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_feliz.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🎉 Feliz\n\n🎉 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"feliz failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _prayer_audio_path() -> str:
+    """First existing prayer mp3 from the candidate list ("" if none)."""
+    for p in _PRAYER_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_prayer(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the prayer clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _prayer_audio_path()
+    if not audio:
+        raise RuntimeError("Prayer audio (assets/prayer.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_PRAYER_DURATION)
+
+
+def prayer_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a prayer MP4 (mirrors whoabuddy_attachments)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_prayer(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_prayer.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🙏 Prayer\n\n🙏 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"prayer failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _feltedtables_audio_path() -> str:
+    """First existing felted-tables mp3 from the candidate list ("" if none)."""
+    for p in _FELTEDTABLES_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_feltedtables(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the felted-tables clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _feltedtables_audio_path()
+    if not audio:
+        raise RuntimeError("Felted-tables audio (assets/feltedtables.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_FELTEDTABLES_DURATION)
+
+
+def feltedtables_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a felted-tables MP4. Mirrors
+    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_feltedtables(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_feltedtables.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🎱 Felted Tables\n\n🎱 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"feltedtables failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _cheers_audio_path() -> str:
+    """First existing cheers mp3 from the candidate list ("" if none)."""
+    for p in _CHEERS_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_cheers(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the Cheers clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _cheers_audio_path()
+    if not audio:
+        raise RuntimeError("Cheers audio (assets/cheers.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_CHEERS_DURATION)
+
+
+def cheers_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a cheers MP4. Mirrors
+    whoabuddy_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_cheers(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_cheers.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🍻 Cheers\n\n🍻 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"cheers failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
