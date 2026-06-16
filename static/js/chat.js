@@ -1244,11 +1244,30 @@ class ChatHandler {
         const url = urlMatch[0];
         bar.innerHTML = '';
         bar.style.display = 'flex';
-        const actions = [
-            ['📋 Summary', `Summarize this page: ${url}`, 'Fetch the page and summarize it'],
-            ['📸 Screenshot', `screenshot ${url}`, 'Capture a screenshot of the page'],
-            ['🎴 Flashcards', `flashcards ${url}`, 'Build a study quiz from the page'],
-        ];
+        // Media links get download-specific actions (matches the Telegram yt: menu); everything else
+        // gets the generic page actions. ytdl handles YouTube, X/Twitter and Nitter.
+        const isYouTube = /(?:youtube\.com\/|youtu\.be\/)/i.test(url);
+        const isX = /\/\/[^/]*(?:x\.com|twitter\.com|nitter)/i.test(url);
+        let actions;
+        if (isYouTube) {
+            actions = [
+                ['📋 Summary', `yt ${url}`, 'Summarize the video from its transcript'],
+                ['🎵 MP3', `ytdl ${url}`, 'Download the audio as an MP3'],
+                ['🎬 Movie', `ytdl video ${url}`, 'Download the video'],
+            ];
+        } else if (isX) {
+            // Tweets have no transcript, so no Summary — just download (like the Telegram X menu).
+            actions = [
+                ['🎵 MP3', `ytdl ${url}`, 'Download the audio as an MP3'],
+                ['🎬 Video', `ytdl video ${url}`, 'Download the video'],
+            ];
+        } else {
+            actions = [
+                ['📋 Summary', `Summarize this page: ${url}`, 'Fetch the page and summarize it'],
+                ['📸 Screenshot', `screenshot ${url}`, 'Capture a screenshot of the page'],
+                ['🎴 Flashcards', `flashcards ${url}`, 'Build a study quiz from the page'],
+            ];
+        }
         actions.forEach(([label, cmd, title]) => {
             const b = document.createElement('button');
             b.type = 'button';
