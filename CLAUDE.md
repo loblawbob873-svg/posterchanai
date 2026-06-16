@@ -161,8 +161,9 @@ open a fresh `SessionLocal` and capture any needed config up front.
   so with no `| lyrics` the LLM auto-writes them (`_music_write_lyrics`); `instrumental` skips that.
   Web UI + Telegram only (NOT the fedi bots — abuse surface). REST gotchas: `/query_result` field
   is **`task_id_list`** (not `task_ids`), and its `result` is a **JSON-encoded string** whose items
-  carry `file: "/v1/audio?path=..."`. Deployed: nas.lan (RTX 3060, CUDA) serves music; the Arc
-  (server1) can't easily host it (XPU torch swap breaks ACE-Step's CUDA-pinned torchvision/audio ABI).
+  carry `file: "/v1/audio?path=..."`. Deployed: BOTH nas.lan (RTX 3060, CUDA) and the Arc (server1,
+  A770 XPU) host ACE-Step and serve music fine (the Arc's torch-XPU trio works — see the musicgeni
+  memory for the soundfile/torchcodec workarounds).
 - **Video generation** (`videogeni` command; `app/services/video_service.py` + `video_factory.py` +
   `app/routers/video_api.py`): text-to-video, **NATIVE in-process diffusers** (unlike music — LTX/Wan/
   CogVideoX are stock diffusers pipelines on the SAME torch stack as image gen, so no separate
