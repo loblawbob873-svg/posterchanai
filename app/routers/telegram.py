@@ -677,12 +677,20 @@ def _help_main_keyboard() -> dict:
             ],
             [
                 {"text": "⏰ Reminders",   "callback_data": "help:reminders"},
+                {"text": "📌 Saved Searches", "callback_data": "help:pins"},
             ],
         ]
     }
 
 
 _HELP_SECTIONS = {
+    "pins": (
+        "📌 *Pinned Searches*\n\n"
+        "Save searches you run often, then re-run them with one tap:\n\n"
+        "• `pin canon city news`\n"
+        "• `pin latest xrp news and price`\n\n"
+        "Send `pins` to see your saved searches — each has a 🔍 Run and a 🗑️ Delete button\\."
+    ),
     "reminders": (
         "⏰ *Reminders*\n\n"
         "Set a reminder in plain language — I work out the time and ping you here "
@@ -2215,7 +2223,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "musicgeni", "videogeni", "narrate", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "remind", "reminders", "removebackground", "compress", "clip", "convert", "flashcards", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
+            commands = ["help", "new", "ytdl", "geni", "musicgeni", "videogeni", "narrate", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "remind", "reminders", "pin", "pins", "removebackground", "compress", "clip", "convert", "flashcards", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -2447,7 +2455,7 @@ async def _handle_telegram_update(update: dict, db: Session):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "musicgeni", "videogeni", "narrate", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "remind", "reminders", "removebackground", "compress", "clip", "convert", "flashcards", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
+            commands = ["help", "new", "ytdl", "geni", "musicgeni", "videogeni", "narrate", "mail", "news", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "remind", "reminders", "pin", "pins", "removebackground", "compress", "clip", "convert", "flashcards", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "node", "budget", "finance", "bills", "pay", "addbill", "screenshot", "shot", "ss"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -3128,6 +3136,24 @@ async def _handle_telegram_update(update: dict, db: Session):
                             for _r in result["reminders"]:
                                 _label = _r.get("text", "")[:40]
                                 kb.append([{"text": f"🗑️ Cancel: {_label}", "callback_data": f"rem:cancel:{_r['id']}"}])
+                            await telegram_service.send_message(
+                                chat_id, result.get("content", ""),
+                                reply_markup={"inline_keyboard": kb}, parse_mode="",
+                            )
+                        else:
+                            await telegram_service.send_message(chat_id, result.get("content", "Done."), parse_mode="")
+                        return {"ok": True}
+                    elif command in ("pin", "pins"):
+                        # Pinned searches: save/list. The list gets a Run + Delete button per item.
+                        result = await command_service.execute_command(command, arg)
+                        if result.get("type") == "saved_searches" and result.get("saved_searches"):
+                            kb = []
+                            for _s in result["saved_searches"]:
+                                _q = _s.get("query", "")
+                                kb.append([
+                                    {"text": f"🔍 {_q[:32]}", "callback_data": f"pin:run:{_s['id']}"},
+                                    {"text": "🗑️", "callback_data": f"pin:del:{_s['id']}"},
+                                ])
                             await telegram_service.send_message(
                                 chat_id, result.get("content", ""),
                                 reply_markup={"inline_keyboard": kb}, parse_mode="",
@@ -3821,6 +3847,33 @@ async def _handle_telegram_update(update: dict, db: Session):
                     ok = reminder_service.cancel_reminder(db, cb_user, int(parts[2]))
                     await telegram_service.send_message(
                         chat_id, "🗑️ Reminder cancelled." if ok else "No matching pending reminder.")
+                return {"ok": True}
+
+            if data.startswith("pin:"):
+                # Pinned-search Run / Delete buttons.
+                cb_user = db.query(User).filter(
+                    User.telegram_chat_id == chat_id,
+                    User.telegram_enabled == True
+                ).first()
+                if not cb_user:
+                    await telegram_service.send_message(chat_id, "Your Telegram account is not linked.")
+                    return {"ok": True}
+                parts = data.split(":")
+                if len(parts) >= 3 and parts[2].isdigit():
+                    from app.services import saved_search_service
+                    sid = int(parts[2])
+                    if parts[1] == "del":
+                        ok = saved_search_service.delete_saved_search(db, cb_user, sid)
+                        await telegram_service.send_message(
+                            chat_id, "🗑️ Saved search deleted." if ok else "No matching saved search.")
+                    elif parts[1] == "run":
+                        s = next((x for x in saved_search_service.list_saved_searches(db, cb_user) if x.id == sid), None)
+                        if not s:
+                            await telegram_service.send_message(chat_id, "That saved search is gone.")
+                        else:
+                            await telegram_service.send_message(chat_id, f"🔍 Searching: {s.query}", parse_mode="")
+                            _res = await CommandService(db, user=cb_user).execute_command("search", s.query)
+                            await telegram_service.send_message(chat_id, _res.get("content", "(no results)"), parse_mode="")
                 return {"ok": True}
 
             if data.startswith("t:"):

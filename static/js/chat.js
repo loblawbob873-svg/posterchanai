@@ -1,5 +1,5 @@
 // Chat Handler
-console.log('[PosterChanAI] chat.js build v41 loaded');
+console.log('[PosterChanAI] chat.js build v42 loaded');
 class ChatHandler {
     constructor() {
         this.ws = null;
@@ -1406,6 +1406,28 @@ class ChatHandler {
         }
     }
 
+    // Delete a pinned search via the command endpoint, then grey out its row.
+    async deleteSavedSearch(id, btn) {
+        if (!id) return;
+        try {
+            const resp = await csrfFetch('/api/command', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ command: `pin delete ${id}` })
+            });
+            if (resp.ok) {
+                this.showToast('🗑️ Saved search deleted');
+                const item = btn.closest('.saved-search-item');
+                if (item) item.remove();
+            } else {
+                this.showToast('Could not delete saved search');
+            }
+        } catch (e) {
+            console.error('deleteSavedSearch failed:', e);
+            this.showToast('Could not delete saved search');
+        }
+    }
+
     // Run an attachment action: set the command and send (the staged attachment rides along).
     runAttachmentAction(cmd) {
         if (!this.messageInput) return;
@@ -2519,6 +2541,21 @@ class ChatHandler {
                 </div>`;
             }
             html += '</div>';
+        } else if (data.type === 'saved_searches' && Array.isArray(data.saved_searches)) {
+            // Pinned searches — each row: the query, a Run button, and a Delete button.
+            html = contentHtml + '<div class="saved-searches-list" style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">';
+            for (const s of data.saved_searches) {
+                const safeQuery = this.escapeHtml(s.query || '');
+                const attrQuery = (s.query || '').replace(/"/g, '&quot;');
+                html += `<div class="saved-search-item" data-search-id="${s.id}" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 12px;background:var(--bg-secondary,#1e1e2e);border:1px solid var(--border-color,#333);border-radius:8px;">
+                    <span style="flex:1;word-break:break-word;">🔍 ${safeQuery}</span>
+                    <span style="display:flex;gap:6px;flex-shrink:0;">
+                        <button type="button" class="saved-search-run-btn" data-query="${attrQuery}" title="Run this search" style="padding:4px 10px;border-radius:14px;border:1px solid var(--border-color,#ccc);background:transparent;color:inherit;cursor:pointer;font-size:0.85em;white-space:nowrap;">▶ Run</button>
+                        <button type="button" class="saved-search-del-btn" data-search-id="${s.id}" title="Delete" style="padding:4px 10px;border-radius:14px;border:1px solid var(--border-color,#ccc);background:transparent;color:inherit;cursor:pointer;font-size:0.85em;white-space:nowrap;">🗑️</button>
+                    </span>
+                </div>`;
+            }
+            html += '</div>';
         } else if (data.type === 'text' && data.content && data.content.includes('🔍 **Search Results:**')) {
             html = contentHtml;
         } else if (data.type === '4chan') {
@@ -2546,6 +2583,23 @@ class ChatHandler {
                 if (!btn) return;
                 e.preventDefault();
                 this.cancelReminder(btn.dataset.reminderId, btn);
+            });
+        }
+
+        // Wire pinned-search Run / Delete buttons.
+        if (messageEl && data.type === 'saved_searches') {
+            messageEl.addEventListener('click', (e) => {
+                const runBtn = e.target.closest('.saved-search-run-btn[data-query]');
+                if (runBtn) {
+                    e.preventDefault();
+                    this.runAttachmentAction('search ' + runBtn.dataset.query);
+                    return;
+                }
+                const delBtn = e.target.closest('.saved-search-del-btn[data-search-id]');
+                if (delBtn) {
+                    e.preventDefault();
+                    this.deleteSavedSearch(delBtn.dataset.searchId, delBtn);
+                }
             });
         }
 

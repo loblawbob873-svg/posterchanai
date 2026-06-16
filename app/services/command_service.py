@@ -579,6 +579,8 @@ class CommandService:
         "post": "Share text (and an optional attached image) to your connected Misskey/Pleroma: post <text>",
         "remind": "Set a reminder in natural language: remind <what> <when> (e.g. remind open the oven in 10m, remind me next tuesday to call mom). Delivered in the web UI and Telegram.",
         "reminders": "Show your pending reminders (clickable to cancel): reminders",
+        "pin": "Save (pin) a search you run often: pin <query> (e.g. pin latest xrp news and price)",
+        "pins": "Show your pinned searches — click to run, or delete: pins",
         "meme": "Add outlined white meme text to an attached image: meme <text>",
         "dildo": "Scatter dildos all over an attached image: dildo",
         "poo": "Scatter poop all over an attached image: poo",
@@ -679,6 +681,10 @@ class CommandService:
         "share": "post",
         "remindme": "remind",
         "reminder": "reminders",
+        "savesearch": "pin",
+        "savedsearches": "pins",
+        "savedsearch": "pins",
+        "saved": "pins",
     }
 
     # Effects that accept a trailing motion arg (`zoom` Ken Burns pan-out or
@@ -972,6 +978,10 @@ class CommandService:
             return await self._remind_command(arg)
         elif command == "reminders":
             return await self._reminders_command()
+        elif command == "pin":
+            return await self._pin_command(arg)
+        elif command == "pins":
+            return await self._pins_command()
         elif command == "meme":
             return await self._meme_command(arg, attachments)
         elif command == "dildo":
@@ -4029,6 +4039,51 @@ Files are saved to your Storage.""",
             "type": "reminders",
             "content": f"⏰ **Your reminders** ({len(items)})\n{lines}",
             "reminders": payload,
+        }
+
+    async def _pin_command(self, arg: str) -> dict:
+        """Save (pin) a search query, or `pin delete <id>`. `pin` with no arg shows the list."""
+        from app.services import saved_search_service
+
+        if self.user is None:
+            return {"type": "text", "content": "Sign in to save searches."}
+        arg = (arg or "").strip()
+        low = arg.lower()
+        if not arg or low == "list":
+            return await self._pins_command()
+        if low.startswith("delete") or low.startswith("remove"):
+            rest = arg.split(maxsplit=1)
+            rid = rest[1].strip() if len(rest) > 1 else ""
+            if rid.isdigit():
+                ok = saved_search_service.delete_saved_search(self.db, self.user, int(rid))
+                return {"type": "text", "content": ("🗑️ Pinned search deleted." if ok
+                                                    else "No matching pinned search.")}
+            return {"type": "text", "content": "Usage: `pin delete <id>` — see ids with `pins`."}
+
+        s = saved_search_service.create_saved_search(self.db, self.user, arg)
+        if not s:
+            return {"type": "text", "content": "Give me something to pin, e.g. `pin latest xrp news and price`."}
+        return {"type": "text", "content": (
+            f"📌 Pinned search: **{s.query}**\n_`pins` to run or delete it._")}
+
+    async def _pins_command(self) -> dict:
+        """List pinned searches. Returns a `saved_searches` result the web UI renders with Run +
+        Delete buttons per item (Telegram builds an inline keyboard from the same list)."""
+        from app.services import saved_search_service
+
+        if self.user is None:
+            return {"type": "text", "content": "Sign in to view saved searches."}
+        items = saved_search_service.list_saved_searches(self.db, self.user)
+        if not items:
+            return {"type": "text", "content": (
+                "You have no pinned searches yet. Save one with `pin <query>` — "
+                "e.g. `pin canon city news`.")}
+        payload = [{"id": s.id, "query": s.query} for s in items]
+        lines = "\n".join(f"• {s.query} _(id {s.id})_" for s in items)
+        return {
+            "type": "saved_searches",
+            "content": f"📌 **Your pinned searches** ({len(items)})\n{lines}",
+            "saved_searches": payload,
         }
 
     async def _flashcards_command(self, arg: str, attachments: Optional[list]) -> dict:

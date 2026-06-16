@@ -319,3 +319,16 @@ class Reminder(Base):
 
     user = relationship("User", backref="reminders")
 
+
+class SavedSearch(Base):
+    """A user's pinned/saved search (`pin` command). Clicking one re-runs `search <query>`. No time
+    component (unlike reminders) — just a saved query the user can run or delete from a list."""
+    __tablename__ = "saved_searches"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    query = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", backref="saved_searches")
+
