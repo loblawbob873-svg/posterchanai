@@ -47,13 +47,16 @@ def parse_music_server_urls(raw: str) -> List[str]:
 
 async def _rotated(candidates: List[str]) -> List[str]:
     """Return `candidates` rotated by a global round-robin index, so each call starts at a different
-    node. On failure the caller falls through to the rest of the list."""
+    node. The stored index advances by 1 (mod a large constant), NOT `% len(candidates)` — otherwise
+    single-candidate (local_only / forwarded) calls reset it to 0 and starve later nodes. Single-
+    candidate calls don't advance it (not a balancing decision)."""
     global _rr_index
     if not candidates:
         return []
     async with _rr_lock:
         start = _rr_index % len(candidates)
-        _rr_index = (_rr_index + 1) % len(candidates)
+        if len(candidates) > 1:
+            _rr_index = (_rr_index + 1) % 1_000_000
     return candidates[start:] + candidates[:start]
 
 
@@ -123,6 +126,13 @@ async def generate_music_for_user(
     else:
         candidates = parse_music_server_urls(cfg["server_urls"]) + [_LOCAL]
     candidates = await _rotated(candidates)
+    # Busy-aware: if THIS node's GPU is occupied, defer local to the end so the song goes to an idle
+    # remote node instead of queueing behind the in-progress task here.
+    if len(candidates) > 1 and _LOCAL in candidates:
+        from app.services.locks import gpu_busy
+        if gpu_busy():
+            candidates = [c for c in candidates if c != _LOCAL] + [_LOCAL]
+            logger.info("[music] local GPU busy → deferring local, preferring remotes")
 
     audio_bytes: Optional[bytes] = None
     ext = fmt

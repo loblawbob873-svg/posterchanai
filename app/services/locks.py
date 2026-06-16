@@ -31,6 +31,12 @@ _gpu_lock_holder = None
 GPU_LOCK_WAIT_TIMEOUT = 630.0
 
 
+def gpu_busy() -> bool:
+    """True if THIS node's GPU lock is currently held (an LLM/image/music/video task is running).
+    Used by the load-balancing factories to prefer an idle remote node over queueing locally."""
+    return _gpu_lock_holder is not None
+
+
 def _try_acquire_file_lock(lock_file: str) -> Optional[int]:
     """Try to acquire file lock without blocking. Returns fd if acquired, None otherwise."""
     try:

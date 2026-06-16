@@ -60,12 +60,16 @@ def _factory_settings(db: Session) -> dict:
 
 
 async def _rotated(candidates: List[str]) -> List[str]:
+    """Rotate by a global round-robin index. The stored index advances by 1 (mod a large constant),
+    NOT `% len(candidates)` — otherwise single-candidate (local_only) calls reset it to 0 and starve
+    later nodes. Single-candidate calls don't advance it (not a balancing decision)."""
     global _rr_index
     if not candidates:
         return []
     async with _rr_lock:
         start = _rr_index % len(candidates)
-        _rr_index = (_rr_index + 1) % len(candidates)
+        if len(candidates) > 1:
+            _rr_index = (_rr_index + 1) % 1_000_000
     return candidates[start:] + candidates[:start]
 
 
@@ -139,6 +143,13 @@ async def generate_video_for_user(
     if not candidates:
         raise VideoError("No video generation nodes available (enable local, or add nodes in Site → Load Balancing).")
     candidates = await _rotated(candidates)
+    # Busy-aware: if THIS node's GPU is occupied, defer local to the end so the clip goes to an idle
+    # remote node instead of queueing behind the in-progress task here.
+    if len(candidates) > 1 and _LOCAL in candidates:
+        from app.services.locks import gpu_busy
+        if gpu_busy():
+            candidates = [c for c in candidates if c != _LOCAL] + [_LOCAL]
+            logger.info("[video] local GPU busy → deferring local, preferring remotes")
 
     video_bytes: Optional[bytes] = None
     last_err: Optional[Exception] = None

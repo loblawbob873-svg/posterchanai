@@ -31,13 +31,18 @@ _rr_lock = asyncio.Lock()
 
 
 async def _rotated(candidates: list) -> list:
-    """Rotate `candidates` by a global round-robin index so each call starts at a different node."""
+    """Rotate `candidates` by a global round-robin index so each call starts at a different node.
+    The stored index is advanced by 1 (mod a large constant) — NOT `% len(candidates)` — so that
+    single-candidate (local_only / forwarded) calls don't reset the shared rotation to 0 and starve
+    later nodes. Single-candidate calls don't advance the index at all (they aren't a balancing
+    decision)."""
     global _rr_index
     if not candidates:
         return []
     async with _rr_lock:
         start = _rr_index % len(candidates)
-        _rr_index = (_rr_index + 1) % len(candidates)
+        if len(candidates) > 1:
+            _rr_index = (_rr_index + 1) % 1_000_000
     return candidates[start:] + candidates[:start]
 
 
@@ -153,6 +158,14 @@ async def generate_image_with_load_balancing(
         logger.error("[IMAGE] No candidates (vram_mode 'llm_only' with no servers configured)")
         return None
     candidates = await _rotated(candidates)
+    # Busy-aware: if THIS node's GPU is occupied, push local to the END so the request goes to an
+    # idle remote node instead of queueing behind the in-progress task here (local stays as a
+    # last-resort fallback if every remote fails).
+    if len(candidates) > 1 and _LOCAL in candidates:
+        from app.services.locks import gpu_busy
+        if gpu_busy():
+            candidates = [c for c in candidates if c != _LOCAL] + [_LOCAL]
+            logger.info("[IMAGE] local GPU busy → deferring local, preferring remotes")
     logger.info(f"[IMAGE] candidates (round-robin): {candidates}")
 
     last_err: Optional[Exception] = None
