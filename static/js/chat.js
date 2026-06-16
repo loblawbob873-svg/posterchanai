@@ -1,5 +1,5 @@
 // Chat Handler
-console.log('[PosterChanAI] chat.js build v40 loaded');
+console.log('[PosterChanAI] chat.js build v41 loaded');
 class ChatHandler {
     constructor() {
         this.ws = null;
@@ -667,14 +667,18 @@ class ChatHandler {
         }
     }
 
-    // Report the browser's UTC offset (minutes east of UTC) so reminders use the user's local time.
+    // Auto-report the browser's timezone (zero user input) so reminders use the user's local time.
+    // Send the IANA zone name (e.g. "Asia/Bangkok") — DST-aware and unambiguous — plus the current
+    // numeric offset as a fallback for environments where the zone name isn't resolvable.
     async reportTimezone() {
         try {
+            let tzName = '';
+            try { tzName = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) {}
             const offsetMinutes = -new Date().getTimezoneOffset();  // east-of-UTC, e.g. UTC+2 → 120
             await csrfFetch('/api/auth/timezone', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ offset_minutes: offsetMinutes })
+                body: JSON.stringify({ offset_minutes: offsetMinutes, tz_name: tzName })
             });
         } catch (e) { /* non-critical */ }
     }

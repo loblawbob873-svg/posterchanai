@@ -17,12 +17,17 @@ Times are handled in UTC (the model convention, matching `datetime.utcnow()`); r
 import json
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy.orm import Session
 
 from app.models import User, Conversation, Message, Reminder
+
+try:
+    from zoneinfo import ZoneInfo
+except Exception:  # pragma: no cover
+    ZoneInfo = None
 
 logger = logging.getLogger("reminder_service")
 logger.setLevel(logging.INFO)
@@ -65,73 +70,88 @@ def _fallback_parse(text: str, now: datetime) -> Optional[dict]:
     return {"text": _strip_lead(body) or "Reminder", "due_at": now + timedelta(seconds=secs)}
 
 
-def get_user_tz_offset(db: Session, user_id: int) -> int:
-    """The user's UTC offset in minutes (east of UTC), stored from the browser via
-    POST /api/auth/timezone. 0 (UTC) if never set — e.g. a Telegram-only user."""
+def _get_setting_value(db: Session, user_id: int, key: str) -> Optional[str]:
     from app.models import UserSetting
     s = (db.query(UserSetting)
-         .filter(UserSetting.user_id == user_id, UserSetting.key == "tz_offset_minutes")
+         .filter(UserSetting.user_id == user_id, UserSetting.key == key)
          .first())
+    return s.value if s else None
+
+
+def get_user_tzinfo(db: Session, user_id: int):
+    """The user's timezone, auto-detected from their browser (no manual entry). Prefers the IANA
+    zone name (e.g. "Asia/Bangkok" — DST-aware), falling back to the stored numeric UTC offset, and
+    finally UTC. Stored via POST /api/auth/timezone on every web page load, so it follows the user
+    when they travel; Telegram-only reminders reuse whatever the web last reported."""
+    name = _get_setting_value(db, user_id, "tz_name")
+    if name and ZoneInfo is not None:
+        try:
+            return ZoneInfo(name)
+        except Exception:
+            pass
+    off = _get_setting_value(db, user_id, "tz_offset_minutes")
     try:
-        return int(s.value) if s and s.value is not None else 0
+        if off is not None:
+            return timezone(timedelta(minutes=int(off)))
     except (ValueError, TypeError):
-        return 0
+        pass
+    return timezone.utc
 
 
-async def parse_reminder(text: str, chat_service, now: Optional[datetime] = None,
-                         tz_offset: int = 0) -> dict:
-    """Parse a natural-language reminder into {ok, text, due_at(UTC), error}.
+async def parse_reminder(text: str, chat_service, now: Optional[datetime] = None, tz=None) -> dict:
+    """Parse a natural-language reminder into {ok, text, due_at(naive UTC), error}.
 
-    Times are interpreted in the user's LOCAL timezone (``tz_offset`` minutes east of UTC) and
-    converted to UTC for storage, so "next tuesday 9am" means 9am *their* time. Relative phrases
-    ("in 10m") are timezone-independent. Falls back to a regex for the common relative case."""
-    now = now or datetime.utcnow()              # UTC
-    local_now = now + timedelta(minutes=tz_offset)
+    A clear relative phrase ("in 10s/10m/2h/3d") is parsed EXACTLY by regex first — fast and not
+    subject to LLM rounding (the "in 10s became 10 min" bug). Anything else (absolute/fuzzy:
+    "tomorrow", "next tuesday 9am") goes to the LLM, interpreted in the user's local timezone `tz`
+    and converted to UTC for storage."""
+    now = now or datetime.utcnow()              # naive UTC
+    tz = tz or timezone.utc
     text = (text or "").strip()
     if not text:
         return {"ok": False, "error": "Tell me what to remind you about, e.g. `remind open the oven in 10m`."}
 
-    parsed = None
-    try:
-        weekday = local_now.strftime("%A")
-        prompt = (
-            "You convert a reminder request into JSON. The user's current LOCAL time is "
-            f"{local_now.strftime('%Y-%m-%dT%H:%M:%S')} ({weekday}).\n"
-            "Return ONLY a JSON object, no prose, with exactly these keys:\n"
-            '  "text": the thing to be reminded of, phrased as a short imperative WITHOUT '
-            '"remind me" (e.g. "open the oven").\n'
-            '  "iso": the absolute due time as "YYYY-MM-DDTHH:MM:SS" in the user\'s LOCAL time, '
-            "computed from their current local time for relative phrases (in 10m, in 2 hours, "
-            "tomorrow, next tuesday 9am). Use null if no time is present.\n"
-            f"Request: {text}"
-        )
-        raw = await chat_service.chat([{"role": "user", "content": prompt}])
-        raw = (raw or "").strip()
-        # Strip ```json fences if the model added them.
-        m = re.search(r'\{.*\}', raw, re.DOTALL)
-        if m:
-            obj = json.loads(m.group(0))
-            iso = obj.get("iso")
-            body = _strip_lead(obj.get("text") or "")
-            if iso:
-                local_due = datetime.fromisoformat(str(iso).replace("Z", "").strip())
-                # LLM gave LOCAL time → convert to UTC for storage.
-                parsed = {"text": body or text, "due_at": local_due - timedelta(minutes=tz_offset)}
-    except Exception as e:
-        logger.info(f"LLM parse failed ({e}); trying fallback")
+    # 1) Exact relative ("in N unit") — timezone-independent, no LLM.
+    parsed = _fallback_parse(text, now)
 
+    # 2) Otherwise ask the LLM, interpreting in the user's local time.
     if not parsed:
-        # Relative ("in 10m") is timezone-independent — compute straight off UTC now.
-        parsed = _fallback_parse(text, now)
+        try:
+            local_now = now.replace(tzinfo=timezone.utc).astimezone(tz)
+            prompt = (
+                "You convert a reminder request into JSON. The user's current LOCAL time is "
+                f"{local_now.strftime('%Y-%m-%dT%H:%M:%S')} ({local_now.strftime('%A')}).\n"
+                "Return ONLY a JSON object, no prose, with exactly these keys:\n"
+                '  "text": the thing to be reminded of, phrased as a short imperative WITHOUT '
+                '"remind me" (e.g. "open the oven").\n'
+                '  "iso": the absolute due time as "YYYY-MM-DDTHH:MM:SS" in the user\'s LOCAL time, '
+                "computed from their current local time (tomorrow, next tuesday 9am, at 18:00). "
+                "Use null if no time is present.\n"
+                f"Request: {text}"
+            )
+            raw = (await chat_service.chat([{"role": "user", "content": prompt}]) or "").strip()
+            m = re.search(r'\{.*\}', raw, re.DOTALL)
+            if m:
+                obj = json.loads(m.group(0))
+                iso = obj.get("iso")
+                body = _strip_lead(obj.get("text") or "")
+                if iso:
+                    # LLM gave LOCAL wall-clock time → localize in tz, then convert to naive UTC.
+                    local_due = datetime.fromisoformat(str(iso).replace("Z", "").strip())
+                    local_due = local_due.replace(tzinfo=tz)
+                    due_utc = local_due.astimezone(timezone.utc).replace(tzinfo=None)
+                    parsed = {"text": body or text, "due_at": due_utc}
+        except Exception as e:
+            logger.info(f"LLM parse failed ({e})")
 
     if not parsed:
         return {"ok": False, "error": (
             "I couldn't work out *when* to remind you. Try a clear time, e.g. "
             "`remind open the oven in 10m` or `remind me next tuesday to open the oven`.")}
 
-    # Guard against times in the past (model clock drift / ambiguous parse).
+    # Guard against times in the past (clock drift / ambiguous parse).
     if parsed["due_at"] <= now:
-        parsed["due_at"] = now + timedelta(minutes=1)
+        parsed["due_at"] = now + timedelta(seconds=5)
     return {"ok": True, "text": parsed["text"], "due_at": parsed["due_at"]}
 
 
@@ -182,10 +202,11 @@ def snooze_reminder(db: Session, user: User, rid: int, minutes: int) -> Optional
 
 # --------------------------------------------------------------------------- formatting
 
-def humanize_due(due_at: datetime, now: Optional[datetime] = None, tz_offset: int = 0) -> str:
+def humanize_due(due_at: datetime, now: Optional[datetime] = None, tz=None) -> str:
     """A short 'in 10 minutes' / 'in 2 days' phrase plus the absolute time in the user's LOCAL
-    timezone (``due_at`` is stored UTC; ``tz_offset`` is minutes east of UTC)."""
+    timezone (``due_at`` is stored naive UTC; ``tz`` is a tzinfo)."""
     now = now or datetime.utcnow()
+    tz = tz or timezone.utc
     delta = (due_at - now).total_seconds()
     if delta < 0:
         rel = "now"
@@ -197,8 +218,8 @@ def humanize_due(due_at: datetime, now: Optional[datetime] = None, tz_offset: in
         rel = f"in {round(delta / 3600)} h"
     else:
         rel = f"in {round(delta / 86400)} days"
-    local = due_at + timedelta(minutes=tz_offset)
-    return f"{rel} ({local.strftime('%Y-%m-%d %H:%M')})"
+    local = due_at.replace(tzinfo=timezone.utc).astimezone(tz)
+    return f"{rel} ({local.strftime('%Y-%m-%d %H:%M %Z')})"
 
 
 # --------------------------------------------------------------------------- delivery
@@ -306,9 +327,9 @@ def start_reminder_scheduler() -> None:
             _db.close()
 
     _scheduler = AsyncIOScheduler()
-    _scheduler.add_job(_job, "interval", seconds=30, id="reminder_poll", max_instances=1, coalesce=True)
+    _scheduler.add_job(_job, "interval", seconds=15, id="reminder_poll", max_instances=1, coalesce=True)
     _scheduler.start()
-    logger.info("reminder poller started (every 30s)")
+    logger.info("reminder poller started (every 15s)")
 
 
 def stop_reminder_scheduler() -> None:

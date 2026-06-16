@@ -3996,12 +3996,12 @@ Files are saved to your Storage.""",
                                                     else "No matching pending reminder for that id.")}
             return {"type": "text", "content": "Usage: `remind cancel <id>` — see ids with `reminders`."}
 
-        tz_off = reminder_service.get_user_tz_offset(self.db, self.user.id)
-        parsed = await reminder_service.parse_reminder(arg, self.chat_service, tz_offset=tz_off)
+        tz = reminder_service.get_user_tzinfo(self.db, self.user.id)
+        parsed = await reminder_service.parse_reminder(arg, self.chat_service, tz=tz)
         if not parsed.get("ok"):
             return {"type": "text", "content": parsed.get("error", "Couldn't set that reminder.")}
         r = reminder_service.create_reminder(self.db, self.user, parsed["text"], parsed["due_at"])
-        human = reminder_service.humanize_due(r.due_at, tz_offset=tz_off)
+        human = reminder_service.humanize_due(r.due_at, tz=tz)
         return {"type": "text", "content": (
             f"⏰ Reminder set: **{r.text}** — {human}.\n_id {r.id} · `reminders` to view or cancel._")}
 
@@ -4017,13 +4017,13 @@ Files are saved to your Storage.""",
             return {"type": "text", "content": (
                 "You have no pending reminders. Set one with `remind <what> <when>` — "
                 "e.g. `remind open the oven in 10m`.")}
-        tz_off = reminder_service.get_user_tz_offset(self.db, self.user.id)
+        tz = reminder_service.get_user_tzinfo(self.db, self.user.id)
         payload = [{
             "id": r.id, "text": r.text,
             "due_at": r.due_at.isoformat(),
-            "human": reminder_service.humanize_due(r.due_at, tz_offset=tz_off),
+            "human": reminder_service.humanize_due(r.due_at, tz=tz),
         } for r in items]
-        lines = "\n".join(f"• **{r.text}** — {reminder_service.humanize_due(r.due_at, tz_offset=tz_off)} _(id {r.id})_"
+        lines = "\n".join(f"• **{r.text}** — {reminder_service.humanize_due(r.due_at, tz=tz)} _(id {r.id})_"
                           for r in items)
         return {
             "type": "reminders",

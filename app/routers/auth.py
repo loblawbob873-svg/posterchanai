@@ -389,22 +389,31 @@ def set_user_timezone(
 ):
     """Store the user's UTC offset (minutes east of UTC, from the browser) so natural-language
     reminders are parsed and displayed in their local time, not UTC."""
+    import re
     from app.models import UserSetting
+
+    def _save(key: str, value: str):
+        s = db.query(UserSetting).filter(
+            UserSetting.user_id == current_user.id, UserSetting.key == key
+        ).first()
+        if s:
+            s.value = value
+        else:
+            db.add(UserSetting(user_id=current_user.id, key=key, value=value))
+
     try:
-        offset = int(data.get("offset_minutes"))
+        offset = max(-840, min(840, int(data.get("offset_minutes"))))  # clamp to ±14h
     except (TypeError, ValueError):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="offset_minutes (int) required")
-    offset = max(-840, min(840, offset))  # clamp to ±14h
-    s = db.query(UserSetting).filter(
-        UserSetting.user_id == current_user.id,
-        UserSetting.key == "tz_offset_minutes"
-    ).first()
-    if s:
-        s.value = str(offset)
-    else:
-        db.add(UserSetting(user_id=current_user.id, key="tz_offset_minutes", value=str(offset)))
+    _save("tz_offset_minutes", str(offset))
+
+    # The IANA zone name (e.g. "Asia/Bangkok") is preferred — DST-aware. Sanity-check length/charset.
+    tz_name = (data.get("tz_name") or "").strip()
+    if tz_name and len(tz_name) <= 64 and re.match(r'^[A-Za-z0-9_+\-/]+$', tz_name):
+        _save("tz_name", tz_name)
+
     db.commit()
-    return {"ok": True, "offset_minutes": offset}
+    return {"ok": True, "offset_minutes": offset, "tz_name": tz_name}
 
 
 @router.get("/settings", response_model=UserSettingsResponse)
