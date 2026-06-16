@@ -1202,15 +1202,28 @@ class CommandService:
             return {"type": "text", "content": "Please provide a search query. Example: `search latest AI news`"}
 
         clean_query, categories, time_range = self.search_service.detect_search_intent(query)
-        # News pulls more candidates so the newest-first sort + recency window have a deeper pool to
-        # surface the latest from; general search stays tight for a focused summary.
-        _limit = 8 if categories == "news" else 5
+        is_news = (categories == "news")
+        if is_news:
+            # The dedicated SearXNG `news` category is sparse + dateless on this deployment (≈12
+            # results, no publishedDate) and MISSES the fresh items the general engines
+            # (google/brave/ddg/startpage) return — which is what made "latest news" look stale.
+            # Query the broad GENERAL pool instead, windowed to recent and sorted newest-first.
+            query_categories = None
+            sort_recent = True
+            _limit = 10
+            if not time_range:
+                time_range = "week"
+        else:
+            query_categories = categories
+            sort_recent = False
+            _limit = 5
         results = await self.search_service.web_search(
-            clean_query, limit=_limit, categories=categories, time_range=time_range
+            clean_query, limit=_limit, categories=query_categories,
+            time_range=time_range, sort_recent=sort_recent,
         )
-        # Fall back to a plain general search if a category search came up empty.
-        if not results and (categories or time_range):
-            results = await self.search_service.web_search(clean_query, limit=5)
+        # Fall back to a plain general search if a category/time search came up empty.
+        if not results and (query_categories or time_range):
+            results = await self.search_service.web_search(clean_query, limit=_limit)
         if not results:
             return {"type": "text", "content": f"No results found for: {query}"}
 

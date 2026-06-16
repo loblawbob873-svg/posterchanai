@@ -101,6 +101,7 @@ class SearchService:
         limit: int = 5,
         categories: Optional[str] = None,
         time_range: Optional[str] = None,
+        sort_recent: bool = False,
     ) -> list[dict]:
         """Search the web using SearXNG.
 
@@ -120,9 +121,8 @@ class SearchService:
         if time_range:
             params["time_range"] = time_range
 
-        # News is time-sensitive: sort the most-recent first (SearXNG returns `publishedDate` for
-        # news results but doesn't globally sort by it). Other categories keep relevance order.
-        sort_recent = (categories == "news")
+        # Caller decides recency sort (e.g. news). When on, sort the most-recent first (SearXNG
+        # returns `publishedDate` for some engines but doesn't globally sort by it).
 
         async with httpx.AsyncClient(timeout=30) as client:
             try:
