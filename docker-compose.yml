@@ -116,6 +116,55 @@ services:
               count: all
               capabilities: ["gpu"]
 
+  # AMD/ROCm music. Same as `acestep` but builds the ROCm torch trio (TORCH_INDEX) and passes the
+  # render nodes through instead of using the nvidia runtime. The `acestep` network alias means the
+  # app still reaches it at the default http://acestep:8001 — no URL change needed. TURNKEY:
+  #   POSTERCHANAI_MUSIC=1 docker compose --profile rocm --profile music-rocm up -d --build
+  acestep-rocm:
+    profiles: ["music-rocm"]
+    image: posterchanai-acestep:${TAG:-local}-rocm
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Dockerfile.acestep
+      args:
+        ACESTEP_REF: ${ACESTEP_REF:-main}
+        TORCH_INDEX: ${ACESTEP_TORCH_INDEX:-https://download.pytorch.org/whl/rocm6.3}
+    ports:
+      - "${ACESTEP_PORT:-8001}:8001"
+    volumes:
+      - pc-acestep:/root/.cache/huggingface
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    security_opt:
+      - seccomp:unconfined
+    networks:
+      default:
+        aliases: [acestep]
+
+  # Intel Arc/XPU music. Builds the XPU torch trio and exposes only /dev/dri. Same `acestep` alias.
+  #   POSTERCHANAI_MUSIC=1 docker compose --profile intel --profile music-intel up -d --build
+  acestep-intel:
+    profiles: ["music-intel"]
+    image: posterchanai-acestep:${TAG:-local}-xpu
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Dockerfile.acestep
+      args:
+        ACESTEP_REF: ${ACESTEP_REF:-main}
+        TORCH_INDEX: ${ACESTEP_TORCH_INDEX:-https://download.pytorch.org/whl/xpu}
+    ports:
+      - "${ACESTEP_PORT:-8001}:8001"
+    volumes:
+      - pc-acestep:/root/.cache/huggingface
+    devices:
+      - /dev/dri
+    networks:
+      default:
+        aliases: [acestep]
+
 volumes:
   pc-data:
   pc-rag:  # legacy name; mounts /app/data (uploads, generated media)

@@ -31,7 +31,7 @@
 # the app stage re-declares `ARG GPU` (no default) to reuse this value.
 ARG GPU=cpu
 ARG CPU_BASE=ubuntu:24.04
-ARG CUDA_BASE=nvidia/cuda:12.4.1-devel-ubuntu24.04
+ARG CUDA_BASE=nvidia/cuda:12.5.1-devel-ubuntu24.04
 ARG ROCM_BASE=ubuntu:24.04
 # Use oneAPI 2025.2+ : the 2025.0 SYCL compiler has a codegen bug that makes the Arc emit EMPTY
 # generations for thinking-mode/code prompts (verified 2026-06; 2025.2 fixes it and ships
@@ -141,7 +141,12 @@ RUN set -eux; \
         ;; \
       cuda) \
         pip install torch torchvision --index-url "$TORCH_CUDA_INDEX" ; \
-        CMAKE_ARGS="-DGGML_CUDA=ON" \
+        # The devel image ships a BUILD-TIME stub libcuda (the real driver lib is mounted at runtime
+        # by the nvidia container runtime). Newer llama.cpp links the CUDA driver API (cuMem*) so the
+        # link fails with "libcuda.so.1 not found" unless we expose the stub as .so.1 + on LIBRARY_PATH.
+        ln -sf /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1 ; \
+        LIBRARY_PATH="/usr/local/cuda/lib64/stubs:${LIBRARY_PATH:-}" \
+        CMAKE_ARGS="-DGGML_CUDA=ON -DCMAKE_SHARED_LINKER_FLAGS=-Wl,-rpath-link,/usr/local/cuda/lib64/stubs -DCMAKE_EXE_LINKER_FLAGS=-Wl,-rpath-link,/usr/local/cuda/lib64/stubs" \
           pip install "llama-cpp-python${LLAMA_CPP_VERSION:+==$LLAMA_CPP_VERSION}" ; \
         ;; \
       rocm) \
