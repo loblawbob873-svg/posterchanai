@@ -1,4 +1,5 @@
 // Chat Handler
+console.log('[PosterChanAI] chat.js build v36 loaded');
 class ChatHandler {
     constructor() {
         this.ws = null;
