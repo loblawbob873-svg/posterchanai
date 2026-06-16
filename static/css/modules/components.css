@@ -183,7 +183,6 @@
 
 #calendarModal .modal-content,
 #contactsModal .modal-content,
-#newsModal .modal-content,
 #apiKeysModal .modal-content {
     max-height: calc(100vh - 10px) !important;
     height: calc(100vh - 10px) !important;
@@ -191,10 +190,11 @@
     box-sizing: border-box !important;
     position: relative !important;
 }
-/* Translate is a small form — size to its content (don't force full viewport
-   height, which left a big empty gap below the button and pushed the modal
-   border/shadow off the screen edges). */
-#translateModal .modal-content {
+/* Translate and News are small forms/pickers — size to content (don't force full viewport
+   height, which left a big empty gap below the buttons and pushed the modal border/shadow off
+   the screen edges). */
+#translateModal .modal-content,
+#newsModal .modal-content {
     height: fit-content !important;
     max-height: calc(100vh - 20px) !important;
     overflow-y: hidden !important;
