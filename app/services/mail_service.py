@@ -1113,11 +1113,12 @@ def send_email(
     reply_to_msg: Optional[EmailMessage] = None,
     cc: str = "",
     bcc: str = "",
+    inline_images: List[Tuple[str, bytes, str]] = None,  # (cid, data, content_type) for cid: refs in html_body
 ) -> bool:
     """Send an email via SMTP."""
     try:
         # Create message
-        if attachments or html_body:
+        if attachments or html_body or inline_images:
             msg = MIMEMultipart("mixed")
 
             # Add body
@@ -1128,6 +1129,21 @@ def send_email(
                 msg.attach(body_part)
             else:
                 msg.attach(MIMEText(body, "plain", "utf-8"))
+
+            # Inline images referenced from the HTML via cid: (e.g. a branding logo).
+            if inline_images:
+                from email.mime.image import MIMEImage
+                for cid, idata, imime in inline_images:
+                    if not idata:
+                        continue
+                    try:
+                        sub = imime.split("/", 1)[1] if "/" in (imime or "") else "png"
+                        img = MIMEImage(idata, _subtype=sub)
+                        img.add_header("Content-ID", f"<{cid}>")
+                        img.add_header("Content-Disposition", "inline", filename=f"{cid}.{sub}")
+                        msg.attach(img)
+                    except Exception as e:
+                        logger.warning(f"Inline image {cid} failed: {e}")
 
             # Add attachments with size limits and filename sanitization
             if attachments:

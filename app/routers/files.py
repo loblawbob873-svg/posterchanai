@@ -2061,13 +2061,54 @@ async def email_files(
     if not attachments:
         raise HTTPException(status_code=400, detail="No valid files to email")
     
+    # Build a branded HTML body (matches the chat-response email style) so the message looks nice,
+    # not plain text — listing the attached files.
+    import html as _html
+    from pathlib import Path as _Path
+    _safe_body = _html.escape(request.body or "").replace("\n", "<br>")
+    _file_items = "".join(f"<li>{_html.escape(fn)}</li>" for fn, _, _ in attachments)
+
+    # Embed the PosterChan logo inline (cid:) for a professional, branded header.
+    inline_images = []
+    _logo_html = ""
+    try:
+        _logo_path = _Path(__file__).resolve().parent.parent.parent / "static" / "icon-512.png"
+        if _logo_path.exists():
+            with open(_logo_path, "rb") as _lf:
+                inline_images.append(("pclogo", _lf.read(), "image/png"))
+            _logo_html = '<img src="cid:pclogo" width="64" height="64" alt="PosterChanAI" style="border-radius:12px;display:block;margin:0 auto 10px;">'
+    except Exception:
+        inline_images = []
+
+    html_body = f"""<!DOCTYPE html><html><head><style>
+        body {{ font-family: Arial, sans-serif; background:#1a1a2e; color:#fff; padding:20px; }}
+        .container {{ max-width:600px; margin:0 auto; background:#16213e; border-radius:12px; padding:30px; }}
+        h1 {{ color:#4a9eff; font-size:22px; margin:6px 0 16px; text-align:center; }}
+        .box {{ background:#0f1729; border-radius:8px; padding:20px; margin:18px 0; border-left:4px solid #4a9eff; }}
+        .box .msg {{ color:#e0e0e0; line-height:1.7; }}
+        .box .label {{ color:#9aa3b2; font-size:13px; margin:14px 0 4px; }}
+        ul {{ color:#e0e0e0; margin:0; padding-left:20px; }}
+        .footer {{ color:#666; font-size:12px; margin-top:28px; text-align:center; }}
+    </style></head><body><div class="container">
+        {_logo_html}
+        <h1>File from PosterChanAI</h1>
+        <div class="box">
+            <div class="msg">{_safe_body}</div>
+            <div class="label">Attached:</div>
+            <ul>{_file_items}</ul>
+        </div>
+        <p class="footer">Sent from PosterChanAI</p>
+    </div></body></html>"""
+
     # Send email
     success = send_email(
         account=account,
         to=request.to,
         subject=request.subject,
         body=request.body,
-        attachments=attachments
+        html_body=html_body,
+        attachments=attachments,
+        inline_images=inline_images,
     )
     
     if not success:
