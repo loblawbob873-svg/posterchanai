@@ -668,6 +668,16 @@ class ChatHandler {
                 const settings = await response.json();
                 console.log('User settings loaded:', settings);
 
+                // Whether the user has a connected fediverse account — gates the 📣 Post buttons
+                // (mirrors the Telegram _has_misskey/_has_pleroma checks). Re-render the attachment
+                // preview so a just-connected/disconnected account updates the buttons live.
+                this.hasSocialAccount = !!(
+                    (settings.misskey_enabled && settings.misskey_has_api_token) ||
+                    (settings.pleroma_enabled && settings.pleroma_has_access_token)
+                );
+                this.updateAttachmentsPreview();
+                this.updateLinkActionBar();
+
                 // Profile settings
                 const notificationEmail = document.getElementById('notificationEmail');
                 if (notificationEmail) notificationEmail.value = settings.notification_email || '';
@@ -1188,7 +1198,9 @@ class ChatHandler {
                 mkBtn('🌐 Translate', 'translate to english', { selectToken: 'english', title: 'OCR then translate (edit the language, then Enter)' });
                 mkBtn('🎴 Flashcards', 'flashcards', { submit: true, title: 'Build a study quiz from the file' });
                 mkBtn('✨ Effects', '', { onClick: () => this.toggleEffectsRow(bar), title: 'Apply a video effect' });
-                mkBtn('📣 Post', 'post ', { selectToken: '', title: 'Share this image to your connected social accounts (add a caption, then Enter)' });
+                if (this.hasSocialAccount) {
+                    mkBtn('📣 Post', 'post ', { selectToken: '', title: 'Share this image to your connected social accounts (add a caption, then Enter)' });
+                }
             } else if (hasPdf) {
                 mkBtn('🖼 To images', 'convert images', { submit: true, title: 'One PNG per page' });
                 mkBtn('🔤 Read text', 'ocr', { submit: true, title: 'OCR — read the text out of the PDF' });
@@ -1313,6 +1325,10 @@ class ChatHandler {
                 ['🎴 Flashcards', `flashcards ${url}`, 'Build a study quiz from the page'],
                 ['📣 Post', `post ${url}`, 'Share this link to your connected social accounts'],
             ];
+        }
+        // The 📣 Post action only makes sense with a connected fediverse account (Telegram parity).
+        if (!this.hasSocialAccount) {
+            actions = actions.filter(a => !a[0].includes('Post'));
         }
         actions.forEach(([label, cmd, title, selectToken]) => {
             const b = document.createElement('button');

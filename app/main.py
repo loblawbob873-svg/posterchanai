@@ -128,6 +128,20 @@ async def general_exception_handler(request: FastAPIRequest, exc: Exception):
 static_path = os.path.join(os.path.dirname(__file__), "..", "static")
 app.mount("/static", StaticFiles(directory=static_path), name="static")
 
+
+@app.middleware("http")
+async def _static_revalidate(request: Request, call_next):
+    """Force JS/CSS to revalidate on every load so a deploy's new asset is always picked up.
+    The `?v=` query-string bump only busts caches that key on the query string — a CDN (e.g.
+    Cloudflare in front of this deployment) can be configured to IGNORE it, serving stale JS
+    indefinitely (the "I still see the old behavior" bug). `no-cache` lets the browser/CDN keep
+    a copy but requires revalidation against the origin, which returns the new file after deploy."""
+    resp = await call_next(request)
+    p = request.url.path
+    if p.startswith("/static/js/") or p.startswith("/static/css/"):
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return resp
+
 # Templates
 templates_path = os.path.join(os.path.dirname(__file__), "..", "templates")
 templates = Jinja2Templates(directory=templates_path)
