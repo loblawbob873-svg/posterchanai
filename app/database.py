@@ -379,7 +379,7 @@ def _run_migrations():
 
 
 def init_db():
-    from app.models import User, Conversation, Message, Setting, ProxyImageCache, SocialReplyMap, Bot  # noqa: F401 - registers tables for create_all
+    from app.models import User, Conversation, Message, Setting, ProxyImageCache, SocialReplyMap, Bot, Reminder  # noqa: F401 - registers tables for create_all
     logger.info("[INIT] Initializing database...")
     Base.metadata.create_all(bind=engine)
 

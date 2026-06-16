@@ -288,6 +288,13 @@ async def startup():
             except Exception as e:
                 logging.error(f"Error starting bot manager: {e}", exc_info=True)
 
+            try:
+                # Start the reminders poller (`remind` command)
+                from app.services.reminder_service import start_reminder_scheduler
+                start_reminder_scheduler()
+            except Exception as e:
+                logging.error(f"Error starting reminder scheduler: {e}", exc_info=True)
+
         else:
             logging.info(f"Schedulers disabled on port {app_port} (only run on port 3051)")
 
@@ -426,6 +433,13 @@ async def shutdown():
         try:
             from app.services.bot_manager_service import stop_bot_manager
             stop_bot_manager()
+        except Exception:
+            pass
+
+        # Stop the reminders poller
+        try:
+            from app.services.reminder_service import stop_reminder_scheduler
+            stop_reminder_scheduler()
         except Exception:
             pass
 

@@ -577,6 +577,8 @@ class CommandService:
         "ocr": "Read the text out of an attached image or PDF (OCR, no translation): ocr",
         "flashcards": "Make an interactive multiple-choice study quiz from an attached PDF/image/slide deck, or a URL: flashcards <url>",
         "post": "Share text (and an optional attached image) to your connected Misskey/Pleroma: post <text>",
+        "remind": "Set a reminder in natural language: remind <what> <when> (e.g. remind open the oven in 10m, remind me next tuesday to call mom). Delivered in the web UI and Telegram.",
+        "reminders": "Show your pending reminders (clickable to cancel): reminders",
         "meme": "Add outlined white meme text to an attached image: meme <text>",
         "dildo": "Scatter dildos all over an attached image: dildo",
         "poo": "Scatter poop all over an attached image: poo",
@@ -675,6 +677,8 @@ class CommandService:
         "readtext": "ocr",
         "read": "ocr",
         "share": "post",
+        "remindme": "remind",
+        "reminder": "reminders",
     }
 
     # Effects that accept a trailing motion arg (`zoom` Ken Burns pan-out or
@@ -964,6 +968,10 @@ class CommandService:
             return await self._ocr_command(attachments)
         elif command == "post":
             return await self._post_command(arg, attachments)
+        elif command == "remind":
+            return await self._remind_command(arg)
+        elif command == "reminders":
+            return await self._reminders_command()
         elif command == "meme":
             return await self._meme_command(arg, attachments)
         elif command == "dildo":
@@ -3966,6 +3974,60 @@ Files are saved to your Storage.""",
                 results.append(f"❌ Pleroma: {e}")
 
         return {"type": "text", "content": "📣 **Post**\n" + "\n".join(results)}
+
+    async def _remind_command(self, arg: str) -> dict:
+        """Set/cancel a reminder. `remind <what> <when>` parses natural language via the LLM and
+        stores it; `remind list` shows them; `remind cancel <id>` cancels one. Delivered later by
+        the reminder scheduler to the web UI (always) and Telegram (if configured)."""
+        from app.services import reminder_service
+
+        if self.user is None:
+            return {"type": "text", "content": "Sign in to set reminders."}
+        arg = (arg or "").strip()
+        low = arg.lower()
+
+        if not arg or low == "list":
+            return await self._reminders_command()
+        if low.startswith("cancel"):
+            rest = arg[len("cancel"):].strip()
+            if rest.isdigit():
+                ok = reminder_service.cancel_reminder(self.db, self.user, int(rest))
+                return {"type": "text", "content": ("🗑️ Reminder cancelled." if ok
+                                                    else "No matching pending reminder for that id.")}
+            return {"type": "text", "content": "Usage: `remind cancel <id>` — see ids with `reminders`."}
+
+        parsed = await reminder_service.parse_reminder(arg, self.chat_service)
+        if not parsed.get("ok"):
+            return {"type": "text", "content": parsed.get("error", "Couldn't set that reminder.")}
+        r = reminder_service.create_reminder(self.db, self.user, parsed["text"], parsed["due_at"])
+        human = reminder_service.humanize_due(r.due_at)
+        return {"type": "text", "content": (
+            f"⏰ Reminder set: **{r.text}** — {human}.\n_id {r.id} · `reminders` to view or cancel._")}
+
+    async def _reminders_command(self) -> dict:
+        """List pending reminders. Returns a `reminders` result the web UI renders with a Cancel
+        button per item (Telegram builds an inline keyboard from the same list)."""
+        from app.services import reminder_service
+
+        if self.user is None:
+            return {"type": "text", "content": "Sign in to view reminders."}
+        items = reminder_service.list_reminders(self.db, self.user)
+        if not items:
+            return {"type": "text", "content": (
+                "You have no pending reminders. Set one with `remind <what> <when>` — "
+                "e.g. `remind open the oven in 10m`.")}
+        payload = [{
+            "id": r.id, "text": r.text,
+            "due_at": r.due_at.isoformat(),
+            "human": reminder_service.humanize_due(r.due_at),
+        } for r in items]
+        lines = "\n".join(f"• **{r.text}** — {reminder_service.humanize_due(r.due_at)} _(id {r.id})_"
+                          for r in items)
+        return {
+            "type": "reminders",
+            "content": f"⏰ **Your reminders** ({len(items)})\n{lines}",
+            "reminders": payload,
+        }
 
     async def _flashcards_command(self, arg: str, attachments: Optional[list]) -> dict:
         """Build an interactive multiple-choice study quiz from an attached PDF / image / slide

@@ -1,5 +1,5 @@
 // Chat Handler
-console.log('[PosterChanAI] chat.js build v37 loaded');
+console.log('[PosterChanAI] chat.js build v38 loaded');
 class ChatHandler {
     constructor() {
         this.ws = null;
@@ -1362,6 +1362,29 @@ class ChatHandler {
         });
     }
 
+    // Cancel a pending reminder via the command endpoint, then grey out its row (no chat spam).
+    async cancelReminder(id, btn) {
+        if (!id) return;
+        try {
+            const resp = await csrfFetch('/api/command', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ command: `remind cancel ${id}` })
+            });
+            if (resp.ok) {
+                this.showToast('🗑️ Reminder cancelled');
+                const item = btn.closest('.reminder-item');
+                if (item) { item.style.opacity = '0.5'; }
+                if (btn) { btn.disabled = true; btn.textContent = 'Cancelled'; }
+            } else {
+                this.showToast('Could not cancel reminder');
+            }
+        } catch (e) {
+            console.error('cancelReminder failed:', e);
+            this.showToast('Could not cancel reminder');
+        }
+    }
+
     // Run an attachment action: set the command and send (the staged attachment rides along).
     runAttachmentAction(cmd) {
         if (!this.messageInput) return;
@@ -1908,10 +1931,29 @@ class ChatHandler {
             case 'response':
                 this.handleCommandResponse(data.data);
                 break;
+            case 'reminder':
+                this.handleReminderPush(data);
+                break;
             case 'error':
                 this.handleError(data.message);
                 break;
         }
+    }
+
+    // A reminder fired while the user is connected — surface it immediately (toast + a browser
+    // notification if permitted). It's also persisted to the "⏰ Reminders" conversation server-side.
+    handleReminderPush(data) {
+        const text = (data && data.content) ? String(data.content) : '⏰ Reminder';
+        this.showToast(text);
+        try {
+            if (window.Notification && Notification.permission === 'granted') {
+                new Notification('⏰ Reminder', { body: text.replace(/^⏰ Reminder:\s*/, '') });
+            } else if (window.Notification && Notification.permission !== 'denied') {
+                Notification.requestPermission().then(p => {
+                    if (p === 'granted') new Notification('⏰ Reminder', { body: text.replace(/^⏰ Reminder:\s*/, '') });
+                });
+            }
+        } catch (e) { /* notifications unsupported */ }
     }
 
     handleStreamChunk(content) {
@@ -2408,6 +2450,18 @@ class ChatHandler {
             const deckId = 'fcdeck_' + Date.now();
             html = contentHtml + this.renderFlashcardShell(deckId, data);
             this._pendingFlashcards = { deckId, data };
+        } else if (data.type === 'reminders' && Array.isArray(data.reminders)) {
+            // Pending-reminders list, each with a clickable Cancel button.
+            html = contentHtml + '<div class="reminders-list" style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">';
+            for (const r of data.reminders) {
+                const safeText = this.escapeHtml(r.text || '');
+                const safeHuman = this.escapeHtml(r.human || '');
+                html += `<div class="reminder-item" data-reminder-id="${r.id}" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 12px;background:var(--bg-secondary,#1e1e2e);border:1px solid var(--border-color,#333);border-radius:8px;">
+                    <span><strong>${safeText}</strong><br><small style="opacity:0.7;">${safeHuman}</small></span>
+                    <button type="button" class="reminder-cancel-btn" data-reminder-id="${r.id}" title="Cancel this reminder" style="padding:4px 10px;border-radius:14px;border:1px solid var(--border-color,#ccc);background:transparent;color:inherit;cursor:pointer;font-size:0.85em;white-space:nowrap;">🗑️ Cancel</button>
+                </div>`;
+            }
+            html += '</div>';
         } else if (data.type === 'text' && data.content && data.content.includes('🔍 **Search Results:**')) {
             html = contentHtml;
         } else if (data.type === '4chan') {
@@ -2427,7 +2481,17 @@ class ChatHandler {
         if (data.type === '4chan' && data.board && typeof window.openFourchanModal === 'function') {
             setTimeout(() => window.openFourchanModal(data.board), 100);
         }
-        
+
+        // Wire reminder Cancel buttons (event delegation on the message element).
+        if (messageEl && data.type === 'reminders') {
+            messageEl.addEventListener('click', (e) => {
+                const btn = e.target.closest('.reminder-cancel-btn[data-reminder-id]');
+                if (!btn) return;
+                e.preventDefault();
+                this.cancelReminder(btn.dataset.reminderId, btn);
+            });
+        }
+
         // Attach event listeners to file action buttons using event delegation
         // This is more reliable than attaching to individual buttons
         if (messageEl && data.type === 'files') {
@@ -3582,6 +3646,42 @@ class ChatHandler {
             // Open settings modal
             const settingsModal = document.getElementById('userSettingsModal');
             if (settingsModal) settingsModal.style.display = 'flex';
+            return;
+        }
+
+        // If the response embeds files saved to storage (effect/clip videos, generated images,
+        // downloaded MP3s, converted PDFs — `/api/files/<user>/<conv>/<name>`), email the actual
+        // FILE(S) as attachments via the file-email endpoint, not just the text. Otherwise the
+        // recipient would get a message with no attachment (the reported bug).
+        const fileUrls = [...content.matchAll(/\/api\/files\/[^\s)\]"']+/g)].map(m => m[0]);
+        const filePaths = fileUrls.map(u => {
+            // /api/files/<username>/<conv>/<name> → storage path relative to the user root: <conv>/<name>
+            const parts = decodeURIComponent(u.replace(/^https?:\/\/[^/]+/, '')).split('/').filter(Boolean);
+            return parts.slice(3).join('/');  // drop 'api', 'files', '<username>'
+        }).filter(Boolean);
+
+        if (filePaths.length > 0) {
+            try {
+                const response = await csrfFetch('/api/files/email', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        to: this.notificationEmail,
+                        subject: 'Your file from PosterChanAI',
+                        body: 'Here is the file from your chat.',
+                        file_paths: filePaths,
+                    })
+                });
+                if (response.ok) {
+                    this.showToast(`Sent to your email with ${filePaths.length} attachment(s)!`);
+                } else {
+                    const data = await response.json().catch(() => ({}));
+                    this.showToast(data.detail || 'Failed to send email');
+                }
+            } catch (e) {
+                console.error('Failed to email file response:', e);
+                this.showToast('Failed to send email');
+            }
             return;
         }
 

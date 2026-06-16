@@ -67,6 +67,7 @@ One FastAPI backend that does chat, image generation, voice, email, news, torren
 - **File storage** per user and per conversation; file manager in the UI
 - **Media tools**: upload a file and `compress` it (image/video — H.264 with GPU acceleration when available), `clip <start> <end>` a video to a time span, or `convert` images↔PDF — all shared across the web UI, Telegram, and Matrix
 - **Flashcards (study tool)**: upload a **PDF, image, slide deck (PPTX) or Word doc (DOCX)** and send `flashcards` (or `cards`/`study`/`quiz`) to generate an **interactive multiple-choice quiz** — the LLM writes the questions, options and explanations (math problems include worked steps). The web UI shows animated cards with instant ✓/✗ feedback and KaTeX-rendered math; Telegram shows image cards with answer buttons (tap **🎴 Flashcards** after uploading) and a running score. Text PDFs/slides work best; image OCR is weaker (on Telegram, send screenshots as a *file*, not a compressed photo)
+- **Reminders** (`remind`): set a reminder in plain language — `remind open the oven in 10m`, `remind me next tuesday to call mom` — and the LLM parses the time. A background scheduler alerts you in the **web UI** (a dedicated "⏰ Reminders" conversation + a live pop-up if you're online) and on **Telegram** if linked. `reminders` lists your pending ones, each with a clickable **Cancel**.
 
 ### Bots & social
 

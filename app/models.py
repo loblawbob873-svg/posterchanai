@@ -301,3 +301,21 @@ class Bot(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+
+class Reminder(Base):
+    """A user reminder (`remind` command). The text + due time are parsed from natural language
+    by the LLM (`reminder_service.parse_reminder`); a background scheduler polls for due rows and
+    delivers them — ALWAYS to the web UI (a dedicated "⏰ Reminders" conversation + a live push to
+    any connected websocket), and ALSO to Telegram when the user has it configured."""
+    __tablename__ = "reminders"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    text = Column(Text, nullable=False)                  # what to remind the user about
+    due_at = Column(DateTime, nullable=False, index=True)  # UTC; when to fire
+    status = Column(String(20), default="pending", index=True)  # pending | done | cancelled
+    created_at = Column(DateTime, default=datetime.utcnow)
+    delivered_at = Column(DateTime, nullable=True)       # set when fired
+
+    user = relationship("User", backref="reminders")
+

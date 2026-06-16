@@ -42,6 +42,8 @@ the LLM. The bots reply with TTS via `/narrate <message>`.
 | Command | What it does |
 |---|---|
 | `mail <to> [subject] <body>` | Send email |
+| `remind <what> <when>` | Set a reminder in natural language — e.g. `remind open the oven in 10m`, `remind me next tuesday to call mom`. The LLM parses the time; you're alerted in the web UI (always) and on Telegram (if linked). |
+| `reminders` | List your pending reminders, each with a clickable **Cancel** (web buttons / Telegram inline keyboard). Also `remind cancel <id>`. |
 | `translate <text> to <lang>` | Translate text |
 | `files <query>` | Search your stored files |
 | `budget` / `bills` / `pay <bill>` / `addbill` | Budget Manager (per-user `finance_api_key`) |
