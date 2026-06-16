@@ -27,13 +27,11 @@
             <small>The native diffusers path on this node. Turn off to make this node forward to
                 remote nodes only (e.g. an Arc box that can't fit a clip).</small>
         </div>
-        <div class="form-group">
-            <label for="video_server_urls">Remote Video Servers (load balancing)</label>
-            <input type="text" id="video_server_urls" name="video_server_urls" placeholder="http://node2:3051, http://node3:3051">
-            <small>Optional comma-separated OTHER posterchanai nodes. Tried round-robin via their
-                <code>/api/generate-video</code> (each frees its own GPU first); falls back to the
-                local GPU above. Same pattern as Image/Music Server URLs.</small>
-        </div>
+        <p class="vram-info">
+            Cross-node load balancing uses the single <strong>Site → Load Balancing → Server URLs</strong>
+            list (tried round-robin via each node's <code>/api/generate-video</code>, each freeing its own
+            GPU first; falls back to the local GPU above) — no per-feature server config here.
+        </p>
         <div class="form-group">
             <label for="video_gpu_device">Local GPU Device</label>
             <select id="video_gpu_device" name="video_gpu_device">

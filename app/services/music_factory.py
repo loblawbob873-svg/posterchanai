@@ -2,12 +2,12 @@
 
 Mirrors `image_factory` EXACTLY, including cross-node behaviour:
 
-- REMOTE nodes (`music_server_urls` = other posterchanai nodes) are called via their
+- REMOTE nodes (the unified `chat_server_urls` list = other posterchanai nodes) are called via their
   `/api/generate-music` endpoint — NOT acestep directly. That endpoint runs the remote node's own
   local path, so the remote node frees ITS GPU (`prepare_for_music`) before generating. This is the
   same node→node pattern image gen uses (`/api/generate-image`), and it's what makes "unload the GPU
   before processing" work across machines.
-- LOCAL generation (`music_api_base` = this node's acestep server) is wrapped in the shared
+- LOCAL generation (this node's acestep server, localhost:8001 by default) is wrapped in the shared
   `GPUResourceLock` (so chat, image AND music all QUEUE on one GPU lock) plus the VRAM swap
   (`vram_manager.prepare_for_music` unloads our LLM/image first).
 
@@ -37,7 +37,7 @@ _rr_index = 0
 _rr_lock = asyncio.Lock()
 
 def parse_music_server_urls(raw: str) -> List[str]:
-    """Parse the comma/newline-separated music_server_urls setting into a clean list."""
+    """Parse the comma/newline-separated server-URL list (chat_server_urls) into a clean list."""
     if not raw:
         return []
     parts = [p.strip().rstrip("/") for chunk in raw.splitlines() for p in chunk.split(",")]

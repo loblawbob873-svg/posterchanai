@@ -6,7 +6,7 @@
 
 ### Your own AI assistant — self-hosted, private, and ridiculously capable.
 
-One FastAPI backend that does chat, image generation, voice, RAG over your code, email, news, torrents, and runs autonomous bots on **Telegram, Matrix, Misskey & Pleroma**. Cloud LLMs or fully local. Your hardware, your data, your rules.
+One FastAPI backend that does chat, image generation, voice, email, news, torrents, and runs autonomous bots on **Telegram, Matrix, Misskey & Pleroma**. Cloud LLMs or fully local. Your hardware, your data, your rules.
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -19,8 +19,7 @@ One FastAPI backend that does chat, image generation, voice, RAG over your code,
 [Quick start](#quick-start-backend-and-web-ui) ·
 [Features](#features) ·
 [Bots & social](#bots--social) ·
-[Documentation](#documentation) ·
-[Android app](#android-app)
+[Documentation](#documentation)
 
 </div>
 
@@ -31,7 +30,6 @@ One FastAPI backend that does chat, image generation, voice, RAG over your code,
 - 🏠 **Truly self-hosted** — runs on your own box, SQLite-backed, no telemetry, single-admin multi-user. Your conversations and keys never leave your network.
 - 🔌 **Bring any model** — cloud (any OpenAI-compatible API) or local: **Ollama** or **llama.cpp** (CPU / CUDA / HIP / **Intel Arc SYCL**). Round-robin load-balance across several backends.
 - 🤖 **It's also a bot platform** — drive everything from **Telegram & Matrix**, and run autonomous **Pleroma / Misskey / Matrix** bots from a single admin tab.
-- 🧠 **Knows your stuff** — RAG over your git repos and folders, exposed to your IDE over **MCP**.
 - 🎨 **More than chat** — image generation, TTS/STT, website screenshots, YouTube/X summarize & download, media tools, interactive study flashcards, email, news, finance, torrents — all behind one chat box.
 - 🛠️ **Hackable & honest** — thin routers, services for logic, an interactive installer, and an OpenAI-compatible `/v1/` endpoint that agentic coding clients (e.g. opencode) can drive against your local models.
 
@@ -58,11 +56,6 @@ One FastAPI backend that does chat, image generation, voice, RAG over your code,
 - **Video generation** (`videogeni`): native in-process text-to-video via **diffusers** — point it at *any* model (Wan2.1 / LTX / CogVideoX, auto-detected) to match your GPU; runs on CUDA / Intel Arc (XPU) / AMD (ROCm), load-balanced + VRAM-swapped across nodes like image gen, with a branded watermark and optional 720p/1080p upscale. Web UI + Telegram. See [docs/VIDEO.md](docs/VIDEO.md)
 - **Website screenshots**: full-page capture with the `screenshot <url>` command (also `shot` / `ss`) — works in the web UI, Telegram, and Matrix. Uses headless Chrome (JS-aware, so SPAs render), Firefox fallback (see [Requirements](#requirements)).
 - **YouTube / X**: summarize a video **from its transcript** (so summaries and link-posts reflect the actual content, not the page), grab thumbnails, or **download** audio (MP3) / video with the `ytdl` command — in the web UI, Telegram, Matrix, Misskey, and Pleroma. A video download can be trimmed and/or shrunk in one command (`ytdl video <url> clip 0:10 0:30 compress`); Telegram also offers these as buttons after the download
-
-### Knowledge & code
-
-- **RAG (retrieval-augmented generation)** with ChromaDB and sentence-transformers: index git repos, folders, or zip uploads; code-aware chunking (Python, JS/TS, Go, Rust, etc.)
-- **MCP server** (Model Context Protocol) for Continue.dev, Claude Desktop, and other clients—expose RAG search to your IDE
 
 ### PIM & productivity
 
@@ -103,7 +96,7 @@ One FastAPI backend that does chat, image generation, voice, RAG over your code,
 
 - **4chan** integration (optional)
 - **Remote node management**: run OS commands across SSH-reachable machines from chat or Telegram, with long-running background jobs and a **tool-calling agentic mode** (one node or all nodes) that streams each step live. See [Remote node management](#remote-node-management).
-- **Admin panel**: users, API keys, LLM/image/RAG/email settings, systemd service setup
+- **Admin panel**: users, API keys, LLM/image/email settings, systemd service setup
 - **Multi-user** with registration (optional), email verification, and quotas
 
 ---
@@ -204,8 +197,8 @@ The **installer** sets up the virtual environment, dependencies, optional GPU ba
 - First run creates a **SQLite** database; use the **web UI** and **Admin** panel to configure:
   - LLM backend (Ollama, llama-cpp, IPEX) and model
   - Image generation (ComfyUI URL or native)
-  - RAG, TTS/STT, email, plugins
-- See **`docs/`** for detailed setup (IPEX, nginx, RAG/MCP, etc.).
+  - TTS/STT, email, plugins
+- See **`docs/`** for detailed setup (IPEX, nginx, etc.).
 
 ### Social posting from the bots
 
@@ -329,25 +322,14 @@ the Arc environment.
 
 | Path | Description |
 |------|-------------|
-| `app/` | FastAPI app, routers (auth, chat, admin, TTS, STT, RAG, mail, torrent, bots, etc.), services |
+| `app/` | FastAPI app, routers (auth, chat, admin, TTS, STT, mail, torrent, bots, etc.), services |
 | `botframework/` | Merged autonomous bot framework (Pleroma/Misskey/Matrix/nitter listeners + daemons); spawned by `app/services/bot_manager_service.py`. See [docs/BOTS.md](docs/BOTS.md) |
 | `templates/` | Jinja2 HTML (login, chat, admin, modals) |
 | `static/` | CSS, JS, icons, mascot assets |
 | `run.py` | Server entry (uvicorn) |
 | `requirements.txt` | Python dependencies |
 | `install.sh` | Interactive installer (Linux) |
-| `docs/` | [ADVANCED.md](docs/ADVANCED.md) (RAG, MCP, LLM, image, load balancing), IPEX, nginx, etc. |
-
----
-
-## Android app
-
-The **Android app** (native login, conversation list, streaming chat, optional “Web app” view) lives in **[`android/`](android/)** and talks to this backend.
-
-- **Run:** Open the **`android`** folder in **Android Studio**, then **Run** (▶).
-- Full instructions: **[android/README.md](android/README.md)**.
-
-Set the app’s server URL to your instance (e.g. `http://YOUR_IP:3051`).
+| `docs/` | [ADVANCED.md](docs/ADVANCED.md) (LLM, image, load balancing), IPEX, nginx, etc. |
 
 ---
 
@@ -355,7 +337,7 @@ Set the app’s server URL to your instance (e.g. `http://YOUR_IP:3051`).
 
 - **[docs/DOCKER.md](docs/DOCKER.md)** — Turnkey Docker image (CPU / NVIDIA / AMD / Intel Arc): build matrix, GPU run flags, model auto-download, opt-ins, and OpenAI-client/opencode setup
 - **[docs/BOTS.md](docs/BOTS.md)** — Bot manager: the merged `botframework/`, Admin → Bots, per-bot config, the single server endpoint, and per-node cutover
-- **[docs/ADVANCED.md](docs/ADVANCED.md)** — RAG, MCP server, LLM backends, image generation, load balancing, Intel IPEX
+- **[docs/ADVANCED.md](docs/ADVANCED.md)** — LLM backends, image generation, load balancing, Intel IPEX
 - **docs/** — Email, nginx, and other feature documentation
 
 ---

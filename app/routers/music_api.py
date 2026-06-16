@@ -1,6 +1,6 @@
 """Direct Music Generation API (server-to-server), mirroring image_api.
 
-Lets one posterchanai node forward a music request to another (`music_server_urls`). The receiving
+Lets one posterchanai node forward a music request to another (the unified `chat_server_urls` list). The receiving
 node generates LOCALLY — `generate_music_for_user(local_only=True)` takes the shared GPU lock and
 runs `prepare_for_music` (freeing its LLM/image VRAM) before its local acestep server. This is the
 same node→node + VRAM-swap pattern image gen uses, and it's what makes "unload the GPU before

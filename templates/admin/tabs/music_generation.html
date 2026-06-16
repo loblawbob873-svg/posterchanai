@@ -17,20 +17,11 @@
             </label>
             <small>Off by default. When off, <code>musicgeni</code> returns a friendly notice.</small>
         </div>
-        <div class="form-group">
-            <label for="music_api_base">Local ACE-Step Server URL</label>
-            <input type="text" id="music_api_base" name="music_api_base" placeholder="http://localhost:8001">
-            <small>The <strong>local</strong> <code>acestep-api</code> server (shares this box's GPU).
-                Requests to it take the shared GPU lock and swap the LLM/image model out of VRAM
-                first — one GPU task at a time, exactly like image generation.</small>
-        </div>
-        <div class="form-group">
-            <label for="music_server_urls">Remote Music Servers (load balancing)</label>
-            <input type="text" id="music_server_urls" name="music_server_urls" placeholder="http://node2:8001, http://node3:8001">
-            <small>Optional comma-separated ACE-Step servers on OTHER nodes. Tried round-robin
-                (no local GPU lock); falls back to the local server above. Same pattern as Image
-                Server URLs.</small>
-        </div>
+        <p class="vram-info">
+            The local <code>acestep-api</code> server is assumed at <code>http://localhost:8001</code>
+            (the ACE-Step default), and cross-node load balancing uses the single
+            <strong>Site → Load Balancing → Server URLs</strong> list — no per-feature server config here.
+        </p>
         <div class="form-group">
             <label for="music_gpu_device">Local GPU Device</label>
             <select id="music_gpu_device" name="music_gpu_device">

@@ -1,6 +1,6 @@
 """Direct Video Generation API (server-to-server), mirroring music_api / image_api.
 
-Lets one posterchanai node forward a video request to another (`video_server_urls`). The receiving
+Lets one posterchanai node forward a video request to another (the unified `chat_server_urls` list). The receiving
 node generates LOCALLY — `generate_video_for_user(local_only=True)` takes the shared GPU lock and
 runs `prepare_for_video` (freeing its LLM/image VRAM) before its native diffusers Wan pipeline, then
 assembles the branded MP4. Returns base64 mp4.

@@ -6,7 +6,7 @@ Mirrors `music_factory` (and image LB), with ONE difference: the LOCAL path is N
 - LOCAL generation runs under the shared `GPUResourceLock` (chat/image/music/video all QUEUE on one
   GPU lock) + `vram_manager.prepare_for_video` (frees our LLM/image first), then assembles the
   branded MP4 (frames → `media_service.make_generated_video` → end-card outro "watermark").
-- REMOTE nodes (`video_server_urls` = other posterchanai nodes) are called via their
+- REMOTE nodes (the unified `chat_server_urls` list = other posterchanai nodes) are called via their
   `/api/generate-video` endpoint, which runs the remote node's own local path (so it frees ITS GPU).
 
 Concurrent requests fan out across DIFFERENT nodes in parallel (one clip per GPU); each node
@@ -48,7 +48,8 @@ def _factory_settings(db: Session) -> dict:
     return {
         "enabled": str(s.get("video_enabled", "false")).lower() == "true",
         "local_enabled": str(s.get("video_local_enabled", "true")).lower() == "true",
-        "server_urls": s.get("video_server_urls", "") or "",
+        # Cross-node LB uses the single unified list (Site → Load Balancing).
+        "server_urls": s.get("chat_server_urls", "") or "",
         "device": s.get("video_gpu_device", "auto") or "auto",
         "timeout": _i("video_timeout", 600000) / 1000.0,
         "watermark": str(s.get("video_watermark_enabled", "true")).lower() != "false",
@@ -134,7 +135,7 @@ async def generate_video_for_user(
         if cfg["local_enabled"]:
             candidates = candidates + [_LOCAL]
     if not candidates:
-        raise VideoError("No video generation nodes available (enable local or add video_server_urls).")
+        raise VideoError("No video generation nodes available (enable local, or add nodes in Site → Load Balancing).")
     candidates = await _rotated(candidates)
 
     video_bytes: Optional[bytes] = None

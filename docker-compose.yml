@@ -5,7 +5,7 @@
 #   docker compose --profile intel up -d --build   # Intel Arc (needs host i915 + /dev/dri)
 #
 # All four share the same data volume so you can switch backends without losing
-# your DB / models / RAG store.
+# your DB / models.
 
 x-common: &common
   image: posterchanai:${TAG:-local}
@@ -118,5 +118,5 @@ services:
 
 volumes:
   pc-data:
-  pc-rag:
+  pc-rag:  # legacy name; mounts /app/data (uploads, generated media)
   pc-acestep:

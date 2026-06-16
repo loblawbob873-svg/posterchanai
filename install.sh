@@ -138,9 +138,6 @@ main() {
     # Step 11: Setup systemd service
     setup_systemd
 
-    # Step 12: Show MCP server info
-    setup_mcp_server
-
     # Step 13: Offer model download (if local LLM)
     if [ "$INSTALL_LLM" = "1" ] && [ "$LLM_BACKEND" != "ollama" ]; then
         download_model

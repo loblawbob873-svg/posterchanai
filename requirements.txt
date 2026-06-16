@@ -82,20 +82,13 @@ rembg>=2.0.50
 #   See requirements-image.txt + docs/IPEX-LLM-SETUP.md (#image-generation-xpu). Setup:
 #   scripts/setup-image-instance.sh.
 
-# RAG (Retrieval-Augmented Generation) support
-chromadb>=0.4.0
-sentence-transformers>=2.2.0
-mcp
+# YouTube transcript / download support
 youtube-transcript-api
 yt-dlp  # no version pin: always use latest (YouTube changes often)
 # Native RSS support
 feedparser>=6.0.0
 
-# CalDAV/CardDAV support
-# Used for: Calendar/contact sync, Radicale import, calendar export
-caldav>=1.3.0
-vobject>=0.9.6
-icalendar>=5.0.0
+# Date/time helpers
 python-dateutil>=2.8.0
 pytz>=2024.1
 

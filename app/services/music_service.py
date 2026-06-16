@@ -41,8 +41,11 @@ def get_settings(db: Session) -> dict:
     rows = {s.key: s.value for s in db.query(Setting).all()}
     return {
         "enabled": (rows.get("music_enabled", "false") or "").lower() == "true",
+        # Local ACE-Step server: no admin UI field — auto-seeded from POSTERCHANAI_ACESTEP_URL in
+        # Docker (acestep:8001), else the localhost:8001 convention default.
         "base_url": (rows.get("music_api_base", "") or "").strip() or DEFAULT_BASE_URL,
-        "server_urls": rows.get("music_server_urls", "") or "",
+        # Cross-node LB uses the single unified list (Site → Load Balancing).
+        "server_urls": rows.get("chat_server_urls", "") or "",
         "device": (rows.get("music_gpu_device", "auto") or "auto").strip().lower(),
         "model": (rows.get("music_model", "") or "").strip(),
         "duration": _to_float(rows.get("music_default_duration"), 60.0),

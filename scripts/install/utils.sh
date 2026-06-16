@@ -87,10 +87,6 @@ print_summary() {
         echo "    • Configure ComfyUI URL in Admin > Image Generation"
     fi
     echo ""
-    echo -e "  ${BOLD}RAG (Codebase Indexing):${NC}"
-    echo "    • Create collections in Admin > RAG tab"
-    echo "    • First query downloads ~90MB embedding model"
-    echo ""
 }
 
 fix_ipex_execstack() {

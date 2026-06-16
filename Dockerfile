@@ -117,8 +117,8 @@ RUN python3 -m venv --system-site-packages /opt/venv && pip install --upgrade pi
 WORKDIR /app
 
 # --- accelerator-specific PyTorch + llama-cpp-python --------------------------
-# torch is installed FIRST from the right wheel index so the requirements.txt
-# step (sentence-transformers pulls torch) finds it already satisfied and does
+# torch is installed FIRST from the right wheel index so the later diffusers
+# step (transformers pulls torch) finds it already satisfied and does
 # not drag in a CPU build over it. llama-cpp-python is compiled for the backend.
 ARG TORCH_CUDA_INDEX=https://download.pytorch.org/whl/cu121
 ARG TORCH_ROCM_INDEX=https://download.pytorch.org/whl/rocm6.3
@@ -164,7 +164,7 @@ RUN set -eux; \
 
 # --- application python deps --------------------------------------------------
 # Copy just the requirement files first so this layer caches across source edits.
-# requirements.txt = the web app (FastAPI, Pillow, chromadb, sentence-transformers,
+# requirements.txt = the web app (FastAPI, Pillow,
 # faster-whisper, insightface/onnxruntime …). botframework adds the bot deps.
 # diffusers stack = native image generation (transformers pinned <5 for SDXL) AND text-to-video
 # (videogeni — Wan2.1/LTX/CogVideoX); sentencepiece is REQUIRED for the T5 video text-encoder.
@@ -176,10 +176,10 @@ RUN pip install -r /tmp/requirements.txt -r /tmp/requirements-bot.txt \
 # --- app source ---------------------------------------------------------------
 COPY . /app
 
-# Runtime data lives on a volume: uploads, downloaded models, RAG store, sqlite db,
+# Runtime data lives on a volume: uploads, downloaded models, sqlite db,
 # HF caches. The entrypoint symlinks the db onto the volume so it persists too.
 RUN mkdir -p /var/lib/posterchanai/models /var/lib/posterchanai/torrents \
-             /var/lib/posterchanai/tor /var/lib/posterchanai/hf /app/data/chromadb
+             /var/lib/posterchanai/tor /var/lib/posterchanai/hf /app/data
 VOLUME ["/var/lib/posterchanai", "/app/data"]
 
 # Runtime config (LATE so changing a default is a cheap rebuild). HF_HOME caches

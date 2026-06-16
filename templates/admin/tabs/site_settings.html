@@ -14,14 +14,12 @@
     <fieldset>
         <legend>Load Balancing</legend>
         <div class="form-group">
-            <label for="chat_server_urls">Chat Server URLs</label>
-            <input type="text" id="chat_server_urls" name="chat_server_urls" placeholder="http://192.168.0.85:3051">
-            <small>Comma-separated URLs. Chat requests alternate between this server and listed servers. Local URLs on different ports (e.g., localhost:3052) are allowed.</small>
-        </div>
-        <div class="form-group">
-            <label for="image_server_urls">Image Server URLs</label>
-            <input type="text" id="image_server_urls" name="image_server_urls" placeholder="http://localhost:3052, http://nas.lan:3051">
-            <small>Comma-separated URLs. For dual-instance setup, use <code>http://localhost:3052</code> to forward images to a local image-only instance.</small>
+            <label for="chat_server_urls">Server URLs</label>
+            <input type="text" id="chat_server_urls" name="chat_server_urls" placeholder="http://192.168.0.85:3051, http://nas.lan:3051">
+            <small>Comma-separated posterchanai node URLs. This <strong>one</strong> list load-balances
+                <strong>all</strong> GPU work — chat, image, music and video — round-robin between this
+                server and the listed nodes (each node frees its own GPU first). Local URLs on different
+                ports (e.g., <code>localhost:3052</code>) are allowed for dual-instance setups.</small>
         </div>
         <div class="form-group" style="margin-top: 12px; padding: 10px; background: #1a1a2e; border: 1px solid #2a2a3e; border-radius: 6px;">
             <small style="color: #aaa; display: block;">

@@ -29,11 +29,6 @@ context:
   - provider: code
   - provider: diff
 
-# Optional: Add MCP server for RAG codebase search
-# mcpServers:
-#   - name: posterchanai-rag
-#     url: http://your-server:8808/sse
-
 # For larger context windows (16k+), you can enable more providers:
 # context:
 #   - provider: code

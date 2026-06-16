@@ -6,7 +6,7 @@ patterns below.
 ## What this is
 
 PosterChanAI — a self-hosted FastAPI app: streaming LLM chat (OpenAI-compatible `/v1/`),
-image gen, RAG/MCP, TTS/STT, email/news/torrents, a file manager, and **Telegram + Matrix
+image gen, TTS/STT, email/news/torrents, a file manager, and **Telegram + Matrix
 bots**. Single-admin, multi-user, SQLite-backed.
 
 ## Run / dev
@@ -297,4 +297,4 @@ open a fresh `SessionLocal` and capture any needed config up front.
 - Do not run `git gc`/maintenance on the Gitea server data dir (production).
 - `app/routers/openai_api.py` is a generic proxy — keep it task-agnostic; never hardcode
   task-specific logic there.
-- Detailed setup (RAG/MCP/LLM/image/IPEX/nginx) lives in `docs/`.
+- Detailed setup (LLM/image/IPEX/nginx) lives in `docs/`.

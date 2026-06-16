@@ -19,7 +19,7 @@ logging.basicConfig(
 from app.database import init_db, get_db
 from app.auth import get_current_user_optional, get_current_user, create_access_token
 from app.models import User, VerificationToken, Setting
-from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, media_api, news, rag, mail, torrent, storage, files, music_api, video_api
+from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, media_api, news, mail, torrent, storage, files, music_api, video_api
 from app.routers import fourchan, youtube_thumb, bots
 from app.routers.telegram import router as telegram_router
 from app.routers.misskey import router as misskey_router
@@ -148,7 +148,6 @@ app.include_router(music_api.router)
 app.include_router(video_api.router)
 app.include_router(media_api.router)
 app.include_router(news.router)
-app.include_router(rag.router)
 app.include_router(mail.router)
 app.include_router(torrent.router)
 app.include_router(fourchan.router)
@@ -277,36 +276,6 @@ async def startup():
 
         else:
             logging.info(f"Schedulers disabled on port {app_port} (only run on port 3051)")
-
-        # Auto-warmup RAG cache if enabled (only if MCP server is not handling it)
-        db2 = SessionLocal()
-        try:
-            rag_enabled = db2.query(Setting).filter(Setting.key == "rag_enabled").first()
-            rag_auto_warmup = db2.query(Setting).filter(Setting.key == "rag_auto_warmup").first()
-            mcp_enabled = db2.query(Setting).filter(Setting.key == "mcp_enabled").first()
-
-            # Only run standalone RAG warmup if MCP is disabled (MCP handles its own warmup)
-            if (rag_enabled and rag_enabled.value == "true" and
-                (not rag_auto_warmup or rag_auto_warmup.value == "true") and
-                (not mcp_enabled or mcp_enabled.value != "true")):
-                from app.services.rag_warmup import warmup_rag_cache
-                logging.info("Starting RAG cache warmup in background...")
-                warmup_thread = threading.Thread(target=warmup_rag_cache, daemon=True)
-                warmup_thread.start()
-        except Exception as e:
-            logging.error(f"Error starting RAG warmup: {e}", exc_info=True)
-        finally:
-            db2.close()
-
-        # Start integrated MCP server if enabled (only on main instance to avoid port conflicts)
-        if app_port == 3051:
-            try:
-                from app.services.mcp_service import start_mcp_server
-                start_mcp_server()
-            except Exception as e:
-                logging.error(f"Error starting MCP server: {e}", exc_info=True)
-        else:
-            logging.info(f"MCP server disabled on port {app_port} (only run on port 3051)")
 
         # Auto-start built-in Tor if enabled
         db_tor = SessionLocal()
@@ -445,10 +414,6 @@ async def shutdown():
             stop_bot_manager()
         except Exception:
             pass
-
-    # Stop MCP server
-    from app.services.mcp_service import stop_mcp_server
-    stop_mcp_server()
 
     # Stop built-in torrent client if running (only if libtorrent is available)
     try:

@@ -13,17 +13,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# RAG context injection template
-RAG_CONTEXT_TEMPLATE = """
-
----
-The following is relevant context from the user's indexed codebase/documents that may help answer their question:
-
-{context}
-
----
-Use this context to provide accurate and helpful responses. If the context doesn't seem relevant to the question, you can ignore it."""
-
 # Thread pool for running synchronous generators
 _stream_executor = ThreadPoolExecutor(max_workers=4)
 
@@ -100,62 +89,6 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
             logger.debug(f"[CHAT SERVICE] No chat servers configured (chat_server_urls='{chat_server_urls}')")
         return None
 
-    def _get_rag_context(self, user_message: str) -> str:
-        """Get RAG context for the user message if enabled."""
-        if not self.user:
-            return ""
-
-        # Check if RAG is enabled
-        rag_enabled = self._settings.get("rag_enabled", "true").lower() == "true"
-        auto_context = self._settings.get("rag_auto_context", "true").lower() == "true"
-
-        if not rag_enabled or not auto_context:
-            return ""
-
-        try:
-            from app.services.rag_service import get_rag_service
-            rag_service = get_rag_service(self.db, self.user.id)
-            results = rag_service.query(user_message)
-
-            if results:
-                context = rag_service.format_context(results)
-                logger.debug(f"[RAG] Injecting {len(context)} chars of context")
-                return RAG_CONTEXT_TEMPLATE.format(context=context)
-        except Exception as e:
-            logger.debug(f"[RAG] Error getting context: {e}")
-
-        return ""
-
-    def _inject_rag_context(self, messages: list[dict], user_message: str) -> list[dict]:
-        """Inject RAG context into messages if available."""
-        rag_context = self._get_rag_context(user_message)
-        if not rag_context:
-            return messages
-
-        # Find and enhance the system message - put RAG context BEFORE the persona
-        enhanced_messages = []
-        system_found = False
-
-        for msg in messages:
-            if msg.get("role") == "system" and not system_found:
-                # Put RAG context at the START so model sees it first
-                enhanced_messages.append({
-                    "role": "system",
-                    "content": rag_context + "\n\n" + msg["content"]
-                })
-                system_found = True
-            else:
-                enhanced_messages.append(msg)
-
-        # If no system message was found, add one with RAG context
-        if not system_found:
-            enhanced_messages.insert(0, {
-                "role": "system",
-                "content": f"You are a helpful AI assistant.{rag_context}"
-            })
-
-        return enhanced_messages
-
     def strip_thinking_tags(self, response: str) -> str:
         """Strip thinking tags from AI response"""
         from app.services.text_utils import strip_thinking_tags
@@ -205,27 +138,6 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
     async def chat(self, messages: list[dict]) -> str:
         """Non-streaming chat completion using inference factory or custom AI service"""
         try:
-            # Extract user message for RAG query (last user message)
-            user_message = ""
-            for msg in reversed(messages):
-                if msg.get("role") == "user":
-                    content = msg.get("content", "")
-                    # Handle multimodal content (list of content parts) - extract text only for RAG
-                    if isinstance(content, list):
-                        for part in content:
-                            if isinstance(part, dict) and part.get("type") == "text":
-                                user_message = part.get("text", "")
-                                break
-                            elif isinstance(part, str):
-                                user_message = part
-                                break
-                    else:
-                        user_message = content if isinstance(content, str) else ""
-                    break
-
-            # Inject RAG context if available
-            messages = self._inject_rag_context(messages, user_message)
-
             # Ensure messages alternate user/assistant properly
             messages = self._ensure_alternating_roles(messages)
 
@@ -273,16 +185,6 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
         from app.services.load_balancer import NoHealthyServersError
 
         try:
-            # Extract user message for RAG query (last user message)
-            user_message = ""
-            for msg in reversed(messages):
-                if msg.get("role") == "user":
-                    user_message = msg.get("content", "")
-                    break
-
-            # Inject RAG context if available
-            messages = self._inject_rag_context(messages, user_message)
-
             # Ensure messages alternate user/assistant properly
             messages = self._ensure_alternating_roles(messages)
 

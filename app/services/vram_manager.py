@@ -4,7 +4,7 @@ The local LLM is always native llama.cpp and local image gen is always native di
 Modes:
 - shared: swap models in/out of VRAM (single GPU) - default
 - dedicated: keep both loaded (dual GPU or high VRAM)
-- llm_only: keep LLM loaded, image uses an external image server (image_server_urls)
+- llm_only: keep LLM loaded, image uses external nodes (the unified chat_server_urls list)
 - image_only: keep image model loaded, LLM uses an external/remote server
 """
 import logging

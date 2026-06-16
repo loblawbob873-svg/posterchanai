@@ -121,8 +121,12 @@ async def generate_image(
     try:
         logger.info(f"[IMAGE-API] Generating image: {request.prompt[:50]}...")
 
+        # Server-to-server (load-balanced) requests must generate LOCALLY here, not re-balance —
+        # the unified chat_server_urls list is on every node, so re-balancing would ping-pong the
+        # request node→node until timeout. Mirrors chat's skip_load_balancer / music+video local_only.
+        is_load_balanced = http_request.headers.get("x-posterchanai-load-balanced", "").lower() == "true"
+
         # Generate image with load balancing support
-        # The load balancer will detect if this server is selected and generate locally
         # Lock is handled inside for local generation only
         # Note: Server-to-server requests use global API key from settings, not user's API key
         result = await generate_image_with_load_balancing(
@@ -132,7 +136,8 @@ async def generate_image(
             width=request.width,
             height=request.height,
             steps=request.steps,
-            cfg=request.cfg
+            cfg=request.cfg,
+            local_only=is_load_balanced
         )
 
         if result:
@@ -142,13 +147,13 @@ async def generate_image(
             logger.error(f"[IMAGE-API] Image generation failed (no result)")
             # Check if it's a load balancing issue
             settings = {s.key: s.value for s in db.query(Setting).all()}
-            image_server_urls = settings.get("image_server_urls", "")
+            server_urls = settings.get("chat_server_urls", "")
             vram_mode = settings.get("vram_mode", "shared")
-            
-            if vram_mode == "llm_only" and not image_server_urls:
-                return ImageResponse(error="Image generation failed: vram_mode is 'llm_only' but no image servers configured")
-            elif image_server_urls:
-                return ImageResponse(error="Image generation failed: All image servers failed or unavailable")
+
+            if vram_mode == "llm_only" and not server_urls:
+                return ImageResponse(error="Image generation failed: vram_mode is 'llm_only' but no servers configured in Site → Load Balancing")
+            elif server_urls:
+                return ImageResponse(error="Image generation failed: All servers failed or unavailable")
             else:
                 return ImageResponse(error="Image generation failed: Local generation failed and no remote servers configured")
 

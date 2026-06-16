@@ -400,7 +400,7 @@ def init_db():
     try:
         default_settings = {
             # Native image generation (diffusers / torch-XPU) is the only image backend.
-            # image_timeout also bounds the image-server LB request (image_server_urls). The
+            # image_timeout also bounds the image LB request (chat_server_urls). The
             # model FIRST-RUN default can be seeded from the environment (the Docker image ships
             # a free SDXL repo so image gen works out of the box; diffusers downloads on first gen).
             "image_timeout": "300000",  # image request timeout in ms
@@ -487,10 +487,9 @@ When asked to write or modify code or files:
             "ollama_tfs_z": "1.0",
             # Registration settings
             "allow_registration": "false",
-            # Load balancing - proxy chat to external posterchanai servers
+            # Load balancing - ONE unified list of posterchanai node URLs that drives chat, image,
+            # music and video LB (empty = use local backend only).
             "chat_server_urls": "",  # Comma-separated URLs (empty = use local backend)
-            # Load balancing - proxy image generation to external posterchanai servers
-            "image_server_urls": "",  # Comma-separated URLs (empty = use local backend)
             # Native LLM settings (the local LLM backend is always native llama.cpp now). The
             # model-path FIRST-RUN default can be seeded from the environment (the Docker image
             # ships a turnkey native+GPU config); unset → the default below.
@@ -535,37 +534,6 @@ When asked to write or modify code or files:
             "imap_sent_folder": "Sent",
             # News sources
             "news_sources": "",
-            # RAG (Retrieval-Augmented Generation) settings
-            "rag_enabled": "true",
-            "rag_embedding_model": "all-MiniLM-L6-v2",
-            "rag_chunk_size": "2000",
-            "rag_chunk_overlap": "100",
-            "rag_top_k": "5",
-            "rag_min_similarity": "0.3",
-            "rag_max_file_size": "1",
-            "rag_max_log_size": "100",
-            "rag_embedding_batch_size": "64",
-            "rag_num_threads": "0",
-            "rag_chromadb_path": "./data/chromadb",
-            "rag_auto_context": "true",
-            "rag_auto_warmup": "true",  # Auto-load RAG data into RAM on startup
-            "rag_max_context_chars": "32000",  # Max total context injected into prompt
-            "rag_max_chunk_display": "8000",   # Max chars per chunk when displaying
-            "rag_max_chunk_index": "10000",    # Max chunk size during indexing
-            "rag_api_url": "",  # Remote RAG API URL for distributed setups
-            # RAG cache settings (for performance tuning) - aggressive RAM caching
-            "rag_query_cache_max": "100000",
-            "rag_query_cache_ttl": "600",
-            "rag_embedding_cache_max": "250000",
-            # ChromaDB HNSW tuning (advanced performance)
-            "rag_hnsw_ef_search": "100",       # Query-time accuracy (higher = slower but better)
-            "rag_hnsw_ef_construction": "200", # Index build quality (higher = slower builds)
-            "rag_hnsw_m": "16",                # Max connections per node (16 is good default)
-            # MCP Server settings (integrated, no separate service needed)
-            "mcp_enabled": "true",             # MCP server enabled by default
-            "mcp_port": "8808",                # SSE/HTTP port for MCP clients
-            "mcp_host": "0.0.0.0",             # Host to bind MCP server
-            "mcp_warmup": "true",              # Pre-load embeddings on startup
             # Built-in torrent client (libtorrent). FIRST-RUN default can be seeded
             # from env (the Docker image enables the torrent/proxy/Tor stack so it
             # works out of the box; the app starts Tor + the HTTP proxy itself).

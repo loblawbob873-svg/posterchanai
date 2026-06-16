@@ -23,11 +23,11 @@ setup_directories() {
         print_success "Created $MODELS_PATH"
     fi
 
-    # Create data directory for ChromaDB
+    # Create data directory
     local DATA_PATH="$SCRIPT_DIR/data"
     if [ ! -d "$DATA_PATH" ]; then
-        mkdir -p "$DATA_PATH/chromadb"
-        print_success "Created $DATA_PATH/chromadb (RAG vector store)"
+        mkdir -p "$DATA_PATH"
+        print_success "Created $DATA_PATH"
     fi
 }
 
@@ -234,19 +234,5 @@ download_model() {
     echo "  For agentic coding, point opencode (its own config) at Qwen3-Coder-30B-A3B if you"
     echo "  downloaded it (best), otherwise Qwen3.5-9B-Claude-Code. With a 12-16GB GPU the 30B"
     echo "  auto-fits context via partial CPU offload - leave ollama_num_ctx on 'auto'."
-}
-
-setup_mcp_server() {
-    print_step "MCP Server (Integrated)"
-    echo ""
-    echo "  The MCP server is integrated into the main app!"
-    echo "  It starts automatically - no separate service needed."
-    echo ""
-    echo "  Features:"
-    echo "    • Exposes RAG search to Continue.dev, Claude Desktop, etc."
-    echo "    • Configure in Admin > Services > MCP Server"
-    echo "    • Default port: 8808"
-    echo ""
-    print_success "MCP server will start automatically with the main app"
 }
 

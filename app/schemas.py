@@ -87,7 +87,7 @@ class SettingsUpdate(BaseModel):
 
 class SettingsResponse(BaseModel):
     # Native image generation (diffusers / torch-XPU). image_timeout also bounds the
-    # image-server load-balancer request when image_server_urls is configured.
+    # image load-balancer request when chat_server_urls is configured.
     image_timeout: str = "300000"  # image request timeout in ms
     image_model_path: str = ""
     image_anime_model_path: str = ""  # Optional anime model for style switching
@@ -100,11 +100,9 @@ class SettingsResponse(BaseModel):
     image_idle_timeout: str = "120"  # Seconds before unloading image model (0=disabled)
     image_subprocess_mode: str = "false"  # Run each image in subprocess for VRAM release (Intel XPU)
     # Music generation (ACE-Step). ACE-Step needs its own Python 3.11-3.12 env and ships a REST
-    # server, so it runs as a SEPARATE service and the app talks to it over HTTP (like
-    # finance_api_base / image_server_urls). Wired for web UI + Telegram only (not the fedi bots).
+    # server, so it runs as a SEPARATE service and the app talks to it over HTTP at the local
+    # default (localhost:8001); cross-node LB uses chat_server_urls. Web UI + Telegram only.
     music_enabled: str = "false"
-    music_api_base: str = "http://localhost:8001"  # LOCAL ACE-Step server (co-located on this GPU)
-    music_server_urls: str = ""  # Comma-separated REMOTE ACE-Step servers for load balancing
     music_gpu_device: str = "auto"  # "auto"/"cuda"/"xpu"/"cpu" — picks the GPU vs CPU lock locally
     music_model: str = ""  # DiT model name/path, e.g. acestep-v15-turbo (blank = server default)
     music_default_duration: str = "180"  # seconds (ACE-Step range 10-600)
@@ -115,7 +113,6 @@ class SettingsResponse(BaseModel):
     # Video generation (videogeni — NATIVE in-process diffusers, like image gen; mirrors music LB)
     video_enabled: str = "false"
     video_local_enabled: str = "true"  # generate on THIS node's GPU (the native diffusers path)
-    video_server_urls: str = ""  # Comma-separated REMOTE posterchanai nodes for load balancing
     video_gpu_device: str = "auto"  # "auto"/"cuda"/"xpu"/"cpu" — picks the GPU vs CPU lock locally
     video_model: str = "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"  # HF id / local path of the diffusers model
     video_cpu_offload: str = "false"  # stream weights from RAM (fits big models like CogVideoX-5B on
@@ -188,10 +185,9 @@ class SettingsResponse(BaseModel):
     ollama_tfs_z: str = "1.0"
     # Registration settings
     allow_registration: str = "false"
-    # Load balancing - proxy chat to external posterchanai servers
+    # Load balancing - ONE unified list of posterchanai node URLs that drives chat, image, music
+    # and video LB (Site → Load Balancing → Server URLs).
     chat_server_urls: str = ""  # Comma-separated list of posterchanai server URLs for load balancing
-    # Load balancing - proxy image generation to external posterchanai servers
-    image_server_urls: str = ""  # Comma-separated list of posterchanai server URLs for image load balancing
     # Native LLM health check (ping the loaded model; reload it on repeated failure / high VRAM)
     llm_health_check_enabled: str = "false"
     llm_health_check_interval: str = "90"
@@ -221,37 +217,6 @@ class SettingsResponse(BaseModel):
     imap_sent_folder: str = "Sent"
     # News sources
     news_sources: str = ""
-    # RAG (Retrieval-Augmented Generation) settings
-    rag_enabled: str = "true"
-    rag_embedding_model: str = "all-MiniLM-L6-v2"
-    rag_chunk_size: str = "2000"
-    rag_chunk_overlap: str = "100"
-    rag_top_k: str = "5"
-    rag_min_similarity: str = "0.3"
-    rag_max_file_size: str = "1"
-    rag_max_log_size: str = "100"
-    rag_embedding_batch_size: str = "64"
-    rag_num_threads: str = "0"
-    rag_chromadb_path: str = "./data/chromadb"
-    rag_auto_context: str = "true"
-    rag_auto_warmup: str = "true"  # Auto-load RAG data into RAM on startup
-    rag_max_context_chars: str = "32000"  # Max total context injected into prompt
-    rag_max_chunk_display: str = "8000"   # Max chars per chunk when displaying
-    rag_max_chunk_index: str = "10000"    # Max chunk size during indexing
-    rag_api_url: str = ""  # Remote RAG API URL for distributed setups
-    # RAG cache settings
-    rag_embedding_cache_max: str = "250000"  # Max cached embeddings
-    rag_query_cache_max: str = "100000"      # Max cached query results
-    rag_query_cache_ttl: str = "600"         # Query cache TTL in seconds
-    # ChromaDB HNSW tuning
-    rag_hnsw_ef_search: str = "100"          # Query-time accuracy
-    rag_hnsw_ef_construction: str = "200"    # Index build quality
-    rag_hnsw_m: str = "16"                   # Max connections per node
-    # MCP Server settings
-    mcp_enabled: str = "true"
-    mcp_host: str = "0.0.0.0"
-    mcp_port: str = "8808"
-    mcp_warmup: str = "true"
     # Intelligent Intent Detection settings
     intent_detection_enabled: str = "true"  # Enable AI-powered intent detection for natural language actions (only triggers on action keywords)
     intent_confidence_threshold: str = "0.7"  # Minimum confidence to execute detected actions (0.0-1.0)
@@ -567,92 +532,5 @@ class UserSettingsResponse(BaseModel):
     matrix_notif_enabled: bool = False
     # Nitter RSS feeds (newline-separated URLs) posted as image cards to Telegram
     nitter_feeds: str = ""
-
-
-# RAG (Retrieval-Augmented Generation) schemas
-
-class RAGCollectionCreate(BaseModel):
-    name: str
-    description: Optional[str] = None
-    collection_type: str  # "folder", "git", "watcher"
-    source_path: Optional[str] = None
-    git_branch: Optional[str] = "main"
-    file_patterns: Optional[str] = "*.py,*.js,*.ts,*.tsx,*.jsx,*.html,*.css,*.json,*.yaml,*.yml,*.md,*.txt,*.go,*.rs,*.java,*.sh"
-
-
-class RAGCollectionUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    source_path: Optional[str] = None
-    git_branch: Optional[str] = None
-    file_patterns: Optional[str] = None
-
-
-class RAGCollectionResponse(BaseModel):
-    id: int
-    name: str
-    description: Optional[str] = None
-    collection_type: str
-    source_path: Optional[str] = None
-    git_branch: Optional[str] = None
-    file_patterns: Optional[str] = None
-    document_count: int = 0
-    last_indexed_at: Optional[datetime] = None
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
-class RAGQueryRequest(BaseModel):
-    query: str
-    collection_ids: Optional[List[int]] = None  # None = search all user collections
-    top_k: Optional[int] = None
-
-
-class RAGQueryResult(BaseModel):
-    content: str
-    file_path: str
-    similarity: float
-    collection_name: str
-
-
-class RAGWatcherCreate(BaseModel):
-    collection_id: int
-    watch_path: str
-
-
-class RAGWatcherResponse(BaseModel):
-    id: int
-    collection_id: int
-    watch_path: str
-    api_key: str
-    is_active: bool
-    last_event_at: Optional[datetime] = None
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
-class RAGFileEvent(BaseModel):
-    """Event from VS Code file watcher"""
-    event_type: str  # "created", "modified", "deleted"
-    file_path: str
-    content: Optional[str] = None  # File content for create/modify
-
-
-class RAGGitCloneRequest(BaseModel):
-    name: str
-    git_url: str
-    branch: Optional[str] = "main"
-    file_patterns: Optional[str] = "*.py,*.js,*.ts,*.tsx,*.jsx,*.html,*.css,*.json,*.yaml,*.yml,*.md,*.txt,*.go,*.rs,*.java,*.sh"
-
-
-class RAGStatusResponse(BaseModel):
-    enabled: bool
-    embedding_model: str
-    collections_count: int
-    total_documents: int
 
 

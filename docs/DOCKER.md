@@ -75,7 +75,7 @@ Two volumes hold all mutable state:
 
 - `/var/lib/posterchanai` — uploads, downloaded models, HF cache, **MIOpen cache**,
   the **sqlite DB** (symlinked here), torrents, Tor data.
-- `/app/data` — the ChromaDB RAG store.
+- `/app/data` — app data directory.
 
 ## Configuration / opt-ins
 

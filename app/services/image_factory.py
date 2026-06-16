@@ -2,7 +2,7 @@
 Image Generation Factory
 Image generation is always native diffusers (torch-XPU/CUDA/HIP/CPU). Integrates with the
 VRAM manager for model swapping on a shared GPU, and supports load balancing across multiple
-posterchanai image servers (image_server_urls).
+posterchanai nodes (the unified chat_server_urls list).
 """
 import logging
 from typing import Optional, Protocol, runtime_checkable, TYPE_CHECKING
@@ -43,8 +43,9 @@ def get_image_load_balancer(db: Session) -> Optional[ImageLoadBalancer]:
     Returns None if no remote servers are configured.
     """
     settings = {s.key: s.value for s in db.query(Setting).all()}
-    image_server_urls = settings.get("image_server_urls", "")
-    servers = parse_image_server_urls(image_server_urls)
+    # Single unified load-balancing list (Site → Load Balancing) drives chat/image/music/video.
+    server_urls = settings.get("chat_server_urls", "")
+    servers = parse_image_server_urls(server_urls)
 
     if servers:
         timeout = int(settings.get("image_timeout", "300000")) / 1000
@@ -61,24 +62,31 @@ async def generate_image_with_load_balancing(
     height: Optional[int] = None,
     steps: Optional[int] = None,
     cfg: Optional[float] = None,
+    local_only: bool = False,
 ) -> Optional[str]:
     """
     Generate image with load balancing support.
     Alternates between local and remote servers if load balancing is configured.
     Remote requests run in parallel; local requests are serialized via lock.
     If vram_mode is 'llm_only', always uses remote servers.
-    Returns base64 encoded image or None.
+    `local_only` skips remote nodes (set by the /api/generate-image endpoint for server-to-server
+    requests so a forwarded request generates HERE instead of bouncing onward — the unified
+    chat_server_urls list is populated on every node, so without this a forwarded request would
+    ping-pong between nodes). Returns base64 encoded image or None.
     """
     from app.services.locks import image_generation_lock
 
     # Query settings from database
     settings = {s.key: s.value for s in db.query(Setting).all()}
-    image_server_urls = settings.get("image_server_urls", "")
+    # Single unified load-balancing list (Site → Load Balancing) drives chat/image/music/video.
+    # A forwarded (local_only) request must NOT re-balance, or it loops node→node.
+    server_urls = settings.get("chat_server_urls", "")
     vram_mode = settings.get("vram_mode", "shared")
-    servers = parse_image_server_urls(image_server_urls)
+    servers = [] if local_only else parse_image_server_urls(server_urls)
 
-    # If vram_mode is llm_only, always use remote servers (no local image generation)
-    force_remote = vram_mode == "llm_only"
+    # If vram_mode is llm_only, always use remote servers (no local image generation) — but a
+    # forwarded request still generates locally (it was sent here precisely to run on this GPU).
+    force_remote = (vram_mode == "llm_only") and not local_only
     
     if force_remote and not servers:
         logger.error("[IMAGE] vram_mode is 'llm_only' but no image servers configured")
@@ -237,7 +245,7 @@ async def generate_image_with_load_balancing(
         logger.error(f"[IMAGE] All image generation attempts failed - local and remote")
         # Log configuration for debugging
         settings = {s.key: s.value for s in db.query(Setting).all()}
-        logger.error(f"[IMAGE] Config - image_server_urls: {settings.get('image_server_urls', '')}, "
+        logger.error(f"[IMAGE] Config - chat_server_urls: {settings.get('chat_server_urls', '')}, "
                     f"vram_mode: {settings.get('vram_mode', 'shared')}")
     
     return result

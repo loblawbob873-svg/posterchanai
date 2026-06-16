@@ -89,7 +89,7 @@ async def mark_image_server_unhealthy(server: str):
 async def should_use_remote_image(num_remote_servers: int) -> bool:
     """
     Always use remote servers when configured - pure load balancing.
-    All requests go to the configured image_server_urls.
+    All requests go to the configured nodes (the unified chat_server_urls list).
     """
     if num_remote_servers > 0:
         return True
