@@ -1762,7 +1762,8 @@ fieldset legend {
 }
 #userSettingsModal .modal-content,
 #translateModal .modal-content,
-#calendarModal .modal-content {
+#calendarModal .modal-content,
+#newsModal .modal-content {
     max-height: min(90vh, calc(100vh - 40px)) !important;
     flex-shrink: 0 !important;
     display: flex !important;
@@ -1771,12 +1772,14 @@ fieldset legend {
 }
 #userSettingsModal .modal-header,
 #translateModal .modal-header,
-#calendarModal .modal-header {
+#calendarModal .modal-header,
+#newsModal .modal-header {
     flex-shrink: 0 !important;
 }
 #userSettingsModal .modal-body,
 #translateModal .modal-body,
-#calendarModal .modal-body {
+#calendarModal .modal-body,
+#newsModal .modal-body {
     flex: 1 !important;
     min-height: 0 !important;
     overflow-y: auto !important;
