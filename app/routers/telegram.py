@@ -2466,10 +2466,13 @@ async def _handle_telegram_update(update: dict, db: Session):
             if command:
                 command = CommandService.COMMAND_ALIASES.get(command, command)
 
-            # Auto-detect bare magnet links — route to "torrents add <magnet>"
-            if not command and text.strip().startswith("magnet:?"):
+            # Auto-detect a bare magnet link OR a .torrent URL — route to "torrents add <link>"
+            _tl = text.strip()
+            if not command and (_tl.startswith("magnet:?") or
+                                (_tl.lower().startswith(("http://", "https://"))
+                                 and __import__("re").search(r'\.torrent(\?|$)', _tl, __import__("re").IGNORECASE))):
                 command = "torrents"
-                arg = f"add {text.strip()}"
+                arg = f"add {_tl}"
 
             logger.warning(f"TELEGRAM: text='{text}', cmd={command}, arg='{arg}', photos={len(photos) if photos else 0}")
             

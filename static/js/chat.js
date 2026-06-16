@@ -1,5 +1,5 @@
 // Chat Handler
-console.log('[PosterChanAI] chat.js build v44 loaded');
+console.log('[PosterChanAI] chat.js build v45 loaded');
 class ChatHandler {
     constructor() {
         this.ws = null;
@@ -1326,22 +1326,28 @@ class ChatHandler {
         const bar = document.getElementById('linkActions');
         if (!bar) return;
         const text = (this.messageInput ? this.messageInput.value : '').trim();
+        const isMagnet = /^magnet:\?/i.test(text);
         const urlMatch = text.match(/^https?:\/\/\S+$/i);
-        if (!urlMatch) {
+        if (!isMagnet && !urlMatch) {
             if (bar.style.display !== 'none') { bar.style.display = 'none'; bar.innerHTML = ''; }
             return;
         }
-        const url = urlMatch[0];
+        const url = isMagnet ? text : urlMatch[0];
         bar.innerHTML = '';
         bar.style.display = 'flex';
         // Media links get download-specific actions (matches the Telegram yt: menu); everything else
         // gets the generic page actions. ytdl handles YouTube, X/Twitter and Nitter.
+        const isTorrent = isMagnet || /\.torrent(\?|$)/i.test(url);
         const isYouTube = /(?:youtube\.com\/|youtu\.be\/)/i.test(url);
         const isX = /\/\/[^/]*(?:x\.com|twitter\.com|nitter)/i.test(url);
         // A 4th element = a token to pre-select for editing (timecodes) instead of auto-submitting,
         // so the user can trim the download (`ytdl video <url> clip <start> <end>`) before sending.
         let actions;
-        if (isYouTube) {
+        if (isTorrent) {
+            actions = [
+                ['🧲 Add Torrent', `torrents add ${url}`, 'Add this magnet/.torrent to your downloads'],
+            ];
+        } else if (isYouTube) {
             actions = [
                 ['📋 Summary', `yt ${url}`, 'Summarize the video from its transcript'],
                 ['🎵 MP3', `ytdl ${url}`, 'Download the audio as an MP3'],
@@ -1587,7 +1593,10 @@ class ChatHandler {
         }
         // Bare link (Telegram parity): a message that is ONLY a URL shows the link-action bar
         // instead of auto-chatting. Add text alongside the URL to ask the AI about the page.
-        if (!hasAttachments && /^https?:\/\/\S+$/i.test(content)) {
+        // EXCEPTION: magnet links and .torrent URLs flow straight through (the server auto-routes
+        // them to `torrents add`) — don't hijack them with the page-action bar.
+        const _isTorrentLink = /^magnet:\?/i.test(content) || /\.torrent(\?|$)/i.test(content);
+        if (!hasAttachments && !_isTorrentLink && /^https?:\/\/\S+$/i.test(content)) {
             this.updateLinkActionBar();
             this.showToast('Pick an action for this link, or add a question to ask the AI');
             return;

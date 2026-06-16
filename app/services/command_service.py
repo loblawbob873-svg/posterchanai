@@ -733,6 +733,15 @@ class CommandService:
         cleaned_message = re.sub(r'[✏️🔄📅📆🗓️➕➖✕×]', '', message)
         lower = cleaned_message.lower().strip()
 
+        # Bare magnet link or .torrent URL (just pasted, no command word) → add to the torrent
+        # client. Shared by the web UI + Matrix (both route through parse_command).
+        _stripped = message.strip()
+        if _stripped.startswith("magnet:?") or (
+            re.match(r'^https?://\S+$', _stripped, re.IGNORECASE)
+            and re.search(r'\.torrent(\?|$)', _stripped, re.IGNORECASE)
+        ):
+            return "torrents", f"add {_stripped}"
+
         # Check natural language phrases first (exact match)
         if lower in self.PHRASE_COMMANDS:
             cmd, arg = self.PHRASE_COMMANDS[lower]
@@ -2005,9 +2014,29 @@ Files are saved to your Storage.""",
         elif subcommand == "add" and len(parts) > 1:
             if not bt_service:
                 return {"type": "text", "content": bt_error}
-            magnet = parts[1]
+            target = parts[1].strip()
+
+            # A `.torrent` URL: download the file and add it (magnets go the parse_magnet path).
+            if not target.startswith("magnet:") and re.match(r'^https?://', target, re.IGNORECASE):
+                import httpx
+                try:
+                    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as _c:
+                        _resp = await _c.get(target, headers={"User-Agent": "Mozilla/5.0"})
+                        _resp.raise_for_status()
+                        _data = _resp.content
+                except Exception as e:
+                    return {"type": "text", "content": f"Couldn't download that .torrent: {e}"}
+                if bt_service == "remote":
+                    return {"type": "text", "content": "Adding a .torrent URL isn't supported on the remote torrent server yet — use a magnet link."}
+                try:
+                    info_hash = bt_service.add_torrent_file(_data)
+                except Exception as e:
+                    return {"type": "text", "content": f"Couldn't add that .torrent: {e}"}
+                return {"type": "text", "content": f"Added torrent: `{info_hash}`\n\nUse `torrents list` to check progress."}
+
+            magnet = target
             if not magnet.startswith("magnet:"):
-                return {"type": "text", "content": "Please provide a magnet link starting with `magnet:`"}
+                return {"type": "text", "content": "Please provide a magnet link (`magnet:…`) or a `.torrent` URL."}
             if bt_service == "remote":
                 result = await self._remote_bt_request("/add", method="POST", json_body={"magnet": magnet})
                 if result and "error" in result:
