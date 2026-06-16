@@ -1747,11 +1747,13 @@ async def get_bot_info(db: Session = Depends(get_db), admin: User = Depends(get_
 
 
 @router.post("/webhook")
-async def telegram_webhook(update: dict, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def telegram_webhook(update: dict, background_tasks: BackgroundTasks):
     """Handle incoming webhook updates from Telegram.
 
-    Returns 200 OK immediately so Telegram doesn't time out (60s limit),
-    then processes the message in a background task.
+    Returns 200 OK immediately so Telegram doesn't time out (60s limit), then processes the message
+    in a background task. Intentionally takes NO `db` dependency: the body doesn't use one (dedup is
+    in-memory; the background task opens its own session), and depending on `get_db` here meant a
+    drained connection pool would block the ACK → Telegram would replay its backlog.
     """
     global _seen_update_ids
     update_id = update.get("update_id", 0)

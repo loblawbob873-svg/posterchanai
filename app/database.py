@@ -78,7 +78,12 @@ if "sqlite" in DATABASE_URL:
     if ":memory:" in DATABASE_URL:
         _pool_kwargs = {"poolclass": StaticPool}
     else:
-        _pool_kwargs = {"poolclass": QueuePool, "pool_size": 5, "max_overflow": 10, "pool_recycle": 3600}
+        # Pool sized for this workload: long GPU background tasks (music/image/video) each hold a
+        # connection for MINUTES while queued on the GPU lock, alongside the webhook + several
+        # schedulers. 15 was far too small and exhausted under bursts (QueuePool timeout → the
+        # Telegram webhook couldn't even get a connection to ACK → Telegram replayed history).
+        # SQLite+WAL handles many connections cheaply, so size generously.
+        _pool_kwargs = {"poolclass": QueuePool, "pool_size": 20, "max_overflow": 80, "pool_recycle": 3600}
     engine = create_engine(
         DATABASE_URL,
         connect_args={
