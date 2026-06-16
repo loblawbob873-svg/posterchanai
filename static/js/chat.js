@@ -1709,10 +1709,11 @@ class ChatHandler {
             displayMsg = displayContent + (displayContent ? ' ' : '') + `[with ${count} attachment${count > 1 ? 's' : ''}]`;
         }
 
-        // Get first image data URL for preview (if any)
+        // Image data URLs for preview — ALL uploaded images, so a multi-image send (e.g. collage)
+        // shows every thumbnail in the user message, not just the first.
         let imageDataUrl = null;
         if (this.uploadedImages.length > 0) {
-            imageDataUrl = this.uploadedImages[0].dataUrl;
+            imageDataUrl = this.uploadedImages.map(img => img.dataUrl);
         }
 
         // Add user message to UI (show what user typed, not the command)
@@ -3071,20 +3072,23 @@ class ChatHandler {
 
         // Add stored image if present
         if (imagePath) {
-            // Store image path on element for editing later
-            messageEl._imagePath = imagePath;
+            // imagePath may be a single URL or an array of URLs (multi-image uploads).
+            const _paths = Array.isArray(imagePath) ? imagePath : [imagePath];
+            messageEl._imagePath = _paths[0];  // first kept for edit/backward-compat
 
             const imgContainer = document.createElement('div');
             imgContainer.className = 'generated-image';
-            const img = document.createElement('img');
-            img.src = imagePath;
-            img.alt = 'Stored image';
-            img.style.maxWidth = '100%';
-            img.style.borderRadius = '8px';
-            img.style.marginTop = '10px';
-            img.onclick = () => window.open(imagePath, '_blank');
-            img.style.cursor = 'pointer';
-            imgContainer.appendChild(img);
+            _paths.forEach((p) => {
+                const img = document.createElement('img');
+                img.src = p;
+                img.alt = 'Stored image';
+                img.style.maxWidth = '100%';
+                img.style.borderRadius = '8px';
+                img.style.marginTop = '10px';
+                img.onclick = () => window.open(p, '_blank');
+                img.style.cursor = 'pointer';
+                imgContainer.appendChild(img);
+            });
             contentEl.appendChild(imgContainer);
         }
 
