@@ -42,6 +42,7 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
         "reminders": "Show your pending reminders (clickable to cancel): reminders",
         "pin": "Save (pin) a search you run often: pin <query> (e.g. pin latest xrp news and price)",
         "pins": "Show your pinned searches — click to run, or delete: pins",
+        "collage": "Combine all attached images into one collage: collage (attach 2+ images)",
         "meme": "Add outlined white meme text to an attached image: meme <text>",
         "dildo": "Scatter dildos all over an attached image: dildo",
         "poo": "Scatter poop all over an attached image: poo",
@@ -147,7 +148,7 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
         "saved": "pins",
     }
     MOTION_EFFECTS = {
-        "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay",
+        "collage", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay",
         "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete",
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
         "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze",
@@ -432,6 +433,8 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
             return await self._pin_command(arg)
         elif command == "pins":
             return await self._pins_command()
+        elif command == "collage":
+            return await self._collage_command(attachments)
         elif command == "meme":
             return await self._meme_command(arg, attachments)
         elif command == "dildo":

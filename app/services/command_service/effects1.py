@@ -24,6 +24,24 @@ class _Effects1Mixin:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
 
+    async def _collage_command(self, attachments: Optional[list]) -> dict:
+        """Combine ALL attached images into a single collage image: `collage` (attach 2+ images)."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {
+                "type": "text",
+                "content": "Attach two or more images, then send `collage` to combine them.",
+            }
+
+        import asyncio
+        from app.services.effects_service import collage_attachments
+
+        outputs, summary = await asyncio.to_thread(collage_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
     async def _dildo_command(self, attachments: Optional[list]) -> dict:
         """Scatter dildos all over an attached image: `dildo` (no text needed)."""
         from app.services.media_service import is_image

@@ -1257,7 +1257,7 @@ class ChatHandler {
         if (existing) { existing.remove(); return; }
         // [label, command]. `meme` takes a caption (pre-fill); everything else runs immediately.
         const groups = [
-            ['✨ Basic', [['🪄 Alive (3D)', 'alive'], ['🌟 Glow', 'glow']]],
+            ['✨ Basic', [['🧩 Collage (combine all)', 'collage'], ['🪄 Alive (3D)', 'alive'], ['🌟 Glow', 'glow']]],
             ['🎨 Memes / overlays', [
                 ['🖼 Meme', 'meme'], ['🍆 Dildo', 'dildo'], ['💩 Poo', 'poo'], ['💦 Cum', 'cum'],
                 ['🩸 Blood', 'blood'], ['🔥 Fire', 'fire'], ['🕳️ Bullet holes', 'bullethole'],

@@ -9,4 +9,5 @@ from .gore import *
 from .stamps import *
 from .audio1 import *
 from .audio2 import *
+from .collage import *
 from .character import _character_path
