@@ -111,6 +111,12 @@ def prepare_for_llm(db: Session) -> bool:
     """
     global _current_mode
 
+    # Complete the per-GPU swap: free the co-located ACE-Step music server's VRAM (it's a SEPARATE
+    # process holding several GB, so unload_model() can't touch it) — otherwise the LLM can't get
+    # GPU layers and silently runs on CPU (very slow, pegs cores). Gated by video_free_music; no-op
+    # elsewhere. acestep restarts on the next music gen (prepare_for_music → _ensure_music_server).
+    _music_service_ctl(db, "stop")
+
     settings = _get_vram_settings(db)
     vram_mode = settings["vram_mode"]
 
