@@ -1204,26 +1204,31 @@ class CommandService:
         clean_query, categories, time_range = self.search_service.detect_search_intent(query)
         is_news = (categories == "news")
         if is_news:
-            # The dedicated SearXNG `news` category is sparse + dateless on this deployment (≈12
-            # results, no publishedDate) and MISSES the fresh items the general engines
-            # (google/brave/ddg/startpage) return — which is what made "latest news" look stale.
-            # Query the broad GENERAL pool instead, windowed to recent and sorted newest-first.
-            query_categories = None
-            sort_recent = True
-            _limit = 10
+            # News: the dedicated `news` engines give the most relevant headlines, but the category
+            # only returns ~12 here — so pull 15 from news AND top up from the general pool
+            # (google/brave/ddg, which carry the freshest items + some dates), dedupe by URL, and
+            # sort newest-first. Best of both: relevant + fresh + deeper.
             if not time_range:
                 time_range = "week"
+            news_res = await self.search_service.web_search(
+                clean_query, limit=15, categories="news", time_range=time_range, sort_recent=True)
+            gen_res = await self.search_service.web_search(
+                clean_query, limit=15, categories=None, time_range=time_range, sort_recent=True)
+            # News FIRST (more relevant for news), then top up with general to reach 15. Do NOT
+            # re-sort the merged list — that would float general's dated items above the news ones.
+            seen, merged = set(), []
+            for r in news_res + gen_res:
+                u = (r.get("url") or "").strip()
+                if u and u not in seen:
+                    seen.add(u)
+                    merged.append(r)
+            results = merged[:15]
         else:
-            query_categories = categories
-            sort_recent = False
-            _limit = 5
-        results = await self.search_service.web_search(
-            clean_query, limit=_limit, categories=query_categories,
-            time_range=time_range, sort_recent=sort_recent,
-        )
-        # Fall back to a plain general search if a category/time search came up empty.
-        if not results and (query_categories or time_range):
-            results = await self.search_service.web_search(clean_query, limit=_limit)
+            results = await self.search_service.web_search(
+                clean_query, limit=5, categories=categories, time_range=time_range)
+            # Fall back to a plain general search if a category/time search came up empty.
+            if not results and (categories or time_range):
+                results = await self.search_service.web_search(clean_query, limit=5)
         if not results:
             return {"type": "text", "content": f"No results found for: {query}"}
 
