@@ -110,7 +110,8 @@ def get_remote_server_url(db: Session) -> Optional[str]:
 
 
 class AddTorrentRequest(BaseModel):
-    magnet: str
+    magnet: str = ""
+    torrent_url: str = ""  # a .torrent URL — the server downloads + adds it (add_torrent_file)
 
 
 class TorrentActionRequest(BaseModel):
@@ -287,14 +288,31 @@ async def add_torrent(
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_torrent_user)
 ):
-    """Add a torrent by magnet link."""
-    # Check for remote server first
+    """Add a torrent by magnet link or .torrent URL."""
+    # Check for remote server first — forward both fields so a chained remote can do the work.
     if get_remote_server_url(db):
-        return await forward_to_remote(db, request, "/add", method="POST", json_body={"magnet": body.magnet})
+        return await forward_to_remote(db, request, "/add", method="POST",
+                                       json_body={"magnet": body.magnet, "torrent_url": body.torrent_url})
 
     service = get_bt_service(db)
     if not service:
         raise HTTPException(status_code=503, detail="Torrent client not configured")
+
+    # A .torrent URL: download the file here (this node owns the torrent client + proxy) and add it.
+    if body.torrent_url and not body.magnet:
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as _c:
+                _resp = await _c.get(body.torrent_url, headers={"User-Agent": "Mozilla/5.0"})
+                _resp.raise_for_status()
+                _data = _resp.content
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Couldn't download .torrent: {e}")
+        try:
+            info_hash = service.add_torrent_file(_data)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Couldn't add .torrent: {e}")
+        return {"info_hash": info_hash, "message": "Torrent added"}
 
     if not body.magnet.startswith("magnet:"):
         raise HTTPException(status_code=400, detail="Invalid magnet link")

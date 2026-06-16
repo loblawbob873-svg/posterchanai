@@ -2016,8 +2016,17 @@ Files are saved to your Storage.""",
                 return {"type": "text", "content": bt_error}
             target = parts[1].strip()
 
-            # A `.torrent` URL: download the file and add it (magnets go the parse_magnet path).
+            # A `.torrent` URL: add it (magnets fall through to the parse_magnet path below).
             if not target.startswith("magnet:") and re.match(r'^https?://', target, re.IGNORECASE):
+                if bt_service == "remote":
+                    # The remote server owns the torrent client — let IT download + add the URL.
+                    result = await self._remote_bt_request("/add", method="POST", json_body={"torrent_url": target})
+                    if result and "error" in result:
+                        return {"type": "text", "content": result["error"]}
+                    if result and "info_hash" in result:
+                        return {"type": "text", "content": f"Added torrent: `{result['info_hash']}`\n\nUse `torrents list` to check progress."}
+                    return {"type": "text", "content": "Failed to add .torrent to remote server"}
+                # Local client: download the .torrent here and add it.
                 import httpx
                 try:
                     async with httpx.AsyncClient(timeout=30, follow_redirects=True) as _c:
@@ -2026,8 +2035,6 @@ Files are saved to your Storage.""",
                         _data = _resp.content
                 except Exception as e:
                     return {"type": "text", "content": f"Couldn't download that .torrent: {e}"}
-                if bt_service == "remote":
-                    return {"type": "text", "content": "Adding a .torrent URL isn't supported on the remote torrent server yet — use a magnet link."}
                 try:
                     info_hash = bt_service.add_torrent_file(_data)
                 except Exception as e:
