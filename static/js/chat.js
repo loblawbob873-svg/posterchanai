@@ -1418,6 +1418,13 @@ class ChatHandler {
             this.showToast('Pick an action above, or type a question to ask the AI');
             return;
         }
+        // Bare link (Telegram parity): a message that is ONLY a URL shows the link-action bar
+        // instead of auto-chatting. Add text alongside the URL to ask the AI about the page.
+        if (!hasAttachments && /^https?:\/\/\S+$/i.test(content)) {
+            this.updateLinkActionBar();
+            this.showToast('Pick an action for this link, or add a question to ask the AI');
+            return;
+        }
 
         // Save to message history for up arrow recall
         this.saveToHistory(displayContent);
