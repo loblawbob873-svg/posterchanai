@@ -1422,31 +1422,37 @@ def _media_action_keyboard(attachments: list, user=None) -> Optional[dict]:
             {"text": "✂️ Clip video", "callback_data": "media:clip"},
         ])
     if has_image:
+        # Grouped by purpose so it reads as sections instead of one long column:
+        # transform · read · create/learn.
         rows.append([
             {"text": "🗜 Compress", "callback_data": "media:compress"},
+            {"text": "✂️ Remove BG", "callback_data": "media:removebackground"},
             {"text": "📄 To PDF", "callback_data": "media:topdf"},
         ])
         rows.append([
             {"text": "🔤 Read text", "callback_data": "media:ocr"},
             {"text": "🌐 Translate", "callback_data": "media:translate"},
         ])
-        rows.append([
-            {"text": "✂️ Remove background", "callback_data": "media:removebackground"},
-        ])
-        rows.append([
+        # Bottom row: create/learn/share — kept side-by-side (left→right) rather than stacked.
+        bottom = [
             {"text": "✨ Effects", "callback_data": "media:effects"},
-        ])
+            {"text": "🎴 Flashcards", "callback_data": "media:fc"},
+        ]
+        if _social:
+            bottom.append({"text": "📣 Post", "callback_data": "media:post"})
+        rows.append(bottom)
     if has_pdf:
         rows.append([
             {"text": "🖼 To images", "callback_data": "media:toimg"},
             {"text": "📝 Summarize", "callback_data": "media:summarize"},
             {"text": "🌐 Translate", "callback_data": "media:translate"},
         ])
-    # Study material (PDF / image / slide deck / doc) → interactive flashcards quiz.
-    if has_pdf or has_image or has_doc:
+    # Study material (PDF / slide deck / doc) → interactive flashcards quiz. (Images get the
+    # Flashcards button grouped into the create/learn row above, so don't duplicate it here.)
+    if (has_pdf or has_doc) and not has_image:
         rows.append([{"text": "🎴 Flashcards", "callback_data": "media:fc"}])
-    # Offer posting an image or video to connected social platforms.
-    if _social and (has_image or has_video):
+    # Video (without an image) gets its own Post row; image's Post is folded into its bottom row.
+    if _social and has_video and not has_image:
         rows.append([{"text": "📣 Post to social", "callback_data": "media:post"}])
     return {"inline_keyboard": rows} if rows else None
 
