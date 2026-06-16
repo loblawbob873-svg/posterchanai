@@ -1,5 +1,5 @@
 // Chat Handler
-console.log('[PosterChanAI] chat.js build v36 loaded');
+console.log('[PosterChanAI] chat.js build v37 loaded');
 class ChatHandler {
     constructor() {
         this.ws = null;
@@ -1089,6 +1089,12 @@ class ChatHandler {
         const uploadPreview = document.getElementById('uploadPreview');
         if (!attachmentsList || !uploadPreview) return;
 
+        // The effects picker is a sibling below the preview (not inside attachmentsList), so a
+        // rebuild/clear must remove any stale panel explicitly.
+        const staleEffects = uploadPreview.parentElement
+            ? uploadPreview.parentElement.querySelector('.attachment-effects') : null;
+        if (staleEffects) staleEffects.remove();
+
         const totalAttachments = this.uploadedImages.length + this.uploadedPDFs.length +
                                 this.uploadedDocuments.length + this.uploadedVideos.length +
                                 this.uploadedFiles.length;
@@ -1221,7 +1227,12 @@ class ChatHandler {
     // Reveal the full image→video effects picker under the action bar (toggles on repeat click).
     // Mirrors the Telegram effects keyboard (_FX_THEMES / _FX_SOUNDS / _FX_MEMES + Alive/Glow).
     toggleEffectsRow(bar) {
-        const existing = bar.parentElement.querySelector('.attachment-effects');
+        // Render the picker as a full-width panel BELOW the attachment preview — NOT inside the
+        // preview strip (.attachments-list is max-height:180px;overflow:auto, which clipped all but
+        // the first group out of view). uploadPreview's parent is the input area.
+        const uploadPreview = document.getElementById('uploadPreview');
+        const host = uploadPreview ? uploadPreview.parentElement : bar.parentElement;
+        const existing = host.querySelector('.attachment-effects');
         if (existing) { existing.remove(); return; }
         // [label, command]. `meme` takes a caption (pre-fill); everything else runs immediately.
         const groups = [
@@ -1279,7 +1290,13 @@ class ChatHandler {
             });
             wrap.appendChild(row);
         });
-        bar.parentElement.appendChild(wrap);
+        wrap.style.cssText += 'border:1px solid var(--border-color,#ccc);border-radius:8px;padding:8px;';
+        // Place it directly under the attachment preview, full width and unclipped.
+        if (uploadPreview) {
+            uploadPreview.insertAdjacentElement('afterend', wrap);
+        } else {
+            host.appendChild(wrap);
+        }
     }
 
     // Show a link-action bar (Telegram parity) when the composer holds a single bare URL and
