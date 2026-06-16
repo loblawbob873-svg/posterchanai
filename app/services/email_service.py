@@ -49,23 +49,40 @@ class EmailService:
         to_email: str,
         subject: str,
         body: str,
-        html_body: Optional[str] = None
+        html_body: Optional[str] = None,
+        inline_images: Optional[list] = None,  # (cid, bytes, mime) referenced via cid: in html_body
     ) -> MIMEMultipart:
-        """Create an email message"""
-        msg = MIMEMultipart("alternative")
+        """Create an email message. With inline_images + html_body, builds multipart/related so the
+        HTML can reference embedded images (e.g. a branding logo) via cid:."""
+        if inline_images and html_body:
+            from email.mime.image import MIMEImage
+            msg = MIMEMultipart("related")
+            alt = MIMEMultipart("alternative")
+            alt.attach(MIMEText(body, "plain", "utf-8"))
+            alt.attach(MIMEText(html_body, "html", "utf-8"))
+            msg.attach(alt)
+            for cid, data, mime in inline_images:
+                if not data:
+                    continue
+                try:
+                    sub = mime.split("/", 1)[1] if "/" in (mime or "") else "png"
+                    img = MIMEImage(data, _subtype=sub)
+                    img.add_header("Content-ID", f"<{cid}>")
+                    img.add_header("Content-Disposition", "inline", filename=f"{cid}.{sub}")
+                    msg.attach(img)
+                except Exception:
+                    pass
+        else:
+            msg = MIMEMultipart("alternative")
+            msg.attach(MIMEText(body, "plain", "utf-8"))
+            if html_body:
+                msg.attach(MIMEText(html_body, "html", "utf-8"))
+
         msg["Subject"] = subject
         msg["From"] = f"{self.smtp_from_name} <{self.smtp_from_email}>"
         msg["To"] = to_email
         msg["Date"] = formatdate(localtime=True)
         msg["Message-ID"] = make_msgid()
-
-        # Add plain text body
-        msg.attach(MIMEText(body, "plain", "utf-8"))
-
-        # Add HTML body if provided
-        if html_body:
-            msg.attach(MIMEText(html_body, "html", "utf-8"))
-
         return msg
 
     def _save_to_sent_folder(self, msg: MIMEMultipart) -> Tuple[bool, str]:
@@ -112,7 +129,8 @@ class EmailService:
         subject: str,
         body: str,
         html_body: Optional[str] = None,
-        save_to_sent: bool = True
+        save_to_sent: bool = True,
+        inline_images: Optional[list] = None,
     ) -> Tuple[bool, str]:
         """
         Send an email via SMTP.
@@ -131,7 +149,7 @@ class EmailService:
 
         try:
             # Create message
-            msg = self._create_message(to_email, subject, body, html_body)
+            msg = self._create_message(to_email, subject, body, html_body, inline_images=inline_images)
 
             # Connect to SMTP server
             if self.smtp_use_ssl:
@@ -329,10 +347,29 @@ Poster-chan AI
 
         # Escape HTML in user-provided content
         safe_username = html.escape(username)
-        # Convert markdown-style formatting to HTML and escape
         safe_content = html.escape(content)
-        # Convert newlines to <br> for HTML
-        safe_content_html = safe_content.replace('\n', '<br>')
+        # Make URLs clickable, THEN convert newlines to <br> (the reported "links don't work" bug —
+        # they were plain escaped text before). The URL match runs on escaped text, so `&amp;` in a
+        # query string stays valid inside href.
+        import re as _re
+        safe_content_html = _re.sub(
+            r'(https?://[^\s<]+)',
+            r'<a href="\1" style="color:#4a9eff;">\1</a>',
+            safe_content,
+        ).replace('\n', '<br>')
+
+        # Inline PosterChan logo (cid:) for a branded header.
+        inline_images = []
+        logo_html = ""
+        try:
+            from pathlib import Path as _Path
+            _logo = _Path(__file__).resolve().parent.parent.parent / "static" / "icon-512.png"
+            if _logo.exists():
+                with open(_logo, "rb") as _lf:
+                    inline_images.append(("pclogo", _lf.read(), "image/png"))
+                logo_html = '<img src="cid:pclogo" width="64" height="64" alt="PosterChanAI" style="border-radius:12px;display:block;margin:0 auto 10px;">'
+        except Exception:
+            inline_images = []
 
         html_body = f"""
 <!DOCTYPE html>
@@ -341,28 +378,29 @@ Poster-chan AI
     <style>
         body {{ font-family: Arial, sans-serif; background: #1a1a2e; color: #fff; padding: 20px; }}
         .container {{ max-width: 600px; margin: 0 auto; background: #16213e; border-radius: 12px; padding: 30px; }}
-        h1 {{ color: #4a9eff; margin-bottom: 20px; font-size: 24px; }}
+        h1 {{ color: #4a9eff; margin-bottom: 20px; font-size: 24px; text-align: center; }}
         .greeting {{ color: #ccc; margin-bottom: 20px; }}
         .response-box {{ background: #0f1729; border-radius: 8px; padding: 20px; margin: 20px 0; border-left: 4px solid #4a9eff; }}
-        .response-content {{ color: #e0e0e0; line-height: 1.8; white-space: pre-wrap; }}
+        .response-content {{ color: #e0e0e0; line-height: 1.8; }}
         .footer {{ color: #666; font-size: 12px; margin-top: 30px; text-align: center; }}
     </style>
 </head>
 <body>
     <div class="container">
+        {logo_html}
         <h1>AI Response</h1>
         <p class="greeting">Hello {safe_username},</p>
         <p class="greeting">Here is the AI response you requested:</p>
         <div class="response-box">
             <div class="response-content">{safe_content_html}</div>
         </div>
-        <p class="footer">Sent from Poster-chan AI</p>
+        <p class="footer">Sent from PosterChanAI</p>
     </div>
 </body>
 </html>
 """
 
-        return self.send_email(to_email, subject, body, html_body, save_to_sent=True)
+        return self.send_email(to_email, subject, body, html_body, save_to_sent=True, inline_images=inline_images)
 
 
 def get_email_service(db: Session) -> EmailService:

@@ -3871,8 +3871,9 @@ async def _handle_telegram_update(update: dict, db: Session):
                         if not s:
                             await telegram_service.send_message(chat_id, "That saved search is gone.")
                         else:
-                            await telegram_service.send_message(chat_id, f"🔍 Searching: {s.query}", parse_mode="")
-                            _res = await CommandService(db, user=cb_user).execute_command("search", s.query)
+                            _q = saved_search_service.normalize_query(s.query)
+                            await telegram_service.send_message(chat_id, f"🔍 Searching: {_q}", parse_mode="")
+                            _res = await CommandService(db, user=cb_user).execute_command("search", _q)
                             # Send the AI summary PLUS the source links so it's clearly grounded in a
                             # real web search (matches the web UI, which shows the result list too).
                             _msg = _res.get("content", "") or "(no summary)"

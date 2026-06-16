@@ -1,5 +1,5 @@
 // Chat Handler
-console.log('[PosterChanAI] chat.js build v43 loaded');
+console.log('[PosterChanAI] chat.js build v44 loaded');
 class ChatHandler {
     constructor() {
         this.ws = null;
@@ -2592,7 +2592,10 @@ class ChatHandler {
                 const runBtn = e.target.closest('.saved-search-run-btn[data-query]');
                 if (runBtn) {
                     e.preventDefault();
-                    this.runAttachmentAction('search ' + runBtn.dataset.query);
+                    // Strip any leading "search " so we never double-prefix (e.g. a row saved as
+                    // "search xrp news" → run "search xrp news", not "search search xrp news").
+                    const q = (runBtn.dataset.query || '').replace(/^\s*search\s+/i, '').trim();
+                    if (q) this.runAttachmentAction('search ' + q);
                     return;
                 }
                 const delBtn = e.target.closest('.saved-search-del-btn[data-search-id]');

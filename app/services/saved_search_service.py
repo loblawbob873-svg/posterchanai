@@ -4,6 +4,7 @@ A user saves a search query (`pin ai news`); `pins` lists them with clickable Ru
 Running one just executes `search <query>`. No scheduler/time component (unlike reminders) — plain
 CRUD shared by the web UI and Telegram."""
 import logging
+import re
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -15,8 +16,17 @@ logger = logging.getLogger("saved_search_service")
 _MAX_QUERY = 300
 
 
+def normalize_query(query: str) -> str:
+    """Store just the search terms. Users often pin `search xrp news` (with the word "search"),
+    which would otherwise double up to `search search xrp news` when re-run — strip a leading
+    "search "/"images "/etc. so the stored query is always the bare terms."""
+    q = (query or "").strip()
+    q = re.sub(r'^\s*(search|images|web\s*search)\s+', '', q, flags=re.IGNORECASE)
+    return q.strip()[:_MAX_QUERY]
+
+
 def create_saved_search(db: Session, user: User, query: str) -> Optional[SavedSearch]:
-    query = (query or "").strip()[:_MAX_QUERY]
+    query = normalize_query(query)
     if not query:
         return None
     # De-dupe: if the same query is already pinned, return the existing row.
