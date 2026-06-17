@@ -37,7 +37,13 @@ get_thread_history = _nk.get_thread_history
 download_image_from_url = _nk.download_image_from_url
 
 # nostr: tokens in content (nostr:npub1…, nostr:nprofile…, nostr:note…) — stripped from prompts.
-_NOSTR_TOKEN_RE = re.compile(r"nostr:[a-z0-9]+", re.IGNORECASE)
+# Strip mention/entity tokens from the prompt: `nostr:<…>` URIs AND bare bech32 entities
+# (npub/nprofile/nevent/note/naddr) so a bare-npub mention doesn't push the command word off
+# the front (e.g. "npub1bot… cum" must reduce to "cum", or the command isn't recognized).
+_NOSTR_TOKEN_RE = re.compile(
+    r"nostr:[a-z0-9]+|\b(?:npub1|nprofile1|nevent1|note1|naddr1)[023456789acdefghjklmnpqrstuvwxyz]+",
+    re.IGNORECASE,
+)
 _YTDL_COOLDOWN_SECONDS = 30
 _ytdl_last_request: dict = {}
 

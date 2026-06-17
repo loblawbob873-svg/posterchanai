@@ -214,7 +214,9 @@ def get_note(note_id):
 
 _QUOTE_RE = re.compile(r"(?:nostr:)?((?:nevent1|note1)[023456789acdefghjklmnpqrstuvwxyz]+)", re.IGNORECASE)
 # Person-mentions only (npub/nprofile), in order, to find who a note is *addressed* to.
-_MENTION_RE = re.compile(r"nostr:((?:npub1|nprofile1)[023456789acdefghjklmnpqrstuvwxyz]+)", re.IGNORECASE)
+# The `nostr:` prefix is OPTIONAL — many clients/users write a bare npub1…/nprofile1…
+# (without which the bot would miss the mention and treat it as thread carryover).
+_MENTION_RE = re.compile(r"(?:nostr:)?\b((?:npub1|nprofile1)[023456789acdefghjklmnpqrstuvwxyz]+)", re.IGNORECASE)
 
 
 def _inline_mention_pubkeys(content: str) -> list:
