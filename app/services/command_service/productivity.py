@@ -93,7 +93,7 @@ class _ProductivityMixin:
         cmd, _ = self.parse_command(s.query)
         kind = "command" if cmd else "search"
         return {"type": "text", "content": (
-            f"📌 Pinned {kind}: **{s.query}**\n_`pins` to run or delete it._")}
+            f"📌 Pinned {kind}: {s.query}\nSend 'pins' to run or delete it.")}
 
     async def _pins_command(self) -> dict:
         """List pins. Returns a `saved_searches` result the web UI renders with Run + Delete
@@ -115,10 +115,13 @@ class _ProductivityMixin:
             cmd, c_arg = self.parse_command(s.query)
             run = (f"{cmd} {c_arg}".strip() if cmd else f"search {s.query}".strip())
             payload.append({"id": s.id, "query": s.query, "run": run})
-        lines = "\n".join(f"• {s.query} _(id {s.id})_" for s in items)
+        # Plain text (no Markdown) — this `content` is what plain-text clients (Matrix, and the
+        # Telegram/web fallbacks) show verbatim; the web UI and Telegram each render their own
+        # interactive list from `saved_searches`, so they don't reuse this body.
+        lines = "\n".join(f"• {s.query}  (id {s.id})" for s in items)
         return {
             "type": "saved_searches",
-            "content": f"📌 **Your pins** ({len(items)})\n{lines}",
+            "content": f"📌 Your pins ({len(items)})\n{lines}",
             "saved_searches": payload,
         }
 

@@ -2630,8 +2630,12 @@ class ChatHandler {
             }
             html += '</div>';
         } else if (data.type === 'saved_searches' && Array.isArray(data.saved_searches)) {
-            // Pinned searches — each row: the query, a Run button, and a Delete button.
-            html = contentHtml + '<div class="saved-searches-list" style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">';
+            // Pins — each row: the query, a Run button, and a Delete button. Render our own clean
+            // header instead of the server's plain-text `content` (whose bullet list + ids are
+            // for plain-text clients only and would just duplicate this list).
+            const pinCount = data.saved_searches.length;
+            html = `<div style="margin-bottom:8px;">📌 <strong>Your pins</strong> (${pinCount})</div>`
+                 + '<div class="saved-searches-list" style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">';
             for (const s of data.saved_searches) {
                 const safeQuery = this.escapeHtml(s.query || '');
                 // `run` is the server-resolved command (bare query → "search …", a command word
