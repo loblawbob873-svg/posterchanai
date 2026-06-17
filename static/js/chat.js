@@ -1528,7 +1528,9 @@ class ChatHandler {
             // Don't hijack clicks on the action buttons overlaid on the image.
             if (e.target.closest('.image-actions, .attachment-actions')) return;
             e.preventDefault();
-            this.openImageInNewTab(img.src);
+            // Prefer the persisted storage URL (real file, opens directly) over the inline
+            // base64 (which has to be turned into a blob URL first).
+            this.openImageInNewTab(img.dataset.fileUrl || img.src);
         });
     }
 
@@ -2492,8 +2494,12 @@ class ChatHandler {
                 html = contentHtml;
                 const imageId = 'img_' + Date.now();
                 const saveButtonId = 'save_img_' + Date.now();
+                // When the server persisted the image to storage, carry its /api/files URL on the
+                // element: open-in-new-tab uses it, and the 📧 email scan picks it up as an
+                // attachment (so e.g. a screenshot is actually attached, not just its text).
+                const fileUrlAttr = data.image_path ? ` data-file-url="${this.escapeHtml(data.image_path)}"` : '';
                 html += `<div class="image-wrapper">
-                    <img src="data:image/png;base64,${data.image}" alt="Generated image" class="generated-image" id="${imageId}">
+                    <img src="data:image/png;base64,${data.image}" alt="Generated image" class="generated-image" id="${imageId}"${fileUrlAttr}>
                     <div class="image-actions">
                         <button class="btn-action" onclick="window.chatHandler.saveGeneratedImage('${imageId}', '${this.escapeHtml(data.prompt || '')}', '${saveButtonId}')" id="${saveButtonId}" title="Save to storage">💾</button>
                         <button class="btn-action" onclick="window.chatHandler.downloadImage('${imageId}')" title="Download">⬇️</button>
@@ -3915,14 +3921,14 @@ class ChatHandler {
         // downloaded MP3s, converted PDFs — `/api/files/<user>/<conv>/<name>`), email the actual
         // FILE(S) as attachments via the file-email endpoint, not just the text. Otherwise the
         // recipient would get a message with no attachment (the reported bug).
-        const fileUrls = [...content.matchAll(/\/api\/files\/[^\s)\]"']+/g)].map(m => m[0]);
-        const filePaths = fileUrls.map(u => {
+        const fileUrls = [...new Set([...content.matchAll(/\/api\/files\/[^\s)\]"']+/g)].map(m => m[0]))];
+        const filePaths = [...new Set(fileUrls.map(u => {
             // /api/files/<username>/<conv>/<name> is served from <user_root>/chat/<conv>/<name>,
             // so the email endpoint (which resolves paths under the user root) needs chat/<conv>/<name>.
             const parts = decodeURIComponent(u.replace(/^https?:\/\/[^/]+/, '')).split('/').filter(Boolean);
             const rest = parts.slice(3);  // drop 'api','files','<username>' → [<conv>, <name>]
             return rest.length ? 'chat/' + rest.join('/') : '';
-        }).filter(Boolean);
+        }).filter(Boolean))];
 
         if (filePaths.length > 0) {
             try {
