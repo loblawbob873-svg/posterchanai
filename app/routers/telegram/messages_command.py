@@ -382,20 +382,17 @@ async def _msg_command(_make_tg_node_notify, arg, attachments, chat_id, command,
                         result = await command_service.execute_command(command, arg)
                         if result.get("type") == "saved_searches" and result.get("saved_searches"):
                             kb = []
-                            _names = []
                             for _s in result["saved_searches"]:
                                 _q = _s.get("query", "")
-                                _names.append(f"• {_q}")
                                 kb.append([
-                                    {"text": f"▶ {_q[:32]}", "callback_data": f"pin:run:{_s['id']}"},
+                                    {"text": f"▶ {_q[:40]}", "callback_data": f"pin:run:{_s['id']}"},
                                     {"text": "🗑️", "callback_data": f"pin:del:{_s['id']}"},
                                 ])
-                            # Build a clean plain-text body (no Markdown, no id clutter) — the
-                            # buttons below are the interactive list, so ids aren't needed here.
-                            _body = (f"📌 Your pins ({len(result['saved_searches'])}) — "
-                                     "tap ▶ to run or 🗑️ to delete:\n" + "\n".join(_names))
+                            # Header only — the buttons below ARE the list, so don't repeat the
+                            # queries as text (that was the duplicate-info clutter).
                             await telegram_service.send_message(
-                                chat_id, _body,
+                                chat_id,
+                                f"📌 Your pins ({len(result['saved_searches'])}) — tap ▶ to run or 🗑️ to delete:",
                                 reply_markup={"inline_keyboard": kb}, parse_mode="",
                             )
                         else:
