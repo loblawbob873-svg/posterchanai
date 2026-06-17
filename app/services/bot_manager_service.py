@@ -168,11 +168,16 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
 
     if is_image:
         # Image bots post to their own platform — set creds for whichever it is (the
-        # one-shot imageposter picks pleroma vs misskey from these env vars).
+        # one-shot imageposter picks pleroma/misskey/nostr from these env vars).
         if bot_dict.get("platform") == "pleroma":
             setif("server", "PLEROMA_ENDPOINT")
             setif("username", "PLEROMA_USERNAME", lambda v: str(v).lstrip("@"))
             setif("access_token", "PLEROMA_ACCESS_TOKEN")
+        elif bot_dict.get("platform") == "nostr":
+            setif("nostr_nsec", "NOSTR_NSEC")
+            setif("nostr_relays", "NOSTR_RELAYS")
+            setif("nostr_media_service", "NOSTR_MEDIA_SERVICE")
+            setif("nostr_media_endpoint", "NOSTR_MEDIA_ENDPOINT")
         else:
             setif("server", "MISSKEY_SERVER")
             setif("username", "MISSKEY_USERNAME", lambda v: str(v).lstrip("@"))

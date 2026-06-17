@@ -96,6 +96,29 @@ def _claim(note_id) -> bool:
 _load_ids()
 
 
+def imageposter():
+    """One-shot: generate an image from IMAGE_POSTER_PROMPT and post it to Nostr.
+    Entry point for `main.py --image` (manager schedule + admin Test-Post). Uses the
+    retrying backend call so a transient image-server 524 doesn't fail the post."""
+    import random
+    from config import IMAGE_POSTER_PROMPT, IMAGE_POSTER_TEXT, IMAGE_POSTER_RANDOM_SCENES
+    from image_backend import generate_image_bytes_with_retries
+    prompt = IMAGE_POSTER_PROMPT or ""
+    if IMAGE_POSTER_RANDOM_SCENES:
+        try:
+            from random_scenes import RANDOM_SCENE_ELEMENTS
+            prompt = f"{prompt}, {random.choice(RANDOM_SCENE_ELEMENTS)}".strip(", ")
+        except Exception:
+            pass
+    print(f"[nostr] image poster generating: {prompt[:80]}", flush=True)
+    image_bytes = generate_image_bytes_with_retries(prompt, max_retries=10, retry_delay=30)
+    if image_bytes:
+        _nk.post_image_to_fediverse(IMAGE_POSTER_TEXT, image_bytes=image_bytes)
+        print("[nostr] image poster posted", flush=True)
+    else:
+        print("[nostr] image poster: generation returned None after retries", flush=True)
+
+
 def _gather_media(note):
     """Download files linked on the note (or its nearest ancestor with media)."""
     files = list(note.get("files") or [])

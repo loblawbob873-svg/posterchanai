@@ -223,10 +223,18 @@ def main():
     elif args.image:
         from config import MISSKEY_SERVER
         from config import PLEROMA_ENDPOINT
+        from config import NOSTR_NSEC
+        imageposter = None
         if MISSKEY_SERVER:
             from misskeyListener import imageposter
-        if PLEROMA_ENDPOINT:
+        elif PLEROMA_ENDPOINT:
             from pleromaListener import imageposter
+        elif NOSTR_NSEC:
+            from nostrListener import imageposter
+        if imageposter is None:
+            print("ERROR: image bot has no platform configured (need MISSKEY_SERVER, "
+                  "PLEROMA_ENDPOINT, or NOSTR_NSEC)")
+            return
         print("Starting Image Poster mode (one-shot)...")
         # One-shot mode - post once and exit (botctl handles scheduling)
         imageposter()
