@@ -41,6 +41,29 @@ _MIME_BY_EXT = {
     "webp": "image/webp", "mp4": "video/mp4", "webm": "video/webm", "mov": "video/quicktime",
     "mp3": "audio/mpeg", "m4a": "audio/mp4", "ogg": "audio/ogg", "wav": "audio/wav",
 }
+# Extensionless media links: a Blossom URL is /<64-hex sha256>, and the common Nostr media
+# CDNs serve blobs. These have no file extension and (if the client omitted imeta) would
+# otherwise be missed; their real type is sniffed from the bytes at download time.
+_BLOSSOM_RE = re.compile(r"/[0-9a-f]{64}(?:\.\w+)?(?:[?#]|$)", re.IGNORECASE)
+_MEDIA_HOST_HINTS = ("blossom", "nostr.build", "nostrcheck", "nostr.media", "void.cat", "satellite.earth")
+
+
+def _is_media_url(url: str) -> bool:
+    """True for extensionless URLs that are very likely media (Blossom hash path / media CDN)."""
+    if _BLOSSOM_RE.search(url):
+        return True
+    u = url.lower()
+    return any(h in u for h in _MEDIA_HOST_HINTS)
+
+
+def sniff_mime(data: bytes) -> str:
+    """Detect an image/video mime from magic bytes (reuses the shared sniffer)."""
+    try:
+        from app.services.misskey_service import _detect_mime
+        mime, _ = _detect_mime(data)
+        return mime
+    except Exception:
+        return ""
 
 
 def _run(coro):
@@ -113,10 +136,17 @@ def _files_from_event(ev: dict) -> list:
                 files.append({"url": url, "name": url.rsplit("/", 1)[-1], "type": mime})
     for url in _URL_RE.findall(ev.get("content") or ""):
         url = url.rstrip(").,")
-        ext = url.rsplit(".", 1)[-1].lower() if "." in url.rsplit("/", 1)[-1] else ""
-        if ext in _MIME_BY_EXT and url not in seen:
+        if url in seen:
+            continue
+        last = url.rsplit("/", 1)[-1]
+        ext = last.rsplit(".", 1)[-1].lower() if "." in last else ""
+        if ext in _MIME_BY_EXT:
             seen.add(url)
-            files.append({"url": url, "name": url.rsplit("/", 1)[-1], "type": _MIME_BY_EXT[ext]})
+            files.append({"url": url, "name": last, "type": _MIME_BY_EXT[ext]})
+        elif _is_media_url(url):
+            # Extensionless media link (no imeta) — real type sniffed at download time.
+            seen.add(url)
+            files.append({"url": url, "name": last, "type": ""})
     return files
 
 

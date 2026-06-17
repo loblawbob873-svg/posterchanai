@@ -134,7 +134,10 @@ def _gather_media(note):
     for f in files:
         data = download_image_from_url(f["url"], timeout=300)
         if data:
-            media.append((f.get("name") or "file", data, f.get("type") or ""))
+            # Extensionless/imeta-less links arrive with no type — sniff it from the bytes
+            # so the effect/media command gets a correct image/video content-type.
+            ct = f.get("type") or _nk.sniff_mime(data)
+            media.append((f.get("name") or "file", data, ct or ""))
     return media
 
 
