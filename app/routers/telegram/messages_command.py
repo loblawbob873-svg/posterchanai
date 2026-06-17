@@ -394,7 +394,7 @@ async def _msg_command(_make_tg_node_notify, arg, attachments, chat_id, command,
                                         {"text": "▶ Run", "callback_data": f"pin:run:{_s['id']}"},
                                         {"text": "🗑️ Delete", "callback_data": f"pin:del:{_s['id']}"},
                                     ]]},
-                                    parse_mode="",
+                                    parse_mode="", disable_web_page_preview=True,
                                 )
                                 await asyncio.sleep(0.1)
                         else:

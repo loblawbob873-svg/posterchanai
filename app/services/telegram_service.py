@@ -64,9 +64,11 @@ class TelegramService:
     def is_local_api(self) -> bool:
         return self.api_root != self.DEFAULT_API_ROOT
     
-    async def send_message(self, chat_id: str, text: str, parse_mode: str = "Markdown", reply_markup: dict = None) -> dict:
+    async def send_message(self, chat_id: str, text: str, parse_mode: str = "Markdown", reply_markup: dict = None, disable_web_page_preview: bool = False) -> dict:
         """Send a message to a Telegram chat. Long text (e.g. full-page translations)
-        is split into multiple messages, since Telegram rejects >4096 chars."""
+        is split into multiple messages, since Telegram rejects >4096 chars.
+        Set `disable_web_page_preview` to suppress the auto link-preview card (e.g. for
+        a list of pinned URLs)."""
         if not self.bot_token:
             logger.warning("Telegram bot token not configured")
             return {"ok": False, "error": "Bot token not configured"}
@@ -79,6 +81,7 @@ class TelegramService:
                 result = await self.send_message(
                     chat_id, part, parse_mode=parse_mode,
                     reply_markup=reply_markup if i == len(parts) - 1 else None,
+                    disable_web_page_preview=disable_web_page_preview,
                 )
                 await asyncio.sleep(0.1)  # avoid Telegram flood limits
             return result
@@ -89,6 +92,8 @@ class TelegramService:
             "text": text,
             "parse_mode": parse_mode
         }
+        if disable_web_page_preview:
+            payload["disable_web_page_preview"] = True
         if reply_markup:
             payload["reply_markup"] = reply_markup
 
@@ -106,6 +111,8 @@ class TelegramService:
                             "text": text
                             # No parse_mode = plain text
                         }
+                        if disable_web_page_preview:
+                            payload_plain["disable_web_page_preview"] = True
                         if reply_markup:
                             payload_plain["reply_markup"] = reply_markup
                         response = await client.post(url, json=payload_plain)
