@@ -40,10 +40,7 @@ def make_collage(images: list, cell: int = 512, gap: int = 8, bg=(18, 18, 18)) -
 def collage_attachments(attachments):
     """Combine all attached images into one collage image. Mirrors the other *_attachments
     shape (returns (output_files, summary_text)) so the shared delivery path is unchanged."""
-    _all = attachments or []
-    images = [(fn, d, ct) for fn, d, ct in _all if is_image(fn, ct)]
-    logger.info(f"[collage] received {len(_all)} attachments {[(fn, ct) for fn, _, ct in _all]}; "
-                f"{len(images)} passed is_image")
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
     if not images:
         return [], "No images — attach at least one image to make a collage."
     try:
