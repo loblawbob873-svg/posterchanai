@@ -45,8 +45,12 @@ _headers = {
 
 
 def is_ai_configured():
-    """Check if OpenAI/AI endpoint is properly configured"""
-    return OPENAI_ENDPOINT and OPENAI_ENDPOINT.startswith("https://")
+    """Check if OpenAI/AI endpoint is properly configured.
+
+    Accepts http:// too — bots now talk to the local app at http://localhost:3051
+    (bots_server_url), so requiring https would (and did) silently disable all LLM replies.
+    The endpoint is operator-configured, not user input, so plaintext to localhost is fine."""
+    return bool(OPENAI_ENDPOINT and OPENAI_ENDPOINT.startswith(("http://", "https://")))
 
 
 def _acquire_ai_slot():
@@ -126,7 +130,7 @@ def generate_reply(user_content, previous_content=None, ping=False, thread_histo
     Returns:
         str: The AI-generated response, or None if OpenAI is not configured
     """
-    if not OPENAI_ENDPOINT or not OPENAI_ENDPOINT.startswith("https://"):
+    if not OPENAI_ENDPOINT or not OPENAI_ENDPOINT.startswith(("http://", "https://")):
         print("OpenAI not configured, skipping AI generation")
         return None
 

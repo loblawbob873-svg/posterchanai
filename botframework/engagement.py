@@ -261,7 +261,7 @@ def daily_top_posts(print_only=False):
     FINAL = f"{title}\n\n{output_str}"
 
     # 5. Generate AI commentary (skip in print mode for speed)
-    if OPENAI_ENDPOINT and OPENAI_ENDPOINT.startswith("https://"):
+    if OPENAI_ENDPOINT and OPENAI_ENDPOINT.startswith(("http://", "https://")):
         logging.info("Generating AI commentary for top posts")
         try:
             prompt = f"""Generate an entertaining daily social media report highlighting the top posts.
@@ -365,7 +365,7 @@ def misskey_daily_top_posts(print_only=False):
     FINAL = f"{title}\n\n{output_str}"
 
     # 5. Generate AI commentary (skip in print mode for speed)
-    if OPENAI_ENDPOINT and OPENAI_ENDPOINT.startswith("https://"):
+    if OPENAI_ENDPOINT and OPENAI_ENDPOINT.startswith(("http://", "https://")):
         logging.info("Generating AI commentary for top posts")
         try:
             prompt = f"""Generate an entertaining daily social media report highlighting the top posts.
@@ -501,7 +501,7 @@ def post_active_user_stats(print_only=False):
     FINAL = generic_post
 
     # Try to generate AI response
-    if OPENAI_ENDPOINT and OPENAI_ENDPOINT.startswith("https://"):
+    if OPENAI_ENDPOINT and OPENAI_ENDPOINT.startswith(("http://", "https://")):
         logging.info("Generating AI commentary for user stats")
         try:
             prompt = f"""Generate an engaging social media post about our instance's user activity.
@@ -565,7 +565,7 @@ def misskey_post_active_user_stats(print_only=False):
     FINAL = generic_post
 
     # Try to generate AI response
-    if OPENAI_ENDPOINT and OPENAI_ENDPOINT.startswith("https://"):
+    if OPENAI_ENDPOINT and OPENAI_ENDPOINT.startswith(("http://", "https://")):
         logging.info("Generating AI commentary for user stats")
         try:
             prompt = f"""Generate an engaging social media post about our instance's user activity.

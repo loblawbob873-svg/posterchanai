@@ -222,7 +222,7 @@ def summarize_search_results(results, query, categories=None):
         context += f"{i}. {r['title']}\n{r['url']}\n{snippet}\n\n"
 
     # Try AI summarization if configured
-    if OPENAI_ENDPOINT and OPENAI_ENDPOINT.startswith("https://"):
+    if OPENAI_ENDPOINT and OPENAI_ENDPOINT.startswith(("http://", "https://")):
         try:
             headers = {
                 "Content-Type": "application/json",

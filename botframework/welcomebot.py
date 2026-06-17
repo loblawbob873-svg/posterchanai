@@ -193,7 +193,7 @@ def generate_welcome_message(username, instance_name):
     fallback_message = f"@{username} {WELCOME_MESSAGE.format(instance_name=instance_name)}"
 
     # Check if OpenAI is configured
-    if not OPENAI_ENDPOINT or not OPENAI_ENDPOINT.startswith("https://"):
+    if not OPENAI_ENDPOINT or not OPENAI_ENDPOINT.startswith(("http://", "https://")):
         logging.debug("OpenAI not configured, using fallback message")
         return fallback_message
 

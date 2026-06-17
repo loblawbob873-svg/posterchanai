@@ -259,7 +259,7 @@ def misskey_unfollows(print_only=False):
         msg = "\n".join(matches)
 
         # Use OpenAI to generate message if configured
-        if OPENAI_ENDPOINT and OPENAI_ENDPOINT.startswith("https://"):
+        if OPENAI_ENDPOINT and OPENAI_ENDPOINT.startswith(("http://", "https://")):
             print("OpenAI configured. Trying to generate reply.")
             try:
                 last_unfollower = unfollows[-1]['follower_username']
@@ -408,7 +408,7 @@ def pleroma_unfollows(print_only=False):
         msg = "\n".join(matches)
 
         # Use OpenAI to generate message if configured
-        if OPENAI_ENDPOINT and OPENAI_ENDPOINT.startswith("https://"):
+        if OPENAI_ENDPOINT and OPENAI_ENDPOINT.startswith(("http://", "https://")):
             print("OpenAI configured. Trying to generate reply.")
             try:
                 last_unfollower = unfollows[-1]['follower_username']

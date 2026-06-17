@@ -394,7 +394,7 @@ def misskey_blocks(print_only=False):
         msg = "\n".join(matches)
 
         # Use OpenAI to generate message if configured
-        if OPENAI_ENDPOINT and OPENAI_ENDPOINT.startswith("https://"):
+        if OPENAI_ENDPOINT and OPENAI_ENDPOINT.startswith(("http://", "https://")):
             print("OpenAI configured. Trying to generate reply.")
             try:
                 original_msg = msg  # Save original for validation
@@ -522,7 +522,7 @@ def blocks(print_only=False):
         )
     if matches:
         msg = "\n".join(matches)
-        if OPENAI_ENDPOINT and OPENAI_ENDPOINT.startswith("https://"):
+        if OPENAI_ENDPOINT and OPENAI_ENDPOINT.startswith(("http://", "https://")):
             print("OpenAI configured. Trying to generate reply.")
             try:
                 original_msg = msg  # Save original for validation
@@ -610,7 +610,7 @@ def scalps(print_only=False):
     FINAL = f"{title} \n\n {output_str}"
     print(FINAL)
 
-    if OPENAI_ENDPOINT and OPENAI_ENDPOINT.startswith("https://"):
+    if OPENAI_ENDPOINT and OPENAI_ENDPOINT.startswith(("http://", "https://")):
         print("OpenAI configured. Trying to generate reply.")
         try:
             original_final = FINAL
@@ -684,7 +684,7 @@ def misskey_scalps(print_only=False):
     FINAL = f"{title} \n\n {output_str}"
     print(FINAL)
 
-    if OPENAI_ENDPOINT and OPENAI_ENDPOINT.startswith("https://"):
+    if OPENAI_ENDPOINT and OPENAI_ENDPOINT.startswith(("http://", "https://")):
         print("OpenAI configured. Trying to generate reply.")
         try:
             original_final = FINAL

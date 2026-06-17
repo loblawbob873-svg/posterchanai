@@ -194,7 +194,7 @@ def generate_report_message(report_details):
     fallback_message = f"New user report: {report_details[:200]}..."
 
     # Check if OpenAI is configured
-    if not OPENAI_ENDPOINT or not OPENAI_ENDPOINT.startswith("https://"):
+    if not OPENAI_ENDPOINT or not OPENAI_ENDPOINT.startswith(("http://", "https://")):
         logging.debug("OpenAI not configured, using fallback message")
         return fallback_message
 
