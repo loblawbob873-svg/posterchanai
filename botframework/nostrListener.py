@@ -309,7 +309,14 @@ def process_mentions():
         prompt_text = _NOSTR_TOKEN_RE.sub("", note.get("text") or "").strip()
         prompt_text = re.sub(r"@[\w@.]+", "", prompt_text).strip()[:4000]
         if not prompt_text:
-            continue
+            # A quote-only mention (just a nevent/note ref) strips to nothing — pull in the
+            # quoted post's text so the bot can actually respond to it instead of skipping.
+            quoted = _nk.get_quoted_note(note)
+            qtext = (quoted or {}).get("text", "").strip()
+            if qtext:
+                prompt_text = f"Respond to this quoted post: {qtext}"[:4000]
+            else:
+                continue
         if not _claim(nid):
             continue
         print(f"[nostr] processing {nid[:12]} from {user.get('username')}: {prompt_text[:80]}", flush=True)

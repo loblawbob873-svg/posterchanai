@@ -1,13 +1,30 @@
 """
 Shared proxy configuration utilities for services that require Tor proxy.
 """
+import time
 import logging
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# Short-TTL cache: get_proxy_config is called on every social/bot HTTP client and relay
+# connect (~8 per Nostr op, ~14 per Misskey op). The proxy setting changes very rarely, so
+# caching the resolved value for a few seconds avoids opening a DB session on every call.
+_CACHE_TTL = 30.0
+_cache: dict = {"value": None, "ts": 0.0}
+
 
 def get_proxy_config() -> Optional[str]:
+    """Cached wrapper around _resolve_proxy_config (see TTL note above)."""
+    now = time.monotonic()
+    if now - _cache["ts"] < _CACHE_TTL:
+        return _cache["value"]
+    val = _resolve_proxy_config()
+    _cache["value"], _cache["ts"] = val, now
+    return val
+
+
+def _resolve_proxy_config() -> Optional[str]:
     """
     Get HTTP proxy configuration for Tor.
     

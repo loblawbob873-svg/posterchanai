@@ -212,6 +212,30 @@ def get_note(note_id):
     return _shape_note(ev) if ev else None
 
 
+_QUOTE_RE = re.compile(r"(?:nostr:)?((?:nevent1|note1)[023456789acdefghjklmnpqrstuvwxyz]+)", re.IGNORECASE)
+
+
+def get_quoted_note(note):
+    """If a note quotes another event (NIP-18 `q` tag, or a nevent/note ref in its text),
+    fetch and return that event as a shaped note — else None. Lets the bot respond to a
+    quote-only mention (which otherwise strips to an empty prompt)."""
+    ev = note.get("_event") or {}
+    qid = None
+    for t in ev.get("tags", []):
+        if len(t) >= 2 and t[0] == "q" and t[1]:
+            qid = t[1]
+            break
+    if not qid:
+        m = _QUOTE_RE.search(ev.get("content") or "")
+        if m:
+            try:
+                raw = _svc.bech32.decode_any(m.group(1))
+                qid = raw.hex() if raw else None
+            except Exception:
+                qid = None
+    return get_note(qid) if qid else None
+
+
 def get_thread_history(note_id, max_depth=20):
     """Walk up the reply chain and return [{username, content, is_bot}] oldest-first."""
     history = []

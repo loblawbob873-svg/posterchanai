@@ -92,9 +92,13 @@ async def upload_nip96(server: str, seckey: bytes, data: bytes, mime: str = "") 
     server = (server or DEFAULT_NIP96_SERVER)
     endpoint = await _nip96_endpoint(server)
     digest = hashlib.sha256(data).hexdigest()
+    # NIP-98 auth. The optional `payload` tag must be sha256 of the *request body*, but for a
+    # multipart upload that's the whole encoded body (boundaries included), not the file digest
+    # — sending the file digest there makes strict servers reject the upload, so we omit it
+    # (payload is optional per NIP-98).
     auth = _event.build_event(
         seckey, 27235, "",
-        tags=[["u", endpoint], ["method", "POST"], ["payload", digest]],
+        tags=[["u", endpoint], ["method", "POST"]],
     )
     headers = {"Authorization": _auth_header(auth)}
     files = {"file": ("upload", data, mime or "application/octet-stream")}

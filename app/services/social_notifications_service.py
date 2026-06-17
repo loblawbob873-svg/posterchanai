@@ -381,6 +381,10 @@ async def handle_reply(db: Session, chat_id, reply_to_message_id: int, text: str
                 return "⚠️ That notification has nothing to reply to."
             seckey, relays, media_cfg = _nostr_cfg(user)
             parent = await nostr_service.fetch_event(relays, row.target_id)
+            # If the relays don't return the parent event, still thread the reply off its id
+            # (e root tag) instead of posting a detached note that loses the conversation.
+            if not parent:
+                parent = {"id": row.target_id, "pubkey": "", "tags": []}
             await nostr_service.post_note(seckey, relays, text, reply_to=parent, media_cfg=media_cfg)
             return "✅ Reply posted to Nostr."
         if row.platform == "matrix":
