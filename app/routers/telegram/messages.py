@@ -1457,7 +1457,8 @@ async def _handle_message(update, db):
                         result = await command_service.execute_command(command, arg)
                 else:
                     # Regular chat - use the chat service
-                    from app.models import Conversation, Message
+                    # (Conversation/Message come from the module-level import; a local re-import
+                    # here would make them function-local and break the earlier `new` command.)
 
                     # Forwarded messages and bare URLs use a clean summarization context —
                     # no history, focused system prompt to avoid hallucination loops.
