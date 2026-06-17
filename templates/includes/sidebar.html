@@ -21,14 +21,6 @@
                 <button class="menu-item" id="userSettingsBtn">
                     <span class="menu-icon">👤</span> Settings
                 </button>
-                <div class="menu-item ai-toggle-item" id="aiToggleItem" style="display: none;">
-                    <span class="menu-icon">🤖</span>
-                    <span id="aiToggleLabel">Using: Server AI</span>
-                    <label class="toggle-switch">
-                        <input type="checkbox" id="quickAiToggle">
-                        <span class="toggle-slider"></span>
-                    </label>
-                </div>
                 {% if user.is_admin %}
                 <a href="/admin" class="menu-item">
                     <span class="menu-icon">⚙️</span> Admin Panel
