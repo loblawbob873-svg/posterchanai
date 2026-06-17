@@ -452,6 +452,15 @@ def _has_matrix(user) -> bool:
     )
 
 
+def _has_nostr(user) -> bool:
+    # Nostr needs only a secret key (no instance); relays default if unset.
+    return bool(
+        user
+        and getattr(user, "nostr_enabled", False)
+        and getattr(user, "nostr_nsec", None)
+    )
+
+
 def _strip_hashtags(text: str) -> str:
     """Remove hashtag tokens from AI-generated post text (the model often ignores
     the 'no hashtags' instruction). Apply BEFORE appending any URL so URL fragments

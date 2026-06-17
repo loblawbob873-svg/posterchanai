@@ -1,7 +1,7 @@
 """Auto-split from callbacks.py: misc callback handlers. Bodies moved verbatim."""
-from ._common import ChatService, CommandService, User, _CONSUMED, _FIN_INCOME_PROMPT, _HELP_SECTIONS, _finance_bills_cache, _flashcard_decks_cache, _geni_image_cache, _link_action_cache, _matrix_post_cache, _matrix_room_cache, _misskey_post_cache, _pleroma_post_cache, asyncio, logger, telegram_service, time
-from .keyboards import _has_matrix, _has_misskey, _has_pleroma, _help_main_keyboard, _recover_post_text, _strip_hashtags
-from .senders import User, _deliver_pin_result, _finance_bills_cache, _geni_image_cache, _has_matrix, _has_misskey, _has_pleroma, _link_content_for_llm, _matrix_post_cache, _misskey_post_cache, _offer_social_post, _pleroma_post_cache, _send_bills_list, _send_budget, _send_flashcard, _send_screenshot, asyncio, logger, telegram_service, time
+from ._common import ChatService, CommandService, User, _CONSUMED, _FIN_INCOME_PROMPT, _HELP_SECTIONS, _finance_bills_cache, _flashcard_decks_cache, _geni_image_cache, _link_action_cache, _matrix_post_cache, _matrix_room_cache, _misskey_post_cache, _nostr_post_cache, _pleroma_post_cache, asyncio, logger, telegram_service, time
+from .keyboards import _has_matrix, _has_misskey, _has_nostr, _has_pleroma, _help_main_keyboard, _recover_post_text, _strip_hashtags
+from .senders import User, _deliver_pin_result, _finance_bills_cache, _geni_image_cache, _has_matrix, _has_misskey, _has_nostr, _has_pleroma, _link_content_for_llm, _matrix_post_cache, _misskey_post_cache, _offer_social_post, _pleroma_post_cache, _post_to_nostr, _send_bills_list, _send_budget, _send_flashcard, _send_screenshot, asyncio, logger, telegram_service, time
 
 
 async def _cb_rem(update, db, chat_id, data, callback_query, callback_query_id):
@@ -320,7 +320,7 @@ async def _cb_lnk(update, db, chat_id, data, callback_query, callback_query_id):
 
 async def _cb_glowtextpost(update, db, chat_id, data, callback_query, callback_query_id):
         _gp = (_misskey_post_cache.get(chat_id) or _pleroma_post_cache.get(chat_id)
-               or _matrix_post_cache.get(chat_id))
+               or _matrix_post_cache.get(chat_id) or _nostr_post_cache.get(chat_id))
         if _gp in (None, _CONSUMED):
             _gp = _recover_post_text(callback_query) or None
         if not _gp:
@@ -364,6 +364,7 @@ async def _cb_mk(update, db, chat_id, data, callback_query, callback_query_id):
             _misskey_post_cache.pop(chat_id, None)
             _pleroma_post_cache.pop(chat_id, None)
             _matrix_post_cache.pop(chat_id, None)
+            _nostr_post_cache.pop(chat_id, None)
             _matrix_room_cache.pop(chat_id, None)
             _geni_image_cache.pop(chat_id, None)
             await telegram_service.send_message(chat_id, "Post skipped.")
@@ -416,6 +417,7 @@ async def _cb_plr(update, db, chat_id, data, callback_query, callback_query_id):
             _misskey_post_cache.pop(chat_id, None)
             _pleroma_post_cache.pop(chat_id, None)
             _matrix_post_cache.pop(chat_id, None)
+            _nostr_post_cache.pop(chat_id, None)
             _matrix_room_cache.pop(chat_id, None)
             _geni_image_cache.pop(chat_id, None)
             await telegram_service.send_message(chat_id, "Post skipped.")
@@ -454,6 +456,48 @@ async def _cb_plr(update, db, chat_id, data, callback_query, callback_query_id):
         except Exception as plr_err:
             logger.error(f"Pleroma post error: {plr_err}", exc_info=True)
             await telegram_service.send_message(chat_id, f"❌ Failed to post to Pleroma: {plr_err}")
+
+
+async def _cb_nostr(update, db, chat_id, data, callback_query, callback_query_id):
+        action = data.split(":", 1)[1]
+
+        if action == "skip":
+            _misskey_post_cache.pop(chat_id, None)
+            _pleroma_post_cache.pop(chat_id, None)
+            _matrix_post_cache.pop(chat_id, None)
+            _nostr_post_cache.pop(chat_id, None)
+            _matrix_room_cache.pop(chat_id, None)
+            _geni_image_cache.pop(chat_id, None)
+            await telegram_service.send_message(chat_id, "Post skipped.")
+            return {"ok": True}
+
+        # action == "post"
+        pending_post = _nostr_post_cache.pop(chat_id, None)
+        if pending_post == _CONSUMED:
+            await telegram_service.send_message(chat_id, "Already posted via 'Post to All'.")
+            return {"ok": True}
+        if pending_post is None:
+            pending_post = _recover_post_text(callback_query) or None
+        if pending_post is None:
+            await telegram_service.send_message(chat_id, "No pending Nostr post found. Please generate a new post.")
+            return {"ok": True}
+
+        nostr_user = db.query(User).filter(
+            User.telegram_chat_id == chat_id,
+            User.telegram_enabled == True
+        ).first()
+
+        if not nostr_user or not _has_nostr(nostr_user):
+            await telegram_service.send_message(chat_id, "Nostr is not configured on your account.")
+            return {"ok": True}
+
+        _nostr_image = _geni_image_cache.get(chat_id)  # .get so other platforms can still use it
+        try:
+            await _post_to_nostr(nostr_user, pending_post, _nostr_image)
+            await telegram_service.send_message(chat_id, "✅ Posted to Nostr!")
+        except Exception as nostr_err:
+            logger.error(f"Nostr post error: {nostr_err}", exc_info=True)
+            await telegram_service.send_message(chat_id, f"❌ Failed to post to Nostr: {nostr_err}")
 
 
 async def _cb_mtx(update, db, chat_id, data, callback_query, callback_query_id):
@@ -570,6 +614,7 @@ async def _cb_mtx(update, db, chat_id, data, callback_query, callback_query_id):
             _matrix_room_cache.pop(chat_id, None)
             _misskey_post_cache.pop(chat_id, None)
             _pleroma_post_cache.pop(chat_id, None)
+            _nostr_post_cache.pop(chat_id, None)
             _geni_image_cache.pop(chat_id, None)
             await telegram_service.send_message(chat_id, "Post cancelled.")
 
@@ -616,6 +661,18 @@ async def _cb_allpost(update, db, chat_id, data, callback_query, callback_query_
                 results.append(f"❌ Pleroma: {_e}")
             # Sentinel prevents old Pleroma button from double-posting
             _pleroma_post_cache[chat_id] = _CONSUMED
+
+        # Nostr
+        nostr_post = _nostr_post_cache.pop(chat_id, None) or _recover_post_text(callback_query)
+        if (nostr_post or _all_image) and nostr_post != _CONSUMED and all_user and _has_nostr(all_user):
+            try:
+                await _post_to_nostr(all_user, nostr_post, _all_image)
+                results.append("✅ Nostr")
+            except Exception as _e:
+                logger.error(f"all:post Nostr error: {_e}", exc_info=True)
+                results.append(f"❌ Nostr: {_e}")
+            # Sentinel prevents the old Nostr button from double-posting
+            _nostr_post_cache[chat_id] = _CONSUMED
 
         if results:
             await telegram_service.send_message(chat_id, "\n".join(results))

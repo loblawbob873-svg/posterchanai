@@ -236,6 +236,7 @@ _MAX_SEEN_IDS = 500  # Keep a bounded window; Telegram won't replay further back
 _misskey_post_cache: dict = {}
 _pleroma_post_cache: dict = {}
 _matrix_post_cache: dict = {}
+_nostr_post_cache: dict = {}
 _matrix_room_cache: dict = {}
 _CONSUMED = "__consumed__"
 _geni_image_cache: dict = {}
