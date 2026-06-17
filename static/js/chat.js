@@ -1515,9 +1515,10 @@ class ChatHandler {
     }
 
     // Run an attachment action: set the command and send (the staged attachment rides along).
-    // Delegated click-to-zoom for chat images: clicking a screenshot / generated image /
-    // attachment / inline image opens it full-size in a lightbox overlay. Delegation means
-    // dynamically-added images work without per-image wiring.
+    // Delegated click-to-open for chat images: clicking a screenshot / generated image /
+    // attachment / inline image opens it full-size in a new browser tab, where the native
+    // image viewer gives proper zoom/scroll/pan (better than an in-page lightbox for tall
+    // full-page screenshots). Delegation means dynamically-added images work without wiring.
     setupImageLightbox() {
         if (!this.messagesContainer) return;
         const SELECTOR = 'img.generated-image, img.attachment-image, img.message-inline-image';
@@ -1527,39 +1528,31 @@ class ChatHandler {
             // Don't hijack clicks on the action buttons overlaid on the image.
             if (e.target.closest('.image-actions, .attachment-actions')) return;
             e.preventDefault();
-            this.openImageLightbox(img.src, img.alt || '');
+            this.openImageInNewTab(img.src);
         });
     }
 
-    openImageLightbox(src, alt = '') {
-        // One overlay reused across opens.
-        let overlay = document.getElementById('imageLightbox');
-        if (!overlay) {
-            overlay = document.createElement('div');
-            overlay.id = 'imageLightbox';
-            overlay.className = 'image-lightbox';
-            overlay.innerHTML = '<img class="image-lightbox-img" alt=""><button class="image-lightbox-close" title="Close (Esc)">✕</button>';
-            document.body.appendChild(overlay);
-            // Click backdrop (but not the image) or the ✕ to close.
-            overlay.addEventListener('click', (e) => {
-                if (e.target === overlay || e.target.closest('.image-lightbox-close')) {
-                    this.closeImageLightbox();
-                }
-            });
-            this._lightboxKeyHandler = (e) => { if (e.key === 'Escape') this.closeImageLightbox(); };
+    openImageInNewTab(src) {
+        try {
+            // Chrome/Firefox block top-level navigation to large data: URLs, so convert a
+            // base64 data URL to a Blob URL and open that. Remote/object URLs open directly.
+            if (src.startsWith('data:')) {
+                const comma = src.indexOf(',');
+                const mime = (src.slice(5, src.indexOf(';')) || 'image/png');
+                const bin = atob(src.slice(comma + 1));
+                const bytes = new Uint8Array(bin.length);
+                for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+                window.open(url, '_blank');
+                // Give the new tab time to load before releasing the blob.
+                setTimeout(() => URL.revokeObjectURL(url), 60000);
+            } else {
+                window.open(src, '_blank');
+            }
+        } catch (err) {
+            console.error('openImageInNewTab failed:', err);
+            window.open(src, '_blank');
         }
-        const img = overlay.querySelector('.image-lightbox-img');
-        img.src = src;
-        img.alt = alt;
-        overlay.classList.add('open');
-        document.addEventListener('keydown', this._lightboxKeyHandler);
-    }
-
-    closeImageLightbox() {
-        const overlay = document.getElementById('imageLightbox');
-        if (!overlay) return;
-        overlay.classList.remove('open');
-        document.removeEventListener('keydown', this._lightboxKeyHandler);
     }
 
     runAttachmentAction(cmd) {
