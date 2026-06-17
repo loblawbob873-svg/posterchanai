@@ -371,6 +371,17 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     # Check for load balancer first (unless explicitly skipped to prevent loops)
     # Load balancer ONLY uses what's configured in admin UI - round-robin between all configured servers
     settings = {s.key: s.value for s in db.query(Setting).all()}
+
+    # Tool/agentic requests use the configured agentic model (`llm_tools_model`) when the client
+    # didn't ask for a specific real model — so opencode/aider get the coding model while plain
+    # chat stays on the default. Generic + admin-configurable; blank setting → no change. Both the
+    # LB hop and local inference resolve request.model via resolve_model_path (missing → default).
+    if request.tools and not skip_load_balancer \
+            and (request.model or "").strip().lower() in ("", "native", "default"):
+        _tools_model = (settings.get("llm_tools_model", "") or "").strip()
+        if _tools_model:
+            request.model = _tools_model
+
     chat_server_urls = settings.get("chat_server_urls", "")
     # Parse server URLs from admin UI - use all servers for round-robin (including self if configured)
     servers = parse_server_urls(chat_server_urls, exclude_self=False) if not skip_load_balancer and chat_server_urls else []

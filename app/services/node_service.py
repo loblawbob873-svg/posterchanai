@@ -449,9 +449,11 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
     from app.services.inference_factory import get_inference_service
 
     max_steps = _max_steps(db)
-    # Agentic model: tuned for the tool-call loop. Override via the node_exec_agent_model setting;
-    # empty/missing gguf -> backend falls back to the default model.
-    model = _get(db, "node_exec_agent_model", "Qwen3.5-9B-Claude-Code-Q4_K_M.gguf").strip() or None
+    # Agentic model for the tool-call loop. Prefer the unified `llm_tools_model` (shared with the
+    # /v1 agentic path); fall back to the legacy `node_exec_agent_model` for back-compat, then the
+    # tuned default. Empty/missing gguf -> backend falls back to the default model (resolve_model_path).
+    model = (_get(db, "llm_tools_model", "").strip()
+             or _get(db, "node_exec_agent_model", "Qwen3.5-9B-Claude-Code-Q4_K_M.gguf").strip()) or None
     service = get_inference_service(db)
 
     messages = [

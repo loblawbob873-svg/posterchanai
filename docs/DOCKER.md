@@ -156,3 +156,9 @@ default, but for serious opencode use download
 MoE (~3 B active) that reliably 1-shots small apps where 8–14 B models stall. Needs a 12 GB+ GPU
 (partial CPU offload on 12–16 GB cards; leave `ollama_num_ctx` on `auto` — it auto-sizes context
 even when the weights spill to CPU).
+
+Point the **agentic/tools model** at it server-wide via **Admin → AI Settings → Agentic / Tools
+Model** (`llm_tools_model`) or the **`POSTERCHANAI_LLM_TOOLS_MODEL`** env var on first run — it's
+used for tool-bearing `/v1` requests and the `node agent` command. The image ships the lightweight
+9B as the default; if the configured tools GGUF isn't in the models volume it transparently falls
+back to the default model, so this is safe to leave at the default.

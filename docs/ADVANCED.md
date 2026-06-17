@@ -561,6 +561,8 @@ Use posterchanai as the LLM backend for [OpenCode](https://opencode.ai):
 
 4. **Recommended model**: for agentic coding, use [`Qwen3-Coder-30B-A3B-Instruct`](https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF) (`IQ4_XS`, ~16 GB, MoE ~3 B active) — drop the GGUF in the models dir and set OpenCode's `model` to its basename. It's dramatically more reliable at multi-step tool use than the 8–14 B models (it 1-shots small web apps). Needs a 12 GB+ GPU; on 12–16 GB cards it partial-offloads to CPU and auto-fits context (keep `ollama_num_ctx` on `auto`). `Qwen3.5-9B-Claude-Code` is the lightweight fallback for smaller GPUs.
 
+   **Server-wide agentic model:** rather than (or in addition to) setting it per-client, set **Admin → AI Settings → Agentic / Tools Model** (`llm_tools_model`, GGUF basename in the models dir or an absolute path). It's used for **every tool-bearing `/v1` request** *and* the **`node agent`** command (web UI, Telegram, and the system-health report) — falling back to the default Model Path if blank or the file is missing. Plain chat always uses the default model. (The legacy `node_exec_agent_model` setting is still honored as a fallback.)
+
 #### Editing large files on a small-context model
 
 Local models served by posterchanai have small context windows. By default a coding client's
