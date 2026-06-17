@@ -341,14 +341,17 @@ async def startup():
 
                 socks_host = get_proxy_setting("proxy_socks_host")
                 if socks_host:
-                    from app.services.http_proxy_service import start_http_proxy
-                    start_http_proxy(
+                    # Run the proxy as its OWN process so its asyncio loop gets a dedicated
+                    # core and doesn't contend with the app's event loop (all bot/social media
+                    # uploads route through it — in-process this pegged a shared core).
+                    from app.services.http_proxy_service import start_http_proxy_process
+                    start_http_proxy_process(
                         listen_host=get_proxy_setting("proxy_listen_host", "127.0.0.1"),
                         listen_port=int(get_proxy_setting("proxy_listen_port", "8118")),
                         socks_host=socks_host,
                         socks_port=int(get_proxy_setting("proxy_socks_port", "9052")),
                     )
-                    logging.info(f"Built-in HTTP proxy started on port {get_proxy_setting('proxy_listen_port', '8118')}")
+                    logging.info(f"Built-in HTTP proxy (subprocess) started on port {get_proxy_setting('proxy_listen_port', '8118')}")
                 else:
                     logging.warning("HTTP proxy enabled but no SOCKS5 target host configured")
         except Exception as e:
@@ -456,10 +459,10 @@ async def shutdown():
     except Exception as e:
         logging.error(f"Error stopping torrent client: {e}")
 
-    # Stop built-in HTTP proxy if running
+    # Stop built-in HTTP proxy subprocess if running
     try:
-        from app.services.http_proxy_service import stop_http_proxy
-        stop_http_proxy()
+        from app.services.http_proxy_service import stop_http_proxy_process
+        stop_http_proxy_process()
     except Exception as e:
         logging.error(f"Error stopping HTTP proxy: {e}")
 

@@ -3,10 +3,13 @@ Built-in HTTP proxy that forwards traffic through a SOCKS5 proxy (e.g., Tor).
 Replaces Privoxy for torrent traffic routing.
 """
 
+import os
+import sys
 import asyncio
 import ipaddress
 import socket
 import logging
+import subprocess
 import threading
 from typing import Optional
 from urllib.parse import urlparse
@@ -413,3 +416,73 @@ def stop_http_proxy():
     """Stop the HTTP proxy if running."""
     if HttpToSocksProxy._instance:
         HttpToSocksProxy._instance.stop()
+
+
+# --- standalone subprocess (own core) ---------------------------------------
+# All bot/social media uploads route through this proxy; in-process its asyncio loop
+# competed with the app's event loop and pegged a shared core under concurrent uploads.
+# Running it as its OWN process gives it a dedicated core. The module is pure-stdlib, so
+# it's launched by file path (no app package import) and stays lightweight.
+
+_proxy_process: Optional[subprocess.Popen] = None
+
+
+def start_http_proxy_process(
+    listen_host: str = "127.0.0.1",
+    listen_port: int = 8118,
+    socks_host: str = "127.0.0.1",
+    socks_port: int = 9052,
+) -> subprocess.Popen:
+    """Spawn the proxy as a separate process. Idempotent (reuses a live child)."""
+    global _proxy_process
+    if _proxy_process and _proxy_process.poll() is None:
+        return _proxy_process
+    _proxy_process = subprocess.Popen([
+        sys.executable, os.path.abspath(__file__),
+        "--listen-host", str(listen_host), "--listen-port", str(listen_port),
+        "--socks-host", str(socks_host), "--socks-port", str(socks_port),
+    ])
+    logger.info(f"HTTP proxy subprocess started (pid {_proxy_process.pid}) on "
+                f"{listen_host}:{listen_port} → SOCKS5 {socks_host}:{socks_port}")
+    return _proxy_process
+
+
+def stop_http_proxy_process():
+    """Terminate the proxy subprocess if running."""
+    global _proxy_process
+    if _proxy_process and _proxy_process.poll() is None:
+        _proxy_process.terminate()
+        try:
+            _proxy_process.wait(timeout=10)
+        except Exception:
+            _proxy_process.kill()
+        logger.info("HTTP proxy subprocess stopped")
+    _proxy_process = None
+
+
+def _run_standalone():
+    import argparse
+    parser = argparse.ArgumentParser(description="PosterChanAI HTTP→SOCKS5 proxy (standalone)")
+    parser.add_argument("--listen-host", default="127.0.0.1")
+    parser.add_argument("--listen-port", type=int, default=8118)
+    parser.add_argument("--socks-host", default="127.0.0.1")
+    parser.add_argument("--socks-port", type=int, default=9052)
+    args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [http-proxy] %(message)s")
+    proxy = HttpToSocksProxy.get_instance(
+        listen_host=args.listen_host, listen_port=args.listen_port,
+        socks_host=args.socks_host, socks_port=args.socks_port,
+    )
+
+    async def _serve():
+        await proxy._start_server()
+        await proxy._server.serve_forever()
+
+    try:
+        asyncio.run(_serve())
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    _run_standalone()
