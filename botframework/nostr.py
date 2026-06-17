@@ -213,6 +213,42 @@ def get_note(note_id):
 
 
 _QUOTE_RE = re.compile(r"(?:nostr:)?((?:nevent1|note1)[023456789acdefghjklmnpqrstuvwxyz]+)", re.IGNORECASE)
+# Person-mentions only (npub/nprofile), in order, to find who a note is *addressed* to.
+_MENTION_RE = re.compile(r"nostr:((?:npub1|nprofile1)[023456789acdefghjklmnpqrstuvwxyz]+)", re.IGNORECASE)
+
+
+def _inline_mention_pubkeys(content: str) -> list:
+    """Ordered list of pubkey hexes explicitly @-mentioned (nostr:npub/nprofile) in the text."""
+    out = []
+    for tok in _MENTION_RE.findall(content or ""):
+        try:
+            raw = _svc.bech32.decode_any(tok)
+            if raw:
+                out.append(raw.hex())
+        except Exception:
+            pass
+    return out
+
+
+def is_addressed(note, own_pubkey: str) -> bool:
+    """True if the bot is actually being ADDRESSED, not just carried forward as a NIP-10
+    p-tag in a thread it once participated in (which would make it reply to every reply).
+
+    Mirrors the fediverse bot's 'first @mention' rule: the bot must be the FIRST inline
+    person-mention. With no inline mentions, a top-level note counts (someone tagged the
+    bot in a fresh post); a reply counts only if its parent was authored by the bot.
+    Fail-open on uncertainty so a real mention is never silently dropped."""
+    ev = note.get("_event") or {}
+    mentions = _inline_mention_pubkeys(ev.get("content", ""))
+    if mentions:
+        return mentions[0] == own_pubkey
+    parent_id = note.get("replyId")
+    if not parent_id:
+        return True  # top-level note tagging the bot, no inline mention → a direct ping
+    parent = get_note(parent_id)
+    if parent is None:
+        return True  # can't resolve parent → don't suppress a possible real mention
+    return (parent.get("user") or {}).get("pubkey") == own_pubkey
 
 
 def get_quoted_note(note):

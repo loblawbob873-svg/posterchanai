@@ -330,6 +330,11 @@ def process_mentions():
             continue  # never reply to self
         if any(b in (user.get("username") or "").lower() for b in blacklist):
             continue
+        # Only respond when actually ADDRESSED (first mention / reply to the bot) — not when
+        # the bot is just a NIP-10 p-tag carried forward through a thread it's in. Otherwise
+        # it would reply to every subsequent reply between other users in that thread.
+        if not _nk.is_addressed(note, own_pubkey):
+            continue
         prompt_text = _NOSTR_TOKEN_RE.sub("", note.get("text") or "").strip()
         prompt_text = re.sub(r"@[\w@.]+", "", prompt_text).strip()[:4000]
         if not prompt_text:
