@@ -106,8 +106,6 @@ async def _handle_telegram_update(update: dict, db: Session):
     """Core Telegram update processing logic."""
     logger.info(f"Received Telegram webhook update: {update}")
     try:
-        from app.services.chat_service import ChatService
-        
         bot_token = db.query(Setting).filter(Setting.key == "telegram_bot_token").first()
         if not bot_token or not bot_token.value:
             logger.warning("Telegram bot not configured")

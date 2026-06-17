@@ -5,7 +5,6 @@ from .senders import User, _deliver_files_result, _finance_bills_cache, _geni_im
 
 
 async def _handle_callback(update, db):
-    from app.services.chat_service import ChatService
     try:
         callback_query = update.get("callback_query")
         if callback_query:
@@ -1386,7 +1385,6 @@ async def _handle_callback(update, db):
                             title, url = cached_articles[article_idx]
                             await telegram_service.send_message(chat_id, f"📝 Summarizing article...")
                             # Use AI to summarize
-                            from app.services.chat_service import ChatService
                             chat_service = ChatService(db, user=cb_user)
                             messages = [
                                 {"role": "system", "content": "Summarize the following news article in 2-3 sentences. Be concise and factual."},
@@ -1412,7 +1410,6 @@ async def _handle_callback(update, db):
                             title, url = cached_articles[article_idx]
                             await telegram_service.send_message(chat_id, f"📣 Generating social media post...")
                             # Use AI to generate post
-                            from app.services.chat_service import ChatService
                             chat_service = ChatService(db, user=cb_user)
                             messages = [
                                 {"role": "system", "content": "Generate a short, engaging social media post (under 280 characters) for this news article. Use emojis but no hashtags."},

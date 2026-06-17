@@ -5,7 +5,6 @@ from .senders import User, _has_matrix, _has_misskey, _has_pleroma, _matrix_post
 
 
 async def _handle_message(update, db):
-    from app.services.chat_service import ChatService
     from .webhook import _make_tg_node_notify
     try:
         message = update.get("message")

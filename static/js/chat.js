@@ -3029,8 +3029,16 @@ class ChatHandler {
             content: content
         };
 
-        // Include stored image data
-        if (messageEl._imageData) {
+        // Include stored image data — prefer the FULL attachment set so editing a multi-image
+        // (e.g. collage) message resends every image, not just the first.
+        const _att = messageEl._allAttachments;
+        if (_att && _att.images && _att.images.length) {
+            payload.image_data = _att.images[0].base64;  // first for backward compat
+            payload.images = _att.images.map(i => ({ base64: i.base64, filename: i.filename }));
+            if (_att.pdfs && _att.pdfs.length) payload.pdfs = _att.pdfs.map(p => ({ base64: p.base64, filename: p.filename }));
+            if (_att.documents && _att.documents.length) payload.documents = _att.documents.map(d => ({ base64: d.base64, filename: d.filename, type: d.type }));
+            if (_att.videos && _att.videos.length) payload.videos = _att.videos;
+        } else if (messageEl._imageData) {
             payload.image_data = messageEl._imageData;
         } else if (messageEl._imagePath) {
             // For historical messages, use the stored image path

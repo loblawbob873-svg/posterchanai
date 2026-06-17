@@ -303,10 +303,18 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
         if command in self.MOTION_EFFECTS and arg:
             _toks = arg.split()
             _low = [t.lower() for t in _toks]
-            # `char <name>` (anywhere) → overlay a cute character bottom-right. Parsed FIRST (before
-            # `meme`, which consumes to the end) and only consumed when <name> is a real character,
-            # so the word "char" inside a caption is never mistaken for the modifier.
             from app.services import effects_service as _fx_chk
+            # Strip the `meme <caption>` suffix FIRST so the caption's words (which may themselves
+            # contain "char <name>" or "meme") are never re-parsed as modifiers. `meme` consumes to
+            # the end; it doesn't apply to the meme effect itself (whole arg is the caption) nor thug
+            # (which bakes its own "THUG LIFE" text).
+            _meme_text = None
+            if command not in ("meme", "thug") and "meme" in _low:
+                _i = _low.index("meme")
+                _meme_text = " ".join(_toks[_i + 1:]).strip()
+                _toks, _low = _toks[:_i], _low[:_i]
+            # `char <name>` (anywhere in the REMAINING pre-meme tokens) → overlay a cute character
+            # bottom-right; only consumed when <name> is a real character.
             _character = None
             if "char" in _low:
                 _ci = _low.index("char")
@@ -314,14 +322,6 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
                     _character = _toks[_ci + 1].lower()
                     _toks = _toks[:_ci] + _toks[_ci + 2:]
                     _low = [t.lower() for t in _toks]
-            _meme_text = None
-            # `meme` only acts as a trailing subcommand for OTHER effects — not for
-            # the meme effect itself (its whole arg is the caption) nor thug (which
-            # bakes its own "THUG LIFE" text).
-            if command not in ("meme", "thug") and "meme" in _low:
-                _i = _low.index("meme")
-                _meme_text = " ".join(_toks[_i + 1:]).strip()
-                _toks, _low = _toks[:_i], _low[:_i]
             # Trailing motion cluster: at most one geometry motion (zoom/shake/
             # medshake/beginshake/pulse) plus the `trippy` colour pass, in either
             # order, at the very END of the arg. Only TRAILING tokens are consumed

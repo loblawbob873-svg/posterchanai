@@ -43,6 +43,7 @@ def collage_attachments(attachments):
     images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
     if not images:
         return [], "No images — attach at least one image to make a collage."
+    images = images[:16]  # cap the grid so a huge upload can't build a giant canvas
     try:
         result = make_collage([d for _, d, _ in images])
         out = _alive_or_still(result, "collage", "collage")
