@@ -15,6 +15,17 @@ import websockets
 
 logger = logging.getLogger(__name__)
 
+
+def _proxy_kw() -> dict:
+    """websockets connect kwargs to route relays through the built-in HTTP proxy (→ Tor),
+    when one is configured (env for bots, settings for the app). Empty = direct."""
+    try:
+        from app.services.proxy_utils import get_outbound_proxy
+        p = get_outbound_proxy()
+        return {"proxy": p} if p else {}
+    except Exception:
+        return {}
+
 _CONNECT_TIMEOUT = 8
 _DEFAULT_QUERY_TIMEOUT = 12
 _PUBLISH_TIMEOUT = 10
@@ -34,7 +45,7 @@ def normalize_relays(relays) -> list[str]:
 
 async def _publish_one(relay: str, event: dict) -> bool:
     try:
-        async with websockets.connect(relay, open_timeout=_CONNECT_TIMEOUT) as ws:
+        async with websockets.connect(relay, open_timeout=_CONNECT_TIMEOUT, **_proxy_kw()) as ws:
             await ws.send(json.dumps(["EVENT", event]))
             try:
                 raw = await asyncio.wait_for(ws.recv(), timeout=5)
@@ -64,7 +75,7 @@ async def publish(relays, event: dict) -> int:
 async def _query_one(relay: str, filters: list, out: dict, timeout: float) -> None:
     sub_id = uuid.uuid4().hex[:16]
     try:
-        async with websockets.connect(relay, open_timeout=_CONNECT_TIMEOUT) as ws:
+        async with websockets.connect(relay, open_timeout=_CONNECT_TIMEOUT, **_proxy_kw()) as ws:
             await ws.send(json.dumps(["REQ", sub_id] + filters))
             deadline = asyncio.get_event_loop().time() + timeout
             while True:

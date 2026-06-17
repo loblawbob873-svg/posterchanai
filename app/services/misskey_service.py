@@ -4,6 +4,8 @@ import uuid
 import logging
 import httpx
 
+from app.services.proxy_utils import get_outbound_proxy
+
 logger = logging.getLogger(__name__)
 
 
@@ -18,7 +20,7 @@ async def password_signin(instance_url: str, username: str, password: str, token
     payload: dict = {"username": username, "password": password}
     if token:
         payload["token"] = token
-    async with httpx.AsyncClient(timeout=20) as client:
+    async with httpx.AsyncClient(proxy=get_outbound_proxy(), timeout=20) as client:
         resp = await client.post(url, json=payload)
         resp.raise_for_status()
         data = resp.json()
@@ -31,7 +33,7 @@ async def password_signin(instance_url: str, username: str, password: str, token
 async def check_miauth_session(instance_url: str, session_id: str) -> dict:
     """Call Misskey's MiAuth check endpoint and return the access token payload."""
     url = instance_url.rstrip("/") + f"/api/miauth/{session_id}/check"
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(proxy=get_outbound_proxy(), timeout=15) as client:
         resp = await client.post(url)
         resp.raise_for_status()
         return resp.json()
@@ -60,7 +62,7 @@ async def upload_file(instance_url: str, token: str, image_bytes: bytes, mime: s
     # type, which would otherwise upload an MP4 mislabeled as image.jpg.
     mime = detected_mime if detected_mime.startswith("video/") else (mime or detected_mime)
     url = instance_url.rstrip("/") + "/api/drive/files/create"
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(proxy=get_outbound_proxy(), timeout=60) as client:
         resp = await client.post(
             url,
             data={"i": token},
@@ -84,7 +86,7 @@ async def call(instance_url: str, token: str, method: str, params: dict | None =
     body = {"i": token}
     if params:
         body.update(params)
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(proxy=get_outbound_proxy(), timeout=30) as client:
         resp = await client.post(url, json=body)
         resp.raise_for_status()
         return resp.json() if resp.text else {}
@@ -120,7 +122,7 @@ async def post_note(
         payload["replyId"] = reply_id
     if renote_id:
         payload["renoteId"] = renote_id   # with text → quote-renote; without → plain renote
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(proxy=get_outbound_proxy(), timeout=15) as client:
         resp = await client.post(url, json=payload)
         resp.raise_for_status()
         return resp.json()
@@ -133,7 +135,7 @@ async def fetch_notifications(instance_url: str, token: str, since_id: str | Non
     payload: dict = {"i": token, "limit": limit}
     if since_id:
         payload["sinceId"] = since_id
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(proxy=get_outbound_proxy(), timeout=15) as client:
         resp = await client.post(url, json=payload)
         resp.raise_for_status()
         data = resp.json()
@@ -156,7 +158,7 @@ async def fetch_timeline(instance_url: str, token: str, timeline_type: str = "ho
     payload: dict = {"i": token, "limit": limit}
     if since_id:
         payload["sinceId"] = since_id
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(proxy=get_outbound_proxy(), timeout=15) as client:
         resp = await client.post(url, json=payload)
         resp.raise_for_status()
         data = resp.json()
@@ -167,7 +169,7 @@ async def fetch_children(instance_url: str, token: str, note_id: str, limit: int
     """Fetch replies (descendants) of a note, raw Misskey notes."""
     url = instance_url.rstrip("/") + "/api/notes/children"
     payload = {"i": token, "noteId": note_id, "limit": limit, "depth": 5}
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(proxy=get_outbound_proxy(), timeout=15) as client:
         resp = await client.post(url, json=payload)
         resp.raise_for_status()
         data = resp.json()
@@ -179,7 +181,7 @@ async def fetch_conversation(instance_url: str, token: str, note_id: str, limit:
     /api/notes/conversation returns them, typically nearest-first."""
     url = instance_url.rstrip("/") + "/api/notes/conversation"
     payload = {"i": token, "noteId": note_id, "limit": limit}
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(proxy=get_outbound_proxy(), timeout=15) as client:
         resp = await client.post(url, json=payload)
         resp.raise_for_status()
         data = resp.json()
@@ -190,7 +192,7 @@ async def create_reaction(instance_url: str, token: str, note_id: str, reaction:
     """React to a note (the Misskey equivalent of a favourite). Returns 204 on success."""
     url = instance_url.rstrip("/") + "/api/notes/reactions/create"
     payload = {"i": token, "noteId": note_id, "reaction": reaction}
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(proxy=get_outbound_proxy(), timeout=15) as client:
         resp = await client.post(url, json=payload)
         resp.raise_for_status()
 
@@ -199,7 +201,7 @@ async def renote(instance_url: str, token: str, note_id: str) -> dict:
     """Renote (boost) an existing note."""
     url = instance_url.rstrip("/") + "/api/notes/create"
     payload = {"i": token, "renoteId": note_id}
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(proxy=get_outbound_proxy(), timeout=15) as client:
         resp = await client.post(url, json=payload)
         resp.raise_for_status()
         return resp.json()
@@ -211,7 +213,7 @@ async def resolve_note(instance_url: str, token: str, uri: str) -> dict | None:
     or None if it can't be resolved."""
     url = instance_url.rstrip("/") + "/api/ap/show"
     payload = {"i": token, "uri": uri}
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(proxy=get_outbound_proxy(), timeout=15) as client:
         resp = await client.post(url, json=payload)
         if resp.status_code != 200:
             return None

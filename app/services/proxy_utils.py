@@ -70,6 +70,29 @@ def get_proxy_config() -> Optional[str]:
     return None
 
 
+def get_outbound_proxy() -> Optional[str]:
+    """Proxy URL for outbound social/bot traffic, resolved for BOTH process types:
+
+    - **Bot subprocesses** get the proxy via injected env (HTTPS_PROXY/ALL_PROXY/…),
+      which requests/httpx/websockets already honour — checked first so we don't open a
+      DB the bot doesn't have.
+    - **The app process** has no global proxy env (that would wrongly route the LB's LAN
+      calls through Tor), so it falls back to the configured proxy from settings.
+
+    Returns the URL (e.g. "http://192.168.0.2:8118") or None when no proxy is set.
+    """
+    import os
+    for key in ("OUTBOUND_HTTP_PROXY", "HTTPS_PROXY", "https_proxy",
+                "ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy"):
+        val = os.environ.get(key)
+        if val:
+            return val
+    try:
+        return get_proxy_config()
+    except Exception:
+        return None
+
+
 def require_proxy(service_name: str) -> str:
     """
     Get proxy config and raise ValueError if not configured.

@@ -161,6 +161,22 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
     existing_pp = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = repo_root + (os.pathsep + existing_pp if existing_pp else "")
 
+    # Route ALL of a bot's outbound internet traffic (fediverse/nostr relays, Nitter RSS +
+    # media, web search, news, blossom uploads, image downloads) through the built-in HTTP
+    # proxy (→ SOCKS5/Tor). requests, httpx and websockets all honour these standard env
+    # vars, so this single injection covers every bot library without per-call wiring.
+    # localhost is excluded so the bot's calls to the local app (chat/image/media at
+    # bots_server_url=http://localhost:3051) stay direct and never go through Tor.
+    try:
+        from app.services.proxy_utils import get_proxy_config
+        _proxy = get_proxy_config()
+    except Exception:
+        _proxy = None
+    if _proxy:
+        for k in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"):
+            env[k] = _proxy
+        env["NO_PROXY"] = env["no_proxy"] = "localhost,127.0.0.1,::1"
+
     def setif(key, env_key, transform=str):
         v = bot_dict.get(key)
         if v not in (None, "", [], {}):
