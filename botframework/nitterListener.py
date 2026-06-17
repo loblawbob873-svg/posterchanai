@@ -23,7 +23,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 if script_dir not in sys.path:
     sys.path.insert(0, script_dir)
 
-from config import MISSKEY_SERVER, PLEROMA_ENDPOINT
+from config import MISSKEY_SERVER, PLEROMA_ENDPOINT, NOSTR_NSEC
 from matrix_client import send_message
 
 # Per-bot feeds, set by botctl/the installer from the bot's `nitter_feeds`.
@@ -31,13 +31,18 @@ NITTER_FEEDS = json.loads(os.getenv("NITTER_FEEDS", "[]"))
 NITTER_POLL_SECONDS = int(os.getenv("NITTER_POLL_SECONDS", "300"))
 
 # A feed entry with a "room" posts to that Matrix room; one without posts to the
-# fediverse (Pleroma or Misskey, whichever this bot is configured for).
+# fediverse (Pleroma/Misskey/Nostr, whichever this bot is configured for).
 _fedi_post = None
 _fedi_post_image = None
 if MISSKEY_SERVER:
     from misskey import post_to_fediverse as _fedi_post, post_image_to_fediverse as _fedi_post_image
 elif PLEROMA_ENDPOINT:
     from pleroma import post_to_fediverse as _fedi_post, post_image_to_fediverse as _fedi_post_image
+elif NOSTR_NSEC:
+    # Nostr has one post primitive: post_image_to_fediverse(text, image_bytes=None) handles
+    # both the text-only and text+image cases, so both hooks point at it.
+    from nostr import post_image_to_fediverse as _fedi_post_image
+    _fedi_post = _fedi_post_image
 
 _STATE_FILE = os.path.join(script_dir, ".nitter_seen.json")
 _MAX_SEEN_PER_FEED = 300  # cap stored GUIDs per feed so the state file stays small
