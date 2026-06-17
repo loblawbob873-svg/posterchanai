@@ -29,6 +29,11 @@ from matrix_client import send_message
 # Per-bot feeds, set by botctl/the installer from the bot's `nitter_feeds`.
 NITTER_FEEDS = json.loads(os.getenv("NITTER_FEEDS", "[]"))
 NITTER_POLL_SECONDS = int(os.getenv("NITTER_POLL_SECONDS", "300"))
+# Fire-rate throttle: post at most N items per feed per poll (the rest stay unseen and
+# drain on later cycles — nothing is dropped, just spread out), with a pause between
+# posts so a backlogged feed doesn't dump a wall of notes / trip relay rate limits.
+NITTER_MAX_POSTS_PER_CYCLE = int(os.getenv("NITTER_MAX_POSTS_PER_CYCLE", "3"))
+NITTER_POST_DELAY = int(os.getenv("NITTER_POST_DELAY", "5"))
 
 # A feed entry with a "room" posts to that Matrix room; one without posts to the
 # fediverse (Pleroma/Misskey/Nostr, whichever this bot is configured for).
@@ -371,8 +376,17 @@ def _process_feed(feed, state):
         return
 
     dest = feed.get("room") or "fediverse"
-    print(f"[nitter] @{handle}: {len(new_items)} new item(s) → {dest}", flush=True)
-    for it in new_items:
+    # Throttle: post only the oldest NITTER_MAX_POSTS_PER_CYCLE this cycle; the rest stay
+    # unseen and drain (chronologically) on subsequent polls.
+    batch = new_items[:NITTER_MAX_POSTS_PER_CYCLE] if NITTER_MAX_POSTS_PER_CYCLE > 0 else new_items
+    if len(batch) < len(new_items):
+        print(f"[nitter] @{handle}: {len(new_items)} new item(s) → {dest} "
+              f"(posting {len(batch)} this cycle, {len(new_items) - len(batch)} next)", flush=True)
+    else:
+        print(f"[nitter] @{handle}: {len(new_items)} new item(s) → {dest}", flush=True)
+    for idx, it in enumerate(batch):
+        if idx > 0 and NITTER_POST_DELAY > 0:
+            time.sleep(NITTER_POST_DELAY)  # pace posts so a burst doesn't flood
         try:
             ok = _post_item(feed, handle, it)
         except Exception as e:
