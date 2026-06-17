@@ -330,13 +330,6 @@ def process_mentions():
             continue  # never reply to self
         if any(b in (user.get("username") or "").lower() for b in blacklist):
             continue
-        # Rate limit BEFORE any work or claim: a throttled mention is left unclaimed so it
-        # re-checks next poll (no token consumed on rejection) and gets served once the
-        # window frees — rather than burning a reply or being permanently dropped. We stay
-        # silent on rejection (replying would just amplify spam).
-        if not _rl.allow(user.get("pubkey") or ""):
-            print(f"[nostr] rate-limited {user.get('username')} ({(user.get('pubkey') or '')[:10]}…) — skipping", flush=True)
-            continue
         prompt_text = _NOSTR_TOKEN_RE.sub("", note.get("text") or "").strip()
         prompt_text = re.sub(r"@[\w@.]+", "", prompt_text).strip()[:4000]
         if not prompt_text:
@@ -348,6 +341,14 @@ def process_mentions():
                 prompt_text = f"Respond to this quoted post: {qtext}"[:4000]
             else:
                 continue
+        # Rate limit only ACTUAL requests (after we know there's real work), and BEFORE claim:
+        # a token is consumed only on success, a throttled mention is left unclaimed so it
+        # re-checks next poll (no token spent on rejection) and is served once the window
+        # frees — rather than burning a reply, draining the budget on empties, or being
+        # permanently dropped. Silent on rejection (replying would just amplify spam).
+        if not _rl.allow(user.get("pubkey") or ""):
+            print(f"[nostr] rate-limited {user.get('username')} ({(user.get('pubkey') or '')[:10]}…) — skipping", flush=True)
+            continue
         if not _claim(nid):
             continue
         print(f"[nostr] processing {nid[:12]} from {user.get('username')}: {prompt_text[:80]}", flush=True)
