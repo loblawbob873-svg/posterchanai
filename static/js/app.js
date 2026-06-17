@@ -155,8 +155,11 @@ class App {
         document.querySelectorAll('.quick-btn[data-cmd]').forEach(btn => {
             btn.addEventListener('click', () => {
                 const cmd = btn.dataset.cmd;
-                if (window.chatHandler && window.chatHandler.ws) {
-                    window.chatHandler.sendMessageDirect(cmd);
+                // Use executeCommand (not sendMessageDirect) so the button works even with no
+                // chat window open — it auto-creates a conversation / reconnects the socket,
+                // matching the dropdown command items. sendMessageDirect just bails with no ws.
+                if (window.chatHandler && cmd) {
+                    window.chatHandler.executeCommand(cmd);
                 }
             });
         });
