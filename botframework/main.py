@@ -169,7 +169,10 @@ def main():
                     process_mentions()
                 except Exception as e:
                     print(f"[ERROR] nostr process_mentions failed: {e}", flush=True)
-                time.sleep(20)
+                # Poll cadence: relays push fast, so a short gap keeps replies snappy
+                # (each poll is one short-lived REQ per relay). Overridable via NOSTR_POLL_SECONDS.
+                import os as _os
+                time.sleep(int(_os.getenv("NOSTR_POLL_SECONDS", "8")))
         if threads or has_daemon:
             t = threading.Thread(target=run_nostr, daemon=True)
             t.start()
