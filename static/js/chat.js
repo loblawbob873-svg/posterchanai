@@ -75,6 +75,8 @@ class ChatHandler {
         this.loadUserSettings();
         // Report the browser timezone so natural-language reminders parse/display in local time.
         this.reportTimezone();
+        // Click any chat image (screenshot / generated / attachment / inline) to open it full-size.
+        this.setupImageLightbox();
         // Notes autocomplete removed
 
         // Enter to send (Shift+Enter for new line)
@@ -1513,6 +1515,53 @@ class ChatHandler {
     }
 
     // Run an attachment action: set the command and send (the staged attachment rides along).
+    // Delegated click-to-zoom for chat images: clicking a screenshot / generated image /
+    // attachment / inline image opens it full-size in a lightbox overlay. Delegation means
+    // dynamically-added images work without per-image wiring.
+    setupImageLightbox() {
+        if (!this.messagesContainer) return;
+        const SELECTOR = 'img.generated-image, img.attachment-image, img.message-inline-image';
+        this.messagesContainer.addEventListener('click', (e) => {
+            const img = e.target.closest(SELECTOR);
+            if (!img || !img.src) return;
+            // Don't hijack clicks on the action buttons overlaid on the image.
+            if (e.target.closest('.image-actions, .attachment-actions')) return;
+            e.preventDefault();
+            this.openImageLightbox(img.src, img.alt || '');
+        });
+    }
+
+    openImageLightbox(src, alt = '') {
+        // One overlay reused across opens.
+        let overlay = document.getElementById('imageLightbox');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'imageLightbox';
+            overlay.className = 'image-lightbox';
+            overlay.innerHTML = '<img class="image-lightbox-img" alt=""><button class="image-lightbox-close" title="Close (Esc)">✕</button>';
+            document.body.appendChild(overlay);
+            // Click backdrop (but not the image) or the ✕ to close.
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay || e.target.closest('.image-lightbox-close')) {
+                    this.closeImageLightbox();
+                }
+            });
+            this._lightboxKeyHandler = (e) => { if (e.key === 'Escape') this.closeImageLightbox(); };
+        }
+        const img = overlay.querySelector('.image-lightbox-img');
+        img.src = src;
+        img.alt = alt;
+        overlay.classList.add('open');
+        document.addEventListener('keydown', this._lightboxKeyHandler);
+    }
+
+    closeImageLightbox() {
+        const overlay = document.getElementById('imageLightbox');
+        if (!overlay) return;
+        overlay.classList.remove('open');
+        document.removeEventListener('keydown', this._lightboxKeyHandler);
+    }
+
     runAttachmentAction(cmd) {
         if (!this.messageInput) return;
         this.messageInput.value = cmd;
