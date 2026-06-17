@@ -249,39 +249,14 @@ async def startup():
         app_port = int(os.environ.get("POSTERCHANAI_PORT", "3051"))
         if app_port == 3051:
             try:
-                # Start Logs scheduler
-                from app.services.logs_scheduler import start_logs_scheduler
-                start_logs_scheduler()
+                # Background pollers (fedi-timeline bridge + social/nitter/matrix-notif/logs)
+                # run in a SEPARATE worker process so their polling/bridging doesn't contend
+                # with the web/API event loop (the bridge could otherwise stall the reactor).
+                # They're DB-mediated, so the app's reply/action endpoints keep working.
+                from app.worker import start_worker_process
+                start_worker_process()
             except Exception as e:
-                logging.error(f"Error starting logs scheduler: {e}", exc_info=True)
-
-            try:
-                # Start social-notification relay poller (Pleroma/Misskey/Matrix → Telegram)
-                from app.services.social_notifications_service import start_social_notifications_scheduler
-                start_social_notifications_scheduler()
-            except Exception as e:
-                logging.error(f"Error starting social notifications scheduler: {e}", exc_info=True)
-
-            try:
-                # Start Nitter feeds poller (per-user RSS → image cards → Telegram)
-                from app.services.nitter_feeds_service import start_nitter_feeds_scheduler
-                start_nitter_feeds_scheduler()
-            except Exception as e:
-                logging.error(f"Error starting nitter feeds scheduler: {e}", exc_info=True)
-
-            try:
-                # Start Fediverse timeline → Matrix room bridge poller
-                from app.services.fedi_timeline_service import start_fedi_timeline_scheduler
-                start_fedi_timeline_scheduler()
-            except Exception as e:
-                logging.error(f"Error starting fedi timeline scheduler: {e}", exc_info=True)
-
-            try:
-                # Start personal fedi-notification → Matrix DM poller
-                from app.services.matrix_notifications_service import start_matrix_notifications_scheduler
-                start_matrix_notifications_scheduler()
-            except Exception as e:
-                logging.error(f"Error starting matrix notifications scheduler: {e}", exc_info=True)
+                logging.error(f"Error starting background worker: {e}", exc_info=True)
 
             try:
                 # Start the bot manager (merged ~/posterchan framework; Admin → Bots)
@@ -409,28 +384,11 @@ async def shutdown():
     # Only stop schedulers on main instance (port 3051)
     app_port = int(os.environ.get("POSTERCHANAI_PORT", "3051"))
     if app_port == 3051:
-        # Stop Logs scheduler
-        from app.services.logs_scheduler import stop_logs_scheduler
-        stop_logs_scheduler()
-
-        # Stop Nitter feeds poller
+        # Stop the background worker process (fedi-timeline bridge + social/nitter/
+        # matrix-notif/logs pollers all run there now).
         try:
-            from app.services.nitter_feeds_service import stop_nitter_feeds_scheduler
-            stop_nitter_feeds_scheduler()
-        except Exception:
-            pass
-
-        # Stop Fediverse timeline → Matrix bridge poller
-        try:
-            from app.services.fedi_timeline_service import stop_fedi_timeline_scheduler
-            stop_fedi_timeline_scheduler()
-        except Exception:
-            pass
-
-        # Stop personal fedi-notification → Matrix DM poller
-        try:
-            from app.services.matrix_notifications_service import stop_matrix_notifications_scheduler
-            stop_matrix_notifications_scheduler()
+            from app.worker import stop_worker_process
+            stop_worker_process()
         except Exception:
             pass
 
