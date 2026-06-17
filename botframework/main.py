@@ -107,9 +107,11 @@ def main():
             from nitterListener import nitter_poster
             print("Starting Nitter RSS poster mode...")
             nitter_poster()
-        # Run in a thread when combined with a listener (--pleroma/--misskey/--matrix)
+        # Run in a thread when combined with a listener (--pleroma/--misskey/--nostr/--matrix)
         # or a daemon, so it doesn't block them; run directly when it's the only mode.
-        if args.misskey or args.pleroma or args.matrix or threads or has_daemon:
+        # (Omitting --nostr here made nitter run directly + return, so a --nostr --nitter
+        # bot never started its Nostr listener.)
+        if args.misskey or args.pleroma or args.nostr or args.matrix or threads or has_daemon:
             t = threading.Thread(target=run_nitter, daemon=True)
             t.start()
             threads.append(t)
