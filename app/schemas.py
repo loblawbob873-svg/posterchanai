@@ -142,10 +142,12 @@ class SettingsResponse(BaseModel):
     upload_path: str = "/var/lib/posterchanai"
     # LLM settings (backend is always native llama.cpp — SYCL/CUDA/HIP/CPU)
     llm_model_path: str = ""
-    # GGUF (basename or absolute path) used for tool-calling / agentic jobs: opencode/aider via
-    # /v1, the `node agent` command (web UI + Telegram), and the system-health report. Blank or a
-    # missing file → falls back to llm_model_path. Admin-overridable in the UI.
-    llm_tools_model: str = "Qwen3.5-9B-Claude-Code-Q4_K_M.gguf"
+    # GGUF (absolute path preferred; a bare basename is resolved against the models dir) used for
+    # tool-calling / agentic jobs: opencode/aider via /v1, the `node agent` command (web UI +
+    # Telegram), and the system-health report. BLANK (default) → use llm_model_path, so it always
+    # points at a model that exists. The installer sets this to a downloaded coding model's full
+    # path; Docker via POSTERCHANAI_LLM_TOOLS_MODEL. Admin-overridable in the UI.
+    llm_tools_model: str = ""
     llm_gpu_layers: str = "-1"  # -1 = all layers on GPU
     llm_n_threads: str = "0"  # 0 = auto-detect (cpu_count - 2)
     llm_n_batch: str = "1024"  # Batch size for prompt processing (higher = faster)

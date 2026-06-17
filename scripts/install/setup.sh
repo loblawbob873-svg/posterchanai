@@ -133,6 +133,20 @@ configure_database_settings() {
         sqlite3 posterchanai.db "INSERT OR REPLACE INTO settings (key, value) VALUES ('image_subprocess_mode', 'true');" 2>/dev/null
         print_success "Intel: native image gen + subprocess VRAM release enabled"
     fi
+
+    # Point the agentic/tools model (llm_tools_model) at the best coding GGUF we downloaded, by
+    # FULL PATH (prefer the 30B Coder, then the lightweight Claude-Code). Blank → falls back to the
+    # main model, so this only sets it when a real coding model is present.
+    if [ -f "posterchanai.db" ]; then
+        local MODELS_PATH="${UPLOAD_PATH:-/var/lib/posterchanai}/models"
+        for cm in "Qwen3-Coder-30B-A3B-Instruct-IQ4_XS.gguf" "Qwen3.5-9B-Claude-Code-Q4_K_M.gguf"; do
+            if [ -f "$MODELS_PATH/$cm" ]; then
+                sqlite3 posterchanai.db "INSERT OR REPLACE INTO settings (key, value) VALUES ('llm_tools_model', '$MODELS_PATH/$cm');" 2>/dev/null
+                print_success "Agentic/tools model set to $cm"
+                break
+            fi
+        done
+    fi
 }
 
 # Shared file downloader (wget|curl) - single implementation so the multi-model path below

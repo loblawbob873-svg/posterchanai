@@ -540,9 +540,10 @@ When asked to write or modify code or files:
             # model-path FIRST-RUN default can be seeded from the environment (the Docker image
             # ships a turnkey native+GPU config); unset → the default below.
             "llm_model_path": os.environ.get("POSTERCHANAI_LLM_MODEL_PATH", "/home/verita84/models/model.gguf"),
-            # Model for tool/agentic jobs (opencode/aider, `node agent`, health report). Env-overridable
-            # for Docker; blank or missing file falls back to llm_model_path.
-            "llm_tools_model": os.environ.get("POSTERCHANAI_LLM_TOOLS_MODEL", "Qwen3.5-9B-Claude-Code-Q4_K_M.gguf"),
+            # Model for tool/agentic jobs (opencode/aider, `node agent`, health report). Blank →
+            # falls back to llm_model_path (always a real file). Docker/installer set a coding-model
+            # path here via the env var / sqlite when one is downloaded.
+            "llm_tools_model": os.environ.get("POSTERCHANAI_LLM_TOOLS_MODEL", ""),
             "llm_gpu_layers": "-1",  # -1 = all layers on GPU
             "llm_n_threads": "0",  # 0 = auto-detect (physical cores)
             "llm_n_batch": "1024",  # Batch size for prompt processing (higher = faster, try 2048+ with 16GB+ VRAM)

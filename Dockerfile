@@ -213,6 +213,7 @@ ENV POSTERCHANAI_PORT=3051 \
     U2NET_MODEL_URL=https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx \
     POSTERCHANAI_LLM_MODEL_PATH=/var/lib/posterchanai/models/Qwen3.5-9B-abliterated-Q4_K_M.gguf \
     POSTERCHANAI_MODEL_URL=https://huggingface.co/lukey03/Qwen3.5-9B-abliterated-GGUF/resolve/main/Qwen3.5-9B-abliterated-Q4_K_M.gguf \
+    POSTERCHANAI_LLM_TOOLS_MODEL= \
     POSTERCHANAI_IMAGE_MODEL_PATH=Lykon/dreamshaper-8 \
     POSTERCHANAI_IMAGE_MODEL_TYPE=sd15
 # Tor / built-in proxy / torrenting ship ready (the `tor` binary + libtorrent are

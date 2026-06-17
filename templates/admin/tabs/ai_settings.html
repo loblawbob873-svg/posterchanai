@@ -93,20 +93,6 @@
         </div>
     </fieldset>
 
-    <fieldset id="ollama-settings">
-        <legend>Model name &amp; timeout</legend>
-        <div class="form-group">
-            <label for="ollama_model">Default Model (name in logs / API)</label>
-            <input type="text" id="ollama_model" name="ollama_model" placeholder="native">
-            <small><strong>This is the value that appears in logs and the API</strong> (e.g. &quot;LoadBalancer model='...'&quot;). <strong>Model Path (GGUF)</strong> above is the file actually loaded; this field is just the label sent to clients and other servers. If you see the wrong model name in logs, change this and Save.</small>
-        </div>
-        <div class="form-group">
-            <label for="ollama_timeout">LLM Request Timeout (ms)</label>
-            <input type="number" id="ollama_timeout" name="ollama_timeout" value="300000">
-            <small>Max time for an LLM request (video summaries need longer).</small>
-        </div>
-    </fieldset>
-
     <fieldset>
         <legend>Model Parameters</legend>
         <div class="form-row">
@@ -122,6 +108,10 @@
                 <label for="ollama_top_k">Top K</label>
                 <input type="number" id="ollama_top_k" name="ollama_top_k" value="40" min="1" max="100">
             </div>
+            <div class="form-group">
+                <label for="ollama_timeout">Request Timeout (ms)</label>
+                <input type="number" id="ollama_timeout" name="ollama_timeout" value="300000">
+            </div>
         </div>
         <div class="form-row">
             <div class="form-group">
@@ -131,7 +121,6 @@
             <div class="form-group">
                 <label for="ollama_num_ctx">Context Length</label>
                 <input type="text" id="ollama_num_ctx" name="ollama_num_ctx" placeholder="auto">
-                <small>Set to <code>auto</code> to auto-size the window to this GPU (recommended — the auto-tuner picks the largest safe context), or a fixed number (e.g. <code>32768</code>) to pin it. Pin a smaller value on backends where a large auto-sized window is unstable (e.g. some Intel Arc/SYCL builds); switch back to <code>auto</code> anytime.</small>
             </div>
             <div class="form-group">
                 <label for="ollama_num_predict">Max Tokens</label>
@@ -142,6 +131,7 @@
                 <input type="number" id="ollama_tool_num_predict" name="ollama_tool_num_predict" value="16384" min="64" step="1">
             </div>
         </div>
+        <small style="display:block;margin-top:-4px;opacity:0.8;"><strong>Context Length</strong>: <code>auto</code> sizes the window to the GPU (recommended), or set a fixed number (e.g. <code>32768</code>) to pin it — pin a smaller value on backends where a large auto-sized window is unstable, and switch back to <code>auto</code> anytime.</small>
         <div class="form-row">
             <div class="form-group">
                 <label for="tool_guidance_enabled">Inject small-context coding guidance (tool calls)</label>
