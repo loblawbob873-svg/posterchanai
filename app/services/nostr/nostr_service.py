@@ -13,9 +13,10 @@ from . import bech32, bip340, event as _event, relay, media
 logger = logging.getLogger(__name__)
 
 # Default relays (shared by bots + users); user/bot config may override.
+# relay.damus.io dropped: it rejects our WebSocket connections with HTTP 503 on nearly
+# every query, adding latency for no benefit — the other four cover read+write fine.
 DEFAULT_RELAYS = [
     "wss://nos.lol/",
-    "wss://relay.damus.io/",
     "wss://relay.primal.net/",
     "wss://relay.ditto.pub/",
     "wss://relay.sovrgn.co.za/",
@@ -120,7 +121,9 @@ async def fetch_mentions(pubkey_hex: str, relays, since: int | None = None, limi
 
 async def fetch_event(relays, event_id: str) -> dict | None:
     relays = relay.normalize_relays(relays) or DEFAULT_RELAYS
-    events = await relay.query(relays, [{"ids": [event_id], "limit": 1}], timeout=8)
+    # Short timeout: a point lookup either EOSEs fast or isn't there — used on every
+    # reply-chain hop, so a long wait per miss would compound badly.
+    events = await relay.query(relays, [{"ids": [event_id], "limit": 1}], timeout=5)
     return events[0] if events else None
 
 
@@ -133,7 +136,7 @@ async def fetch_thread(relays, event_id: str, limit: int = 50) -> list[dict]:
 async def get_metadata(pubkey_hex: str, relays) -> dict:
     """Latest kind-0 profile metadata (name/picture) for a pubkey, or {}."""
     relays = relay.normalize_relays(relays) or DEFAULT_RELAYS
-    events = await relay.query(relays, [{"kinds": [0], "authors": [pubkey_hex], "limit": 1}], timeout=8)
+    events = await relay.query(relays, [{"kinds": [0], "authors": [pubkey_hex], "limit": 1}], timeout=5)
     if not events:
         return {}
     import json as _json
