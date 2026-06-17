@@ -167,6 +167,25 @@
                         <input type="text" id="bot_f_nostr_media_endpoint" placeholder="https://blossom.primal.net">
                     </div>
                 </div>
+                <!-- Abuse rate limits: Nostr is permissionless, so cap requests per sender + globally. -->
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="bot_f_nostr_rate_per_user">Rate limit / sender <span class="bots-dim">(per window; 0 = off)</span></label>
+                        <input type="number" id="bot_f_nostr_rate_per_user" placeholder="5">
+                    </div>
+                    <div class="form-group">
+                        <label for="bot_f_nostr_rate_global">Rate limit / global <span class="bots-dim">(all senders; 0 = off)</span></label>
+                        <input type="number" id="bot_f_nostr_rate_global" placeholder="30">
+                    </div>
+                    <div class="form-group">
+                        <label for="bot_f_nostr_rate_window">Window <span class="bots-dim">(seconds)</span></label>
+                        <input type="number" id="bot_f_nostr_rate_window" placeholder="300">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="bot_f_nostr_rate_exempt">Rate-limit exempt <span class="bots-dim">(npub/hex, comma or newline separated — never throttled, e.g. you)</span></label>
+                    <textarea id="bot_f_nostr_rate_exempt" rows="2" placeholder="npub1youroperatorkey…"></textarea>
+                </div>
             </div>
 
             <!-- Matrix credentials -->

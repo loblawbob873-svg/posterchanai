@@ -6,6 +6,7 @@
 const BOT_KNOWN_KEYS = [
     'server', 'username', 'access_token', 'pleroma_admin_token',
     'nostr_nsec', 'nostr_relays', 'nostr_media_service', 'nostr_media_endpoint',
+    'nostr_rate_per_user', 'nostr_rate_global', 'nostr_rate_window', 'nostr_rate_exempt',
     'matrix_server', 'matrix_user_id', 'matrix_access_token', 'matrix_room_id', 'matrix_admins',
     'prompt',
     'sql_database', 'db_user', 'db_pass', 'db_host',
