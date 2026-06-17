@@ -21,6 +21,7 @@ if script_dir not in sys.path:
 
 from config import NOSTR_NSEC, BOT_BLACKLIST
 from bot_commands import MEDIA_COMMANDS, NO_CAPTION_COMMANDS, BOT_HELP_TEXT
+from rate_limit import SlidingWindowLimiter
 from ai import generate_reply, is_ai_configured
 import nostr as _nk
 from searxng import smart_search, summarize_search_results, search_and_download_images
@@ -39,6 +40,29 @@ download_image_from_url = _nk.download_image_from_url
 _NOSTR_TOKEN_RE = re.compile(r"nostr:[a-z0-9]+", re.IGNORECASE)
 _YTDL_COOLDOWN_SECONDS = 30
 _ytdl_last_request: dict = {}
+
+# Abuse guard: Nostr is permissionless (anyone on any relay can mention the bot), so cap
+# requests per sender pubkey and globally. Tunable per-bot (Admin → Bots) via the
+# NOSTR_RATE_* env the manager injects. 0 disables a dimension. Exempt list = npub/hex
+# pubkeys never limited (e.g. the operator).
+_RATE_PER_USER = int(os.getenv("NOSTR_RATE_PER_USER", "5"))      # per window per pubkey
+_RATE_GLOBAL = int(os.getenv("NOSTR_RATE_GLOBAL", "30"))         # per window, all senders
+_RATE_WINDOW = int(os.getenv("NOSTR_RATE_WINDOW", "300"))        # seconds
+
+
+def _rate_exempt() -> set:
+    out = set()
+    for tok in (os.getenv("NOSTR_RATE_EXEMPT", "") or "").replace(",", "\n").split():
+        try:
+            hexpk = _nk._svc.to_pubkey_hex(tok.strip())
+            if hexpk:
+                out.add(hexpk)
+        except Exception:
+            pass
+    return out
+
+
+_rl = SlidingWindowLimiter(_RATE_PER_USER, _RATE_GLOBAL, _RATE_WINDOW, _rate_exempt())
 
 
 def _state_suffix() -> str:
@@ -305,6 +329,13 @@ def process_mentions():
         if user.get("pubkey") == own_pubkey:
             continue  # never reply to self
         if any(b in (user.get("username") or "").lower() for b in blacklist):
+            continue
+        # Rate limit BEFORE any work or claim: a throttled mention is left unclaimed so it
+        # re-checks next poll (no token consumed on rejection) and gets served once the
+        # window frees — rather than burning a reply or being permanently dropped. We stay
+        # silent on rejection (replying would just amplify spam).
+        if not _rl.allow(user.get("pubkey") or ""):
+            print(f"[nostr] rate-limited {user.get('username')} ({(user.get('pubkey') or '')[:10]}…) — skipping", flush=True)
             continue
         prompt_text = _NOSTR_TOKEN_RE.sub("", note.get("text") or "").strip()
         prompt_text = re.sub(r"@[\w@.]+", "", prompt_text).strip()[:4000]

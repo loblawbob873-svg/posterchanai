@@ -221,6 +221,11 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
             setif("nostr_relays", "NOSTR_RELAYS")
             setif("nostr_media_service", "NOSTR_MEDIA_SERVICE")
             setif("nostr_media_endpoint", "NOSTR_MEDIA_ENDPOINT")
+            # Abuse rate limits (per-pubkey + global per window) — Nostr is permissionless.
+            setif("nostr_rate_per_user", "NOSTR_RATE_PER_USER")
+            setif("nostr_rate_global", "NOSTR_RATE_GLOBAL")
+            setif("nostr_rate_window", "NOSTR_RATE_WINDOW")
+            setif("nostr_rate_exempt", "NOSTR_RATE_EXEMPT")
         elif platform == "matrix":
             setif("matrix_server", "MATRIX_SERVER")
             setif("matrix_user_id", "MATRIX_USER_ID")
