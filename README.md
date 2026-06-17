@@ -6,7 +6,7 @@
 
 ### Your own AI assistant — self-hosted, private, and ridiculously capable.
 
-One FastAPI backend that does chat, image generation, voice, email, news, torrents, and runs autonomous bots on **Telegram, Matrix, Misskey & Pleroma**. Cloud LLMs or fully local. Your hardware, your data, your rules.
+One FastAPI backend that does chat, image generation, voice, email, news, torrents, and runs autonomous bots on **Telegram, Matrix, Misskey, Pleroma & Nostr**. Cloud LLMs or fully local. Your hardware, your data, your rules.
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -29,7 +29,7 @@ One FastAPI backend that does chat, image generation, voice, email, news, torren
 
 - 🏠 **Truly self-hosted** — runs on your own box, SQLite-backed, no telemetry, single-admin multi-user. Your conversations and keys never leave your network.
 - 🔌 **Bring any model** — cloud (any OpenAI-compatible API) or local: **Ollama** or **llama.cpp** (CPU / CUDA / HIP / **Intel Arc SYCL**). Round-robin load-balance across several backends.
-- 🤖 **It's also a bot platform** — drive everything from **Telegram & Matrix**, and run autonomous **Pleroma / Misskey / Matrix** bots from a single admin tab.
+- 🤖 **It's also a bot platform** — drive everything from **Telegram & Matrix**, and run autonomous **Pleroma / Misskey / Matrix / Nostr** bots from a single admin tab.
 - 🎨 **More than chat** — image generation, TTS/STT, website screenshots, YouTube/X summarize & download, media tools, interactive study flashcards, email, news, finance, torrents — all behind one chat box.
 - 🛠️ **Hackable & honest** — thin routers, services for logic, an interactive installer, and an OpenAI-compatible `/v1/` endpoint that agentic coding clients (e.g. opencode) can drive against your local models.
 
@@ -77,8 +77,9 @@ One FastAPI backend that does chat, image generation, voice, email, news, torren
   **bundled in this repo** (`botframework/`) and supervised in-process; no separate repo or
   hand-edited config file. See [Bot manager](docs/BOTS.md).
 - **Telegram and Matrix bots** drive chat, commands, and media from your phone
-- **Social posting** to **Misskey**, **Pleroma/Mastodon**, and **Matrix**: turn any reply, link, or topic into a post with the `post` command (rewrite, verbatim, or with your own instructions). See [Social posting from the bots](#social-posting-from-the-bots).
-- **Social notification relay**: forward mentions/replies/DMs from Misskey/Pleroma/Matrix to Telegram and reply right from the chat. See [Social notifications to Telegram](#social-notifications-to-telegram).
+- **Social posting** to **Misskey**, **Pleroma/Mastodon**, **Matrix**, and **Nostr**: turn any reply, link, or topic into a post with the `post` command (rewrite, verbatim, or with your own instructions). See [Social posting from the bots](#social-posting-from-the-bots).
+- **Social notification relay**: forward mentions/replies/DMs from Misskey/Pleroma/Matrix/Nostr to Telegram and reply right from the chat. See [Social notifications to Telegram](#social-notifications-to-telegram).
+- **Nostr** (keypair identity — no instance, no signup): run a **Nostr reply bot** and link your own `nsec` to post & reply. Handles mentions, replies, reactions, reposts, plus `geni`/image **effects** and **Nitter→Nostr** feeds; publishes to **multiple relays**; uploads media to a **Blossom** (BUD-02) or **NIP-96** host (e.g. nostr.build) embedded with `imeta`; supports **NIP-05** verification. The bot only replies when actually addressed (first mention / direct reply — no thread-spam), is **rate-limited per sender** (with an exempt list), and all bot/social egress can route through the built-in **Tor** proxy. Pure-Python signing (BIP-340) — no native deps.
 - **Fediverse timeline → Matrix room**: mirror one Misskey/Pleroma timeline (home/global/local) into a single Matrix room, with avatar + name, custom emoji, inline images (as captions), quote-posts, and **conversations grouped into Matrix threads** (replies thread under their parent; missing ancestors are backfilled). Members act straight from Element, each under their **own** linked fediverse account (resolved cross-instance by canonical AP URI):
   - **react** ❤/any emoji → favourite (Misskey keeps the exact emoji) · **🔁** → boost
   - **post** a top-level message → new status (with image) · **reply in a thread** → reply (auto-mentions the author)

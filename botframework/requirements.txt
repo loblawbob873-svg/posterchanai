@@ -3,6 +3,12 @@
 # HTTP requests
 requests>=2.28.0
 
+# Nostr bot: relay websockets + media uploads go through app.services.nostr (Blossom/NIP-96
+# over httpx, relays over websockets, both routed through the built-in proxy). Version floors
+# match the app: httpx proxy= string (0.28+), websockets connect(proxy=) (14+).
+httpx>=0.28.0
+websockets>=14.0
+
 # Timezone handling
 pytz>=2023.0
 
