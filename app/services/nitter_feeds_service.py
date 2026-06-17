@@ -32,6 +32,10 @@ _MAX_DL = 20_000_000          # cap media/avatar download size to bound memory
 _MAX_SEEN = 200               # guids retained per feed
 _MAX_NEW_PER_FEED = 5         # don't flood a chat if a feed jumps ahead
 _DC_CREATOR = "{http://purl.org/dc/elements/1.1/}creator"
+# Nitter uses these literal placeholder strings as the RSS <title> of a tweet that
+# has NO text (just media), instead of an empty title — so they must be treated as
+# image-only and skipped, same as an empty title.
+_MEDIA_PLACEHOLDER_TITLES = {"image", "video", "gif"}
 
 
 # --- settings helpers -------------------------------------------------------
@@ -77,9 +81,11 @@ def _handle_from_rss(rss_url: str) -> str:
 def _should_skip(item) -> bool:
     """Keep only the account's own original, text-bearing tweets: drop retweets
     (native 'RT by @user:' and classic 'RT @handle:'), replies ('R to ') and
-    image-only posts (empty title)."""
+    image-only posts (empty title, or Nitter's 'Image'/'Video'/'GIF' placeholder
+    title for a text-less media tweet)."""
     title = (item.findtext("title") or "").strip()
-    return ((not title) or title.startswith("RT by ") or title.startswith("RT @")
+    return ((not title) or title.lower() in _MEDIA_PLACEHOLDER_TITLES
+            or title.startswith("RT by ") or title.startswith("RT @")
             or title.startswith("R to "))
 
 
