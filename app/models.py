@@ -49,6 +49,15 @@ class User(Base):
     pleroma_instance_url = Column(String(500), nullable=True)
     pleroma_access_token = Column(String(500), nullable=True)
 
+    # Nostr integration settings. Identity is a secret key (nsec/hex); posts publish to the
+    # user's relays; media uploads to an external Blossom/NIP-96 host (not an "instance").
+    nostr_enabled = Column(Boolean, default=False)
+    nostr_nsec = Column(String(200), nullable=True)            # secret key (nsec1… or hex)
+    nostr_npub = Column(String(100), nullable=True)            # derived public key, for display
+    nostr_relays = Column(Text, nullable=True)                 # comma/newline list; blank = defaults
+    nostr_media_service = Column(String(20), nullable=True)    # "blossom" | "nip96"
+    nostr_media_endpoint = Column(String(500), nullable=True)  # blank = service default
+
     # Matrix integration settings
     matrix_enabled = Column(Boolean, default=False)
     matrix_homeserver = Column(String(500), nullable=True)
@@ -65,6 +74,7 @@ class User(Base):
     social_notif_enabled = Column(Boolean, default=False)
     misskey_notif_since = Column(Text, nullable=True)   # last-seen Misskey notification id
     pleroma_notif_since = Column(Text, nullable=True)   # last-seen Pleroma notification id
+    nostr_notif_since = Column(Text, nullable=True)     # last-seen Nostr event created_at (unix)
     matrix_notif_since = Column(Text, nullable=True)    # Matrix /sync next_batch cursor
 
     # Fediverse notifications → Matrix DM (independent per-user toggle, separate from Telegram above)

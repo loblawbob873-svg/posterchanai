@@ -477,6 +477,13 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         pleroma_enabled=current_user.pleroma_enabled if hasattr(current_user, 'pleroma_enabled') else False,
         pleroma_instance_url=current_user.pleroma_instance_url if hasattr(current_user, 'pleroma_instance_url') else None,
         pleroma_has_access_token=bool(current_user.pleroma_access_token) if hasattr(current_user, 'pleroma_access_token') else False,
+        # Nostr settings (key linked via /api/nostr/connect; never returned, only presence)
+        nostr_enabled=current_user.nostr_enabled if hasattr(current_user, 'nostr_enabled') else False,
+        nostr_npub=current_user.nostr_npub if hasattr(current_user, 'nostr_npub') else None,
+        nostr_has_key=bool(current_user.nostr_nsec) if hasattr(current_user, 'nostr_nsec') else False,
+        nostr_relays=current_user.nostr_relays if hasattr(current_user, 'nostr_relays') else None,
+        nostr_media_service=current_user.nostr_media_service if hasattr(current_user, 'nostr_media_service') else None,
+        nostr_media_endpoint=current_user.nostr_media_endpoint if hasattr(current_user, 'nostr_media_endpoint') else None,
         # Matrix settings
         matrix_enabled=current_user.matrix_enabled if hasattr(current_user, 'matrix_enabled') else False,
         matrix_homeserver=current_user.matrix_homeserver if hasattr(current_user, 'matrix_homeserver') else None,
@@ -589,6 +596,17 @@ def update_user_settings(
         current_user.misskey_instance_url = settings.misskey_instance_url.strip() if settings.misskey_instance_url else None
     if settings.misskey_api_token is not None:
         current_user.misskey_api_token = settings.misskey_api_token if settings.misskey_api_token else None
+
+    # Nostr settings (the secret key is linked via /api/nostr/connect; here we let the user
+    # toggle/disable and tweak relays + media host without re-pasting the key).
+    if settings.nostr_enabled is not None:
+        current_user.nostr_enabled = settings.nostr_enabled
+    if settings.nostr_relays is not None:
+        current_user.nostr_relays = settings.nostr_relays.strip() or None
+    if settings.nostr_media_service is not None:
+        current_user.nostr_media_service = settings.nostr_media_service.strip() or None
+    if settings.nostr_media_endpoint is not None:
+        current_user.nostr_media_endpoint = settings.nostr_media_endpoint.strip() or None
 
     # Matrix settings (homeserver URL only — token is managed via /api/matrix/connect)
     if settings.matrix_enabled is not None:

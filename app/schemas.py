@@ -491,6 +491,11 @@ class UserSettingsUpdate(BaseModel):
     # Pleroma settings (read-only via /api/pleroma/connect; exposed here for display)
     pleroma_enabled: Optional[bool] = None
     pleroma_instance_url: Optional[str] = None
+    # Nostr settings (key linked via /api/nostr/connect; relays/media editable here)
+    nostr_enabled: Optional[bool] = None
+    nostr_relays: Optional[str] = None
+    nostr_media_service: Optional[str] = None
+    nostr_media_endpoint: Optional[str] = None
     # Matrix settings
     matrix_enabled: Optional[bool] = None
     matrix_homeserver: Optional[str] = None
@@ -528,6 +533,13 @@ class UserSettingsResponse(BaseModel):
     pleroma_enabled: bool = False
     pleroma_instance_url: Optional[str] = None
     pleroma_has_access_token: bool = False
+    # Nostr settings (the secret key is never returned, only whether one is set)
+    nostr_enabled: bool = False
+    nostr_npub: Optional[str] = None
+    nostr_has_key: bool = False
+    nostr_relays: Optional[str] = None
+    nostr_media_service: Optional[str] = None
+    nostr_media_endpoint: Optional[str] = None
     # Matrix settings
     matrix_enabled: bool = False
     matrix_homeserver: Optional[str] = None

@@ -263,6 +263,45 @@ www.coindesk.com/price/xrp/news|XRP News"></textarea>
                             <div class="settings-status success" id="misskeyConnectedMsg"></div>
                         </div>
                     </fieldset>
+
+                    <fieldset style="margin-top: 24px;">
+                        <legend>Nostr Integration</legend>
+                        <p class="fieldset-info">Connect a Nostr key to post and forward notifications. Nostr has no instance: you paste your <strong>secret key</strong>, posts publish to your <strong>relays</strong>, and media uploads to an external <strong>Blossom/NIP-96 host</strong>. The key is stored on this server and never shown again.</p>
+
+                        <div class="form-group">
+                            <label for="nostrSecretKey">Secret key</label>
+                            <input type="password" id="nostrSecretKey" placeholder="nsec1… or 64-char hex" autocomplete="new-password">
+                            <small id="nostrKeyStatus">Not connected.</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="nostrRelays">Relays</label>
+                            <textarea id="nostrRelays" rows="5" placeholder="wss://nos.lol/&#10;wss://relay.damus.io/&#10;wss://relay.primal.net/&#10;wss://relay.ditto.pub/&#10;wss://relay.sovrgn.co.za/"></textarea>
+                            <small>One per line or comma-separated. Leave blank to use the default relays.</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="nostrMediaService">Media host type</label>
+                            <select id="nostrMediaService">
+                                <option value="blossom">Blossom</option>
+                                <option value="nip96">NIP-96</option>
+                            </select>
+                            <small>How attached images/videos are hosted before being linked in a note.</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="nostrMediaEndpoint">Media host URL</label>
+                            <input type="url" id="nostrMediaEndpoint" placeholder="https://blossom.primal.net">
+                            <small>Blank uses blossom.primal.net (Blossom) or nostr.build (NIP-96).</small>
+                        </div>
+                        <div class="form-group" id="nostrAuthSection">
+                            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                                <button type="button" class="btn-primary" id="nostrConnectBtn">Connect</button>
+                                <button type="button" class="btn-danger" id="nostrDisconnectBtn" style="display: none;">Disconnect</button>
+                            </div>
+                            <div id="nostrStatus" class="test-result" style="margin-top: 8px;"></div>
+                        </div>
+                        <div class="form-group" id="nostrConnectedInfo" style="display: none;">
+                            <div class="settings-status success" id="nostrConnectedMsg"></div>
+                        </div>
+                    </fieldset>
                 </div>
 
                 <!-- Finance Tab -->

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.models import User, Setting, SocialReplyMap
 from app.services import misskey_service, pleroma_service, matrix_service
+from app.services.nostr import nostr_service
 from app.services.telegram_service import TelegramService
 
 logger = logging.getLogger(__name__)
@@ -120,7 +121,41 @@ def _norm_matrix(ev: dict) -> dict:
     }
 
 
-_PLATFORM_ICON = {"misskey": "🍮", "pleroma": "💧", "matrix": "🟩"}
+_NOSTR_KIND_TYPE = {1: "mention", 6: "repost", 7: "reaction"}
+
+
+def _norm_nostr(ev: dict) -> dict:
+    """Normalize a raw Nostr event (kind 1 mention/reply, 6 repost, 7 reaction)."""
+    pubkey = ev.get("pubkey", "")
+    try:
+        npub = nostr_service.npub_of(pubkey)
+    except Exception:
+        npub = pubkey[:12]
+    kind = ev.get("kind", 1)
+    content = ev.get("content", "") or ""
+    if kind == 7:
+        text = f"reacted {content or '+'}"
+    elif kind == 6:
+        text = "reposted your note"
+    else:
+        text = content
+    return {
+        "platform": "nostr",
+        "type": _NOSTR_KIND_TYPE.get(kind, "notification"),
+        "actor": npub,
+        "actor_display": npub[:16] + "…",
+        "actor_avatar": None,
+        "text": text,
+        # Only kind-1 mentions/replies are a sensible reply target; reactions/reposts notify only.
+        "reply_target": ev.get("id") if kind == 1 else None,
+        "room_id": None,
+        "event_id": None,
+        "visibility": "public",
+        "url": None,
+    }
+
+
+_PLATFORM_ICON = {"misskey": "🍮", "pleroma": "💧", "matrix": "🟩", "nostr": "🟣"}
 
 
 def _format(norm: dict) -> str:
@@ -210,6 +245,41 @@ async def _relay_misskey(db: Session, tg: TelegramService, user: User, chat_id: 
     db.commit()
 
 
+def _nostr_cfg(user: User) -> tuple[bytes, list, dict]:
+    """(seckey, relays, media_cfg) for a user's linked Nostr account."""
+    seckey = nostr_service.decode_seckey(user.nostr_nsec)
+    relays = nostr_service.relay.normalize_relays(user.nostr_relays) or nostr_service.DEFAULT_RELAYS
+    media_cfg = {"service": user.nostr_media_service or "blossom",
+                 "endpoint": user.nostr_media_endpoint or ""}
+    return seckey, relays, media_cfg
+
+
+async def _relay_nostr(db: Session, tg: TelegramService, user: User, chat_id: str) -> None:
+    pubkey = nostr_service.derive_pubkey(nostr_service.decode_seckey(user.nostr_nsec))
+    relays = nostr_service.relay.normalize_relays(user.nostr_relays) or nostr_service.DEFAULT_RELAYS
+    since = int(user.nostr_notif_since) if (user.nostr_notif_since or "").isdigit() else None
+    raw = await nostr_service.fetch_mentions(pubkey, relays, since=since)
+    # Exclude the user's own events (e.g. our replies/reactions that carry a self p-tag).
+    raw = [ev for ev in raw if ev.get("pubkey") != pubkey]
+    if not raw:
+        return
+    newest = max(int(ev.get("created_at", 0)) for ev in raw)
+    # Cursor is a unix-second timestamp; fetch_mentions queries `since+1` to avoid re-sending
+    # the boundary event. Trade-off: a second mention landing in the SAME second as `newest`
+    # after this poll is skipped (Nostr lacks the opaque ids Misskey/Pleroma cursor on). Rare
+    # for a single account; accepted over the duplicate-flood the inclusive alternative causes.
+    if since is None:
+        # First poll: establish the cursor without forwarding the backlog.
+        user.nostr_notif_since = str(newest)
+        db.commit()
+        return
+    for ev in sorted(raw, key=lambda e: e.get("created_at", 0)):  # oldest-first
+        await _deliver(db, tg, user, chat_id, _norm_nostr(ev))
+    user.nostr_notif_since = str(newest)
+    _prune(db)
+    db.commit()
+
+
 async def _relay_matrix(db: Session, tg: TelegramService, user: User, chat_id: str) -> None:
     events, next_batch = await matrix_service.fetch_notifications(
         user.matrix_homeserver, user.matrix_access_token, user.matrix_user_id, since=user.matrix_notif_since
@@ -241,6 +311,11 @@ async def _poll_user(db: Session, tg: TelegramService, user: User) -> None:
             await _relay_matrix(db, tg, user, chat_id)
         except Exception as e:
             logger.warning(f"[social] matrix relay failed for user {user.id}: {e}")
+    if getattr(user, "nostr_enabled", False) and user.nostr_nsec:
+        try:
+            await _relay_nostr(db, tg, user, chat_id)
+        except Exception as e:
+            logger.warning(f"[social] nostr relay failed for user {user.id}: {e}")
 
 
 async def poll_once(db: Session) -> None:
@@ -301,6 +376,13 @@ async def handle_reply(db: Session, chat_id, reply_to_message_id: int, text: str
                 visibility=row.visibility or "public", reply_id=row.target_id,
             )
             return "✅ Reply posted to Misskey."
+        if row.platform == "nostr":
+            if not row.target_id:
+                return "⚠️ That notification has nothing to reply to."
+            seckey, relays, media_cfg = _nostr_cfg(user)
+            parent = await nostr_service.fetch_event(relays, row.target_id)
+            await nostr_service.post_note(seckey, relays, text, reply_to=parent, media_cfg=media_cfg)
+            return "✅ Reply posted to Nostr."
         if row.platform == "matrix":
             if not row.room_id:
                 return "⚠️ That notification has no room to reply to."

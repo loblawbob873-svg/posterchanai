@@ -5,6 +5,7 @@
 // field — no JSON needed for normal config). Shown contextually per feature/platform.
 const BOT_KNOWN_KEYS = [
     'server', 'username', 'access_token', 'pleroma_admin_token',
+    'nostr_nsec', 'nostr_relays', 'nostr_media_service', 'nostr_media_endpoint',
     'matrix_server', 'matrix_user_id', 'matrix_access_token', 'matrix_room_id', 'matrix_admins',
     'prompt',
     'sql_database', 'db_user', 'db_pass', 'db_host',
@@ -124,7 +125,9 @@ function onBotFormChange() {
     // Matrix can be a SECONDARY connection on a misskey/pleroma bot (e.g. a Matrix listener
     // that also posts to misskey). The "Also connect to Matrix" checkbox only makes sense then.
     const matrixSecondary = ck('bot_ft_matrix');
-    show('bot_grp_fedi', !isMatrix);
+    const isNostr = platform === 'nostr';
+    show('bot_grp_fedi', !isMatrix && !isNostr);   // server/username/token: Misskey/Pleroma only
+    show('bot_grp_nostr', isNostr);                // Nostr: secret key + relays + media host
     show('bot_grp_matrix', isMatrix || (matrixSecondary && !isImage));
     show('bot_grp_matrix_extra', (isMatrix || matrixSecondary) && !isImage);
     show('bot_ft_matrix_label', !isMatrix && !isImage);   // the checkbox itself

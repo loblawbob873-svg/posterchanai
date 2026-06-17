@@ -299,6 +299,14 @@ def _run_migrations():
         ("pleroma_enabled", "BOOLEAN DEFAULT 0"),
         ("pleroma_instance_url", "VARCHAR(500)"),
         ("pleroma_access_token", "VARCHAR(500)"),
+        # Nostr columns (keypair identity + relays + external media host)
+        ("nostr_enabled", "BOOLEAN DEFAULT 0"),
+        ("nostr_nsec", "VARCHAR(200)"),
+        ("nostr_npub", "VARCHAR(100)"),
+        ("nostr_relays", "TEXT"),
+        ("nostr_media_service", "VARCHAR(20)"),
+        ("nostr_media_endpoint", "VARCHAR(500)"),
+        ("nostr_notif_since", "TEXT"),
         # Matrix columns
         ("matrix_enabled", "BOOLEAN DEFAULT 0"),
         ("matrix_homeserver", "VARCHAR(500)"),

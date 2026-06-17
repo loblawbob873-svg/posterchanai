@@ -59,6 +59,14 @@ MISSKEY_SERVER = os.getenv("MISSKEY_SERVER")
 MISSKEY_USERNAME = os.getenv("MISSKEY_USERNAME")
 MISSKEY_ACCESS_TOKEN = os.getenv("MISSKEY_ACCESS_TOKEN")
 
+# Nostr Configuration. Identity is a secret key (nsec/hex); posts are signed events
+# published to multiple relays; media goes to an external Blossom/NIP-96 host (NOT the
+# "instance"). NOSTR_RELAYS is a comma/newline list; blank → app default relays.
+NOSTR_NSEC = os.getenv("NOSTR_NSEC")
+NOSTR_RELAYS = os.getenv("NOSTR_RELAYS", "")
+NOSTR_MEDIA_SERVICE = os.getenv("NOSTR_MEDIA_SERVICE", "blossom")   # "blossom" | "nip96"
+NOSTR_MEDIA_ENDPOINT = os.getenv("NOSTR_MEDIA_ENDPOINT", "")        # blank → service default
+
 # Pleroma Configuration
 PLEROMA_ENDPOINT = os.getenv("PLEROMA_ENDPOINT")
 PLEROMA_USERNAME = os.getenv("PLEROMA_USERNAME")

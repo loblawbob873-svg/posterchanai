@@ -388,6 +388,57 @@ class ChatHandler {
             });
         }
 
+        // Nostr connect / disconnect buttons (paste a secret key — no OAuth/instance)
+        const nostrConnectBtn = document.getElementById('nostrConnectBtn');
+        const nostrDisconnectBtn = document.getElementById('nostrDisconnectBtn');
+        if (nostrConnectBtn) {
+            nostrConnectBtn.addEventListener('click', async () => {
+                const statusEl = document.getElementById('nostrStatus');
+                const secret_key = (document.getElementById('nostrSecretKey').value || '').trim();
+                const relays = (document.getElementById('nostrRelays').value || '').trim();
+                const media_service = document.getElementById('nostrMediaService').value;
+                const media_endpoint = (document.getElementById('nostrMediaEndpoint').value || '').trim();
+                if (!secret_key) {
+                    if (statusEl) { statusEl.textContent = 'Paste your Nostr secret key (nsec… or hex) first.'; statusEl.className = 'test-result error'; }
+                    return;
+                }
+                if (statusEl) { statusEl.textContent = 'Connecting…'; statusEl.className = 'test-result'; }
+                try {
+                    const resp = await csrfFetch('/api/nostr/connect', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ secret_key, relays, media_service, media_endpoint })
+                    });
+                    const data = await resp.json();
+                    if (!resp.ok) {
+                        if (statusEl) { statusEl.textContent = data.detail || 'Failed to connect'; statusEl.className = 'test-result error'; }
+                        return;
+                    }
+                    if (statusEl) { statusEl.textContent = '✓ Connected as ' + data.npub; statusEl.className = 'test-result success'; }
+                    document.getElementById('nostrSecretKey').value = '';
+                    await this.loadUserSettings();
+                } catch (e) {
+                    if (statusEl) { statusEl.textContent = 'Error: ' + e.message; statusEl.className = 'test-result error'; }
+                }
+            });
+        }
+        if (nostrDisconnectBtn) {
+            nostrDisconnectBtn.addEventListener('click', async () => {
+                if (!confirm('Disconnect your Nostr account?')) return;
+                try {
+                    const resp = await csrfFetch('/api/nostr/disconnect', { method: 'POST' });
+                    if (resp.ok) {
+                        await this.loadUserSettings();
+                    } else {
+                        const d = await resp.json();
+                        alert(d.detail || 'Failed to disconnect');
+                    }
+                } catch (e) {
+                    alert('Error: ' + e.message);
+                }
+            });
+        }
+
         // Matrix connect / disconnect buttons
         const matrixConnectBtn = document.getElementById('matrixConnectBtn');
         const matrixDisconnectBtn = document.getElementById('matrixDisconnectBtn');
@@ -534,6 +585,15 @@ class ChatHandler {
                 if (financeApiKeyEl && financeApiKeyEl.value.trim()) {
                     settings.finance_api_key = financeApiKeyEl.value.trim();
                 }
+
+                // Nostr relays + media host — editable here without re-pasting the secret key
+                // (the key itself is linked via the Connect button → /api/nostr/connect).
+                const nostrRelaysSaveEl = document.getElementById('nostrRelays');
+                const nostrMediaServiceSaveEl = document.getElementById('nostrMediaService');
+                const nostrMediaEndpointSaveEl = document.getElementById('nostrMediaEndpoint');
+                if (nostrRelaysSaveEl) settings.nostr_relays = nostrRelaysSaveEl.value.trim();
+                if (nostrMediaServiceSaveEl) settings.nostr_media_service = nostrMediaServiceSaveEl.value;
+                if (nostrMediaEndpointSaveEl) settings.nostr_media_endpoint = nostrMediaEndpointSaveEl.value.trim();
 
                 try {
                     const response = await csrfFetch('/api/auth/settings', {
@@ -818,6 +878,33 @@ class ChatHandler {
                     if (pleromaConnectBtnEl) pleromaConnectBtnEl.style.display = 'inline-block';
                     if (pleromaDisconnectBtnEl) pleromaDisconnectBtnEl.style.display = 'none';
                     if (pleromaConnectedInfo) pleromaConnectedInfo.style.display = 'none';
+                }
+
+                // Nostr — relays/media echo back; the secret key never does (only presence)
+                const nostrRelaysEl = document.getElementById('nostrRelays');
+                const nostrMediaServiceEl = document.getElementById('nostrMediaService');
+                const nostrMediaEndpointEl = document.getElementById('nostrMediaEndpoint');
+                const nostrSecretKeyEl = document.getElementById('nostrSecretKey');
+                const nostrKeyStatus = document.getElementById('nostrKeyStatus');
+                const nostrConnectBtnEl = document.getElementById('nostrConnectBtn');
+                const nostrDisconnectBtnEl = document.getElementById('nostrDisconnectBtn');
+                const nostrConnectedInfo = document.getElementById('nostrConnectedInfo');
+                const nostrConnectedMsg = document.getElementById('nostrConnectedMsg');
+                if (nostrRelaysEl) nostrRelaysEl.value = settings.nostr_relays || '';
+                if (nostrMediaServiceEl) nostrMediaServiceEl.value = settings.nostr_media_service || 'blossom';
+                if (nostrMediaEndpointEl) nostrMediaEndpointEl.value = settings.nostr_media_endpoint || '';
+                if (nostrSecretKeyEl) nostrSecretKeyEl.value = '';
+                if (settings.nostr_enabled && settings.nostr_has_key) {
+                    if (nostrKeyStatus) nostrKeyStatus.textContent = 'Connected as ' + (settings.nostr_npub || 'your key');
+                    if (nostrConnectBtnEl) nostrConnectBtnEl.style.display = 'none';
+                    if (nostrDisconnectBtnEl) nostrDisconnectBtnEl.style.display = 'inline-block';
+                    if (nostrConnectedInfo) nostrConnectedInfo.style.display = 'block';
+                    if (nostrConnectedMsg) nostrConnectedMsg.textContent = 'Connected as ' + (settings.nostr_npub || '');
+                } else {
+                    if (nostrKeyStatus) nostrKeyStatus.textContent = 'Not connected.';
+                    if (nostrConnectBtnEl) nostrConnectBtnEl.style.display = 'inline-block';
+                    if (nostrDisconnectBtnEl) nostrDisconnectBtnEl.style.display = 'none';
+                    if (nostrConnectedInfo) nostrConnectedInfo.style.display = 'none';
                 }
 
                 // Matrix

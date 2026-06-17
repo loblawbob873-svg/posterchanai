@@ -193,6 +193,13 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
             setif("username", "PLEROMA_USERNAME", lambda v: str(v).lstrip("@"))
             setif("access_token", "PLEROMA_ACCESS_TOKEN")
             setif("pleroma_admin_token", "PLEROMA_ADMIN_TOKEN")
+        elif platform == "nostr":
+            # Nostr identity is a secret key (nsec/hex); relays + the external media host come
+            # from the bot's config. Blank relays → app defaults.
+            setif("nostr_nsec", "NOSTR_NSEC")
+            setif("nostr_relays", "NOSTR_RELAYS")
+            setif("nostr_media_service", "NOSTR_MEDIA_SERVICE")
+            setif("nostr_media_endpoint", "NOSTR_MEDIA_ENDPOINT")
         elif platform == "matrix":
             setif("matrix_server", "MATRIX_SERVER")
             setif("matrix_user_id", "MATRIX_USER_ID")
