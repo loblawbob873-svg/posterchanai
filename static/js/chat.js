@@ -1490,7 +1490,7 @@ class ChatHandler {
         }
     }
 
-    // Delete a pinned search via the command endpoint, then grey out its row.
+    // Delete a pin via the command endpoint, then grey out its row.
     async deleteSavedSearch(id, btn) {
         if (!id) return;
         try {
@@ -1500,15 +1500,15 @@ class ChatHandler {
                 body: JSON.stringify({ command: `pin delete ${id}` })
             });
             if (resp.ok) {
-                this.showToast('🗑️ Saved search deleted');
+                this.showToast('🗑️ Pin deleted');
                 const item = btn.closest('.saved-search-item');
                 if (item) item.remove();
             } else {
-                this.showToast('Could not delete saved search');
+                this.showToast('Could not delete pin');
             }
         } catch (e) {
             console.error('deleteSavedSearch failed:', e);
-            this.showToast('Could not delete saved search');
+            this.showToast('Could not delete pin');
         }
     }
 

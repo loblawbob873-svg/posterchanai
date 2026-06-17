@@ -419,7 +419,7 @@ def _help_main_keyboard() -> dict:
             ],
             [
                 {"text": "⏰ Reminders",   "callback_data": "help:reminders"},
-                {"text": "📌 Saved Searches", "callback_data": "help:pins"},
+                {"text": "📌 Pins", "callback_data": "help:pins"},
             ],
         ]
     }

@@ -18,11 +18,12 @@ from app.services.command_service import CommandService
 logger = logging.getLogger(__name__)
 _HELP_SECTIONS = {
     "pins": (
-        "📌 *Pinned Searches*\n\n"
-        "Save searches you run often, then re-run them with one tap:\n\n"
+        "📌 *Pins*\n\n"
+        "Pin anything you run often — a search or any command — then re-run it with one tap:\n\n"
         "• `pin ai news`\n"
-        "• `pin latest xrp news and price`\n\n"
-        "Send `pins` to see your saved searches — each has a 🔍 Run and a 🗑️ Delete button\\."
+        "• `pin latest xrp news and price`\n"
+        "• `pin screenshot https://google.com`\n\n"
+        "Send `pins` to see your pins — each has a ▶ Run and a 🗑️ Delete button\\."
     ),
     "reminders": (
         "⏰ *Reminders*\n\n"

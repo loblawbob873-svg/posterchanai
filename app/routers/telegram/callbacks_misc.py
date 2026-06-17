@@ -36,7 +36,7 @@ async def _cb_pin(update, db, chat_id, data, callback_query, callback_query_id):
             if parts[1] == "del":
                 ok = saved_search_service.delete_saved_search(db, cb_user, sid)
                 await telegram_service.send_message(
-                    chat_id, "🗑️ Saved search deleted." if ok else "No matching saved search.")
+                    chat_id, "🗑️ Pin deleted." if ok else "No matching pin.")
             elif parts[1] == "run":
                 s = next((x for x in saved_search_service.list_saved_searches(db, cb_user) if x.id == sid), None)
                 if not s:
