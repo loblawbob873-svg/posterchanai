@@ -381,20 +381,22 @@ async def _msg_command(_make_tg_node_notify, arg, attachments, chat_id, command,
                         # Pinned searches: save/list. The list gets a Run + Delete button per item.
                         result = await command_service.execute_command(command, arg)
                         if result.get("type") == "saved_searches" and result.get("saved_searches"):
-                            kb = []
-                            for _s in result["saved_searches"]:
-                                _q = _s.get("query", "")
-                                kb.append([
-                                    {"text": f"▶ {_q[:40]}", "callback_data": f"pin:run:{_s['id']}"},
-                                    {"text": "🗑️", "callback_data": f"pin:del:{_s['id']}"},
-                                ])
-                            # Header only — the buttons below ARE the list, so don't repeat the
-                            # queries as text (that was the duplicate-info clutter).
+                            # One message per pin (like torrent/nyaa results): the full pin line as
+                            # the body, with Run + Delete buttons right beneath it — so the whole
+                            # query is readable and nothing is duplicated/truncated.
+                            _pins = result["saved_searches"]
                             await telegram_service.send_message(
-                                chat_id,
-                                f"📌 Your pins ({len(result['saved_searches'])}) — tap ▶ to run or 🗑️ to delete:",
-                                reply_markup={"inline_keyboard": kb}, parse_mode="",
-                            )
+                                chat_id, f"📌 Your pins ({len(_pins)}):", parse_mode="")
+                            for _s in _pins:
+                                await telegram_service.send_message(
+                                    chat_id, f"📌 {_s.get('query', '')}",
+                                    reply_markup={"inline_keyboard": [[
+                                        {"text": "▶ Run", "callback_data": f"pin:run:{_s['id']}"},
+                                        {"text": "🗑️ Delete", "callback_data": f"pin:del:{_s['id']}"},
+                                    ]]},
+                                    parse_mode="",
+                                )
+                                await asyncio.sleep(0.1)
                         else:
                             await telegram_service.send_message(chat_id, result.get("content", "Done."), parse_mode="")
                         return {"ok": True}
