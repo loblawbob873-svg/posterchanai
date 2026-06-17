@@ -495,10 +495,6 @@ class ChatHandler {
                 // Profile settings
                 if (emailInput) settings.notification_email = emailInput.value;
 
-                // Schedule settings
-                const scheduleEnabled = document.getElementById('scheduleEnabled');
-                if (scheduleEnabled) settings.schedule_enabled = scheduleEnabled.checked;
-
                 // News sources
                 const userNewsSourcesEl = document.getElementById('userNewsSources');
                 if (userNewsSourcesEl) settings.news_sources = userNewsSourcesEl.value;
@@ -718,10 +714,6 @@ class ChatHandler {
                     avatarPlaceholder.style.display = 'block';
                     if (deleteAvatarBtn) deleteAvatarBtn.style.display = 'none';
                 }
-
-                // Schedule settings
-                const scheduleEnabled = document.getElementById('scheduleEnabled');
-                if (scheduleEnabled) scheduleEnabled.checked = settings.schedule_enabled || false;
 
                 // News sources
                 const userNewsSources = document.getElementById('userNewsSources');

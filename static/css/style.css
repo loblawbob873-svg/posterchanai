@@ -2328,21 +2328,6 @@ fieldset legend {
     color: var(--error-color);
     text-align: center;
 }
-
-/* Quick AI Toggle in User Menu */
-.ai-toggle-item {
-    display: flex !important;
-    align-items: center;
-    gap: 8px;
-    cursor: default !important;
-}
-.ai-toggle-item:hover {
-    background: var(--bg-secondary) !important;
-}
-#aiToggleLabel {
-    flex: 1;
-    font-size: 13px;
-}
 .toggle-switch {
     position: relative;
     display: inline-block;
