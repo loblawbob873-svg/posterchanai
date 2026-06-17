@@ -284,7 +284,7 @@ async def execute_matrix_command(
         "compress", "clip", "convert", "translate", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz"
     ):
         from app.services.command_service import CommandService
-        _media_svc = CommandService(db, user=user)
+        _media_svc = CommandService(db, user=user, is_bot=True)
         _mcmd, _marg = _media_svc.parse_command(command_str)
         return await _process_matrix_media(_media_svc, _mcmd, _marg, data)
 
@@ -645,7 +645,7 @@ async def execute_matrix_command(
 
     # Parse command
     from app.services.command_service import CommandService
-    cmd_service = CommandService(db, user=user)
+    cmd_service = CommandService(db, user=user, is_bot=True)
     command, arg = cmd_service.parse_command(command_str)
 
     if not command:

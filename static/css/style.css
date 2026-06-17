@@ -1110,11 +1110,11 @@ fieldset legend {
 }
 .user-item {
     display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 16px;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px 16px;
     background: rgba(0, 0, 0, 0.3);
-    border-radius: 4px;
+    border-radius: 6px;
     border: 1px solid var(--border-color);
     transition: all 0.3s;
 }
@@ -1122,10 +1122,64 @@ fieldset legend {
     border-color: var(--accent);
     box-shadow: 0 0 10px rgba(0, 255, 255, 0.2);
 }
+.user-item-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
 .user-item .username {
     flex: 1;
-    font-weight: 500;
+    font-weight: 600;
     color: var(--accent);
+}
+.user-item-actions {
+    display: flex;
+    gap: 8px;
+    margin-left: auto;
+}
+.user-item-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-color);
+}
+.user-control-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.user-control-label {
+    min-width: 56px;
+    font-size: 0.8em;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+}
+.user-control-row .quota-input {
+    width: 90px;
+    padding: 4px 6px;
+}
+.cap-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.85em;
+    padding: 3px 9px;
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    cursor: pointer;
+    user-select: none;
+}
+.cap-toggle input {
+    cursor: pointer;
+    margin: 0;
+}
+.cap-note {
+    font-size: 0.78em;
+    opacity: 0.65;
+    font-style: italic;
 }
 .user-item .user-toggle {
     display: flex;

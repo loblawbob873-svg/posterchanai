@@ -276,6 +276,11 @@ def _run_migrations():
     # Define new columns to add to users table
     new_user_columns = [
         ("storage_quota", "INTEGER DEFAULT 0"),  # Storage quota in bytes (0 = unlimited)
+        # Per-user feature access (default on = unchanged behavior for existing users)
+        ("can_image", "BOOLEAN DEFAULT 1"),
+        ("can_music", "BOOLEAN DEFAULT 1"),
+        ("can_video", "BOOLEAN DEFAULT 1"),
+        ("can_torrent", "BOOLEAN DEFAULT 1"),
         # Scheduled news / custom news sources
         ("news_schedule_enabled", "BOOLEAN DEFAULT 0"),
         ("news_schedule_time", "VARCHAR(5) DEFAULT '12:00'"),

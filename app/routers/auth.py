@@ -101,13 +101,19 @@ def register(user_data: UserRegister, request: Request, response: Response, db: 
     email_service = EmailService(db)
     require_verification = email_service.smtp_enabled and user_data.email
 
-    # Create new user
+    # Create new user. Self-signups get a restricted default: chat + image + music only.
+    # Video and torrents are off until an admin grants them in Admin → Users. (Admin-created
+    # users keep the model's all-on defaults.)
     user = User(
         username=user_data.username,
         email=user_data.email if user_data.email else None,
         password_hash=get_password_hash(user_data.password),
         is_admin=False,
-        email_verified=not require_verification  # True if no verification needed
+        email_verified=not require_verification,  # True if no verification needed
+        can_image=True,
+        can_music=True,
+        can_video=False,
+        can_torrent=False,
     )
     db.add(user)
     db.commit()

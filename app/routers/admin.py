@@ -407,10 +407,16 @@ def create_user(
             detail="Username already exists"
         )
 
+    # New users default to chat + image + music only; video and torrents stay off until
+    # the admin grants them via the per-user toggles (matches the self-signup default).
     user = User(
         username=user_data.username,
         password_hash=get_password_hash(user_data.password),
-        is_admin=user_data.is_admin
+        is_admin=user_data.is_admin,
+        can_image=True,
+        can_music=True,
+        can_video=False,
+        can_torrent=False,
     )
     db.add(user)
     db.commit()
@@ -528,6 +534,32 @@ def update_user_storage_quota(
     db.commit()
     
     return {"message": "Storage quota updated", "quota_mb": quota_mb, "quota_bytes": quota_bytes}
+
+
+@router.put("/users/{user_id}/capabilities", response_model=UserResponse)
+def update_user_capabilities(
+    user_id: int,
+    can_image: bool = Query(...),
+    can_music: bool = Query(...),
+    can_video: bool = Query(...),
+    can_torrent: bool = Query(...),
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """Set a user's per-feature access (image/music/video/torrent). Admins are always
+    allowed regardless of these flags."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.can_image = can_image
+    user.can_music = can_music
+    user.can_video = can_video
+    user.can_torrent = can_torrent
+    db.commit()
+    db.refresh(user)
+    logger.info(f"[ADMIN] Updated capabilities for user {user_id} ({user.username}): "
+                f"image={can_image} music={can_music} video={can_video} torrent={can_torrent}")
+    return user
 
 
 @router.post("/storage/rescan")

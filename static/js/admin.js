@@ -157,24 +157,33 @@ async function loadUsers() {
                 const quota_mb = u.storage_quota > 0 ? (u.storage_quota / (1024 * 1024)).toFixed(1) : '∞';
                 return `
                 <div class="user-item">
-                    <span class="username">${escapeHtml(u.username)}</span>
-                    <span class="badge ${u.is_admin ? 'admin' : ''}">${u.is_admin ? 'Admin' : 'User'}</span>
-
-                    <div class="storage-quota-control" style="display: inline-flex; align-items: center; gap: 8px;">
-                        <label style="font-size: 0.9em;">Quota:</label>
-                        <input type="number" 
-                               id="quota_${u.id}" 
-                               value="${quota_mb === '∞' ? '0' : quota_mb}" 
-                               step="0.1" 
-                               min="0" 
-                               style="width: 80px; padding: 4px;"
-                               placeholder="MB (0=unlimited)">
-                        <button class="btn-secondary btn-small" onclick="updateStorageQuota(${u.id}, '${escapeHtml(u.username)}')">Set</button>
-                        <!-- Storage scanning moved to user-level - users can scan from User Settings -->
-                        <button class="btn-secondary btn-small" onclick="generateThumbnailsForUser(${u.id}, '${escapeHtml(u.username)}')" title="Generate thumbnails for this user's images">🖼️ Thumbnails</button>
+                    <div class="user-item-header">
+                        <span class="username">${escapeHtml(u.username)}</span>
+                        <span class="badge ${u.is_admin ? 'admin' : ''}">${u.is_admin ? 'Admin' : 'User'}</span>
+                        <div class="user-item-actions">
+                            <button class="btn-secondary btn-small" onclick="resetPassword(${u.id}, '${escapeHtml(u.username)}')">Reset Password</button>
+                            <button class="btn-danger btn-small" onclick="deleteUser(${u.id})">Delete</button>
+                        </div>
                     </div>
-                    <button class="btn-secondary btn-small" onclick="resetPassword(${u.id}, '${escapeHtml(u.username)}')">Reset Password</button>
-                    <button class="btn-danger btn-small" onclick="deleteUser(${u.id})">Delete</button>
+                    <div class="user-item-controls">
+                        <div class="user-control-row">
+                            <span class="user-control-label">Quota</span>
+                            <input type="number" id="quota_${u.id}" class="quota-input"
+                                   value="${quota_mb === '∞' ? '0' : quota_mb}" step="0.1" min="0"
+                                   placeholder="MB (0=unlimited)">
+                            <button class="btn-secondary btn-small" onclick="updateStorageQuota(${u.id}, '${escapeHtml(u.username)}')">Set</button>
+                            <button class="btn-secondary btn-small" onclick="generateThumbnailsForUser(${u.id}, '${escapeHtml(u.username)}')" title="Generate thumbnails for this user's images">🖼️ Thumbnails</button>
+                        </div>
+                        <div class="user-control-row">
+                            <span class="user-control-label">Access</span>
+                            <label class="cap-toggle"><input type="checkbox" id="cap_image_${u.id}" ${u.can_image ? 'checked' : ''}> 🖼️ Image</label>
+                            <label class="cap-toggle"><input type="checkbox" id="cap_music_${u.id}" ${u.can_music ? 'checked' : ''}> 🎵 Music</label>
+                            <label class="cap-toggle"><input type="checkbox" id="cap_video_${u.id}" ${u.can_video ? 'checked' : ''}> 🎬 Video</label>
+                            <label class="cap-toggle"><input type="checkbox" id="cap_torrent_${u.id}" ${u.can_torrent ? 'checked' : ''}> 🧲 Torrent</label>
+                            <button class="btn-secondary btn-small" onclick="updateCapabilities(${u.id}, '${escapeHtml(u.username)}')">Save Access</button>
+                            ${u.is_admin ? '<span class="cap-note">admin: always allowed</span>' : ''}
+                        </div>
+                    </div>
                 </div>
             `;
             }).join('');
@@ -247,6 +256,32 @@ async function updateStorageQuota(userId, username) {
         }
     } catch (err) {
         alert('Error updating quota');
+        loadUsers();
+    }
+}
+
+async function updateCapabilities(userId, username) {
+    const cap = (k) => document.getElementById(`cap_${k}_${userId}`).checked;
+    const params = new URLSearchParams({
+        can_image: cap('image'),
+        can_music: cap('music'),
+        can_video: cap('video'),
+        can_torrent: cap('torrent'),
+    });
+    try {
+        const response = await csrfFetch(`/api/admin/users/${userId}/capabilities?${params.toString()}`, {
+            method: 'PUT'
+        });
+        if (response.ok) {
+            alert(`Access updated for ${username}`);
+            loadUsers();
+        } else {
+            const data = await response.json().catch(() => ({}));
+            alert(data.detail || 'Failed to update access');
+            loadUsers();
+        }
+    } catch (err) {
+        alert('Error updating access');
         loadUsers();
     }
 }

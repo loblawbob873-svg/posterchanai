@@ -25,6 +25,13 @@ class User(Base):
     # Storage quota (in bytes, 0 = unlimited)
     storage_quota = Column(Integer, default=0)  # 0 means unlimited
 
+    # Per-user feature access (admins are always allowed). Managed in Admin → Users.
+    # Default True = unchanged behavior for existing users; admin unchecks to restrict.
+    can_image = Column(Boolean, default=True)    # image generation (geni)
+    can_music = Column(Boolean, default=True)    # music generation (musicgeni)
+    can_video = Column(Boolean, default=True)    # video generation (videogeni)
+    can_torrent = Column(Boolean, default=True)  # torrent search / download
+
     # Telegram integration settings
     telegram_enabled = Column(Boolean, default=False)
     telegram_chat_id = Column(String(50), nullable=True)  # Uniqueness enforced by partial index (non-NULL only)

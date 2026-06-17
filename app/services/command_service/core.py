@@ -161,9 +161,13 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
     OVERLAY_MOTIONS = {"glow"}
     PHRASE_COMMANDS = {}
 
-    def __init__(self, db: Session, user: Optional["User"] = None):
+    def __init__(self, db: Session, user: Optional["User"] = None, is_bot: bool = False):
         self.db = db
         self.user = user
+        # Bot-driven contexts (Matrix/Pleroma/Misskey listeners) are configured in Admin → Bots,
+        # so they're exempt from per-user feature gating. Pleroma/Misskey hit /api/generate-image
+        # directly (never this service); Matrix routes through here, so it sets is_bot=True.
+        self.is_bot = is_bot
         self.search_service = SearchService(db)
         self.chat_service = ChatService(db, user=user)
 
@@ -272,6 +276,29 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
             out.append(f)
         return out
 
+    # Per-user feature access: command → capability flag on User (admins always allowed).
+    # Configured in Admin → Users. A user without the capability is refused before dispatch.
+    _CAPABILITY_BY_COMMAND = {
+        "geni": ("can_image", "image generation"),
+        "musicgeni": ("can_music", "music generation"),
+        "videogeni": ("can_video", "video generation"),
+        "torrents": ("can_torrent", "torrents"),
+        "nyaa": ("can_torrent", "torrents"),
+    }
+
+    def _user_has_capability(self, attr: str) -> bool:
+        """True if the current user may use a gated feature. System/internal callers
+        (no user, e.g. load-balanced or bot paths) and admins are always allowed; the
+        flags default True so existing users are unaffected until an admin restricts them."""
+        if self.is_bot:
+            return True
+        u = self.user
+        if u is None:
+            return True
+        if getattr(u, "is_admin", False) or getattr(u, "id", None) == 1:
+            return True
+        return bool(getattr(u, attr, True))
+
     async def _execute_command_inner(
         self,
         command: str,
@@ -293,6 +320,13 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
         # Resolve aliases (e.g. "shot" → "screenshot") centrally so callers that match
         # commands literally (Telegram) accept them just like the web UI's parse_command.
         command = self.COMMAND_ALIASES.get(command, command)
+
+        # Per-user feature access gate (Admin → Users). Admins + bot listeners are exempt.
+        _cap = self._CAPABILITY_BY_COMMAND.get(command)
+        if _cap and not self._user_has_capability(_cap[0]):
+            return {"type": "text",
+                    "content": f"⛔ You don't have access to {_cap[1]} on this server. "
+                               f"Ask an admin to enable it for your account."}
 
         # Trailing subcommands on an effect, applied to its output in order:
         #   <effect> [zoom|shake] [meme <text>]

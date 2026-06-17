@@ -27,6 +27,10 @@ class UserResponse(BaseModel):
     email: Optional[str] = None
     is_admin: bool
     storage_quota: int = 0  # 0 = unlimited
+    can_image: bool = True
+    can_music: bool = True
+    can_video: bool = True
+    can_torrent: bool = True
     telegram_enabled: bool = False
     telegram_chat_id: Optional[str] = None
     telegram_notifications: str = ""

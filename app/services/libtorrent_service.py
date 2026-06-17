@@ -192,6 +192,18 @@ class LibtorrentService:
         self.resume_dir = self.download_dir / ".resume"
         self.resume_dir.mkdir(parents=True, exist_ok=True)
 
+        # Persisted set of info_hashes we've already sent a "download complete"
+        # Telegram alert for, so frequent restarts/rechecks (which re-emit
+        # torrent_finished_alert) don't re-spam. Cleared per-torrent on remove().
+        self._notified_path = self.resume_dir / ".notified.json"
+        self._notified: set[str] = self._load_notified()
+
+        # Persisted info_hash -> user_id of whoever added each torrent, so the
+        # "download complete" alert goes to that user (any user can add torrents).
+        # Survives restarts (resume data carries no owner). Unknown owner → admins.
+        self._owners_path = self.resume_dir / ".owners.json"
+        self._owners: dict[str, int] = self._load_owners()
+
         # Alert processing
         self._alert_thread: Optional[threading.Thread] = None
         self._running = False
@@ -455,8 +467,12 @@ class LibtorrentService:
                 if isinstance(alert, lt.save_resume_data_alert):
                     try:
                         info_hash = str(alert.handle.info_hash())
-                        (self.resume_dir / f"{info_hash}.resume").write_bytes(
-                            lt.write_resume_data_buf(alert.params))
+                        # Ignore late resume-save alerts for torrents removed between the
+                        # periodic save request and this alert — otherwise the .resume file
+                        # is resurrected and the torrent comes back on the next restart.
+                        if info_hash in self.torrents:
+                            (self.resume_dir / f"{info_hash}.resume").write_bytes(
+                                lt.write_resume_data_buf(alert.params))
                     except Exception as e:
                         logger.error(f"[BT] Failed to write resume data: {e}")
                     continue
@@ -466,7 +482,18 @@ class LibtorrentService:
 
                 # Torrent lifecycle events
                 if isinstance(alert, lt.torrent_finished_alert):
-                    logger.info(f"[BT] FINISHED: {alert.torrent_name}")
+                    name = alert.torrent_name
+                    logger.info(f"[BT] FINISHED: {name}")
+                    # Notify once per torrent that the download is done. Dedup against the
+                    # persisted set so restarts/rechecks (which re-emit this alert) don't re-spam.
+                    try:
+                        ih = str(alert.handle.info_hash())
+                        if ih in self.torrents and ih not in self._notified:
+                            self._notified.add(ih)
+                            self._save_notified()
+                            self._notify_finished(ih, name)
+                    except Exception as e:
+                        logger.error(f"[BT] finish-notify error: {e}")
                 elif isinstance(alert, lt.torrent_error_alert):
                     logger.error(f"[BT] ERROR: {alert.torrent_name} - {alert.error}")
                 elif isinstance(alert, lt.torrent_added_alert):
@@ -534,7 +561,7 @@ class LibtorrentService:
             # 2s sleep to avoid burning a full CPU core when many torrents/alerts
             time.sleep(2.0)
 
-    def add_magnet(self, magnet: str) -> str:
+    def add_magnet(self, magnet: str, user_id: Optional[int] = None) -> str:
         """Add a magnet link. Returns info_hash. Requires proxy."""
         # Verify proxy is still available before adding
         self._verify_proxy_or_fail()
@@ -547,11 +574,12 @@ class LibtorrentService:
 
         self.torrents[info_hash] = handle
         self._update_numbering()
+        self._set_owner(info_hash, user_id)
 
         logger.info(f"Added magnet: {info_hash}")
         return info_hash
 
-    def add_torrent_file(self, torrent_data: bytes) -> str:
+    def add_torrent_file(self, torrent_data: bytes, user_id: Optional[int] = None) -> str:
         """Add a .torrent file. Returns info_hash. Requires proxy."""
         # Verify proxy is still available before adding
         self._verify_proxy_or_fail()
@@ -567,6 +595,7 @@ class LibtorrentService:
 
         self.torrents[info_hash] = handle
         self._update_numbering()
+        self._set_owner(info_hash, user_id)
 
         logger.info(f"Added torrent: {info_hash}")
         return info_hash
@@ -707,6 +736,79 @@ class LibtorrentService:
             return True
         return False
 
+    def _load_notified(self) -> set:
+        """Load the persisted set of info_hashes already alerted as 'download complete'."""
+        try:
+            if self._notified_path.exists():
+                import json
+                return set(json.loads(self._notified_path.read_text()))
+        except Exception as e:
+            logger.debug(f"[BT] could not load notified set: {e}")
+        return set()
+
+    def _save_notified(self) -> None:
+        try:
+            import json
+            self._notified_path.write_text(json.dumps(sorted(self._notified)))
+        except Exception as e:
+            logger.error(f"[BT] could not save notified set: {e}")
+
+    def _load_owners(self) -> dict:
+        """Load the persisted info_hash -> user_id ownership map."""
+        try:
+            if self._owners_path.exists():
+                import json
+                return {str(k): int(v) for k, v in json.loads(self._owners_path.read_text()).items()}
+        except Exception as e:
+            logger.debug(f"[BT] could not load owners map: {e}")
+        return {}
+
+    def _save_owners(self) -> None:
+        try:
+            import json
+            self._owners_path.write_text(json.dumps(self._owners))
+        except Exception as e:
+            logger.error(f"[BT] could not save owners map: {e}")
+
+    def _set_owner(self, info_hash: str, user_id: Optional[int]) -> None:
+        """Record who added a torrent so its completion alert reaches that user."""
+        if user_id is None:
+            return
+        self._owners[info_hash] = int(user_id)
+        self._save_owners()
+
+    def _notify_finished(self, info_hash: str, name: str) -> None:
+        """A torrent finished downloading → file a 'complete' reminder for the user who added
+        it (any user can add torrents); fall back to admins if the owner is unknown. The reminder
+        scheduler then delivers it to BOTH the web UI (⏰ Reminders conversation + live websocket)
+        AND Telegram (~30s), reusing the existing notification path."""
+        try:
+            from datetime import datetime
+            from app.database import SessionLocal
+            from app.models import User
+            from app.services.reminder_service import create_reminder
+            db = SessionLocal()
+            try:
+                owner_id = self._owners.get(info_hash)
+                recipients = []
+                if owner_id is not None:
+                    u = db.query(User).filter(User.id == owner_id).first()
+                    if u:
+                        recipients = [u]
+                if not recipients:
+                    # Unknown owner (e.g. added before this feature) → notify admins.
+                    recipients = db.query(User).filter(User.is_admin == True).all()  # noqa: E712
+                if not recipients:
+                    return
+                text = f"🎉 Torrent finished downloading: {name}"
+                for u in recipients:
+                    create_reminder(db, u, text, datetime.utcnow())
+                logger.info(f"[BT] filed torrent-complete reminder for {len(recipients)} user(s): {name}")
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"[BT] failed to file torrent-complete reminder: {e}")
+
     def remove(self, info_hash: str, delete_files: bool = False) -> bool:
         """Remove a torrent and its resume data."""
         handle = self.torrents.get(info_hash)
@@ -726,6 +828,14 @@ class LibtorrentService:
                     logger.debug(f"[BT] Deleted resume file: {info_hash}")
             except Exception as e:
                 logger.error(f"[BT] Failed to delete resume file: {e}")
+
+            # Forget the completion alert so re-adding the same torrent notifies again.
+            if info_hash in self._notified:
+                self._notified.discard(info_hash)
+                self._save_notified()
+            if info_hash in self._owners:
+                del self._owners[info_hash]
+                self._save_owners()
 
             return True
         return False

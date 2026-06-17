@@ -42,7 +42,16 @@ def get_torrent_user(
             return None  # System access, no specific user
 
         # Fall back to normal user authentication
-        return get_current_user(request, credentials, db)
+        user = get_current_user(request, credentials, db)
+        # Per-user torrent access (Admin → Users). Admins/user-1 always allowed; the flag
+        # defaults True so existing users are unaffected. Load-balanced traffic returns above
+        # with user=None and is never gated, so remote bt-server forwarding still works.
+        if user is not None and not (
+            getattr(user, "is_admin", False) or user.id == 1 or getattr(user, "can_torrent", True)
+        ):
+            raise HTTPException(status_code=403,
+                                detail="You don't have access to torrents on this server. Ask an admin to enable it.")
+        return user
     except HTTPException:
         raise
     except Exception as e:
@@ -309,7 +318,7 @@ async def add_torrent(
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Couldn't download .torrent: {e}")
         try:
-            info_hash = service.add_torrent_file(_data)
+            info_hash = service.add_torrent_file(_data, user_id=current_user.id if current_user else None)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Couldn't add .torrent: {e}")
         return {"info_hash": info_hash, "message": "Torrent added"}
@@ -317,7 +326,7 @@ async def add_torrent(
     if not body.magnet.startswith("magnet:"):
         raise HTTPException(status_code=400, detail="Invalid magnet link")
 
-    info_hash = service.add_magnet(body.magnet)
+    info_hash = service.add_magnet(body.magnet, user_id=current_user.id if current_user else None)
     return {"info_hash": info_hash, "message": "Torrent added"}
 
 

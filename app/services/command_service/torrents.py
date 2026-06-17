@@ -162,7 +162,7 @@ class _TorrentsMixin:
                 except Exception as e:
                     return {"type": "text", "content": f"Couldn't download that .torrent: {e}"}
                 try:
-                    info_hash = bt_service.add_torrent_file(_data)
+                    info_hash = bt_service.add_torrent_file(_data, user_id=self.user.id if self.user else None)
                 except Exception as e:
                     return {"type": "text", "content": f"Couldn't add that .torrent: {e}"}
                 return {"type": "text", "content": f"Added torrent: `{info_hash}`\n\nUse `torrents list` to check progress."}
@@ -180,7 +180,7 @@ class _TorrentsMixin:
                         "content": f"Added torrent: `{result['info_hash']}`\n\nUse `torrents list` to check progress.",
                     }
                 return {"type": "text", "content": "Failed to add torrent to remote server"}
-            info_hash = bt_service.add_magnet(magnet)
+            info_hash = bt_service.add_magnet(magnet, user_id=self.user.id if self.user else None)
             return {
                 "type": "text",
                 "content": f"Added torrent: `{info_hash}`\n\nUse `torrents list` to check progress.",
@@ -498,7 +498,7 @@ class _TorrentsMixin:
                     "content": f"**Selected:** {torrent.title}\n\nFailed to add torrent to remote server",
                 }
 
-            info_hash = bt_service.add_magnet(magnet)
+            info_hash = bt_service.add_magnet(magnet, user_id=self.user.id if self.user else None)
             return {
                 "type": "text",
                 "content": f"**Downloading:** {torrent.title}\n\nAdded: `{info_hash}`\n\nUse `torrents list` to check progress.",
@@ -647,7 +647,7 @@ class _TorrentsMixin:
                     "content": f"**Selected:** {torrent.title}\n\nFailed to add torrent to remote server",
                 }
 
-            info_hash = bt_service.add_magnet(magnet)
+            info_hash = bt_service.add_magnet(magnet, user_id=self.user.id if self.user else None)
             return {
                 "type": "text",
                 "content": f"**Downloading:** {torrent.title}\n\nAdded: `{info_hash}`\n\nUse `torrents list` to check progress.",
