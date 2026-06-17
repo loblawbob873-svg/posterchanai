@@ -1,8 +1,10 @@
-"""Pinned/saved searches — the `pin` command.
+"""Pinned/saved commands — the `pin` command.
 
-A user saves a search query (`pin ai news`); `pins` lists them with clickable Run / Delete.
-Running one just executes `search <query>`. No scheduler/time component (unlike reminders) — plain
-CRUD shared by the web UI and Telegram."""
+A user pins something they run often (`pin ai news`, or any command like
+`pin screenshot https://google.com`); `pins` lists them with clickable Run / Delete.
+Running one re-runs it: a bare query → `search <query>`, anything starting with a known
+command → that command verbatim (resolved at run time via CommandService.parse_command).
+No scheduler/time component (unlike reminders) — plain CRUD shared by web UI + Telegram."""
 import logging
 import re
 from typing import Optional
@@ -17,11 +19,13 @@ _MAX_QUERY = 300
 
 
 def normalize_query(query: str) -> str:
-    """Store just the search terms. Users often pin `search xrp news` (with the word "search"),
-    which would otherwise double up to `search search xrp news` when re-run — strip a leading
-    "search "/"images "/etc. so the stored query is always the bare terms."""
+    """Store just the search terms for a plain search pin. Users often pin `search xrp news`
+    (with the word "search"), which would otherwise double up to `search search xrp news`
+    when re-run — strip a leading "search "/"web search ". NOTE: only the literal search verb
+    is stripped, never real command words like `images`/`screenshot`, so `pin <command> ...`
+    keeps the command and re-runs it verbatim."""
     q = (query or "").strip()
-    q = re.sub(r'^\s*(search|images|web\s*search)\s+', '', q, flags=re.IGNORECASE)
+    q = re.sub(r'^\s*(search|web\s*search)\s+', '', q, flags=re.IGNORECASE)
     return q.strip()[:_MAX_QUERY]
 
 

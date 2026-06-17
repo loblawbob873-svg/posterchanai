@@ -1,5 +1,5 @@
 """Auto-split from the original telegram.py monolith. No behavior change."""
-from ._common import Optional, SessionLocal, User, _4chan_cache, _4chan_thread_cache, _finance_bills_cache, _geni_image_cache, _matrix_post_cache, _media_action_cache, _misskey_post_cache, _news_source_cache, _pleroma_post_cache, asyncio, datetime, logger, re, telegram_service, time
+from ._common import Optional, SessionLocal, User, _4chan_cache, _4chan_thread_cache, _finance_bills_cache, _flashcard_decks_cache, _geni_image_cache, _matrix_post_cache, _media_action_cache, _misskey_post_cache, _news_source_cache, _pleroma_post_cache, asyncio, datetime, logger, re, telegram_service, time
 from .keyboards import _4chan_board_switcher_keyboard, _4chan_thread_keyboard, _flashcard_keyboard, _format_4chan_post, _has_matrix, _has_misskey, _has_pleroma, _news_source_keyboard, _strip_cmd_links, _torrent_nav_keyboard, _ytdl_video_keyboard
 
 async def _send_news_source_selector(chat_id: str, sources: list):
@@ -675,3 +675,92 @@ async def _offer_ytdl_share(chat_id: str, filename: str, video_bytes: bytes, db)
         chat_id, "📣 Post this to your timeline?",
         reply_markup={"inline_keyboard": [[{"text": "📣 Post to social", "callback_data": "media:post"}]]},
     )
+
+
+async def _deliver_pin_result(chat_id: str, result: dict) -> None:
+    """Deliver a re-run pinned command's result to a Telegram chat. Covers the result types a
+    pinnable command produces (text / search / image / images / files / video / audio /
+    flashcards), reusing the same senders as the main message handler. Share-offer prompts are
+    intentionally omitted — re-running a pin shouldn't nag to repost."""
+    import base64 as _b64, os as _os, tempfile as _tmp
+
+    rtype = (result or {}).get("type", "text")
+    content = (result or {}).get("content", "") or ""
+    image = result.get("image")
+
+    if rtype == "generated_image" and image and result.get("prefer_document"):
+        await _send_screenshot(chat_id, image, content or "")
+    elif rtype == "generated_image" and image:
+        res = await telegram_service.send_photo(chat_id, image, content or None)
+        if not res.get("ok") and not await _send_png_as_document(chat_id, image, content or ""):
+            await telegram_service.send_message(chat_id, f"{content}\n\n(Image failed to send)", parse_mode="")
+    elif rtype == "generated_video" and result.get("video"):
+        path = None
+        try:
+            fd, path = _tmp.mkstemp(prefix="tg_pin_", suffix=".mp4")
+            with _os.fdopen(fd, "wb") as f:
+                f.write(_b64.b64decode(result["video"]))
+            r = await telegram_service.send_video(chat_id, path, caption=content)
+            if not r.get("ok"):
+                await telegram_service.send_message(chat_id, f"{content}\n\n(Video failed to send)", parse_mode="")
+        finally:
+            if path and _os.path.exists(path):
+                try: _os.unlink(path)
+                except OSError: pass
+    elif rtype == "generated_audio" and result.get("audio"):
+        fmt = (result.get("format") or "mp3").lower()
+        path = None
+        try:
+            fd, path = _tmp.mkstemp(prefix="tg_pin_", suffix="." + fmt)
+            with _os.fdopen(fd, "wb") as f:
+                f.write(_b64.b64decode(result["audio"]))
+            r = await telegram_service.send_audio(chat_id, path, title="PosterChanAI", caption=content)
+            if not r.get("ok"):
+                await telegram_service.send_message(chat_id, f"{content}\n\n(Audio failed to send)", parse_mode="")
+        finally:
+            if path and _os.path.exists(path):
+                try: _os.unlink(path)
+                except OSError: pass
+    elif rtype == "search":
+        links = ""
+        results = result.get("results") or []
+        if results:
+            lines = []
+            for r in results[:5]:
+                title = (r.get("title") or r.get("url", ""))[:60]
+                url = r.get("url", "")
+                if url:
+                    lines.append(f"{len(lines) + 1}. {title}\n{url}")
+            if lines:
+                links = "\n\n🔗 Sources:\n" + "\n".join(lines)
+        await telegram_service.send_message(chat_id, (content or "(no summary)") + links, parse_mode="")
+    elif rtype == "images":
+        await telegram_service.send_message(chat_id, content or "Image results", parse_mode="")
+        for img in (result.get("images") or []):
+            img_url = img.get("img_src", "")
+            if not img_url:
+                continue
+            await telegram_service.send_photo(chat_id, img_url, ((img.get("title") or "")[:80]) or None)
+            await asyncio.sleep(0.15)
+    elif rtype == "files":
+        if content:
+            await telegram_service.send_message(chat_id, content, parse_mode="")
+        for f in (result.get("files") or []):
+            f_bytes = f.get("data")
+            if not f_bytes:
+                continue
+            r = await telegram_service.send_document_bytes(chat_id, f_bytes, f.get("filename", "file"))
+            if not r.get("ok"):
+                await telegram_service.send_message(chat_id, f"❌ Failed to send {f.get('filename', 'file')}", parse_mode="")
+            await asyncio.sleep(0.15)
+    elif rtype == "flashcards":
+        cards = result.get("cards") or []
+        if not cards:
+            await telegram_service.send_message(chat_id, content or "Couldn't make flashcards.", parse_mode="")
+        else:
+            deck = {"title": result.get("title") or "Flashcards", "cards": cards, "idx": 0,
+                    "answered": [None] * len(cards), "score": 0, "ts": time.time()}
+            _flashcard_decks_cache[chat_id] = deck
+            await _send_flashcard(chat_id, deck)
+    else:
+        await telegram_service.send_message(chat_id, content or "Done.", parse_mode="")

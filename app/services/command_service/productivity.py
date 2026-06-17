@@ -64,11 +64,14 @@ class _ProductivityMixin:
         }
 
     async def _pin_command(self, arg: str) -> dict:
-        """Save (pin) a search query, or `pin delete <id>`. `pin` with no arg shows the list."""
+        """Pin something you run often — a search (`pin ai news`) or any command
+        (`pin screenshot https://google.com`). `pin delete <id>` removes one; `pin` with no
+        arg shows the list. Running a pin re-runs it (bare text → search; a command word →
+        that command verbatim)."""
         from app.services import saved_search_service
 
         if self.user is None:
-            return {"type": "text", "content": "Sign in to save searches."}
+            return {"type": "text", "content": "Sign in to save pins."}
         arg = (arg or "").strip()
         low = arg.lower()
         if not arg or low == "list":
@@ -78,33 +81,44 @@ class _ProductivityMixin:
             rid = rest[1].strip() if len(rest) > 1 else ""
             if rid.isdigit():
                 ok = saved_search_service.delete_saved_search(self.db, self.user, int(rid))
-                return {"type": "text", "content": ("🗑️ Pinned search deleted." if ok
-                                                    else "No matching pinned search.")}
+                return {"type": "text", "content": ("🗑️ Pin deleted." if ok
+                                                    else "No matching pin.")}
             return {"type": "text", "content": "Usage: `pin delete <id>` — see ids with `pins`."}
 
         s = saved_search_service.create_saved_search(self.db, self.user, arg)
         if not s:
-            return {"type": "text", "content": "Give me something to pin, e.g. `pin latest xrp news and price`."}
+            return {"type": "text", "content": (
+                "Give me something to pin, e.g. `pin latest xrp news` or "
+                "`pin screenshot https://google.com`.")}
+        cmd, _ = self.parse_command(s.query)
+        kind = "command" if cmd else "search"
         return {"type": "text", "content": (
-            f"📌 Pinned search: **{s.query}**\n_`pins` to run or delete it._")}
+            f"📌 Pinned {kind}: **{s.query}**\n_`pins` to run or delete it._")}
 
     async def _pins_command(self) -> dict:
-        """List pinned searches. Returns a `saved_searches` result the web UI renders with Run +
-        Delete buttons per item (Telegram builds an inline keyboard from the same list)."""
+        """List pins. Returns a `saved_searches` result the web UI renders with Run + Delete
+        buttons per item (Telegram builds an inline keyboard from the same list). Each item
+        carries a `run` string — the resolved command to execute (a bare query becomes
+        `search <query>`, a command word is kept verbatim) — so the web Run button re-runs the
+        right thing instead of always searching."""
         from app.services import saved_search_service
 
         if self.user is None:
-            return {"type": "text", "content": "Sign in to view saved searches."}
+            return {"type": "text", "content": "Sign in to view your pins."}
         items = saved_search_service.list_saved_searches(self.db, self.user)
         if not items:
             return {"type": "text", "content": (
-                "You have no pinned searches yet. Save one with `pin <query>` — "
-                "e.g. `pin ai news`.")}
-        payload = [{"id": s.id, "query": s.query} for s in items]
+                "You have no pins yet. Save one with `pin <query>` or `pin <command>` — "
+                "e.g. `pin ai news` or `pin screenshot https://google.com`.")}
+        payload = []
+        for s in items:
+            cmd, c_arg = self.parse_command(s.query)
+            run = (f"{cmd} {c_arg}".strip() if cmd else f"search {s.query}".strip())
+            payload.append({"id": s.id, "query": s.query, "run": run})
         lines = "\n".join(f"• {s.query} _(id {s.id})_" for s in items)
         return {
             "type": "saved_searches",
-            "content": f"📌 **Your pinned searches** ({len(items)})\n{lines}",
+            "content": f"📌 **Your pins** ({len(items)})\n{lines}",
             "saved_searches": payload,
         }
 

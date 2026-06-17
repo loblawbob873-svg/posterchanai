@@ -1,7 +1,7 @@
 """Auto-split from callbacks.py: misc callback handlers. Bodies moved verbatim."""
 from ._common import ChatService, CommandService, User, _CONSUMED, _FIN_INCOME_PROMPT, _HELP_SECTIONS, _finance_bills_cache, _flashcard_decks_cache, _geni_image_cache, _link_action_cache, _matrix_post_cache, _matrix_room_cache, _misskey_post_cache, _pleroma_post_cache, asyncio, logger, telegram_service, time
 from .keyboards import _has_matrix, _has_misskey, _has_pleroma, _help_main_keyboard, _recover_post_text, _strip_hashtags
-from .senders import User, _finance_bills_cache, _geni_image_cache, _has_matrix, _has_misskey, _has_pleroma, _link_content_for_llm, _matrix_post_cache, _misskey_post_cache, _offer_social_post, _pleroma_post_cache, _send_bills_list, _send_budget, _send_flashcard, _send_screenshot, asyncio, logger, telegram_service, time
+from .senders import User, _deliver_pin_result, _finance_bills_cache, _geni_image_cache, _has_matrix, _has_misskey, _has_pleroma, _link_content_for_llm, _matrix_post_cache, _misskey_post_cache, _offer_social_post, _pleroma_post_cache, _send_bills_list, _send_budget, _send_flashcard, _send_screenshot, asyncio, logger, telegram_service, time
 
 
 async def _cb_rem(update, db, chat_id, data, callback_query, callback_query_id):
@@ -40,20 +40,23 @@ async def _cb_pin(update, db, chat_id, data, callback_query, callback_query_id):
             elif parts[1] == "run":
                 s = next((x for x in saved_search_service.list_saved_searches(db, cb_user) if x.id == sid), None)
                 if not s:
-                    await telegram_service.send_message(chat_id, "That saved search is gone.")
+                    await telegram_service.send_message(chat_id, "That pin is gone.")
                 else:
-                    _q = saved_search_service.normalize_query(s.query)
-                    await telegram_service.send_message(chat_id, f"🔍 Searching: {_q}", parse_mode="")
-                    _res = await CommandService(db, user=cb_user).execute_command("search", _q)
-                    # Send the AI summary PLUS the source links so it's clearly grounded in a
-                    # real web search (matches the web UI, which shows the result list too).
-                    _msg = _res.get("content", "") or "(no summary)"
-                    _results = _res.get("results") or []
-                    if _results:
-                        _msg += "\n\n🔗 Sources:"
-                        for _i, _r in enumerate(_results[:5], 1):
-                            _msg += f"\n{_i}. {_r.get('title', 'link')}\n{_r.get('url', '')}"
-                    await telegram_service.send_message(chat_id, _msg, parse_mode="")
+                    # Resolve the pin to a real command: a bare query → `search <query>`, a
+                    # command word (screenshot/geni/news/…) → that command verbatim. Then run it
+                    # and deliver whatever it produces (text/image/video/files/…) generically.
+                    _svc = CommandService(db, user=cb_user)
+                    _cmd, _arg = _svc.parse_command(s.query)
+                    if _cmd is None:
+                        _cmd, _arg = "search", saved_search_service.normalize_query(s.query)
+                    await telegram_service.send_message(
+                        chat_id, f"▶ Running: {(_cmd + ' ' + _arg).strip()}", parse_mode="")
+                    try:
+                        _res = await _svc.execute_command(_cmd, _arg)
+                    except Exception as _pin_err:
+                        logger.error(f"pin run error: {_pin_err}", exc_info=True)
+                        _res = {"type": "text", "content": f"Error running pin: {_pin_err}"}
+                    await _deliver_pin_result(chat_id, _res)
         return {"ok": True}
 
 

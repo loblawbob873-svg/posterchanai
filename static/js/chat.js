@@ -2634,11 +2634,14 @@ class ChatHandler {
             html = contentHtml + '<div class="saved-searches-list" style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">';
             for (const s of data.saved_searches) {
                 const safeQuery = this.escapeHtml(s.query || '');
-                const attrQuery = (s.query || '').replace(/"/g, '&quot;');
+                // `run` is the server-resolved command (bare query → "search …", a command word
+                // kept verbatim); fall back to a search for older payloads without it.
+                const runCmd = s.run || ('search ' + (s.query || '')).trim();
+                const attrRun = runCmd.replace(/"/g, '&quot;');
                 html += `<div class="saved-search-item" data-search-id="${s.id}" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 12px;background:var(--bg-secondary,#1e1e2e);border:1px solid var(--border-color,#333);border-radius:8px;">
-                    <span style="flex:1;word-break:break-word;">🔍 ${safeQuery}</span>
+                    <span style="flex:1;word-break:break-word;">📌 ${safeQuery}</span>
                     <span style="display:flex;gap:6px;flex-shrink:0;">
-                        <button type="button" class="saved-search-run-btn" data-query="${attrQuery}" title="Run this search" style="padding:4px 10px;border-radius:14px;border:1px solid var(--border-color,#ccc);background:transparent;color:inherit;cursor:pointer;font-size:0.85em;white-space:nowrap;">▶ Run</button>
+                        <button type="button" class="saved-search-run-btn" data-run="${attrRun}" title="Run this pin" style="padding:4px 10px;border-radius:14px;border:1px solid var(--border-color,#ccc);background:transparent;color:inherit;cursor:pointer;font-size:0.85em;white-space:nowrap;">▶ Run</button>
                         <button type="button" class="saved-search-del-btn" data-search-id="${s.id}" title="Delete" style="padding:4px 10px;border-radius:14px;border:1px solid var(--border-color,#ccc);background:transparent;color:inherit;cursor:pointer;font-size:0.85em;white-space:nowrap;">🗑️</button>
                     </span>
                 </div>`;
@@ -2677,13 +2680,13 @@ class ChatHandler {
         // Wire pinned-search Run / Delete buttons.
         if (messageEl && data.type === 'saved_searches') {
             messageEl.addEventListener('click', (e) => {
-                const runBtn = e.target.closest('.saved-search-run-btn[data-query]');
+                const runBtn = e.target.closest('.saved-search-run-btn[data-run]');
                 if (runBtn) {
                     e.preventDefault();
-                    // Strip any leading "search " so we never double-prefix (e.g. a row saved as
-                    // "search xrp news" → run "search xrp news", not "search search xrp news").
-                    const q = (runBtn.dataset.query || '').replace(/^\s*search\s+/i, '').trim();
-                    if (q) this.runAttachmentAction('search ' + q);
+                    // Run the server-resolved command verbatim (a search, or any command like
+                    // `screenshot https://…`). It goes back through parse_command server-side.
+                    const cmd = (runBtn.dataset.run || '').trim();
+                    if (cmd) this.runAttachmentAction(cmd);
                     return;
                 }
                 const delBtn = e.target.closest('.saved-search-del-btn[data-search-id]');

@@ -385,7 +385,7 @@ async def _msg_command(_make_tg_node_notify, arg, attachments, chat_id, command,
                             for _s in result["saved_searches"]:
                                 _q = _s.get("query", "")
                                 kb.append([
-                                    {"text": f"🔍 {_q[:32]}", "callback_data": f"pin:run:{_s['id']}"},
+                                    {"text": f"▶ {_q[:32]}", "callback_data": f"pin:run:{_s['id']}"},
                                     {"text": "🗑️", "callback_data": f"pin:del:{_s['id']}"},
                                 ])
                             await telegram_service.send_message(
