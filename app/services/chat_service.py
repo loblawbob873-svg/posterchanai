@@ -62,7 +62,7 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
             val = self._settings.get(key, default)
             return val if val else default
         # These are used for chat_stream kwargs
-        self.temperature = float(get_setting("ollama_temperature", "0.7"))
+        self.temperature = float(get_setting("ollama_temperature", "0.2"))
         self.top_p = float(get_setting("ollama_top_p", "0.9"))
         self.num_predict = int(get_setting("ollama_num_predict", "2048"))
         # Stop token(s) - can be comma-separated for multiple

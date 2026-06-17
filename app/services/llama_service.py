@@ -489,7 +489,7 @@ class LlamaService:
         self.function_calling = get_setting("llm_function_calling", "false").lower() == "true"
 
         # Sampling settings
-        self.temperature = float(get_setting("ollama_temperature", "0.7"))
+        self.temperature = float(get_setting("ollama_temperature", "0.2"))
         self.top_p = float(get_setting("ollama_top_p", "0.9"))
         self.top_k = int(get_setting("ollama_top_k", "40"))
         self.repeat_penalty = float(get_setting("ollama_repeat_penalty", "1.1"))
