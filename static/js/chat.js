@@ -1528,9 +1528,7 @@ class ChatHandler {
             // Don't hijack clicks on the action buttons overlaid on the image.
             if (e.target.closest('.image-actions, .attachment-actions')) return;
             e.preventDefault();
-            // Prefer the persisted storage URL (real file, opens directly) over the inline
-            // base64 (which has to be turned into a blob URL first).
-            this.openImageInNewTab(img.dataset.fileUrl || img.src);
+            this.openImageInNewTab(img.src);
         });
     }
 
@@ -2494,12 +2492,8 @@ class ChatHandler {
                 html = contentHtml;
                 const imageId = 'img_' + Date.now();
                 const saveButtonId = 'save_img_' + Date.now();
-                // When the server persisted the image to storage, carry its /api/files URL on the
-                // element: open-in-new-tab uses it, and the 📧 email scan picks it up as an
-                // attachment (so e.g. a screenshot is actually attached, not just its text).
-                const fileUrlAttr = data.image_path ? ` data-file-url="${this.escapeHtml(data.image_path)}"` : '';
                 html += `<div class="image-wrapper">
-                    <img src="data:image/png;base64,${data.image}" alt="Generated image" class="generated-image" id="${imageId}"${fileUrlAttr}>
+                    <img src="data:image/png;base64,${data.image}" alt="Generated image" class="generated-image" id="${imageId}">
                     <div class="image-actions">
                         <button class="btn-action" onclick="window.chatHandler.saveGeneratedImage('${imageId}', '${this.escapeHtml(data.prompt || '')}', '${saveButtonId}')" id="${saveButtonId}" title="Save to storage">💾</button>
                         <button class="btn-action" onclick="window.chatHandler.downloadImage('${imageId}')" title="Download">⬇️</button>
@@ -3930,7 +3924,20 @@ class ChatHandler {
             return rest.length ? 'chat/' + rest.join('/') : '';
         }).filter(Boolean))];
 
-        if (filePaths.length > 0) {
+        // Inline base64 images embedded in the response (screenshots / generated images live as
+        // data: URLs, not saved-file URLs — and with a remote storage server they wouldn't be
+        // readable from this node's disk anyway). Attach the actual bytes directly.
+        const inlineAttachments = [];
+        const imgRe = /<img[^>]+src=["'](data:(image\/[a-z.+-]+);base64,[^"']+)["']/gi;
+        let _im, _ix = 0;
+        while ((_im = imgRe.exec(content)) !== null) {
+            const mime = _im[2] || 'image/png';
+            const ext = (mime.split('/')[1] || 'png').replace('jpeg', 'jpg').replace('svg+xml', 'svg');
+            inlineAttachments.push({ filename: `image-${++_ix}.${ext}`, data: _im[1], content_type: mime });
+        }
+
+        if (filePaths.length > 0 || inlineAttachments.length > 0) {
+            const total = filePaths.length + inlineAttachments.length;
             try {
                 const response = await csrfFetch('/api/files/email', {
                     method: 'POST',
@@ -3940,10 +3947,11 @@ class ChatHandler {
                         subject: 'Your file from PosterChanAI',
                         body: 'Here is the file from your chat.',
                         file_paths: filePaths,
+                        inline_attachments: inlineAttachments,
                     })
                 });
                 if (response.ok) {
-                    this.showToast(`Sent to your email with ${filePaths.length} attachment(s)!`);
+                    this.showToast(`Sent to your email with ${total} attachment(s)!`);
                 } else {
                     const data = await response.json().catch(() => ({}));
                     this.showToast(data.detail || 'Failed to send email');

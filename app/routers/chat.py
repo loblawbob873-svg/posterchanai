@@ -1233,14 +1233,6 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             except Exception:
                                 pass
 
-                        # Surface the persisted file URL to the client so the image is backed by
-                        # storage (open-in-new-tab and the 📧 email-attachment scan both use it),
-                        # mirroring how loaded history messages expose image_path.
-                        if generated_image_path:
-                            from urllib.parse import quote as _q
-                            _img_fn = Path(generated_image_path).name
-                            result["image_path"] = f"/api/files/{_q(user.username, safe='')}/{conversation_id}/{_q(_img_fn)}"
-
                         # Send response (with conn_id to ensure it goes to correct chat, queue if stale)
                         # Log image generation responses for debugging
                         if result.get("type") == "generated_image":

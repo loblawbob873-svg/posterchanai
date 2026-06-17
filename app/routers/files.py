@@ -1969,9 +1969,19 @@ async def invalidate_file_cache(
 
 
 # Pydantic models for email and sharing
+class InlineEmailAttachment(BaseModel):
+    filename: str
+    data: str  # base64 (optionally a full "data:<mime>;base64,..." URL)
+    content_type: Optional[str] = None
+
+
 class EmailFileRequest(BaseModel):
     file_paths: Optional[List[str]] = None  # List of file paths to email
     file_urls: Optional[List[str]] = None  # List of file URLs (for note attachments)
+    # Raw base64 attachments for content that isn't a saved local file — e.g. a screenshot /
+    # generated image that lives as a data: URL in the chat (and, with a remote storage server,
+    # isn't readable from this node's disk anyway).
+    inline_attachments: Optional[List[InlineEmailAttachment]] = None
     to: str  # Recipient email
     subject: str = "Shared files"
     body: str = "Please find the attached files."
@@ -2053,11 +2063,30 @@ async def email_files(
             except Exception as e:
                 logger.error(f"Error reading file {file_path}: {e}")
                 raise HTTPException(status_code=500, detail=f"Error reading file: {file_path}")
-    
-    # Validate we have either file_paths or file_urls
-    if not request.file_paths and not request.file_urls:
-        raise HTTPException(status_code=400, detail="Either file_paths or file_urls must be provided")
-    
+
+    # Inline attachments: raw base64 bytes carried in the request (no disk read). Each is capped
+    # so a runaway data: URL can't blow up the mail send.
+    if request.inline_attachments:
+        import base64 as _b64
+        _MAX_INLINE = 25 * 1024 * 1024  # 25 MB decoded, per attachment
+        for ia in request.inline_attachments:
+            raw = ia.data or ""
+            if raw.startswith("data:"):
+                raw = raw.split(",", 1)[1] if "," in raw else ""
+            try:
+                file_data = _b64.b64decode(raw)
+            except Exception:
+                raise HTTPException(status_code=400, detail=f"Invalid inline attachment: {ia.filename}")
+            if not file_data:
+                continue
+            if len(file_data) > _MAX_INLINE:
+                raise HTTPException(status_code=400, detail=f"Attachment too large: {ia.filename}")
+            attachments.append((ia.filename or "attachment", file_data, ia.content_type or "application/octet-stream"))
+
+    # Validate we were given something to attach
+    if not request.file_paths and not request.file_urls and not request.inline_attachments:
+        raise HTTPException(status_code=400, detail="Either file_paths, file_urls, or inline_attachments must be provided")
+
     if not attachments:
         raise HTTPException(status_code=400, detail="No valid files to email")
     
