@@ -108,6 +108,49 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
     return len(new_events)
 
 
+async def backfill_author(store, server, upstream, pubkey: str, *, direct: bool = False,
+                          kinds=None, pace: float = 1.0, max_total: int = 20000,
+                          max_pages: int = 200) -> int:
+    """Backfill a single author's FULL history from upstream into the store — paging back in
+    time with `until`. Writes straight to the store (origin='wot'), so it does NOT go through
+    the WS write path and is NOT re-broadcast by the outbox. Used to seed e.g. the operator's
+    own posts. The author should already be a WoT/operator member."""
+    kinds = kinds or [0, 1, 3, 6, 7]
+    until = int(time.time())
+    stored = 0
+    for _ in range(max_pages):
+        try:
+            evs = await _relay.query(
+                upstream, [{"authors": [pubkey], "kinds": kinds, "until": until, "limit": 200}],
+                direct=direct)
+        except Exception as e:
+            logger.warning("[nostr-relay] backfill query failed: %s", e)
+            break
+        if not evs:
+            break
+        oldest = until
+        for ev in evs:
+            if ev.get("pubkey") != pubkey:
+                continue
+            oldest = min(oldest, int(ev.get("created_at", until)))
+            if not _is_evid(ev.get("id")) or not verify_event(ev):
+                continue
+            if await store.has_event(ev["id"]):
+                continue
+            if await store.add_event(ev, origin="wot"):
+                stored += 1
+                await server.subs.fanout(ev)
+        if oldest >= until:
+            break  # no older events found → done
+        until = oldest - 1
+        if stored >= max_total:
+            break
+        if pace > 0:
+            await asyncio.sleep(pace)
+    logger.info("[nostr-relay] backfilled %d events for %s…", stored, pubkey[:12])
+    return stored
+
+
 async def backfill_ancestors(store, server, upstream, events, max_ancestors: int,
                              direct: bool = False) -> int:
     """Walk reply-to (`e`-tag) references up to the thread root, fetching by id any event we

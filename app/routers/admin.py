@@ -320,6 +320,21 @@ def nostr_relay_status(admin: User = Depends(get_admin_user)):
     return relay_status()
 
 
+@router.post("/nostr-relay/backfill-me")
+def nostr_relay_backfill_me(admin: User = Depends(get_admin_user)):
+    """Backfill the admin's own Nostr post history into the relay (Admin → Relay button)."""
+    from app.services.nostr import nostr_service
+    from app.services.nostr_relay.thread import trigger_backfill
+    nsec = getattr(admin, "nostr_nsec", None)
+    if not nsec:
+        return {"ok": False, "error": "link a Nostr key in your user settings first"}
+    try:
+        pk = nostr_service.derive_pubkey(nostr_service.decode_seckey(nsec))
+    except Exception:
+        return {"ok": False, "error": "could not derive your Nostr pubkey"}
+    return trigger_backfill(pk)
+
+
 @router.put("/settings")
 def update_settings(
     data: SettingsUpdate,

@@ -62,6 +62,11 @@
             <span id="relayWotStatus" style="margin-left:10px;color:#9aa;"></span>
             <small>Rebuilds the follow graph from the seeds immediately (otherwise daily). Save seed changes first.</small>
         </div>
+        <div class="form-group">
+            <button type="button" id="relayBackfillMeBtn" class="btn-primary">⭳ Sync my post history to the relay</button>
+            <span id="relayBackfillStatus" style="margin-left:10px;color:#9aa;"></span>
+            <small>Pulls your full Nostr history from the upstream relays into this relay. Writes directly (your old posts are <strong>not</strong> re-broadcast). Needs a Nostr key linked in your user settings.</small>
+        </div>
     </fieldset>
     <script>
     (function(){
@@ -79,10 +84,22 @@
                 var f=(window.csrfFetch||fetch);
                 f('/api/admin/nostr-relay/refresh-wot',{method:'POST'}).then(function(r){return r.json();})
                 .then(function(j){
-                    if(j && j.ok) stat.textContent='✓ WoT rebuilt: '+j.members+' members';
+                    if(j && j.ok) stat.textContent='✓ started — building (depth 2 takes a few min)';
                     else stat.textContent='✗ '+((j&&j.error)||'failed');
                 }).catch(function(e){ stat.textContent='✗ '+e; })
                 .finally(function(){ btn.disabled=false; });
+            });
+            var bf=document.getElementById('relayBackfillMeBtn');
+            var bstat=document.getElementById('relayBackfillStatus');
+            if(bf) bf.addEventListener('click', function(){
+                bf.disabled=true; bstat.textContent='Pulling your history from upstream…';
+                var f=(window.csrfFetch||fetch);
+                f('/api/admin/nostr-relay/backfill-me',{method:'POST'}).then(function(r){return r.json();})
+                .then(function(j){
+                    if(j && j.ok) bstat.textContent='✓ started — your posts are being synced in the background';
+                    else bstat.textContent='✗ '+((j&&j.error)||'failed');
+                }).catch(function(e){ bstat.textContent='✗ '+e; })
+                .finally(function(){ bf.disabled=false; });
             });
         }
         if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded', init); }

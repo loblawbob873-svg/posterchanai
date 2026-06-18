@@ -363,6 +363,28 @@ def trigger_wot_refresh() -> dict:
         return {"ok": False, "error": str(e)}
 
 
+def trigger_backfill(pubkey_hex: str) -> dict:
+    """Backfill an author's full history into the relay (Admin button). Fire-and-forget on the
+    relay loop; writes straight to the store so the outbox does NOT re-broadcast old posts."""
+    if not _relay.is_running() or _relay.loop is None or _relay.store is None or _relay.server is None:
+        return {"ok": False, "error": "relay not running"}
+    if not pubkey_hex:
+        return {"ok": False, "error": "no nostr key on your account"}
+    cfg = _relay.cfg
+
+    async def _run():
+        from . import ingest as _ingest
+        await _ingest.backfill_author(
+            _relay.store, _relay.server, cfg["upstream"], pubkey_hex,
+            direct=cfg["direct"], pace=cfg["request_pace_sec"])
+
+    try:
+        asyncio.run_coroutine_threadsafe(_safe(_run()), _relay.loop)
+        return {"ok": True, "started": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 def relay_status() -> dict:
     """Lightweight status for the Admin UI."""
     if not _relay.is_running() or _relay.gate is None:
