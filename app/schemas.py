@@ -547,6 +547,7 @@ class UserSettingsUpdate(BaseModel):
     nostr_relay_icon: Optional[str] = None             # relay avatar URL (blank = mascot)
     nostr_relay_advertise_restricted_writes: Optional[bool] = False  # off = single-relay NIP-65 lists stick in Yakihonne
     nostr_relay_mirror_feeds: Optional[bool] = False   # off = write-gated store, not a crawler of the WoT's whole feed
+    nostr_relay_firehose_max_relays: Optional[int] = 0  # how many upstreams the firehose streams from (0 = ALL)
     nostr_relay_blocked_langs: Optional[str] = None    # CSV of blocked language codes
     nostr_relay_blocked_words: Optional[str] = None    # newline list; reject notes containing these
     nostr_relay_blocked_pubkeys: Optional[str] = None  # npub/hex denylist (purged + rejected)

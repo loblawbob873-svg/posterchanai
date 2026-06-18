@@ -100,8 +100,11 @@ def _read_config() -> dict:
             # Live firehose: keep a persistent subscription to each upstream relay and store
             # only WoT authors — real-time, vs the polling sweep's per-cycle lag.
             "firehose_enabled": gb("nostr_relay_firehose_enabled", True),
-            # Mirror the WoT's public feed from upstream (sync sweep + firehose). OFF: the relay
-            # is a write-gated store, not a crawler of the whole trust graph. See _main.
+            # How many upstream relays the firehose streams from (0 = ALL). It's the sole
+            # real-time ingestion path now, so default to all for completeness.
+            "firehose_max_relays": gi("nostr_relay_firehose_max_relays", 0),
+            # Heavy backfill SWEEP (per-member crawl of the whole trust graph). OFF: the firehose
+            # streams + filters in real time; the sweep is the laggy "mirror their feeds" crawl.
             "mirror_feeds": gb("nostr_relay_mirror_feeds", False),
             "db_path": db_path,
             "retention_days": gi("nostr_relay_retention_days", 30),
@@ -298,7 +301,8 @@ async def _main(cfg: dict) -> None:
         from .firehose import run_firehose
         tasks.append(asyncio.create_task(
             run_firehose(cfg["upstream"], cfg["ingest_kinds"], _firehose_event,
-                         _relay.stop_event, cfg["direct"])))
+                         _relay.stop_event, cfg["direct"],
+                         max_relays=cfg.get("firehose_max_relays", 0))))
     try:
         await _relay.stop_event.wait()
     finally:

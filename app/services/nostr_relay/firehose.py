@@ -66,19 +66,20 @@ async def _run_one(relay_url: str, kinds: list, on_event, stop: asyncio.Event, d
         backoff = min(backoff * 2, 60)  # exponential backoff on repeated failures
 
 
-# Cap how many relays we firehose. The global stream is highly redundant — popular notes
-# arrive on every relay — so subscribing to all ~12 means parsing (and deduping) the same
-# events N times for little extra coverage, which is the relay's main idle-CPU cost. A few
-# high-traffic relays cover virtually all WoT members in real time; the windowed author-batched
-# sync (ingest.sync_tick) still queries ALL upstream relays, so completeness is unaffected.
-_FIREHOSE_MAX_RELAYS = 4
+async def run_firehose(upstream, kinds: list, on_event, stop: asyncio.Event, direct: bool,
+                       max_relays: int = 0) -> None:
+    """Run a persistent firehose subscription against the upstream relays until `stop`.
 
-
-async def run_firehose(upstream, kinds: list, on_event, stop: asyncio.Event, direct: bool) -> None:
-    """Run a persistent firehose subscription against a few upstream relays until `stop`."""
-    relays = list(upstream)[:_FIREHOSE_MAX_RELAYS]
+    `max_relays` caps how many relays to subscribe to (0 = ALL). The firehose is now the sole
+    real-time ingestion path (the windowed sync sweep is off by default), so by default we
+    stream from EVERY upstream — a WoT post that only lands on a less-popular relay would
+    otherwise be missed. The global stream is redundant (popular notes arrive on every relay),
+    but non-WoT events are dropped before any verify/DB work and WoT events are has_event-
+    deduped, so the extra cost is just parsing each stream. Lower max_relays to trade
+    completeness for idle CPU if a node is constrained."""
+    relays = list(upstream)[:max_relays] if max_relays and max_relays > 0 else list(upstream)
     tasks = [asyncio.create_task(_run_one(u, kinds, on_event, stop, direct)) for u in relays]
-    logger.info("[nostr-relay] firehose started on %d/%d upstream relays (rest covered by sync)",
+    logger.info("[nostr-relay] firehose started on %d/%d upstream relays",
                 len(tasks), len(upstream))
     try:
         await stop.wait()
