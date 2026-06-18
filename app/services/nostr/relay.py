@@ -10,6 +10,7 @@ import json
 import uuid
 import asyncio
 import logging
+from urllib.parse import urlparse
 
 import websockets
 
@@ -43,16 +44,30 @@ def normalize_relays(relays) -> list[str]:
     return out
 
 
-def _conn_kw(direct: bool) -> dict:
-    """Connection kwargs: {} for a direct connection (bypass proxy), else the configured
-    outbound proxy. `direct=True` lets the built-in relay opt out of Tor for its own upstream
-    traffic without changing the bots' behavior."""
+def _is_local(relay: str) -> bool:
+    """True if the relay URL points at this host — a loopback connection must NEVER be sent
+    through the outbound (Tor/SOCKS) proxy, which can't reach localhost (it rejects with 502).
+    Lets bots point their relay list at ws://localhost:3052 (our in-process relay)."""
+    try:
+        host = urlparse(relay).hostname or ""
+    except Exception:
+        return False
+    return host in ("localhost", "127.0.0.1", "::1", "0.0.0.0")
+
+
+def _conn_kw(relay: str, direct: bool) -> dict:
+    """Connection kwargs for websockets.connect. Loopback relays pass `proxy=None` to
+    EXPLICITLY disable proxying — websockets otherwise reads HTTPS/ALL_PROXY from the env
+    (the bot's Tor proxy) and tries to tunnel localhost through it (502 / handshake timeout).
+    `direct=True` (the relay's own upstream) omits the kwarg; otherwise use the configured proxy."""
+    if _is_local(relay):
+        return {"proxy": None}
     return {} if direct else _proxy_kw()
 
 
 async def _publish_one(relay: str, event: dict, direct: bool = False) -> bool:
     try:
-        async with websockets.connect(relay, open_timeout=_CONNECT_TIMEOUT, **_conn_kw(direct)) as ws:
+        async with websockets.connect(relay, open_timeout=_CONNECT_TIMEOUT, **_conn_kw(relay, direct)) as ws:
             await ws.send(json.dumps(["EVENT", event]))
             try:
                 raw = await asyncio.wait_for(ws.recv(), timeout=5)
@@ -82,7 +97,7 @@ async def publish(relays, event: dict, direct: bool = False) -> int:
 async def _query_one(relay: str, filters: list, out: dict, timeout: float, direct: bool = False) -> None:
     sub_id = uuid.uuid4().hex[:16]
     try:
-        async with websockets.connect(relay, open_timeout=_CONNECT_TIMEOUT, **_conn_kw(direct)) as ws:
+        async with websockets.connect(relay, open_timeout=_CONNECT_TIMEOUT, **_conn_kw(relay, direct)) as ws:
             await ws.send(json.dumps(["REQ", sub_id] + filters))
             deadline = asyncio.get_event_loop().time() + timeout
             while True:

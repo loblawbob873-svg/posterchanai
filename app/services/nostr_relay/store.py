@@ -88,11 +88,15 @@ END;
 """
 
 
-# Kinds the age-based auto-cleaner NEVER deletes: profiles (0), contact lists (3) and relay
-# lists (10002) — replaceable identity metadata clients always need; long-form articles
-# (30023) — low-volume, valuable; and private DMs (legacy 4, NIP-17 gift wraps 1059) — a DM
-# inbox must not silently lose messages. Only notes/reposts/reactions age out.
-_KEEP_KINDS = (0, 3, 4, 1059, 10002, 30023)
+# The age-based auto-cleaner deletes ONLY high-volume, reconstructable FEED content — never
+# important events. Allowlist (not denylist) so a kind is pruned only if it is explicitly one
+# of these: notes (1), reposts (6), reactions (7), NIP-22 comments (1111). EVERYTHING else is
+# kept indefinitely — profiles (0), contacts (3), ALL replaceable identity/relay lists
+# (10000-19999: relay list 10002, DM relays 10050, search relays 10007, blossom servers 10063,
+# mute/bookmark/etc.), private DMs (legacy 4, NIP-59 seal 13, NIP-17 gift wrap 1059), long-form
+# articles (30023), and any other/unknown kind. (Client-published `origin='direct'` events are
+# additionally never pruned regardless of kind.)
+_PRUNABLE_KINDS = (1, 6, 7, 1111)
 
 
 class RelayStore:
@@ -554,20 +558,21 @@ class RelayStore:
     def _prune_sync(self) -> int:
         conn = self._conn()
         removed = 0
-        keep = ",".join(str(k) for k in _KEEP_KINDS)
+        prunable = ",".join(str(k) for k in _PRUNABLE_KINDS)
         preserve = self._preserve_clause()
-        # Age-based auto-cleaner: delete only old NOTES/reactions/reposts — never profiles
-        # (kind 0) or contact lists (kind 3), so identities/follows survive indefinitely.
+        # Age-based auto-cleaner: delete only old feed content (notes/reposts/reactions/comments
+        # — kinds in _PRUNABLE_KINDS). Everything else (profiles, contacts, relay/identity lists,
+        # DMs, articles, …) is never touched, so important events survive indefinitely.
         if self.retention_days:
             cutoff = int(time.time()) - self.retention_days * 86400
             cur = conn.execute(
-                f"DELETE FROM events WHERE created_at < ? AND kind NOT IN ({keep}) "
+                f"DELETE FROM events WHERE created_at < ? AND kind IN ({prunable}) "
                 f"AND {preserve}", (cutoff,))
             removed += cur.rowcount or 0
-        # Hard count cap (memory bound): trim oldest non-kept events beyond the limit.
+        # Hard count cap (memory bound): trim oldest prunable feed events beyond the limit.
         if self.max_events:
             cur = conn.execute(
-                f"DELETE FROM events WHERE kind NOT IN ({keep}) AND {preserve} AND id IN "
+                f"DELETE FROM events WHERE kind IN ({prunable}) AND {preserve} AND id IN "
                 "(SELECT id FROM events ORDER BY created_at DESC LIMIT -1 OFFSET ?)",
                 (self.max_events,))
             removed += cur.rowcount or 0
@@ -579,7 +584,7 @@ class RelayStore:
                     break
                 cur = conn.execute(
                     f"DELETE FROM events WHERE id IN (SELECT id FROM events "
-                    f"WHERE kind NOT IN ({keep}) AND {preserve} "
+                    f"WHERE kind IN ({prunable}) AND {preserve} "
                     "ORDER BY created_at ASC LIMIT 2000)")
                 if not cur.rowcount:
                     break  # only kept/preserved events remain — don't spin
