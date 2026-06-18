@@ -20,6 +20,7 @@ DEFAULT_RELAYS = [
     "wss://nos.lol/",
     "wss://nostr.mom/",
     "wss://purplepag.es/",
+    "wss://ditto.pub/relay",
     "wss://offchain.pub/",
     "wss://relay.snort.social/",
     "wss://relay.0xchat.com/",
