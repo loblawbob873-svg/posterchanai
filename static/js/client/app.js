@@ -129,6 +129,7 @@
     try{ if(window.Notification && Notification.permission==='default') Notification.requestPermission(); }catch(_){}
     $('#auth-gate').classList.add('hidden'); $('#app').classList.remove('hidden');
     $('#btn-logout').onclick = logout;
+    $('#me-card').onclick = ()=>renderProfileView(ME.pubkey);
     $$('.nav-item[data-view]').forEach(b=> b.onclick = ()=>switchView(b.dataset.view));
     $('#btn-compose').onclick = ()=>compose(); $('#btn-compose-m').onclick = ()=>compose();
     $('#btn-refresh').onclick = ()=>renderView(true);
@@ -746,7 +747,7 @@
         <div class="about">${linkify(p.about||'')}</div>
         <div class="follow-stats"><button class="statbtn" id="show-following"><b>${following.length}</b> Following</button><button class="statbtn" id="show-followers"><b>${followers.length}${followerEvs.length>=1000?'+':''}</b> Followers</button></div>
       </div></div>
-      <div id="prof-notes">${Store.feed(e=>e.pubkey===pk && !isReply(e)).slice(0,40).map(noteCard).join('')||'<div class="empty">No posts.</div>'}</div>`;
+      <div id="prof-notes">${Store.feed(e=>e.pubkey===pk && !isReply(e)).slice(0,40).map(e=>noteCard(e)).join('')||'<div class="empty">No posts.</div>'}</div>`;
     hydrate(feed);
     $('#copy-npub').onclick=()=>{ navigator.clipboard.writeText(npub); toast('npub copied'); };
     $('#show-following').onclick=()=>peopleModal('Following', following);
@@ -814,7 +815,7 @@
     html+=`<div class="thread-focus">${noteCard(ev)}</div>`;
     const rs=replies.sort((a,b)=>a.created_at-b.created_at);
     html+=`<div class="search-section-title">Replies (${rs.length})</div>`;
-    html+= rs.length ? rs.map(noteCard).join('') : '<div class="empty">No replies yet.</div>';
+    html+= rs.length ? rs.map(e=>noteCard(e)).join('') : '<div class="empty">No replies yet.</div>';
     feed.innerHTML=html; hydrate(feed);
   }
 
@@ -851,7 +852,7 @@
     if(profs.length){ html+='<div class="search-section-title">Profiles</div>'; for(const p of profs){ const m=p.meta; html+=`<div class="psearch" data-prof="${p.pubkey}"><img src="${enc(m.picture||LOGO)}" onerror="this.src='${LOGO}'"><div><b>${enc(m.name||m.display_name||'anon')}</b><div class="muted small">${enc(niceNip05(m.nip05)||(m.about||'').slice(0,60))}</div></div></div>`; } }
     const posts=postEvs.sort((a,b)=>b.created_at-a.created_at);
     html+='<div class="search-section-title">Posts</div>';
-    html+= posts.length ? posts.map(noteCard).join('') : '<div class="empty">No matching posts.</div>';
+    html+= posts.length ? posts.map(e=>noteCard(e)).join('') : '<div class="empty">No matching posts.</div>';
     feed.innerHTML=html; hydrate(feed);
     $$('[data-prof]',feed).forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
   }
