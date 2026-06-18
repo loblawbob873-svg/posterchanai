@@ -334,15 +334,18 @@ class RelayStore:
     async def wot_members(self) -> set:
         return await self._r(self._wot_members_sync)
 
-    def _wot_missing_profiles_sync(self) -> list:
+    def _wot_missing_metadata_sync(self) -> list:
+        # Members lacking lookup metadata: no kind-0 profile OR no kind-10002 relay list.
+        # Drives the lookup-relay backfill so clients can resolve profiles + outbox relays.
         rows = self._conn().execute(
-            "SELECT w.pubkey FROM wot w "
-            "WHERE NOT EXISTS (SELECT 1 FROM events e WHERE e.pubkey=w.pubkey AND e.kind=0)"
+            "SELECT w.pubkey FROM wot w WHERE "
+            "NOT EXISTS (SELECT 1 FROM events e WHERE e.pubkey=w.pubkey AND e.kind=0) "
+            "OR NOT EXISTS (SELECT 1 FROM events e WHERE e.pubkey=w.pubkey AND e.kind=10002)"
         ).fetchall()
         return [r["pubkey"] for r in rows]
 
-    async def wot_missing_profiles(self) -> list:
-        return await self._r(self._wot_missing_profiles_sync)
+    async def wot_missing_metadata(self) -> list:
+        return await self._r(self._wot_missing_metadata_sync)
 
     # --- snapshot + prune ---------------------------------------------------
 

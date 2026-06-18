@@ -122,10 +122,10 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
             logger.warning("[nostr-relay] ancestor backfill failed: %s", e)
 
     try:
-        await fetch_missing_profiles(store, upstream, batch, cfg.get("profile_limit", 500),
-                                     pace, direct)
+        await fetch_lookup_metadata(store, upstream, batch, cfg.get("profile_limit", 500),
+                                    pace, direct)
     except Exception as e:
-        logger.warning("[nostr-relay] profile fetch failed: %s", e)
+        logger.warning("[nostr-relay] metadata fetch failed: %s", e)
 
     logger.info("[nostr-relay] sync tick: %d new (window %ds, %d/%d members scanned)",
                 len(new_events), now - since, scanned, len(members))
@@ -216,11 +216,17 @@ async def backfill_ancestors(store, server, upstream, events, max_ancestors: int
     return fetched
 
 
-async def fetch_missing_profiles(store, upstream, batch: int, limit: int, pace: float = 1.0,
-                                 direct: bool = False) -> int:
-    """Pull kind-0 metadata for WoT members we have no profile for, so clients render
-    names/avatars. Batched by author to respect relay filter caps, paced to be polite."""
-    missing = await store.wot_missing_profiles()
+# Lookup-relay metadata kinds: profile (NIP-01), contact list (NIP-02), relay list (NIP-65).
+_LOOKUP_KINDS = [0, 3, 10002]
+
+
+async def fetch_lookup_metadata(store, upstream, batch: int, limit: int, pace: float = 1.0,
+                                direct: bool = False) -> int:
+    """Pull lookup metadata (kind-0 profile, kind-3 contacts, kind-10002 relay list) for WoT
+    members that lack it, so clients can use this relay to resolve who-is-who and where each
+    member posts (the outbox / NIP-65 lookup-relay role). Batched + paced; replaceable events
+    keep only the newest. These authors are WoT members, so they pass the gate."""
+    missing = await store.wot_missing_metadata()
     if not missing:
         return 0
     missing = missing[:limit]
@@ -230,17 +236,20 @@ async def fetch_missing_profiles(store, upstream, batch: int, limit: int, pace: 
             await asyncio.sleep(pace)
         chunk = missing[i:i + batch]
         try:
-            evs = await _relay.query(upstream, [{"authors": chunk, "kinds": [0]}], direct=direct)
+            evs = await _relay.query(upstream, [{"authors": chunk, "kinds": _LOOKUP_KINDS}],
+                                     direct=direct)
         except Exception:
             continue
+        # Newest per (author, kind) — these are all replaceable.
         latest: dict = {}
         for ev in evs:
-            a = ev.get("pubkey")
-            if a and ev.get("created_at", 0) >= latest.get(a, {}).get("created_at", -1):
-                latest[a] = ev
+            key = (ev.get("pubkey"), ev.get("kind"))
+            if key[0] is not None and ev.get("created_at", 0) >= latest.get(key, {}).get("created_at", -1):
+                latest[key] = ev
         for ev in latest.values():
             if verify_event(ev) and await store.add_event(ev, origin="wot"):
                 stored += 1
     if stored:
-        logger.info("[nostr-relay] fetched %d missing profile(s)", stored)
+        logger.info("[nostr-relay] fetched %d lookup-metadata event(s) (profiles/contacts/relay-lists)",
+                    stored)
     return stored
