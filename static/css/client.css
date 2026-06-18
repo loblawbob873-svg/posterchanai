@@ -152,7 +152,6 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 /* profile Media tab — square thumbnail gallery (media only, no post chrome) */
 .media-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:4px}
 .media-grid img,.media-grid video{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:8px;border:1px solid var(--line);background:#0d0a1a;cursor:pointer;display:block}
-@media(max-width:560px){.media-grid{grid-template-columns:repeat(2,1fr)}}
 .note .txt audio{width:100%;max-width:420px;margin-top:8px;display:block}
 .note .txt a.mention{color:var(--cyan);font-weight:600}
 .note .repost-tag{font-size:12px;color:var(--green);margin-bottom:4px}
@@ -341,6 +340,8 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
   .prof .phead{padding:0 14px}.prof .pbody{padding:12px 14px}
   .prof .phead .btn{margin-top:6px}
   .files-grid{grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;padding:12px}
+  .media-grid{gap:3px;padding:3px}   /* tighter phone gallery, still 3 across */
+  .media-grid img,.media-grid video{border-radius:6px}
   .modal{padding:16px}
   .auth-card{padding:22px}
   /* compose: drop the growing spacer so every tool (incl. 💾 Draft) flows + wraps visibly
