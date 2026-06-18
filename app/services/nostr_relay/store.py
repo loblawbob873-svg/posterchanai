@@ -210,6 +210,23 @@ class RelayStore:
         """Insert an event (already verified + WoT-gated by the caller). Returns stored?"""
         return await self._w(self._add_event_sync, ev, origin)
 
+    def _delete_pubkeys_sync(self, pubkeys: list) -> int:
+        if not pubkeys:
+            return 0
+        conn = self._conn()
+        removed = 0
+        for pk in pubkeys:
+            conn.execute("DELETE FROM event_tags WHERE event_id IN "
+                         "(SELECT id FROM events WHERE pubkey=?)", (pk,))
+            cur = conn.execute("DELETE FROM events WHERE pubkey=?", (pk,))
+            removed += cur.rowcount or 0
+        conn.commit()
+        return removed
+
+    async def delete_pubkeys(self, pubkeys: list) -> int:
+        """Purge all events authored by these pubkeys (e.g. when an author is blocklisted)."""
+        return await self._w(self._delete_pubkeys_sync, list(pubkeys))
+
     def _has_sync(self, eid: str) -> bool:
         return self._conn().execute(
             "SELECT 1 FROM events WHERE id=? LIMIT 1", (eid,)).fetchone() is not None

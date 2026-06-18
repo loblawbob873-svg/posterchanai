@@ -17,7 +17,7 @@ import logging
 
 from app.services.nostr import relay as _relay
 from app.services.nostr.event import verify_event
-from .langfilter import blocked_language
+from .langfilter import blocked_language, blocked_word
 
 logger = logging.getLogger(__name__)
 
@@ -28,36 +28,50 @@ def _is_evid(x) -> bool:
 
 async def sync_tick(store, gate, server, upstream, cfg) -> int:
     """One windowed sync pass over the WoT author set. Returns count of new events."""
-    members = list(gate.members())
+    members = sorted(gate.members())   # stable order so the rotating offset is meaningful
+    n_members = len(members)
     if not members:
         return 0
     now = int(time.time())
-    try:
-        cursor = int(await store.kv_get("sync_cursor") or 0)
-    except (ValueError, TypeError):
-        cursor = 0
     window = cfg["sync_window_sec"]
     overlap = cfg["overlap_sec"]
-    # Never look back less than `window`; if we fell behind (cursor old / was down), look back
-    # to the cursor instead. Overlap re-pulls boundary stragglers. Dedup makes it idempotent.
-    base = min(cursor, now - window) if cursor else (now - window)
-    since = max(0, base - overlap)
-    until = now
     kinds = cfg["ingest_kinds"]
     batch = cfg["author_batch"]
     blocked = cfg.get("blocked_langs")
+    blocked_words = cfg.get("blocked_words")
     pace = cfg.get("request_pace_sec", 1.0)
     direct = cfg.get("direct", False)
     deadline = time.monotonic() + cfg.get("budget_sec", 45)
 
+    # Rotating sweep: a WoT too large to scan in one budget is still FULLY covered. We continue
+    # from where the last tick's budget stopped (`sync_offset`) and cycle through every author.
+    # All queries in one cycle share a time floor (`sync_floor`); when a full cycle completes,
+    # the floor advances to when that cycle started — so consecutive cycles overlap and no
+    # author's notes are ever missed (the tail is just delayed by up to one cycle).
+    async def _kv_int(key, default):
+        try:
+            v = await store.kv_get(key)
+            return int(v) if v not in (None, "") else default
+        except (ValueError, TypeError):
+            return default
+
+    offset = await _kv_int("sync_offset", 0)
+    if offset >= n_members:
+        offset = 0
+    floor = await _kv_int("sync_floor", 0) or (now - window)
+    if offset == 0:
+        await store.kv_set("sync_cycle_start", str(now))
+    cycle_start = await _kv_int("sync_cycle_start", now)
+    since = max(0, floor - overlap)
+    until = now
+
     new_events = []
+    i = offset
     scanned = 0
-    for i in range(0, len(members), batch):
+    while i < n_members:
         if time.monotonic() > deadline:
-            logger.info("[nostr-relay] sync budget hit (%d/%d authors); rest next tick",
-                        scanned, len(members))
             break
-        if i > 0 and pace > 0:
+        if scanned > 0 and pace > 0:
             await asyncio.sleep(pace)   # pace upstream REQs — don't blast the relays
         chunk = members[i:i + batch]
         scanned += len(chunk)
@@ -67,6 +81,7 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
                 direct=direct)
         except Exception as e:
             logger.warning("[nostr-relay] sync query failed: %s", e)
+            i += len(chunk)
             continue
         for ev in evs:
             if not gate.is_member(ev.get("pubkey", "")):
@@ -77,15 +92,24 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
                 continue
             if not verify_event(ev):
                 continue
-            if blocked and int(ev.get("kind", 1)) == 1 and \
-                    blocked_language(ev.get("content", ""), blocked):
-                continue
+            if int(ev.get("kind", 1)) == 1:
+                _content = ev.get("content", "")
+                if blocked and blocked_language(_content, blocked):
+                    continue
+                if blocked_words and blocked_word(_content, blocked_words):
+                    continue
             if await store.add_event(ev, origin="wot"):
                 new_events.append(ev)
+        i += len(chunk)
 
-    # Advance the cursor: the look-back window always re-covers recent time, so authors
-    # skipped by the budget this tick are picked up next tick (no permanent gap).
-    await store.kv_set("sync_cursor", str(until))
+    # Persist the sweep position. On a completed cycle, wrap to 0 and advance the floor to this
+    # cycle's start (next cycle re-covers [cycle_start, now], overlapping the one just finished).
+    cycled = i >= n_members
+    if cycled:
+        await store.kv_set("sync_offset", "0")
+        await store.kv_set("sync_floor", str(cycle_start))
+    else:
+        await store.kv_set("sync_offset", str(i))
 
     for ev in new_events:
         await server.subs.fanout(ev)

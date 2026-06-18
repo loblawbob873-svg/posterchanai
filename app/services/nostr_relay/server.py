@@ -14,7 +14,7 @@ from websockets.datastructures import Headers
 from websockets.http11 import Response
 
 from app.services.nostr.event import verify_event
-from .langfilter import blocked_language
+from .langfilter import blocked_language, blocked_word
 
 logger = logging.getLogger(__name__)
 
@@ -188,12 +188,19 @@ class RelayServer:
             await conn.send(json.dumps(["OK", eid, False,
                                         "blocked: not in web of trust"]))
             return
-        blocked = self.cfg.get("blocked_langs")
-        if blocked and int(ev.get("kind", 1)) == 1:
-            lang = blocked_language(ev.get("content", ""), blocked)
-            if lang:
+        if int(ev.get("kind", 1)) == 1:
+            content = ev.get("content", "")
+            blocked = self.cfg.get("blocked_langs")
+            if blocked:
+                lang = blocked_language(content, blocked)
+                if lang:
+                    await conn.send(json.dumps(["OK", eid, False,
+                                                f"blocked: language '{lang}' not accepted"]))
+                    return
+            words = self.cfg.get("blocked_words")
+            if words and blocked_word(content, words):
                 await conn.send(json.dumps(["OK", eid, False,
-                                            f"blocked: language '{lang}' not accepted"]))
+                                            "blocked: contains filtered text"]))
                 return
         stored = await self.store.add_event(ev, origin="wot")
         await conn.send(json.dumps(["OK", eid, True, ""]))

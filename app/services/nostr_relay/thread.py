@@ -132,6 +132,16 @@ def _read_config() -> dict:
             "max_ancestors": gi("nostr_relay_max_ancestors", 20),
             "blocked_langs": {x.strip() for x in g("nostr_relay_blocked_langs", "")
                               .replace(",", " ").split() if x.strip()},
+            # Reject notes whose text contains any of these words/phrases (case-insensitive
+            # substring). One per line so phrases with spaces work.
+            "blocked_words": {w.strip().lower() for w in g("nostr_relay_blocked_words", "")
+                              .split("\n") if w.strip()},
+            # Hard denylist of pubkeys (npub/hex) — rejected even if in the WoT, and their
+            # existing notes are purged on startup.
+            "blocked_pubkeys": [pk for pk in
+                                (nostr_service.to_pubkey_hex(t.strip()) for t in
+                                 g("nostr_relay_blocked_pubkeys", "").replace(",", "\n").split())
+                                if pk],
             # NIP-11 metadata
             "name": g("nostr_relay_name", "PosterChanAI Relay"),
             "description": g("nostr_relay_description", "Web-of-trust relay"),
@@ -191,7 +201,12 @@ async def _main(cfg: dict) -> None:
     store.open(loop)
     gate = WotGate()
     gate.set_operator(cfg["operator"])
+    gate.set_blocked(cfg["blocked_pubkeys"])
     await gate.load_from_store(store)              # warm from snapshot for immediate gating
+    if cfg["blocked_pubkeys"]:
+        removed = await store.delete_pubkeys(cfg["blocked_pubkeys"])
+        logger.info("[nostr-relay] purged %d events from %d blocklisted pubkey(s)",
+                    removed, len(cfg["blocked_pubkeys"]))
     from .outbox import Outbox
     outbox = Outbox(cfg["upstream"], min_interval=cfg["outbox_min_interval"],
                     maxsize=cfg["outbox_max_queue"], direct=cfg["direct"])

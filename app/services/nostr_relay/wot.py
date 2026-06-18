@@ -21,13 +21,19 @@ class WotGate:
     def __init__(self):
         self._members: frozenset = frozenset()
         self._operator: frozenset = frozenset()
+        self._blocked: frozenset = frozenset()
         self.built_at: float = 0.0
 
     def set_operator(self, operator_hex) -> None:
         self._operator = frozenset(operator_hex or [])
 
+    def set_blocked(self, blocked_hex) -> None:
+        self._blocked = frozenset(blocked_hex or [])
+
     def is_member(self, pubkey: str) -> bool:
-        return bool(pubkey) and (pubkey in self._members or pubkey in self._operator)
+        if not pubkey or pubkey in self._blocked:
+            return False  # explicit denylist overrides everything, even operator
+        return pubkey in self._members or pubkey in self._operator
 
     def members(self) -> frozenset:
         return self._members | self._operator

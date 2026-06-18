@@ -127,6 +127,20 @@
     </fieldset>
 
     <fieldset>
+        <legend>Content &amp; account filters</legend>
+        <div class="form-group">
+            <label for="nostr_relay_blocked_words">Blocked words / phrases</label>
+            <textarea id="nostr_relay_blocked_words" name="nostr_relay_blocked_words" rows="5" placeholder="one word or phrase per line&#10;spammy phrase here"></textarea>
+            <small>Reject text notes (kind 1) whose content contains any of these (case-insensitive substring). One per line.</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_blocked_pubkeys">Blocked accounts (pubkeys)</label>
+            <textarea id="nostr_relay_blocked_pubkeys" name="nostr_relay_blocked_pubkeys" rows="4" placeholder="npub1…&#10;or 64-char hex"></textarea>
+            <small>Hard denylist — these accounts are rejected <strong>even if in the Web of Trust</strong>, and their stored notes are purged on restart. npub or hex, one per line.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
         <legend>Upstream relays (sync from / broadcast to)</legend>
         <div class="form-group">
             <label for="nostr_relay_upstream_relays">Relay URLs</label>

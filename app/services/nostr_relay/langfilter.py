@@ -101,3 +101,15 @@ def blocked_language(content: str, blocked: set) -> str | None:
         return None
     hit = detect_languages(content) & set(blocked)
     return next(iter(hit)) if hit else None
+
+
+def blocked_word(content: str, words) -> str | None:
+    """Return the first blocked word/phrase found in `content` (case-insensitive substring),
+    or None. `words` should already be lowercased. Used to reject notes containing banned text."""
+    if not words or not content:
+        return None
+    low = content.lower()
+    for w in words:
+        if w and w in low:
+            return w
+    return None
