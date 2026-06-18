@@ -134,6 +134,7 @@ def main():
     cfg = config.get("cfg", 7.0)
     seed = config.get("seed")
     device = config.get("device", "xpu")
+    attention_slicing = str(config.get("attention_slicing", "off")).lower()
 
     if not model_path:
         print(json.dumps({"error": "No model_path provided"}))
@@ -200,9 +201,16 @@ def main():
         else:
             pipe = pipe.to(device)
 
-        # Enable optimizations
+        # Enable optimizations. Attention slicing trades speed for VRAM and is driven by the
+        # image_attention_slicing setting (passed in config) — must match the in-process path:
+        # "off" (default, fastest, relies on SDPA) / "auto" (balanced) / "max" (least VRAM).
         try:
-            pipe.enable_attention_slicing()
+            if attention_slicing == "max":
+                pipe.enable_attention_slicing("max")
+            elif attention_slicing == "auto":
+                pipe.enable_attention_slicing()
+            else:  # "off" and any unknown value
+                pipe.disable_attention_slicing()
         except Exception:
             pass
         try:

@@ -819,6 +819,7 @@ class DiffusersService:
             "cfg": cfg,
             "seed": seed,
             "device": self._device,
+            "attention_slicing": self._attention_slicing,
         }
 
         _repo = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
