@@ -381,7 +381,6 @@
           <button class="act" data-a="react" title="react">😀</button>
           ${mine?`<button class="act ${PINNED.has(ev.id)?'on':''}" data-a="pin" title="pin/unpin on your profile">📌</button>`:''}
           ${mine?`<button class="act" data-a="delete" title="delete">🗑️</button>`:''}
-          <span class="spacer"></span>
           <button class="act" data-a="copyid" title="copy event id">🆔</button>
           ${(IS_ADMIN && !mine)?`<button class="act" data-a="block" title="block author on relay">🚫</button>`:''}
         </div>
