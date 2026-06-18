@@ -24,10 +24,12 @@ logger = logging.getLogger(__name__)
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
-# Per-connection protocol limits (constants — tune in code, not user-facing).
-_MAX_MESSAGE_SIZE = 256 * 1024
-_MAX_SUBS_PER_CONN = 20
-_MAX_FILTERS_PER_REQ = 10
+# Per-connection protocol limits (constants — tune in code, not user-facing). Generous so
+# feature-rich clients (which open many simultaneous subscriptions for feed/notifs/profiles)
+# don't hit the cap and get a CLOSED, which some clients render as an unhealthy/red relay.
+_MAX_MESSAGE_SIZE = 512 * 1024
+_MAX_SUBS_PER_CONN = 500
+_MAX_FILTERS_PER_REQ = 25
 
 
 class _Relay:
