@@ -155,7 +155,8 @@ class RelayServer:
             async for raw in conn:
                 await self._dispatch(conn, raw)
         except Exception as e:
-            logger.info("[relay-diag] connection handler error: %r", e)
+            if "ConnectionClosed" not in type(e).__name__:
+                logger.debug("[nostr-relay] connection handler error: %r", e)
         finally:
             self.subs.remove_conn(conn)
             self._neg.pop(conn, None)
@@ -179,6 +180,9 @@ class RelayServer:
         if typ == "EVENT" and len(msg) >= 2:
             await self._on_event(conn, msg[1])
         elif typ == "REQ" and len(msg) >= 2:
+            logger.info("[relay-diag] REQ %s", [{k: (f"[{len(v)}]" if isinstance(v, list) else v)
+                                                 for k, v in f.items()}
+                                                for f in msg[2:] if isinstance(f, dict)])
             await self._on_req(conn, msg[1], msg[2:])
         elif typ == "CLOSE" and len(msg) >= 2:
             self.subs.remove(conn, msg[1])
@@ -270,6 +274,7 @@ class RelayServer:
                 return
             sessions[sub_id] = items
             resp = negentropy.reconcile(items, bytes.fromhex(msg_hex))
+            logger.info("[relay-diag] NEG-OPEN ok: %d items, resp %d bytes", len(items), len(resp))
             await conn.send(json.dumps(["NEG-MSG", sub_id, resp.hex()]))
         except Exception as e:
             logger.info("[relay-diag] NEG-OPEN %s failed: %r", sub_id, e)
