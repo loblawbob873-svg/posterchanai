@@ -317,7 +317,7 @@
         <div class="acts">
           <button class="act" data-a="reply" title="reply">💬 <span class="n">${counts.replies||''}</span></button>
           <button class="act rt ${counts.iRt?'on':''}" data-a="repost" title="repost">🔁 <span class="n">${counts.reposts||''}</span></button>
-          <button class="act" data-a="quote" title="quote post">🗨️</button>
+          <button class="act actq" data-a="quote" title="quote post">❝</button>
           <button class="act ${liked?'on':''}" data-a="like" title="like">${liked||'🤍'} <span class="n">${counts.reactions||''}</span></button>
           <button class="act" data-a="react" title="react">😀</button>
           ${mine?`<button class="act" data-a="delete" title="delete">🗑️</button>`:''}
