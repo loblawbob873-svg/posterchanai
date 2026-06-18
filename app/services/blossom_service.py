@@ -184,10 +184,9 @@ async def save_blob(db: Session, pubkey: str, data: bytes, mime: str) -> dict:
 
     existing = db.query(BlossomBlob).filter(BlossomBlob.sha256 == sha256).first()
     if existing:
-        # Already stored (possibly by another user). Refresh TTL window on re-upload.
-        if cfg["ttl_days"] > 0:
-            existing.expires_at = int(time.time()) + cfg["ttl_days"] * 86400
-            db.commit()
+        # Already stored (possibly by another user) — content-addressed, so nothing to write.
+        # Retention is governed live by the admin TTL setting (see _cleanup_once), keyed off
+        # created_at, so re-uploads don't need to re-stamp anything.
         return _descriptor_fields(existing)
 
     if cfg["backend"] == "proxy":
@@ -207,10 +206,11 @@ async def save_blob(db: Session, pubkey: str, data: bytes, mime: str) -> dict:
         storage = "local"
 
     now = int(time.time())
+    # expires_at is reserved for an explicit per-blob TTL (left NULL here); ordinary retention
+    # is driven live by the admin `blossom_blob_ttl_days` setting against created_at.
     blob = BlossomBlob(
         sha256=sha256, pubkey=pubkey, size=size, mime=mime or None, created_at=now,
-        expires_at=(now + cfg["ttl_days"] * 86400) if cfg["ttl_days"] > 0 else None,
-        storage=storage, path=path,
+        expires_at=None, storage=storage, path=path,
     )
     db.add(blob)
     db.commit()
@@ -312,16 +312,25 @@ _cleanup_thread: threading.Thread | None = None
 
 
 def _cleanup_once() -> int:
-    """Delete blobs past their expires_at (bytes + row). Returns count removed."""
+    """Delete expired blobs (bytes + row). Returns count removed.
+
+    Expiry is governed LIVE by the admin `blossom_blob_ttl_days` setting: when > 0, any blob
+    whose `created_at` is older than that many days is swept — so lowering/raising the setting
+    in the admin UI takes effect on the next sweep for ALL blobs (including migrated ones), not
+    just future uploads. An explicit per-blob `expires_at` (if ever set) is also honoured.
+    """
+    from sqlalchemy import or_, and_
     db = SessionLocal()
     removed = 0
     try:
+        cfg = _cfg(db)
         now = int(time.time())
-        expired = (db.query(BlossomBlob)
-                   .filter(BlossomBlob.expires_at.isnot(None),
-                           BlossomBlob.expires_at > 0,
-                           BlossomBlob.expires_at <= now)
-                   .limit(500).all())
+        conds = [and_(BlossomBlob.expires_at.isnot(None),
+                      BlossomBlob.expires_at > 0,
+                      BlossomBlob.expires_at <= now)]
+        if cfg["ttl_days"] > 0:
+            conds.append(BlossomBlob.created_at <= now - cfg["ttl_days"] * 86400)
+        expired = db.query(BlossomBlob).filter(or_(*conds)).limit(500).all()
         for blob in expired:
             try:
                 asyncio.run(delete_blob_bytes(db, blob))
