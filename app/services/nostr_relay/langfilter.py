@@ -24,6 +24,7 @@ LANGUAGES = {
     "hi": "Hindi / Devanagari",
     "hy": "Armenian",
     "ka": "Georgian",
+    "vi": "Vietnamese",
 }
 
 _BLOCK_THRESHOLD = 0.20  # ≥20% of letters in a blocked script → reject
@@ -46,6 +47,17 @@ _RANGES = {
 }
 
 
+# Vietnamese is Latin-script, so it can't be told apart by script the way the others can.
+# But its tone-marked vowels (U+1EA0–1EF9) plus đ/ư/ơ/ă are essentially unique to it among
+# Latin-using languages, so a couple of them is a strong, low-false-positive signal even when
+# the note mixes in English (names, hashtags, "World Cup", …).
+_VIET_CHARS = frozenset(
+    {0x0102, 0x0103, 0x0110, 0x0111, 0x01A0, 0x01A1, 0x01AF, 0x01B0}  # Ăă Đđ Ơơ Ưư
+    | set(range(0x1EA0, 0x1EFA))                                      # tone-marked vowels
+)
+_VIET_MIN = 2  # this many distinctive chars in a note ⇒ Vietnamese
+
+
 def _script_of(cp: int) -> str | None:
     for script, ranges in _RANGES.items():
         for lo, hi in ranges:
@@ -60,14 +72,18 @@ def detect_languages(text: str) -> set:
         return set()
     counts = defaultdict(int)
     letters = 0
+    viet = 0
     for ch in text:
-        sc = _script_of(ord(ch))
+        cp = ord(ch)
+        if cp in _VIET_CHARS:
+            viet += 1
+        sc = _script_of(cp)
         if sc is None:
             continue
         counts[sc] += 1
         letters += 1
     if letters == 0:
-        return set()
+        return {"vi"} if viet >= _VIET_MIN else set()
 
     # Resolve CJK ambiguity: kana ⇒ Japanese (han counts with it); hangul ⇒ Korean;
     # bare han ⇒ Chinese.
@@ -92,7 +108,10 @@ def detect_languages(text: str) -> set:
     if hangul and kana:  # mixed: count hangul as Korean too
         langs["ko"] = max(langs["ko"], hangul)
 
-    return {code for code, c in langs.items() if c and (c / letters) >= _BLOCK_THRESHOLD}
+    found = {code for code, c in langs.items() if c and (c / letters) >= _BLOCK_THRESHOLD}
+    if viet >= _VIET_MIN:
+        found.add("vi")
+    return found
 
 
 def blocked_language(content: str, blocked: set) -> str | None:
