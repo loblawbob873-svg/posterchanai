@@ -17,7 +17,7 @@ point your bots/clients at it and it re-broadcasts what you publish to the wider
 ```
           ┌──────────────────────── PosterChanAI ────────────────────────┐
  clients  │   relay thread (own asyncio loop, own port :3052)            │
-   ⇄ wss ─┼─▶  NIP-01 WS ──▶ WoT gate ──▶ SQLite (tmpfs OR disk/WAL) ────┼─▶ durable
+   ⇄ wss ─┼─▶  NIP-01 WS ──▶ WoT gate ──▶ SQLite (on disk / WAL) ────┼─▶ durable
           │        ▲                          ▲     │                     │
           │        │  outbox (your writes)    │     └─▶ live fan-out ─────┼─▶ subscribers
           │        └──────────────┐           │                          │
@@ -105,47 +105,42 @@ not the bots.
 
 ---
 
-## Storage modes (small vs. many-GB)
+## Storage (on-disk WAL, RAM-cached)
 
-Choose in Admin → Relay → **Storage mode**:
+The DB lives **directly on disk in WAL mode** (`nostr_relay.db` + `-wal` + `-shm`) — durable by
+itself, scales to many GB (a depth-2 WoT is multi-GB), with no snapshot/restore machinery to
+get in the way. RAM is used where it matters: a large **SQLite page cache** + a big **mmap read
+window** + `temp_store=MEMORY` keep hot pages and sorts in RAM (Nostr is read/write intense),
+and a fast **libsecp256k1** verify path (see below) keeps ingest CPU-cheap.
 
-### `tmpfs` (default — small, fast, bounded)
-The hot DB is a SQLite file on **tmpfs** (`/tmp`, RAM-backed) for fast write churn with zero
-SSD wear. It's **snapshotted to a persistent disk file every 10 min** via SQLite's online
-backup API (stepped copy on its own thread so it never blocks writers, atomic temp-file swap,
-skipped when nothing changed), and **restored on startup** if tmpfs was wiped by a reboot.
-
-| Restart type | What happens to events |
-|---|---|
-| Service restart / deploy | tmpfs survives a process restart → **nothing lost** (a final snapshot is also taken on shutdown) |
-| Machine reboot | tmpfs wiped → **restored from the last disk snapshot**, then windowed sync re-pulls the small gap |
-
-### `disk` (for many-GB / large WoT)
-The DB lives **directly on disk in WAL mode** — **no snapshots at all**, because a full-copy
-snapshot becomes the bottleneck once the DB is multiple GB. The DB is durable by itself, the
-OS page cache keeps hot pages in RAM, and writes are sequential WAL appends. A
-`wal_checkpoint(TRUNCATE)` runs on clean shutdown.
-
-**How DB writes work in WAL mode** (`nostr_relay.db` + `-wal` + `-shm`):
-- New writes append to the **`-wal`** file, not the main DB; the main file is only updated at
-  a *checkpoint*.
+**How DB writes work in WAL mode:**
+- New writes append to the **`-wal`** file, not the main DB; the main file is updated at a
+  *checkpoint*.
 - **One writer at a time globally**, serialized by the WAL lock (waiters block up to
   `busy_timeout`, not error). **Readers never block** and read a consistent snapshot — so
   client subscriptions keep working during heavy ingest/backfill.
-- A **large WAL** (`WAL size`, default 50 000 pages ≈ 200 MB; set higher, e.g. 500 000 ≈ 2 GB)
-  means far fewer checkpoints and much faster sustained writes for a big DB.
+- A **larger WAL** (`WAL size`, default 50 000 pages ≈ 200 MB) means fewer checkpoints and
+  faster sustained writes; very large (e.g. 500 000 ≈ 2 GB) can slightly slow reads.
+- **RAM caches** (Admin → Relay): `Page cache` (default 512 MB) and `mmap window` (default up
+  to SQLite's ~2 GB cap) — size them toward your DB for max read speed.
 
-In both modes, memory/size is **hard-bounded** by an event-count cap, a byte budget, and an
-**auto-cleaner** that deletes notes/reactions older than *N* days (default 30) but **keeps
-profiles and contact lists forever** — identities and follow graphs survive indefinitely while
-note volume stays bounded.
+Size is **hard-bounded** by an event-count cap, a byte budget, and an **auto-cleaner** that
+deletes notes/reactions older than *N* days (default 30) but **keeps profiles and contact lists
+forever** — identities and follow graphs survive indefinitely while note volume stays bounded.
+
+### Fast signature verification
+Mass-verifying synced events is the ingest bottleneck. The relay uses **libsecp256k1 via
+`coincurve`** when available (~0.03 ms/sig vs ~67 ms pure-Python — ~2000× faster), gated by a
+self-test so it's only used if it verifies a known good/bad signature correctly; otherwise it
+falls back to the bundled pure-Python verify. `coincurve` is in `requirements.txt` (optional but
+strongly recommended for a relay).
 
 ---
 
 ## Quick start
 
 1. **Admin → Relay → enable** "Run the relay on this server", set your **seed npubs** (a
-   starter set ships by default), pick the **WoT depth** and **storage mode**, **save**, and
+   starter set ships by default), pick the **WoT depth**, **save**, and
    **restart the service**.
 2. Verify it's up: `journalctl -u posterchanai.service | grep nostr-relay` should show
    `listening on ws://…:3052/relay`, `WoT rebuilt: N members`, and periodic `sync tick` lines.
@@ -213,11 +208,9 @@ exact path it was reached on.
 | Delay between sync queries | 1.0 s | Pace upstream requests |
 | Outbox min interval / queue | 1.0 s / 500 | Throttle + bound broadcasts |
 | Max connections | 5000 | Concurrent client cap |
-| **Storage mode** | tmpfs | `tmpfs` (snapshots) or `disk` (WAL, many-GB) |
 | WAL size | 50000 pages | Larger = fewer checkpoints, faster writes |
-| Scratch dir | /tmp | tmpfs hot DB location |
-| Snapshot path | data/nostr_relay.db | Disk DB (snapshot in tmpfs mode; live DB in disk mode) |
-| Snapshot interval | 600s | tmpfs mode only |
+| Database path | data/nostr_relay.db | On-disk DB (WAL) |
+| Page cache / mmap (MB RAM) | 512 / 4096 | SQLite read caches |
 | Auto-clean notes older than | 30 days (0=off) | Old notes only — **profiles & contacts kept forever** |
 | Max events / Max DB MB | 500k / 1024 | Hard bounds (trim oldest notes first) |
 | NIP-11 name/description/pubkey/contact | — | Relay info document |

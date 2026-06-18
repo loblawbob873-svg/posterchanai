@@ -83,17 +83,9 @@ def _read_config() -> dict:
         upstream = nostr_service.relay.normalize_relays(
             g("nostr_relay_upstream_relays", "")) or list(nostr_service.DEFAULT_RELAYS)
 
-        scratch = g("nostr_relay_scratch_dir", "/tmp")
-        snap_path = g("nostr_relay_db_path", os.path.join(_REPO_ROOT, "data", "nostr_relay.db"))
-        # Storage mode: 'tmpfs' = hot DB in RAM + periodic snapshot to disk (fast, for a
-        # bounded/small DB). 'disk' = DB lives directly on disk in WAL mode, NO snapshot —
-        # scales to many GB without the full-copy snapshot bottleneck (OS page cache keeps
-        # hot pages in RAM, writes are sequential WAL appends, the DB is durable by itself).
-        storage_mode = (g("nostr_relay_storage_mode", "tmpfs") or "tmpfs").lower()
-        if storage_mode == "disk":
-            hot_path = snap_path
-        else:
-            hot_path = os.path.join(scratch, "posterchanai-nostr-relay.db")
+        # The DB lives on disk in WAL mode — durable by itself, scales to many GB, OS page
+        # cache + a big mmap window keep hot pages in RAM.
+        db_path = g("nostr_relay_db_path", os.path.join(_REPO_ROOT, "data", "nostr_relay.db"))
 
         cfg = {
             "enabled": gb("nostr_relay_enabled", False),
@@ -105,16 +97,15 @@ def _read_config() -> dict:
             # WoT). Direct is faster and avoids the proxy-startup-race log flood; doesn't change
             # the bots' proxy behavior.
             "direct": gb("nostr_relay_disable_proxy", False),
-            "hot_path": hot_path,
-            "snapshot_path": snap_path,
-            "storage_mode": storage_mode,
-            "snapshot_sec": gi("nostr_relay_snapshot_sec", 600),
+            "db_path": db_path,
             "retention_days": gi("nostr_relay_retention_days", 30),
             "max_events": gi("nostr_relay_max_events", 500000),
             "max_db_mb": gi("nostr_relay_max_db_mb", 1024),
             "wal_pages": gi("nostr_relay_wal_autocheckpoint", 50000),  # ~200MB WAL before checkpoint
-            "cache_mb": gi("nostr_relay_cache_mb", 64),                # SQLite page cache
-            "mmap_mb": gi("nostr_relay_mmap_mb", 256),                 # SQLite mmap read window
+            # Nostr is read/write intense — default to generous RAM caches (negative cache_size
+            # = KiB; mmap serves reads with zero syscalls). Tunable in Admin → Relay.
+            "cache_mb": gi("nostr_relay_cache_mb", 512),               # SQLite page cache
+            "mmap_mb": gi("nostr_relay_mmap_mb", 4096),                # SQLite mmap read window
             "sync_budget_sec": gi("nostr_relay_sync_budget_sec", 100), # per-tick sync work budget
             "wot_refresh_sec": gi("nostr_relay_wot_refresh_sec", 86400),  # daily
             "wot_depth": gi("nostr_relay_wot_depth", 1),                  # 1=follows, 2=+FoF
@@ -200,7 +191,7 @@ async def _main(cfg: dict) -> None:
     # handshake with a full traceback, which would flood the journal. Quiet it.
     logging.getLogger("websockets.server").setLevel(logging.CRITICAL)
     store = RelayStore(
-        cfg["hot_path"], cfg["snapshot_path"],
+        cfg["db_path"],
         max_events=cfg["max_events"], retention_days=cfg["retention_days"],
         max_db_mb=cfg["max_db_mb"], wal_pages=cfg["wal_pages"],
         cache_mb=cfg["cache_mb"], mmap_mb=cfg["mmap_mb"])
@@ -250,11 +241,6 @@ async def _main(cfg: dict) -> None:
                                                                 cfg["upstream"], cfg),
                                       "sync")),
     ]
-    # Snapshot loop only in tmpfs mode; in disk mode the DB is already durable (no full-copy
-    # snapshot bottleneck as it grows to many GB).
-    if cfg["storage_mode"] != "disk":
-        tasks.append(asyncio.create_task(
-            _periodic(_relay.stop_event, cfg["snapshot_sec"], store.snapshot, "snapshot")))
     try:
         await _relay.stop_event.wait()
     finally:
@@ -266,16 +252,10 @@ async def _main(cfg: dict) -> None:
             await ws.wait_closed()
         except Exception:
             pass
-        if cfg["storage_mode"] != "disk":
-            try:
-                await store.snapshot()           # final durable snapshot (tmpfs mode only)
-            except Exception as e:
-                logger.warning("[nostr-relay] final snapshot failed: %s", e)
-        else:
-            try:
-                await store.checkpoint()         # fold WAL into the disk DB on clean shutdown
-            except Exception as e:
-                logger.warning("[nostr-relay] final checkpoint failed: %s", e)
+        try:
+            await store.checkpoint()             # fold WAL into the main DB on clean shutdown
+        except Exception as e:
+            logger.warning("[nostr-relay] final checkpoint failed: %s", e)
         store.close()
         logger.info("[nostr-relay] stopped")
 

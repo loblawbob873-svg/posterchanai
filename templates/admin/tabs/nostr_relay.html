@@ -211,33 +211,26 @@
     </fieldset>
 
     <fieldset>
-        <legend>Storage &amp; memory</legend>
+        <legend>Storage &amp; memory (on-disk WAL DB)</legend>
         <div class="form-group">
-            <label for="nostr_relay_storage_mode">Storage mode</label>
-            <select id="nostr_relay_storage_mode" name="nostr_relay_storage_mode">
-                <option value="tmpfs">tmpfs — hot DB in RAM + 10-min snapshots (small/fast)</option>
-                <option value="disk">disk — DB on disk in WAL, no snapshots (scales to many GB)</option>
-            </select>
-            <small><strong>Use <code>disk</code> for a large DB</strong> (many GB): the DB is durable by itself and there's no full-copy snapshot bottleneck. <code>tmpfs</code> is fastest for a small, bounded DB. <strong>Restart after changing.</strong></small>
+            <label for="nostr_relay_db_path">Database path</label>
+            <input type="text" id="nostr_relay_db_path" name="nostr_relay_db_path" placeholder="data/nostr_relay.db">
+            <small>The relay's SQLite DB lives here on disk (WAL mode — durable by itself, scales to many GB). <strong>Restart after changing.</strong></small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_cache_mb">Page cache (MB RAM)</label>
+            <input type="number" id="nostr_relay_cache_mb" name="nostr_relay_cache_mb" placeholder="512">
+            <small>SQLite page cache held in RAM — bigger = more hot pages cached (Nostr is read-heavy).</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_mmap_mb">mmap window (MB RAM)</label>
+            <input type="number" id="nostr_relay_mmap_mb" name="nostr_relay_mmap_mb" placeholder="4096">
+            <small>Memory-mapped read window — serves reads with zero syscalls. Set near your DB size for max read speed.</small>
         </div>
         <div class="form-group">
             <label for="nostr_relay_wal_autocheckpoint">WAL size (pages before checkpoint)</label>
             <input type="number" id="nostr_relay_wal_autocheckpoint" name="nostr_relay_wal_autocheckpoint" placeholder="50000">
-            <small>Larger = fewer checkpoints, faster sustained writes on a big disk DB (50000 ≈ 200 MB; 500000 ≈ 2 GB).</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_scratch_dir">Scratch dir (tmpfs hot DB)</label>
-            <input type="text" id="nostr_relay_scratch_dir" name="nostr_relay_scratch_dir" placeholder="/tmp">
-            <small>tmpfs mode only: where the RAM-backed hot DB lives. <code>/tmp</code> is RAM — fast, zero SSD wear.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_db_path">Snapshot path (persistent)</label>
-            <input type="text" id="nostr_relay_db_path" name="nostr_relay_db_path" placeholder="data/nostr_relay.db">
-            <small>The hot DB is snapshotted here periodically and restored on reboot.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_snapshot_sec">Snapshot interval (seconds)</label>
-            <input type="number" id="nostr_relay_snapshot_sec" name="nostr_relay_snapshot_sec" placeholder="600">
+            <small>Larger = fewer checkpoints, faster sustained writes (50000 ≈ 200 MB; 500000 ≈ 2 GB). Very large can slow reads.</small>
         </div>
         <div class="form-group">
             <label for="nostr_relay_retention_days">Auto-clean notes older than (days)</label>
@@ -249,9 +242,9 @@
             <input type="number" id="nostr_relay_max_events" name="nostr_relay_max_events" placeholder="500000">
         </div>
         <div class="form-group">
-            <label for="nostr_relay_max_db_mb">Max DB size (MB, RAM cap)</label>
+            <label for="nostr_relay_max_db_mb">Max DB size (MB)</label>
             <input type="number" id="nostr_relay_max_db_mb" name="nostr_relay_max_db_mb" placeholder="1024">
-            <small>Hard cap on the tmpfs DB so it never competes with the models for RAM.</small>
+            <small>Hard cap — oldest notes are trimmed to stay under this (profiles/contacts kept).</small>
         </div>
     </fieldset>
 

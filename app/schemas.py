@@ -515,9 +515,7 @@ class UserSettingsUpdate(BaseModel):
     nostr_relay_port: Optional[int] = None
     nostr_relay_wot_seeds: Optional[str] = None          # npub/hex seeds, newline/comma
     nostr_relay_upstream_relays: Optional[str] = None     # blank = bots' DEFAULT_RELAYS
-    nostr_relay_scratch_dir: Optional[str] = None         # tmpfs dir for the hot DB
-    nostr_relay_db_path: Optional[str] = None             # persistent snapshot path
-    nostr_relay_snapshot_sec: Optional[int] = None
+    nostr_relay_db_path: Optional[str] = None             # on-disk DB path (WAL)
     nostr_relay_retention_days: Optional[int] = None  # auto-clean notes older than N days (0=off)
     nostr_relay_max_events: Optional[int] = None
     nostr_relay_max_db_mb: Optional[int] = None
@@ -525,8 +523,9 @@ class UserSettingsUpdate(BaseModel):
     nostr_relay_wot_depth: Optional[int] = None              # 1=follows, 2=+friends-of-friends
     nostr_relay_wot_min_followers: Optional[int] = None      # FoF inclusion threshold
     nostr_relay_wot_max: Optional[int] = None                # cap on total WoT members
-    nostr_relay_storage_mode: Optional[str] = None           # 'tmpfs' (snapshot) | 'disk' (WAL)
     nostr_relay_wal_autocheckpoint: Optional[int] = None     # WAL pages before checkpoint
+    nostr_relay_cache_mb: Optional[int] = None               # SQLite page cache (RAM)
+    nostr_relay_mmap_mb: Optional[int] = None                # SQLite mmap read window (RAM)
     nostr_relay_max_connections: Optional[int] = None
     nostr_relay_fetch_ancestors: Optional[bool] = None
     nostr_relay_max_ancestors: Optional[int] = None

@@ -15,7 +15,6 @@ import os
 import re
 import json
 import time
-import shutil
 import sqlite3
 import asyncio
 import logging
@@ -92,12 +91,11 @@ _KEEP_KINDS = (0, 3)
 
 
 class RelayStore:
-    def __init__(self, hot_path: str, snapshot_path: str, *,
+    def __init__(self, db_path: str, *,
                  read_workers: int = 4, max_events: int = 0,
                  retention_days: int = 30, max_db_mb: int = 0, wal_pages: int = 50000,
                  cache_mb: int = 64, mmap_mb: int = 256):
-        self.hot_path = hot_path
-        self.snapshot_path = snapshot_path
+        self.db_path = db_path       # the DB lives on disk in WAL mode (durable by itself)
         self.max_events = max_events
         self.retention_days = retention_days
         self.max_db_mb = max_db_mb
@@ -107,24 +105,15 @@ class RelayStore:
         self._tls = threading.local()
         self._write_exec = ThreadPoolExecutor(max_workers=1, thread_name_prefix="relay-db-w")
         self._read_exec = ThreadPoolExecutor(max_workers=read_workers, thread_name_prefix="relay-db-r")
-        self._snap_exec = ThreadPoolExecutor(max_workers=1, thread_name_prefix="relay-db-snap")
-        self._last_dv = -1   # PRAGMA data_version at last snapshot (dirty check)
         self._fts = False    # NIP-50 full-text search available?
         self._loop: asyncio.AbstractEventLoop | None = None
 
     # --- lifecycle ----------------------------------------------------------
 
     def open(self, loop: asyncio.AbstractEventLoop) -> None:
-        """Restore from snapshot if the tmpfs DB is gone (post-reboot), then init schema."""
+        """Open the on-disk DB (WAL = durable by itself) and init the schema."""
         self._loop = loop
-        os.makedirs(os.path.dirname(self.hot_path) or ".", exist_ok=True)
-        os.makedirs(os.path.dirname(self.snapshot_path) or ".", exist_ok=True)
-        if not os.path.exists(self.hot_path) and os.path.exists(self.snapshot_path):
-            try:
-                shutil.copy2(self.snapshot_path, self.hot_path)
-                logger.info("[nostr-relay] restored hot DB from snapshot %s", self.snapshot_path)
-            except Exception as e:
-                logger.warning("[nostr-relay] snapshot restore failed: %s", e)
+        os.makedirs(os.path.dirname(self.db_path) or ".", exist_ok=True)
         # Initialize schema on a fresh connection.
         conn = self._conn()
         conn.executescript(_SCHEMA)
@@ -145,17 +134,13 @@ class RelayStore:
 
     def close(self) -> None:
         self._write_exec.shutdown(wait=True)
-        self._snap_exec.shutdown(wait=True)
         self._read_exec.shutdown(wait=False)
-
-    async def _snap(self, fn, *a):
-        return await self._loop.run_in_executor(self._snap_exec, fn, *a)
 
     def _conn(self) -> sqlite3.Connection:
         """Per-thread connection (executor threads each get their own), WAL + busy wait."""
         c = getattr(self._tls, "conn", None)
         if c is None:
-            c = sqlite3.connect(self.hot_path, timeout=10, check_same_thread=False)
+            c = sqlite3.connect(self.db_path, timeout=10, check_same_thread=False)
             c.row_factory = sqlite3.Row
             c.execute("PRAGMA journal_mode=WAL")
             c.execute("PRAGMA synchronous=NORMAL")
@@ -451,43 +436,7 @@ class RelayStore:
     async def wot_missing_metadata(self) -> list:
         return await self._r(self._wot_missing_metadata_sync)
 
-    # --- snapshot + prune ---------------------------------------------------
-
-    def _snapshot_sync(self) -> bool:
-        # Runs on its own connection/thread, NOT the write thread — so it never blocks
-        # writers (WAL lets it read concurrently). `data_version` changes whenever another
-        # connection has committed, so we skip the copy entirely when nothing changed.
-        src = self._conn()
-        try:
-            dv = src.execute("PRAGMA data_version").fetchone()[0]
-        except Exception:
-            dv = None
-        if dv is not None and dv == self._last_dv:
-            return False  # idle since last snapshot — nothing to copy
-        tmp = self.snapshot_path + ".tmp"
-        try:
-            if os.path.exists(tmp):
-                os.remove(tmp)
-            dst = sqlite3.connect(tmp)
-            # Stepped copy: 4096 pages (~16MB) per step, yielding between steps so the
-            # snapshot stays cheap and cooperative even as the DB grows.
-            src.backup(dst, pages=4096, sleep=0.01)
-            dst.close()
-            os.replace(tmp, self.snapshot_path)
-            if dv is not None:
-                self._last_dv = dv
-            return True
-        except Exception as e:
-            logger.warning("[nostr-relay] snapshot failed: %s", e)
-            try:
-                if os.path.exists(tmp):
-                    os.remove(tmp)
-            except Exception:
-                pass
-            return False
-
-    async def snapshot(self) -> None:
-        await self._snap(self._snapshot_sync)
+    # --- checkpoint + prune -------------------------------------------------
 
     def _checkpoint_sync(self) -> None:
         try:
@@ -496,7 +445,7 @@ class RelayStore:
             logger.warning("[nostr-relay] checkpoint failed: %s", e)
 
     async def checkpoint(self) -> None:
-        """Fold the WAL back into the main DB (disk mode, clean shutdown)."""
+        """Fold the WAL back into the main DB (e.g. on clean shutdown)."""
         await self._w(self._checkpoint_sync)
 
     def _prune_sync(self) -> int:
@@ -537,9 +486,9 @@ class RelayStore:
 
     def _db_bytes(self) -> int:
         try:
-            total = os.path.getsize(self.hot_path)
+            total = os.path.getsize(self.db_path)
             for ext in ("-wal", "-shm"):
-                p = self.hot_path + ext
+                p = self.db_path + ext
                 if os.path.exists(p):
                     total += os.path.getsize(p)
             return total
