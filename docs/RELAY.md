@@ -70,11 +70,26 @@ Pull your **own full post history** from the upstream relays into the relay:
 It pages back through time and writes **directly to the store** — your old posts are **not**
 re-broadcast by the outbox. Safe to re-run (it dedupes).
 
-### Language blocking
-Optionally reject text notes (kind 1) written in chosen scripts (Cyrillic/CJK/Arabic/…),
-toggled per-language with clickable chips in Admin → Relay. Detection is by Unicode script
-(dependency-free), targeting non-Latin spam. Applies to both writes and sync. (Latin-script
-languages can't be told apart by script and aren't offered.)
+### Search (NIP-50)
+Clients can full-text **search** the relay's notes with a `{"search": "..."}` filter, backed
+by a **SQLite FTS5** index over note content (kept in sync by triggers; LIKE fallback if FTS5
+isn't compiled in). Multiple words are AND-ed. Advertised as NIP-50 in the relay info doc.
+
+### Lookup relay (NIP-65 / outbox model)
+Beyond the timeline, the relay stores and serves the **lookup metadata** for every WoT
+member — **kind-0 profiles**, **kind-3 contact lists**, and **kind-10002 relay lists** — so
+clients can use it to resolve who-is-who and *where each member posts*. Advertised as NIP-02
++ NIP-65.
+
+### Content & account filters
+Three independent filters, all in Admin → Relay, all applied to **both writes and sync**:
+- **Language blocking** — reject kind-1 notes in chosen scripts (Cyrillic/CJK/Arabic/…),
+  toggled per-language with clickable chips. Detection is by Unicode script (dependency-free),
+  targeting non-Latin spam. (Latin-script languages can't be told apart by script.)
+- **Word/phrase blocking** — reject notes whose text contains any banned word/phrase
+  (case-insensitive substring; one per line).
+- **Account blocklist** — a hard denylist of pubkeys (npub/hex), rejected **even if they're in
+  the Web of Trust**; their stored notes are purged on restart.
 
 ### Rate limiting (don't get blocked)
 Upstream requests are **paced** (a configurable delay between author batches during sync /
@@ -213,12 +228,18 @@ exact path it was reached on.
 
 - **NIP-01** — events, REQ/EVENT/CLOSE subscriptions, filters (ids, authors, kinds, since,
   until, `#<tag>`), EOSE, live fan-out.
+- **NIP-02** — contact lists (kind-3) stored & served (lookup relay).
 - **NIP-09** — event deletion (a kind-5 removes the author's own referenced events).
 - **NIP-11** — relay information document.
-- **NIP-45** — `COUNT` (basic).
+- **NIP-45** — `COUNT`.
+- **NIP-50** — full-text **search** (`{"search": "..."}` filters), backed by SQLite FTS5
+  over note content with a LIKE fallback if FTS5 is unavailable.
+- **NIP-65** — relay lists (kind-10002) stored & served — this relay works as an **outbox /
+  lookup relay** so clients can resolve where each member posts.
 
 **Writes are restricted to the Web of Trust; reads are open.** A blocked write gets
-`["OK", id, false, "blocked: not in web of trust"]` (or `"blocked: language '…'"`).
+`["OK", id, false, "blocked: not in web of trust"]` (or `"… language '…'"`, `"… filtered
+text"`).
 
 ## Notes & limits
 

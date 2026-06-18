@@ -121,6 +121,7 @@ def _read_config() -> dict:
             # windowed ingestion
             "sync_window_sec": gi("nostr_relay_sync_window_sec", 600),
             "sync_interval_sec": gi("nostr_relay_sync_interval_sec", 120),
+            "backfill_sec": gi("nostr_relay_backfill_hours", 48) * 3600,  # initial history depth
             "overlap_sec": gi("nostr_relay_overlap_sec", 120),
             "ingest_kinds": [int(k) for k in (g("nostr_relay_ingest_kinds", "1,6,7")
                              .replace(" ", "").split(",")) if k.strip().lstrip("-").isdigit()],

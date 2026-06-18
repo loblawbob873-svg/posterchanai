@@ -58,7 +58,12 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
     offset = await _kv_int("sync_offset", 0)
     if offset >= n_members:
         offset = 0
-    floor = await _kv_int("sync_floor", 0) or (now - window)
+    # First run (no floor yet): reach back `backfill_sec` (default 48h) so a fresh relay pulls
+    # real history and the feed isn't empty. After the first full cycle the floor advances and
+    # sync becomes incremental.
+    floor = await _kv_int("sync_floor", 0)
+    if floor <= 0:
+        floor = now - cfg.get("backfill_sec", 48 * 3600)
     if offset == 0:
         await store.kv_set("sync_cycle_start", str(now))
     cycle_start = await _kv_int("sync_cycle_start", now)

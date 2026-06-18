@@ -532,6 +532,7 @@ class UserSettingsUpdate(BaseModel):
     nostr_relay_max_ancestors: Optional[int] = None
     nostr_relay_sync_window_sec: Optional[int] = None
     nostr_relay_sync_interval_sec: Optional[int] = None
+    nostr_relay_backfill_hours: Optional[int] = None  # initial history depth pulled on first sync
     nostr_relay_overlap_sec: Optional[int] = None
     nostr_relay_ingest_kinds: Optional[str] = None
     nostr_relay_author_batch: Optional[int] = None
