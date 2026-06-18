@@ -303,6 +303,30 @@ class RelayStore:
         """Purge all events authored by these pubkeys (e.g. when an author is blocklisted)."""
         return await self._w(self._delete_pubkeys_sync, list(pubkeys))
 
+    def _delete_by_words_sync(self, words: list) -> int:
+        """Purge stored kind-1 notes whose content contains any blocked word (case-insensitive
+        substring) — the same match blocked_word() uses, applied retroactively."""
+        if not words:
+            return 0
+        conn = self._conn()
+        removed = 0
+        for w in words:
+            like = "%" + w.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            ids = [r["id"] for r in conn.execute(
+                "SELECT id FROM events WHERE kind=1 AND LOWER(content) LIKE ? ESCAPE '\\'",
+                (like,)).fetchall()]
+            for i in range(0, len(ids), 900):
+                chunk = ids[i:i + 900]
+                ph = ",".join("?" * len(chunk))
+                conn.execute(f"DELETE FROM event_tags WHERE event_id IN ({ph})", chunk)
+                conn.execute(f"DELETE FROM events WHERE id IN ({ph})", chunk)
+                removed += len(chunk)
+        conn.commit()
+        return removed
+
+    async def delete_by_words(self, words: list) -> int:
+        return await self._w(self._delete_by_words_sync, list(words))
+
     def _has_sync(self, eid: str) -> bool:
         return self._conn().execute(
             "SELECT 1 FROM events WHERE id=? LIMIT 1", (eid,)).fetchone() is not None

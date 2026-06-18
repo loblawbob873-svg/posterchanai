@@ -211,6 +211,11 @@ async def _main(cfg: dict) -> None:
         removed = await store.delete_pubkeys(cfg["blocked_pubkeys"])
         logger.info("[nostr-relay] purged %d events from %d blocklisted pubkey(s)",
                     removed, len(cfg["blocked_pubkeys"]))
+    if cfg["blocked_words"]:
+        rw = await store.delete_by_words(cfg["blocked_words"])
+        if rw:
+            logger.info("[nostr-relay] purged %d stored note(s) matching %d blocked word(s)",
+                        rw, len(cfg["blocked_words"]))
     from .outbox import Outbox
     outbox = Outbox(cfg["upstream"], min_interval=cfg["outbox_min_interval"],
                     maxsize=cfg["outbox_max_queue"], direct=cfg["direct"])
