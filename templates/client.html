@@ -4,6 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="theme-color" content="#0b0118">
+    <!-- Avatars/media: auto-upgrade http:// to https:// (mixed content is otherwise blocked on
+         this https page) and send no Referer (many image CDNs 403 a cross-origin referrer). These
+         are the usual reasons a profile's name shows but its picture falls back to the logo. -->
+    <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
+    <meta name="referrer" content="no-referrer">
     <title>PosterChan · Nostr</title>
     <link rel="manifest" href="/client/manifest.json">
     <link rel="icon" type="image/png" href="/static/posterchan-relay.png">

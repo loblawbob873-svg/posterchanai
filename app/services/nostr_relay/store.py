@@ -546,21 +546,27 @@ class RelayStore:
         return await self._r(self._wot_members_sync)
 
     def _wot_missing_metadata_sync(self) -> list:
-        # Members lacking lookup metadata (kind-0 profile and/or kind-10002 relay list).
+        # Pubkeys lacking lookup metadata (kind-0 profile and/or kind-10002 relay list).
         # Computed with SET MATH over a few indexed kind-scans — NOT per-member correlated
         # subqueries, which over a 37k-member WoT took 30s+ and stalled the whole backfill.
-        # Ordering prioritizes authors who actually have notes (visible avatars/names) so their
-        # profiles resolve first, then other no-profile members, then profile-but-no-relay-list.
+        # Ordering prioritizes authors with VISIBLE content (notes/reposts/reactions) so their
+        # avatars/names resolve first, then other no-profile members, then profile-but-no-relay.
+        # Crucially this is NOT limited to WoT members: replies/quotes/boosts pull in non-WoT
+        # authors whose events we store and the client renders — without backfilling their kind-0
+        # those avatars stay default forever (the "still see missing" pics). add_event isn't
+        # WoT-gated, so fetching + storing their profile is fine.
         conn = self._conn()
         wot = {r[0] for r in conn.execute("SELECT pubkey FROM wot").fetchall()}
         have_k0 = {r[0] for r in conn.execute("SELECT DISTINCT pubkey FROM events WHERE kind=0").fetchall()}
         have_relay = {r[0] for r in conn.execute("SELECT DISTINCT pubkey FROM events WHERE kind=10002").fetchall()}
-        note_authors = {r[0] for r in conn.execute("SELECT DISTINCT pubkey FROM events WHERE kind=1").fetchall()}
-        no_profile = wot - have_k0
-        prio = [pk for pk in no_profile if pk in note_authors]            # visible authors first
-        rest = [pk for pk in no_profile if pk not in note_authors]
+        # Authors of anything the client paints an avatar for: notes, reposts, reactions.
+        visible = {r[0] for r in conn.execute(
+            "SELECT DISTINCT pubkey FROM events WHERE kind IN (1,6,7)").fetchall()}
+        prio = [pk for pk in (wot - have_k0) if pk in visible]               # WoT visible authors
+        ghost = [pk for pk in visible if pk not in have_k0 and pk not in wot]  # non-WoT visible authors
+        rest = [pk for pk in (wot - have_k0) if pk not in visible]           # WoT members, no content
         relay_only = [pk for pk in (wot & have_k0) if pk not in have_relay]  # have profile, want relay list
-        return prio + rest + relay_only
+        return prio + ghost + rest + relay_only
 
     async def wot_missing_metadata(self) -> list:
         return await self._r(self._wot_missing_metadata_sync)
