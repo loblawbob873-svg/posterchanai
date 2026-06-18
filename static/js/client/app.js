@@ -142,6 +142,15 @@
     bindSearch();
     bindFeedActions();
     bumpDraft();   // show the saved-drafts count on the nav badge
+    // YouTube facade → load the real player iframe on click (kept out of the timeline until then
+    // for performance), and don't let the click bubble up to open the note thread.
+    document.addEventListener('click', e=>{
+      const yt=e.target.closest && e.target.closest('.yt-embed[data-yt]'); if(!yt) return;
+      e.preventDefault(); e.stopPropagation();
+      const f=document.createElement('div'); f.className='yt-frame';
+      f.innerHTML=`<iframe src="https://www.youtube.com/embed/${yt.dataset.yt}?autoplay=1" allow="autoplay; encrypted-media; fullscreen" allowfullscreen loading="lazy"></iframe>`;
+      yt.replaceWith(f);
+    });
     // Run initial queries only once the relay socket is open (otherwise the REQs are dropped
     // and profiles/follows never resolve — names would show as raw npubs).
     Relay.onReady = ()=>{ fetchFollows(); fetchMutes(); fetchPins(); fetchMyProfile(); watchNotifications();
@@ -367,7 +376,7 @@
       <img class="av" src="${enc(av)}" onerror="this.src='${LOGO}'">
       <div class="body">${prefix}
         <div class="hd"><span class="name" data-prof="${ev.pubkey}">${enc(name)}</span><span class="vchk"></span>
-          <span class="handle">${enc(handle)}</span><span class="time">${timeAgo(ev.created_at)}</span></div>
+          <span class="handle">${enc(handle)}</span><span class="time">${timeAgo(ev.created_at)}</span>${mine?`<button class="act hd-pin ${PINNED.has(ev.id)?'on':''}" data-a="pin" title="pin/unpin on your profile">📌</button>`:''}</div>
         <div class="txt">${linkify(mp.text)}</div>
         ${mp.gallery}
         ${linkCardHtml(mp.text)}
@@ -379,7 +388,7 @@
           <button class="act ${liked?'on':''}" data-a="like" title="like">${liked||'🤍'} <span class="n">${counts.reactions||''}</span></button>
           <button class="act actz" data-a="zap" title="zap (lightning)">⚡</button>
           <button class="act" data-a="react" title="react">😀</button>
-          ${mine?`<button class="act ${PINNED.has(ev.id)?'on':''}" data-a="pin" title="pin/unpin on your profile">📌</button>`:''}
+          <span class="spacer"></span>
           ${mine?`<button class="act" data-a="delete" title="delete">🗑️</button>`:''}
           <button class="act" data-a="copyid" title="copy event id">🆔</button>
           ${(IS_ADMIN && !mine)?`<button class="act" data-a="block" title="block author on relay">🚫</button>`:''}
@@ -436,6 +445,7 @@
   // ---------- interactions ----------
   function bindFeedActions(){
     $('#feed').addEventListener('click', async (e)=>{
+      if(e.target.closest('.yt-embed')) return;  // YouTube facade → handled by the player loader; don't lightbox the thumb
       const mn=e.target.closest('.mention'); if(mn){ e.preventDefault(); const pk=safePk(mn.dataset.np); if(pk) renderProfileView(pk); return; }
       const evl=e.target.closest('.evlink'); if(evl){ e.preventDefault(); renderThread(evl.dataset.ev); return; }
       const im=e.target.closest('.txt img, .note-preview img, .media-row img'); if(im){ e.preventDefault(); openLightbox(im.currentSrc||im.src); return; }
@@ -1121,7 +1131,8 @@
   const _pv=new Map();
   function firstLink(text){
     const m=(text||'').match(/https?:\/\/[^\s<]+/g); if(!m) return null;
-    for(let u of m){ u=u.replace(/[)\].,!?]+$/,''); if(!/\.(jpe?g|png|gif|webp|avif|mp4|webm|mov|m4v|mp3|ogg|wav|m4a|aac|flac)(\?|#|$)/i.test(u)) return u; }
+    for(let u of m){ u=u.replace(/[)\].,!?]+$/,''); if(ytId(u)) continue;  // YouTube is embedded inline, not carded
+      if(!/\.(jpe?g|png|gif|webp|avif|mp4|webm|mov|m4v|mp3|ogg|wav|m4a|aac|flac)(\?|#|$)/i.test(u)) return u; }
     return null;
   }
   function linkCardHtml(content){ const u=firstLink(content); return u?`<div class="link-card" data-url="${enc(u)}"></div>`:''; }
@@ -1136,6 +1147,11 @@
     el.innerHTML=`${d.image?`<img class="lc-img" src="${enc(d.image)}" loading="lazy" onerror="this.remove()">`:''}<div class="lc-body"><div class="lc-site">${enc(d.site||host)}</div>${d.title?`<div class="lc-title">${enc(d.title)}</div>`:''}${d.description?`<div class="lc-desc">${enc(d.description.slice(0,160))}</div>`:''}</div>`;
     el.onclick=(ev)=>{ ev.stopPropagation(); window.open(url,'_blank','noopener'); };
   }
+  // YouTube video id from watch / youtu.be / shorts / embed / live URLs (else null).
+  function ytId(u){
+    const m=u.match(/(?:youtube\.com\/(?:watch\?(?:[^#]*&)?v=|shorts\/|embed\/|v\/|live\/)|youtu\.be\/)([\w-]{11})/i);
+    return m?m[1]:null;
+  }
   function linkify(txt){
     let h=enc(txt);
     // images / video / audio embed (extension may be followed by ?query or #frag); else link.
@@ -1143,7 +1159,9 @@
       const u=url.replace(/[)\].,!?]+$/,'');          // don't swallow trailing punctuation
       const tail=url.slice(u.length);
       let tag;
-      if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)) tag=`<img class="m" src="${u}" loading="lazy">`;
+      const yid=ytId(u);
+      if(yid) tag=`<span class="yt-embed" data-yt="${yid}" title="play"><img class="yt-thumb" src="https://i.ytimg.com/vi/${yid}/hqdefault.jpg" loading="lazy" onerror="this.src='https://i.ytimg.com/vi/${yid}/0.jpg'"><span class="yt-play">▶</span></span>`;
+      else if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)) tag=`<img class="m" src="${u}" loading="lazy">`;
       else if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)) tag=`<video class="m" src="${u}" controls preload="metadata" playsinline></video>`;
       else if(/\.(mp3|ogg|wav|m4a|aac|flac)(\?|#|$)/i.test(u)) tag=`<br><audio src="${u}" controls preload="none"></audio>`;
       // extensionless Blossom hash URLs (e.g. media.poster.place/<sha256>) — bots post these for
