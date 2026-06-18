@@ -79,8 +79,36 @@ async def client_config(request: Request, db: Session = Depends(get_db)):
         "blossom_enabled": _setting(db, "blossom_enabled", "false").lower() == "true",
         "operator_npub": op_npub,
         "admin_npubs": admin_npubs,
+        "gif_enabled": bool(_setting(db, "tenor_api_key")),
         "name": _setting(db, "site_name", "PosterChan"),
     })
+
+
+@router.get("/gif")
+async def gif_search(q: str = "", db: Session = Depends(get_db)):
+    """GIF picker — proxies Tenor v2 (key server-side, never exposed). Blank key → empty + error."""
+    key = _setting(db, "tenor_api_key")
+    if not key:
+        return JSONResponse({"results": [], "error": "no_key"})
+    import httpx
+    base = "https://tenor.googleapis.com/v2/" + ("search" if q else "featured")
+    params = {"key": key, "limit": "24", "media_filter": "tinygif,gif", "client_key": "posterchan"}
+    if q:
+        params["q"] = q
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as client:
+            j = (await client.get(base, params=params)).json()
+        out = []
+        for r in j.get("results", []):
+            mf = r.get("media_formats", {})
+            full = mf.get("gif") or mf.get("tinygif") or {}
+            tiny = mf.get("tinygif") or full
+            if full.get("url"):
+                out.append({"url": full["url"], "preview": tiny.get("url", full["url"])})
+        return JSONResponse({"results": out})
+    except Exception as e:
+        logger.warning("[client] gif search failed: %s", e)
+        return JSONResponse({"results": [], "error": "fetch_failed"})
 
 
 @router.get("/manifest.json")

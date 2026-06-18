@@ -477,7 +477,7 @@
       <div class="cmp-tabs"><button class="cmp-tab active" data-t="write">Write</button><button class="cmp-tab" data-t="preview">👁 Preview</button></div>
       <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
       <div id="cmp-preview" class="note-preview hidden"></div>
-      <div class="row"><button class="mini" id="cmp-img">📎 attach</button><button class="mini" id="cmp-blossom">🌸 files</button><input type="file" id="cmp-file" multiple hidden>
+      <div class="row cmp-tools"><button class="btn btn-ghost small" id="cmp-img">📎 Attach</button><button class="btn btn-ghost small" id="cmp-blossom">🌸 Files</button>${CFG.gif_enabled?`<button class="btn btn-ghost small" id="cmp-gif">🎬 GIF</button>`:''}<input type="file" id="cmp-file" multiple hidden>
       <span class="spacer"></span><button class="btn btn-neon" id="cmp-send">Post ▶</button></div>
       <div class="muted small" id="cmp-status"></div>`, root=>{
       const ta=$('#cmp',root); attachMentionAutocomplete(ta);
@@ -498,6 +498,7 @@
       });
       $('#cmp-img',root).onclick=()=>$('#cmp-file',root).click();
       $('#cmp-blossom',root).onclick=()=>blossomPicker(ta);
+      { const gb=$('#cmp-gif',root); if(gb) gb.onclick=()=>gifPicker(ta); }
       $('#cmp-file',root).onchange=async e=>{ const files=[...e.target.files]; if(!files.length)return;
         for(let i=0;i<files.length;i++){ $('#cmp-status',root).textContent=`uploading ${i+1}/${files.length}…`;
           try{ const url=await uploadBlob(files[i]); ta.value+=(ta.value?'\n':'')+url; }
@@ -580,6 +581,23 @@
     if(/audio/.test(t)) return `<div class="file-icon">🎵<span>${enc(ext)}</span></div>`;
     const icon = /zip|compress|tar|gzip|7z|rar/.test(t)?'📦' : /pdf/.test(t)?'📕' : /text|json|xml|csv/.test(t)?'📄' : '📎';
     return `<div class="file-icon">${icon}<span>${enc(ext)}</span></div>`;
+  }
+  function gifPicker(ta){
+    const bg=document.createElement('div'); bg.className='modal-bg'; bg.style.zIndex='200';
+    bg.innerHTML=`<div class="modal glass neon-border"><h3>🎬 GIFs</h3><input class="input" id="gif-q" placeholder="search GIFs…" autocomplete="off"><div id="gif-grid" class="gif-grid"><div class="spinner"></div></div></div>`;
+    bg.onclick=e=>{ if(e.target===bg) bg.remove(); };
+    $('#modal-root').appendChild(bg);
+    const grid=bg.querySelector('#gif-grid'), q=bg.querySelector('#gif-q'); let t=null;
+    async function load(query){
+      grid.innerHTML='<div class="spinner"></div>';
+      let j={}; try{ j=await fetch('/client/gif?q='+encodeURIComponent(query||'')).then(r=>r.json()); }catch(_){}
+      const rs=j.results||[];
+      if(!rs.length){ grid.innerHTML='<div class="empty">'+(j.error?'GIF search not configured (set a Tenor key in Admin).':'No GIFs.')+'</div>'; return; }
+      grid.innerHTML=rs.map(g=>`<img class="gif-item" src="${enc(g.preview)}" data-url="${enc(g.url)}" loading="lazy">`).join('');
+      grid.querySelectorAll('.gif-item').forEach(im=> im.onclick=()=>{ ta.value+=(ta.value?'\n':'')+im.dataset.url+' '; bg.remove(); toast('GIF added'); });
+    }
+    q.oninput=()=>{ clearTimeout(t); t=setTimeout(()=>load(q.value.trim()),350); };
+    load(''); q.focus();
   }
   function blossomPicker(ta){
     const server=mediaServer(); if(!server){ toast('no media server set'); return; }
@@ -786,7 +804,7 @@
           <button class="btn btn-ghost small" id="mute-prof">${MUTED.has(pk)?'Unmute':'Mute'}</button>
           <button class="btn btn-ghost small" id="dm-prof">Message</button>
           <button class="btn btn-ghost small" id="zap-prof">⚡ Zap</button>
-          ${IS_ADMIN?`<button class="btn btn-ghost small" id="block-prof" style="color:#ff6b8b">Block</button>`:''}`}</div>
+          ${IS_ADMIN?`<button class="btn btn-ghost small" id="block-prof" style="color:#ff6b8b">🚫 Block (relay)</button>`:''}`}</div>
       <div class="pbody"><h2>${enc(p.name||p.display_name||'anon')}</h2>
         ${niceNip05(p.nip05)?`<div class="muted small">${enc(niceNip05(p.nip05))}</div>`:''}
         <div class="npubrow"><code>${enc(npub.slice(0,24))}…</code><button class="mini" id="copy-npub">📋 copy npub</button></div>

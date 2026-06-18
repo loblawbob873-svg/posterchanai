@@ -171,6 +171,10 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 .note-preview a.mention{color:var(--cyan)}
 .row{display:flex;gap:8px;align-items:center}
 .spacer{flex:1}
+.cmp-tools{flex-wrap:wrap;gap:8px;margin-bottom:8px}
+.gif-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;max-height:55vh;overflow:auto;margin-top:10px}
+.gif-item{width:100%;height:110px;object-fit:cover;border-radius:8px;cursor:pointer;border:1px solid var(--line);background:#120c24}
+.gif-item:hover{border-color:var(--neon)}
 .emoji-pick{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .emoji-pick button{font-size:20px;background:transparent;border:1px solid var(--line);border-radius:9px;cursor:pointer;padding:4px 8px}
 .emoji-pick button:hover{border-color:var(--neon)}
@@ -232,7 +236,7 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 .empty{text-align:center;color:var(--muted);padding:60px 20px;font-size:14px}
 .spinner{width:26px;height:26px;border:3px solid var(--line);border-top-color:var(--neon);border-radius:50%;animation:spin .7s linear infinite;margin:40px auto}
 @keyframes spin{to{transform:rotate(360deg)}}
-.badge{display:inline-grid;place-items:center;min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:var(--neon);color:#fff;font-size:10px;font-weight:700;margin-left:6px}
+.badge{display:inline-grid;place-items:center;min-width:21px;height:21px;padding:0 6px;border-radius:11px;background:var(--neon);color:#fff;font-size:12.5px;font-weight:700;margin-left:6px;box-shadow:0 0 8px rgba(255,43,214,.5)}
 
 .lightbox{position:fixed;inset:0;z-index:400;background:rgba(4,2,12,.92);backdrop-filter:blur(6px);display:grid;place-items:center;padding:20px;cursor:zoom-out;animation:fade .15s}
 .lightbox img{max-width:96vw;max-height:94vh;border-radius:10px;border:1px solid var(--neon);box-shadow:0 0 40px rgba(255,43,214,.4)}
@@ -264,10 +268,8 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
   .acts{gap:6px}
   .act{font-size:15px;padding:6px 9px}
   .act.actq{font-size:22px;padding-top:6px;padding-bottom:4px}
-  /* keep the DM compose bar + conversation list above the fixed bottom nav */
-  .dm-compose{padding-bottom:calc(12px + 58px + env(safe-area-inset-bottom))}
-  .dm-list{padding-bottom:64px}
-  .dm-msgs{padding-bottom:8px}
+  /* shrink the messages view so the compose bar + list clear the fixed bottom nav */
+  .dm-wrap{height:calc(100% - 58px - env(safe-area-inset-bottom))}
   .topbar{padding:10px 14px;gap:8px}
   .topbar h2{font-size:16px;flex-shrink:0}
   .searchbox{margin:0 4px}
