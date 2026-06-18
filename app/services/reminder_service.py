@@ -39,11 +39,13 @@ if not logger.handlers:
 
 REMINDERS_CHAT_TITLE = "⏰ Reminders"
 
-# Fallback "in <n> <unit>" parser used when the LLM is unavailable or returns nothing usable.
-_REL_RE = re.compile(
-    r'\bin\s+(\d+)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|week|weeks)\b',
-    re.IGNORECASE,
-)
+# Fallback relative parser used when the LLM is unavailable or returns nothing usable.
+_UNIT_PAT = r'(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|week|weeks)'
+# "… in 10m …" anywhere in the text.
+_REL_RE = re.compile(r'\bin\s+(\d+)\s*' + _UNIT_PAT + r'\b', re.IGNORECASE)
+# A bare trailing duration with no "in", e.g. "open oven 10m" / "call mom 2 hours" — the common
+# way people phrase it. Anchored to the END so a number mid-sentence isn't mistaken for a time.
+_REL_END_RE = re.compile(r'^(.*?)[\s,]*\b(\d+)\s*' + _UNIT_PAT + r'\s*$', re.IGNORECASE)
 _UNIT_SECONDS = {
     "s": 1, "sec": 1, "secs": 1, "second": 1, "seconds": 1,
     "m": 60, "min": 60, "mins": 60, "minute": 60, "minutes": 60,
@@ -61,13 +63,19 @@ def _strip_lead(text: str) -> str:
 
 
 def _fallback_parse(text: str, now: datetime) -> Optional[dict]:
-    """Regex fallback for 'in <n> <unit>' — returns {text, due_at} or None."""
-    m = _REL_RE.search(text or "")
-    if not m:
-        return None
-    secs = int(m.group(1)) * _UNIT_SECONDS[m.group(2).lower()]
-    body = (text[:m.start()] + " " + text[m.end():]).strip()
-    return {"text": _strip_lead(body) or "Reminder", "due_at": now + timedelta(seconds=secs)}
+    """Regex fallback for a relative duration — returns {text, due_at} or None.
+    Handles both "open oven in 10m" (in-anywhere) and "open oven 10m" (bare trailing duration)."""
+    text = text or ""
+    m = _REL_RE.search(text)
+    if m:
+        secs = int(m.group(1)) * _UNIT_SECONDS[m.group(2).lower()]
+        body = (text[:m.start()] + " " + text[m.end():]).strip()
+        return {"text": _strip_lead(body) or "Reminder", "due_at": now + timedelta(seconds=secs)}
+    m = _REL_END_RE.match(text)
+    if m:
+        secs = int(m.group(2)) * _UNIT_SECONDS[m.group(3).lower()]
+        return {"text": _strip_lead(m.group(1)) or "Reminder", "due_at": now + timedelta(seconds=secs)}
+    return None
 
 
 def _get_setting_value(db: Session, user_id: int, key: str) -> Optional[str]:

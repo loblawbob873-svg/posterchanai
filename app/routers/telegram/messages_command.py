@@ -366,14 +366,19 @@ async def _msg_command(_make_tg_node_notify, arg, attachments, chat_id, command,
                         # so Telegram is interactive too (mirrors the web UI's clickable list).
                         result = await command_service.execute_command(command, arg)
                         if result.get("type") == "reminders" and result.get("reminders"):
-                            kb = []
-                            for _r in result["reminders"]:
-                                _label = _r.get("text", "")[:40]
-                                kb.append([{"text": f"🗑️ Cancel: {_label}", "callback_data": f"rem:cancel:{_r['id']}"}])
+                            # One message per reminder (plain text — the shared `content` is
+                            # Markdown and we send parse_mode="" so it'd show literal ** / _),
+                            # each with a single 🗑️ Delete button beneath it.
+                            _rems = result["reminders"]
                             await telegram_service.send_message(
-                                chat_id, result.get("content", ""),
-                                reply_markup={"inline_keyboard": kb}, parse_mode="",
-                            )
+                                chat_id, f"⏰ Your reminders ({len(_rems)}):", parse_mode="")
+                            for _r in _rems:
+                                _line = f"• {_r.get('text','')} — {_r.get('human','')} (id {_r['id']})"
+                                await telegram_service.send_message(
+                                    chat_id, _line, parse_mode="",
+                                    reply_markup={"inline_keyboard": [[
+                                        {"text": "🗑️ Delete", "callback_data": f"rem:cancel:{_r['id']}"}]]},
+                                )
                         else:
                             await telegram_service.send_message(chat_id, result.get("content", "Done."), parse_mode="")
                         return {"ok": True}
