@@ -260,7 +260,7 @@ async def _main(cfg: dict) -> None:
             if (_bl and blocked_language(content, _bl)) or (_bw and blocked_word(content, _bw)):
                 return
         if await store.add_event(ev, origin="wot"):
-            await server.subs.fanout(ev)
+            server.subs.fanout(ev, server._send)
 
     tasks = [
         asyncio.create_task(_periodic(_relay.stop_event, 3600, store.prune, "prune")),

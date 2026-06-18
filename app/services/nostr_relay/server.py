@@ -8,6 +8,7 @@ so only web-of-trust pubkeys are ever accepted.
 
 import re
 import json
+import asyncio
 import logging
 
 from websockets.datastructures import Headers
@@ -68,15 +69,13 @@ class SubscriptionManager:
     def count(self, conn) -> int:
         return len(self._subs.get(conn, {}))
 
-    async def fanout(self, ev: dict) -> None:
+    def fanout(self, ev: dict, send) -> None:
+        """Enqueue `ev` to every matching open subscription via `send(conn, obj)` (a
+        non-blocking, drop-on-slow enqueue) — so one slow client can't stall the firehose."""
         for conn, subs in list(self._subs.items()):
             for sub_id, filters in list(subs.items()):
                 if _matches(filters, ev):
-                    try:
-                        await conn.send(json.dumps(["EVENT", sub_id, ev]))
-                    except Exception:
-                        self.remove_conn(conn)
-                        break
+                    send(conn, ["EVENT", sub_id, ev])
 
 
 class RelayServer:
@@ -88,6 +87,28 @@ class RelayServer:
         self.subs = SubscriptionManager()
         self._conns = 0
         self._neg: dict = {}   # conn -> {sub_id: negentropy item set} (NIP-77 sessions)
+        self._outq: dict = {}  # conn -> bounded outbound queue (decouples slow clients)
+
+    def _send(self, conn, obj) -> None:
+        """Enqueue a message to a client WITHOUT blocking. If the client is too slow and its
+        queue is full, drop the message (live events are re-pullable) — a slow consumer must
+        never stall the firehose/fanout or other clients."""
+        q = self._outq.get(conn)
+        if q is None:
+            return
+        try:
+            q.put_nowait(json.dumps(obj))
+        except asyncio.QueueFull:
+            pass
+
+    async def _writer(self, conn, q) -> None:
+        """Drain one connection's outbound queue at the client's own pace."""
+        try:
+            while True:
+                msg = await q.get()
+                await conn.send(msg)
+        except Exception:
+            pass
 
     # --- NIP-11 -------------------------------------------------------------
 
@@ -151,6 +172,9 @@ class RelayServer:
             await conn.close(code=1013, reason="overloaded")
             return
         self._conns += 1
+        q = asyncio.Queue(maxsize=self.cfg.get("outq_size", 4096))
+        self._outq[conn] = q
+        writer = asyncio.create_task(self._writer(conn, q))
         try:
             async for raw in conn:
                 await self._dispatch(conn, raw)
@@ -158,6 +182,8 @@ class RelayServer:
             if "ConnectionClosed" not in type(e).__name__:
                 logger.debug("[nostr-relay] connection handler error: %r", e)
         finally:
+            writer.cancel()
+            self._outq.pop(conn, None)
             self.subs.remove_conn(conn)
             self._neg.pop(conn, None)
             self._conns -= 1
@@ -168,7 +194,7 @@ class RelayServer:
                 return
             raw = raw.decode("utf-8", "replace")
         elif len(raw) > self.cfg.get("max_message_size", 262144):
-            await conn.send(json.dumps(["NOTICE", "message too large"]))
+            self._send(conn, ["NOTICE", "message too large"])
             return
         try:
             msg = json.loads(raw)
@@ -202,11 +228,11 @@ class RelayServer:
             return
         eid = ev.get("id", "")
         if not verify_event(ev):
-            await conn.send(json.dumps(["OK", eid, False, "invalid: bad id or signature"]))
+            self._send(conn, ["OK", eid, False, "invalid: bad id or signature"])
             return
         if not self.gate.is_member(ev.get("pubkey", "")):
-            await conn.send(json.dumps(["OK", eid, False,
-                                        "blocked: not in web of trust"]))
+            self._send(conn, ["OK", eid, False,
+                                        "blocked: not in web of trust"])
             return
         if int(ev.get("kind", 1)) == 1:
             content = ev.get("content", "")
@@ -214,18 +240,18 @@ class RelayServer:
             if blocked:
                 lang = blocked_language(content, blocked)
                 if lang:
-                    await conn.send(json.dumps(["OK", eid, False,
-                                                f"blocked: language '{lang}' not accepted"]))
+                    self._send(conn, ["OK", eid, False,
+                                                f"blocked: language '{lang}' not accepted"])
                     return
             words = self.cfg.get("blocked_words")
             if words and blocked_word(content, words):
-                await conn.send(json.dumps(["OK", eid, False,
-                                            "blocked: contains filtered text"]))
+                self._send(conn, ["OK", eid, False,
+                                            "blocked: contains filtered text"])
                 return
         stored = await self.store.add_event(ev, origin="wot")
-        await conn.send(json.dumps(["OK", eid, True, ""]))
+        self._send(conn, ["OK", eid, True, ""])
         if stored:
-            await self.subs.fanout(ev)
+            self.subs.fanout(ev, self._send)
             if self.outbox_cb:
                 # Non-blocking enqueue onto the paced outbox queue (drops on overflow) — a
                 # post-blasting client can't stall this connection or flood upstream relays.
@@ -238,24 +264,24 @@ class RelayServer:
         if not isinstance(sub_id, str):
             return
         if self.subs.count(conn) >= self.cfg.get("max_subs_per_conn", 20):
-            await conn.send(json.dumps(["CLOSED", sub_id, "rate-limited: too many subscriptions"]))
+            self._send(conn, ["CLOSED", sub_id, "rate-limited: too many subscriptions"])
             return
         filters = [f for f in filters if isinstance(f, dict)][: self.cfg.get("max_filters_per_req", 10)]
         try:
             events = await self.store.query(filters)
         except Exception as e:
             logger.warning("[relay-diag] query FAILED for %s: %s", sub_id, e)
-            await conn.send(json.dumps(["CLOSED", sub_id, f"error: {e}"]))
+            self._send(conn, ["CLOSED", sub_id, f"error: {e}"])
             return
         for ev in reversed(events):  # send oldest-first, newest last (common client expectation)
-            await conn.send(json.dumps(["EVENT", sub_id, ev]))
-        await conn.send(json.dumps(["EOSE", sub_id]))
+            self._send(conn, ["EVENT", sub_id, ev])
+        self._send(conn, ["EOSE", sub_id])
         self.subs.add(conn, sub_id, filters)
 
     async def _on_count(self, conn, sub_id, filters) -> None:
         filters = [f for f in filters if isinstance(f, dict)]
         events = await self.store.query(filters)
-        await conn.send(json.dumps(["COUNT", sub_id, {"count": len(events)}]))
+        self._send(conn, ["COUNT", sub_id, {"count": len(events)}])
 
     # --- NIP-77 negentropy --------------------------------------------------
 
@@ -270,31 +296,31 @@ class RelayServer:
             items = await self.store.neg_items(flts, cap=self.cfg.get("neg_max_items", 200000))
             sessions = self._neg.setdefault(conn, {})
             if len(sessions) >= self.cfg.get("max_subs_per_conn", 20):
-                await conn.send(json.dumps(["NEG-ERR", sub_id, "rate-limited"]))
+                self._send(conn, ["NEG-ERR", sub_id, "rate-limited"])
                 return
             sessions[sub_id] = items
             resp = negentropy.reconcile(items, bytes.fromhex(msg_hex))
             logger.info("[relay-diag] NEG-OPEN ok: %d items, resp %d bytes", len(items), len(resp))
-            await conn.send(json.dumps(["NEG-MSG", sub_id, resp.hex()]))
+            self._send(conn, ["NEG-MSG", sub_id, resp.hex()])
         except Exception as e:
             logger.info("[relay-diag] NEG-OPEN %s failed: %r", sub_id, e)
             self._neg.get(conn, {}).pop(sub_id, None)
-            await conn.send(json.dumps(["NEG-ERR", sub_id, "unsupported: negentropy"]))
+            self._send(conn, ["NEG-ERR", sub_id, "unsupported: negentropy"])
 
     async def _on_neg_msg(self, conn, sub_id, msg_hex) -> None:
         items = self._neg.get(conn, {}).get(sub_id)
         if items is None:
-            await conn.send(json.dumps(["NEG-ERR", sub_id, "closed"]))
+            self._send(conn, ["NEG-ERR", sub_id, "closed"])
             return
         try:
             resp = negentropy.reconcile(items, bytes.fromhex(msg_hex))
-            await conn.send(json.dumps(["NEG-MSG", sub_id, resp.hex()]))
+            self._send(conn, ["NEG-MSG", sub_id, resp.hex()])
             if len(resp) <= 1:  # only the version byte → nothing left to reconcile
                 self._neg.get(conn, {}).pop(sub_id, None)
         except Exception as e:
             logger.info("[relay-diag] NEG-MSG %s failed: %r", sub_id, e)
             self._neg.get(conn, {}).pop(sub_id, None)
-            await conn.send(json.dumps(["NEG-ERR", sub_id, "error"]))
+            self._send(conn, ["NEG-ERR", sub_id, "error"])
 
 
 _WELCOME_HTML = """<!DOCTYPE html>

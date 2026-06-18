@@ -122,7 +122,7 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
         await store.kv_set("sync_offset", str(i))
 
     for ev in new_events:
-        await server.subs.fanout(ev)
+        server.subs.fanout(ev, server._send)
 
     if cfg.get("fetch_ancestors", True) and new_events:
         try:
@@ -173,7 +173,7 @@ async def backfill_author(store, server, upstream, pubkey: str, *, direct: bool 
                 continue
             if await store.add_event(ev, origin="wot"):
                 stored += 1
-                await server.subs.fanout(ev)
+                server.subs.fanout(ev, server._send)
         if oldest >= until:
             break  # no older events found → done
         until = oldest - 1
@@ -215,7 +215,7 @@ async def backfill_ancestors(store, server, upstream, events, max_ancestors: int
                 continue
             if await store.add_event(ev, origin="ancestor"):
                 fetched += 1
-                await server.subs.fanout(ev)
+                server.subs.fanout(ev, server._send)
                 for t in ev.get("tags", []):
                     if len(t) >= 2 and t[0] == "e" and _is_evid(t[1]):
                         nxt.add(t[1])
