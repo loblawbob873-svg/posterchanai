@@ -97,6 +97,11 @@ def _pid_alive(pid) -> bool:
 _relay_shutdown = False
 _monitor_thread: threading.Thread | None = None
 _relay_lock = threading.RLock()
+# Watchdog respawn rate-limit: a single crash respawns instantly, but a relay that keeps
+# crashing is left DOWN (with a loud error) instead of being hammered every 15s forever.
+_RESPAWN_WINDOW = 600   # seconds
+_RESPAWN_MAX = 5        # max respawns per window before backing off
+_respawn_times: list = []
 
 
 _relay = _Relay()
@@ -614,6 +619,14 @@ def _monitor_loop() -> None:
                 cfg = _relay.cfg or _read_config()
                 if not cfg.get("enabled"):
                     continue
+                now = time.time()
+                _respawn_times[:] = [t for t in _respawn_times if now - t < _RESPAWN_WINDOW]
+                if len(_respawn_times) >= _RESPAWN_MAX:
+                    logger.error("[nostr-relay] relay crashed %d× in %dm — backing off, NOT "
+                                 "respawning (fix the relay)", len(_respawn_times),
+                                 _RESPAWN_WINDOW // 60)
+                    continue
+                _respawn_times.append(now)
                 logger.warning("[nostr-relay] subprocess not running — respawning (watchdog)")
                 _relay.cfg = cfg
                 _spawn_relay(cfg)
