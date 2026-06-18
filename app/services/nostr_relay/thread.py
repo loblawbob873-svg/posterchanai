@@ -234,7 +234,6 @@ async def _main(cfg: dict) -> None:
     logger.info("[nostr-relay] listening on ws://%s:%d/relay (operator=%d, seeds=%d)",
                 cfg["bind"], cfg["port"], len(cfg["operator"]), len(cfg["seeds"]))
 
-    from . import ingest as _ingest
     from app.services.nostr.event import verify_event
     from .langfilter import blocked_language, blocked_word
     _bl, _bw = cfg["blocked_langs"], cfg["blocked_words"]
