@@ -312,6 +312,28 @@ def start_nostr_relay() -> None:
     logger.info("[nostr-relay] thread started")
 
 
+def trigger_wot_refresh(timeout: float = 120) -> dict:
+    """Rebuild the WoT now (Admin button). Schedules `gate.build` on the relay's own loop
+    from the caller thread and waits for the new member count."""
+    if not _relay.is_running() or _relay.loop is None or _relay.gate is None or _relay.store is None:
+        return {"ok": False, "error": "relay not running"}
+    cfg = _relay.cfg
+    try:
+        fut = asyncio.run_coroutine_threadsafe(
+            _relay.gate.build(_relay.store, cfg["upstream"], cfg["seeds"]), _relay.loop)
+        n = fut.result(timeout=timeout)
+        return {"ok": True, "members": n}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def relay_status() -> dict:
+    """Lightweight status for the Admin UI."""
+    if not _relay.is_running() or _relay.gate is None:
+        return {"running": False, "members": 0}
+    return {"running": True, "members": len(_relay.gate.members())}
+
+
 def stop_nostr_relay() -> None:
     if not _relay.is_running() or _relay.loop is None or _relay.stop_event is None:
         return

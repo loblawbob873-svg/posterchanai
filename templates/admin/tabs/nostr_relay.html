@@ -33,7 +33,38 @@
             <input type="number" id="nostr_relay_wot_refresh_sec" name="nostr_relay_wot_refresh_sec" placeholder="86400">
             <small>How often to rebuild the follow graph from seeds. Default 86400 (daily).</small>
         </div>
+        <div class="form-group">
+            <button type="button" id="relayRefreshWotBtn" class="btn-primary">↻ Refresh Web of Trust now</button>
+            <span id="relayWotStatus" style="margin-left:10px;color:#9aa;"></span>
+            <small>Rebuilds the follow graph from the seeds immediately (otherwise daily). Save seed changes first.</small>
+        </div>
     </fieldset>
+    <script>
+    (function(){
+        function init(){
+            var btn=document.getElementById('relayRefreshWotBtn');
+            var stat=document.getElementById('relayWotStatus');
+            if(!btn) return;
+            // Show current member count on load.
+            fetch('/api/admin/nostr-relay/status').then(function(r){return r.json();}).then(function(s){
+                if(s && s.running) stat.textContent='WoT: '+s.members+' members';
+                else stat.textContent='relay not running';
+            }).catch(function(){});
+            btn.addEventListener('click', function(){
+                btn.disabled=true; stat.textContent='Rebuilding from upstream relays…';
+                var f=(window.csrfFetch||fetch);
+                f('/api/admin/nostr-relay/refresh-wot',{method:'POST'}).then(function(r){return r.json();})
+                .then(function(j){
+                    if(j && j.ok) stat.textContent='✓ WoT rebuilt: '+j.members+' members';
+                    else stat.textContent='✗ '+((j&&j.error)||'failed');
+                }).catch(function(e){ stat.textContent='✗ '+e; })
+                .finally(function(){ btn.disabled=false; });
+            });
+        }
+        if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded', init); }
+        else { init(); }
+    })();
+    </script>
 
     <fieldset>
         <legend>Blocked languages</legend>

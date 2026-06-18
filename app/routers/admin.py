@@ -307,6 +307,19 @@ def get_settings(
     return SettingsResponse(**settings)
 
 
+@router.post("/nostr-relay/refresh-wot")
+def refresh_nostr_relay_wot(admin: User = Depends(get_admin_user)):
+    """Rebuild the Nostr relay's Web of Trust now (Admin → Relay button)."""
+    from app.services.nostr_relay.thread import trigger_wot_refresh
+    return trigger_wot_refresh()
+
+
+@router.get("/nostr-relay/status")
+def nostr_relay_status(admin: User = Depends(get_admin_user)):
+    from app.services.nostr_relay.thread import relay_status
+    return relay_status()
+
+
 @router.put("/settings")
 def update_settings(
     data: SettingsUpdate,
