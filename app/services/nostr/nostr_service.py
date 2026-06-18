@@ -13,12 +13,20 @@ from . import bech32, bip340, event as _event, relay, media
 logger = logging.getLogger(__name__)
 
 # Default relays (shared by bots + users); user/bot config may override.
-# relay.damus.io dropped: it rejects our WebSocket connections with HTTP 503 on nearly
-# every query, adding latency for no benefit — the other four cover read+write fine.
+# relay.damus.io / relay.ditto.pub excluded: they reject our WS connections (HTTP 503) or
+# time out during the opening handshake on nearly every poll, so each poll waited out a
+# connect timeout and mention pickup/replies were delayed minutes.
 DEFAULT_RELAYS = [
-    "wss://nos.lol/",
+    "wss://offchain.pub/",
+    "wss://relay.snort.social/",
+    "wss://relay.0xchat.com/",
+    "wss://relay.froth.zone/",
     "wss://relay.primal.net/",
-    "wss://relay.ditto.pub/",
+    "wss://frens.nostr1.com/onyx-bravo",
+    "wss://nostr.chaima.info/",
+    "wss://nostr.corebreach.com/",
+    "wss://relay.nostr.band/",
+    "wss://social.amanah.eblessing.co/titan",
     "wss://relay.sovrgn.co.za/",
 ]
 
