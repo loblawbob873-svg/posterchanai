@@ -210,6 +210,7 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 .prof .phead{display:flex;gap:16px;align-items:flex-end;padding:0 22px;margin-top:-44px}
 .prof .pav{width:92px;height:92px;border-radius:50%;border:3px solid var(--bg);object-fit:cover;background:#1a1230}
 .prof .pbody{padding:14px 22px}
+.prof .phead .btn{font-size:14.5px;padding:10px 17px;border-radius:12px}
 .prof h2{margin:0} .prof .about{color:var(--text);margin:8px 0;line-height:1.5;white-space:pre-wrap}
 .npubrow{display:flex;align-items:center;gap:8px;margin:8px 0}
 .npubrow code{color:var(--cyan);font-size:12px}

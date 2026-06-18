@@ -314,6 +314,18 @@ def refresh_nostr_relay_wot(admin: User = Depends(get_admin_user)):
     return trigger_wot_refresh()
 
 
+@router.post("/nostr-relay/backfill")
+def nostr_relay_backfill(npub: str = Query(...), admin: User = Depends(get_admin_user)):
+    """Backfill any user's Nostr history into the relay by npub/hex (Admin → Relay)."""
+    from app.services.nostr import nostr_service
+    from app.services.nostr_relay.thread import trigger_backfill
+    pk = nostr_service.to_pubkey_hex((npub or "").strip())
+    if not pk:
+        return {"ok": False, "error": "invalid npub or hex pubkey"}
+    r = trigger_backfill(pk)
+    return {**r, "pubkey": pk}
+
+
 @router.get("/nostr-relay/status")
 def nostr_relay_status(admin: User = Depends(get_admin_user)):
     from app.services.nostr_relay.thread import relay_status

@@ -47,6 +47,15 @@
             <span id="relayWotStatus" style="margin-left:10px;color:#9aa;"></span>
             <small>Rebuilds the follow graph from the seeds immediately (otherwise daily). Save seed changes first.</small>
         </div>
+        <div class="form-group">
+            <label for="relayBackfillNpub">Sync a user's data</label>
+            <div style="display:flex;gap:8px">
+                <input type="text" id="relayBackfillNpub" placeholder="npub1… or hex pubkey" style="flex:1">
+                <button type="button" id="relayBackfillBtn" class="btn-primary">⤓ Sync</button>
+            </div>
+            <span id="relayBackfillStatus" style="color:#9aa"></span>
+            <small>Pulls that user's full history (profile, notes, contacts, reactions, relay list) from upstream into this relay — makes a specific user resolvable/visible even if not yet reached by the backfill.</small>
+        </div>
     </fieldset>
     <script>
     (function(){
@@ -69,6 +78,15 @@
                 }).catch(function(e){ stat.textContent='✗ '+e; })
                 .finally(function(){ btn.disabled=false; });
             });
+            var bnpub=document.getElementById('relayBackfillNpub'), bbtn=document.getElementById('relayBackfillBtn'), bstat=document.getElementById('relayBackfillStatus');
+            if(bbtn){ bbtn.addEventListener('click', function(){
+                var v=(bnpub.value||'').trim(); if(!v){ bstat.textContent='enter an npub'; return; }
+                bbtn.disabled=true; bstat.textContent='syncing…';
+                var f=(window.csrfFetch||fetch);
+                f('/api/admin/nostr-relay/backfill?npub='+encodeURIComponent(v),{method:'POST'}).then(function(r){return r.json();})
+                .then(function(j){ bstat.textContent=(j&&j.ok)?('✓ syncing '+String(j.pubkey||'').slice(0,12)+'… (a few sec)'):('✗ '+((j&&j.error)||'failed')); })
+                .catch(function(e){ bstat.textContent='✗ '+e; }).finally(function(){ bbtn.disabled=false; });
+            }); }
         }
         if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded', init); }
         else { init(); }
