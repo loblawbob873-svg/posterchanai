@@ -142,22 +142,18 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
     return len(new_events)
 
 
-async def backfill_author(store, server, upstream, pubkey: str, *, direct: bool = False,
-                          kinds=None, pace: float = 1.0, max_total: int = 20000,
-                          max_pages: int = 200) -> int:
-    """Backfill a single author's FULL history from upstream into the store — paging back in
-    time with `until`. Writes straight to the store (origin='wot'), so it does NOT go through
-    the WS write path and is NOT re-broadcast by the outbox. Used to seed e.g. the operator's
-    own posts. The author should already be a WoT/operator member."""
-    # profile, notes, contacts, reposts, reactions, comments, relay list, long-form articles.
-    kinds = kinds or [0, 1, 3, 6, 7, 1111, 10002, 30023]
+async def _backfill_filter(store, server, upstream, base_filter: dict, *, direct: bool,
+                           pace: float, max_total: int, max_pages: int,
+                           require_author: str | None) -> int:
+    """Page a filter back in time with `until`, storing matching events. `require_author`
+    restricts to that author (for own-posts); None accepts any author (for received DMs,
+    whose gift-wrap author is a random key)."""
     until = int(time.time())
     stored = 0
     for _ in range(max_pages):
         try:
-            evs = await _relay.query(
-                upstream, [{"authors": [pubkey], "kinds": kinds, "until": until, "limit": 200}],
-                direct=direct)
+            evs = await _relay.query(upstream, [dict(base_filter, until=until, limit=200)],
+                                     direct=direct)
         except Exception as e:
             logger.warning("[nostr-relay] backfill query failed: %s", e)
             break
@@ -165,7 +161,7 @@ async def backfill_author(store, server, upstream, pubkey: str, *, direct: bool 
             break
         oldest = until
         for ev in evs:
-            if ev.get("pubkey") != pubkey:
+            if require_author and ev.get("pubkey") != require_author:
                 continue
             oldest = min(oldest, int(ev.get("created_at", until)))
             if not _is_evid(ev.get("id")) or not verify_event(ev):
@@ -182,6 +178,26 @@ async def backfill_author(store, server, upstream, pubkey: str, *, direct: bool 
             break
         if pace > 0:
             await asyncio.sleep(pace)
+    return stored
+
+
+async def backfill_author(store, server, upstream, pubkey: str, *, direct: bool = False,
+                          kinds=None, pace: float = 1.0, max_total: int = 20000,
+                          max_pages: int = 200) -> int:
+    """Backfill a user's FULL Nostr history into the store: everything they AUTHORED (notes,
+    articles, reposts, reactions, comments, profile, contacts, relay list) AND the private
+    DMs ADDRESSED to them (NIP-17 gift wraps + legacy kind-4). Writes straight to the store
+    (origin='wot'), so it does NOT go through the WS write path and is NOT re-broadcast."""
+    # profile, notes, contacts, reposts, reactions, comments, relay list, long-form articles.
+    kinds = kinds or [0, 1, 3, 6, 7, 1111, 10002, 30023]
+    common = dict(direct=direct, pace=pace, max_total=max_total, max_pages=max_pages)
+    stored = await _backfill_filter(store, server, upstream,
+                                    {"authors": [pubkey], "kinds": kinds},
+                                    require_author=pubkey, **common)
+    # Private messages addressed to the user (gift-wrap author is random → match by #p, any author).
+    stored += await _backfill_filter(store, server, upstream,
+                                     {"#p": [pubkey], "kinds": [1059, 4]},
+                                     require_author=None, **common)
     logger.info("[nostr-relay] backfilled %d events for %s…", stored, pubkey[:12])
     return stored
 
