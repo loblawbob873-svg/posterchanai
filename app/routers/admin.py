@@ -326,38 +326,6 @@ def nostr_relay_backfill(npub: str = Query(...), admin: User = Depends(get_admin
     return {**r, "pubkey": pk}
 
 
-@router.post("/nostr-relay/block")
-def nostr_relay_block(npub: str = Query(...), remove: bool = Query(False),
-                      db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
-    """Block/unblock any npub on the relay directly (instance moderation; no need to find a post).
-    Edits nostr_relay_blocked_pubkeys + re-applies live (gate + purge)."""
-    from app.models import Setting
-    from app.services.nostr import nostr_service
-    pk = nostr_service.to_pubkey_hex((npub or "").strip())
-    if not pk:
-        return {"ok": False, "error": "invalid npub or hex pubkey"}
-    row = db.query(Setting).filter(Setting.key == "nostr_relay_blocked_pubkeys").first()
-    cur = set()
-    if row and row.value:
-        for tok in row.value.replace(",", " ").split():
-            h = nostr_service.to_pubkey_hex(tok.strip())
-            if h:
-                cur.add(h)
-    cur.discard(pk) if remove else cur.add(pk)
-    val = "\n".join(sorted(cur))
-    if row:
-        row.value = val
-    else:
-        db.add(Setting(key="nostr_relay_blocked_pubkeys", value=val))
-    db.commit()
-    try:
-        from app.services.nostr_relay.thread import trigger_block_reload
-        trigger_block_reload()
-    except Exception:
-        pass
-    return {"ok": True, "blocked": not remove, "count": len(cur), "pubkey": pk}
-
-
 @router.get("/nostr-relay/status")
 def nostr_relay_status(admin: User = Depends(get_admin_user)):
     from app.services.nostr_relay.thread import relay_status
@@ -413,6 +381,15 @@ def update_settings(
         # Commit the transaction - ensure this succeeds
         db.commit()
         logger.info(f"[Admin] Successfully saved {len(data.settings)} settings")
+
+        # If the relay blocklist/filters were edited in the UI, push them to the running relay
+        # immediately (otherwise the change wouldn't apply until restart / daily refresh).
+        if any(k in data.settings for k in ("nostr_relay_blocked_pubkeys", "nostr_relay_blocked_words", "nostr_relay_blocked_langs")):
+            try:
+                from app.services.nostr_relay.thread import trigger_block_reload
+                trigger_block_reload()
+            except Exception as e:
+                logger.warning(f"[Admin] relay block reload after settings save failed: {e}")
         
     except IntegrityError as e:
         # Handle constraint violations (e.g., unique constraint, foreign key)

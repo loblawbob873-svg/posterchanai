@@ -361,12 +361,19 @@ async def block_pubkey(data: BlockReq, db: Session = Depends(get_db)):
             h = nostr_service.to_pubkey_hex(tok.strip())
             if h:
                 current.append(h)
-    cur = set(current)
+    cur = set(current)   # canonical hex set
     if data.remove:
         cur.discard(target)
     else:
         cur.add(target)
-    value = "\n".join(sorted(cur))
+    # store as npubs (readable in the Admin → Relay "Blocked accounts" box; relay converts back)
+    out = []
+    for h in sorted(cur):
+        try:
+            out.append(nostr_service.npub_of(h))
+        except Exception:
+            out.append(h)
+    value = "\n".join(out)
     if row:
         row.value = value
     else:

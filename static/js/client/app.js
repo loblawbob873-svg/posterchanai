@@ -7,7 +7,7 @@
   const enc = s => (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const LOGO = '/static/posterchan-relay.png';
 
-  let CFG = {}, ME = null, FOLLOWS = new Set(), MUTED = new Set(), VIEW = 'home', IS_ADMIN = false;
+  let CFG = {}, ME = null, FOLLOWS = new Set(), MUTED = new Set(), PINNED = new Set(), VIEW = 'home', IS_ADMIN = false;
   let signer = null;
   const subs = {};                 // view -> subId
   const seenNotif = { last: 0 };
@@ -137,7 +137,7 @@
     bindFeedActions();
     // Run initial queries only once the relay socket is open (otherwise the REQs are dropped
     // and profiles/follows never resolve — names would show as raw npubs).
-    Relay.onReady = ()=>{ fetchFollows(); fetchMutes(); fetchMyProfile(); watchNotifications();
+    Relay.onReady = ()=>{ fetchFollows(); fetchMutes(); fetchPins(); fetchMyProfile(); watchNotifications();
       setTimeout(()=>ensureDMs(), 3000); };   // load DMs LAST so they don't slow the timeline
     Relay.connect(CFG.relay_url);
     renderMe();
@@ -192,6 +192,24 @@
   async function toggleMute(pk){
     const have=MUTED.has(pk); await _editPList(10000, pk, !have);
     have?MUTED.delete(pk):MUTED.add(pk); toast(have?'unmuted':'muted'); if(VIEW==='home'||VIEW==='global') renderView(true);
+  }
+  async function fetchPins(){
+    const evs=await Relay.query([{ authors:[ME.pubkey], kinds:[10001], limit:1 }]);
+    if(evs.length){ const e=evs.sort((a,b)=>b.created_at-a.created_at)[0];
+      PINNED=new Set(e.tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1])); }
+  }
+  async function _editEList(kind, eid, add){    // replaceable e-tag list (e.g. pinned notes k10001)
+    const evs=await Relay.query([{ authors:[ME.pubkey], kinds:[kind], limit:1 }]);
+    const cur=evs.length?evs.sort((a,b)=>b.created_at-a.created_at)[0]:null;
+    let tags=cur?cur.tags.map(t=>[...t]):[];
+    const has=tags.some(t=>t[0]==='e'&&t[1]===eid);
+    if(add&&!has) tags.push(['e',eid]); else if(!add&&has) tags=tags.filter(t=>!(t[0]==='e'&&t[1]===eid)); else return;
+    await publish(kind, cur?cur.content:'', tags);
+  }
+  async function togglePin(id){
+    const have=PINNED.has(id); await _editEList(10001, id, !have);
+    have?PINNED.delete(id):PINNED.add(id); toast(have?'unpinned':'pinned 📌');
+    if(VIEW==='profile') renderProfileView(ME.pubkey);
   }
   const _profQ = new Set(); let _profT = null;
   function needProfile(pk){ if(pk && !Store.haveProfile(pk)){ _profQ.add(pk); if(!_profT) _profT=setTimeout(flushProfiles,120);} }
@@ -321,6 +339,7 @@
           <button class="act ${liked?'on':''}" data-a="like" title="like">${liked||'🤍'} <span class="n">${counts.reactions||''}</span></button>
           <button class="act actz" data-a="zap" title="zap (lightning)">⚡</button>
           <button class="act" data-a="react" title="react">😀</button>
+          ${mine?`<button class="act ${PINNED.has(ev.id)?'on':''}" data-a="pin" title="pin/unpin on your profile">📌</button>`:''}
           ${mine?`<button class="act" data-a="delete" title="delete">🗑️</button>`:''}
           ${(IS_ADMIN && !mine)?`<button class="act" data-a="block" title="block author on relay">🚫</button>`:''}
         </div>
@@ -393,6 +412,7 @@
       if(a==='reply') return compose({reply:id, replyPk:pk});
       if(a==='delete') return doDelete(id,art);
       if(a==='zap') return doZap(id,pk);
+      if(a==='pin') return togglePin(id);
       if(a==='block') return doBlock(pk);
     });
   }
@@ -808,6 +828,11 @@
     const following=k3.length ? (k3.sort((a,b)=>b.created_at-a.created_at)[0].tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1])) : [];
     const followerEvs=await Relay.query([{kinds:[3],'#p':[pk],limit:1000}]);
     const followers=[...new Set(followerEvs.map(e=>e.pubkey))];
+    // pinned notes (NIP-51 kind-10001)
+    const pinList=await Relay.query([{authors:[pk],kinds:[10001],limit:1}]);
+    const pinIds=pinList.length ? pinList.sort((a,b)=>b.created_at-a.created_at)[0].tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1]) : [];
+    let pinned=[];
+    if(pinIds.length){ const got=await Relay.query([{ids:pinIds}]); got.forEach(e=>Store.saveEvent(e)); pinned=pinIds.map(id=>Store.get(id)).filter(Boolean); }
     const npub=NT().nip19.npubEncode(pk);
     feed.innerHTML=`<div class="prof"><div class="banner">${p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''}</div>
       <div class="phead"><img class="pav" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
@@ -824,7 +849,8 @@
         <div class="about">${linkify(p.about||'')}</div>
         <div class="follow-stats"><button class="statbtn" id="show-following"><b>${following.length}</b> Following</button><button class="statbtn" id="show-followers"><b>${followers.length}${followerEvs.length>=1000?'+':''}</b> Followers</button></div>
       </div></div>
-      <div id="prof-notes">${Store.feed(e=>e.pubkey===pk && !isReply(e)).slice(0,40).map(e=>noteCard(e)).join('')||'<div class="empty">No posts.</div>'}</div>`;
+      <div id="prof-notes">${pinned.length?`<div class="search-section-title">📌 Pinned</div>`+pinned.map(e=>noteHtml(e)).join(''):''}
+        ${pinned.length?`<div class="search-section-title">Posts</div>`:''}${Store.feed(e=>e.pubkey===pk && !isReply(e)).slice(0,40).map(e=>noteHtml(e)).join('')||'<div class="empty">No posts.</div>'}</div>`;
     hydrate(feed);
     $('#copy-npub').onclick=()=>{ navigator.clipboard.writeText(npub); toast('npub copied'); };
     $('#show-following').onclick=()=>peopleModal('Following', following);
@@ -890,11 +916,11 @@
     needProfile(ev.pubkey); if(parent) needProfile(parent.pubkey);
     if(VIEW!=='thread') return;
     let html='';
-    if(parent) html+=`<div class="thread-parent">${noteCard(parent)}</div>`;
-    html+=`<div class="thread-focus">${noteCard(ev)}</div>`;
+    if(parent) html+=`<div class="thread-parent">${noteHtml(parent)}</div>`;
+    html+=`<div class="thread-focus">${noteHtml(ev)}</div>`;
     const rs=replies.sort((a,b)=>a.created_at-b.created_at);
     html+=`<div class="search-section-title">Replies (${rs.length})</div>`;
-    html+= rs.length ? rs.map(e=>noteCard(e)).join('') : '<div class="empty">No replies yet.</div>';
+    html+= rs.length ? rs.map(e=>noteHtml(e)).join('') : '<div class="empty">No replies yet.</div>';
     feed.innerHTML=html; hydrate(feed);
   }
 
@@ -931,7 +957,7 @@
     if(profs.length){ html+='<div class="search-section-title">Profiles</div>'; for(const p of profs){ const m=p.meta; html+=`<div class="psearch" data-prof="${p.pubkey}"><img src="${enc(m.picture||LOGO)}" onerror="this.src='${LOGO}'"><div><b>${enc(m.name||m.display_name||'anon')}</b><div class="muted small">${enc(niceNip05(m.nip05)||(m.about||'').slice(0,60))}</div></div></div>`; } }
     const posts=postEvs.sort((a,b)=>b.created_at-a.created_at);
     html+='<div class="search-section-title">Posts</div>';
-    html+= posts.length ? posts.map(e=>noteCard(e)).join('') : '<div class="empty">No matching posts.</div>';
+    html+= posts.length ? posts.map(e=>noteHtml(e)).join('') : '<div class="empty">No matching posts.</div>';
     feed.innerHTML=html; hydrate(feed);
     $$('[data-prof]',feed).forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
   }

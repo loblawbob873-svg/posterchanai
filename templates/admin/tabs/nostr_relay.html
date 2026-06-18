@@ -56,16 +56,6 @@
             <span id="relayBackfillStatus" style="color:#9aa"></span>
             <small>Pulls that user's full history (profile, notes, contacts, reactions, relay list) from upstream into this relay — makes a specific user resolvable/visible even if not yet reached by the backfill.</small>
         </div>
-        <div class="form-group">
-            <label for="relayBlockNpub">Block / unblock a user (instance moderation)</label>
-            <div style="display:flex;gap:8px">
-                <input type="text" id="relayBlockNpub" placeholder="npub1… or hex pubkey" style="flex:1">
-                <button type="button" id="relayBlockBtn" class="btn-primary" style="background:#a33">🚫 Block</button>
-                <button type="button" id="relayUnblockBtn" class="btn-secondary">Unblock</button>
-            </div>
-            <span id="relayBlockStatus" style="color:#9aa"></span>
-            <small>Blocks the pubkey on this relay directly (no need to find a post): rejects their future events and purges existing ones. Applies live.</small>
-        </div>
     </fieldset>
     <script>
     (function(){
@@ -97,17 +87,6 @@
                 .then(function(j){ bstat.textContent=(j&&j.ok)?('✓ syncing '+String(j.pubkey||'').slice(0,12)+'… (a few sec)'):('✗ '+((j&&j.error)||'failed')); })
                 .catch(function(e){ bstat.textContent='✗ '+e; }).finally(function(){ bbtn.disabled=false; });
             }); }
-            var blkNpub=document.getElementById('relayBlockNpub'), blkBtn=document.getElementById('relayBlockBtn'),
-                unblkBtn=document.getElementById('relayUnblockBtn'), blkStat=document.getElementById('relayBlockStatus');
-            function doBlock(remove){
-                var v=(blkNpub.value||'').trim(); if(!v){ blkStat.textContent='enter an npub'; return; }
-                blkBtn.disabled=true; unblkBtn.disabled=true; blkStat.textContent=remove?'unblocking…':'blocking…';
-                var f=(window.csrfFetch||fetch);
-                f('/api/admin/nostr-relay/block?npub='+encodeURIComponent(v)+'&remove='+(remove?'true':'false'),{method:'POST'}).then(function(r){return r.json();})
-                .then(function(j){ blkStat.textContent=(j&&j.ok)?('✓ '+(remove?'unblocked':'blocked')+' — '+j.count+' blocked total'):('✗ '+((j&&j.error)||'failed')); })
-                .catch(function(e){ blkStat.textContent='✗ '+e; }).finally(function(){ blkBtn.disabled=false; unblkBtn.disabled=false; });
-            }
-            if(blkBtn){ blkBtn.addEventListener('click',function(){doBlock(false);}); unblkBtn.addEventListener('click',function(){doBlock(true);}); }
         }
         if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded', init); }
         else { init(); }
