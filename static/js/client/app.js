@@ -386,7 +386,7 @@
       <div class="cmp-tabs"><button class="cmp-tab active" data-t="write">Write</button><button class="cmp-tab" data-t="preview">👁 Preview</button></div>
       <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
       <div id="cmp-preview" class="note-preview hidden"></div>
-      <div class="row"><button class="mini" id="cmp-img">📎 attach</button><input type="file" id="cmp-file" multiple hidden>
+      <div class="row"><button class="mini" id="cmp-img">📎 attach</button><button class="mini" id="cmp-blossom">🌸 files</button><input type="file" id="cmp-file" multiple hidden>
       <span class="spacer"></span><button class="btn btn-neon" id="cmp-send">Post ▶</button></div>
       <div class="muted small" id="cmp-status"></div>`, root=>{
       const ta=$('#cmp',root); attachMentionAutocomplete(ta);
@@ -406,6 +406,7 @@
         $('#cmp-status',root).textContent='';
       });
       $('#cmp-img',root).onclick=()=>$('#cmp-file',root).click();
+      $('#cmp-blossom',root).onclick=()=>blossomPicker(ta);
       $('#cmp-file',root).onchange=async e=>{ const files=[...e.target.files]; if(!files.length)return;
         for(let i=0;i<files.length;i++){ $('#cmp-status',root).textContent=`uploading ${i+1}/${files.length}…`;
           try{ const url=await uploadBlob(files[i]); ta.value+=(ta.value?'\n':'')+url; }
@@ -480,6 +481,22 @@
     // Our Blossom URLs are extensionless (/<sha256>); append the file extension so clients (incl.
     // linkify below) can detect the media type and embed/play it. The server ignores the suffix.
     const ext=extFor(file); return (d.url||server+'/'+hash) + (ext?('.'+ext):'');
+  }
+  function blossomPicker(ta){
+    const server=mediaServer(); if(!server){ toast('no media server set'); return; }
+    const bg=document.createElement('div'); bg.className='modal-bg'; bg.style.zIndex='200';
+    bg.innerHTML=`<div class="modal glass neon-border"><h3>🌸 Attach from your Blossom files</h3><div id="bp-grid" class="files-grid"><div class="spinner"></div></div></div>`;
+    bg.onclick=e=>{ if(e.target===bg) bg.remove(); };
+    $('#modal-root').appendChild(bg);
+    (async()=>{
+      let list=[]; try{ const r=await fetch(server+'/list/'+ME.pubkey); if(r.ok) list=await r.json(); }catch(_){}
+      const grid=bg.querySelector('#bp-grid');
+      grid.innerHTML = list.length ? list.map(b=>{ const isVid=/video/.test(b.type||''), isAud=/audio/.test(b.type||'');
+        const m=isVid?`<video src="${enc(b.url)}" muted></video>`:isAud?`<div style="display:grid;place-items:center;height:140px">🎵</div>`:`<img src="${enc(b.url)}" loading="lazy">`;
+        return `<div class="file-card" data-url="${enc(b.url)}" data-type="${enc(b.type||'')}">${m}</div>`;
+      }).join('') : '<div class="empty">No files yet — upload some in the Files tab.</div>';
+      bg.querySelectorAll('[data-url]').forEach(el=> el.onclick=()=>{ const ext=_MIME_EXT[el.dataset.type]||''; ta.value+=(ta.value?'\n':'')+el.dataset.url+(ext?('.'+ext):''); bg.remove(); toast('attached'); });
+    })();
   }
   async function renderBlossom(){
     const feed=$('#feed'); const server=mediaServer();
