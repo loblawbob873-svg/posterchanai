@@ -229,20 +229,46 @@
     return [{ kinds:[1,6], limit:120 }];
   }
   function renderTimeline(view, reset){
-    const feed = $('#feed');
     const fn = view==='home' ? (ev=>FOLLOWS.has(ev.pubkey)) : null;
-    const draw = ()=>{
-      const notes = Store.feed(e=>(!fn||fn(e))&&!MUTED.has(e.pubkey)).filter(e=>!isReply(e)).slice(0,200);
-      feed.innerHTML = notes.length ? notes.map(noteHtml).join('') : `<div class="empty">No posts yet. ${view==='home'?'Follow people or check Global.':''}</div>`;
-      hydrate(feed);
-    };
-    draw();
+    _drawTimeline(false);
     if (subs[view]) Relay.close(subs[view]);
     subs[view] = Relay.subscribe(timelineFilter(), {
-      onEvent: ev => { if (Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.pubkey); if (VIEW===view && (ev.kind===1||ev.kind===6)) prependNote(ev, fn); } },
-      onEose: ()=>{ if(VIEW===view) draw(); }
+      onEvent: ev => { if (Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.pubkey); if (VIEW===view && (ev.kind===1||ev.kind===6)) _bufferLive(ev, fn); } },
+      onEose: ()=>{ if(VIEW===view) _drawTimeline(false); }
     });
   }
+  // Batched live updates: a busy global feed must NOT prepend + re-render per event (that pegged
+  // the CPU and flashed). Buffer incoming notes and prepend them together a few times a second,
+  // capping the feed and keeping scroll stable.
+  let _liveBuf=[], _liveT=null, _liveFn=null;
+  function _bufferLive(ev, fn){ _liveFn=fn; _liveBuf.push(ev); if(!_liveT) _liveT=setTimeout(flushLive, 1800); }
+  function flushLive(){
+    _liveT=null; const evs=_liveBuf.splice(0);
+    if((VIEW!=='home'&&VIEW!=='global') || !evs.length) return;
+    const feed=$('#feed'); if(!feed) return;
+    const sp=feed.querySelector('.spinner'); if(sp)sp.remove(); const em=feed.querySelector('.empty'); if(em)em.remove();
+    evs.sort((a,b)=>b.created_at-a.created_at);
+    const frag=document.createDocumentFragment();
+    for(const ev of evs){ if(ev.kind===1&&isReply(ev))continue; if(MUTED.has(ev.pubkey))continue; if(_liveFn&&!_liveFn(ev))continue;
+      const div=document.createElement('div'); div.innerHTML=noteHtml(ev); const node=div.firstElementChild; if(node) frag.appendChild(node); }
+    if(!frag.childElementCount) return;
+    const atTop=feed.scrollTop<100, beforeH=feed.scrollHeight;
+    feed.insertBefore(frag, feed.firstChild);
+    if(!atTop) feed.scrollTop += (feed.scrollHeight - beforeH);   // keep scroll stable on prepend
+    const notes=[...feed.querySelectorAll('.note')]; for(let i=200;i<notes.length;i++) notes[i].remove();  // cap feed
+    decorateProfiles(); hydrateLinkCards(feed);
+  }
+  function _drawTimeline(preserveScroll){
+    if(VIEW!=='home' && VIEW!=='global') return;
+    const feed=$('#feed'); if(!feed) return;
+    const top=preserveScroll?feed.scrollTop:0;
+    const fn = VIEW==='home' ? (e=>FOLLOWS.has(e.pubkey)) : null;
+    const notes = Store.feed(e=>(!fn||fn(e))&&!MUTED.has(e.pubkey)).filter(e=>!isReply(e)).slice(0,200);
+    feed.innerHTML = notes.length ? notes.map(noteHtml).join('') : `<div class="empty">No posts yet. ${VIEW==='home'?'Follow people or check Global.':''}</div>`;
+    hydrate(feed); if(preserveScroll) feed.scrollTop=top;
+  }
+  let _redrawT=null;
+  function scheduleRedraw(){ if(_redrawT) return; _redrawT=setTimeout(()=>{ _redrawT=null; _drawTimeline(true); }, 350); }
   function isReply(ev){ return ev.kind===1 && ev.tags.some(t=>t[0]==='e'); }
   function prependNote(ev, fn){
     if (ev.kind===1 && isReply(ev)) return;
@@ -258,12 +284,13 @@
   function noteHtml(ev){
     if (ev.kind===6){  // repost
       let inner=null; try{ inner=JSON.parse(ev.content); }catch(_){}
-      const orig = inner || Store.get((ev.tags.find(t=>t[0]==='e')||[])[1]);
-      const rp = profOf(ev.pubkey);
-      const body = orig ? noteCard(orig, `<div class="repost-tag">↻ ${enc(rp.name||'someone')} reposted</div>`) :
-        `<div class="repost-tag">↻ reposted</div><div class="muted small">original not loaded</div>`;
-      if (orig) needProfile(orig.pubkey);
-      return body;
+      if(inner && inner.id) Store.saveEvent(inner);
+      const origId=(ev.tags.find(t=>t[0]==='e')||[])[1];
+      const orig = inner || Store.get(origId);
+      const rp = profOf(ev.pubkey); needProfile(ev.pubkey);
+      if(orig){ needProfile(orig.pubkey); return noteCard(orig, `<div class="repost-tag">🔁 ${enc(rp.name||'someone')} reposted</div>`); }
+      needEvent(origId);   // fetch the original; flushEvents redraws when it arrives
+      return `<article class="note" data-id="${ev.id}" data-pk="${ev.pubkey}"><div class="body"><div class="repost-tag">🔁 ${enc(rp.name||'someone')} reposted</div><div class="muted small">loading post…</div></div></article>`;
     }
     return noteCard(ev);
   }
@@ -302,7 +329,7 @@
   }
   const _evQ=new Set(); let _evT=null;
   function needEvent(id){ if(id&&!Store.get(id)){ _evQ.add(id); if(!_evT)_evT=setTimeout(flushEvents,150);} }
-  async function flushEvents(){ _evT=null; const ids=[..._evQ]; _evQ.clear(); if(!ids.length)return; const evs=await Relay.query([{ids}]); for(const e of evs){Store.saveEvent(e); needProfile(e.pubkey);} if(VIEW==='home'||VIEW==='global') decorateProfiles(); }
+  async function flushEvents(){ _evT=null; const ids=[..._evQ]; _evQ.clear(); if(!ids.length)return; const evs=await Relay.query([{ids}]); for(const e of evs){Store.saveEvent(e); needProfile(e.pubkey);} if(VIEW==='home'||VIEW==='global') scheduleRedraw(); else if(VIEW==='thread'||VIEW==='profile') decorateProfiles(); }
 
   // reaction/repost counts — built ONCE per render pass (single scan of the store) instead of
   // re-scanning the whole store for every rendered note (was O(notes × store)).
@@ -327,6 +354,8 @@
   function bindFeedActions(){
     $('#feed').addEventListener('click', async (e)=>{
       const mn=e.target.closest('.mention'); if(mn){ e.preventDefault(); const pk=safePk(mn.dataset.np); if(pk) renderProfileView(pk); return; }
+      const evl=e.target.closest('.evlink'); if(evl){ e.preventDefault(); renderThread(evl.dataset.ev); return; }
+      const im=e.target.closest('.txt img, .note-preview img'); if(im){ e.preventDefault(); openLightbox(im.currentSrc||im.src); return; }
       const tm=e.target.closest('.time'); if(tm){ const n=e.target.closest('.note'); if(n){ renderThread(n.dataset.id); return; } }
       const av=e.target.closest('.av'); if(av){ const n=e.target.closest('.note'); if(n){ renderProfileView(n.dataset.pk); return; } }
       const prof=e.target.closest('[data-prof]'); if(prof){ renderProfileView(prof.dataset.prof); return; }
@@ -817,8 +846,9 @@
     return null;
   }
   function linkCardHtml(content){ const u=firstLink(content); return u?`<div class="link-card" data-url="${enc(u)}"></div>`:''; }
-  const _pvObs = ('IntersectionObserver' in window) ? new IntersectionObserver((es)=>{ for(const e of es){ if(e.isIntersecting){ _pvObs.unobserve(e.target); fillLinkCard(e.target); } } }, {rootMargin:'250px'}) : null;
-  function hydrateLinkCards(scope){ $$('.link-card[data-url]:not([data-obs])', scope||document).forEach(el=>{ el.setAttribute('data-obs','1'); _pvObs?_pvObs.observe(el):fillLinkCard(el); }); }
+  // Fill directly on render (the empty placeholder is display:none via CSS until filled; an
+  // IntersectionObserver never fires on a zero-height hidden element, which broke lazy loading).
+  function hydrateLinkCards(scope){ $$('.link-card[data-url]:not([data-done])', scope||document).forEach(el=>{ el.setAttribute('data-done','1'); fillLinkCard(el); }); }
   async function fetchPreview(url){ if(_pv.has(url)) return _pv.get(url); let d=null; try{ d=await fetch('/client/preview?url='+encodeURIComponent(url)).then(r=>r.json()); }catch(_){} _pv.set(url,d); return d; }
   async function fillLinkCard(el){
     const url=el.dataset.url; const d=await fetchPreview(url);
@@ -837,14 +867,27 @@
       if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)) tag=`<br><img src="${u}" loading="lazy">`;
       else if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)) tag=`<br><video src="${u}" controls preload="metadata" playsinline></video>`;
       else if(/\.(mp3|ogg|wav|m4a|aac|flac)(\?|#|$)/i.test(u)) tag=`<br><audio src="${u}" controls preload="none"></audio>`;
+      // extensionless Blossom hash URLs (e.g. media.poster.place/<sha256>) — bots post these for
+      // nitter/fedi media. Try as an image; if it isn't one, swap to a plain link on error.
+      else if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)) tag=`<br><img src="${u}" loading="lazy" onerror="this.onerror=null;var a=document.createElement('a');a.href=this.src;a.target='_blank';a.rel='noopener';a.textContent=this.src;this.replaceWith(a);">`;
       else tag=`<a href="${u}" target="_blank" rel="noopener">${u}</a>`;
       return tag+tail;
     });
-    // npub mentions (with or without the nostr: prefix) -> clickable @name (loads the profile)
-    h=h.replace(/(?:nostr:)?(npub1[0-9a-z]{20,})/gi, (m,np)=>{
-      const pk=safePk(np); if(!pk) return m;
-      needProfile(pk); const nm=(Store.profile(pk)||{}).name;
-      return `<a href="#" class="mention" data-np="${np}">@${nm?enc(nm):np.slice(0,12)+'…'}</a>`;
+    // nostr entities (npub/nprofile -> profile mention; note/nevent -> thread link)
+    h=h.replace(/(?:nostr:)?((?:npub1|nprofile1|nevent1|note1)[0-9a-z]{20,})/gi, (m,ent)=>{
+      try{
+        const d=NT().nip19.decode(ent);
+        if(d.type==='npub' || d.type==='nprofile'){
+          const pk = d.type==='npub' ? d.data : d.data.pubkey;
+          needProfile(pk); const nm=(Store.profile(pk)||{}).name||(Store.profile(pk)||{}).display_name;
+          return `<a href="#" class="mention" data-np="${NT().nip19.npubEncode(pk)}">@${nm?enc(nm):'profile'}</a>`;
+        }
+        if(d.type==='note' || d.type==='nevent'){
+          const id = d.type==='note' ? d.data : d.data.id;
+          return `<a href="#" class="evlink" data-ev="${id}">🔗 note</a>`;
+        }
+      }catch(_){}
+      return m;
     });
     return h;
   }
@@ -853,6 +896,7 @@
   function modal(html, onMount){ const bg=document.createElement('div'); bg.className='modal-bg'; bg.innerHTML=`<div class="modal glass neon-border">${html}</div>`; bg.onclick=e=>{ if(e.target===bg) closeModal(); }; $('#modal-root').appendChild(bg); if(onMount)onMount(bg.querySelector('.modal')); }
   function closeModal(){ $('#modal-root').innerHTML=''; }
   function toast(m){ const t=document.createElement('div'); t.className='toast'; t.textContent=m; $('#toast-root').appendChild(t); setTimeout(()=>t.remove(),3200); }
+  function openLightbox(src){ const bg=document.createElement('div'); bg.className='lightbox'; const i=document.createElement('img'); i.src=src; bg.appendChild(i); bg.onclick=()=>bg.remove(); document.body.appendChild(bg); }
 
   document.addEventListener('DOMContentLoaded', boot);
 })();

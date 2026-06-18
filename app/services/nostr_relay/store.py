@@ -546,20 +546,21 @@ class RelayStore:
         return await self._r(self._wot_members_sync)
 
     def _wot_missing_metadata_sync(self) -> list:
-        # Members lacking lookup metadata: no kind-0 profile OR no kind-10002 relay list.
-        # Drives the lookup-relay backfill so clients can resolve profiles + outbox relays.
-        # PRIORITIZE members who actually have notes in the store (the authors clients are
-        # displaying) — with a large WoT (tens of thousands) the backfill must reach posting
-        # authors first, otherwise their names/avatars never resolve for a long time.
-        rows = self._conn().execute(
-            "SELECT w.pubkey, "
-            "  EXISTS (SELECT 1 FROM events e WHERE e.pubkey=w.pubkey AND e.kind=1) AS has_note "
-            "FROM wot w WHERE "
-            "NOT EXISTS (SELECT 1 FROM events e WHERE e.pubkey=w.pubkey AND e.kind=0) "
-            "OR NOT EXISTS (SELECT 1 FROM events e WHERE e.pubkey=w.pubkey AND e.kind=10002) "
-            "ORDER BY has_note DESC"
-        ).fetchall()
-        return [r["pubkey"] for r in rows]
+        # Members lacking lookup metadata (kind-0 profile and/or kind-10002 relay list).
+        # Computed with SET MATH over a few indexed kind-scans — NOT per-member correlated
+        # subqueries, which over a 37k-member WoT took 30s+ and stalled the whole backfill.
+        # Ordering prioritizes authors who actually have notes (visible avatars/names) so their
+        # profiles resolve first, then other no-profile members, then profile-but-no-relay-list.
+        conn = self._conn()
+        wot = {r[0] for r in conn.execute("SELECT pubkey FROM wot").fetchall()}
+        have_k0 = {r[0] for r in conn.execute("SELECT DISTINCT pubkey FROM events WHERE kind=0").fetchall()}
+        have_relay = {r[0] for r in conn.execute("SELECT DISTINCT pubkey FROM events WHERE kind=10002").fetchall()}
+        note_authors = {r[0] for r in conn.execute("SELECT DISTINCT pubkey FROM events WHERE kind=1").fetchall()}
+        no_profile = wot - have_k0
+        prio = [pk for pk in no_profile if pk in note_authors]            # visible authors first
+        rest = [pk for pk in no_profile if pk not in note_authors]
+        relay_only = [pk for pk in (wot & have_k0) if pk not in have_relay]  # have profile, want relay list
+        return prio + rest + relay_only
 
     async def wot_missing_metadata(self) -> list:
         return await self._r(self._wot_missing_metadata_sync)
