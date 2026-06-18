@@ -141,6 +141,7 @@
     $('#btn-refresh').onclick = ()=>renderView(true);
     bindSearch();
     bindFeedActions();
+    bumpDraft();   // show the saved-drafts count on the nav badge
     // Run initial queries only once the relay socket is open (otherwise the REQs are dropped
     // and profiles/follows never resolve — names would show as raw npubs).
     Relay.onReady = ()=>{ fetchFollows(); fetchMutes(); fetchPins(); fetchMyProfile(); watchNotifications();
@@ -253,7 +254,7 @@
   function switchView(v){
     VIEW = v;
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
-    $('#view-title').textContent = { home:'Home', global:'Global', notifications:'Notifications', messages:'Messages', blossom:'Files', profile:'Profile' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Global', notifications:'Notifications', messages:'Messages', drafts:'Drafts', blossom:'Files', profile:'Profile' }[v]||v;
     renderView(true);
   }
   function renderView(reset){
@@ -263,6 +264,7 @@
     if (VIEW==='home' || VIEW==='global') return renderTimeline(VIEW, reset);
     if (VIEW==='notifications') return renderNotifications();
     if (VIEW==='messages') return renderMessages();
+    if (VIEW==='drafts') return renderDrafts();
     if (VIEW==='blossom') return renderBlossom();
     if (VIEW==='profile') return renderProfile(ME.pubkey);
   }
@@ -529,7 +531,46 @@
   }
 
   // ---------- compose ----------
-  function compose({reply=null, replyPk=null, quote=null}={}){
+  // ---------- drafts (local-only, per-account; never published until you send) ----------
+  const Drafts = {
+    key(){ return 'pc_drafts_' + ((typeof ME!=='undefined' && ME && ME.pubkey) || 'anon'); },
+    all(){ try{ return JSON.parse(localStorage.getItem(this.key())||'[]'); }catch(_){ return []; } },
+    _save(a){ try{ localStorage.setItem(this.key(), JSON.stringify(a.slice(0,300))); }catch(_){} bumpDraft(); },
+    get(id){ return this.all().find(x=>x.id===id); },
+    save(d){ const a=this.all(); d.id=d.id||('d'+Date.now().toString(36)+Math.random().toString(36).slice(2,6)); d.ts=Math.floor(Date.now()/1000);
+      const i=a.findIndex(x=>x.id===d.id); if(i>=0)a[i]=d; else a.unshift(d); this._save(a); return d.id; },
+    remove(id){ this._save(this.all().filter(x=>x.id!==id)); },
+  };
+  function bumpDraft(){ const n=Drafts.all().length; $$('#draft-badge').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden'); }); }
+  function renderDrafts(){
+    const feed=$('#feed'); const list=Drafts.all();
+    feed.innerHTML = list.length ? list.map(d=>{
+      const ctx = d.reply?'<span class="muted small">↩ reply</span>' : d.quote?'<span class="muted small">❝ quote</span>' : '';
+      return `<div class="note draft-card" data-draft="${d.id}"><div class="draft-body">${linkify(d.text||'')}</div>
+        <div class="draft-foot"><span class="muted small">${ctx} saved ${timeAgo(d.ts)}</span>
+          <span class="spacer"></span>
+          <button class="btn btn-ghost small" data-act="edit">✏ Edit</button>
+          <button class="btn btn-ghost small" data-act="del" style="color:#ff6b8b">🗑 Delete</button>
+          <button class="btn btn-neon small" data-act="send">Send ▶</button></div></div>`;
+    }).join('') : '<div class="empty">No drafts. Write a post and tap 💾 Draft to save it for later.</div>';
+    feed.querySelectorAll('.draft-card').forEach(card=>{
+      const id=card.dataset.draft;
+      card.querySelector('[data-act="edit"]').onclick=()=>{ const d=Drafts.get(id); if(d) compose({reply:d.reply,replyPk:d.replyPk,quote:d.quote,draftId:id,text:d.text}); };
+      card.querySelector('[data-act="del"]').onclick=()=>{ if(confirm('Delete this draft?')){ Drafts.remove(id); renderDrafts(); } };
+      card.querySelector('[data-act="send"]').onclick=()=>sendDraft(id);
+    });
+    hydrate(feed);
+  }
+  async function sendDraft(id){
+    const d=Drafts.get(id); if(!d || !(d.text||'').trim()) return;
+    let tags=[];
+    if(d.reply){ const o=Store.get(d.reply); tags=replyTags(o, d.reply, d.replyPk); }
+    if(d.quote){ tags.push(['q',d.quote]); const o=Store.get(d.quote); if(o)tags.push(['p',o.pubkey]); }
+    mentionTags(d.text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
+    try{ await publish(1, d.text, tags); Drafts.remove(id); toast('posted'); if(VIEW==='drafts') renderDrafts(); }
+    catch(e){ toast('post failed: '+e.message); }
+  }
+  function compose({reply=null, replyPk=null, quote=null, draftId=null, text=''}={}){
     const title = reply?'Reply':quote?'Quote post':'New post';
     let qhtml=''; if(quote){ const o=Store.get(quote); if(o) qhtml=`<div class="quoted"><b>${enc((profOf(o.pubkey).name)||'anon')}</b><div class="txt">${linkify(o.content)}</div></div>`; }
     modal(`<h3>${title}</h3>${qhtml}
@@ -537,9 +578,9 @@
       <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
       <div id="cmp-preview" class="note-preview hidden"></div>
       <div class="row cmp-tools"><button class="btn btn-ghost small" id="cmp-img">📎 Attach</button><button class="btn btn-ghost small" id="cmp-blossom">🌸 Files</button>${CFG.gif_enabled?`<button class="btn btn-ghost small" id="cmp-gif">🎬 GIF</button>`:''}<input type="file" id="cmp-file" multiple hidden>
-      <span class="spacer"></span><button class="btn btn-neon" id="cmp-send">Post ▶</button></div>
+      <span class="spacer"></span><button class="btn btn-ghost" id="cmp-draft">💾 Draft</button><button class="btn btn-neon" id="cmp-send">Post ▶</button></div>
       <div class="muted small" id="cmp-status"></div>`, root=>{
-      const ta=$('#cmp',root); attachMentionAutocomplete(ta);
+      const ta=$('#cmp',root); attachMentionAutocomplete(ta); if(text) ta.value=text;
       $$('.cmp-tab',root).forEach(b=> b.onclick=()=>{
         $$('.cmp-tab',root).forEach(x=>x.classList.toggle('active',x===b));
         const pv=b.dataset.t==='preview', prev=$('#cmp-preview',root);
@@ -563,13 +604,19 @@
           try{ const url=await uploadBlob(files[i]); ta.value+=(ta.value?'\n':'')+url; }
           catch(err){ $('#cmp-status',root).textContent='upload failed: '+err.message; return; } }
         $('#cmp-status',root).textContent=''; e.target.value=''; };
+      $('#cmp-draft',root).onclick=()=>{
+        const body=ta.value.trim(); if(!body){ toast('nothing to save'); return; }
+        Drafts.save({id:draftId, text:body, reply, replyPk, quote}); closeModal(); toast('saved to drafts');
+        if(VIEW==='drafts') renderView(true);
+      };
       $('#cmp-send',root).onclick=async()=>{
         const text=ta.value.trim(); if(!text)return;
         let tags=[];
         if(reply){ const o=Store.get(reply); tags=replyTags(o, reply, replyPk); }
         if(quote){ tags.push(['q',quote]); const o=Store.get(quote); if(o)tags.push(['p',o.pubkey]); }
         mentionTags(text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
-        closeModal(); await publish(1, text, tags); toast('posted'); if(VIEW==='home'||VIEW==='global') renderView(true);
+        closeModal(); await publish(1, text, tags); if(draftId) Drafts.remove(draftId);
+        toast('posted'); if(VIEW==='home'||VIEW==='global'||VIEW==='drafts') renderView(true);
       };
       ta.focus();
     });
