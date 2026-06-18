@@ -289,8 +289,8 @@
       const orig = inner || Store.get(origId);
       const rp = profOf(ev.pubkey); needProfile(ev.pubkey);
       if(orig){ needProfile(orig.pubkey); return noteCard(orig, `<div class="repost-tag">🔁 ${enc(rp.name||'someone')} reposted</div>`); }
-      needEvent(origId);   // fetch the original; flushEvents redraws when it arrives
-      return `<article class="note" data-id="${ev.id}" data-pk="${ev.pubkey}"><div class="body"><div class="repost-tag">🔁 ${enc(rp.name||'someone')} reposted</div><div class="muted small">loading post…</div></div></article>`;
+      needEvent(origId);   // fetch the original; flushEvents patches this placeholder in place
+      return `<article class="note" data-orig="${origId}" data-reposter="${enc(rp.name||'someone')}"><div class="body"><div class="repost-tag">🔁 ${enc(rp.name||'someone')} reposted</div><div class="muted small">loading post…</div></div></article>`;
     }
     return noteCard(ev);
   }
@@ -323,13 +323,31 @@
   }
   function quoteHtml(ev){
     const q=(ev.tags.find(t=>t[0]==='q')||[])[1]; if(!q) return '';
-    const o=Store.get(q); if(!o){ needEvent(q); return `<div class="quoted muted small">quoted post loading…</div>`; }
-    const p=profOf(o.pubkey); needProfile(o.pubkey);
-    return `<div class="quoted" data-open="${o.id}"><div class="hd"><b>${enc(p.name||'anon')}</b> <span class="handle">${timeAgo(o.created_at)}</span></div><div class="txt">${linkify(o.content)}</div></div>`;
+    const o=Store.get(q); if(!o){ needEvent(q); return `<div class="quoted muted small" data-qload="${q}">quoted post loading…</div>`; }
+    return quotedDiv(o);
   }
+  function quotedDiv(o){ const p=profOf(o.pubkey); needProfile(o.pubkey);
+    return `<div class="quoted" data-open="${o.id}"><div class="hd"><b>${enc(p.name||'anon')}</b> <span class="handle">${timeAgo(o.created_at)}</span></div><div class="txt">${linkify(o.content)}</div></div>`; }
   const _evQ=new Set(); let _evT=null;
   function needEvent(id){ if(id&&!Store.get(id)){ _evQ.add(id); if(!_evT)_evT=setTimeout(flushEvents,150);} }
-  async function flushEvents(){ _evT=null; const ids=[..._evQ]; _evQ.clear(); if(!ids.length)return; const evs=await Relay.query([{ids}]); for(const e of evs){Store.saveEvent(e); needProfile(e.pubkey);} if(VIEW==='home'||VIEW==='global') scheduleRedraw(); else if(VIEW==='thread'||VIEW==='profile') decorateProfiles(); }
+  async function flushEvents(){
+    _evT=null; const ids=[..._evQ]; _evQ.clear(); if(!ids.length) return;
+    const evs=await Relay.query([{ids}]);
+    for(const e of evs){ Store.saveEvent(e); needProfile(e.pubkey); patchLoaded(e); }
+    decorateProfiles();
+  }
+  // Patch repost/quote placeholders in place when their referenced event loads — NO full feed
+  // re-render (that flashed the whole screen on the busy global feed).
+  function patchLoaded(e){
+    $$(`.note[data-orig="${e.id}"]`).forEach(el=>{
+      const div=document.createElement('div'); div.innerHTML=noteCard(e, `<div class="repost-tag">🔁 ${enc(el.dataset.reposter||'someone')} reposted</div>`);
+      if(div.firstElementChild) el.replaceWith(div.firstElementChild);
+    });
+    $$(`[data-qload="${e.id}"]`).forEach(el=>{
+      const div=document.createElement('div'); div.innerHTML=quotedDiv(e);
+      if(div.firstElementChild) el.replaceWith(div.firstElementChild);
+    });
+  }
 
   // reaction/repost counts — built ONCE per render pass (single scan of the store) instead of
   // re-scanning the whole store for every rendered note (was O(notes × store)).
