@@ -27,6 +27,13 @@
 
   // in-memory mirror for fast render
   const mem = { events: new Map(), profiles: new Map() };
+  // batched IndexedDB writes — one transaction per burst instead of per event (busy-feed perf)
+  let _wbuf = [], _wt = null;
+  function _flushWrites(){
+    _wt = null; if (!db || !_wbuf.length) return;
+    const batch = _wbuf; _wbuf = [];
+    try { const s = db.transaction('events','readwrite').objectStore('events'); for (const ev of batch) s.put(ev); } catch(_){}
+  }
 
   const Store = {
     async init(){
@@ -45,7 +52,7 @@
     saveEvent(ev){
       if (mem.events.has(ev.id)) return false;
       mem.events.set(ev.id, ev);
-      if (db) try { tx('events','readwrite').put(ev); } catch(_){}
+      if (db){ _wbuf.push(ev); if(!_wt) _wt=setTimeout(_flushWrites, 700); }  // batch IDB writes
       return true;
     },
     removeEvent(id){

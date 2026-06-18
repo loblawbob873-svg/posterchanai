@@ -176,6 +176,15 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 .prof .pav{width:92px;height:92px;border-radius:50%;border:3px solid var(--bg);object-fit:cover;background:#1a1230}
 .prof .pbody{padding:14px 22px}
 .prof h2{margin:0} .prof .about{color:var(--text);margin:8px 0;line-height:1.5;white-space:pre-wrap}
+.npubrow{display:flex;align-items:center;gap:8px;margin:8px 0}
+.npubrow code{color:var(--cyan);font-size:12px}
+.follow-stats{display:flex;gap:18px;margin-top:10px}
+.statbtn{background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:0}
+.statbtn:hover{color:var(--cyan)} .statbtn b{color:var(--text);font-size:15px}
+.people-list{max-height:60vh;overflow:auto;margin-top:8px}
+.thread-focus{border-left:3px solid var(--neon)}
+.thread-focus .note{background:rgba(255,43,214,.06)}
+.thread-parent{opacity:.8}
 
 /* notifications */
 .notif{display:flex;gap:12px;padding:13px 20px;border-bottom:1px solid var(--line);align-items:center}

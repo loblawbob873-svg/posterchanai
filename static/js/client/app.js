@@ -556,15 +556,21 @@
       onEose: ()=>{ if(VIEW==='messages') renderMessages(); }
     });
   }
-  async function ingestDM(ev){
+  // Index DMs WITHOUT decrypting (decryption is CPU-heavy ECDH+AES in the worker; decrypting all
+  // 200 on load jams the worker and stalls timeline verification). Decrypt lazily on view.
+  function ingestDM(ev){
     const mine = ev.pubkey===ME.pubkey;
     const peer = mine ? (ev.tags.find(t=>t[0]==='p')||[])[1] : ev.pubkey;
     if(!peer) return; needProfile(peer);
     if(!dmPeers.has(peer)) dmPeers.set(peer, []);
     const arr=dmPeers.get(peer); if(arr.find(m=>m.id===ev.id)) return;
-    let text=''; try{ text=await signer.nip04dec(peer, ev.content); }catch(_){ text='[encrypted]'; }
-    arr.push({ id:ev.id, mine, text, t:ev.created_at }); arr.sort((a,b)=>a.t-b.t);
+    arr.push({ id:ev.id, mine, ev, text:null, t:ev.created_at }); arr.sort((a,b)=>a.t-b.t);
     if(VIEW==='messages' && dmActive===peer) renderDmThread(peer);
+  }
+  async function decryptMsg(peer, m){
+    if(m.text!=null) return m.text;
+    try{ m.text=await signer.nip04dec(peer, m.ev.content); }catch(_){ m.text='🔒 (couldn\'t decrypt)'; }
+    return m.text;
   }
   function renderMessages(){
     const feed=$('#feed');
@@ -573,18 +579,25 @@
     const peers=[...dmPeers.keys()].sort((a,b)=>{ const la=dmPeers.get(a).slice(-1)[0]||{}, lb=dmPeers.get(b).slice(-1)[0]||{}; return (lb.t||0)-(la.t||0); });
     list.innerHTML = `<div class="dm-peer" id="dm-new"><span class="ic">＋</span><b>New message</b></div>` + peers.map(pk=>{
       const p=profOf(pk); const last=dmPeers.get(pk).slice(-1)[0]||{};
-      return `<div class="dm-peer" data-peer="${pk}"><img src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><div><b>${enc(p.name||NT().nip19.npubEncode(pk).slice(0,12))}</b><div class="muted small">${enc((last.text||'').slice(0,28))}</div></div></div>`;
+      const prev = last.text!=null ? enc(last.text.slice(0,28)) : '🔒 …';
+      return `<div class="dm-peer" data-peer="${pk}"><img src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><div><b>${enc(p.name||NT().nip19.npubEncode(pk).slice(0,12))}</b><div class="muted small">${prev}</div></div></div>`;
     }).join('');
-    $('#dm-new').onclick=()=>{ const v=prompt('Recipient npub:'); if(!v)return; const pk=NT().nip19.npubEncode?safePk(v):null; if(pk){ if(!dmPeers.has(pk))dmPeers.set(pk,[]); needProfile(pk); renderMessages(); openDm(pk);} else toast('invalid npub'); };
+    $('#dm-new').onclick=()=>{ const v=prompt('Recipient npub:'); if(!v)return; const pk=safePk(v.trim()); if(pk){ if(!dmPeers.has(pk))dmPeers.set(pk,[]); needProfile(pk); renderMessages(); openDm(pk);} else toast('invalid npub'); };
     $$('[data-peer]',list).forEach(el=> el.onclick=()=>openDm(el.dataset.peer));
+    // lazily decrypt ONLY the last message of each peer for the preview (not every message)
+    const need=peers.filter(pk=>{ const l=dmPeers.get(pk).slice(-1)[0]; return l && l.text==null; });
+    if(need.length) Promise.all(need.map(pk=>decryptMsg(pk, dmPeers.get(pk).slice(-1)[0]))).then(()=>{ if(VIEW==='messages' && !dmActive) renderMessages(); });
     if(dmActive && dmPeers.has(dmActive)) renderDmThread(dmActive);
   }
   function safePk(v){ try{ if(v.startsWith('npub')){const d=NT().nip19.decode(v); return d.data;} if(/^[0-9a-f]{64}$/i.test(v))return v.toLowerCase(); }catch(_){} return null; }
   function openDm(pk){ dmActive=pk; $$('.dm-peer').forEach(e=>e.classList.toggle('active',e.dataset.peer===pk)); $('#dm-list').classList.add('has-active'); renderDmThread(pk); }
-  function renderDmThread(pk){
+  async function renderDmThread(pk){
     const wrap=$('#dm-thread'); if(!wrap)return; const p=profOf(pk); const msgs=dmPeers.get(pk)||[];
+    // decrypt this conversation's messages on open (bounded to one peer's thread)
+    for(const m of msgs){ if(m.text==null) await decryptMsg(pk,m); }
+    if(dmActive!==pk) return;   // user switched away while decrypting
     wrap.innerHTML=`<div class="topbar"><button class="mini" id="dm-back">←</button> <b>${enc(p.name||NT().nip19.npubEncode(pk).slice(0,14))}</b></div>
-      <div class="dm-msgs" id="dm-msgs">${msgs.map(m=>`<div class="bubble ${m.mine?'me':'them'}">${linkify(m.text)}</div>`).join('')}</div>
+      <div class="dm-msgs" id="dm-msgs">${msgs.map(m=>`<div class="bubble ${m.mine?'me':'them'}">${linkify(m.text||'')}</div>`).join('')}</div>
       <div class="dm-compose"><input class="input" id="dm-in" placeholder="encrypted message…"><button class="btn btn-neon" id="dm-send">▶</button></div>`;
     $('#dm-back').onclick=()=>{ $('#dm-list').classList.remove('has-active'); dmActive=null; };
     const send=async()=>{ const inp=$('#dm-in'); const t=inp.value.trim(); if(!t)return; inp.value='';
@@ -601,6 +614,12 @@
     if(!Store.haveProfile(pk)){ const e=await Relay.query([{authors:[pk],kinds:[0],limit:1}]); for(const x of e)Store.saveProfile(x); }
     const p=Store.profile(pk)||{}; const mine=pk===ME.pubkey;
     const notes=await Relay.query([{authors:[pk],kinds:[1],limit:40}]); notes.forEach(n=>Store.saveEvent(n));
+    // following (their latest kind-3) + followers (kind-3s that p-tag them)
+    const k3=await Relay.query([{authors:[pk],kinds:[3],limit:1}]);
+    const following=k3.length ? (k3.sort((a,b)=>b.created_at-a.created_at)[0].tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1])) : [];
+    const followerEvs=await Relay.query([{kinds:[3],'#p':[pk],limit:1000}]);
+    const followers=[...new Set(followerEvs.map(e=>e.pubkey))];
+    const npub=NT().nip19.npubEncode(pk);
     feed.innerHTML=`<div class="prof"><div class="banner" style="${p.banner?`background-image:url('${enc(p.banner)}');background-size:cover`:''}"></div>
       <div class="phead"><img class="pav" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
         <div style="flex:1"></div>${mine?`<button class="btn btn-cyan small" id="edit-prof">Edit</button> <button class="btn btn-ghost small" id="open-settings">⚙ Settings</button>`:`
@@ -608,10 +627,17 @@
           <button class="btn btn-ghost small" id="mute-prof">${MUTED.has(pk)?'Unmute':'Mute'}</button>
           <button class="btn btn-ghost small" id="dm-prof">Message</button>
           ${IS_ADMIN?`<button class="btn btn-ghost small" id="block-prof" style="color:#ff6b8b">Block</button>`:''}`}</div>
-      <div class="pbody"><h2>${enc(p.name||p.display_name||'anon')}</h2><div class="muted small">${enc(NT().nip19.npubEncode(pk))}</div>
-        <div class="about">${linkify(p.about||'')}</div></div></div>
+      <div class="pbody"><h2>${enc(p.name||p.display_name||'anon')}</h2>
+        ${niceNip05(p.nip05)?`<div class="muted small">${enc(niceNip05(p.nip05))}</div>`:''}
+        <div class="npubrow"><code>${enc(npub.slice(0,24))}…</code><button class="mini" id="copy-npub">📋 copy npub</button></div>
+        <div class="about">${linkify(p.about||'')}</div>
+        <div class="follow-stats"><button class="statbtn" id="show-following"><b>${following.length}</b> Following</button><button class="statbtn" id="show-followers"><b>${followers.length}${followerEvs.length>=1000?'+':''}</b> Followers</button></div>
+      </div></div>
       <div id="prof-notes">${Store.feed(e=>e.pubkey===pk && !isReply(e)).slice(0,40).map(noteCard).join('')||'<div class="empty">No posts.</div>'}</div>`;
     hydrate(feed);
+    $('#copy-npub').onclick=()=>{ navigator.clipboard.writeText(npub); toast('npub copied'); };
+    $('#show-following').onclick=()=>peopleModal('Following', following);
+    $('#show-followers').onclick=()=>peopleModal('Followers', followers);
     if(mine){ $('#edit-prof').onclick=()=>editProfile(p); $('#open-settings').onclick=openSettings; }
     else {
       const d=$('#dm-prof'); if(d)d.onclick=()=>{ switchView('messages'); setTimeout(()=>{ if(!dmPeers.has(pk))dmPeers.set(pk,[]); openDm(pk); },50); };
@@ -633,6 +659,17 @@
         closeModal(); await publish(0, JSON.stringify(meta), []); Store.saveProfile({pubkey:ME.pubkey,created_at:Math.floor(Date.now()/1000),content:JSON.stringify(meta)}); toast('profile saved'); renderMe(); renderProfileView(ME.pubkey); };
     });
   }
+  async function peopleModal(title, pks){
+    modal(`<h3>${enc(title)} (${pks.length})</h3><div id="people-list" class="people-list"><div class="spinner"></div></div>`, async root=>{
+      const miss=pks.filter(p=>!Store.haveProfile(p)).slice(0,300);
+      if(miss.length){ try{ const evs=await Relay.query([{authors:miss,kinds:[0],limit:miss.length}]); evs.forEach(e=>Store.saveProfile(e)); }catch(_){} }
+      const list=$('#people-list',root); if(!list) return;
+      list.innerHTML = pks.length ? pks.slice(0,400).map(p=>{ const m=Store.profile(p)||{};
+        return `<div class="psearch" data-prof="${p}"><img src="${enc(m.picture||LOGO)}" onerror="this.src='${LOGO}'"><div><b>${enc(m.name||m.display_name||NT().nip19.npubEncode(p).slice(0,14))}</b><div class="muted small">${enc(niceNip05(m.nip05)||'')}</div></div></div>`;
+      }).join('') : '<div class="empty">Nobody here.</div>';
+      $$('[data-prof]',list).forEach(el=> el.onclick=()=>{ closeModal(); renderProfileView(el.dataset.prof); });
+    });
+  }
   function openSettings(){
     modal(`<h3>⚙ Settings</h3>
       <label class="muted small">Media upload server (Blossom)</label>
@@ -642,7 +679,30 @@
       $('#set-save',root).onclick=()=>{ ClientSettings.set('mediaServer', $('#set-media',root).value.trim()); closeModal(); toast('settings saved'); };
     });
   }
-  function openThread(id){ needEvent(id); const o=Store.get(id); if(o) renderProfileView(o.pubkey); }  // light: jump to author
+  function openThread(id){ renderThread(id); }
+  async function renderThread(id){
+    VIEW='thread'; $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='Thread';
+    const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
+    let ev=Store.get(id);
+    if(!ev){ const r=await Relay.query([{ ids:[id] }]); if(r[0]){ Store.saveEvent(r[0]); ev=r[0]; } }
+    if(!ev){ feed.innerHTML='<div class="empty">Post not found on the relay.</div>'; return; }
+    // fetch the parent (for reply context) and the replies
+    let parent=null;
+    const es=ev.tags.filter(t=>t[0]==='e');
+    const parentId=((es.find(t=>t[3]==='reply')||es.find(t=>t[3]==='root')||es[es.length-1])||[])[1];
+    if(parentId && parentId!==id){ parent=Store.get(parentId); if(!parent){ const r=await Relay.query([{ids:[parentId]}]); if(r[0]){ Store.saveEvent(r[0]); parent=r[0]; } } }
+    const replies=(await Relay.query([{ kinds:[1], '#e':[id], limit:100 }])).filter(r=>r.id!==id);
+    replies.forEach(r=>{ Store.saveEvent(r); needProfile(r.pubkey); });
+    needProfile(ev.pubkey); if(parent) needProfile(parent.pubkey);
+    if(VIEW!=='thread') return;
+    let html='';
+    if(parent) html+=`<div class="thread-parent">${noteCard(parent)}</div>`;
+    html+=`<div class="thread-focus">${noteCard(ev)}</div>`;
+    const rs=replies.sort((a,b)=>a.created_at-b.created_at);
+    html+=`<div class="search-section-title">Replies (${rs.length})</div>`;
+    html+= rs.length ? rs.map(noteCard).join('') : '<div class="empty">No replies yet.</div>';
+    feed.innerHTML=html; hydrate(feed);
+  }
 
   // ---------- search (NIP-50 posts + profile lookup) ----------
   function bindSearch(){

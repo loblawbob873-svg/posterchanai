@@ -134,21 +134,45 @@ async def get_blob(sha256: str, request: Request, db: Session = Depends(get_db))
     if not blob:
         return _err(404, "blob not found")
 
+    mime = blob.mime or "application/octet-stream"
     headers = {
         **_CORS,
-        "Content-Length": str(blob.size),
         "Cache-Control": "public, max-age=31536000, immutable",
-        "Accept-Ranges": "none",
+        "Accept-Ranges": "bytes",   # advertise range support so browsers will seek/play video
     }
     if request.method == "HEAD":
-        return Response(status_code=200, media_type=(blob.mime or "application/octet-stream"),
-                        headers=headers)
+        return Response(status_code=200, media_type=mime,
+                        headers={**headers, "Content-Length": str(blob.size)})
+
+    # HTTP Range (video/audio seeking + MP4s with a trailing moov atom). Buffer-and-slice for
+    # blobs up to _RANGE_MAX (kept in the RAM cache); larger blobs stream whole.
+    _RANGE_MAX = 32 * 1024 * 1024
+    rng = request.headers.get("range")
+    if rng and rng.startswith("bytes=") and blob.size <= _RANGE_MAX:
+        data = await blossom_service.read_full(db, blob)
+        if data is None:
+            return _err(404, "blob bytes unavailable")
+        total = len(data)
+        try:
+            s, _, e = rng[6:].partition("-")
+            start = int(s) if s else 0
+            end = int(e) if e else total - 1
+        except ValueError:
+            start, end = 0, total - 1
+        end = min(end, total - 1)
+        if start > end or start < 0:
+            return Response(status_code=416, headers={**headers, "Content-Range": f"bytes */{total}"})
+        chunk = data[start:end + 1]
+        return Response(chunk, status_code=206, media_type=mime,
+                        headers={**headers, "Content-Range": f"bytes {start}-{end}/{total}",
+                                 "Content-Length": str(len(chunk))})
 
     result = await blossom_service.read_blob(db, blob)
     if result is None:
         return _err(404, "blob bytes unavailable")
-    stream, mime, _size = result
-    return StreamingResponse(stream, media_type=mime, headers=headers)
+    stream, rmime, size = result
+    return StreamingResponse(stream, media_type=rmime,
+                             headers={**headers, "Content-Length": str(size)})
 
 
 @router.delete("/{sha256}")

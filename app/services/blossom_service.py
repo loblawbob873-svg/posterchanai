@@ -377,6 +377,32 @@ async def read_blob(db: Session, blob: BlossomBlob):
     return _file_stream(), mime, blob.size
 
 
+async def read_full(db: Session, blob: BlossomBlob) -> bytes | None:
+    """Return the blob's full bytes (cache-aware). Used for HTTP Range responses — browsers need
+    range support to play many MP4s (moov atom at the end) and to seek."""
+    cached = _cache_get(blob.sha256)
+    if cached is not None:
+        return cached
+    cfg = _cfg(db)
+    if blob.storage == "proxy":
+        if not cfg["storage_url"]:
+            return None
+        from urllib.parse import quote
+        url = (f"{cfg['storage_url'].rstrip('/')}/api/storage/view-file"
+               f"?username={_PROXY_USER}&file_path={quote(blob.path)}&download=1")
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as client:
+            r = await client.get(url, headers=_proxy_headers())
+        if r.status_code != 200:
+            return None
+        data = r.content
+    else:
+        if not os.path.isfile(blob.path):
+            return None
+        data = await asyncio.to_thread(lambda: open(blob.path, "rb").read())
+    _cache_put(blob.sha256, data, cfg["cache_mb"] * 1024 * 1024)
+    return data
+
+
 async def delete_blob_bytes(db: Session, blob: BlossomBlob) -> None:
     """Best-effort removal of the underlying bytes (the row is deleted by the caller)."""
     cfg = _cfg(db)
