@@ -84,10 +84,11 @@ END;
 """
 
 
-# Kinds preserved forever by the age-based auto-cleaner: profiles (0) and contact lists (3).
-# They're replaceable (one per author) so they don't grow unbounded, and clients need them
-# to render names/avatars/follows even for very old notes.
-_KEEP_KINDS = (0, 3)
+# Kinds the age-based auto-cleaner NEVER deletes: profiles (0), contact lists (3) and relay
+# lists (10002) — replaceable identity metadata clients always need; long-form articles
+# (30023) — low-volume, valuable; and private DMs (legacy 4, NIP-17 gift wraps 1059) — a DM
+# inbox must not silently lose messages. Only notes/reposts/reactions age out.
+_KEEP_KINDS = (0, 3, 4, 1059, 10002, 30023)
 
 
 class RelayStore:

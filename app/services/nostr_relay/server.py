@@ -280,9 +280,12 @@ class RelayServer:
         self._send(conn, ["OK", eid, True, ""])
         if stored:
             self.subs.fanout(ev, self._send)
-            if self.outbox_cb and not is_dm:   # never re-broadcast private DMs to public relays
-                # Non-blocking enqueue onto the paced outbox queue (drops on overflow) — a
-                # post-blasting client can't stall this connection or flood upstream relays.
+            if self.outbox_cb:
+                # Blaster: re-broadcast EVERY inbound write to the upstream relays — notes,
+                # profile updates, articles, AND DMs. DMs are encrypted (gift wraps / NIP-04),
+                # so broadcasting leaks no content and is what delivers them to recipients when
+                # a user treats this as their only relay. Non-blocking enqueue (drops on
+                # overflow) so a post-blasting client can't stall this connection.
                 try:
                     self.outbox_cb(ev)
                 except Exception as e:
