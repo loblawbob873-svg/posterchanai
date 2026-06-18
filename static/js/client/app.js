@@ -980,7 +980,29 @@
   }
 
   // ---------- helpers ----------
-  function hydrate(scope){ decorateProfiles(); hydrateLinkCards(scope); }
+  function hydrate(scope){ decorateProfiles(); hydrateLinkCards(scope); hydrateCounts(); }
+  // Fetch reactions/reposts/replies for the posts currently on screen and show the counts +
+  // liked/reposted state (the timeline sub only carries notes, so without this the counts are 0).
+  let _ixT=null;
+  function hydrateCounts(){ if(_ixT) return; _ixT=setTimeout(async()=>{
+    _ixT=null;
+    const ids=[...new Set($$('.note[data-id]').map(n=>n.dataset.id))].slice(0,200);
+    if(!ids.length) return;
+    try{ const evs=await Relay.query([{ kinds:[1,6,7], '#e':ids, limit:500 }]);
+      let any=false; for(const e of evs){ if(Store.saveEvent(e)){ any=true; needProfile(e.pubkey); } }
+      if(any){ invalidateCounts(); }
+    }catch(_){}
+    decorateCounts();
+  }, 450); }
+  function decorateCounts(){
+    $$('.note[data-id]').forEach(n=>{
+      const id=n.dataset.id, c=countsFor(id), mr=myReaction(id);
+      const setN=(a,v)=>{ const s=n.querySelector('.act[data-a="'+a+'"] .n'); if(s) s.textContent=v||''; };
+      setN('reply',c.replies); setN('repost',c.reposts); setN('like',c.reactions);
+      const lk=n.querySelector('.act[data-a="like"]'); if(lk){ lk.classList.toggle('on',!!mr); if(lk.firstChild) lk.firstChild.textContent=(mr||'🤍')+' '; }
+      const rt=n.querySelector('.act[data-a="repost"]'); if(rt) rt.classList.toggle('on',c.iRt);
+    });
+  }
   function timeAgo(ts){ const s=Math.floor(Date.now()/1000)-ts; if(s<60)return s+'s'; if(s<3600)return (s/60|0)+'m'; if(s<86400)return (s/3600|0)+'h'; return (s/86400|0)+'d'; }
   // ---------- link preview cards (OpenGraph via /client/preview, lazy on scroll) ----------
   const _pv=new Map();
@@ -1037,8 +1059,8 @@
   }
 
   // ---------- modal + toast ----------
-  function modal(html, onMount){ const bg=document.createElement('div'); bg.className='modal-bg'; bg.innerHTML=`<div class="modal glass neon-border">${html}</div>`; bg.onclick=e=>{ if(e.target===bg) closeModal(); }; $('#modal-root').appendChild(bg); if(onMount)onMount(bg.querySelector('.modal')); }
-  function closeModal(){ $('#modal-root').innerHTML=''; }
+  function modal(html, onMount){ const bg=document.createElement('div'); bg.className='modal-bg'; bg.innerHTML=`<div class="modal glass neon-border">${html}</div>`; bg.onclick=e=>{ if(e.target===bg) closeModal(); }; $('#modal-root').appendChild(bg); document.body.classList.add('modal-open'); if(onMount)onMount(bg.querySelector('.modal')); }
+  function closeModal(){ $('#modal-root').innerHTML=''; document.body.classList.remove('modal-open'); }
   function toast(m){ const t=document.createElement('div'); t.className='toast'; t.textContent=m; $('#toast-root').appendChild(t); setTimeout(()=>t.remove(),3200); }
   function openLightbox(src){ const bg=document.createElement('div'); bg.className='lightbox'; const i=document.createElement('img'); i.src=src; bg.appendChild(i); bg.onclick=()=>bg.remove(); document.body.appendChild(bg); }
 

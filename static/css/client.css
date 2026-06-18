@@ -278,8 +278,9 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
   .act.actq{font-size:22px;padding-top:6px;padding-bottom:4px}
   /* shrink the messages view so the compose bar + list clear the fixed bottom nav */
   /* lift the DM composer above the fixed bottom nav (reliable, no :has/height-calc) */
-  .dm-compose{padding-bottom:calc(14px + 64px + env(safe-area-inset-bottom))}
-  .dm-list{padding-bottom:70px}
+  .dm-compose{padding-bottom:calc(14px + 70px + env(safe-area-inset-bottom))}
+  .dm-list{padding-bottom:74px}
+  body.modal-open .mobilenav{display:none}   /* don't let the fixed nav overlap an open modal */
   .topbar{padding:10px 14px;gap:8px}
   .topbar h2{font-size:16px;flex-shrink:0}
   .searchbox{margin:0 4px}
