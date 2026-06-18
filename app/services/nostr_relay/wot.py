@@ -30,6 +30,9 @@ class WotGate:
     def set_blocked(self, blocked_hex) -> None:
         self._blocked = frozenset(blocked_hex or [])
 
+    def is_blocked(self, pubkey: str) -> bool:
+        return bool(pubkey) and pubkey in self._blocked
+
     def is_member(self, pubkey: str) -> bool:
         if not pubkey or pubkey in self._blocked:
             return False  # explicit denylist overrides everything, even operator

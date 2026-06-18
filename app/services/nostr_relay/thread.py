@@ -361,7 +361,7 @@ async def _main(cfg: dict) -> None:
                 try:
                     await _ingest.backfill_ancestors(
                         store, server, cfg["upstream"], [ev], cfg.get("max_ancestors", 20),
-                        cfg["direct"], blocked=_bl, blocked_words=_bw)
+                        cfg["direct"], blocked=_bl, blocked_words=_bw, gate=gate)
                 except Exception as e:
                     logger.debug("[nostr-relay] firehose ancestor backfill failed: %s", e)
 

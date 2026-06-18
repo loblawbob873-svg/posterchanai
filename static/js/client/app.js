@@ -212,11 +212,21 @@
     if(VIEW==='profile') renderProfileView(ME.pubkey);
   }
   const _profQ = new Set(); let _profT = null;
-  function needProfile(pk){ if(pk && !Store.haveProfile(pk)){ _profQ.add(pk); if(!_profT) _profT=setTimeout(flushProfiles,120);} }
+  const _profMiss = new Map();   // pubkey -> ts of a lookup that returned nothing (throttle retries)
+  const _PROF_MISS_TTL = 300000; // 5 min before re-asking the relay for a not-found profile
+  function needProfile(pk){
+    if(!pk || Store.haveProfile(pk)) return;
+    const miss=_profMiss.get(pk); if(miss && Date.now()-miss < _PROF_MISS_TTL) return;  // don't hammer
+    _profQ.add(pk); if(!_profT) _profT=setTimeout(flushProfiles,120);
+  }
   async function flushProfiles(){
     _profT=null; const pks=[..._profQ]; _profQ.clear(); if(!pks.length) return;
     const evs = await Relay.query([{ authors:pks, kinds:[0], limit:pks.length }]);
-    let changed=false; for(const e of evs){ Store.saveProfile(e); changed=true; }
+    const got=new Set(); let changed=false;
+    for(const e of evs){ Store.saveProfile(e); got.add(e.pubkey); changed=true; }
+    const now=Date.now();
+    for(const pk of pks){ if(!got.has(pk)) _profMiss.set(pk, now); }   // relay has no profile yet → back off
+    if(_profMiss.size>5000){ for(const k of _profMiss.keys()){ _profMiss.delete(k); if(_profMiss.size<=4000) break; } }
     if(changed){ renderMe(); decorateProfiles(); }
   }
   async function fetchMyProfile(){ const e=await Relay.query([{authors:[ME.pubkey],kinds:[0],limit:1}]); if(e.length){Store.saveProfile(e.sort((a,b)=>b.created_at-a.created_at)[0]); renderMe();} }
@@ -976,7 +986,7 @@
   // Fill directly on render (the empty placeholder is display:none via CSS until filled; an
   // IntersectionObserver never fires on a zero-height hidden element, which broke lazy loading).
   function hydrateLinkCards(scope){ $$('.link-card[data-url]:not([data-done])', scope||document).forEach(el=>{ el.setAttribute('data-done','1'); fillLinkCard(el); }); }
-  async function fetchPreview(url){ if(_pv.has(url)) return _pv.get(url); let d=null; try{ d=await fetch('/client/preview?url='+encodeURIComponent(url)).then(r=>r.json()); }catch(_){} _pv.set(url,d); return d; }
+  async function fetchPreview(url){ if(_pv.has(url)) return _pv.get(url); let d=null; try{ d=await fetch('/client/preview?url='+encodeURIComponent(url)).then(r=>r.json()); }catch(_){} _pv.set(url,d); if(_pv.size>600) _pv.delete(_pv.keys().next().value); return d; }
   async function fillLinkCard(el){
     const url=el.dataset.url; const d=await fetchPreview(url);
     if(!d || (!d.title && !d.image && !d.description)){ el.remove(); return; }
@@ -991,12 +1001,12 @@
       const u=url.replace(/[)\].,!?]+$/,'');          // don't swallow trailing punctuation
       const tail=url.slice(u.length);
       let tag;
-      if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)) tag=`<br><img src="${u}" loading="lazy">`;
-      else if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)) tag=`<br><video src="${u}" controls preload="metadata" playsinline></video>`;
+      if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)) tag=`<img class="m" src="${u}" loading="lazy">`;
+      else if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)) tag=`<video class="m" src="${u}" controls preload="metadata" playsinline></video>`;
       else if(/\.(mp3|ogg|wav|m4a|aac|flac)(\?|#|$)/i.test(u)) tag=`<br><audio src="${u}" controls preload="none"></audio>`;
       // extensionless Blossom hash URLs (e.g. media.poster.place/<sha256>) — bots post these for
       // nitter/fedi media. Try as an image; if it isn't one, swap to a plain link on error.
-      else if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)) tag=`<br><img src="${u}" loading="lazy" onerror="this.onerror=null;var a=document.createElement('a');a.href=this.src;a.target='_blank';a.rel='noopener';a.textContent=this.src;this.replaceWith(a);">`;
+      else if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)) tag=`<img class="m" src="${u}" loading="lazy" onerror="this.onerror=null;var a=document.createElement('a');a.href=this.src;a.target='_blank';a.rel='noopener';a.textContent=this.src;this.replaceWith(a);">`;
       else tag=`<a href="${u}" target="_blank" rel="noopener">${u}</a>`;
       return tag+tail;
     });

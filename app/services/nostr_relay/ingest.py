@@ -139,7 +139,7 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
         try:
             await backfill_ancestors(store, server, upstream, new_events,
                                      cfg.get("max_ancestors", 20), direct,
-                                     blocked=blocked, blocked_words=blocked_words)
+                                     blocked=blocked, blocked_words=blocked_words, gate=gate)
         except Exception as e:
             logger.warning("[nostr-relay] ancestor backfill failed: %s", e)
 
@@ -215,7 +215,7 @@ async def backfill_author(store, server, upstream, pubkey: str, *, direct: bool 
 
 
 async def backfill_ancestors(store, server, upstream, events, max_ancestors: int,
-                             direct: bool = False, blocked=None, blocked_words=None) -> int:
+                             direct: bool = False, blocked=None, blocked_words=None, gate=None) -> int:
     """Walk reply-to (`e`-tag) references up to the thread root, fetching by id any event we
     don't have. Parents may be outside the WoT (stored as origin='ancestor') — the deliberate,
     bounded relaxation that keeps threads whole. Still honours the language/word content
@@ -242,6 +242,10 @@ async def backfill_ancestors(store, server, upstream, events, max_ancestors: int
         nxt = set()
         for ev in anc:
             if not _is_evid(ev.get("id")) or not verify_event(ev):
+                continue
+            # A parent may be outside the WoT (that's the point), but NEVER store a blocked
+            # author's event — otherwise blocklisted spam leaks in as a thread ancestor.
+            if gate is not None and gate.is_blocked(ev.get("pubkey", "")):
                 continue
             if _content_blocked(ev, blocked, blocked_words):
                 continue

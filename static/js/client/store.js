@@ -27,12 +27,36 @@
 
   // in-memory mirror for fast render
   const mem = { events: new Map(), profiles: new Map() };
+  // Bound the in-memory event cache: the global firehose streams forever, so an uncapped Map
+  // would grow without limit — bloating memory AND making the full-store scans (feed / counts)
+  // slower over a long session until the UI goes sluggish. Keep the newest N by created_at.
+  const MEM_MAX = 4500, MEM_KEEP = 3000;
+  function _evictMem(){
+    if (mem.events.size <= MEM_MAX) return;
+    const arr = [...mem.events.values()].sort((a,b)=>b.created_at-a.created_at).slice(0, MEM_KEEP);
+    mem.events.clear();
+    for (const ev of arr) mem.events.set(ev.id, ev);
+  }
   // batched IndexedDB writes — one transaction per burst instead of per event (busy-feed perf)
   let _wbuf = [], _wt = null;
   function _flushWrites(){
     _wt = null; if (!db || !_wbuf.length) return;
     const batch = _wbuf; _wbuf = [];
     try { const s = db.transaction('events','readwrite').objectStore('events'); for (const ev of batch) s.put(ev); } catch(_){}
+  }
+  // Keep the on-disk event store bounded too (otherwise it balloons over weeks → slow reloads).
+  const IDB_CAP = 8000, IDB_KEEP = 5000;
+  async function _pruneIDB(){
+    if (!db) return;
+    try {
+      const n = await pr(tx('events','readonly').count());
+      if (n <= IDB_CAP) return;
+      const all = await pr(tx('events','readonly').getAll());
+      all.sort((a,b)=>b.created_at-a.created_at);
+      const del = all.slice(IDB_KEEP);
+      const s = tx('events','readwrite');
+      for (const ev of del) s.delete(ev.id);
+    } catch(e){ console.warn('IDB prune failed', e); }
   }
 
   const Store = {
@@ -46,12 +70,14 @@
         const profs = await pr(tx('profiles','readonly').getAll());
         for (const p of profs) mem.profiles.set(p.pubkey, p);
       } catch(e){ console.warn('hydrate failed', e); }
+      setTimeout(_pruneIDB, 8000);   // trim the on-disk store after startup (non-blocking)
     },
     has(id){ return mem.events.has(id); },
     get(id){ return mem.events.get(id); },
     saveEvent(ev){
       if (mem.events.has(ev.id)) return false;
       mem.events.set(ev.id, ev);
+      if (mem.events.size > MEM_MAX) _evictMem();   // bound in-memory cache
       if (db){ _wbuf.push(ev); if(!_wt) _wt=setTimeout(_flushWrites, 700); }  // batch IDB writes
       return true;
     },
