@@ -149,6 +149,10 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 .media-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .media-row img,.media-row video{max-height:300px;max-width:100%;width:auto;border-radius:12px;border:1px solid var(--line);background:#0d0a1a;cursor:pointer;flex:0 1 auto}
 .thread-focus .media-row img,.thread-focus .media-row video{max-height:420px}
+/* profile Media tab — square thumbnail gallery (media only, no post chrome) */
+.media-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:4px}
+.media-grid img,.media-grid video{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:8px;border:1px solid var(--line);background:#0d0a1a;cursor:pointer;display:block}
+@media(max-width:560px){.media-grid{grid-template-columns:repeat(2,1fr)}}
 .note .txt audio{width:100%;max-width:420px;margin-top:8px;display:block}
 .note .txt a.mention{color:var(--cyan);font-weight:600}
 .note .repost-tag{font-size:12px;color:var(--green);margin-bottom:4px}
