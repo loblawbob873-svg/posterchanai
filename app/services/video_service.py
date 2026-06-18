@@ -83,11 +83,13 @@ def _idle_loop():
             # Never unload mid-generation: a Wan run can outlast _idle_timeout and `_last_used`
             # only advances when a run COMPLETES, so it goes stale during a long generation and
             # would trick the monitor into unloading the active pipe. Mirrors the image/LLM guard.
+            # The pre-check is the fast path; unload_model(skip_if_generating=True) re-checks under
+            # _load_lock to close the check-then-act window (a gen starting right after this check).
             if inst._generating > 0:
                 continue
             if time.time() - inst._last_used > inst._idle_timeout:
                 logger.info("Idle timeout reached — unloading video model")
-                inst.unload_model()
+                inst.unload_model(skip_if_generating=True)
 
 
 def _start_idle():
@@ -132,7 +134,7 @@ class VideoService:
             if self._pipe is not None and self._model_id == model_id:
                 return
             if self._pipe is not None:
-                self.unload_model()
+                self._unload_internal()  # already holding _load_lock; unload_model() would deadlock
             import torch
             from diffusers import DiffusionPipeline
             device = self._resolve_device(cfg["device"])
@@ -160,28 +162,38 @@ class VideoService:
             self._model_id = model_id
             logger.info(f"Video model loaded in {time.time() - t0:.0f}s")
 
-    def unload_model(self):
+    def unload_model(self, skip_if_generating: bool = False):
+        # skip_if_generating (idle monitor): re-check the in-flight counter UNDER the lock and skip
+        # if a generation is active. A generation increments `_generating` before it contends for
+        # `_load_lock`, so this provably closes the idle loop's check-then-act race.
         with _load_lock:
-            if self._pipe is None:
+            if skip_if_generating and self._generating > 0:
                 return
-            try:
-                self._pipe.to("cpu")
-            except Exception:
-                pass
-            self._pipe = None
-            self._model_id = None
-            gc.collect()
-            try:
-                import torch
-                if self._device == "cuda" and torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                elif self._device == "xpu" and hasattr(torch, "xpu") and torch.xpu.is_available():
-                    torch.xpu.empty_cache()
-            except Exception:
-                pass
-            from app.services.vram_manager import reset_vram_mode
-            reset_vram_mode()
-            logger.info("Video model unloaded")
+            self._unload_internal()
+
+    def _unload_internal(self):
+        """Unload the pipe. Caller MUST hold _load_lock (so load_model can reuse it without
+        re-acquiring the non-reentrant lock — calling unload_model() there would deadlock)."""
+        if self._pipe is None:
+            return
+        try:
+            self._pipe.to("cpu")
+        except Exception:
+            pass
+        self._pipe = None
+        self._model_id = None
+        gc.collect()
+        try:
+            import torch
+            if self._device == "cuda" and torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            elif self._device == "xpu" and hasattr(torch, "xpu") and torch.xpu.is_available():
+                torch.xpu.empty_cache()
+        except Exception:
+            pass
+        from app.services.vram_manager import reset_vram_mode
+        reset_vram_mode()
+        logger.info("Video model unloaded")
 
     def generate(self, db: Session, prompt: str, negative_prompt: str = "",
                  width: Optional[int] = None, height: Optional[int] = None,

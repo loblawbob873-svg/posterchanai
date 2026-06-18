@@ -211,14 +211,16 @@ def _idle_check_loop():
     while not _idle_check_stop.wait(30):  # Check every 30 seconds
         if _diffusers_instance is not None and _diffusers_instance._pipe is not None:
             # Never unload mid-generation: a run can outlast _idle_timeout (Arc XPU), which would
-            # leave `_last_used` stale and trick the monitor into unloading the active pipe.
+            # leave `_last_used` stale and trick the monitor into unloading the active pipe. The
+            # pre-check is the fast path; unload_model(skip_if_generating=True) re-checks under
+            # _load_lock to close the check-then-act window (a gen starting right after this check).
             if _diffusers_instance._generating > 0:
                 continue
             idle_time = time.time() - _diffusers_instance._last_used
             timeout = _diffusers_instance._idle_timeout
             if idle_time > timeout:
                 logger.info(f"Model idle for {idle_time:.0f}s (>{timeout}s), unloading to free VRAM")
-                _diffusers_instance.unload_model()
+                _diffusers_instance.unload_model(skip_if_generating=True)
 
 
 def _start_idle_check():
@@ -577,9 +579,17 @@ class DiffusersService:
 
             logger.info("Model unloaded, VRAM freed")
 
-    def unload_model(self):
-        """Unload model and free VRAM"""
+    def unload_model(self, skip_if_generating: bool = False):
+        """Unload model and free VRAM.
+
+        skip_if_generating: when True (idle monitor), re-check the in-flight counter UNDER the
+        lock and skip if a generation is active. A generation increments `_generating` before it
+        contends for `_load_lock`, so this provably closes the idle loop's check-then-act race.
+        The explicit post-generation unload passes False (it runs while `_generating` is still >0).
+        """
         with _load_lock:
+            if skip_if_generating and self._generating > 0:
+                return
             self._unload_model_internal()
 
     def reload_model(self):
