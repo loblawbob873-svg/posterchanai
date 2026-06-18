@@ -888,7 +888,7 @@
       <div class="pbody"><h2>${enc(p.name||p.display_name||'anon')}</h2>
         ${niceNip05(p.nip05)?`<div class="muted small">${enc(niceNip05(p.nip05))}</div>`:''}
         <div class="npubrow"><code>${enc(npub.slice(0,24))}…</code><button class="mini" id="copy-npub">📋 copy npub</button></div>
-        ${p.lud16?`<div class="muted small">⚡ ${enc(p.lud16)}</div>`:''}
+        ${p.lud16?`<button class="ln-addr" id="prof-ln" title="send a zap">⚡ ${enc(p.lud16)}</button>`:''}
         <div class="about">${linkify(p.about||'')}</div>
         <div class="follow-stats"><button class="statbtn" id="show-following"><b>${following.length}</b> Following</button><button class="statbtn" id="show-followers"><b>${followers.length}${followerEvs.length>=1000?'+':''}</b> Followers</button></div>
       </div></div>
@@ -896,6 +896,7 @@
         ${pinned.length?`<div class="search-section-title">Posts</div>`:''}${Store.feed(e=>e.pubkey===pk && !isReply(e)).slice(0,40).map(e=>noteHtml(e)).join('')||'<div class="empty">No posts.</div>'}</div>`;
     hydrate(feed);
     $('#copy-npub').onclick=()=>{ navigator.clipboard.writeText(npub); toast('npub copied'); };
+    { const ln=$('#prof-ln'); if(ln) ln.onclick=()=>doZap(null, pk); }
     $('#show-following').onclick=()=>peopleModal('Following', following);
     $('#show-followers').onclick=()=>peopleModal('Followers', followers);
     if(mine){ $('#edit-prof').onclick=()=>editProfile(p); $('#open-settings').onclick=openSettings; }

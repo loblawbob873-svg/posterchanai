@@ -241,6 +241,8 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 .prof h2{margin:0} .prof .about{color:var(--text);margin:8px 0;line-height:1.5;white-space:pre-wrap}
 .npubrow{display:flex;align-items:center;gap:8px;margin:8px 0}
 .npubrow code{color:var(--cyan);font-size:12px}
+.ln-addr{background:transparent;border:1px solid var(--line);color:var(--amber);cursor:pointer;border-radius:9px;padding:5px 11px;font-size:13px;margin:6px 0;display:inline-flex;align-items:center;gap:4px;transition:.13s}
+.ln-addr:hover{border-color:var(--amber);box-shadow:0 0 12px rgba(255,207,43,.35)}
 .follow-stats{display:flex;gap:18px;margin-top:10px}
 .statbtn{background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:0}
 .statbtn:hover{color:var(--cyan)} .statbtn b{color:var(--text);font-size:15px}
