@@ -325,6 +325,7 @@
   function bindFeedActions(){
     $('#feed').addEventListener('click', async (e)=>{
       const mn=e.target.closest('.mention'); if(mn){ e.preventDefault(); const pk=safePk(mn.dataset.np); if(pk) renderProfileView(pk); return; }
+      const av=e.target.closest('.av'); if(av){ const n=e.target.closest('.note'); if(n){ renderProfileView(n.dataset.pk); return; } }
       const prof=e.target.closest('[data-prof]'); if(prof){ renderProfileView(prof.dataset.prof); return; }
       const q=e.target.closest('[data-open]'); if(q){ openThread(q.dataset.open); return; }
       const btn=e.target.closest('.act'); if(!btn) return;
@@ -383,6 +384,15 @@
       <span class="spacer"></span><button class="btn btn-neon" id="cmp-send">Post ▶</button></div>
       <div class="muted small" id="cmp-status"></div>`, root=>{
       const ta=$('#cmp',root); attachMentionAutocomplete(ta);
+      // paste image (or any file) from clipboard -> upload + append URL
+      ta.addEventListener('paste', async (e)=>{
+        const files=[...(e.clipboardData&&e.clipboardData.items||[])].filter(it=>it.kind==='file').map(it=>it.getAsFile()).filter(Boolean);
+        if(!files.length) return; e.preventDefault();
+        for(let i=0;i<files.length;i++){ $('#cmp-status',root).textContent=`uploading pasted ${i+1}/${files.length}…`;
+          try{ const url=await uploadBlob(files[i]); ta.value+=(ta.value?'\n':'')+url; }
+          catch(err){ $('#cmp-status',root).textContent='upload failed: '+err.message; return; } }
+        $('#cmp-status',root).textContent='';
+      });
       $('#cmp-img',root).onclick=()=>$('#cmp-file',root).click();
       $('#cmp-file',root).onchange=async e=>{ const files=[...e.target.files]; if(!files.length)return;
         for(let i=0;i<files.length;i++){ $('#cmp-status',root).textContent=`uploading ${i+1}/${files.length}…`;
