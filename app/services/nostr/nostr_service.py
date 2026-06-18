@@ -25,7 +25,6 @@ DEFAULT_RELAYS = [
     "wss://frens.nostr1.com/onyx-bravo",
     "wss://nostr.chaima.info/",
     "wss://nostr.corebreach.com/",
-    "wss://relay.nostr.band/",
     "wss://social.amanah.eblessing.co/titan",
     "wss://relay.sovrgn.co.za/",
 ]
