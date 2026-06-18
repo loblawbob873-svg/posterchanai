@@ -26,6 +26,17 @@ def _is_evid(x) -> bool:
     return isinstance(x, str) and len(x) == 64
 
 
+def _content_blocked(ev, blocked, blocked_words) -> bool:
+    """True if a kind-1 note should be rejected by the language/word content filters — applied
+    on EVERY ingestion path (sync, ancestor backfill) so blocked content can't sneak in as a
+    backfilled reply parent."""
+    if int(ev.get("kind", 1)) != 1:
+        return False
+    content = ev.get("content", "")
+    return bool((blocked and blocked_language(content, blocked)) or
+                (blocked_words and blocked_word(content, blocked_words)))
+
+
 async def sync_tick(store, gate, server, upstream, cfg) -> int:
     """One windowed sync pass over the WoT author set. Returns count of new events."""
     members = sorted(gate.members())   # stable order so the rotating offset is meaningful
@@ -127,7 +138,8 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
     if cfg.get("fetch_ancestors", True) and new_events:
         try:
             await backfill_ancestors(store, server, upstream, new_events,
-                                     cfg.get("max_ancestors", 20), direct)
+                                     cfg.get("max_ancestors", 20), direct,
+                                     blocked=blocked, blocked_words=blocked_words)
         except Exception as e:
             logger.warning("[nostr-relay] ancestor backfill failed: %s", e)
 
@@ -203,10 +215,11 @@ async def backfill_author(store, server, upstream, pubkey: str, *, direct: bool 
 
 
 async def backfill_ancestors(store, server, upstream, events, max_ancestors: int,
-                             direct: bool = False) -> int:
+                             direct: bool = False, blocked=None, blocked_words=None) -> int:
     """Walk reply-to (`e`-tag) references up to the thread root, fetching by id any event we
     don't have. Parents may be outside the WoT (stored as origin='ancestor') — the deliberate,
-    bounded relaxation that keeps threads whole."""
+    bounded relaxation that keeps threads whole. Still honours the language/word content
+    filters: a blocked-language/word parent is NOT stored (the block wins over completeness)."""
     pending = set()
     for ev in events:
         for t in ev.get("tags", []):
@@ -229,6 +242,8 @@ async def backfill_ancestors(store, server, upstream, events, max_ancestors: int
         nxt = set()
         for ev in anc:
             if not _is_evid(ev.get("id")) or not verify_event(ev):
+                continue
+            if _content_blocked(ev, blocked, blocked_words):
                 continue
             if await store.add_event(ev, origin="ancestor"):
                 fetched += 1
