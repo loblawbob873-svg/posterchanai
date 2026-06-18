@@ -283,8 +283,16 @@ class RelayServer:
         if exp is not None and exp <= int(time.time()):
             self._send(conn, ["OK", eid, False, "invalid: event expired"])
             return
-        is_dm = kind in self._DM_KINDS
-        if is_dm:
+        if kind == 4:
+            # NIP-04: the author IS the real sender, so apply the normal WoT gate to them (lets
+            # our web-of-trust members DM each other THROUGH this relay) OR accept it as an
+            # operator's inbox (a DM addressed to one of our own users).
+            if not (self.gate.is_member(ev.get("pubkey", "")) or self._dm_for_operator(ev)):
+                self._send(conn, ["OK", eid, False, "blocked: sender not in web of trust"])
+                return
+        elif kind in (13, 1059):
+            # Gift-wrap / seal: the outer author is a random throwaway key, so the WoT gate can't
+            # apply — only accept when addressed (p-tag) to one of our own relay users.
             if not self._dm_for_operator(ev):
                 self._send(conn, ["OK", eid, False, "blocked: not a DM to a relay user"])
                 return
