@@ -83,6 +83,22 @@ def _relay_paths(db_path: str) -> dict:
     return {"status": db_path + ".status.json", "control": db_path + ".control.d"}
 
 
+def _pid_alive(pid) -> bool:
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except Exception:
+        return False
+
+
+# Set when the app is shutting the relay down on purpose, so the watchdog doesn't respawn it
+# in the middle of a clean shutdown. `_relay_lock` serializes all lifecycle ops (start/stop/
+# restart/watchdog) so they can't race into a double-spawn (→ EADDRINUSE → respawn loop).
+_relay_shutdown = False
+_monitor_thread: threading.Thread | None = None
+_relay_lock = threading.RLock()
+
+
 _relay = _Relay()
 
 
@@ -582,55 +598,95 @@ def _spawn_relay(cfg: dict) -> None:
     logger.info("[nostr-relay] spawned relay subprocess pid %d", _relay.proc.pid)
 
 
+def _monitor_loop() -> None:
+    """Watchdog: respawn the relay subprocess if it dies (crash / OOM), unless we're shutting it
+    down on purpose. Mirrors bot_manager's reconcile so a relay crash isn't a silent outage."""
+    while not _relay_shutdown:
+        time.sleep(15)
+        if _relay_shutdown:
+            break
+        try:
+            with _relay_lock:
+                if _relay_shutdown:
+                    break
+                if _relay.proc is not None and _relay.proc.poll() is None:
+                    continue  # alive
+                cfg = _relay.cfg or _read_config()
+                if not cfg.get("enabled"):
+                    continue
+                logger.warning("[nostr-relay] subprocess not running — respawning (watchdog)")
+                _relay.cfg = cfg
+                _spawn_relay(cfg)
+        except Exception as e:
+            logger.debug("[nostr-relay] watchdog error: %s", e)
+
+
 def start_nostr_relay() -> None:
-    if _relay.proc is not None and _relay.proc.poll() is None:
-        return  # already running
-    cfg = _read_config()
-    if not cfg["enabled"]:
-        logger.info("[nostr-relay] disabled (nostr_relay_enabled off) — not starting")
-        return
-    _relay.cfg = cfg
-    _spawn_relay(cfg)
+    global _relay_shutdown, _monitor_thread
+    with _relay_lock:
+        if _relay.proc is not None and _relay.proc.poll() is None:
+            return  # already running
+        cfg = _read_config()
+        if not cfg["enabled"]:
+            logger.info("[nostr-relay] disabled (nostr_relay_enabled off) — not starting")
+            return
+        _relay_shutdown = False
+        _relay.cfg = cfg
+        _spawn_relay(cfg)
+        if _monitor_thread is None or not _monitor_thread.is_alive():
+            _monitor_thread = threading.Thread(target=_monitor_loop, name="nostr-relay-monitor",
+                                               daemon=True)
+            _monitor_thread.start()
 
 
 def stop_nostr_relay() -> None:
-    proc = _relay.proc
-    if proc is None or proc.poll() is not None:
-        return
-    try:
-        proc.terminate()                # SIGTERM → graceful shutdown + snapshot in relay_main
-    except Exception:
-        pass
-    try:
-        proc.wait(timeout=15)
-    except Exception:
+    global _relay_shutdown
+    with _relay_lock:
+        _relay_shutdown = True           # tell the watchdog not to respawn
+        proc = _relay.proc
+        if proc is None or proc.poll() is not None:
+            return
         try:
-            proc.kill()
+            proc.terminate()             # SIGTERM → graceful shutdown + snapshot in relay_main
         except Exception:
             pass
-    _relay.proc = None
+        try:
+            proc.wait(timeout=15)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        _relay.proc = None
 
 
 def restart_nostr_relay() -> dict:
     """Stop the relay subprocess and spawn a fresh one — used to pick up relay code changes
     (the relay otherwise keeps running across the app's own internal restarts)."""
-    stop_nostr_relay()
-    cfg = _read_config()
-    if not cfg["enabled"]:
-        return {"ok": False, "error": "relay disabled"}
-    _relay.cfg = cfg
-    _spawn_relay(cfg)
+    global _relay_shutdown
+    with _relay_lock:
+        stop_nostr_relay()
+        cfg = _read_config()
+        if not cfg["enabled"]:
+            return {"ok": False, "error": "relay disabled"}
+        _relay_shutdown = False          # re-arm the watchdog
+        _relay.cfg = cfg
+        _spawn_relay(cfg)
     return {"ok": True, "restarted": True}
 
 
 def relay_status() -> dict:
-    """Status for the Admin UI: liveness from the subprocess handle, member count from the
-    status file the relay process writes (it lives in another process now)."""
+    """Status for the Admin UI: liveness from the subprocess handle, with a fallback to the
+    status file (its pid alive + recent ts) so it's correct from any caller; member count comes
+    from that file since the gate lives in the relay's own process now."""
     alive = _relay.proc is not None and _relay.proc.poll() is None
     members = 0
     try:
         with open(_relay_paths(_relay_db_path())["status"]) as f:
-            members = int(json.load(f).get("members", 0))
+            st = json.load(f)
+        members = int(st.get("members", 0))
+        if not alive:
+            alive = (time.time() - st.get("ts", 0)) < 90 and _pid_alive(st.get("pid"))
     except Exception:
         pass
     return {"running": bool(alive), "members": members}
