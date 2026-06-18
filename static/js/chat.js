@@ -439,6 +439,29 @@ class ChatHandler {
             });
         }
 
+        // Nostr: sync my post history into the built-in relay
+        const nostrBackfillBtn = document.getElementById('nostrBackfillBtn');
+        if (nostrBackfillBtn) {
+            nostrBackfillBtn.addEventListener('click', async () => {
+                const status = document.getElementById('nostrBackfillStatus');
+                nostrBackfillBtn.disabled = true;
+                if (status) status.textContent = 'Pulling your history from the relays…';
+                try {
+                    const resp = await csrfFetch('/api/nostr/backfill-relay', { method: 'POST' });
+                    const d = await resp.json();
+                    if (resp.ok) {
+                        if (status) status.textContent = d.message || 'Syncing in the background…';
+                    } else if (status) {
+                        status.textContent = d.detail || 'Failed to start sync';
+                    }
+                } catch (e) {
+                    if (status) status.textContent = 'Error: ' + e.message;
+                } finally {
+                    nostrBackfillBtn.disabled = false;
+                }
+            });
+        }
+
         // Matrix connect / disconnect buttons
         const matrixConnectBtn = document.getElementById('matrixConnectBtn');
         const matrixDisconnectBtn = document.getElementById('matrixDisconnectBtn');

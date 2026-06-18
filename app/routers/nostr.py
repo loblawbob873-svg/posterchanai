@@ -77,3 +77,24 @@ async def disconnect_nostr(
     current_user.nostr_notif_since = None
     db.commit()
     return {"ok": True, "message": "Nostr account disconnected"}
+
+
+@router.post("/backfill-relay")
+async def backfill_to_relay(
+    current_user: User = Depends(get_current_user),
+):
+    """Sync the user's own Nostr post history into the built-in relay (User Settings button).
+    Writes straight to the relay store, so the user's old posts are NOT re-broadcast."""
+    nsec = getattr(current_user, "nostr_nsec", None)
+    if not nsec:
+        raise HTTPException(status_code=400, detail="Connect a Nostr key first.")
+    try:
+        pk = nostr_service.derive_pubkey(nostr_service.decode_seckey(nsec))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    from app.services.nostr_relay.thread import trigger_backfill
+    result = trigger_backfill(pk)
+    if not result.get("ok"):
+        raise HTTPException(status_code=503,
+                            detail=result.get("error") or "relay not available")
+    return {"ok": True, "message": "Your post history is syncing to the relay in the background."}

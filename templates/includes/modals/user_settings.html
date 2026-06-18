@@ -301,6 +301,11 @@ www.coindesk.com/price/xrp/news|XRP News"></textarea>
                         <div class="form-group" id="nostrConnectedInfo" style="display: none;">
                             <div class="settings-status success" id="nostrConnectedMsg"></div>
                         </div>
+                        <div class="form-group">
+                            <button type="button" class="btn-primary" id="nostrBackfillBtn">⭳ Sync my posts to the relay</button>
+                            <div id="nostrBackfillStatus" class="test-result" style="margin-top: 8px;"></div>
+                            <small>Pulls your full Nostr post history from the relays into this server's built-in relay. Your old posts are <strong>not</strong> re-broadcast. Requires a connected Nostr key.</small>
+                        </div>
                     </fieldset>
                 </div>
 
