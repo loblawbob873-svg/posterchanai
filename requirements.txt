@@ -33,6 +33,11 @@ apscheduler>=3.10.0
 # websockets.connect() gained the `proxy=` parameter in 14.0, which the relay uses to route
 # every relay connection through the built-in HTTP→SOCKS5/Tor proxy. Older versions ignore it.
 websockets>=14.0
+# coincurve (libsecp256k1): optional but STRONGLY recommended — gives the built-in Nostr relay
+# a ~2400x faster BIP340 signature verify (~0.03ms vs ~67ms pure-Python), which is the
+# bottleneck when mass-verifying synced events. The relay self-tests it and falls back to the
+# pure-Python verify if it's absent, so it's not a hard requirement.
+coincurve>=19.0
 # websocket-client (sync): drives headless Chrome over the DevTools protocol for the
 # screenshot command (full-page, JS-aware). See the screenshot note near the bottom.
 websocket-client>=1.7.0

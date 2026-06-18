@@ -118,10 +118,29 @@ def sign(msg32: bytes, seckey: bytes, aux: bytes | None = None) -> bytes:
     return sig
 
 
+# Optional fast path: libsecp256k1 via coincurve is ~2400x faster than the pure-Python verify
+# (~0.03ms vs ~67ms), which matters a LOT when the relay mass-verifies synced events. Defined
+# here so `verify` below can use it; activated by a self-test AFTER `verify` is defined (the
+# reference `sign` verifies its own output, so the self-test needs `verify` to exist first).
+_fast_verify = None
+try:
+    from coincurve import PublicKeyXOnly as _CCXOnly
+
+    def _cc_verify(msg32: bytes, pubkey32: bytes, sig64: bytes) -> bool:
+        try:
+            return _CCXOnly(pubkey32).verify(sig64, msg32)
+        except Exception:
+            return False
+except Exception:
+    _cc_verify = None
+
+
 def verify(msg32: bytes, pubkey32: bytes, sig64: bytes) -> bool:
     """Verify a 64-byte BIP340 Schnorr signature."""
     if len(pubkey32) != 32 or len(sig64) != 64 or len(msg32) != 32:
         return False
+    if _fast_verify is not None:
+        return _fast_verify(msg32, pubkey32, sig64)
     P = _lift_x(int.from_bytes(pubkey32, "big"))
     if P is None:
         return False
@@ -136,3 +155,23 @@ def verify(msg32: bytes, pubkey32: bytes, sig64: bytes) -> bool:
     if R is None or not _has_even_y(R) or _x(R) != r:
         return False
     return True
+
+
+def _activate_fast_verify() -> None:
+    """Enable the coincurve fast path only if it computes a known good/bad signature correctly.
+    Runs now that `verify` exists (the self-test's `sign` verifies its own output)."""
+    global _fast_verify
+    if _cc_verify is None:
+        return
+    try:
+        tsk = (7).to_bytes(32, "big")
+        tpub = pubkey_from_seckey(tsk)
+        tmsg = bytes(range(32))
+        tsig = sign(tmsg, tsk)   # _fast_verify still None here → sign's self-check uses pure-Python
+        if _cc_verify(tmsg, tpub, tsig) and not _cc_verify(tmsg, tpub, b"\x00" * 64):
+            _fast_verify = _cc_verify
+    except Exception:
+        _fast_verify = None
+
+
+_activate_fast_verify()

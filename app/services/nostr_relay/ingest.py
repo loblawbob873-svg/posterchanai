@@ -41,7 +41,7 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
     blocked_words = cfg.get("blocked_words")
     pace = cfg.get("request_pace_sec", 1.0)
     direct = cfg.get("direct", False)
-    deadline = time.monotonic() + cfg.get("budget_sec", 45)
+    deadline = time.monotonic() + cfg.get("sync_budget_sec", cfg.get("budget_sec", 100))
 
     # Rotating sweep: a WoT too large to scan in one budget is still FULLY covered. We continue
     # from where the last tick's budget stopped (`sync_offset`) and cycle through every author.

@@ -94,13 +94,16 @@ _KEEP_KINDS = (0, 3)
 class RelayStore:
     def __init__(self, hot_path: str, snapshot_path: str, *,
                  read_workers: int = 4, max_events: int = 0,
-                 retention_days: int = 30, max_db_mb: int = 0, wal_pages: int = 50000):
+                 retention_days: int = 30, max_db_mb: int = 0, wal_pages: int = 50000,
+                 cache_mb: int = 64, mmap_mb: int = 256):
         self.hot_path = hot_path
         self.snapshot_path = snapshot_path
         self.max_events = max_events
         self.retention_days = retention_days
         self.max_db_mb = max_db_mb
         self.wal_pages = wal_pages   # WAL autocheckpoint threshold (large = fewer checkpoints)
+        self.cache_mb = cache_mb     # per-connection page cache
+        self.mmap_mb = mmap_mb       # memory-mapped read window
         self._tls = threading.local()
         self._write_exec = ThreadPoolExecutor(max_workers=1, thread_name_prefix="relay-db-w")
         self._read_exec = ThreadPoolExecutor(max_workers=read_workers, thread_name_prefix="relay-db-r")
@@ -157,7 +160,12 @@ class RelayStore:
             c.execute("PRAGMA journal_mode=WAL")
             c.execute("PRAGMA synchronous=NORMAL")
             c.execute("PRAGMA busy_timeout=5000")
-            c.execute("PRAGMA cache_size=-8000")  # ~8MB page cache
+            # Read/write cache: a big page cache keeps hot pages in RAM, mmap serves reads with
+            # zero read() syscalls (big win for a disk DB's queries + existence checks), and
+            # temp_store=MEMORY keeps sorts/joins off disk.
+            c.execute(f"PRAGMA cache_size={int(self.cache_mb) * -1024}")   # negative = KiB
+            c.execute(f"PRAGMA mmap_size={int(self.mmap_mb) * 1024 * 1024}")
+            c.execute("PRAGMA temp_store=MEMORY")
             # Large WAL autocheckpoint → far fewer checkpoints, much faster sustained writes on
             # a multi-GB disk DB (the WAL absorbs bursts; readers stay non-blocking).
             c.execute(f"PRAGMA wal_autocheckpoint={int(self.wal_pages)}")

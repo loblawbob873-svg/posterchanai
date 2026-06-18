@@ -113,6 +113,9 @@ def _read_config() -> dict:
             "max_events": gi("nostr_relay_max_events", 500000),
             "max_db_mb": gi("nostr_relay_max_db_mb", 1024),
             "wal_pages": gi("nostr_relay_wal_autocheckpoint", 50000),  # ~200MB WAL before checkpoint
+            "cache_mb": gi("nostr_relay_cache_mb", 64),                # SQLite page cache
+            "mmap_mb": gi("nostr_relay_mmap_mb", 256),                 # SQLite mmap read window
+            "sync_budget_sec": gi("nostr_relay_sync_budget_sec", 100), # per-tick sync work budget
             "wot_refresh_sec": gi("nostr_relay_wot_refresh_sec", 86400),  # daily
             "wot_depth": gi("nostr_relay_wot_depth", 1),                  # 1=follows, 2=+FoF
             "wot_min_followers": gi("nostr_relay_wot_min_followers", 2),  # FoF inclusion threshold
@@ -199,7 +202,8 @@ async def _main(cfg: dict) -> None:
     store = RelayStore(
         cfg["hot_path"], cfg["snapshot_path"],
         max_events=cfg["max_events"], retention_days=cfg["retention_days"],
-        max_db_mb=cfg["max_db_mb"], wal_pages=cfg["wal_pages"])
+        max_db_mb=cfg["max_db_mb"], wal_pages=cfg["wal_pages"],
+        cache_mb=cfg["cache_mb"], mmap_mb=cfg["mmap_mb"])
     loop = asyncio.get_running_loop()
     store.open(loop)
     gate = WotGate()
