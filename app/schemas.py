@@ -562,10 +562,7 @@ class UserSettingsUpdate(BaseModel):
         "verita84 4b56bbf41c92e586e88927acb78836eb49f2b184081ef852625cf78be7d56bd6\n"
         "posterchan c7de13bab5818ab7918b5b47a05de11735c4e519e49c8577fd7ce7267fe84d4b"
     )
-    nostr_relay_nip05_relays: Optional[str] = (        # relay URLs advertised for every name
-        "wss://nos.lol/\nwss://relay.damus.io/\nwss://relay.primal.net/\n"
-        "wss://relay.ditto.pub/\nwss://relay.sovrgn.co.za/"
-    )
+    nostr_relay_nip05_relays: Optional[str] = "wss://relay.poster.place"  # advertised for every name
     # Built-in Blossom media server (BUD-01/02). Served by the app at /blossom (front with TLS).
     blossom_enabled: Optional[bool] = None
     blossom_public_url: Optional[str] = None       # advertised base URL (blank = derive from request)

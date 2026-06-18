@@ -196,6 +196,23 @@ The same location serves the NIP-11 JSON (`Accept: application/nostr+json`) and 
 welcome page — the relay decides from the request headers, and the welcome page advertises the
 exact path it was reached on.
 
+### NIP-05 identities (`/.well-known/nostr.json`)
+
+The relay subprocess also answers **NIP-05** lookups, so `name@yourdomain` verifies without a
+separate static file. Configure the names + advertised relays under **Admin → Relay → NIP-05
+identity server**, then point your reverse proxy's well-known path at the relay port:
+
+```nginx
+# on the host that serves https://yourdomain
+location = /.well-known/nostr.json {
+    proxy_pass http://127.0.0.1:3052;   # the relay handles the ?name= query + CORS
+    proxy_set_header Host $host;
+}
+```
+
+The relay sets `Access-Control-Allow-Origin: *` itself, so cross-origin client fetches work.
+Edits in the admin UI apply immediately (no restart).
+
 ---
 
 ## Settings reference (Admin → Relay)

@@ -115,10 +115,7 @@ _DEFAULT_NIP05_NAMES = (
     "verita84 4b56bbf41c92e586e88927acb78836eb49f2b184081ef852625cf78be7d56bd6\n"
     "posterchan c7de13bab5818ab7918b5b47a05de11735c4e519e49c8577fd7ce7267fe84d4b"
 )
-_DEFAULT_NIP05_RELAYS = (
-    "wss://nos.lol/\nwss://relay.damus.io/\nwss://relay.primal.net/\n"
-    "wss://relay.ditto.pub/\nwss://relay.sovrgn.co.za/"
-)
+_DEFAULT_NIP05_RELAYS = "wss://relay.poster.place"
 
 
 def _parse_nip05(names_raw: str, relays_raw: str):
