@@ -212,6 +212,22 @@ def get_note(note_id):
     return _shape_note(ev) if ev else None
 
 
+def has_own_reply(note_id) -> bool:
+    """Whether the bot has ALREADY posted a reply that e-tags `note_id`, per the relay.
+
+    The relay is the authoritative 'did I answer this' record — unlike the local processed-ids
+    file it survives a restart/redeploy and a mid-render kill, so this closes the double-reply
+    window when the listener is restarted while a slow effect render is in flight."""
+    if not _PUBKEY:
+        return False
+    try:
+        replies = _run(_svc.fetch_thread(_RELAYS, note_id, limit=50)) or []
+    except Exception as e:
+        logger.warning(f"[nostr] has_own_reply check failed for {str(note_id)[:12]}: {e}")
+        return False  # never block a reply on a transient query failure
+    return any(ev.get("pubkey") == _PUBKEY for ev in replies)
+
+
 _QUOTE_RE = re.compile(r"(?:nostr:)?((?:nevent1|note1)[023456789acdefghjklmnpqrstuvwxyz]+)", re.IGNORECASE)
 # Person-mentions only (npub/nprofile), in order, to find who a note is *addressed* to.
 # The `nostr:` prefix is OPTIONAL — many clients/users write a bare npub1…/nprofile1…

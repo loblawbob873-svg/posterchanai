@@ -34,6 +34,7 @@ get_note = _nk.get_note
 get_own_account = _nk.get_own_account
 send_reply = _nk.send_reply
 get_thread_history = _nk.get_thread_history
+has_own_reply = _nk.has_own_reply
 download_image_from_url = _nk.download_image_from_url
 
 # nostr: tokens in content (nostr:npub1…, nostr:nprofile…, nostr:note…) — stripped from prompts.
@@ -361,6 +362,13 @@ def process_mentions():
             print(f"[nostr] rate-limited {user.get('username')} ({(user.get('pubkey') or '')[:10]}…) — skipping", flush=True)
             continue
         if not _claim(nid):
+            continue
+        # Belt-and-suspenders across restarts: the local processed-ids file can be lost (or not yet
+        # written) when the listener is killed mid-render of a slow effect and restarted — the
+        # relay is the durable record of what we already answered, so skip anything we've already
+        # replied to. This closes the "fired twice" window a restart-during-render opened.
+        if has_own_reply(nid):
+            print(f"[nostr] already replied to {nid[:12]} (per relay) — skipping", flush=True)
             continue
         print(f"[nostr] processing {nid[:12]} from {user.get('username')}: {prompt_text[:80]}", flush=True)
         try:

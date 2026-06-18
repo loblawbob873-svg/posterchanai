@@ -198,6 +198,10 @@ def _read_config() -> dict:
             "request_pace_sec": float(g("nostr_relay_request_pace_sec", "1.0") or 1.0),
             "outbox_min_interval": float(g("nostr_relay_outbox_min_interval_sec", "1.0") or 1.0),
             "outbox_max_queue": gi("nostr_relay_outbox_max_queue", 500),
+            # Re-send to relays that missed an event (down/handshake-timeout on the first pass)
+            # a few times, then give up. Covers the gap right after a relay restart.
+            "outbox_retries": gi("nostr_relay_outbox_retries", 2),
+            "outbox_retry_delay": float(g("nostr_relay_outbox_retry_delay_sec", "15.0") or 15.0),
             "fetch_ancestors": gb("nostr_relay_fetch_ancestors", True),
             "max_ancestors": gi("nostr_relay_max_ancestors", 20),
             "blocked_langs": {x.strip() for x in g("nostr_relay_blocked_langs", "")
@@ -297,7 +301,8 @@ async def _main(cfg: dict) -> None:
                         rl, len(cfg["blocked_langs"]))
     from .outbox import Outbox
     outbox = Outbox(cfg["upstream"], min_interval=cfg["outbox_min_interval"],
-                    maxsize=cfg["outbox_max_queue"], direct=cfg["direct"])
+                    maxsize=cfg["outbox_max_queue"], direct=cfg["direct"],
+                    retries=cfg["outbox_retries"], retry_delay=cfg["outbox_retry_delay"])
     outbox.start()
     server = RelayServer(store, gate, cfg, outbox_cb=outbox.enqueue)
     _relay.store, _relay.gate, _relay.server, _relay.outbox = store, gate, server, outbox

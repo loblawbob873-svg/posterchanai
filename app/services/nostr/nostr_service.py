@@ -92,7 +92,13 @@ async def post_note(seckey: bytes, relays, text: str, reply_to: dict | None = No
     """
     relays = relay.normalize_relays(relays) or DEFAULT_RELAYS
     tags = _event.reply_tags(reply_to) if reply_to else []
+    had_text = bool((text or "").strip())
     text, media_tags = await _attach_media(seckey, text, media_list or [], media_cfg or {})
+    # Don't publish a junk empty note: if the only content was media and every upload failed
+    # (e.g. the host was unreachable, or the process was being torn down mid-send), posting an
+    # empty kind-1 is worse than posting nothing — skip it and let the caller surface the failure.
+    if not had_text and media_list and not media_tags:
+        raise RuntimeError("post_note: all media uploads failed; refusing to publish an empty note")
     tags = tags + media_tags
     ev = _event.build_event(seckey, 1, text, tags=tags)
     await relay.publish(relays, ev)

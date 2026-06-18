@@ -82,16 +82,23 @@ async def _publish_one(relay: str, event: dict, direct: bool = False) -> bool:
         return False
 
 
-async def publish(relays, event: dict, direct: bool = False) -> int:
-    """Publish an event to all relays. Returns how many accepted/received it."""
+async def publish_to(relays, event: dict, direct: bool = False) -> set:
+    """Publish an event to all relays; return the SET of relay URLs that accepted/received it.
+
+    Lets callers (e.g. the relay outbox) compute the misses and retry just those."""
     relays = normalize_relays(relays)
     if not relays:
-        return 0
+        return set()
     results = await asyncio.gather(
         *[asyncio.wait_for(_publish_one(r, event, direct), timeout=_PUBLISH_TIMEOUT) for r in relays],
         return_exceptions=True,
     )
-    return sum(1 for r in results if r is True)
+    return {r for r, ok in zip(relays, results) if ok is True}
+
+
+async def publish(relays, event: dict, direct: bool = False) -> int:
+    """Publish an event to all relays. Returns how many accepted/received it."""
+    return len(await publish_to(relays, event, direct))
 
 
 async def _query_one(relay: str, filters: list, out: dict, timeout: float, direct: bool = False) -> None:
