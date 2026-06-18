@@ -172,14 +172,15 @@ class RelayStore:
 
     # --- writes -------------------------------------------------------------
 
-    def _add_event_sync(self, ev: dict, origin: str) -> bool:
-        conn = self._conn()
+    def _insert_one(self, conn: sqlite3.Connection, ev: dict, origin: str) -> bool:
+        """Insert a single event on the given connection WITHOUT committing (so it can be
+        batched). Returns whether a row was written. Raises on malformed input."""
         eid = ev["id"]
         kind = int(ev["kind"])
         pubkey = ev["pubkey"]
         created = int(ev["created_at"])
         tags = ev.get("tags") or []
-        try:
+        if True:
             # Replaceable-event handling: drop older versions so only the newest survives.
             if _REPLACEABLE(kind):
                 cur = conn.execute(
@@ -226,15 +227,63 @@ class RelayStore:
                         conn.execute(
                             "DELETE FROM events WHERE id=? AND pubkey=?", (t[1], pubkey))
                         conn.execute("DELETE FROM event_tags WHERE event_id=?", (t[1],))
-            conn.commit()
             return True
+
+    def _add_event_sync(self, ev: dict, origin: str) -> bool:
+        conn = self._conn()
+        try:
+            ok = self._insert_one(conn, ev, origin)
+            conn.commit()
+            return ok
         except Exception as e:
-            logger.warning("[nostr-relay] add_event %s failed: %s", eid[:12], e)
+            logger.warning("[nostr-relay] add_event %s failed: %s", ev.get("id", "")[:12], e)
             try:
                 conn.rollback()
             except Exception:
                 pass
             return False
+
+    def _add_events_bulk_sync(self, events: list, origin: str) -> int:
+        """Insert many events in ONE transaction — far fewer write round-trips than per-event
+        add_event, which is the bottleneck when a backfill batch returns thousands of events."""
+        conn = self._conn()
+        stored = 0
+        try:
+            for ev in events:
+                try:
+                    if self._insert_one(conn, ev, origin):
+                        stored += 1
+                except Exception:
+                    continue
+            conn.commit()
+        except Exception as e:
+            logger.warning("[nostr-relay] bulk add failed: %s", e)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return stored
+
+    async def add_events_bulk(self, events: list, origin: str = "wot") -> int:
+        return await self._w(self._add_events_bulk_sync, events, origin)
+
+    def _filter_existing_sync(self, ids: list) -> set:
+        if not ids:
+            return set()
+        conn = self._conn()
+        out = set()
+        # Chunk to stay under SQLite's parameter limit.
+        for i in range(0, len(ids), 900):
+            chunk = ids[i:i + 900]
+            rows = conn.execute(
+                f"SELECT id FROM events WHERE id IN ({','.join('?' * len(chunk))})", chunk
+            ).fetchall()
+            out.update(r["id"] for r in rows)
+        return out
+
+    async def filter_existing(self, ids: list) -> set:
+        """Return the subset of `ids` already stored — ONE query instead of per-event has_event."""
+        return await self._r(self._filter_existing_sync, ids)
 
     def _delete_sync(self, conn: sqlite3.Connection, eid: str) -> None:
         conn.execute("DELETE FROM events WHERE id=?", (eid,))

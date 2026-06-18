@@ -88,23 +88,29 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
             logger.warning("[nostr-relay] sync query failed: %s", e)
             i += len(chunk)
             continue
+        # Bulk: one existence query for the whole batch, then verify only the new ones and
+        # insert them in a single transaction. This replaces thousands of per-event DB
+        # round-trips (the backfill bottleneck) with two calls per upstream query.
+        ids = [ev["id"] for ev in evs if _is_evid(ev.get("id"))]
+        existing = await store.filter_existing(ids)
+        to_store = []
         for ev in evs:
+            eid = ev.get("id")
+            if not _is_evid(eid) or eid in existing:
+                continue
             if not gate.is_member(ev.get("pubkey", "")):
-                continue
-            if not _is_evid(ev.get("id")):
-                continue
-            if await store.has_event(ev["id"]):
                 continue
             if not verify_event(ev):
                 continue
             if int(ev.get("kind", 1)) == 1:
                 _content = ev.get("content", "")
-                if blocked and blocked_language(_content, blocked):
+                if (blocked and blocked_language(_content, blocked)) or \
+                        (blocked_words and blocked_word(_content, blocked_words)):
                     continue
-                if blocked_words and blocked_word(_content, blocked_words):
-                    continue
-            if await store.add_event(ev, origin="wot"):
-                new_events.append(ev)
+            to_store.append(ev)
+        if to_store:
+            await store.add_events_bulk(to_store, origin="wot")
+            new_events.extend(to_store)
         i += len(chunk)
 
     # Persist the sweep position. On a completed cycle, wrap to 0 and advance the floor to this
