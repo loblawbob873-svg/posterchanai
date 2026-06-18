@@ -56,10 +56,16 @@
     <fieldset>
         <legend>Nostr client — GIF picker</legend>
         <div class="form-group">
-            <label for="tenor_api_key">Tenor API key</label>
+            <label for="giphy_api_key">Giphy API key <small>(easiest)</small></label>
+            <input type="text" id="giphy_api_key" name="giphy_api_key" placeholder="(blank = use Tenor / off)">
+            <small>Enables the 🎬 GIF picker in the <code>/client</code> compose box. Easiest key to get:
+            <code>giphy.com/developers</code> → instant. Used if set (takes priority over Tenor).</small>
+        </div>
+        <div class="form-group">
+            <label for="tenor_api_key">Tenor API key <small>(alternative)</small></label>
             <input type="text" id="tenor_api_key" name="tenor_api_key" placeholder="(blank = GIF button hidden)">
-            <small>Enables the 🎬 GIF picker in the <code>/client</code> compose box. Get a free key from
-            Google Cloud (Tenor API v2). Proxied server-side, never exposed to the browser.</small>
+            <small>Alternative GIF source (Tenor API v2, needs a Google Cloud key). Both keys are
+            proxied server-side, never exposed to the browser.</small>
         </div>
     </fieldset>
 

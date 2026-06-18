@@ -499,6 +499,7 @@ def init_db():
             # skip the cross-node storage-proxy fetch. 0 disables it.
             "blossom_cache_mb": "512",
             "tenor_api_key": "",   # GIF picker in the Nostr client (Tenor v2); blank = hidden
+            "giphy_api_key": "",   # GIF picker alternative (Giphy; easier to obtain) — used if set
             "nostr_relay_enabled": "false",
             "nostr_relay_port": "3052",
             "nostr_relay_wot_seeds": "\n".join([
