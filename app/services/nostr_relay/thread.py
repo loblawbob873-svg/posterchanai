@@ -123,7 +123,8 @@ def _read_config() -> dict:
             "sync_idle_interval_sec": gi("nostr_relay_sync_idle_interval_sec", 1800),
             "backfill_sec": gi("nostr_relay_backfill_hours", 48) * 3600,  # initial history depth
             "overlap_sec": gi("nostr_relay_overlap_sec", 120),
-            "ingest_kinds": [int(k) for k in (g("nostr_relay_ingest_kinds", "1,6,7")
+            # notes, reposts, reactions, NIP-23 long-form articles, NIP-22 comments
+            "ingest_kinds": [int(k) for k in (g("nostr_relay_ingest_kinds", "1,6,7,1111,30023")
                              .replace(" ", "").split(",")) if k.strip().lstrip("-").isdigit()],
             "author_batch": gi("nostr_relay_author_batch", 200),
             # Politeness / anti-blast: pace upstream requests and outbox publishes so we don't

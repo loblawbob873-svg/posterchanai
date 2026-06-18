@@ -122,8 +122,9 @@ class RelayServer:
             "name": c.get("name") or "PosterChanAI Relay",
             "description": c.get("description") or "Web-of-trust relay",
             "software": "https://github.com/loblawbob873-svg/posterchanai",
-            # 1 core, 2 contacts, 9 deletes, 11 info, 45 COUNT, 50 search, 65 relay-list
-            "supported_nips": [1, 2, 9, 11, 45, 50, 65],
+            # 1 core, 2 contacts, 9 deletes, 11 info, 22 comments, 23 long-form, 45 COUNT,
+            # 50 search, 65 relay-list
+            "supported_nips": [1, 2, 9, 11, 22, 23, 45, 50, 65],
             "limitation": {
                 "max_message_length": c.get("max_message_size", 262144),
                 "max_subscriptions": c.get("max_subs_per_conn", 20),
