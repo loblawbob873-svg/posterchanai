@@ -498,6 +498,7 @@ def init_db():
             # In-RAM read cache: serves hot blobs from memory to save disk I/O / SSD wear and
             # skip the cross-node storage-proxy fetch. 0 disables it.
             "blossom_cache_mb": "512",
+            "blossom_whitelist": "",   # npub/hex allowed to upload to Blossom (no AI account needed)
             "tenor_api_key": "",   # GIF picker in the Nostr client (Tenor v2); blank = hidden
             "giphy_api_key": "",   # GIF picker alternative (Giphy; easier to obtain) — used if set
             "nostr_relay_enabled": "false",

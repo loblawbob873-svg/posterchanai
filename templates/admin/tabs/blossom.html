@@ -32,6 +32,11 @@
             <small>Only used by the <em>local</em> backend. Blank = <code>data/blossom</code> under the app root (or <code>$POSTERCHANAI_BLOSSOM_PATH</code>).</small>
         </div>
         <div class="form-group">
+            <label for="blossom_whitelist">Upload whitelist (npubs)</label>
+            <textarea id="blossom_whitelist" name="blossom_whitelist" rows="4" placeholder="npub1…&#10;or 64-char hex&#10;(one per line)"></textarea>
+            <small>npubs allowed to <strong>upload</strong> here <strong>without an account</strong> — for users who don't want to sign up to the AI side. (Linked users with the 🌸 privilege, and the node's own bots, are always allowed too.)</small>
+        </div>
+        <div class="form-group">
             <label for="blossom_max_upload_mb">Max upload size (MB)</label>
             <input type="number" id="blossom_max_upload_mb" name="blossom_max_upload_mb" placeholder="100">
             <small>Uploads larger than this are rejected (HTTP 413).</small>

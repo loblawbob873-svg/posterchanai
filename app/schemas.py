@@ -561,6 +561,7 @@ class UserSettingsUpdate(BaseModel):
     blossom_storage_backend: Optional[str] = None  # "local" | "proxy" (storage_server_url)
     blossom_storage_path: Optional[str] = None      # local blob dir (blank = ./data/blossom)
     blossom_cache_mb: Optional[int] = None          # in-RAM read cache budget (0 = off)
+    blossom_whitelist: Optional[str] = None         # npub/hex allowed to upload (no AI account needed)
     tenor_api_key: Optional[str] = None             # GIF picker (Tenor v2); blank = GIF button hidden
     giphy_api_key: Optional[str] = None             # GIF picker (Giphy; easier key); used if set, else Tenor
 

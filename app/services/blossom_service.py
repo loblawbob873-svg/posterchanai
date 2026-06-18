@@ -176,11 +176,32 @@ def _operator_pubkeys(db: Session) -> frozenset:
     return frozenset(out) if not _operator_cache["set"] else _operator_cache["set"]
 
 
+_whitelist_cache = {"ts": 0.0, "val": "", "set": frozenset()}
+
+
+def _whitelist_pubkeys(db: Session) -> frozenset:
+    """Hex pubkeys from the `blossom_whitelist` setting (npub/hex list) — lets the admin grant
+    Blossom upload to anyone WITHOUT them creating an AI account. Cached briefly per raw value."""
+    row = db.query(Setting).filter(Setting.key == "blossom_whitelist").first()
+    val = (row.value if row and row.value else "")
+    now = time.time()
+    if val == _whitelist_cache["val"] and now - _whitelist_cache["ts"] < _OPERATOR_TTL:
+        return _whitelist_cache["set"]
+    out = set()
+    for tok in val.replace(",", "\n").split():
+        h = nostr_service.to_pubkey_hex(tok.strip())
+        if h:
+            out.add(h)
+    _whitelist_cache.update(ts=now, val=val, set=frozenset(out))
+    return _whitelist_cache["set"]
+
+
 def is_pubkey_allowed(db: Session, pubkey_hex: str) -> bool:
-    """A pubkey may upload/delete iff EITHER it's one of the node's own operator keys (linked
-    users + bots — so the bots can post effect media), OR it's the Nostr key linked by a web user
-    who is an admin or has the `can_blossom` privilege (single indexed-ish lookup by npub)."""
-    if pubkey_hex in _operator_pubkeys(db):
+    """A pubkey may upload/delete iff: it's one of the node's own operator keys (linked users +
+    bots, so the bots can post effect media), OR it's in the `blossom_whitelist` setting (admin
+    allowlist — no AI account needed), OR it's the Nostr key linked by a web user who is an admin
+    or has the `can_blossom` privilege."""
+    if pubkey_hex in _operator_pubkeys(db) or pubkey_hex in _whitelist_pubkeys(db):
         return True
     try:
         npub = nostr_service.npub_of(pubkey_hex)
