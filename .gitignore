@@ -97,3 +97,4 @@ botframework/stickers/
 # Depth-Anything ONNX model for parallax (large, fetched per-node, never commit)
 assets/depth_anything_v2_vits.onnx
 *.onnx
+nostr.json
