@@ -36,6 +36,7 @@
       try { this.ws = new WebSocket(this.url); } catch(e){ this._setStatus('off'); this._retry(); return; }
       this._setStatus('connecting');
       this.ws.onopen = () => {
+        this._backoff = 600;   // reset reconnect backoff on a good connection
         this._setStatus('ok');
         // re-arm only LIVE subscriptions; one-shot query() subs (live:false) must not be
         // re-REQ'd — they'd duplicate events into an already-resolving query.
@@ -48,7 +49,8 @@
       this.ws.onerror = () => { try{ this.ws.close(); }catch(_){} };
       this.ws.onmessage = (e) => this._onMessage(e.data);
     },
-    _retry(){ clearTimeout(this._rt); this._rt = setTimeout(()=>this._open(), 2200 + Math.random()*1500); },
+    _retry(){ clearTimeout(this._rt); const d = this._backoff || 600; this._backoff = Math.min(d*1.7, 8000);
+              this._rt = setTimeout(()=>this._open(), d + Math.random()*300); },
     _send(arr){ if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(arr)); },
 
     _onMessage(raw){

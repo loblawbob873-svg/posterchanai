@@ -441,7 +441,7 @@
   function attachMentionAutocomplete(ta){
     let box=null; const close=()=>{ if(box){box.remove();box=null;} };
     ta.addEventListener('input', ()=>{
-      const pos=ta.selectionStart, left=ta.value.slice(0,pos), m=left.match(/@([a-z0-9_]{1,30})$/i);
+      const pos=ta.selectionStart, left=ta.value.slice(0,pos), m=left.match(/(?:^|\s)@([^\s@]{1,40})$/);
       if(!m){ close(); return; }
       const q=m[1].toLowerCase();
       const matches=Store.profileList().filter(p=>(((p.meta.name||'')+(p.meta.display_name||'')+(p.meta.nip05||'')).toLowerCase().includes(q))).slice(0,6);
@@ -451,7 +451,7 @@
       ta.insertAdjacentElement('afterend', box);
       box.querySelectorAll('[data-pk]').forEach(el=> el.onmousedown=ev=>{ ev.preventDefault();
         const np=NT().nip19.npubEncode(el.dataset.pk);
-        const newLeft=left.replace(/@[a-z0-9_]{1,30}$/i,'nostr:'+np+' ');
+        const newLeft=left.replace(/@[^\s@]{1,40}$/,'nostr:'+np+' ');
         ta.value=newLeft+ta.value.slice(pos); ta.focus(); ta.selectionStart=ta.selectionEnd=newLeft.length; close(); });
     });
     ta.addEventListener('blur', ()=>setTimeout(close,200));
