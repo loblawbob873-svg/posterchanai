@@ -22,7 +22,9 @@
     _okWaiters: new Map(),    // eventId -> {res, t}
     _vq: [],                  // verify queue [{ev, sub}]
     _vt: null,
+    _ready: false,
     onStatus: null,
+    onReady: null,            // fired once when the socket first opens (run initial queries here)
     worker,
 
     connect(url){
@@ -38,6 +40,9 @@
         // re-arm only LIVE subscriptions; one-shot query() subs (live:false) must not be
         // re-REQ'd — they'd duplicate events into an already-resolving query.
         for (const [id, s] of this._subs) if (s.live) this._send(['REQ', id, ...s.filters]);
+        // initial queries (follows/profile/mutes) must wait for the socket — firing them before
+        // open would silently drop the REQ and leave profiles unresolved (names show as npub).
+        if (!this._ready){ this._ready = true; if (this.onReady) try { this.onReady(); } catch(e){ console.warn(e); } }
       };
       this.ws.onclose = () => { this._setStatus('off'); this._retry(); };
       this.ws.onerror = () => { try{ this.ws.close(); }catch(_){} };

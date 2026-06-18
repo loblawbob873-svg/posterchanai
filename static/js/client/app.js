@@ -133,12 +133,10 @@
     $('#btn-refresh').onclick = ()=>renderView(true);
     bindSearch();
     bindFeedActions();
+    // Run initial queries only once the relay socket is open (otherwise the REQs are dropped
+    // and profiles/follows never resolve — names would show as raw npubs).
+    Relay.onReady = ()=>{ fetchFollows(); fetchMutes(); fetchMyProfile(); watchNotifications(); watchDMs(); };
     Relay.connect(CFG.relay_url);
-    fetchFollows();
-    fetchMutes();
-    fetchMyProfile();
-    watchNotifications();
-    watchDMs();
     renderMe();
     switchView('home');
   }
@@ -197,7 +195,11 @@
   }
   async function fetchMyProfile(){ const e=await Relay.query([{authors:[ME.pubkey],kinds:[0],limit:1}]); if(e.length){Store.saveProfile(e.sort((a,b)=>b.created_at-a.created_at)[0]); renderMe();} }
   function decorateProfiles(){
-    $$('.note[data-pk]').forEach(n=>{ const p=Store.profile(n.dataset.pk); if(p){ const a=n.querySelector('.av'); if(p.picture) a.src=p.picture; const nm=n.querySelector('.name'); if(nm) nm.textContent=p.name||p.display_name||nm.textContent; }});
+    $$('.note[data-pk]').forEach(n=>{ const p=Store.profile(n.dataset.pk); if(p){
+      const a=n.querySelector('.av'); if(p.picture && a) a.src=p.picture;
+      const nm=n.querySelector('.name'); if(nm) nm.textContent=p.name||p.display_name||nm.textContent;
+      const h=n.querySelector('.handle'); const nip=niceNip05(p.nip05); if(h && nip) h.textContent=nip;
+    }});
   }
 
   // ---------- view routing ----------

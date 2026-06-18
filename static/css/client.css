@@ -51,7 +51,7 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 .logo-img{display:block;width:84px;height:84px;margin:0 auto 6px;border-radius:20px;
   border:1px solid var(--neon);box-shadow:var(--glow);object-fit:cover}
 .brand{display:flex;align-items:center;justify-content:center;gap:8px}
-.brand-logo{width:34px;height:34px;border-radius:9px;border:1px solid var(--neon);box-shadow:var(--glow);object-fit:cover}
+.brand-logo{width:46px;height:46px;border-radius:12px;border:1px solid var(--neon);box-shadow:var(--glow);object-fit:cover}
 .logo{font-size:30px;font-weight:800;letter-spacing:2px;margin:0;text-align:center;
   background:linear-gradient(90deg,var(--cyan),var(--neon));-webkit-background-clip:text;background-clip:text;color:transparent}
 .tagline{text-align:center;color:var(--muted);margin:4px 0 22px;font-size:13px;letter-spacing:2px;text-transform:uppercase}
