@@ -33,7 +33,6 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
     if not members:
         return 0
     now = int(time.time())
-    window = cfg["sync_window_sec"]
     overlap = cfg["overlap_sec"]
     kinds = cfg["ingest_kinds"]
     batch = cfg["author_batch"]

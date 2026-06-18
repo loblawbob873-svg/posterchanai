@@ -8,7 +8,6 @@ so only web-of-trust pubkeys are ever accepted.
 
 import re
 import json
-import asyncio
 import logging
 
 from websockets.datastructures import Headers
