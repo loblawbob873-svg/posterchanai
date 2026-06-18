@@ -326,6 +326,15 @@
   let _redrawT=null;
   function scheduleRedraw(){ if(_redrawT) return; _redrawT=setTimeout(()=>{ _redrawT=null; _drawTimeline(true); }, 350); }
   function isReply(ev){ return ev.kind===1 && ev.tags.some(t=>t[0]==='e'); }
+  // True when a note carries inline media (image/video URL or a blossom 64-hex blob) — same
+  // detection mediaParts() uses to pull a gallery out of the text. Drives the profile Media tab.
+  function hasMedia(ev){
+    if(ev.kind!==1) return false;
+    return (ev.content||'').replace(/[)\].,!?]+$/,'').match(/(https?:\/\/[^\s<]+)/g)?.some(u=>{
+      u=u.replace(/[)\].,!?]+$/,'');
+      return /\.(jpe?g|png|gif|webp|avif|mp4|webm|mov|m4v)(\?|#|$)/i.test(u) || /\/[0-9a-f]{64}(\?|#|$)/i.test(u);
+    }) || false;
+  }
   function prependNote(ev, fn){
     if (ev.kind===1 && isReply(ev)) return;
     if (MUTED.has(ev.pubkey)) return;
@@ -950,12 +959,14 @@
         <div class="about">${linkify(p.about||'')}</div>
         <div class="follow-stats"><button class="statbtn" id="show-following"><b>${following.length}</b> Following</button><button class="statbtn" id="show-followers"><b>${followers.length}${followerEvs.length>=1000?'+':''}</b> Followers</button></div>
       </div></div>
-      <div class="prof-tabs"><button class="prof-tab active" data-tab="notes">Notes</button><button class="prof-tab" data-tab="replies">Replies</button></div>
+      <div class="prof-tabs"><button class="prof-tab active" data-tab="notes">Notes</button><button class="prof-tab" data-tab="replies">Replies</button><button class="prof-tab" data-tab="media">Media</button></div>
       <div id="prof-list"></div>`;
     const pinnedHtml = pinned.length?`<div class="search-section-title">📌 Pinned</div>`+pinned.map(e=>noteHtml(e)).join(''):'';
     const listFor=(tab)=>{
       if(tab==='replies'){ const r=Store.feed(e=>e.pubkey===pk && isReply(e)).slice(0,40);
         return r.length ? r.map(e=>noteHtml(e)).join('') : '<div class="empty">No replies yet.</div>'; }
+      if(tab==='media'){ const m=Store.feed(e=>e.pubkey===pk && hasMedia(e)).slice(0,40);
+        return m.length ? m.map(e=>noteHtml(e)).join('') : '<div class="empty">No media yet.</div>'; }
       const n=Store.feed(e=>e.pubkey===pk && !isReply(e)).slice(0,40);
       return pinnedHtml + (n.length ? n.map(e=>noteHtml(e)).join('') : '<div class="empty">No posts yet.</div>');
     };
