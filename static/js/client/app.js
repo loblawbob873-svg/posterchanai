@@ -379,9 +379,10 @@
           <button class="act ${liked?'on':''}" data-a="like" title="like">${liked||'🤍'} <span class="n">${counts.reactions||''}</span></button>
           <button class="act actz" data-a="zap" title="zap (lightning)">⚡</button>
           <button class="act" data-a="react" title="react">😀</button>
-          <button class="act" data-a="copyid" title="copy event id">🆔</button>
           ${mine?`<button class="act ${PINNED.has(ev.id)?'on':''}" data-a="pin" title="pin/unpin on your profile">📌</button>`:''}
           ${mine?`<button class="act" data-a="delete" title="delete">🗑️</button>`:''}
+          <span class="spacer"></span>
+          <button class="act" data-a="copyid" title="copy event id">🆔</button>
           ${(IS_ADMIN && !mine)?`<button class="act" data-a="block" title="block author on relay">🚫</button>`:''}
         </div>
       </div></article>`;
