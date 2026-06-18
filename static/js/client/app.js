@@ -1093,8 +1093,8 @@
   // ---------- right column: Hot / Trending (desktop) ----------
   async function loadRightbar(){
     if(!document.querySelector('.rightbar')) return;
-    rankInto('rb-hot', 4*3600, 6);        // most engaged in the last 4h
-    rankInto('rb-trending', 24*3600, 6);  // most engaged in the last 24h
+    rankInto('rb-hot', 4*3600, 12);        // most engaged in the last 4h
+    rankInto('rb-trending', 24*3600, 12);  // most engaged in the last 24h
   }
   async function rankInto(elId, windowSec, n){
     const el=document.getElementById(elId); if(!el) return;
