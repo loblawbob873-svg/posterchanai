@@ -533,6 +533,14 @@
     // linkify below) can detect the media type and embed/play it. The server ignores the suffix.
     const ext=extFor(file); return (d.url||server+'/'+hash) + (ext?('.'+ext):'');
   }
+  function blobThumb(b){
+    const t=b.type||'', ext=(t.split('/')[1]||'file').slice(0,10);
+    if(/image/.test(t)) return `<img src="${enc(b.url)}" loading="lazy">`;
+    if(/video/.test(t)) return `<video src="${enc(b.url)}" muted></video>`;
+    if(/audio/.test(t)) return `<div class="file-icon">🎵<span>${enc(ext)}</span></div>`;
+    const icon = /zip|compress|tar|gzip|7z|rar/.test(t)?'📦' : /pdf/.test(t)?'📕' : /text|json|xml|csv/.test(t)?'📄' : '📎';
+    return `<div class="file-icon">${icon}<span>${enc(ext)}</span></div>`;
+  }
   function blossomPicker(ta){
     const server=mediaServer(); if(!server){ toast('no media server set'); return; }
     const bg=document.createElement('div'); bg.className='modal-bg'; bg.style.zIndex='200';
@@ -542,9 +550,8 @@
     (async()=>{
       let list=[]; try{ const r=await fetch(server+'/list/'+ME.pubkey); if(r.ok) list=await r.json(); }catch(_){}
       const grid=bg.querySelector('#bp-grid');
-      grid.innerHTML = list.length ? list.map(b=>{ const isVid=/video/.test(b.type||''), isAud=/audio/.test(b.type||'');
-        const m=isVid?`<video src="${enc(b.url)}" muted></video>`:isAud?`<div style="display:grid;place-items:center;height:140px">🎵</div>`:`<img src="${enc(b.url)}" loading="lazy">`;
-        return `<div class="file-card" data-url="${enc(b.url)}" data-type="${enc(b.type||'')}">${m}</div>`;
+      grid.innerHTML = list.length ? list.map(b=>{
+        return `<div class="file-card" data-url="${enc(b.url)}" data-type="${enc(b.type||'')}">${blobThumb(b)}</div>`;
       }).join('') : '<div class="empty">No files yet — upload some in the Files tab.</div>';
       bg.querySelectorAll('[data-url]').forEach(el=> el.onclick=()=>{ const ext=_MIME_EXT[el.dataset.type]||''; ta.value+=(ta.value?'\n':'')+el.dataset.url+(ext?('.'+ext):''); bg.remove(); toast('attached'); });
     })();
@@ -561,9 +568,7 @@
     catch(e){ $('#bl-grid').innerHTML='<div class="empty">Couldn\'t load files from '+enc(server)+' ('+enc(e.message)+').</div>'; return; }
     const grid=$('#bl-grid');
     grid.innerHTML = list.length ? list.map(b=>{
-      const isVid=/video/.test(b.type||''); const isAud=/audio/.test(b.type||'');
-      const media=isVid?`<video src="${enc(b.url)}" muted></video>`:isAud?`<div style="display:grid;place-items:center;height:140px">🎵</div>`:`<img src="${enc(b.url)}" loading="lazy">`;
-      return `<div class="file-card" data-sha="${b.sha256}"><a href="${enc(b.url)}" target="_blank">${media}</a><button class="del" data-sha="${b.sha256}">✕</button><div class="meta"><span>${((b.size||0)/1024|0)}KB</span><span>${(b.type||'').split('/')[1]||''}</span></div></div>`;
+      return `<div class="file-card" data-sha="${b.sha256}"><a href="${enc(b.url)}" target="_blank" download>${blobThumb(b)}</a><button class="del" data-sha="${b.sha256}">✕</button><div class="meta"><span>${((b.size||0)/1024|0)}KB</span><span>${(b.type||'').split('/')[1]||''}</span></div></div>`;
     }).join('') : '<div class="empty">No files yet — upload one above.</div>';
     $$('.del',grid).forEach(b=> b.onclick=()=>delBlob(b.dataset.sha));
   }
