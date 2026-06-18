@@ -322,7 +322,9 @@ class RelayStore:
         out = sorted(seen.values(), key=lambda e: e.get("created_at", 0), reverse=True)
         return out[:hard_cap] if hard_cap else out
 
-    def _query_one(self, conn: sqlite3.Connection, flt: dict) -> list:
+    def _build_where(self, flt: dict):
+        """Build the SQL WHERE clause + params for a NIP-01 filter. Returns (where, params),
+        or None if the filter can't match anything (e.g. unparseable search)."""
         where, params = [], []
         ids = flt.get("ids")
         if ids:
@@ -348,7 +350,7 @@ class RelayStore:
             if self._fts:
                 m = _fts_match(search)
                 if not m:
-                    return []
+                    return None
                 where.append("e.rowid IN (SELECT rowid FROM events_fts WHERE events_fts MATCH ?)")
                 params.append(m)
             else:
@@ -364,6 +366,13 @@ class RelayStore:
                 f"({','.join('?' * len(vals))}))")
             params.append(key[1])
             params += [str(v) for v in vals]
+        return where, params
+
+    def _query_one(self, conn: sqlite3.Connection, flt: dict) -> list:
+        built = self._build_where(flt)
+        if built is None:
+            return []
+        where, params = built
         limit = int(flt.get("limit") or 500)
         limit = max(1, min(limit, 5000))
         sql = "SELECT e.raw FROM events e"
@@ -382,6 +391,30 @@ class RelayStore:
 
     async def query(self, filters: list, hard_cap: int = 5000) -> list:
         return await self._r(self._query_sync, filters, hard_cap)
+
+    def _neg_items_sync(self, filters: list, cap: int) -> list:
+        """Lightweight (timestamp, id_bytes) set for NIP-77 negentropy, sorted by (ts, id)."""
+        conn = self._conn()
+        seen: dict = {}
+        for flt in filters or []:
+            built = self._build_where(flt or {})
+            if built is None:
+                continue
+            where, params = built
+            sql = "SELECT e.created_at, e.id FROM events e"
+            if where:
+                sql += " WHERE " + " AND ".join(where)
+            sql += " ORDER BY e.created_at DESC LIMIT ?"
+            params.append(cap)
+            for r in conn.execute(sql, params).fetchall():
+                try:
+                    seen[r["id"]] = (int(r["created_at"]), bytes.fromhex(r["id"]))
+                except ValueError:
+                    continue
+        return sorted(seen.values(), key=lambda x: (x[0], x[1]))
+
+    async def neg_items(self, filters: list, cap: int = 500000) -> list:
+        return await self._r(self._neg_items_sync, filters, cap)
 
     # --- kv (cursors) -------------------------------------------------------
 

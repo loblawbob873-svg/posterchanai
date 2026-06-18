@@ -15,19 +15,9 @@ from websockets.http11 import Response
 
 from app.services.nostr.event import verify_event
 from .langfilter import blocked_language, blocked_word
+from . import negentropy
 
 logger = logging.getLogger(__name__)
-
-
-def _filt_summary(f: dict) -> dict:
-    """Compact filter description for diagnostics (don't dump huge author/id lists)."""
-    out = {}
-    for k, v in f.items():
-        if isinstance(v, list):
-            out[k] = f"[{len(v)}]"
-        else:
-            out[k] = v
-    return out
 
 
 def _match_one(flt: dict, ev: dict) -> bool:
@@ -97,6 +87,7 @@ class RelayServer:
         self.outbox_cb = outbox_cb       # async fn(event) | None (Phase 4)
         self.subs = SubscriptionManager()
         self._conns = 0
+        self._neg: dict = {}   # conn -> {sub_id: negentropy item set} (NIP-77 sessions)
 
     # --- NIP-11 -------------------------------------------------------------
 
@@ -167,6 +158,7 @@ class RelayServer:
             logger.info("[relay-diag] connection handler error: %r", e)
         finally:
             self.subs.remove_conn(conn)
+            self._neg.pop(conn, None)
             self._conns -= 1
 
     async def _dispatch(self, conn, raw) -> None:
@@ -187,20 +179,19 @@ class RelayServer:
         if typ == "EVENT" and len(msg) >= 2:
             await self._on_event(conn, msg[1])
         elif typ == "REQ" and len(msg) >= 2:
-            logger.info("[relay-diag] REQ %s filters=%s",
-                        msg[1], [_filt_summary(f) for f in msg[2:] if isinstance(f, dict)])
             await self._on_req(conn, msg[1], msg[2:])
         elif typ == "CLOSE" and len(msg) >= 2:
             self.subs.remove(conn, msg[1])
         elif typ == "COUNT" and len(msg) >= 2:
             await self._on_count(conn, msg[1], msg[2:])
-        elif typ == "NEG-OPEN" and len(msg) >= 2:
-            # NIP-77 negentropy reconciliation — not implemented. Reply NEG-ERR so the client
-            # falls back to a normal REQ instead of hanging waiting for a NEG-MSG (this is what
-            # broke nostrudel's timeline: it negentropy-syncs and stalled on our silence).
-            await conn.send(json.dumps(["NEG-ERR", msg[1], "unsupported: negentropy"]))
-        elif typ in ("NEG-MSG", "NEG-CLOSE", "AUTH"):
-            pass  # politely ignore unsupported control verbs
+        elif typ == "NEG-OPEN" and len(msg) >= 4:
+            await self._on_neg_open(conn, msg[1], msg[2], msg[3])
+        elif typ == "NEG-MSG" and len(msg) >= 3:
+            await self._on_neg_msg(conn, msg[1], msg[2])
+        elif typ == "NEG-CLOSE" and len(msg) >= 2:
+            self._neg.get(conn, {}).pop(msg[1], None)
+        elif typ == "AUTH":
+            pass  # NIP-42 not required (open reads); ignore
 
     async def _on_event(self, conn, ev) -> None:
         if not isinstance(ev, dict) or "id" not in ev:
@@ -252,7 +243,6 @@ class RelayServer:
             logger.warning("[relay-diag] query FAILED for %s: %s", sub_id, e)
             await conn.send(json.dumps(["CLOSED", sub_id, f"error: {e}"]))
             return
-        logger.info("[relay-diag] REQ %s -> %d events", sub_id, len(events))
         for ev in reversed(events):  # send oldest-first, newest last (common client expectation)
             await conn.send(json.dumps(["EVENT", sub_id, ev]))
         await conn.send(json.dumps(["EOSE", sub_id]))
@@ -262,6 +252,44 @@ class RelayServer:
         filters = [f for f in filters if isinstance(f, dict)]
         events = await self.store.query(filters)
         await conn.send(json.dumps(["COUNT", sub_id, {"count": len(events)}]))
+
+    # --- NIP-77 negentropy --------------------------------------------------
+
+    async def _on_neg_open(self, conn, sub_id, filt, msg_hex) -> None:
+        """Start a negentropy session: build our item set for the filter, reconcile against the
+        client's initial message, reply NEG-MSG. On any failure, NEG-ERR so the client falls
+        back to a normal REQ."""
+        if not isinstance(sub_id, str):
+            return
+        try:
+            flts = [filt] if isinstance(filt, dict) else []
+            items = await self.store.neg_items(flts, cap=self.cfg.get("neg_max_items", 200000))
+            sessions = self._neg.setdefault(conn, {})
+            if len(sessions) >= self.cfg.get("max_subs_per_conn", 20):
+                await conn.send(json.dumps(["NEG-ERR", sub_id, "rate-limited"]))
+                return
+            sessions[sub_id] = items
+            resp = negentropy.reconcile(items, bytes.fromhex(msg_hex))
+            await conn.send(json.dumps(["NEG-MSG", sub_id, resp.hex()]))
+        except Exception as e:
+            logger.info("[relay-diag] NEG-OPEN %s failed: %r", sub_id, e)
+            self._neg.get(conn, {}).pop(sub_id, None)
+            await conn.send(json.dumps(["NEG-ERR", sub_id, "unsupported: negentropy"]))
+
+    async def _on_neg_msg(self, conn, sub_id, msg_hex) -> None:
+        items = self._neg.get(conn, {}).get(sub_id)
+        if items is None:
+            await conn.send(json.dumps(["NEG-ERR", sub_id, "closed"]))
+            return
+        try:
+            resp = negentropy.reconcile(items, bytes.fromhex(msg_hex))
+            await conn.send(json.dumps(["NEG-MSG", sub_id, resp.hex()]))
+            if len(resp) <= 1:  # only the version byte → nothing left to reconcile
+                self._neg.get(conn, {}).pop(sub_id, None)
+        except Exception as e:
+            logger.info("[relay-diag] NEG-MSG %s failed: %r", sub_id, e)
+            self._neg.get(conn, {}).pop(sub_id, None)
+            await conn.send(json.dumps(["NEG-ERR", sub_id, "error"]))
 
 
 _WELCOME_HTML = """<!DOCTYPE html>
