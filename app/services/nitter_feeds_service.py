@@ -138,8 +138,10 @@ def _parse_feed(content: bytes):
     # message ("RSS reader not yet whitelisted! Plain request with just ID will be ignored!").
     # Drop the whole feed so it's never forwarded, rather than posting the error as a tweet.
     try:
+        # Phrases distinctive to the gate page only — a normal tweet won't contain them, so
+        # this can't false-positive and silently stall a real feed.
         if any(s in content.decode("utf-8", "ignore").lower()
-               for s in ("not yet whitelist", "will be ignored", "rss reader")):
+               for s in ("not yet whitelist", "plain request with just id")):
             return [], "", ""
     except Exception:
         pass

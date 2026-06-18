@@ -47,7 +47,7 @@ def normalize_relays(relays) -> list[str]:
 def _is_local(relay: str) -> bool:
     """True if the relay URL points at this host — a loopback connection must NEVER be sent
     through the outbound (Tor/SOCKS) proxy, which can't reach localhost (it rejects with 502).
-    Lets bots point their relay list at ws://localhost:3052 (our in-process relay)."""
+    Lets bots point their relay list at ws://127.0.0.1:3052 (the relay binds IPv4-only, so 127.0.0.1 not localhost)."""
     try:
         host = urlparse(relay).hostname or ""
     except Exception:

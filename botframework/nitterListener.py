@@ -113,7 +113,9 @@ def _handle_from_rss(rss_url):
 # Instance gate/whitelist sentinels that arrive as a 200 RSS body but contain no real
 # tweets — must never be parsed or posted. Matched case-insensitively against the raw body
 # (fetch level) and individual item titles (defensive, in case a feed mixes them in).
-_GATE_SENTINELS = ("not yet whitelist", "will be ignored", "rss reader")
+# Kept to phrases distinctive to the gate page ("RSS reader not yet whitelisted! Plain
+# request with just ID will be ignored!") so a normal tweet can't false-positive the feed.
+_GATE_SENTINELS = ("not yet whitelist", "plain request with just id")
 
 
 def _is_gate_page(content) -> bool:
