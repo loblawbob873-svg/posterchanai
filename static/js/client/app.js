@@ -809,7 +809,7 @@
     const followerEvs=await Relay.query([{kinds:[3],'#p':[pk],limit:1000}]);
     const followers=[...new Set(followerEvs.map(e=>e.pubkey))];
     const npub=NT().nip19.npubEncode(pk);
-    feed.innerHTML=`<div class="prof"><div class="banner" style="${p.banner?`background-image:url('${enc(p.banner)}');background-size:cover`:''}"></div>
+    feed.innerHTML=`<div class="prof"><div class="banner">${p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''}</div>
       <div class="phead"><img class="pav" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
         <div style="flex:1"></div>${mine?`<button class="btn btn-cyan small" id="edit-prof">Edit</button> <button class="btn btn-ghost small" id="open-settings">⚙ Settings</button>`:`
           <button class="btn ${FOLLOWS.has(pk)?'btn-ghost':'btn-neon'} small" id="follow-prof">${FOLLOWS.has(pk)?'Following ✓':'Follow'}</button>

@@ -206,7 +206,8 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 
 /* profile */
 .prof{padding:0 0 20px}
-.prof .banner{height:150px;background:linear-gradient(135deg,#1a0f33,#2a1158);border-bottom:1px solid var(--line)}
+.prof .banner{height:210px;background:linear-gradient(135deg,#1a0f33,#2a1158);border-bottom:1px solid var(--line);overflow:hidden}
+.prof .banner img{width:100%;height:100%;object-fit:cover;display:block}
 .prof .phead{display:flex;gap:16px;align-items:flex-end;padding:0 22px;margin-top:-44px}
 .prof .pav{width:92px;height:92px;border-radius:50%;border:3px solid var(--bg);object-fit:cover;background:#1a1230}
 .prof .pbody{padding:14px 22px}
