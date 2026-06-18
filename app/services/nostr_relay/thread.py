@@ -109,6 +109,37 @@ _relay = _Relay()
 
 # --- settings ---------------------------------------------------------------
 
+# Default NIP-05 identities — the entries this deployment already served from router.lan's
+# static nostr.json, baked in so they keep resolving out of the box (editable in Admin → Relay).
+_DEFAULT_NIP05_NAMES = (
+    "verita84 4b56bbf41c92e586e88927acb78836eb49f2b184081ef852625cf78be7d56bd6\n"
+    "posterchan c7de13bab5818ab7918b5b47a05de11735c4e519e49c8577fd7ce7267fe84d4b"
+)
+_DEFAULT_NIP05_RELAYS = (
+    "wss://nos.lol/\nwss://relay.damus.io/\nwss://relay.primal.net/\n"
+    "wss://relay.ditto.pub/\nwss://relay.sovrgn.co.za/"
+)
+
+
+def _parse_nip05(names_raw: str, relays_raw: str):
+    """Parse the admin NIP-05 settings into (names: {name->hex}, relays: [url,...]).
+    Each names line is "<name> <npub-or-hex>" (also tolerates "name=hex" / commas); blank
+    and #-comment lines are skipped. Relays are a shared list advertised for every name."""
+    names = {}
+    for line in (names_raw or "").split("\n"):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        toks = line.replace("=", " ").replace(",", " ").split()
+        if len(toks) < 2:
+            continue
+        pk = nostr_service.to_pubkey_hex(toks[1].strip())
+        if toks[0] and pk:
+            names[toks[0].strip()] = pk
+    relays = nostr_service.relay.normalize_relays(relays_raw or "")
+    return names, relays
+
+
 def _read_config() -> dict:
     from app.database import SessionLocal
     from app.models import Setting
@@ -216,6 +247,14 @@ def _read_config() -> dict:
                                 (nostr_service.to_pubkey_hex(t.strip()) for t in
                                  g("nostr_relay_blocked_pubkeys", "").replace(",", "\n").split())
                                 if pk],
+            # Built-in NIP-05 identity server (served over HTTP by the relay subprocess at
+            # /.well-known/nostr.json). Defaults preserve the entries previously on router.lan.
+            "nip05": {
+                "enabled": gb("nostr_relay_nip05_enabled", True),
+                **dict(zip(("names", "relays"), _parse_nip05(
+                    g("nostr_relay_nip05_names", _DEFAULT_NIP05_NAMES),
+                    g("nostr_relay_nip05_relays", _DEFAULT_NIP05_RELAYS)))),
+            },
             # NIP-11 metadata
             "name": g("nostr_relay_name", "PosterChanAI Relay"),
             "description": g("nostr_relay_description", "Web-of-trust relay"),
@@ -452,6 +491,15 @@ async def _main(cfg: dict) -> None:
                                         len(cfg["blocked_pubkeys"]))
                         except Exception as e:
                             logger.warning("[nostr-relay] reload-blocks failed: %s", e)
+                    elif cmd.get("cmd") == "reload-nip05":
+                        # Admin edited the NIP-05 identities — re-read and swap in place (the
+                        # server reads cfg["nip05"] live, so no restart needed).
+                        try:
+                            cfg["nip05"] = _read_config()["nip05"]
+                            logger.info("[nostr-relay] control: reloaded %d NIP-05 name(s)",
+                                        len(cfg["nip05"].get("names") or {}))
+                        except Exception as e:
+                            logger.warning("[nostr-relay] reload-nip05 failed: %s", e)
                     elif cmd.get("cmd") == "backfill" and cmd.get("pubkey"):
                         logger.info("[nostr-relay] control: backfill %s", cmd["pubkey"][:12])
                         from . import ingest as _ingest
@@ -764,3 +812,8 @@ def trigger_backfill(pubkey_hex: str) -> dict:
 def trigger_block_reload() -> dict:
     """Re-apply the nostr_relay_blocked_pubkeys denylist (gate + purge) without a restart."""
     return _drop_control({"cmd": "reload-blocks"})
+
+
+def trigger_nip05_reload() -> dict:
+    """Re-read the NIP-05 identities (Admin → Relay) into the running relay without a restart."""
+    return _drop_control({"cmd": "reload-nip05"})

@@ -390,6 +390,13 @@ def update_settings(
                 trigger_block_reload()
             except Exception as e:
                 logger.warning(f"[Admin] relay block reload after settings save failed: {e}")
+        # NIP-05 identities edited → push to the running relay (serves /.well-known/nostr.json)
+        if any(k in data.settings for k in ("nostr_relay_nip05_enabled", "nostr_relay_nip05_names", "nostr_relay_nip05_relays")):
+            try:
+                from app.services.nostr_relay.thread import trigger_nip05_reload
+                trigger_nip05_reload()
+            except Exception as e:
+                logger.warning(f"[Admin] relay NIP-05 reload after settings save failed: {e}")
         
     except IntegrityError as e:
         # Handle constraint violations (e.g., unique constraint, foreign key)

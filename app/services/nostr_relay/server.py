@@ -165,6 +165,28 @@ class RelayServer:
             doc["contact"] = c["contact"]
         return json.dumps(doc).encode("utf-8")
 
+    def nip05_doc(self, raw_path: str) -> bytes:
+        """Build a NIP-05 `/.well-known/nostr.json` response. With `?name=<n>` return only that
+        identity (+ its relays); without it, return all. Empty when disabled or unknown."""
+        n = self.cfg.get("nip05") or {}
+        names = (n.get("names") or {}) if n.get("enabled", False) else {}
+        relays = n.get("relays") or []
+        want = None
+        if "?" in raw_path:
+            from urllib.parse import parse_qs
+            vals = parse_qs(raw_path.split("?", 1)[1]).get("name")
+            if vals:
+                want = vals[0]
+        if want is not None:
+            pk = names.get(want)
+            out_names = {want: pk} if pk else {}
+        else:
+            out_names = dict(names)
+        doc = {"names": out_names}
+        if relays and out_names:
+            doc["relays"] = {pk: list(relays) for pk in out_names.values()}
+        return json.dumps(doc).encode("utf-8")
+
     def process_request(self, connection, request):
         """Route the opening handshake: WebSocket upgrade → proceed (None); a NIP-11
         request (`Accept: application/nostr+json`) → the info doc; any other browser GET →
@@ -177,9 +199,18 @@ class RelayServer:
             host = hdrs.get("Host", "") or f"{self.cfg.get('bind','')}:{self.cfg.get('port','')}"
             # The reverse proxy preserves the public path (e.g. /relay), so the welcome page
             # advertises the exact wss URL clients should use, not a guessed root.
-            path = (getattr(request, "path", "") or "/relay").split("?", 1)[0]
+            raw_path = getattr(request, "path", "") or "/relay"
+            path = raw_path.split("?", 1)[0]
         except Exception:
             return None
+        # NIP-05: nginx proxies /.well-known/nostr.json here (so the identity server "runs as a
+        # subprocess" alongside the relay). Honour the ?name= query per the spec.
+        if path == "/.well-known/nostr.json":
+            headers = Headers({
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*",
+            })
+            return Response(200, "OK", headers, self.nip05_doc(raw_path))
         if "application/nostr+json" in accept:
             headers = Headers({
                 "Content-Type": "application/nostr+json",

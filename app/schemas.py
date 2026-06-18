@@ -553,6 +553,19 @@ class UserSettingsUpdate(BaseModel):
     nostr_relay_blocked_langs: Optional[str] = None    # CSV of blocked language codes
     nostr_relay_blocked_words: Optional[str] = None    # newline list; reject notes containing these
     nostr_relay_blocked_pubkeys: Optional[str] = None  # npub/hex denylist (purged + rejected)
+    # Built-in NIP-05 identity server — served by the relay subprocess at /.well-known/nostr.json
+    # (front it with TLS; nginx proxies the well-known path to the relay port).
+    # Defaults mirror nostr_relay.thread._DEFAULT_NIP05_* so the UI pre-fills the entries the
+    # relay serves out of the box (the ones previously on router.lan).
+    nostr_relay_nip05_enabled: Optional[bool] = True   # serve /.well-known/nostr.json
+    nostr_relay_nip05_names: Optional[str] = (         # "name npub/hex" per line
+        "verita84 4b56bbf41c92e586e88927acb78836eb49f2b184081ef852625cf78be7d56bd6\n"
+        "posterchan c7de13bab5818ab7918b5b47a05de11735c4e519e49c8577fd7ce7267fe84d4b"
+    )
+    nostr_relay_nip05_relays: Optional[str] = (        # relay URLs advertised for every name
+        "wss://nos.lol/\nwss://relay.damus.io/\nwss://relay.primal.net/\n"
+        "wss://relay.ditto.pub/\nwss://relay.sovrgn.co.za/"
+    )
     # Built-in Blossom media server (BUD-01/02). Served by the app at /blossom (front with TLS).
     blossom_enabled: Optional[bool] = None
     blossom_public_url: Optional[str] = None       # advertised base URL (blank = derive from request)

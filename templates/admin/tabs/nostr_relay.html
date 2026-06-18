@@ -128,6 +128,26 @@
     </fieldset>
 
     <fieldset>
+        <legend>NIP-05 identity server</legend>
+        <div class="form-group">
+            <label for="nostr_relay_nip05_enabled">
+                <input type="checkbox" id="nostr_relay_nip05_enabled" name="nostr_relay_nip05_enabled"> Serve <code>/.well-known/nostr.json</code> from the relay
+            </label>
+            <small>The relay subprocess answers NIP-05 lookups so <code>name@yourdomain</code> verifies. Point your reverse proxy's <code>/.well-known/nostr.json</code> at the relay port (default 3052). Changes apply immediately (no restart).</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_nip05_names">Identities</label>
+            <textarea id="nostr_relay_nip05_names" name="nostr_relay_nip05_names" rows="4" placeholder="verita84 npub1…&#10;alice 64-char-hex"></textarea>
+            <small>One per line: <code>&lt;name&gt; &lt;npub-or-hex&gt;</code>. Use <code>_</code> as the name for the domain root identity (<code>_@yourdomain</code>).</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_nip05_relays">Advertised relays</label>
+            <textarea id="nostr_relay_nip05_relays" name="nostr_relay_nip05_relays" rows="4" placeholder="wss://nos.lol/&#10;wss://relay.damus.io/"></textarea>
+            <small>Relay URLs returned for every identity above (NIP-05 <code>relays</code> hint), one per line. Blank = omit the hint.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
         <legend>Upstream relays (sync from / broadcast to)</legend>
         <div class="form-group">
             <label for="nostr_relay_upstream_relays">Relay URLs</label>
