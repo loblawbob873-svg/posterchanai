@@ -762,11 +762,11 @@
   }
   function editProfile(p){
     modal(`<h3>Edit profile</h3>
-      <input class="input" id="pf-name" placeholder="name" value="${enc(p.name||p.display_name||'')}">
-      <input class="input" id="pf-nip05" placeholder="nip05 identifier (name@domain)" value="${enc(p.nip05||'')}">
-      <input class="input" id="pf-pic" placeholder="picture url" value="${enc(p.picture||'')}">
-      <input class="input" id="pf-banner" placeholder="banner url" value="${enc(p.banner||'')}">
-      <textarea id="pf-about" placeholder="about">${enc(p.about||'')}</textarea>
+      <label class="fld">Display name<input class="input" id="pf-name" placeholder="your name" value="${enc(p.name||p.display_name||'')}"></label>
+      <label class="fld">NIP-05 identifier<input class="input" id="pf-nip05" placeholder="name@domain" value="${enc(p.nip05||'')}"></label>
+      <label class="fld">Picture URL<input class="input" id="pf-pic" placeholder="https://…" value="${enc(p.picture||'')}"></label>
+      <label class="fld">Banner URL<input class="input" id="pf-banner" placeholder="https://…" value="${enc(p.banner||'')}"></label>
+      <label class="fld">About<textarea id="pf-about" placeholder="a few words about you">${enc(p.about||'')}</textarea></label>
       <div class="row"><button class="mini" id="pf-up">🖼 upload pic</button><input type="file" id="pf-file" accept="image/*" hidden><span class="spacer"></span><button class="btn btn-neon" id="pf-save">Save</button></div>`, root=>{
       $('#pf-up',root).onclick=()=>$('#pf-file',root).click();
       $('#pf-file',root).onchange=async e=>{ const f=e.target.files[0]; if(!f)return; try{ $('#pf-pic',root).value=await uploadBlob(f); toast('uploaded'); }catch(err){toast('upload failed');} };
