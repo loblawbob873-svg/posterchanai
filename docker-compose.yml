@@ -12,8 +12,14 @@ x-common: &common
   restart: unless-stopped
   ports:
     - "${POSTERCHANAI_PORT:-3051}:3051"
+    # Built-in Nostr relay (NIP-01). Only useful with POSTERCHANAI_NOSTR_RELAY=1 (binds 0.0.0.0).
+    - "${POSTERCHANAI_NOSTR_RELAY_PORT:-3052}:3052"
   environment:
     - POSTERCHANAI_PORT=3051
+    # Turnkey Nostr relay: set POSTERCHANAI_NOSTR_RELAY=1 and the app auto-enables the
+    # web-of-trust relay (binds 0.0.0.0:3052, snapshots to the data volume). Front with TLS
+    # (e.g. nginx → wss://relay.yourdomain/). See docs/RELAY.md.
+    - POSTERCHANAI_NOSTR_RELAY=${POSTERCHANAI_NOSTR_RELAY:-0}
     # Turnkey music: set POSTERCHANAI_MUSIC=1 (with `--profile music`) and the app auto-enables
     # music pointed at the acestep container — no manual Admin config needed.
     - POSTERCHANAI_MUSIC=${POSTERCHANAI_MUSIC:-0}

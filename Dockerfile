@@ -222,6 +222,9 @@ ENV POSTERCHANAI_PORT=3051 \
 # -e POSTERCHANAI_BT_ENABLED=true (the app then starts Tor + the HTTP proxy itself).
 
 EXPOSE 3051
+# Built-in Nostr WoT relay (NIP-01). Stays OFF unless POSTERCHANAI_NOSTR_RELAY=1, which
+# seeds it on + binds 0.0.0.0 so the published port is reachable. See docs/RELAY.md.
+EXPOSE 3052
 
 # TCP health check on the configured port (the UI redirects to /login, so a plain
 # socket connect is a cleaner liveness probe than an HTTP status check).

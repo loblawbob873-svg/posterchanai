@@ -508,6 +508,32 @@ class UserSettingsUpdate(BaseModel):
     matrix_notif_enabled: Optional[bool] = None
     # Nitter RSS feeds (newline-separated URLs) posted as image cards to Telegram
     nitter_feeds: Optional[str] = None
+    # Built-in Nostr WoT relay (own thread; serves NIP-01 at /relay on nostr_relay_port)
+    nostr_relay_enabled: Optional[bool] = None
+    nostr_relay_bind: Optional[str] = None
+    nostr_relay_port: Optional[int] = None
+    nostr_relay_wot_seeds: Optional[str] = None          # npub/hex seeds, newline/comma
+    nostr_relay_upstream_relays: Optional[str] = None     # blank = bots' DEFAULT_RELAYS
+    nostr_relay_scratch_dir: Optional[str] = None         # tmpfs dir for the hot DB
+    nostr_relay_db_path: Optional[str] = None             # persistent snapshot path
+    nostr_relay_snapshot_sec: Optional[int] = None
+    nostr_relay_retention_days: Optional[int] = None  # auto-clean notes older than N days (0=off)
+    nostr_relay_max_events: Optional[int] = None
+    nostr_relay_max_db_mb: Optional[int] = None
+    nostr_relay_wot_refresh_sec: Optional[int] = None
+    nostr_relay_max_connections: Optional[int] = None
+    nostr_relay_fetch_ancestors: Optional[bool] = None
+    nostr_relay_max_ancestors: Optional[int] = None
+    nostr_relay_sync_window_sec: Optional[int] = None
+    nostr_relay_sync_interval_sec: Optional[int] = None
+    nostr_relay_overlap_sec: Optional[int] = None
+    nostr_relay_ingest_kinds: Optional[str] = None
+    nostr_relay_author_batch: Optional[int] = None
+    nostr_relay_name: Optional[str] = None
+    nostr_relay_description: Optional[str] = None
+    nostr_relay_pubkey: Optional[str] = None
+    nostr_relay_contact: Optional[str] = None
+    nostr_relay_blocked_langs: Optional[str] = None  # CSV of blocked language codes
 
 
 class UserSettingsResponse(BaseModel):

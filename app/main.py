@@ -228,6 +228,26 @@ async def startup():
             except Exception as e:
                 logging.error(f"Error seeding video settings: {e}")
 
+        # Turnkey Docker Nostr relay: when POSTERCHANAI_NOSTR_RELAY=1, auto-enable the built-in
+        # web-of-trust relay, bind 0.0.0.0 (so the published container port is reachable) and
+        # point its snapshot at the data volume. Only seeds keys the admin hasn't set.
+        if os.environ.get("POSTERCHANAI_NOSTR_RELAY", "0") == "1":
+            try:
+                _db = SessionLocal()
+                _rdefaults = {
+                    "nostr_relay_enabled": "true",
+                    "nostr_relay_bind": "0.0.0.0",
+                    "nostr_relay_db_path": "/var/lib/posterchanai/nostr_relay.db",
+                }
+                for _k, _v in _rdefaults.items():
+                    if not _db.query(Setting).filter(Setting.key == _k).first():
+                        _db.add(Setting(key=_k, value=_v))
+                _db.commit()
+                _db.close()
+                logging.info("Nostr relay auto-configured from POSTERCHANAI_NOSTR_RELAY env")
+            except Exception as e:
+                logging.error(f"Error seeding Nostr relay settings: {e}")
+
         # Start health check if enabled (in background, don't block startup)
         try:
             from app.services.health_check import start_health_check
@@ -271,6 +291,13 @@ async def startup():
                 start_reminder_scheduler()
             except Exception as e:
                 logging.error(f"Error starting reminder scheduler: {e}", exc_info=True)
+
+            try:
+                # Start the built-in Nostr WoT relay (own thread; no-op unless enabled)
+                from app.services.nostr_relay import start_nostr_relay
+                start_nostr_relay()
+            except Exception as e:
+                logging.error(f"Error starting Nostr relay: {e}", exc_info=True)
 
         else:
             logging.info(f"Schedulers disabled on port {app_port} (only run on port 3051)")
@@ -403,6 +430,13 @@ async def shutdown():
         try:
             from app.services.reminder_service import stop_reminder_scheduler
             stop_reminder_scheduler()
+        except Exception:
+            pass
+
+        # Stop the built-in Nostr WoT relay (final snapshot + join its thread)
+        try:
+            from app.services.nostr_relay import stop_nostr_relay
+            stop_nostr_relay()
         except Exception:
             pass
 

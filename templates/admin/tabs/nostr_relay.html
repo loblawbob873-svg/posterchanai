@@ -1,0 +1,197 @@
+<!-- Nostr Relay Tab -->
+<div class="tab-content" id="tab-relay">
+
+    <fieldset>
+        <legend>Built-in Nostr Relay (Web of Trust)</legend>
+        <div class="form-group">
+            <label for="nostr_relay_enabled">
+                <input type="checkbox" id="nostr_relay_enabled" name="nostr_relay_enabled"> Run the relay on this server
+            </label>
+            <small>Serves NIP-01 in its own thread at <code>/relay</code> on the port below. Only accepts/syncs notes from a <strong>web of trust</strong>. Front it with TLS (e.g. <code>wss://relay.yourdomain/</code>). <strong>Restart the service after enabling.</strong></small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_port">Listen port</label>
+            <input type="number" id="nostr_relay_port" name="nostr_relay_port" placeholder="3052">
+            <small>Internal port the relay binds (default 3052). Your reverse proxy upgrades <code>wss://relay.yourdomain/</code> → <code>127.0.0.1:&lt;port&gt;/relay</code>.</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_bind">Bind address</label>
+            <input type="text" id="nostr_relay_bind" name="nostr_relay_bind" placeholder="127.0.0.1">
+            <small>Default <code>127.0.0.1</code> (front with nginx). Use <code>0.0.0.0</code> only if exposing directly.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Web of Trust</legend>
+        <div class="form-group">
+            <label for="nostr_relay_wot_seeds">Seed npubs</label>
+            <textarea id="nostr_relay_wot_seeds" name="nostr_relay_wot_seeds" rows="6" placeholder="npub1…&#10;npub1…"></textarea>
+            <small>One per line (npub or hex). The trust set = these seeds <strong>+ everyone they follow</strong> (depth 1) + your own bots/users. Rebuilt automatically <strong>daily</strong>.</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_wot_refresh_sec">WoT refresh interval (seconds)</label>
+            <input type="number" id="nostr_relay_wot_refresh_sec" name="nostr_relay_wot_refresh_sec" placeholder="86400">
+            <small>How often to rebuild the follow graph from seeds. Default 86400 (daily).</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Blocked languages</legend>
+        <small>Reject text notes (kind 1) written or synced in these scripts. Detection is by writing system, so it targets non-Latin spam (Cyrillic, CJK, Arabic, …). Click to toggle:</small>
+        <div class="lang-grid" id="relayLangGrid">
+            <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="ru"><span>Russian / Cyrillic</span></label>
+            <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="zh"><span>Chinese</span></label>
+            <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="ja"><span>Japanese</span></label>
+            <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="ko"><span>Korean</span></label>
+            <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="ar"><span>Arabic</span></label>
+            <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="he"><span>Hebrew</span></label>
+            <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="el"><span>Greek</span></label>
+            <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="th"><span>Thai</span></label>
+            <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="hi"><span>Hindi / Devanagari</span></label>
+            <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="hy"><span>Armenian</span></label>
+            <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="ka"><span>Georgian</span></label>
+        </div>
+        <input type="hidden" id="nostr_relay_blocked_langs" name="nostr_relay_blocked_langs">
+    </fieldset>
+
+    <fieldset>
+        <legend>Upstream relays (sync from / broadcast to)</legend>
+        <div class="form-group">
+            <label for="nostr_relay_upstream_relays">Relay URLs</label>
+            <textarea id="nostr_relay_upstream_relays" name="nostr_relay_upstream_relays" rows="4" placeholder="leave blank to use the same default relays as the bots"></textarea>
+            <small>One per line. <strong>Blank = the bots' default relay set.</strong> Used both to pull the WoT feed and to broadcast notes written here.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Sync &amp; threads</legend>
+        <div class="form-group">
+            <label for="nostr_relay_sync_window_sec">Sync window (seconds)</label>
+            <input type="number" id="nostr_relay_sync_window_sec" name="nostr_relay_sync_window_sec" placeholder="600">
+            <small>Each poll re-scans at least this far back so nothing is missed (default 600 = 10 min).</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_sync_interval_sec">Sync interval (seconds)</label>
+            <input type="number" id="nostr_relay_sync_interval_sec" name="nostr_relay_sync_interval_sec" placeholder="120">
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_overlap_sec">Overlap (seconds)</label>
+            <input type="number" id="nostr_relay_overlap_sec" name="nostr_relay_overlap_sec" placeholder="120">
+            <small>Extra look-back to catch boundary stragglers (dedup makes it safe).</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_ingest_kinds">Ingest kinds</label>
+            <input type="text" id="nostr_relay_ingest_kinds" name="nostr_relay_ingest_kinds" placeholder="1,6,7">
+            <small>Event kinds to sync (notes/reposts/reactions). Profiles (0) &amp; contacts (3) are fetched automatically.</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_author_batch">Authors per query</label>
+            <input type="number" id="nostr_relay_author_batch" name="nostr_relay_author_batch" placeholder="200">
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_fetch_ancestors">
+                <input type="checkbox" id="nostr_relay_fetch_ancestors" name="nostr_relay_fetch_ancestors"> Backfill reply ancestors (complete threads)
+            </label>
+            <small>Fetch missing parent notes so replies aren't orphaned. The one place a non-WoT note is stored — only because a trusted member replied to it.</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_max_ancestors">Max ancestors per thread</label>
+            <input type="number" id="nostr_relay_max_ancestors" name="nostr_relay_max_ancestors" placeholder="20">
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_max_connections">Max client connections</label>
+            <input type="number" id="nostr_relay_max_connections" name="nostr_relay_max_connections" placeholder="5000">
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Storage &amp; memory</legend>
+        <div class="form-group">
+            <label for="nostr_relay_scratch_dir">Scratch dir (hot DB)</label>
+            <input type="text" id="nostr_relay_scratch_dir" name="nostr_relay_scratch_dir" placeholder="/tmp">
+            <small>The live DB lives here. <code>/tmp</code> is RAM (tmpfs) — fast, zero SSD wear. Point at a disk path on a low-RAM node.</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_db_path">Snapshot path (persistent)</label>
+            <input type="text" id="nostr_relay_db_path" name="nostr_relay_db_path" placeholder="data/nostr_relay.db">
+            <small>The hot DB is snapshotted here periodically and restored on reboot.</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_snapshot_sec">Snapshot interval (seconds)</label>
+            <input type="number" id="nostr_relay_snapshot_sec" name="nostr_relay_snapshot_sec" placeholder="600">
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_retention_days">Auto-clean notes older than (days)</label>
+            <input type="number" id="nostr_relay_retention_days" name="nostr_relay_retention_days" placeholder="30">
+            <small>Deletes old <strong>notes/reactions/reposts</strong> past this age. <strong>Profiles and contact lists are kept forever.</strong> Set <code>0</code> to disable age-based cleanup.</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_max_events">Max events</label>
+            <input type="number" id="nostr_relay_max_events" name="nostr_relay_max_events" placeholder="500000">
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_max_db_mb">Max DB size (MB, RAM cap)</label>
+            <input type="number" id="nostr_relay_max_db_mb" name="nostr_relay_max_db_mb" placeholder="1024">
+            <small>Hard cap on the tmpfs DB so it never competes with the models for RAM.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Relay info (NIP-11)</legend>
+        <div class="form-group">
+            <label for="nostr_relay_name">Name</label>
+            <input type="text" id="nostr_relay_name" name="nostr_relay_name" placeholder="PosterChanAI Relay">
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_description">Description</label>
+            <input type="text" id="nostr_relay_description" name="nostr_relay_description" placeholder="Web-of-trust relay">
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_pubkey">Admin pubkey (npub/hex)</label>
+            <input type="text" id="nostr_relay_pubkey" name="nostr_relay_pubkey" placeholder="npub1…">
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_contact">Contact</label>
+            <input type="text" id="nostr_relay_contact" name="nostr_relay_contact" placeholder="mailto:admin@…">
+        </div>
+    </fieldset>
+
+    <style>
+    #tab-relay .lang-grid{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0;}
+    #tab-relay .lang-box{display:inline-flex;align-items:center;cursor:pointer;user-select:none;
+        border:1px solid var(--border-color,#2a2a3a);border-radius:8px;padding:7px 12px;
+        background:var(--bg-tertiary,#1a1a2a);color:var(--text-primary,#e0e0e0);
+        font-size:.9rem;transition:.15s;}
+    #tab-relay .lang-box input{display:none;}
+    #tab-relay .lang-box:hover{border-color:var(--accent,#00ffff);}
+    #tab-relay .lang-box.on{background:linear-gradient(135deg,var(--accent-tertiary,#ff3366),#cc0033);
+        border-color:var(--accent-tertiary,#ff3366);color:#fff;
+        box-shadow:0 0 12px rgba(255,51,102,.4);}
+    #tab-relay .lang-box.on span::before{content:"\2715  ";font-weight:700;}
+    </style>
+    <script>
+    (function(){
+        function boxes(){ return document.querySelectorAll('#relayLangGrid .relay-lang'); }
+        function hidden(){ return document.getElementById('nostr_relay_blocked_langs'); }
+        function syncHidden(){
+            var on=[]; boxes().forEach(function(b){ if(b.checked) on.push(b.dataset.lang); });
+            var h=hidden(); if(h) h.value=on.join(',');
+        }
+        function paint(){ boxes().forEach(function(b){ b.closest('.lang-box').classList.toggle('on', b.checked); }); }
+        function applyFromValue(v){
+            var set={}; (v||'').split(',').forEach(function(s){ s=s.trim(); if(s) set[s]=1; });
+            boxes().forEach(function(b){ b.checked=!!set[b.dataset.lang]; });
+        }
+        function init(){
+            boxes().forEach(function(b){ b.addEventListener('change', function(){ syncHidden(); paint(); }); });
+            // Pull current blocked langs (admin.js loads the same endpoint; a second tiny fetch
+            // is cheap and keeps this self-contained / deterministic regardless of load order).
+            fetch('/api/admin/settings').then(function(r){return r.json();}).then(function(s){
+                applyFromValue(s.nostr_relay_blocked_langs); paint(); syncHidden();
+            }).catch(function(){});
+        }
+        if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded', init); }
+        else { init(); }
+    })();
+    </script>
+</div>
