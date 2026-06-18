@@ -183,8 +183,11 @@ async def _main(cfg: dict) -> None:
     _relay.store, _relay.gate, _relay.server, _relay.outbox = store, gate, server, outbox
     _relay.stop_event = asyncio.Event()
 
-    # Initial WoT build (best-effort; non-fatal if upstream is slow).
-    asyncio.create_task(_safe(gate.build(store, cfg["upstream"], cfg["seeds"])))
+    # Initial WoT build, retried with backoff: at startup the built-in HTTP proxy (Tor) the
+    # upstream client routes through may not be listening yet, so the first build can resolve
+    # only the seeds. Keep retrying until the follow graph actually comes through, then the
+    # daily refresh maintains it.
+    asyncio.create_task(_initial_wot_build(gate, store, cfg, _relay.stop_event))
 
     ws = await serve(
         server.handle, cfg["bind"], cfg["port"],
@@ -234,6 +237,33 @@ async def _safe(coro):
         await coro
     except Exception as e:
         logger.warning("[nostr-relay] task error: %s", e)
+
+
+async def _initial_wot_build(gate, store, cfg, stop: asyncio.Event) -> None:
+    """Build the WoT, retrying with backoff until the follow graph resolves (i.e. the
+    outbound HTTP proxy + relays are reachable). Without this, a startup race with the
+    proxy leaves the trust set stuck at seeds-only until the next daily rebuild."""
+    base = len(set(cfg["seeds"]) | set(cfg["operator"]))
+    delay = 20
+    for _ in range(40):
+        if stop.is_set():
+            return
+        try:
+            n = await gate.build(store, cfg["upstream"], cfg["seeds"])
+        except Exception as e:
+            logger.warning("[nostr-relay] initial WoT build error: %s", e)
+            n = 0
+        if n > base:  # follows came through → proxy/relays reachable
+            logger.info("[nostr-relay] initial WoT ready: %d members", n)
+            return
+        logger.info("[nostr-relay] WoT seeds-only (%d) — proxy/relays not ready, retry in %ds",
+                    n, delay)
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=delay)
+            return  # stop requested
+        except asyncio.TimeoutError:
+            pass
+        delay = min(int(delay * 1.5), 300)
 
 
 async def _periodic(stop: asyncio.Event, interval: int, action, name: str) -> None:
