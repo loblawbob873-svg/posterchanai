@@ -35,6 +35,10 @@ def _fts_match(search: str) -> str | None:
 _REPLACEABLE = lambda k: k in (0, 3) or 10000 <= k < 20000
 _PARAM_REPLACEABLE = lambda k: 30000 <= k < 40000
 
+_HEXSET = frozenset("0123456789abcdef")
+def _is_hex64(s) -> bool:
+    return isinstance(s, str) and len(s) == 64 and set(s) <= _HEXSET
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
     id          TEXT PRIMARY KEY,
@@ -103,6 +107,7 @@ class RelayStore:
         self.wal_pages = wal_pages   # WAL autocheckpoint threshold (large = fewer checkpoints)
         self.cache_mb = cache_mb     # per-connection page cache
         self.mmap_mb = mmap_mb       # memory-mapped read window
+        self.preserve_pubkeys: frozenset = frozenset()  # local users — never age/cap-pruned
         self._tls = threading.local()
         self._write_exec = ThreadPoolExecutor(max_workers=1, thread_name_prefix="relay-db-w")
         self._read_exec = ThreadPoolExecutor(max_workers=read_workers, thread_name_prefix="relay-db-r")
@@ -328,6 +333,31 @@ class RelayStore:
     async def delete_by_words(self, words: list) -> int:
         return await self._w(self._delete_by_words_sync, list(words))
 
+    def _delete_by_langs_sync(self, blocked) -> int:
+        """Purge stored kind-1 notes written in a blocked language — the same detection
+        blocked_language() uses, applied retroactively. Language detection has no SQL form,
+        so this scans kind-1 content once (cheap at relay scale; the live filter keeps the
+        set small thereafter)."""
+        blocked = set(blocked)
+        if not blocked:
+            return 0
+        from .langfilter import detect_languages
+        conn = self._conn()
+        ids = [r["id"] for r in conn.execute("SELECT id, content FROM events WHERE kind=1")
+               if detect_languages(r["content"]) & blocked]
+        removed = 0
+        for i in range(0, len(ids), 900):
+            chunk = ids[i:i + 900]
+            ph = ",".join("?" * len(chunk))
+            conn.execute(f"DELETE FROM event_tags WHERE event_id IN ({ph})", chunk)
+            conn.execute(f"DELETE FROM events WHERE id IN ({ph})", chunk)
+            removed += len(chunk)
+        conn.commit()
+        return removed
+
+    async def delete_by_langs(self, blocked) -> int:
+        return await self._w(self._delete_by_langs_sync, set(blocked))
+
     def _has_sync(self, eid: str) -> bool:
         return self._conn().execute(
             "SELECT 1 FROM events WHERE id=? LIMIT 1", (eid,)).fetchone() is not None
@@ -506,35 +536,53 @@ class RelayStore:
         """Fold the WAL back into the main DB (e.g. on clean shutdown)."""
         await self._w(self._checkpoint_sync)
 
+    def set_preserve_pubkeys(self, pubkeys) -> None:
+        """Authors whose notes are NEVER pruned (local users / operators)."""
+        self.preserve_pubkeys = frozenset(p for p in (pubkeys or []) if p)
+
+    def _preserve_clause(self) -> str:
+        """Extra SQL: exclude direct-write events (data entrusted to this relay) and local
+        users' events from a prune DELETE. Pubkeys are our own 64-hex config values (safe to
+        inline). `origin='direct'` = a client published here; `'wot'`/`'ancestor'` = synced feed."""
+        cond = "origin != 'direct'"
+        if self.preserve_pubkeys:
+            vals = ",".join("'" + p + "'" for p in self.preserve_pubkeys if _is_hex64(p))
+            if vals:
+                cond += f" AND pubkey NOT IN ({vals})"
+        return cond
+
     def _prune_sync(self) -> int:
         conn = self._conn()
         removed = 0
         keep = ",".join(str(k) for k in _KEEP_KINDS)
+        preserve = self._preserve_clause()
         # Age-based auto-cleaner: delete only old NOTES/reactions/reposts — never profiles
         # (kind 0) or contact lists (kind 3), so identities/follows survive indefinitely.
         if self.retention_days:
             cutoff = int(time.time()) - self.retention_days * 86400
             cur = conn.execute(
-                f"DELETE FROM events WHERE created_at < ? AND kind NOT IN ({keep})", (cutoff,))
+                f"DELETE FROM events WHERE created_at < ? AND kind NOT IN ({keep}) "
+                f"AND {preserve}", (cutoff,))
             removed += cur.rowcount or 0
         # Hard count cap (memory bound): trim oldest non-kept events beyond the limit.
         if self.max_events:
             cur = conn.execute(
-                f"DELETE FROM events WHERE kind NOT IN ({keep}) AND id IN "
+                f"DELETE FROM events WHERE kind NOT IN ({keep}) AND {preserve} AND id IN "
                 "(SELECT id FROM events ORDER BY created_at DESC LIMIT -1 OFFSET ?)",
                 (self.max_events,))
             removed += cur.rowcount or 0
-        # Hard byte cap (RAM bound): trim oldest non-kept events until under budget.
+        # Hard byte cap (RAM bound): trim oldest prunable events until under budget.
         if self.max_db_mb:
             budget = self.max_db_mb * 1024 * 1024
             for _ in range(50):
                 if self._db_bytes() <= budget:
                     break
                 cur = conn.execute(
-                    f"DELETE FROM events WHERE kind NOT IN ({keep}) AND id IN "
-                    "(SELECT id FROM events ORDER BY created_at ASC LIMIT 2000)")
+                    f"DELETE FROM events WHERE id IN (SELECT id FROM events "
+                    f"WHERE kind NOT IN ({keep}) AND {preserve} "
+                    "ORDER BY created_at ASC LIMIT 2000)")
                 if not cur.rowcount:
-                    break  # only kept kinds remain — don't spin
+                    break  # only kept/preserved events remain — don't spin
                 removed += cur.rowcount
                 conn.commit()
         # Drop orphaned tag rows.

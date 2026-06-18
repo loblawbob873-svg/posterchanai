@@ -208,6 +208,7 @@ async def _main(cfg: dict) -> None:
     gate = WotGate()
     gate.set_operator(cfg["operator"])
     gate.set_blocked(cfg["blocked_pubkeys"])
+    store.set_preserve_pubkeys(cfg["operator"])   # local users' notes are never pruned
     await gate.load_from_store(store)              # warm from snapshot for immediate gating
     if cfg["blocked_pubkeys"]:
         removed = await store.delete_pubkeys(cfg["blocked_pubkeys"])
@@ -218,6 +219,11 @@ async def _main(cfg: dict) -> None:
         if rw:
             logger.info("[nostr-relay] purged %d stored note(s) matching %d blocked word(s)",
                         rw, len(cfg["blocked_words"]))
+    if cfg["blocked_langs"]:
+        rl = await store.delete_by_langs(cfg["blocked_langs"])
+        if rl:
+            logger.info("[nostr-relay] purged %d stored note(s) in %d blocked language(s)",
+                        rl, len(cfg["blocked_langs"]))
     from .outbox import Outbox
     outbox = Outbox(cfg["upstream"], min_interval=cfg["outbox_min_interval"],
                     maxsize=cfg["outbox_max_queue"], direct=cfg["direct"])

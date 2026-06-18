@@ -276,7 +276,10 @@ class RelayServer:
                 self._send(conn, ["OK", eid, False,
                                             "blocked: contains filtered text"])
                 return
-        stored = await self.store.add_event(ev, origin="wot")
+        # origin="direct": a client chose THIS relay as a destination (entrusted data), as
+        # opposed to "wot" (a mirror of the public feed we pulled via sync/firehose). Prune
+        # keeps direct writes forever and only trims the reconstructable synced feed.
+        stored = await self.store.add_event(ev, origin="direct")
         self._send(conn, ["OK", eid, True, ""])
         if stored:
             self.subs.fanout(ev, self._send)
