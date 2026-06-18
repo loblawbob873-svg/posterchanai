@@ -8,6 +8,7 @@ port-3051 guard. Both are no-ops unless `nostr_relay_enabled` is set.
 """
 
 import os
+import time
 import json
 import asyncio
 import logging
@@ -243,11 +244,17 @@ async def _main(cfg: dict) -> None:
     _relay.store, _relay.gate, _relay.server, _relay.outbox = store, gate, server, outbox
     _relay.stop_event = asyncio.Event()
 
-    # Initial WoT build, retried with backoff: at startup the built-in HTTP proxy (Tor) the
-    # upstream client routes through may not be listening yet, so the first build can resolve
-    # only the seeds. Keep retrying until the follow graph actually comes through, then the
-    # daily refresh maintains it.
-    asyncio.create_task(_initial_wot_build(gate, store, cfg, _relay.stop_event))
+    # WoT build cadence: ONCE A DAY. The gate is already warm from the snapshot
+    # (load_from_store above), so on a (re)start we only re-crawl the 37k follow graph if it's
+    # been >= a day since the last successful build. Otherwise a frequent restart (every deploy)
+    # would re-crawl every time and peg a core — that's the churn. Build on startup only when
+    # the cache is empty or stale; the daily refresh below maintains it after that.
+    if not gate.members() or _wot_stale(cfg):
+        asyncio.create_task(_initial_wot_build(gate, store, cfg, _relay.stop_event))
+    else:
+        logger.info("[nostr-relay] WoT warm from snapshot (%d members) — last build %dh ago, "
+                    "skipping rebuild (daily cadence)",
+                    len(gate.members()), int((time.time() - _read_wot_stamp(cfg)) / 3600))
 
     ws = await serve(
         server.handle, cfg["bind"], cfg["port"],
@@ -281,13 +288,19 @@ async def _main(cfg: dict) -> None:
         if await store.add_event(ev, origin="wot"):
             server.subs.fanout(ev, server._send)
 
+    async def _maybe_rebuild_wot():
+        # Rebuild the WoT (write-gate membership) at most ONCE A DAY — the stamp decides, not the
+        # timer, so frequent restarts (which reset timers) can't trigger extra 37k crawls.
+        if _wot_stale(cfg):
+            logger.info("[nostr-relay] daily WoT refresh (>= %dh since last build) — rebuilding",
+                        int(cfg["wot_refresh_sec"] / 3600))
+            await _build_wot(gate, store, cfg)
+
     tasks = [
         asyncio.create_task(_periodic(_relay.stop_event, 3600, store.prune, "prune")),
-        # Daily WoT rebuild from the seeds' follow lists. This is the WRITE GATE membership —
-        # who is allowed to publish TO this relay — NOT a feed mirror.
-        asyncio.create_task(_periodic(_relay.stop_event, cfg["wot_refresh_sec"],
-                                      lambda: _build_wot(gate, store, cfg),
-                                      "wot-refresh")),
+        # WoT rebuild — checked hourly, actually rebuilt only when a day has elapsed (staleness),
+        # so it runs once a day regardless of restarts. NOT a feed mirror; just gate membership.
+        asyncio.create_task(_periodic(_relay.stop_event, 3600, _maybe_rebuild_wot, "wot-refresh")),
     ]
     # Heavy WoT BACKFILL SWEEP — OFF by default. This is the windowed crawl that walks the WHOLE
     # trust graph (tens of thousands of members via depth-2 FoF) re-fetching history; it pegs a
@@ -350,14 +363,44 @@ async def _sync_loop(store, gate, server, cfg, stop: asyncio.Event) -> None:
             pass
 
 
+def _wot_stamp_path(cfg) -> str:
+    return (cfg.get("db_path") or "nostr_relay.db") + ".wot_built"
+
+
+def _read_wot_stamp(cfg) -> float:
+    """Unix time of the last successful WoT build (0 if never / unreadable)."""
+    try:
+        with open(_wot_stamp_path(cfg)) as f:
+            return float(f.read().strip())
+    except Exception:
+        return 0.0
+
+
+def _write_wot_stamp(cfg) -> None:
+    try:
+        with open(_wot_stamp_path(cfg), "w") as f:
+            f.write(str(int(time.time())))
+    except Exception as e:
+        logger.debug("[nostr-relay] could not write WoT stamp: %s", e)
+
+
+def _wot_stale(cfg) -> bool:
+    """True if it's been >= the daily refresh interval since the last successful build, so a
+    restart should rebuild. Within the interval, a restart reuses the snapshot-warmed gate."""
+    return (time.time() - _read_wot_stamp(cfg)) >= cfg.get("wot_refresh_sec", 86400)
+
+
 async def _build_wot(gate, store, cfg) -> int:
     """Single entry point so every WoT build (initial / daily / manual) uses the same
-    depth, pacing and caps."""
-    return await gate.build(
+    depth, pacing and caps. Records the build time so restarts honour the daily cadence."""
+    n = await gate.build(
         store, cfg["upstream"], cfg["seeds"],
         depth=cfg["wot_depth"], direct=cfg["direct"],
         batch=cfg["author_batch"], pace=cfg["request_pace_sec"],
         min_followers=cfg["wot_min_followers"], max_members=cfg["wot_max"])
+    if n > len(set(cfg["seeds"]) | set(cfg["operator"])):  # follows actually resolved
+        _write_wot_stamp(cfg)
+    return n
 
 
 async def _initial_wot_build(gate, store, cfg, stop: asyncio.Event) -> None:
