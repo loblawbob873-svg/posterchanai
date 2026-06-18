@@ -126,6 +126,7 @@
   // ---------- app start ----------
   function startApp(){
     IS_ADMIN = Array.isArray(CFG.admin_npubs) && CFG.admin_npubs.includes(ME.npub);
+    try{ if(window.Notification && Notification.permission==='default') Notification.requestPermission(); }catch(_){}
     $('#auth-gate').classList.add('hidden'); $('#app').classList.remove('hidden');
     $('#btn-logout').onclick = logout;
     $$('.nav-item[data-view]').forEach(b=> b.onclick = ()=>switchView(b.dataset.view));
@@ -159,6 +160,8 @@
     if (evs.length){ const e = evs.sort((a,b)=>b.created_at-a.created_at)[0];
       FOLLOWS = new Set(e.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1])); }
     FOLLOWS.add(ME.pubkey);
+    // prefetch follows' profiles so @-mention autocomplete has names to suggest right away
+    [...FOLLOWS].slice(0,300).forEach(needProfile);
     if (VIEW==='home') renderView(true);
   }
   async function fetchMutes(){
@@ -280,11 +283,11 @@
         ${quoteHtml(ev)}
         <div class="acts">
           <button class="act" data-a="reply" title="reply">💬 <span class="n">${counts.replies||''}</span></button>
-          <button class="act rt ${counts.iRt?'on':''}" data-a="repost" title="repost">↻ <span class="n">${counts.reposts||''}</span></button>
-          <button class="act" data-a="quote" title="quote">❝</button>
-          <button class="act ${liked?'on':''}" data-a="like" title="like">${liked||'♡'} <span class="n">${counts.reactions||''}</span></button>
-          <button class="act" data-a="react" title="react">＋</button>
-          ${mine?`<button class="act" data-a="delete" title="delete">🗑</button>`:''}
+          <button class="act rt ${counts.iRt?'on':''}" data-a="repost" title="repost">🔁 <span class="n">${counts.reposts||''}</span></button>
+          <button class="act" data-a="quote" title="quote post">🗨️</button>
+          <button class="act ${liked?'on':''}" data-a="like" title="like">${liked||'🤍'} <span class="n">${counts.reactions||''}</span></button>
+          <button class="act" data-a="react" title="react">😀</button>
+          ${mine?`<button class="act" data-a="delete" title="delete">🗑️</button>`:''}
           ${(IS_ADMIN && !mine)?`<button class="act" data-a="block" title="block author on relay">🚫</button>`:''}
         </div>
       </div></article>`;
@@ -309,13 +312,14 @@
     for(const e of Store.all()){
       const id = lastE(e); if(!id) continue;
       if(e.kind===1) c.replies[id]=(c.replies[id]||0)+1;
-      else if(e.kind===7){ c.reactions[id]=(c.reactions[id]||0)+1; if(e.pubkey===ME.pubkey) c.myReact[id]=(e.content==='+'?'♥':e.content); }
+      else if(e.kind===7){ c.reactions[id]=(c.reactions[id]||0)+1; if(e.pubkey===ME.pubkey) c.myReact[id]=(e.content==='+'||e.content===''?'❤️':e.content); }
       else if(e.kind===6){ c.reposts[id]=(c.reposts[id]||0)+1; if(e.pubkey===ME.pubkey) c.myRt.add(id); }
     }
     CIDX = c;
   }
   function countsFor(id){ if(!CIDX) buildCounts(); return { replies:CIDX.replies[id]||0, reactions:CIDX.reactions[id]||0, reposts:CIDX.reposts[id]||0, iRt:CIDX.myRt.has(id) }; }
   function myReaction(id){ if(!CIDX) buildCounts(); return CIDX.myReact[id]||null; }
+  // (reaction display: '+' shows as ❤️, custom emoji shown as-is — see buildCounts/doReact)
 
   // ---------- interactions ----------
   function bindFeedActions(){
@@ -349,7 +353,7 @@
   async function doReact(id,pk,emoji,btn){
     if(myReaction(id)){ toast('already reacted'); return; }
     await publish(7, emoji, eTags(id,pk));
-    btn.classList.add('on'); btn.firstChild.textContent = emoji==='+'?'♥':emoji;
+    btn.classList.add('on'); btn.firstChild.textContent = (emoji==='+'?'❤️':emoji)+' ';
     const n=btn.querySelector('.n'); n.textContent=(parseInt(n.textContent||'0')+1);
   }
   function pickEmoji(id,pk){
@@ -479,12 +483,28 @@
   }
 
   // ---------- notifications ----------
+  let _notifReady=false;
   function watchNotifications(){
     seenNotif.last = +(localStorage.getItem('pc_notif_seen')||0);
     Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7], limit:60 }], {
-      onEvent: ev => { if(ev.pubkey===ME.pubkey) return; if(Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.pubkey); if(ev.created_at>seenNotif.last) bumpNotif(); if(VIEW==='notifications') renderNotifications(); } },
-      onEose: ()=>{ if(VIEW==='notifications') renderNotifications(); }
+      onEvent: ev => { if(ev.pubkey===ME.pubkey) return; if(Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.pubkey);
+        if(ev.created_at>seenNotif.last){ bumpNotif(); if(_notifReady) notifPing(ev); }
+        if(VIEW==='notifications') renderNotifications(); } },
+      onEose: ()=>{ _notifReady=true; if(VIEW==='notifications') renderNotifications(); }   // backlog done — only ping LIVE ones
     });
+  }
+  function notifPing(ev){
+    const p=profOf(ev.pubkey); const who=p.name||p.display_name||'someone';
+    const what = ev.kind===7?`reacted ${ev.content==='+'||ev.content===''?'❤️':enc(ev.content)}`
+      : ev.kind===6?'reposted you' : isReply(ev)?'replied to you' : 'mentioned you';
+    notifToast(`🔔 ${who} ${what}`, p.picture);
+    try{ if(window.Notification && Notification.permission==='granted') new Notification('PosterChan', { body:`${who} ${what}`, icon:p.picture||LOGO }); }catch(_){}
+  }
+  function notifToast(msg, pic){
+    const t=document.createElement('div'); t.className='toast notif-toast';
+    t.innerHTML=`<img src="${enc(pic||LOGO)}" onerror="this.src='${LOGO}'"><span>${enc(msg)}</span>`;
+    t.onclick=()=>{ switchView('notifications'); t.remove(); };
+    $('#toast-root').appendChild(t); setTimeout(()=>t.remove(),5000);
   }
   function notifList(){ return Store.all().filter(e=>[1,6,7].includes(e.kind) && e.pubkey!==ME.pubkey && !MUTED.has(e.pubkey) && e.tags.some(t=>t[0]==='p'&&t[1]===ME.pubkey)).sort((a,b)=>b.created_at-a.created_at).slice(0,100); }
   function bumpNotif(){ const n=notifList().filter(e=>e.created_at>seenNotif.last).length; $$('#notif-badge,#notif-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden');}); }
@@ -609,24 +629,31 @@
     inp.addEventListener('input', ()=>{ clearTimeout(t); const q=inp.value.trim(); if(q.length<2) return; t=setTimeout(()=>runSearch(q),350); });
     inp.addEventListener('keydown', e=>{ if(e.key==='Enter'){ const q=inp.value.trim(); if(q) runSearch(q); } });
   }
+  async function nip05Resolve(addr){
+    let [name, domain] = addr.split('@'); if(!domain){ domain=name; name='_'; }
+    try {
+      const j = await fetch(`https://${domain}/.well-known/nostr.json?name=${encodeURIComponent(name)}`).then(r=>r.json());
+      return (j && j.names && j.names[name]) || null;
+    } catch(_){ return null; }
+  }
   async function runSearch(q){
     VIEW='search'; $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='Search';
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
-    // direct npub/hex jump
+    // 1. direct npub/hex -> jump to that profile
     const pk=safePk(q); if(pk){ return renderProfileView(pk); }
-    // profiles: query kind-0, filter by name/nip05; posts: NIP-50 search over kind-1
-    const [profEvs, postEvs] = await Promise.all([
-      Relay.query([{ kinds:[0], search:q, limit:20 }]).catch(()=>[]),
-      Relay.query([{ kinds:[1], search:q, limit:40 }]).catch(()=>[])
-    ]);
-    profEvs.forEach(e=>Store.saveProfile(e)); postEvs.forEach(e=>{Store.saveEvent(e); needProfile(e.pubkey);});
-    // fallback profile filter from cache by name substring
+    // 2. NIP-05 address (name@domain) -> resolve to a pubkey -> jump
+    if(/^[\w.\-+]+@[\w.\-]+\.[a-z]{2,}$/i.test(q)){
+      const rp=await nip05Resolve(q.toLowerCase());
+      if(rp){ return renderProfileView(rp); }
+    }
+    // 3. posts via NIP-50 full-text (relay indexes note content); profiles by name/nip05 over the
+    //    locally-cached profile set (the relay's FTS doesn't cover kind-0, so we match what we know).
+    const postEvs = await Relay.query([{ kinds:[1], search:q, limit:40 }]).catch(()=>[]);
+    postEvs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
     const ql=q.toLowerCase();
-    const profs=new Map();
-    profEvs.forEach(e=>{ try{ const m=JSON.parse(e.content); profs.set(e.pubkey,m); }catch(_){}});
-    Store.all().filter(e=>e.kind===0).forEach(e=>{ const m=Store.profile(e.pubkey); if(m && ((m.name||'')+(m.display_name||'')+(m.nip05||'')).toLowerCase().includes(ql)) profs.set(e.pubkey,m); });
+    const profs=Store.profileList().filter(p=>(((p.meta.name||'')+(p.meta.display_name||'')+(p.meta.nip05||'')).toLowerCase().includes(ql))).slice(0,12);
     let html='';
-    if(profs.size){ html+='<div class="search-section-title">Profiles</div>'; for(const [pk2,m] of [...profs].slice(0,12)){ html+=`<div class="psearch" data-prof="${pk2}"><img src="${enc(m.picture||LOGO)}" onerror="this.src='${LOGO}'"><div><b>${enc(m.name||m.display_name||'anon')}</b><div class="muted small">${enc((m.about||'').slice(0,60))}</div></div></div>`; } }
+    if(profs.length){ html+='<div class="search-section-title">Profiles</div>'; for(const p of profs){ const m=p.meta; html+=`<div class="psearch" data-prof="${p.pubkey}"><img src="${enc(m.picture||LOGO)}" onerror="this.src='${LOGO}'"><div><b>${enc(m.name||m.display_name||'anon')}</b><div class="muted small">${enc(niceNip05(m.nip05)||(m.about||'').slice(0,60))}</div></div></div>`; } }
     const posts=postEvs.sort((a,b)=>b.created_at-a.created_at);
     html+='<div class="search-section-title">Posts</div>';
     html+= posts.length ? posts.map(noteCard).join('') : '<div class="empty">No matching posts.</div>';

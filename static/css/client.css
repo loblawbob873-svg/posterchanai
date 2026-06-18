@@ -189,6 +189,8 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 
 #toast-root{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:300;display:flex;flex-direction:column;gap:8px}
 .toast{background:var(--panel2);border:1px solid var(--neon);border-radius:11px;padding:11px 18px;font-size:13.5px;box-shadow:var(--glow);animation:fade .2s}
+.notif-toast{display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px 14px}
+.notif-toast img{width:30px;height:30px;border-radius:50%;border:1px solid var(--line);object-fit:cover;flex-shrink:0}
 
 .mobilenav{display:none}
 /* ===== responsive ===== */
