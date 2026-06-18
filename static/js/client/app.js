@@ -583,7 +583,7 @@
       const prev = last.text!=null ? enc(last.text.slice(0,28)) : '🔒 …';
       return `<div class="dm-peer" data-peer="${pk}"><img src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><div><b>${enc(p.name||NT().nip19.npubEncode(pk).slice(0,12))}</b><div class="muted small">${prev}</div></div></div>`;
     }).join('');
-    $('#dm-new').onclick=()=>{ const v=prompt('Recipient npub:'); if(!v)return; const pk=safePk(v.trim()); if(pk){ if(!dmPeers.has(pk))dmPeers.set(pk,[]); needProfile(pk); renderMessages(); openDm(pk);} else toast('invalid npub'); };
+    $('#dm-new').onclick=newDmModal;
     $$('[data-peer]',list).forEach(el=> el.onclick=()=>openDm(el.dataset.peer));
     // lazily decrypt ONLY the last message of each peer for the preview (not every message)
     const need=peers.filter(pk=>{ const l=dmPeers.get(pk).slice(-1)[0]; return l && l.text==null; });
@@ -591,6 +591,37 @@
     if(dmActive && dmPeers.has(dmActive)) renderDmThread(dmActive);
   }
   function safePk(v){ try{ if(v.startsWith('npub')){const d=NT().nip19.decode(v); return d.data;} if(/^[0-9a-f]{64}$/i.test(v))return v.toLowerCase(); }catch(_){} return null; }
+  function newDmModal(){
+    modal(`<h3>✉ New message</h3>
+      <input class="input" id="dm-to" placeholder="@name, npub1…, or name@domain" autocomplete="off">
+      <div id="dm-ac" class="mention-box hidden"></div>
+      <textarea id="dm-body" placeholder="encrypted message…"></textarea>
+      <div class="row"><button class="mini" id="dm-attach">📎 attach</button><input type="file" id="dm-file" multiple hidden><span class="spacer"></span><button class="btn btn-neon" id="dm-go">Send ▶</button></div>
+      <div class="muted small" id="dm-status"></div>`, root=>{
+      let toPk=null; const to=$('#dm-to',root), ac=$('#dm-ac',root), body=$('#dm-body',root);
+      to.addEventListener('input', ()=>{ const v=to.value.trim(); toPk=null;
+        const pk=safePk(v); if(pk){ toPk=pk; ac.classList.add('hidden'); return; }
+        const q=v.replace(/^@/,'').toLowerCase(); if(q.length<2){ ac.classList.add('hidden'); return; }
+        const matches=Store.profileList().filter(p=>(((p.meta.name||'')+(p.meta.display_name||'')+(p.meta.nip05||'')).toLowerCase().includes(q))).slice(0,6);
+        if(!matches.length){ ac.classList.add('hidden'); return; }
+        ac.classList.remove('hidden'); ac.innerHTML=matches.map(p=>`<div class="mention-opt" data-pk="${p.pubkey}"><img src="${enc(p.meta.picture||LOGO)}" onerror="this.src='${LOGO}'"><b>${enc(p.meta.name||p.meta.display_name||'anon')}</b></div>`).join('');
+        $$('[data-pk]',ac).forEach(el=> el.onmousedown=ev=>{ ev.preventDefault(); toPk=el.dataset.pk; to.value='@'+((Store.profile(toPk)||{}).name||NT().nip19.npubEncode(toPk).slice(0,12)); ac.classList.add('hidden'); });
+      });
+      $('#dm-attach',root).onclick=()=>$('#dm-file',root).click();
+      $('#dm-file',root).onchange=async e=>{ const files=[...e.target.files]; for(let i=0;i<files.length;i++){ $('#dm-status',root).textContent=`uploading ${i+1}/${files.length}…`; try{ const url=await uploadBlob(files[i]); body.value+=(body.value?'\n':'')+url; }catch(err){ $('#dm-status',root).textContent='upload failed: '+err.message; return; } } $('#dm-status',root).textContent=''; };
+      $('#dm-go',root).onclick=async()=>{
+        let pk=toPk||safePk(to.value.trim().replace(/^@/,''));
+        const v=to.value.trim();
+        if(!pk && /^[\w.\-+]+@[\w.\-]+\.[a-z]{2,}$/i.test(v)){ $('#dm-status',root).textContent='resolving…'; pk=await nip05Resolve(v.toLowerCase()); }
+        if(!pk){ $('#dm-status',root).textContent='pick a valid recipient (npub / NIP-05)'; return; }
+        const txt=body.value.trim(); if(!txt){ $('#dm-status',root).textContent='write a message'; return; }
+        closeModal();
+        try{ const ct=await signer.nip04enc(pk,txt); const r=await publish(4,ct,[['p',pk]]); if(r.ok===false){} if(!dmPeers.has(pk))dmPeers.set(pk,[]); needProfile(pk); switchView('messages'); setTimeout(()=>openDm(pk),80); }
+        catch(e){ toast('dm failed: '+e.message); }
+      };
+      to.focus();
+    });
+  }
   function openDm(pk){ dmActive=pk; $$('.dm-peer').forEach(e=>e.classList.toggle('active',e.dataset.peer===pk)); $('#dm-list').classList.add('has-active'); renderDmThread(pk); }
   async function renderDmThread(pk){
     const wrap=$('#dm-thread'); if(!wrap)return; const p=profOf(pk); const msgs=dmPeers.get(pk)||[];
@@ -759,8 +790,12 @@
       else tag=`<a href="${u}" target="_blank" rel="noopener">${u}</a>`;
       return tag+tail;
     });
-    // nostr:npub… mentions -> short handle link
-    h=h.replace(/nostr:(npub1[0-9a-z]+)/gi, (m,np)=>`<a href="#" class="mention" data-np="${np}">@${np.slice(0,12)}…</a>`);
+    // npub mentions (with or without the nostr: prefix) -> clickable @name (loads the profile)
+    h=h.replace(/(?:nostr:)?(npub1[0-9a-z]{20,})/gi, (m,np)=>{
+      const pk=safePk(np); if(!pk) return m;
+      needProfile(pk); const nm=(Store.profile(pk)||{}).name;
+      return `<a href="#" class="mention" data-np="${np}">@${nm?enc(nm):np.slice(0,12)+'…'}</a>`;
+    });
     return h;
   }
 
