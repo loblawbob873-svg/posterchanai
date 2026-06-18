@@ -544,6 +544,7 @@ class UserSettingsUpdate(BaseModel):
     nostr_relay_description: Optional[str] = None
     nostr_relay_pubkey: Optional[str] = None
     nostr_relay_contact: Optional[str] = None
+    nostr_relay_icon: Optional[str] = None             # relay avatar URL (blank = mascot)
     nostr_relay_blocked_langs: Optional[str] = None    # CSV of blocked language codes
     nostr_relay_blocked_words: Optional[str] = None    # newline list; reject notes containing these
     nostr_relay_blocked_pubkeys: Optional[str] = None  # npub/hex denylist (purged + rejected)

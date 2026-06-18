@@ -112,8 +112,12 @@ class RelayServer:
 
     # --- NIP-11 -------------------------------------------------------------
 
-    def nip11_doc(self) -> bytes:
+    def nip11_doc(self, host: str = "") -> bytes:
         c = self.cfg
+        # Relay icon/avatar (shown by clients like Yakihonne): configured URL, else the
+        # PosterChan mascot served from this host's /static.
+        icon = c.get("icon") or (
+            f"https://{host}/static/mascot/mascot-neutral-front-00.png" if host else "")
         doc = {
             "name": c.get("name") or "PosterChanAI Relay",
             "description": c.get("description") or "Web-of-trust relay",
@@ -127,6 +131,9 @@ class RelayServer:
                 "restricted_writes": True,
             },
         }
+        if icon:
+            doc["icon"] = icon
+            doc["banner"] = icon
         if c.get("pubkey"):
             doc["pubkey"] = c["pubkey"]
         if c.get("contact"):
@@ -153,8 +160,13 @@ class RelayServer:
                 "Content-Type": "application/nostr+json",
                 "Access-Control-Allow-Origin": "*",
             })
-            return Response(200, "OK", headers, self.nip11_doc())
-        headers = Headers({"Content-Type": "text/html; charset=utf-8"})
+            return Response(200, "OK", headers, self.nip11_doc(host))
+        # CORS on the HTML response too — web clients (nostrudel) fetch /relay from the browser
+        # and the Same-Origin Policy blocks reading a response with no Access-Control-Allow-Origin.
+        headers = Headers({
+            "Content-Type": "text/html; charset=utf-8",
+            "Access-Control-Allow-Origin": "*",
+        })
         return Response(200, "OK", headers, self._welcome_html(host, path))
 
     def _welcome_html(self, host: str, path: str = "/relay") -> bytes:

@@ -150,6 +150,7 @@ def _read_config() -> dict:
             "description": g("nostr_relay_description", "Web-of-trust relay"),
             "pubkey": nostr_service.to_pubkey_hex(g("nostr_relay_pubkey", "")) or "",
             "contact": g("nostr_relay_contact", ""),
+            "icon": g("nostr_relay_icon", ""),   # blank = PosterChan mascot from this host
             # protocol limits
             "max_message_size": _MAX_MESSAGE_SIZE,
             "max_subs_per_conn": _MAX_SUBS_PER_CONN,
