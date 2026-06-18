@@ -175,7 +175,22 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
     if _proxy:
         for k in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"):
             env[k] = _proxy
-        env["NO_PROXY"] = env["no_proxy"] = "localhost,127.0.0.1,::1"
+        # Bypass Tor for the bot's INTERNAL backends. The local app, SearXNG, news, etc. live on
+        # localhost or a private LAN IP (e.g. a SearXNG at 192.168.x.x) — Tor can't route RFC1918
+        # and returns 502, so those calls MUST stay direct. localhost is always excluded; we also
+        # add the hostnames of the configured internal endpoints so a LAN SearXNG/app server is
+        # reached directly. (requests/httpx NO_PROXY matches by host, not CIDR — hence explicit
+        # hosts rather than a subnet.)
+        from urllib.parse import urlparse
+        no_proxy = ["localhost", "127.0.0.1", "::1"]
+        for url_key in ("SEARXNG_URL", "POSTERCHANAI_API_ENDPOINT", "OPENAI_ENDPOINT"):
+            u = env.get(url_key)
+            if not u:
+                continue
+            host = urlparse(u if "://" in u else "http://" + u).hostname
+            if host and host not in no_proxy:
+                no_proxy.append(host)
+        env["NO_PROXY"] = env["no_proxy"] = ",".join(no_proxy)
 
     def setif(key, env_key, transform=str):
         v = bot_dict.get(key)
