@@ -298,7 +298,7 @@ class RelayServer:
         try:
             events = await self.store.query(filters)
         except Exception as e:
-            logger.warning("[relay-diag] query FAILED for %s: %s", sub_id, e)
+            logger.warning("[nostr-relay] query failed for %s: %s", sub_id, e)
             self._send(conn, ["CLOSED", sub_id, f"error: {e}"])
             return
         for ev in reversed(events):  # send oldest-first, newest last (common client expectation)
@@ -328,10 +328,9 @@ class RelayServer:
                 return
             sessions[sub_id] = items
             resp = negentropy.reconcile(items, bytes.fromhex(msg_hex))
-            logger.info("[relay-diag] NEG-OPEN ok: %d items, resp %d bytes", len(items), len(resp))
             self._send(conn, ["NEG-MSG", sub_id, resp.hex()])
         except Exception as e:
-            logger.info("[relay-diag] NEG-OPEN %s failed: %r", sub_id, e)
+            logger.debug("[nostr-relay] NEG-OPEN %s fell back: %r", sub_id, e)
             self._neg.get(conn, {}).pop(sub_id, None)
             self._send(conn, ["NEG-ERR", sub_id, "unsupported: negentropy"])
 
@@ -346,7 +345,7 @@ class RelayServer:
             if len(resp) <= 1:  # only the version byte → nothing left to reconcile
                 self._neg.get(conn, {}).pop(sub_id, None)
         except Exception as e:
-            logger.info("[relay-diag] NEG-MSG %s failed: %r", sub_id, e)
+            logger.debug("[nostr-relay] NEG-MSG %s error: %r", sub_id, e)
             self._neg.get(conn, {}).pop(sub_id, None)
             self._send(conn, ["NEG-ERR", sub_id, "error"])
 
