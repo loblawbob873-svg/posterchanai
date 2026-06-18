@@ -301,8 +301,13 @@ class RelayServer:
             logger.warning("[nostr-relay] query failed for %s: %s", sub_id, e)
             self._send(conn, ["CLOSED", sub_id, f"error: {e}"])
             return
-        for ev in reversed(events):  # send oldest-first, newest last (common client expectation)
+        # Send oldest-first, newest last (common client expectation). Yield every chunk so the
+        # writer drains the shared per-connection queue — otherwise a big response (with other
+        # subs also enqueuing) could overflow the queue and drop the trailing EOSE.
+        for n, ev in enumerate(reversed(events)):
             self._send(conn, ["EVENT", sub_id, ev])
+            if n % 512 == 511:
+                await asyncio.sleep(0)
         self._send(conn, ["EOSE", sub_id])
         self.subs.add(conn, sub_id, filters)
 

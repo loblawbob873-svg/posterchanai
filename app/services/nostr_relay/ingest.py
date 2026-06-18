@@ -149,7 +149,8 @@ async def backfill_author(store, server, upstream, pubkey: str, *, direct: bool 
     time with `until`. Writes straight to the store (origin='wot'), so it does NOT go through
     the WS write path and is NOT re-broadcast by the outbox. Used to seed e.g. the operator's
     own posts. The author should already be a WoT/operator member."""
-    kinds = kinds or [0, 1, 3, 6, 7]
+    # profile, notes, contacts, reposts, reactions, comments, relay list, long-form articles.
+    kinds = kinds or [0, 1, 3, 6, 7, 1111, 10002, 30023]
     until = int(time.time())
     stored = 0
     for _ in range(max_pages):
