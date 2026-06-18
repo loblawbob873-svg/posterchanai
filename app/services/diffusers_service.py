@@ -252,6 +252,7 @@ class DiffusersService:
         # so without this guard the monitor unloads the pipe out from under the running
         # generation and the call hangs. Mirrors llama_service's `_pending_requests` guard.
         self._generating: int = 0
+        self._attention_slicing: str = "off"
         self._load_settings()
         _start_idle_check()
 
@@ -262,6 +263,12 @@ class DiffusersService:
         # Idle timeout for automatic unloading (default 2 minutes)
         self._idle_timeout = int(settings.get("image_idle_timeout", str(DEFAULT_IDLE_TIMEOUT)))
         logger.info(f"Loaded image_idle_timeout setting: {self._idle_timeout}")
+
+        # Attention slicing mode: "off" (fastest, relies on SDPA/xformers), "auto" (balanced),
+        # or "max" (most VRAM-saving, slowest). Default "off" — "max" was ~8x slower on the Arc
+        # (4.5s -> 0.56s/step at 1024²) for VRAM a 16GB card doesn't need. Dial up only if a
+        # tight-VRAM node OOMs. Applied at load time (see _ensure_model_loaded).
+        self._attention_slicing = (settings.get("image_attention_slicing", "off") or "off").lower()
 
         # Model settings
         self.model_path = settings.get("image_model_path", "")
@@ -436,32 +443,33 @@ class DiffusersService:
                     else:
                         self._pipe = self._pipe.to(self._device)
 
-                    # xformers only works on CUDA, not Intel XPU or ROCm
+                    # xformers (CUDA only — not XPU/ROCm) is the most efficient attention path.
+                    # Enable it independently of the slicing mode below; it supersedes slicing.
                     if self._device == "cuda":
                         try:
                             self._pipe.enable_xformers_memory_efficient_attention()
                             logger.info("Enabled xformers memory efficient attention (CUDA only)")
                         except Exception:
                             pass
-                        
-                        # CUDA: Enable standard optimizations
-                        try:
-                            self._pipe.enable_attention_slicing()
-                        except Exception:
-                            pass
-                    elif self._device == "xpu":
-                        # Intel Arc: Use max attention slicing (xformers not available)
-                        try:
+
+                    # Attention slicing trades throughput for VRAM, driven by the
+                    # `image_attention_slicing` setting so a tight-VRAM node can dial it up without
+                    # a code change. Default "off": SDPA (XPU/ROCm) / xformers (CUDA) handle 1024²
+                    # fine, and "max" was ~8x slower on the Arc. VAE slicing+tiling below still cap
+                    # the decode peak regardless.
+                    slicing = self._attention_slicing
+                    try:
+                        if slicing == "max":
                             self._pipe.enable_attention_slicing("max")
-                            logger.info("Intel Arc: enabled max attention slicing (xformers not available)")
-                        except Exception as e:
-                            logger.warning(f"Failed to enable attention slicing: {e}")
-                    else:
-                        # ROCm and other devices: standard optimizations
-                        try:
+                            logger.info(f"Attention slicing: max ({self._device})")
+                        elif slicing == "auto":
                             self._pipe.enable_attention_slicing()
-                        except Exception:
-                            pass
+                            logger.info(f"Attention slicing: auto/balanced ({self._device})")
+                        else:  # "off" (default) and any unknown value
+                            self._pipe.disable_attention_slicing()
+                            logger.info(f"Attention slicing: off ({self._device}, using SDPA/xformers)")
+                    except Exception as e:
+                        logger.warning(f"Failed to apply attention slicing '{slicing}': {e}")
 
                     # VAE optimizations for all devices
                     try:

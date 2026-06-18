@@ -58,6 +58,15 @@
             <small>Unload model after this many seconds idle. 0 = unload immediately after each generation.</small>
         </div>
         <div class="form-group">
+            <label for="image_attention_slicing">Attention Slicing</label>
+            <select id="image_attention_slicing" name="image_attention_slicing">
+                <option value="off">Off — fastest (SDPA/xformers; needs most VRAM)</option>
+                <option value="auto">Auto — balanced</option>
+                <option value="max">Max — least VRAM, slowest</option>
+            </select>
+            <small>Trades speed for VRAM. Leave Off on 16GB+ GPUs (≈8× faster than Max on the Arc). Raise to Auto/Max only if a tight-VRAM node OOMs at your resolution.</small>
+        </div>
+        <div class="form-group">
             <label class="checkbox-label">
                 <input type="checkbox" id="image_subprocess_mode" name="image_subprocess_mode">
                 <span>Subprocess Mode (Intel XPU)</span>
