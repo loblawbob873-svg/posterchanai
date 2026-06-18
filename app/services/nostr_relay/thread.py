@@ -286,19 +286,19 @@ async def _main(cfg: dict) -> None:
                                       lambda: _build_wot(gate, store, cfg),
                                       "wot-refresh")),
     ]
-    # Feed mirroring (OFF by default): proactively pulling the whole WoT's notes from upstream
-    # via the windowed sync sweep + live firehose. This is a CRAWLER, not the relay's job — the
-    # relay is a write-gated store of what WoT members publish *to it* (+ outbox fan-out). For a
-    # large WoT (tens of thousands via depth-2 FoF) the sweep pegs a core and lags. Enable only
-    # if you actually want this node to be a read-mirror of the trust graph's public feed.
+    # Heavy WoT BACKFILL SWEEP — OFF by default. This is the windowed crawl that walks the WHOLE
+    # trust graph (tens of thousands of members via depth-2 FoF) re-fetching history; it pegs a
+    # core and lags. That's the "mirror their feeds" machinery we don't want by default.
     if cfg.get("mirror_feeds", False):
-        # Windowed WoT backfill/gap-fill sweep (self-throttling once caught up).
         tasks.append(asyncio.create_task(_sync_loop(store, gate, server, cfg, _relay.stop_event)))
-        if cfg.get("firehose_enabled", True):
-            from .firehose import run_firehose
-            tasks.append(asyncio.create_task(
-                run_firehose(cfg["upstream"], cfg["ingest_kinds"], _firehose_event,
-                             _relay.stop_event, cfg["direct"])))
+    # Live FIREHOSE — ON by default. Lightweight: a real-time subscription that keeps WoT-author
+    # events as they're published (so the relay shows NEW posts), NOT a backfill crawl. This is
+    # how fresh content arrives without the heavy sweep above.
+    if cfg.get("firehose_enabled", True):
+        from .firehose import run_firehose
+        tasks.append(asyncio.create_task(
+            run_firehose(cfg["upstream"], cfg["ingest_kinds"], _firehose_event,
+                         _relay.stop_event, cfg["direct"])))
     try:
         await _relay.stop_event.wait()
     finally:
