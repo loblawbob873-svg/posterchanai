@@ -124,8 +124,38 @@ def _norm_matrix(ev: dict) -> dict:
 _NOSTR_KIND_TYPE = {1: "mention", 6: "repost", 7: "reaction"}
 
 
-def _norm_nostr(ev: dict) -> dict:
-    """Normalize a raw Nostr event (kind 1 mention/reply, 6 repost, 7 reaction)."""
+# pubkey hex → display label (NIP-05 / profile name), resolved once from kind-0 metadata.
+_nostr_name_cache: dict = {}
+
+
+async def _nostr_actor_label(pubkey: str, relays) -> str:
+    """Prefer the sender's NIP-05 (or profile name) over the raw npub in notifications.
+    Resolved once per pubkey from kind-0 metadata and cached; npub is the fallback. Not
+    verified against .well-known/nostr.json — a self-asserted handle is fine for display."""
+    cached = _nostr_name_cache.get(pubkey)
+    if cached:
+        return cached
+    try:
+        npub = nostr_service.npub_of(pubkey)
+    except Exception:
+        npub = pubkey[:12]
+    try:
+        meta = await nostr_service.get_metadata(pubkey, relays)
+    except Exception:
+        return npub  # transient relay error — don't cache, retry next poll
+    nip05 = (meta.get("nip05") or "").strip()
+    if nip05:
+        # NIP-05 "_@domain" is the root identity — show it as just the domain.
+        label = nip05[2:] if nip05.startswith("_@") else nip05
+    else:
+        label = (meta.get("display_name") or meta.get("name") or "").strip() or npub
+    _nostr_name_cache[pubkey] = label
+    return label
+
+
+def _norm_nostr(ev: dict, actor_label: Optional[str] = None) -> dict:
+    """Normalize a raw Nostr event (kind 1 mention/reply, 6 repost, 7 reaction).
+    `actor_label` (NIP-05/profile name) overrides the npub for display when resolved."""
     pubkey = ev.get("pubkey", "")
     try:
         npub = nostr_service.npub_of(pubkey)
@@ -142,8 +172,8 @@ def _norm_nostr(ev: dict) -> dict:
     return {
         "platform": "nostr",
         "type": _NOSTR_KIND_TYPE.get(kind, "notification"),
-        "actor": npub,
-        "actor_display": npub[:16] + "…",
+        "actor": actor_label or npub,
+        "actor_display": actor_label or (npub[:16] + "…"),
         "actor_avatar": None,
         "text": text,
         # Only kind-1 mentions/replies are a sensible reply target; reactions/reposts notify only.
@@ -274,7 +304,8 @@ async def _relay_nostr(db: Session, tg: TelegramService, user: User, chat_id: st
         db.commit()
         return
     for ev in sorted(raw, key=lambda e: e.get("created_at", 0)):  # oldest-first
-        await _deliver(db, tg, user, chat_id, _norm_nostr(ev))
+        label = await _nostr_actor_label(ev.get("pubkey", ""), relays)
+        await _deliver(db, tg, user, chat_id, _norm_nostr(ev, actor_label=label))
     user.nostr_notif_since = str(newest)
     _prune(db)
     db.commit()
