@@ -58,17 +58,19 @@
         const sub = this._subs.get(m[1]); if (!sub) return;
         this._vq.push({ ev: m[2], sub });
         if (!this._vt) this._vt = setTimeout(()=>this._flush(), 25);
-      } else if (typ === 'EOSE'){
-        const sub = this._subs.get(m[1]); if (sub && sub.onEose) sub.onEose();
+      } else if (typ === 'EOSE' || typ === 'CLOSED'){
+        const sub = this._subs.get(m[1]); if (!sub || !sub.onEose) return;
+        // Drain pending verifications FIRST: events arrive queued for off-thread verify, but
+        // EOSE can land before that batch flushes — firing onEose now would resolve a one-shot
+        // query() with an empty result (the profiles/follows-show-as-npub bug).
+        Promise.resolve(this._flush()).then(()=> sub.onEose());
       } else if (typ === 'OK'){
         const w = this._okWaiters.get(m[1]);
         if (w){ clearTimeout(w.t); this._okWaiters.delete(m[1]); w.res({ ok: !!m[2], msg: m[3]||'' }); }
-      } else if (typ === 'CLOSED'){
-        const sub = this._subs.get(m[1]); if (sub && sub.onEose) sub.onEose();
       }
     },
     async _flush(){
-      this._vt = null;
+      if (this._vt){ clearTimeout(this._vt); this._vt = null; }
       const batch = this._vq.splice(0, this._vq.length);
       if (!batch.length) return;
       try {
