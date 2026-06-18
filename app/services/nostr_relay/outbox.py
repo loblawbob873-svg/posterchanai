@@ -17,9 +17,10 @@ logger = logging.getLogger(__name__)
 
 
 class Outbox:
-    def __init__(self, upstream, min_interval: float = 1.0, maxsize: int = 500):
+    def __init__(self, upstream, min_interval: float = 1.0, maxsize: int = 500, direct: bool = False):
         self.upstream = upstream
         self.min_interval = min_interval
+        self.direct = direct
         self._q: asyncio.Queue = asyncio.Queue(maxsize=maxsize)
         self._task: asyncio.Task | None = None
         self._dropped = 0
@@ -48,7 +49,7 @@ class Outbox:
         while True:
             ev = await self._q.get()
             try:
-                n = await _relay.publish(self.upstream, ev)
+                n = await _relay.publish(self.upstream, ev, direct=self.direct)
                 logger.info("[nostr-relay] outbox: %s → %d/%d relays (queue=%d)",
                             ev.get("id", "")[:12], n, len(self.upstream), self._q.qsize())
             except Exception as e:

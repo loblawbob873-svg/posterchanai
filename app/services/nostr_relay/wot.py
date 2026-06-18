@@ -30,7 +30,7 @@ class WotGate:
     def members(self) -> frozenset:
         return self._members | self._operator
 
-    async def build(self, store, upstream_relays, seeds_hex, depth: int = 1) -> int:
+    async def build(self, store, upstream_relays, seeds_hex, depth: int = 1, direct: bool = False) -> int:
         """Resolve the depth-1 follow set from seeds' kind-3 lists, persist it, and swap it in.
         Falls back to keeping the previous set on a total upstream failure."""
         seeds = [s for s in (seeds_hex or []) if s]
@@ -38,7 +38,8 @@ class WotGate:
         if seeds and depth >= 1:
             try:
                 events = await _relay.query(
-                    upstream_relays, [{"authors": seeds, "kinds": [3], "limit": len(seeds) * 2}])
+                    upstream_relays, [{"authors": seeds, "kinds": [3], "limit": len(seeds) * 2}],
+                    direct=direct)
                 # Newest kind-3 per author, then collect p-tagged follows.
                 latest: dict = {}
                 for ev in events:

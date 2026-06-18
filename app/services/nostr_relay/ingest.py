@@ -47,6 +47,7 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
     batch = cfg["author_batch"]
     blocked = cfg.get("blocked_langs")
     pace = cfg.get("request_pace_sec", 1.0)
+    direct = cfg.get("direct", False)
     deadline = time.monotonic() + cfg.get("budget_sec", 45)
 
     new_events = []
@@ -62,7 +63,8 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
         scanned += len(chunk)
         try:
             evs = await _relay.query(
-                upstream, [{"authors": chunk, "kinds": kinds, "since": since, "until": until}])
+                upstream, [{"authors": chunk, "kinds": kinds, "since": since, "until": until}],
+                direct=direct)
         except Exception as e:
             logger.warning("[nostr-relay] sync query failed: %s", e)
             continue
@@ -91,12 +93,13 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
     if cfg.get("fetch_ancestors", True) and new_events:
         try:
             await backfill_ancestors(store, server, upstream, new_events,
-                                     cfg.get("max_ancestors", 20))
+                                     cfg.get("max_ancestors", 20), direct)
         except Exception as e:
             logger.warning("[nostr-relay] ancestor backfill failed: %s", e)
 
     try:
-        await fetch_missing_profiles(store, upstream, batch, cfg.get("profile_limit", 500), pace)
+        await fetch_missing_profiles(store, upstream, batch, cfg.get("profile_limit", 500),
+                                     pace, direct)
     except Exception as e:
         logger.warning("[nostr-relay] profile fetch failed: %s", e)
 
@@ -105,7 +108,8 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
     return len(new_events)
 
 
-async def backfill_ancestors(store, server, upstream, events, max_ancestors: int) -> int:
+async def backfill_ancestors(store, server, upstream, events, max_ancestors: int,
+                             direct: bool = False) -> int:
     """Walk reply-to (`e`-tag) references up to the thread root, fetching by id any event we
     don't have. Parents may be outside the WoT (stored as origin='ancestor') — the deliberate,
     bounded relaxation that keeps threads whole."""
@@ -125,7 +129,7 @@ async def backfill_ancestors(store, server, upstream, events, max_ancestors: int
             break
         missing = missing[: max_ancestors - fetched]
         try:
-            anc = await _relay.query(upstream, [{"ids": missing}])
+            anc = await _relay.query(upstream, [{"ids": missing}], direct=direct)
         except Exception:
             break
         nxt = set()
@@ -145,7 +149,8 @@ async def backfill_ancestors(store, server, upstream, events, max_ancestors: int
     return fetched
 
 
-async def fetch_missing_profiles(store, upstream, batch: int, limit: int, pace: float = 1.0) -> int:
+async def fetch_missing_profiles(store, upstream, batch: int, limit: int, pace: float = 1.0,
+                                 direct: bool = False) -> int:
     """Pull kind-0 metadata for WoT members we have no profile for, so clients render
     names/avatars. Batched by author to respect relay filter caps, paced to be polite."""
     missing = await store.wot_missing_profiles()
@@ -158,7 +163,7 @@ async def fetch_missing_profiles(store, upstream, batch: int, limit: int, pace: 
             await asyncio.sleep(pace)
         chunk = missing[i:i + batch]
         try:
-            evs = await _relay.query(upstream, [{"authors": chunk, "kinds": [0]}])
+            evs = await _relay.query(upstream, [{"authors": chunk, "kinds": [0]}], direct=direct)
         except Exception:
             continue
         latest: dict = {}

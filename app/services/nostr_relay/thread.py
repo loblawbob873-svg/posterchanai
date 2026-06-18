@@ -91,6 +91,10 @@ def _read_config() -> dict:
             "port": gi("nostr_relay_port", 3052),
             "seeds": seeds,
             "upstream": upstream,
+            # Bypass the outbound Tor proxy for the relay's OWN upstream traffic (sync/outbox/
+            # WoT). Direct is faster and avoids the proxy-startup-race log flood; doesn't change
+            # the bots' proxy behavior.
+            "direct": gb("nostr_relay_disable_proxy", False),
             "hot_path": hot_path,
             "snapshot_path": snap_path,
             "snapshot_sec": gi("nostr_relay_snapshot_sec", 600),
@@ -177,7 +181,7 @@ async def _main(cfg: dict) -> None:
     await gate.load_from_store(store)              # warm from snapshot for immediate gating
     from .outbox import Outbox
     outbox = Outbox(cfg["upstream"], min_interval=cfg["outbox_min_interval"],
-                    maxsize=cfg["outbox_max_queue"])
+                    maxsize=cfg["outbox_max_queue"], direct=cfg["direct"])
     outbox.start()
     server = RelayServer(store, gate, cfg, outbox_cb=outbox.enqueue)
     _relay.store, _relay.gate, _relay.server, _relay.outbox = store, gate, server, outbox
@@ -205,7 +209,8 @@ async def _main(cfg: dict) -> None:
         asyncio.create_task(_periodic(_relay.stop_event, 3600, store.prune, "prune")),
         # Daily WoT rebuild from the seeds' follow lists.
         asyncio.create_task(_periodic(_relay.stop_event, cfg["wot_refresh_sec"],
-                                      lambda: gate.build(store, cfg["upstream"], cfg["seeds"]),
+                                      lambda: gate.build(store, cfg["upstream"], cfg["seeds"],
+                                                         direct=cfg["direct"]),
                                       "wot-refresh")),
         # Windowed WoT ingestion (the curated feed) — runs on its own cadence.
         asyncio.create_task(_periodic(_relay.stop_event, cfg["sync_interval_sec"],
@@ -249,7 +254,7 @@ async def _initial_wot_build(gate, store, cfg, stop: asyncio.Event) -> None:
         if stop.is_set():
             return
         try:
-            n = await gate.build(store, cfg["upstream"], cfg["seeds"])
+            n = await gate.build(store, cfg["upstream"], cfg["seeds"], direct=cfg["direct"])
         except Exception as e:
             logger.warning("[nostr-relay] initial WoT build error: %s", e)
             n = 0
@@ -320,7 +325,8 @@ def trigger_wot_refresh(timeout: float = 120) -> dict:
     cfg = _relay.cfg
     try:
         fut = asyncio.run_coroutine_threadsafe(
-            _relay.gate.build(_relay.store, cfg["upstream"], cfg["seeds"]), _relay.loop)
+            _relay.gate.build(_relay.store, cfg["upstream"], cfg["seeds"],
+                              direct=cfg.get("direct", False)), _relay.loop)
         n = fut.result(timeout=timeout)
         return {"ok": True, "members": n}
     except Exception as e:
