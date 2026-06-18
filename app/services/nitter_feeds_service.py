@@ -283,15 +283,18 @@ async def poll_once(db: Session) -> None:
     users = db.query(User).filter(User.telegram_chat_id.isnot(None)).all()
     if not users:
         return
-    # Route all Nitter requests (RSS fetches + media/avatar downloads) through the
-    # built-in proxy, matching 4chan/searx. The proxy is MANDATORY — never make
-    # direct Nitter requests. If it's not configured, skip the poll entirely.
-    proxy_config = get_proxy_config()
-    if not proxy_config:
-        logger.warning("[nitter] no proxy configured; skipping poll (direct requests are not allowed)")
+    # Nitter is public RSS, and Cloudflare throttles/challenges Tor exits — routing through the
+    # built-in proxy caused intermittent 30s read-timeouts and 403s. So fetch DIRECT by default.
+    # Set `nitter_use_proxy=true` to route via the proxy again (e.g. if the host IP gets blocked).
+    # NOTE: httpx honours HTTP(S)_PROXY env when trust_env=True (the default), so trust_env=False
+    # is required to actually bypass the inherited Tor proxy, not just proxy=None.
+    use_proxy = _get_setting(db, "nitter_use_proxy", "false").lower() == "true"
+    proxy_config = get_proxy_config() if use_proxy else None
+    if use_proxy and not proxy_config:
+        logger.warning("[nitter] nitter_use_proxy=true but no proxy configured; skipping poll")
         return
-    logger.debug("[nitter] requests via proxy: %s", proxy_config)
-    async with httpx.AsyncClient(follow_redirects=True, proxy=proxy_config) as client:
+    logger.debug("[nitter] requests %s", f"via proxy {proxy_config}" if proxy_config else "direct")
+    async with httpx.AsyncClient(follow_redirects=True, proxy=proxy_config, trust_env=False) as client:
         for user in users:
             try:
                 await _poll_user(db, tg, user, client)

@@ -9,7 +9,20 @@ distinguishable by script alone and are intentionally not offered.
 `LANGUAGES` (code → UI label) drives the clickable toggles in Admin → Relay.
 """
 
+import re
 from collections import defaultdict
+
+# URLs, nostr: URIs and bech32/Lightning entities are long runs of Latin/base32 characters that
+# are NOT language — left in, they inflate the letter count and dilute a short non-Latin note
+# below the block threshold (e.g. a Japanese line + an image URL reads as 11% Japanese). Strip
+# them before detection so the ratio reflects the actual prose.
+_NOISE_RE = re.compile(
+    r"https?://\S+"
+    r"|nostr:\S+"
+    r"|\b(?:npub|note|nevent|naddr|nprofile|lnbc|lnurl)1[0-9ac-hj-np-z]+"
+    r"|:[a-z0-9_+-]+:",   # custom-emoji shortcodes like :meow_bongo_keyboard:
+    re.IGNORECASE,
+)
 
 # UI-facing toggle set. Codes are stored in the `nostr_relay_blocked_langs` setting (CSV).
 LANGUAGES = {
@@ -37,7 +50,7 @@ _RANGES = {
                    (0xFB50, 0xFDFF), (0xFE70, 0xFEFF)],
     "hebrew":     [(0x0590, 0x05FF), (0xFB1D, 0xFB4F)],
     "han":        [(0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xF900, 0xFAFF), (0x20000, 0x2A6DF)],
-    "kana":       [(0x3040, 0x30FF), (0x31F0, 0x31FF)],
+    "kana":       [(0x3040, 0x30FF), (0x31F0, 0x31FF), (0xFF65, 0xFF9F)],  # incl. halfwidth katakana
     "hangul":     [(0xAC00, 0xD7AF), (0x1100, 0x11FF), (0x3130, 0x318F)],
     "thai":       [(0x0E00, 0x0E7F)],
     "devanagari": [(0x0900, 0x097F)],
@@ -70,6 +83,7 @@ def detect_languages(text: str) -> set:
     """Return the set of language codes present at/above the block threshold in `text`."""
     if not text:
         return set()
+    text = _NOISE_RE.sub(" ", text)  # drop URLs/refs/emoji shortcodes so they don't dilute the ratio
     counts = defaultdict(int)
     letters = 0
     viet = 0
