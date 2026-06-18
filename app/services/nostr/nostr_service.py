@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 # time out during the opening handshake on nearly every poll, so each poll waited out a
 # connect timeout and mention pickup/replies were delayed minutes.
 DEFAULT_RELAYS = [
+    "wss://nos.lol/",
+    "wss://nostr.mom/",
+    "wss://purplepag.es/",
     "wss://offchain.pub/",
     "wss://relay.snort.social/",
     "wss://relay.0xchat.com/",
