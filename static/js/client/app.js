@@ -1193,7 +1193,7 @@
     if(!top.length){ el.innerHTML='<div class="muted small">Nothing yet.</div>'; return; }
     try{ const notes=await Relay.query([{ ids:top }]); notes.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); }); }catch(_){}
     const rows=top.map(id=>{ const ev=Store.get(id); if(!ev||ev.kind!==1) return ''; const pr=profOf(ev.pubkey);
-      const txt=(ev.content||'').replace(/https?:\/\/\S+/g,'').trim().slice(0,140);
+      const txt=(ev.content||'').replace(/https?:\/\/\S+/g,'').trim().slice(0,115);
       return `<div class="rb-item" data-open="${id}" data-pk="${ev.pubkey}"><div class="rb-head"><img class="rb-av" src="${enc(pr.picture||LOGO)}" onerror="this.src='${LOGO}'"><b>${enc(pr.name||pr.display_name||'anon')}</b> <span class="muted">· ${tally[id]} 🔥</span></div><div class="rb-txt">${enc(txt)||'<i>media</i>'}</div></div>`;
     }).filter(Boolean).join('');
     el.innerHTML=rows||'<div class="muted small">Nothing yet.</div>';
