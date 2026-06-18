@@ -122,9 +122,9 @@ class RelayServer:
             "name": c.get("name") or "PosterChanAI Relay",
             "description": c.get("description") or "Web-of-trust relay",
             "software": "https://github.com/loblawbob873-svg/posterchanai",
-            # 1 core, 2 contacts, 9 deletes, 11 info, 22 comments, 23 long-form, 45 COUNT,
-            # 50 search, 65 relay-list
-            "supported_nips": [1, 2, 9, 11, 22, 23, 45, 50, 65],
+            # 1 core, 2 contacts, 9 deletes, 11 info, 17 private DMs, 22 comments, 23 long-form,
+            # 44 encryption, 45 COUNT, 50 search, 59 gift wrap, 65 relay-list
+            "supported_nips": [1, 2, 9, 11, 17, 22, 23, 44, 45, 50, 59, 65],
             "limitation": {
                 "max_message_length": c.get("max_message_size", 262144),
                 "max_subscriptions": c.get("max_subs_per_conn", 20),
@@ -185,7 +185,9 @@ class RelayServer:
             await conn.close(code=1013, reason="overloaded")
             return
         self._conns += 1
-        q = asyncio.Queue(maxsize=self.cfg.get("outq_size", 4096))
+        # Bigger than the query hard_cap (5000) so a full-page REQ response + its EOSE always
+        # fit without the synchronous send loop overflowing the queue and dropping the EOSE.
+        q = asyncio.Queue(maxsize=self.cfg.get("outq_size", 8192))
         self._outq[conn] = q
         writer = asyncio.create_task(self._writer(conn, q))
         try:
@@ -219,9 +221,6 @@ class RelayServer:
         if typ == "EVENT" and len(msg) >= 2:
             await self._on_event(conn, msg[1])
         elif typ == "REQ" and len(msg) >= 2:
-            logger.info("[relay-diag] REQ %s", [{k: (f"[{len(v)}]" if isinstance(v, list) else v)
-                                                 for k, v in f.items()}
-                                                for f in msg[2:] if isinstance(f, dict)])
             await self._on_req(conn, msg[1], msg[2:])
         elif typ == "CLOSE" and len(msg) >= 2:
             self.subs.remove(conn, msg[1])
@@ -236,6 +235,17 @@ class RelayServer:
         elif typ == "AUTH":
             pass  # NIP-42 not required (open reads); ignore
 
+    # NIP-04 (kind 4) / NIP-17 gift wrap (1059) / NIP-59 seal (13) DMs. The author of a gift
+    # wrap is a random throwaway key, so the WoT gate can't apply — instead we accept a DM only
+    # when it's ADDRESSED (p-tag) to one of our own relay users (operator), acting as their inbox.
+    _DM_KINDS = (4, 13, 1059)
+
+    def _dm_for_operator(self, ev: dict) -> bool:
+        for t in ev.get("tags", []):
+            if len(t) >= 2 and t[0] == "p" and self.gate.is_operator(t[1]):
+                return True
+        return False
+
     async def _on_event(self, conn, ev) -> None:
         if not isinstance(ev, dict) or "id" not in ev:
             return
@@ -243,11 +253,16 @@ class RelayServer:
         if not verify_event(ev):
             self._send(conn, ["OK", eid, False, "invalid: bad id or signature"])
             return
-        if not self.gate.is_member(ev.get("pubkey", "")):
-            self._send(conn, ["OK", eid, False,
-                                        "blocked: not in web of trust"])
+        kind = int(ev.get("kind", 1))
+        is_dm = kind in self._DM_KINDS
+        if is_dm:
+            if not self._dm_for_operator(ev):
+                self._send(conn, ["OK", eid, False, "blocked: not a DM to a relay user"])
+                return
+        elif not self.gate.is_member(ev.get("pubkey", "")):
+            self._send(conn, ["OK", eid, False, "blocked: not in web of trust"])
             return
-        if int(ev.get("kind", 1)) == 1:
+        if kind == 1:
             content = ev.get("content", "")
             blocked = self.cfg.get("blocked_langs")
             if blocked:
@@ -265,7 +280,7 @@ class RelayServer:
         self._send(conn, ["OK", eid, True, ""])
         if stored:
             self.subs.fanout(ev, self._send)
-            if self.outbox_cb:
+            if self.outbox_cb and not is_dm:   # never re-broadcast private DMs to public relays
                 # Non-blocking enqueue onto the paced outbox queue (drops on overflow) — a
                 # post-blasting client can't stall this connection or flood upstream relays.
                 try:
@@ -306,7 +321,7 @@ class RelayServer:
             return
         try:
             flts = [filt] if isinstance(filt, dict) else []
-            items = await self.store.neg_items(flts, cap=self.cfg.get("neg_max_items", 200000))
+            items = await self.store.neg_items(flts, cap=self.cfg.get("neg_max_items", 50000))
             sessions = self._neg.setdefault(conn, {})
             if len(sessions) >= self.cfg.get("max_subs_per_conn", 20):
                 self._send(conn, ["NEG-ERR", sub_id, "rate-limited"])

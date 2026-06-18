@@ -29,8 +29,10 @@ async def _run_one(relay_url: str, kinds: list, on_event, stop: asyncio.Event, d
     backoff = 2
     while not stop.is_set():
         try:
+            # Generous frame cap: long-form articles (kind 30023) can be large; too small a
+            # cap would raise on a big event and drop the whole upstream connection.
             async with websockets.connect(relay_url, open_timeout=_CONNECT_TIMEOUT,
-                                          max_size=512 * 1024, **_conn_kw(direct)) as ws:
+                                          max_size=4 * 1024 * 1024, **_conn_kw(direct)) as ws:
                 sub = uuid.uuid4().hex[:16]
                 # Small look-back on (re)connect so a brief drop doesn't lose events.
                 flt = {"kinds": kinds, "since": int(time.time()) - 120}

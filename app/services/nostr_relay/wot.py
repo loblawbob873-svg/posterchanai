@@ -35,6 +35,10 @@ class WotGate:
             return False  # explicit denylist overrides everything, even operator
         return pubkey in self._members or pubkey in self._operator
 
+    def is_operator(self, pubkey: str) -> bool:
+        """A relay user (linked account/bot). DMs addressed to one are accepted as inbox."""
+        return bool(pubkey) and pubkey in self._operator
+
     def members(self) -> frozenset:
         return self._members | self._operator
 
