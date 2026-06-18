@@ -379,6 +379,15 @@ async def _main(cfg: dict) -> None:
         # so it runs once a day regardless of restarts. NOT a feed mirror; just gate membership.
         asyncio.create_task(_periodic(_relay.stop_event, 3600, _maybe_rebuild_wot, "wot-refresh")),
     ]
+    # Profile/metadata backfill — runs INDEPENDENTLY of the (off-by-default) heavy sync sweep, so
+    # clients can resolve names/avatars even when only the firehose is on. Fetches kind-0/3/10002
+    # for WoT members missing them (note-authors prioritized in store.wot_missing_metadata). Paced.
+    async def _meta_backfill():
+        from . import ingest as _ingest
+        await _ingest.fetch_lookup_metadata(store, cfg["upstream"], cfg["author_batch"],
+                                             cfg.get("profile_limit", 1500), cfg["request_pace_sec"], cfg["direct"])
+    tasks.append(asyncio.create_task(_periodic(_relay.stop_event, cfg.get("sync_interval_sec", 120),
+                                               _meta_backfill, "metadata-backfill")))
     # Heavy WoT BACKFILL SWEEP — OFF by default. This is the windowed crawl that walks the WHOLE
     # trust graph (tens of thousands of members via depth-2 FoF) re-fetching history; it pegs a
     # core and lags. That's the "mirror their feeds" machinery we don't want by default.
