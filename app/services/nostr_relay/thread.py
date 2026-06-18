@@ -8,11 +8,16 @@ port-3051 guard. Both are no-ops unless `nostr_relay_enabled` is set.
 """
 
 import os
+import sys
 import time
 import json
+import glob
+import uuid
+import signal
 import asyncio
 import logging
 import threading
+import subprocess
 
 from websockets.asyncio.server import serve
 
@@ -36,6 +41,7 @@ _MAX_FILTERS_PER_REQ = 25
 class _Relay:
     def __init__(self):
         self.thread: threading.Thread | None = None
+        self.proc: subprocess.Popen | None = None   # the relay runs as a subprocess now
         self.loop: asyncio.AbstractEventLoop | None = None
         self.stop_event: asyncio.Event | None = None
         self.store: RelayStore | None = None
@@ -46,6 +52,35 @@ class _Relay:
 
     def is_running(self) -> bool:
         return self.thread is not None and self.thread.is_alive()
+
+
+# Cross-process IPC paths (the relay runs in its own subprocess; the app reads its status and
+# drops admin commands via files). All derived from the relay DB path so they share its volume.
+_DB_PATH_CACHE = ""
+
+
+def _relay_db_path() -> str:
+    global _DB_PATH_CACHE
+    if _DB_PATH_CACHE:
+        return _DB_PATH_CACHE
+    p = ""
+    try:
+        from app.database import SessionLocal
+        from app.models import Setting
+        db = SessionLocal()
+        try:
+            row = db.query(Setting).filter(Setting.key == "nostr_relay_db_path").first()
+            p = (row.value if row else "") or ""
+        finally:
+            db.close()
+    except Exception:
+        p = ""
+    _DB_PATH_CACHE = p or os.path.join(_REPO_ROOT, "data", "nostr_relay.db")
+    return _DB_PATH_CACHE
+
+
+def _relay_paths(db_path: str) -> dict:
+    return {"status": db_path + ".status.json", "control": db_path + ".control.d"}
 
 
 _relay = _Relay()
@@ -332,6 +367,59 @@ async def _main(cfg: dict) -> None:
             run_firehose(cfg["upstream"], cfg["ingest_kinds"], _firehose_event,
                          _relay.stop_event, cfg["direct"],
                          max_relays=cfg.get("firehose_max_relays", 0))))
+
+    # Cross-process admin IPC: this relay runs in its own subprocess, so the app can't read its
+    # gate/store directly. Publish status to a file the app polls, and execute admin commands the
+    # app drops into a control dir (Refresh-WoT / Backfill buttons). No-ops if launched in-thread.
+    _paths = _relay_paths(cfg["db_path"])
+    os.makedirs(_paths["control"], exist_ok=True)
+
+    async def _status_writer():
+        while not _relay.stop_event.is_set():
+            try:
+                tmp = _paths["status"] + ".tmp"
+                with open(tmp, "w") as f:
+                    json.dump({"running": True, "members": len(gate.members()),
+                               "pid": os.getpid(), "ts": int(time.time())}, f)
+                os.replace(tmp, _paths["status"])
+            except Exception:
+                pass
+            try:
+                await asyncio.wait_for(_relay.stop_event.wait(), timeout=15)
+            except asyncio.TimeoutError:
+                pass
+
+    async def _control_poller():
+        while not _relay.stop_event.is_set():
+            try:
+                for cf in sorted(glob.glob(os.path.join(_paths["control"], "cmd_*.json"))):
+                    try:
+                        with open(cf) as f:
+                            cmd = json.load(f)
+                    except Exception:
+                        cmd = {}
+                    try:
+                        os.remove(cf)
+                    except Exception:
+                        pass
+                    if cmd.get("cmd") == "refresh-wot":
+                        logger.info("[nostr-relay] control: WoT refresh requested")
+                        asyncio.create_task(_safe(_build_wot(gate, store, cfg)))
+                    elif cmd.get("cmd") == "backfill" and cmd.get("pubkey"):
+                        logger.info("[nostr-relay] control: backfill %s", cmd["pubkey"][:12])
+                        from . import ingest as _ingest
+                        asyncio.create_task(_safe(_ingest.backfill_author(
+                            store, server, cfg["upstream"], cmd["pubkey"],
+                            direct=cfg["direct"], pace=cfg["request_pace_sec"])))
+            except Exception as e:
+                logger.debug("[nostr-relay] control poll error: %s", e)
+            try:
+                await asyncio.wait_for(_relay.stop_event.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                pass
+
+    tasks.append(asyncio.create_task(_status_writer()))
+    tasks.append(asyncio.create_task(_control_poller()))
     try:
         await _relay.stop_event.wait()
     finally:
@@ -348,6 +436,10 @@ async def _main(cfg: dict) -> None:
         except Exception as e:
             logger.warning("[nostr-relay] final checkpoint failed: %s", e)
         store.close()
+        try:
+            os.remove(_paths["status"])           # don't leave a stale "running" status behind
+        except Exception:
+            pass
         logger.info("[nostr-relay] stopped")
 
 
@@ -478,70 +570,97 @@ def _run(cfg: dict) -> None:
 
 # --- public API -------------------------------------------------------------
 
+def _spawn_relay(cfg: dict) -> None:
+    """Spawn the relay as a child subprocess — own OS process → own GIL/core, so its firehose
+    parsing no longer steals CPU from the app. It's in the app's cgroup, so `systemctl restart`
+    takes it down with the app and the next start respawns it (code changes apply on deploy);
+    stdout/stderr are inherited so its logs land in the journal."""
+    global _DB_PATH_CACHE
+    _DB_PATH_CACHE = cfg["db_path"]
+    entry = os.path.join(_REPO_ROOT, "relay_main.py")
+    _relay.proc = subprocess.Popen([sys.executable, entry], cwd=_REPO_ROOT)
+    logger.info("[nostr-relay] spawned relay subprocess pid %d", _relay.proc.pid)
+
+
 def start_nostr_relay() -> None:
-    if _relay.is_running():
-        return
+    if _relay.proc is not None and _relay.proc.poll() is None:
+        return  # already running
     cfg = _read_config()
     if not cfg["enabled"]:
         logger.info("[nostr-relay] disabled (nostr_relay_enabled off) — not starting")
         return
     _relay.cfg = cfg
-    t = threading.Thread(target=_run, args=(cfg,), name="nostr-relay", daemon=True)
-    _relay.thread = t
-    t.start()
-    logger.info("[nostr-relay] thread started")
+    _spawn_relay(cfg)
 
 
-def trigger_wot_refresh() -> dict:
-    """Kick off a WoT rebuild now (Admin button). Fire-and-forget on the relay's own loop —
-    a depth-2 (friends-of-friends) build can take minutes, so we don't block; the UI polls
-    /status for the updated member count."""
-    if not _relay.is_running() or _relay.loop is None or _relay.gate is None or _relay.store is None:
-        return {"ok": False, "error": "relay not running"}
-    cfg = _relay.cfg
+def stop_nostr_relay() -> None:
+    proc = _relay.proc
+    if proc is None or proc.poll() is not None:
+        return
     try:
-        asyncio.run_coroutine_threadsafe(
-            _safe(_build_wot(_relay.gate, _relay.store, cfg)), _relay.loop)
-        return {"ok": True, "started": True, "members": len(_relay.gate.members())}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-
-def trigger_backfill(pubkey_hex: str) -> dict:
-    """Backfill an author's full history into the relay (Admin button). Fire-and-forget on the
-    relay loop; writes straight to the store so the outbox does NOT re-broadcast old posts."""
-    if not _relay.is_running() or _relay.loop is None or _relay.store is None or _relay.server is None:
-        return {"ok": False, "error": "relay not running"}
-    if not pubkey_hex:
-        return {"ok": False, "error": "no nostr key on your account"}
-    cfg = _relay.cfg
-
-    async def _run():
-        from . import ingest as _ingest
-        await _ingest.backfill_author(
-            _relay.store, _relay.server, cfg["upstream"], pubkey_hex,
-            direct=cfg["direct"], pace=cfg["request_pace_sec"])
-
+        proc.terminate()                # SIGTERM → graceful shutdown + snapshot in relay_main
+    except Exception:
+        pass
     try:
-        asyncio.run_coroutine_threadsafe(_safe(_run()), _relay.loop)
+        proc.wait(timeout=15)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    _relay.proc = None
+
+
+def restart_nostr_relay() -> dict:
+    """Stop the relay subprocess and spawn a fresh one — used to pick up relay code changes
+    (the relay otherwise keeps running across the app's own internal restarts)."""
+    stop_nostr_relay()
+    cfg = _read_config()
+    if not cfg["enabled"]:
+        return {"ok": False, "error": "relay disabled"}
+    _relay.cfg = cfg
+    _spawn_relay(cfg)
+    return {"ok": True, "restarted": True}
+
+
+def relay_status() -> dict:
+    """Status for the Admin UI: liveness from the subprocess handle, member count from the
+    status file the relay process writes (it lives in another process now)."""
+    alive = _relay.proc is not None and _relay.proc.poll() is None
+    members = 0
+    try:
+        with open(_relay_paths(_relay_db_path())["status"]) as f:
+            members = int(json.load(f).get("members", 0))
+    except Exception:
+        pass
+    return {"running": bool(alive), "members": members}
+
+
+def _drop_control(cmd: dict) -> dict:
+    """Hand an admin command to the relay subprocess via its control dir (its poller picks it
+    up, executes on the relay loop). Atomic write so the poller never sees a partial file."""
+    if _relay.proc is None or _relay.proc.poll() is not None:
+        return {"ok": False, "error": "relay not running"}
+    try:
+        ctrl = _relay_paths(_relay_db_path())["control"]
+        os.makedirs(ctrl, exist_ok=True)
+        fn = os.path.join(ctrl, "cmd_%d_%s.json" % (int(time.time()), uuid.uuid4().hex[:8]))
+        tmp = fn + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(cmd, f)
+        os.replace(tmp, fn)
         return {"ok": True, "started": True}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
 
-def relay_status() -> dict:
-    """Lightweight status for the Admin UI."""
-    if not _relay.is_running() or _relay.gate is None:
-        return {"running": False, "members": 0}
-    return {"running": True, "members": len(_relay.gate.members())}
+def trigger_wot_refresh() -> dict:
+    """Admin button: ask the relay subprocess to rebuild the WoT now (it polls /status after)."""
+    return _drop_control({"cmd": "refresh-wot"})
 
 
-def stop_nostr_relay() -> None:
-    if not _relay.is_running() or _relay.loop is None or _relay.stop_event is None:
-        return
-    try:
-        _relay.loop.call_soon_threadsafe(_relay.stop_event.set)
-    except Exception:
-        pass
-    _relay.thread.join(timeout=15)
-    _relay.thread = None
+def trigger_backfill(pubkey_hex: str) -> dict:
+    """Admin button: ask the relay subprocess to backfill an author's history into the store."""
+    if not pubkey_hex:
+        return {"ok": False, "error": "no nostr key on your account"}
+    return _drop_control({"cmd": "backfill", "pubkey": pubkey_hex})
