@@ -548,10 +548,16 @@ class RelayStore:
     def _wot_missing_metadata_sync(self) -> list:
         # Members lacking lookup metadata: no kind-0 profile OR no kind-10002 relay list.
         # Drives the lookup-relay backfill so clients can resolve profiles + outbox relays.
+        # PRIORITIZE members who actually have notes in the store (the authors clients are
+        # displaying) — with a large WoT (tens of thousands) the backfill must reach posting
+        # authors first, otherwise their names/avatars never resolve for a long time.
         rows = self._conn().execute(
-            "SELECT w.pubkey FROM wot w WHERE "
+            "SELECT w.pubkey, "
+            "  EXISTS (SELECT 1 FROM events e WHERE e.pubkey=w.pubkey AND e.kind=1) AS has_note "
+            "FROM wot w WHERE "
             "NOT EXISTS (SELECT 1 FROM events e WHERE e.pubkey=w.pubkey AND e.kind=0) "
-            "OR NOT EXISTS (SELECT 1 FROM events e WHERE e.pubkey=w.pubkey AND e.kind=10002)"
+            "OR NOT EXISTS (SELECT 1 FROM events e WHERE e.pubkey=w.pubkey AND e.kind=10002) "
+            "ORDER BY has_note DESC"
         ).fetchall()
         return [r["pubkey"] for r in rows]
 

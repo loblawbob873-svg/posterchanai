@@ -109,6 +109,82 @@ async def client_sw():
                         headers={"Service-Worker-Allowed": "/client", "Cache-Control": "no-cache"})
 
 
+_preview_cache: dict[str, tuple[float, dict]] = {}   # url -> (expires, data)
+_PREVIEW_TTL = 3600.0
+
+
+def _is_public_host(host: str) -> bool:
+    """SSRF guard: reject hosts that resolve to private/loopback/link-local addresses."""
+    import socket
+    import ipaddress
+    try:
+        for fam, _t, _p, _c, sa in socket.getaddrinfo(host, None):
+            ip = ipaddress.ip_address(sa[0])
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+                return False
+        return True
+    except Exception:
+        return False
+
+
+@router.get("/preview")
+async def link_preview(url: str):
+    """Fetch OpenGraph/Twitter-card metadata for a URL so the client can show a link card.
+    Public endpoint, so it guards against SSRF (no private IPs), caps size, and caches briefly."""
+    import re
+    from urllib.parse import urlparse, urljoin
+    if not url.startswith(("http://", "https://")):
+        return JSONResponse({}, status_code=400)
+    now = time.time()
+    hit = _preview_cache.get(url)
+    if hit and hit[0] > now:
+        return JSONResponse(hit[1])
+    host = urlparse(url).hostname or ""
+    if not host or not _is_public_host(host):
+        return JSONResponse({})
+    data = {}
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=httpx.Timeout(6.0, connect=4.0), follow_redirects=True,
+                                     headers={"User-Agent": "Mozilla/5.0 (compatible; PosterChanBot/1.0)"}) as client:
+            async with client.stream("GET", url) as resp:
+                ctype = resp.headers.get("content-type", "")
+                if resp.status_code == 200 and "text/html" in ctype:
+                    body = b""
+                    async for chunk in resp.aiter_bytes():
+                        body += chunk
+                        if len(body) > 524288:   # 512 KB cap — OG tags live in <head>
+                            break
+                    html = body.decode("utf-8", "ignore")
+
+                    def meta(*names):
+                        for n in names:
+                            m = re.search(r'<meta[^>]+(?:property|name)=["\']' + re.escape(n)
+                                          + r'["\'][^>]+content=["\']([^"\']+)["\']', html, re.I) \
+                                or re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\']'
+                                             + re.escape(n) + r'["\']', html, re.I)
+                            if m:
+                                return m.group(1).strip()
+                        return None
+
+                    title = meta("og:title", "twitter:title")
+                    if not title:
+                        tm = re.search(r"<title[^>]*>([^<]+)</title>", html, re.I)
+                        title = tm.group(1).strip() if tm else None
+                    img = meta("og:image", "twitter:image", "twitter:image:src")
+                    if img:
+                        img = urljoin(url, img)
+                    data = {"url": url, "title": title, "description": meta("og:description", "twitter:description", "description"),
+                            "image": img, "site": meta("og:site_name") or host}
+    except Exception as e:
+        logger.debug("[client] preview fetch failed for %s: %s", url, e)
+    # cache (even negatives, briefly) to avoid refetch storms
+    _preview_cache[url] = (now + _PREVIEW_TTL, data)
+    if len(_preview_cache) > 2000:
+        _preview_cache.clear()
+    return JSONResponse(data)
+
+
 class SignupFollow(BaseModel):
     pubkey: str   # new account's npub or 64-hex
 

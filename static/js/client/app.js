@@ -136,7 +136,8 @@
     bindFeedActions();
     // Run initial queries only once the relay socket is open (otherwise the REQs are dropped
     // and profiles/follows never resolve — names would show as raw npubs).
-    Relay.onReady = ()=>{ fetchFollows(); fetchMutes(); fetchMyProfile(); watchNotifications(); watchDMs(); };
+    Relay.onReady = ()=>{ fetchFollows(); fetchMutes(); fetchMyProfile(); watchNotifications();
+      setTimeout(()=>ensureDMs(), 3000); };   // load DMs LAST so they don't slow the timeline
     Relay.connect(CFG.relay_url);
     renderMe();
     switchView('home');
@@ -280,6 +281,7 @@
         <div class="hd"><span class="name" data-prof="${ev.pubkey}">${enc(name)}</span>
           <span class="handle">${enc(handle)}</span><span class="time">${timeAgo(ev.created_at)}</span></div>
         <div class="txt">${linkify(ev.content)}</div>
+        ${linkCardHtml(ev.content)}
         ${quoteHtml(ev)}
         <div class="acts">
           <button class="act" data-a="reply" title="reply">💬 <span class="n">${counts.replies||''}</span></button>
@@ -512,7 +514,7 @@
       onEvent: ev => { if(ev.pubkey===ME.pubkey) return; if(Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.pubkey);
         if(ev.created_at>seenNotif.last){ bumpNotif(); if(_notifReady) notifPing(ev); }
         if(VIEW==='notifications') renderNotifications(); } },
-      onEose: ()=>{ _notifReady=true; if(VIEW==='notifications') renderNotifications(); }   // backlog done — only ping LIVE ones
+      onEose: ()=>{ _notifReady=true; if(VIEW==='notifications') renderNotifications(); else bumpNotif(); }   // show unseen count on load; ping LIVE ones
     });
   }
   function notifPing(ev){
@@ -551,22 +553,32 @@
   // ---------- DMs (NIP-04) ----------
   const dmPeers = new Map();  // peer -> [{ev, text}]
   let dmActive = null;
-  function watchDMs(){
-    Relay.subscribe([{ kinds:[4], '#p':[ME.pubkey], limit:200 }, { kinds:[4], authors:[ME.pubkey], limit:200 }], {
-      onEvent: ev => { if(Store.saveEvent(ev)){ ingestDM(ev); if(VIEW==='messages') renderMessages(); } },
-      onEose: ()=>{ if(VIEW==='messages') renderMessages(); }
+  let _dmLoaded=false, _dmUnread=0;
+  async function ensureDMs(){
+    if(_dmLoaded) return; _dmLoaded=true;
+    Store.byKind(4).forEach(ingestDM);   // show anything already cached instantly
+    if(VIEW==='messages') renderMessages();
+    const evs=await Relay.query([{ kinds:[4], '#p':[ME.pubkey], limit:300 }, { kinds:[4], authors:[ME.pubkey], limit:300 }]);
+    evs.forEach(e=>{ Store.saveEvent(e); ingestDM(e); });   // ingest ALWAYS (not gated on saveEvent dedup)
+    // live sub for new DMs only (since now)
+    const since=Math.floor(Date.now()/1000)-60;
+    Relay.subscribe([{ kinds:[4], '#p':[ME.pubkey], since }, { kinds:[4], authors:[ME.pubkey], since }], {
+      onEvent: ev => { Store.saveEvent(ev); if(ingestDM(ev) && ev.pubkey!==ME.pubkey){ _dmUnread++; bumpDm(); } if(VIEW==='messages') renderMessages(); }
     });
+    if(VIEW==='messages') renderMessages();
   }
+  function bumpDm(){ $$('#dm-badge,#dm-badge-m').forEach(b=>{ if(_dmUnread){ b.textContent=_dmUnread>99?'99+':_dmUnread; b.classList.remove('hidden'); } else b.classList.add('hidden'); }); }
   // Index DMs WITHOUT decrypting (decryption is CPU-heavy ECDH+AES in the worker; decrypting all
   // 200 on load jams the worker and stalls timeline verification). Decrypt lazily on view.
   function ingestDM(ev){
     const mine = ev.pubkey===ME.pubkey;
     const peer = mine ? (ev.tags.find(t=>t[0]==='p')||[])[1] : ev.pubkey;
-    if(!peer) return; needProfile(peer);
+    if(!peer) return false; needProfile(peer);
     if(!dmPeers.has(peer)) dmPeers.set(peer, []);
-    const arr=dmPeers.get(peer); if(arr.find(m=>m.id===ev.id)) return;
+    const arr=dmPeers.get(peer); if(arr.find(m=>m.id===ev.id)) return false;
     arr.push({ id:ev.id, mine, ev, text:null, t:ev.created_at }); arr.sort((a,b)=>a.t-b.t);
     if(VIEW==='messages' && dmActive===peer) renderDmThread(peer);
+    return true;
   }
   async function decryptMsg(peer, m){
     if(m.text!=null) return m.text;
@@ -574,8 +586,10 @@
     return m.text;
   }
   function renderMessages(){
+    _dmUnread=0; bumpDm();
+    if(!_dmLoaded){ ensureDMs(); }   // lazy-load on first open
     const feed=$('#feed');
-    feed.innerHTML=`<div class="dm-wrap"><div class="dm-list" id="dm-list"></div><div class="dm-thread" id="dm-thread"><div class="empty">Select a conversation, or start one.</div></div></div>`;
+    feed.innerHTML=`<div class="dm-wrap"><div class="dm-list" id="dm-list"></div><div class="dm-thread" id="dm-thread"><div class="empty">${_dmLoaded?'Select a conversation, or start one.':'Loading…'}</div></div></div>`;
     const list=$('#dm-list');
     const peers=[...dmPeers.keys()].sort((a,b)=>{ const la=dmPeers.get(a).slice(-1)[0]||{}, lb=dmPeers.get(b).slice(-1)[0]||{}; return (lb.t||0)-(la.t||0); });
     list.innerHTML = `<div class="dm-peer" id="dm-new"><span class="ic">＋</span><b>New message</b></div>` + peers.map(pk=>{
@@ -681,13 +695,14 @@
   function editProfile(p){
     modal(`<h3>Edit profile</h3>
       <input class="input" id="pf-name" placeholder="name" value="${enc(p.name||p.display_name||'')}">
+      <input class="input" id="pf-nip05" placeholder="nip05 identifier (name@domain)" value="${enc(p.nip05||'')}">
       <input class="input" id="pf-pic" placeholder="picture url" value="${enc(p.picture||'')}">
       <input class="input" id="pf-banner" placeholder="banner url" value="${enc(p.banner||'')}">
       <textarea id="pf-about" placeholder="about">${enc(p.about||'')}</textarea>
       <div class="row"><button class="mini" id="pf-up">🖼 upload pic</button><input type="file" id="pf-file" accept="image/*" hidden><span class="spacer"></span><button class="btn btn-neon" id="pf-save">Save</button></div>`, root=>{
       $('#pf-up',root).onclick=()=>$('#pf-file',root).click();
       $('#pf-file',root).onchange=async e=>{ const f=e.target.files[0]; if(!f)return; try{ $('#pf-pic',root).value=await uploadBlob(f); toast('uploaded'); }catch(err){toast('upload failed');} };
-      $('#pf-save',root).onclick=async()=>{ const meta={ ...p, name:$('#pf-name',root).value.trim(), picture:$('#pf-pic',root).value.trim(), banner:$('#pf-banner',root).value.trim(), about:$('#pf-about',root).value.trim() };
+      $('#pf-save',root).onclick=async()=>{ const meta={ ...p, name:$('#pf-name',root).value.trim(), nip05:$('#pf-nip05',root).value.trim(), picture:$('#pf-pic',root).value.trim(), banner:$('#pf-banner',root).value.trim(), about:$('#pf-about',root).value.trim() };
         closeModal(); await publish(0, JSON.stringify(meta), []); Store.saveProfile({pubkey:ME.pubkey,created_at:Math.floor(Date.now()/1000),content:JSON.stringify(meta)}); toast('profile saved'); renderMe(); renderProfileView(ME.pubkey); };
     });
   }
@@ -775,8 +790,26 @@
   }
 
   // ---------- helpers ----------
-  function hydrate(scope){ decorateProfiles(); }
+  function hydrate(scope){ decorateProfiles(); hydrateLinkCards(scope); }
   function timeAgo(ts){ const s=Math.floor(Date.now()/1000)-ts; if(s<60)return s+'s'; if(s<3600)return (s/60|0)+'m'; if(s<86400)return (s/3600|0)+'h'; return (s/86400|0)+'d'; }
+  // ---------- link preview cards (OpenGraph via /client/preview, lazy on scroll) ----------
+  const _pv=new Map();
+  function firstLink(text){
+    const m=(text||'').match(/https?:\/\/[^\s<]+/g); if(!m) return null;
+    for(let u of m){ u=u.replace(/[)\].,!?]+$/,''); if(!/\.(jpe?g|png|gif|webp|avif|mp4|webm|mov|m4v|mp3|ogg|wav|m4a|aac|flac)(\?|#|$)/i.test(u)) return u; }
+    return null;
+  }
+  function linkCardHtml(content){ const u=firstLink(content); return u?`<div class="link-card" data-url="${enc(u)}"></div>`:''; }
+  const _pvObs = ('IntersectionObserver' in window) ? new IntersectionObserver((es)=>{ for(const e of es){ if(e.isIntersecting){ _pvObs.unobserve(e.target); fillLinkCard(e.target); } } }, {rootMargin:'250px'}) : null;
+  function hydrateLinkCards(scope){ $$('.link-card[data-url]:not([data-obs])', scope||document).forEach(el=>{ el.setAttribute('data-obs','1'); _pvObs?_pvObs.observe(el):fillLinkCard(el); }); }
+  async function fetchPreview(url){ if(_pv.has(url)) return _pv.get(url); let d=null; try{ d=await fetch('/client/preview?url='+encodeURIComponent(url)).then(r=>r.json()); }catch(_){} _pv.set(url,d); return d; }
+  async function fillLinkCard(el){
+    const url=el.dataset.url; const d=await fetchPreview(url);
+    if(!d || (!d.title && !d.image && !d.description)){ el.remove(); return; }
+    const host=(()=>{ try{ return new URL(url).hostname.replace(/^www\./,''); }catch(_){ return url; } })();
+    el.innerHTML=`${d.image?`<img class="lc-img" src="${enc(d.image)}" loading="lazy" onerror="this.remove()">`:''}<div class="lc-body"><div class="lc-site">${enc(d.site||host)}</div>${d.title?`<div class="lc-title">${enc(d.title)}</div>`:''}${d.description?`<div class="lc-desc">${enc(d.description.slice(0,160))}</div>`:''}</div>`;
+    el.onclick=(ev)=>{ ev.stopPropagation(); window.open(url,'_blank','noopener'); };
+  }
   function linkify(txt){
     let h=enc(txt);
     // images / video / audio embed (extension may be followed by ?query or #frag); else link.

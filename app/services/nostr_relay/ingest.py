@@ -144,7 +144,7 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
             logger.warning("[nostr-relay] ancestor backfill failed: %s", e)
 
     try:
-        await fetch_lookup_metadata(store, upstream, batch, cfg.get("profile_limit", 500),
+        await fetch_lookup_metadata(store, upstream, batch, cfg.get("profile_limit", 1500),
                                     pace, direct)
     except Exception as e:
         logger.warning("[nostr-relay] metadata fetch failed: %s", e)
