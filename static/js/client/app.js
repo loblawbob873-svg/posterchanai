@@ -144,10 +144,11 @@
     // Run initial queries only once the relay socket is open (otherwise the REQs are dropped
     // and profiles/follows never resolve — names would show as raw npubs).
     Relay.onReady = ()=>{ fetchFollows(); fetchMutes(); fetchPins(); fetchMyProfile(); watchNotifications();
-      setTimeout(()=>ensureDMs(), 3000); };   // load DMs LAST so they don't slow the timeline
+      setTimeout(()=>ensureDMs(), 3000); setTimeout(loadRightbar, 1500); };   // DMs + rightbar load after the timeline
     Relay.connect(CFG.relay_url);
     renderMe();
     switchView('home');
+    setInterval(loadRightbar, 300000);   // refresh hot/trending every 5 min
     // Re-fetch profiles for on-screen authors still showing as npub — as the relay backfills
     // profiles, already-displayed posts resolve to names/avatars without needing a re-render.
     setInterval(()=>{ if(document.hidden) return; let n=0; $$('.note[data-pk]').forEach(el=>{ if(n<60 && !Store.haveProfile(el.dataset.pk)){ needProfile(el.dataset.pk); n++; } }); }, 12000);
@@ -242,6 +243,10 @@
       const nm=n.querySelector('.name'); if(nm) nm.textContent=p.name||p.display_name||nm.textContent;
       const h=n.querySelector('.handle'); const nip=niceNip05(p.nip05); if(h && nip) h.textContent=nip;
     }});
+    $$('.rb-item[data-pk]').forEach(n=>{ const p=Store.profile(n.dataset.pk); if(p){
+      const a=n.querySelector('.rb-av'); if(p.picture && a) a.src=p.picture;
+      const b=n.querySelector('b'); if(b) b.textContent=p.name||p.display_name||b.textContent;
+    }});
   }
 
   // ---------- view routing ----------
@@ -333,8 +338,22 @@
     }
     return noteCard(ev);
   }
+  // Pull media URLs OUT of the text into a flex gallery — leaving them inline let the post's
+  // newlines (white-space:pre-wrap) break each onto its own row (vertical stacking).
+  function mediaParts(raw){
+    const media=[];
+    const text=(raw||'').replace(/(https?:\/\/[^\s<]+)/g,(url)=>{
+      const u=url.replace(/[)\].,!?]+$/,''); const tail=url.slice(u.length); const E=enc(u);
+      if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)){ media.push(`<img src="${E}" loading="lazy">`); return tail; }
+      if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)){ media.push(`<video src="${E}" controls preload="metadata" playsinline></video>`); return tail; }
+      if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)){ media.push(`<img src="${E}" loading="lazy" onerror="this.onerror=null;var a=document.createElement('a');a.href=this.src;a.target='_blank';a.rel='noopener';a.textContent=this.src;this.replaceWith(a);">`); return tail; }
+      return url;  // non-media URL: leave for linkify
+    });
+    return { text, gallery: media.length?`<div class="media-row">${media.join('')}</div>`:'' };
+  }
   function noteCard(ev, prefix=''){
     const p = profOf(ev.pubkey); needProfile(ev.pubkey);
+    const mp = mediaParts(ev.content);
     const name = p.name||p.display_name||(NT().nip19.npubEncode(ev.pubkey).slice(0,12)+'…');
     const av = p.picture || LOGO;
     const handle = niceNip05(p.nip05) || ('@'+NT().nip19.npubEncode(ev.pubkey).slice(4,12));
@@ -346,8 +365,9 @@
       <div class="body">${prefix}
         <div class="hd"><span class="name" data-prof="${ev.pubkey}">${enc(name)}</span>
           <span class="handle">${enc(handle)}</span><span class="time">${timeAgo(ev.created_at)}</span></div>
-        <div class="txt">${linkify(ev.content)}</div>
-        ${linkCardHtml(ev.content)}
+        <div class="txt">${linkify(mp.text)}</div>
+        ${mp.gallery}
+        ${linkCardHtml(mp.text)}
         ${quoteHtml(ev)}
         <div class="acts">
           <button class="act" data-a="reply" title="reply">💬 <span class="n">${counts.replies||''}</span></button>
@@ -356,6 +376,7 @@
           <button class="act ${liked?'on':''}" data-a="like" title="like">${liked||'🤍'} <span class="n">${counts.reactions||''}</span></button>
           <button class="act actz" data-a="zap" title="zap (lightning)">⚡</button>
           <button class="act" data-a="react" title="react">😀</button>
+          <button class="act" data-a="copyid" title="copy event id">🆔</button>
           ${mine?`<button class="act ${PINNED.has(ev.id)?'on':''}" data-a="pin" title="pin/unpin on your profile">📌</button>`:''}
           ${mine?`<button class="act" data-a="delete" title="delete">🗑️</button>`:''}
           ${(IS_ADMIN && !mine)?`<button class="act" data-a="block" title="block author on relay">🚫</button>`:''}
@@ -414,7 +435,7 @@
     $('#feed').addEventListener('click', async (e)=>{
       const mn=e.target.closest('.mention'); if(mn){ e.preventDefault(); const pk=safePk(mn.dataset.np); if(pk) renderProfileView(pk); return; }
       const evl=e.target.closest('.evlink'); if(evl){ e.preventDefault(); renderThread(evl.dataset.ev); return; }
-      const im=e.target.closest('.txt img, .note-preview img'); if(im){ e.preventDefault(); openLightbox(im.currentSrc||im.src); return; }
+      const im=e.target.closest('.txt img, .note-preview img, .media-row img'); if(im){ e.preventDefault(); openLightbox(im.currentSrc||im.src); return; }
       const tm=e.target.closest('.time'); if(tm){ const n=e.target.closest('.note'); if(n){ renderThread(n.dataset.id); return; } }
       const av=e.target.closest('.av'); if(av){ const n=e.target.closest('.note'); if(n){ renderProfileView(n.dataset.pk); return; } }
       const prof=e.target.closest('[data-prof]'); if(prof){ renderProfileView(prof.dataset.prof); return; }
@@ -429,6 +450,7 @@
       if(a==='reply') return compose({reply:id, replyPk:pk});
       if(a==='delete') return doDelete(id,art);
       if(a==='zap') return doZap(id,pk);
+      if(a==='copyid'){ try{ navigator.clipboard.writeText(NT().nip19.noteEncode(id)); toast('note id copied'); }catch(_){ navigator.clipboard.writeText(id); toast('event id copied'); } return; }
       if(a==='pin') return togglePin(id);
       if(a==='block') return doBlock(pk);
     });
@@ -815,11 +837,15 @@
     wrap.innerHTML=`<div class="topbar"><button class="mini" id="dm-back">←</button> <b>${enc(p.name||NT().nip19.npubEncode(pk).slice(0,14))}</b></div>
       <div class="dm-msgs" id="dm-msgs">${msgs.map(m=>`<div class="bubble ${m.mine?'me':'them'}">${linkify(m.text||'')}</div>`).join('')}</div>
       <div class="dm-compose">
-        <button class="mini" id="dm-attach" title="attach">📎</button>
-        <button class="mini" id="dm-files" title="your Blossom files">🌸</button>
-        ${CFG.gif_enabled?`<button class="mini" id="dm-gif" title="GIF">🎬</button>`:''}
-        <input type="file" id="dm-file" multiple hidden>
-        <input class="input" id="dm-in" placeholder="encrypted message…"><button class="btn btn-neon" id="dm-send">▶</button></div>`;
+        <textarea class="input" id="dm-in" rows="2" placeholder="encrypted message…"></textarea>
+        <div class="dm-tools">
+          <button class="mini" id="dm-attach" title="attach">📎</button>
+          <button class="mini" id="dm-files" title="your Blossom files">🌸</button>
+          ${CFG.gif_enabled?`<button class="mini" id="dm-gif" title="GIF">🎬</button>`:''}
+          <input type="file" id="dm-file" multiple hidden>
+          <span class="spacer"></span>
+          <button class="btn btn-neon" id="dm-send">Send ▶</button>
+        </div></div>`;
     $('#dm-back').onclick=()=>{ $('#dm-list').classList.remove('has-active'); dmActive=null; };
     const inp=$('#dm-in');
     $('#dm-attach').onclick=()=>$('#dm-file').click();
@@ -828,7 +854,7 @@
     { const g=$('#dm-gif'); if(g) g.onclick=()=>gifPicker(inp); }
     const send=async()=>{ const t=inp.value.trim(); if(!t)return; inp.value='';
       try{ const ct=await signer.nip04enc(pk,t); await publish(4, ct, [['p',pk]]); }catch(e){ toast('dm failed: '+e.message);} };
-    $('#dm-send').onclick=send; $('#dm-in').onkeydown=e=>{ if(e.key==='Enter')send(); };
+    $('#dm-send').onclick=send; $('#dm-in').onkeydown=e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } };
     const m=$('#dm-msgs'); if(m)m.scrollTop=m.scrollHeight;
   }
 
@@ -1063,6 +1089,30 @@
   function closeModal(){ $('#modal-root').innerHTML=''; document.body.classList.remove('modal-open'); }
   function toast(m){ const t=document.createElement('div'); t.className='toast'; t.textContent=m; $('#toast-root').appendChild(t); setTimeout(()=>t.remove(),3200); }
   function openLightbox(src){ const bg=document.createElement('div'); bg.className='lightbox'; const i=document.createElement('img'); i.src=src; bg.appendChild(i); bg.onclick=()=>bg.remove(); document.body.appendChild(bg); }
+
+  // ---------- right column: Hot / Trending (desktop) ----------
+  async function loadRightbar(){
+    if(!document.querySelector('.rightbar')) return;
+    rankInto('rb-hot', 4*3600, 6);        // most engaged in the last 4h
+    rankInto('rb-trending', 24*3600, 6);  // most engaged in the last 24h
+  }
+  async function rankInto(elId, windowSec, n){
+    const el=document.getElementById(elId); if(!el) return;
+    const since=Math.floor(Date.now()/1000)-windowSec;
+    let evs=[]; try{ evs=await Relay.query([{ kinds:[6,7], since, limit:800 }]); }catch(_){}
+    const tally={};
+    for(const e of evs){ const id=(e.tags.filter(t=>t[0]==='e').pop()||[])[1]; if(id) tally[id]=(tally[id]||0)+1; }
+    const top=Object.entries(tally).sort((a,b)=>b[1]-a[1]).slice(0,n).map(x=>x[0]);
+    if(!top.length){ el.innerHTML='<div class="muted small">Nothing yet.</div>'; return; }
+    try{ const notes=await Relay.query([{ ids:top }]); notes.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); }); }catch(_){}
+    const rows=top.map(id=>{ const ev=Store.get(id); if(!ev||ev.kind!==1) return ''; const pr=profOf(ev.pubkey);
+      const txt=(ev.content||'').replace(/https?:\/\/\S+/g,'').trim().slice(0,90);
+      return `<div class="rb-item" data-open="${id}" data-pk="${ev.pubkey}"><div class="rb-head"><img class="rb-av" src="${enc(pr.picture||LOGO)}" onerror="this.src='${LOGO}'"><b>${enc(pr.name||pr.display_name||'anon')}</b> <span class="muted">· ${tally[id]} 🔥</span></div><div class="rb-txt">${enc(txt)||'<i>media</i>'}</div></div>`;
+    }).filter(Boolean).join('');
+    el.innerHTML=rows||'<div class="muted small">Nothing yet.</div>';
+    el.querySelectorAll('.rb-item[data-open]').forEach(it=> it.onclick=()=>renderThread(it.dataset.open));
+    decorateProfiles();
+  }
 
   document.addEventListener('DOMContentLoaded', boot);
 })();

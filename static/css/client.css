@@ -72,7 +72,7 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 @keyframes gl{0%{clip-path:inset(0 0 86% 0)}25%{clip-path:inset(60% 0 20% 0)}50%{clip-path:inset(20% 0 60% 0)}75%{clip-path:inset(86% 0 0 0)}100%{clip-path:inset(40% 0 40% 0)}}
 
 /* ===== app shell ===== */
-.app{display:grid;grid-template-columns:240px 1fr;height:100vh}
+.app{display:grid;grid-template-columns:280px 1fr;height:100vh}
 .sidebar{display:flex;flex-direction:column;gap:8px;padding:18px 14px;border-right:1px solid var(--line)}
 .brand{font-size:26px;font-weight:800;text-align:center;color:var(--neon);margin-bottom:8px}
 .nav{display:flex;flex-direction:column;gap:4px}
@@ -94,6 +94,22 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 .conn.off .dot{background:#ff4d6d;box-shadow:0 0 8px #ff4d6d}
 
 .main{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+/* desktop-only right column: Hot / Trending + GitHub link (hidden below 1100px) */
+.rightbar{display:none}
+@media(min-width:1180px){
+  .app{grid-template-columns:300px 1fr 360px}
+  .rightbar{display:flex;flex-direction:column;gap:16px;padding:18px 16px;border-left:1px solid var(--line);overflow-y:auto}
+}
+.rb-section h3{margin:0 0 8px;font-size:15px;letter-spacing:1px;color:var(--text)}
+.rb-item{padding:9px 10px;border:1px solid var(--line);border-radius:11px;margin-bottom:8px;cursor:pointer;transition:.13s;background:rgba(8,5,18,.4)}
+.rb-item:hover{border-color:var(--neon);background:rgba(255,43,214,.08)}
+.rb-head{display:flex;align-items:center;gap:7px}
+.rb-av{width:24px;height:24px;border-radius:50%;border:1px solid var(--line);object-fit:cover;flex-shrink:0;background:#1a1230}
+.rb-item b{font-size:13px}.rb-item .muted{font-size:11px}
+.rb-item .rb-txt{color:var(--muted);font-size:12.5px;line-height:1.35;margin-top:3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.rb-github{margin-top:auto;display:flex;align-items:center;justify-content:center;gap:9px;color:var(--text);
+  border:1px solid var(--line);border-radius:12px;padding:11px;font-weight:600;transition:.15s}
+.rb-github:hover{border-color:var(--cyan);color:var(--cyan);box-shadow:var(--glow-cy)}
 .topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
 .topbar h2{margin:0;font-size:24px;letter-spacing:1px;font-weight:800}
 .searchbox{flex:1;max-width:420px;margin:0 16px}
@@ -127,6 +143,10 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 /* ALL post-content media flows horizontally (inline-block) and is height-capped, so multiple
  * attachments form a wrapping gallery row instead of a giant vertical stack. */
 .note .txt img,.note .txt video,.note .media img,.note .media video{width:auto;max-width:100%;max-height:300px;border-radius:12px;margin:8px 6px 0 0;border:1px solid var(--line);display:inline-block;vertical-align:top;background:#0d0a1a}
+/* media gallery (pulled out of the text so newlines can't stack them) — capped height */
+.media-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.media-row img,.media-row video{max-height:300px;max-width:100%;width:auto;border-radius:12px;border:1px solid var(--line);background:#0d0a1a;cursor:pointer;flex:0 1 auto}
+.thread-focus .media-row img,.thread-focus .media-row video{max-height:420px}
 .note .txt audio{width:100%;max-width:420px;margin-top:8px;display:block}
 .note .txt a.mention{color:var(--cyan);font-weight:600}
 .note .repost-tag{font-size:12px;color:var(--green);margin-bottom:4px}
@@ -194,10 +214,11 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 .bubble{max-width:74%;padding:9px 13px;border-radius:14px;font-size:14px;line-height:1.4;white-space:pre-wrap;word-break:break-word}
 .bubble.me{align-self:flex-end;background:linear-gradient(135deg,var(--neon),var(--neon2));color:#fff;border-bottom-right-radius:4px}
 .bubble.them{align-self:flex-start;background:var(--panel2);border:1px solid var(--line);border-bottom-left-radius:4px}
-.dm-compose{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line);align-items:center}
-.dm-compose .input{margin:0;flex:1;min-width:60px;font-size:15px;padding:11px 14px}
-.dm-compose .mini{flex-shrink:0;font-size:19px;padding:8px 11px;line-height:1}
-.dm-compose .btn{padding:11px 18px;font-size:16px}
+.dm-compose{display:flex;flex-direction:column;gap:8px;padding:12px;border-top:1px solid var(--line)}
+.dm-compose .input{margin:0;width:100%;font-size:15px;padding:12px 14px;min-height:54px;resize:vertical;font-family:inherit}
+.dm-tools{display:flex;align-items:center;gap:8px}
+.dm-tools .mini{flex-shrink:0;font-size:19px;padding:8px 11px;line-height:1}
+.dm-tools .btn{padding:10px 20px;font-size:16px}
 
 /* blossom files */
 .files-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;padding:18px}
