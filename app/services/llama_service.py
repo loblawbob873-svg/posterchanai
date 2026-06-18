@@ -77,7 +77,15 @@ def _idle_check_loop():
             timeout = _llama_instance._idle_timeout
             if timeout > 0 and idle_time > timeout:
                 logger.info(f"LLM idle for {idle_time:.0f}s (>{timeout}s), unloading to free VRAM")
-                _llama_instance.unload_model()
+                # Free UNDER _request_counter_lock and re-check pending atomically with it. Unlike
+                # the image/video services, _ensure_model_loaded takes no internal lock (load/unload
+                # is serialized by the external GPU lock, which this idle thread does NOT hold) — so
+                # a plain re-check would still leave a use-after-free window where a just-incremented
+                # request reads the model between our check and _close_llama_safe(). Holding the lock
+                # across the free closes it: requests increment _pending_requests under this same lock
+                # before any inference, so while we hold it none can start, and any that already did
+                # make pending>0 (we skip). See diffusers/video for the _load_lock analog.
+                _llama_instance._idle_unload_if_free()
 
 
 def _get_inference_semaphore(max_concurrent: int = 1) -> threading.Semaphore:
@@ -1389,6 +1397,16 @@ class LlamaService:
             self._model_path = None
         self._load_settings()
         self._ensure_model_loaded()
+
+    def _idle_unload_if_free(self):
+        """Idle-monitor unload: atomically re-check the in-flight counter and free the model while
+        holding _request_counter_lock, so a request can't slip in and use a model we're freeing.
+        Safe re: deadlock — unload_model() takes no lock, and no _request_counter_lock holder calls
+        this (the inc/dec blocks are self-contained)."""
+        with _request_counter_lock:
+            if _pending_requests > 0:
+                return
+            self.unload_model()
 
     def unload_model(self):
         """Unload the model from memory"""
