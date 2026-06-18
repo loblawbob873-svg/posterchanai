@@ -115,6 +115,9 @@ class RelayServer:
                 return None  # let the WebSocket handshake proceed
             accept = hdrs.get("Accept", "")
             host = hdrs.get("Host", "") or f"{self.cfg.get('bind','')}:{self.cfg.get('port','')}"
+            # The reverse proxy preserves the public path (e.g. /relay), so the welcome page
+            # advertises the exact wss URL clients should use, not a guessed root.
+            path = (getattr(request, "path", "") or "/relay").split("?", 1)[0]
         except Exception:
             return None
         if "application/nostr+json" in accept:
@@ -124,11 +127,11 @@ class RelayServer:
             })
             return Response(200, "OK", headers, self.nip11_doc())
         headers = Headers({"Content-Type": "text/html; charset=utf-8"})
-        return Response(200, "OK", headers, self._welcome_html(host))
+        return Response(200, "OK", headers, self._welcome_html(host, path))
 
-    def _welcome_html(self, host: str) -> bytes:
+    def _welcome_html(self, host: str, path: str = "/relay") -> bytes:
         import html as _html
-        url = f"wss://{_html.escape(host)}/"
+        url = f"wss://{_html.escape(host)}{_html.escape(path)}"
         name = _html.escape(self.cfg.get("name") or "PosterChanAI Relay")
         desc = _html.escape(self.cfg.get("description") or "Web-of-trust Nostr relay")
         return _WELCOME_HTML.replace("{{URL}}", url).replace("{{NAME}}", name).replace(
