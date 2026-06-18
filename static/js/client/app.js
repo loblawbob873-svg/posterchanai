@@ -319,6 +319,7 @@
           <button class="act rt ${counts.iRt?'on':''}" data-a="repost" title="repost">🔁 <span class="n">${counts.reposts||''}</span></button>
           <button class="act actq" data-a="quote" title="quote post">❝</button>
           <button class="act ${liked?'on':''}" data-a="like" title="like">${liked||'🤍'} <span class="n">${counts.reactions||''}</span></button>
+          <button class="act actz" data-a="zap" title="zap (lightning)">⚡</button>
           <button class="act" data-a="react" title="react">😀</button>
           ${mine?`<button class="act" data-a="delete" title="delete">🗑️</button>`:''}
           ${(IS_ADMIN && !mine)?`<button class="act" data-a="block" title="block author on relay">🚫</button>`:''}
@@ -391,9 +392,48 @@
       if(a==='quote') return compose({quote:id});
       if(a==='reply') return compose({reply:id, replyPk:pk});
       if(a==='delete') return doDelete(id,art);
+      if(a==='zap') return doZap(id,pk);
       if(a==='block') return doBlock(pk);
     });
   }
+  // ---------- zaps (NIP-57 lightning) ----------
+  async function lnurlResolve(addr){
+    addr=(addr||'').trim(); if(!addr) return null;
+    let url=null;
+    if(addr.includes('@')){ const [name,domain]=addr.split('@'); url=`https://${domain}/.well-known/lnurlp/${encodeURIComponent(name)}`; }
+    else if(/^lnurl1/i.test(addr)){ try{ const d=NT().nip19.decode(addr); url=d&&d.data; }catch(_){ try{ url=new TextDecoder().decode(bech32ToBytes(addr)); }catch(__){} } }
+    if(!url) return null;
+    try{ const j=await fetch(url).then(r=>r.json()); return { callback:j.callback, allowsNostr:!!j.allowsNostr, min:j.minSendable, max:j.maxSendable }; }catch(_){ return null; }
+  }
+  async function doZap(noteId, pk){
+    const p=profOf(pk); const addr=p.lud16||p.lud06;
+    if(!addr){ toast('no lightning address on this profile'); return; }
+    const amt=parseInt(prompt('Zap amount (sats):','21')||'0',10); if(!amt||amt<1) return;
+    toast('preparing zap…');
+    try{
+      const lnurl=await lnurlResolve(addr);
+      if(!lnurl||!lnurl.callback){ toast('couldn\'t resolve '+addr); return; }
+      const msat=amt*1000;
+      let url=lnurl.callback+(lnurl.callback.includes('?')?'&':'?')+'amount='+msat;
+      if(lnurl.allowsNostr){
+        const zr=await sign(9734,'',[['relays',CFG.relay_url||''],['amount',String(msat)],['p',pk]].concat(noteId?[['e',noteId]]:[]));
+        url+='&nostr='+encodeURIComponent(JSON.stringify(zr));
+      }
+      const inv=await fetch(url).then(r=>r.json());
+      const pr=inv && inv.pr; if(!pr){ toast('no invoice'+(inv&&inv.reason?': '+inv.reason:'')); return; }
+      if(window.webln){ try{ await window.webln.enable(); await window.webln.sendPayment(pr); toast('⚡ zapped '+amt+' sats'); return; }catch(e){} }
+      invoiceModal(pr, amt);
+    }catch(e){ toast('zap failed: '+e.message); }
+  }
+  function invoiceModal(pr, amt){
+    modal(`<h3>⚡ Zap ${amt} sats</h3><p class="muted small">Pay with your Lightning wallet:</p>
+      <a class="btn btn-neon full" href="lightning:${enc(pr)}">Open in wallet</a>
+      <div class="keybox" style="margin-top:10px"><code id="z-inv">${enc(pr)}</code></div>
+      <button class="btn btn-cyan full" id="z-copy">Copy invoice</button>`, root=>{
+      $('#z-copy',root).onclick=()=>{ navigator.clipboard.writeText(pr); toast('invoice copied'); };
+    });
+  }
+  function bech32ToBytes(s){ const d=NT().nip19; throw new Error('lnurl decode unsupported'); }
   async function doBlock(pk){
     if(!IS_ADMIN) return;
     if(!confirm('Block this npub on the relay? Their events get rejected and purged.')) return;
@@ -745,10 +785,12 @@
           <button class="btn ${FOLLOWS.has(pk)?'btn-ghost':'btn-neon'} small" id="follow-prof">${FOLLOWS.has(pk)?'Following ✓':'Follow'}</button>
           <button class="btn btn-ghost small" id="mute-prof">${MUTED.has(pk)?'Unmute':'Mute'}</button>
           <button class="btn btn-ghost small" id="dm-prof">Message</button>
+          <button class="btn btn-ghost small" id="zap-prof">⚡ Zap</button>
           ${IS_ADMIN?`<button class="btn btn-ghost small" id="block-prof" style="color:#ff6b8b">Block</button>`:''}`}</div>
       <div class="pbody"><h2>${enc(p.name||p.display_name||'anon')}</h2>
         ${niceNip05(p.nip05)?`<div class="muted small">${enc(niceNip05(p.nip05))}</div>`:''}
         <div class="npubrow"><code>${enc(npub.slice(0,24))}…</code><button class="mini" id="copy-npub">📋 copy npub</button></div>
+        ${p.lud16?`<div class="muted small">⚡ ${enc(p.lud16)}</div>`:''}
         <div class="about">${linkify(p.about||'')}</div>
         <div class="follow-stats"><button class="statbtn" id="show-following"><b>${following.length}</b> Following</button><button class="statbtn" id="show-followers"><b>${followers.length}${followerEvs.length>=1000?'+':''}</b> Followers</button></div>
       </div></div>
@@ -760,6 +802,7 @@
     if(mine){ $('#edit-prof').onclick=()=>editProfile(p); $('#open-settings').onclick=openSettings; }
     else {
       const d=$('#dm-prof'); if(d)d.onclick=()=>{ switchView('messages'); setTimeout(()=>{ if(!dmPeers.has(pk))dmPeers.set(pk,[]); openDm(pk); },50); };
+      const z=$('#zap-prof'); if(z)z.onclick=()=>doZap(null,pk);
       const f=$('#follow-prof'); if(f)f.onclick=async()=>{ await toggleFollow(pk); renderProfileView(pk); };
       const m=$('#mute-prof'); if(m)m.onclick=async()=>{ await toggleMute(pk); renderProfileView(pk); };
       const b=$('#block-prof'); if(b)b.onclick=()=>doBlock(pk);
@@ -769,13 +812,14 @@
     modal(`<h3>Edit profile</h3>
       <label class="fld">Display name<input class="input" id="pf-name" placeholder="your name" value="${enc(p.name||p.display_name||'')}"></label>
       <label class="fld">NIP-05 identifier<input class="input" id="pf-nip05" placeholder="name@domain" value="${enc(p.nip05||'')}"></label>
+      <label class="fld">⚡ Lightning address<input class="input" id="pf-lud16" placeholder="you@walletofsatoshi.com" value="${enc(p.lud16||'')}"></label>
       <label class="fld">Picture URL<input class="input" id="pf-pic" placeholder="https://…" value="${enc(p.picture||'')}"></label>
       <label class="fld">Banner URL<input class="input" id="pf-banner" placeholder="https://…" value="${enc(p.banner||'')}"></label>
       <label class="fld">About<textarea id="pf-about" placeholder="a few words about you">${enc(p.about||'')}</textarea></label>
       <div class="row"><button class="mini" id="pf-up">🖼 upload pic</button><input type="file" id="pf-file" accept="image/*" hidden><span class="spacer"></span><button class="btn btn-neon" id="pf-save">Save</button></div>`, root=>{
       $('#pf-up',root).onclick=()=>$('#pf-file',root).click();
       $('#pf-file',root).onchange=async e=>{ const f=e.target.files[0]; if(!f)return; try{ $('#pf-pic',root).value=await uploadBlob(f); toast('uploaded'); }catch(err){toast('upload failed');} };
-      $('#pf-save',root).onclick=async()=>{ const meta={ ...p, name:$('#pf-name',root).value.trim(), nip05:$('#pf-nip05',root).value.trim(), picture:$('#pf-pic',root).value.trim(), banner:$('#pf-banner',root).value.trim(), about:$('#pf-about',root).value.trim() };
+      $('#pf-save',root).onclick=async()=>{ const meta={ ...p, name:$('#pf-name',root).value.trim(), nip05:$('#pf-nip05',root).value.trim(), lud16:$('#pf-lud16',root).value.trim(), picture:$('#pf-pic',root).value.trim(), banner:$('#pf-banner',root).value.trim(), about:$('#pf-about',root).value.trim() };
         closeModal(); await publish(0, JSON.stringify(meta), []); Store.saveProfile({pubkey:ME.pubkey,created_at:Math.floor(Date.now()/1000),content:JSON.stringify(meta)}); toast('profile saved'); renderMe(); renderProfileView(ME.pubkey); };
     });
   }

@@ -190,7 +190,7 @@ def _read_config() -> dict:
             # (1111), NIP-65 relay list (10002), NIP-23 long-form (30023). Including 0/3/10002 lets
             # the firehose stream WoT members' IDENTITY metadata too, so the relay serves profiles
             # without a separate fetch — same stream-and-filter path, no extra crawl.
-            "ingest_kinds": [int(k) for k in (g("nostr_relay_ingest_kinds", "0,1,3,6,7,1111,10002,30023")
+            "ingest_kinds": [int(k) for k in (g("nostr_relay_ingest_kinds", "0,1,3,6,7,1111,9735,10002,30023")
                              .replace(" ", "").split(",")) if k.strip().lstrip("-").isdigit()],
             "author_batch": gi("nostr_relay_author_batch", 200),
             # Politeness / anti-blast: pace upstream requests and outbox publishes so we don't

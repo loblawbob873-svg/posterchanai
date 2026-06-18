@@ -296,6 +296,13 @@ class RelayServer:
             if not self._dm_for_operator(ev):
                 self._send(conn, ["OK", eid, False, "blocked: not a DM to a relay user"])
                 return
+        elif kind == 9735:
+            # NIP-57 zap receipt — authored by the zapper SERVICE (lnurl provider), not the zapper,
+            # so the WoT gate can't apply to its author. Accept when it concerns (p-tags) a WoT
+            # member, so members' zaps are stored + counted.
+            if not any(len(t) >= 2 and t[0] == "p" and self.gate.is_member(t[1]) for t in ev.get("tags", [])):
+                self._send(conn, ["OK", eid, False, "blocked: zap not for a web-of-trust member"])
+                return
         elif not self.gate.is_member(ev.get("pubkey", "")):
             self._send(conn, ["OK", eid, False, "blocked: not in web of trust"])
             return

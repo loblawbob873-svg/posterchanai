@@ -146,7 +146,8 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 .note{position:relative}
 .note::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:transparent;transition:.15s}
 .note:hover::before{background:linear-gradient(var(--neon),var(--neon2));box-shadow:0 0 10px var(--neon)}
-.acts{display:flex;gap:8px;margin-top:12px;max-width:480px;justify-content:space-between}
+.acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;max-width:520px}
+.act.actz{color:var(--amber)} .act.actz:hover{color:var(--amber);border-color:var(--amber);box-shadow:0 0 14px rgba(255,207,43,.35)}
 .act{display:flex;align-items:center;gap:7px;background:rgba(123,97,255,.07);border:1px solid var(--line);color:var(--muted);cursor:pointer;
   font-size:17px;padding:8px 14px;border-radius:12px;transition:.13s;line-height:1}
 .act:hover{color:var(--cyan);background:rgba(33,230,255,.14);border-color:var(--cyan);box-shadow:0 0 14px rgba(33,230,255,.3);transform:translateY(-1px)}
@@ -256,6 +257,13 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
   .mobilenav .nav-item.active{color:var(--neon)}
   .mobilenav .compose{color:var(--neon)}
   .mobilenav .badge{position:absolute;top:5px;left:55%;margin:0}
+  /* width / horizontal-overflow guards on mobile */
+  html,body,.app,.main,.feed{max-width:100vw;overflow-x:hidden}
+  .note{padding:12px 12px}
+  .note .txt img,.note .txt video,.note .txt audio,.link-card,.quoted,.note-preview{max-width:100%}
+  .acts{gap:6px}
+  .act{font-size:15px;padding:6px 9px}
+  .act.actq{font-size:22px;padding-top:6px;padding-bottom:4px}
   .topbar{padding:10px 14px;gap:8px}
   .topbar h2{font-size:16px;flex-shrink:0}
   .searchbox{margin:0 4px}
