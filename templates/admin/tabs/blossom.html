@@ -1,0 +1,50 @@
+<!-- Blossom Media Server Tab -->
+<div class="tab-content" id="tab-blossom">
+
+    <fieldset>
+        <legend>Built-in Blossom Media Server</legend>
+        <div class="form-group">
+            <label for="blossom_enabled">
+                <input type="checkbox" id="blossom_enabled" name="blossom_enabled"> Run the Blossom server on this node
+            </label>
+            <small>Serves Blossom (BUD-01/02/06) at <code>/blossom</code> on this app's port. Front it with TLS so clients use <code>https://yourdomain/blossom</code>. Blobs are public-by-hash; <strong>uploading</strong> requires the per-user 🌸 Blossom access toggle (Admin → Users) and a linked Nostr key.</small>
+        </div>
+        <div class="form-group">
+            <label for="blossom_public_url">Public base URL</label>
+            <input type="text" id="blossom_public_url" name="blossom_public_url" placeholder="https://yourdomain/blossom">
+            <small>Advertised in blob descriptors / list responses. Leave blank to derive from the request (set it if behind a reverse proxy that rewrites the host).</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Storage</legend>
+        <div class="form-group">
+            <label for="blossom_storage_backend">Backend</label>
+            <select id="blossom_storage_backend" name="blossom_storage_backend">
+                <option value="proxy">Storage server (proxy) — recommended</option>
+                <option value="local">Local disk on this node</option>
+            </select>
+            <small><strong>Proxy</strong> stores blobs on the shared PosterChanAI storage server (the same one configured under Services → Storage). Falls back to local automatically if no storage server is set.</small>
+        </div>
+        <div class="form-group">
+            <label for="blossom_storage_path">Local blob directory</label>
+            <input type="text" id="blossom_storage_path" name="blossom_storage_path" placeholder="(default: ./data/blossom)">
+            <small>Only used by the <em>local</em> backend. Blank = <code>data/blossom</code> under the app root (or <code>$POSTERCHANAI_BLOSSOM_PATH</code>).</small>
+        </div>
+        <div class="form-group">
+            <label for="blossom_max_upload_mb">Max upload size (MB)</label>
+            <input type="number" id="blossom_max_upload_mb" name="blossom_max_upload_mb" placeholder="100">
+            <small>Uploads larger than this are rejected (HTTP 413).</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Expiration</legend>
+        <div class="form-group">
+            <label for="blossom_blob_ttl_days">Blob TTL (days)</label>
+            <input type="number" id="blossom_blob_ttl_days" name="blossom_blob_ttl_days" placeholder="0">
+            <small><code>0</code> = blobs never expire. Otherwise each blob is deleted (bytes + record) this many days after upload; a background sweep runs every 10 minutes. Re-uploading a blob refreshes its window.</small>
+        </div>
+    </fieldset>
+
+</div>

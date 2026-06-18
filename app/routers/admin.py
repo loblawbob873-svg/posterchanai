@@ -445,6 +445,7 @@ def create_user(
         can_music=True,
         can_video=False,
         can_torrent=False,
+        can_blossom=False,
     )
     db.add(user)
     db.commit()
@@ -571,10 +572,11 @@ def update_user_capabilities(
     can_music: bool = Query(...),
     can_video: bool = Query(...),
     can_torrent: bool = Query(...),
+    can_blossom: bool = Query(False),
     db: Session = Depends(get_db),
     admin: User = Depends(get_admin_user)
 ):
-    """Set a user's per-feature access (image/music/video/torrent). Admins are always
+    """Set a user's per-feature access (image/music/video/torrent/blossom). Admins are always
     allowed regardless of these flags."""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -583,10 +585,12 @@ def update_user_capabilities(
     user.can_music = can_music
     user.can_video = can_video
     user.can_torrent = can_torrent
+    user.can_blossom = can_blossom
     db.commit()
     db.refresh(user)
     logger.info(f"[ADMIN] Updated capabilities for user {user_id} ({user.username}): "
-                f"image={can_image} music={can_music} video={can_video} torrent={can_torrent}")
+                f"image={can_image} music={can_music} video={can_video} torrent={can_torrent} "
+                f"blossom={can_blossom}")
     return user
 
 

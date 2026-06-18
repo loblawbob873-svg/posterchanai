@@ -31,6 +31,7 @@ class UserResponse(BaseModel):
     can_music: bool = True
     can_video: bool = True
     can_torrent: bool = True
+    can_blossom: bool = False
     telegram_enabled: bool = False
     telegram_chat_id: Optional[str] = None
     telegram_notifications: str = ""
@@ -552,6 +553,13 @@ class UserSettingsUpdate(BaseModel):
     nostr_relay_blocked_langs: Optional[str] = None    # CSV of blocked language codes
     nostr_relay_blocked_words: Optional[str] = None    # newline list; reject notes containing these
     nostr_relay_blocked_pubkeys: Optional[str] = None  # npub/hex denylist (purged + rejected)
+    # Built-in Blossom media server (BUD-01/02). Served by the app at /blossom (front with TLS).
+    blossom_enabled: Optional[bool] = None
+    blossom_public_url: Optional[str] = None       # advertised base URL (blank = derive from request)
+    blossom_blob_ttl_days: Optional[int] = None    # per-blob expiry in days (0 = never)
+    blossom_max_upload_mb: Optional[int] = None     # reject uploads over this size
+    blossom_storage_backend: Optional[str] = None  # "local" | "proxy" (storage_server_url)
+    blossom_storage_path: Optional[str] = None      # local blob dir (blank = ./data/blossom)
 
 
 class UserSettingsResponse(BaseModel):

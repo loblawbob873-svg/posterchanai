@@ -281,6 +281,7 @@ def _run_migrations():
         ("can_music", "BOOLEAN DEFAULT 1"),
         ("can_video", "BOOLEAN DEFAULT 1"),
         ("can_torrent", "BOOLEAN DEFAULT 1"),
+        ("can_blossom", "BOOLEAN DEFAULT 0"),  # opt-in: allow Blossom uploads (see blossom_service)
         # Scheduled news / custom news sources
         ("news_schedule_enabled", "BOOLEAN DEFAULT 0"),
         ("news_schedule_time", "VARCHAR(5) DEFAULT '12:00'"),
@@ -431,9 +432,30 @@ def _run_migrations():
         except Exception as e:
             logger.warning(f"[MIGRATE] Failed to ensure saved_searches table: {e}")
 
+    # Built-in Blossom media server (BUD-01/02). Content-addressed blob store keyed by sha256.
+    with engine.connect() as conn:
+        try:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS blossom_blobs (
+                    sha256 VARCHAR(64) NOT NULL PRIMARY KEY,
+                    pubkey VARCHAR(64) NOT NULL,
+                    size INTEGER NOT NULL,
+                    mime VARCHAR(120),
+                    created_at INTEGER NOT NULL,
+                    expires_at INTEGER,
+                    storage VARCHAR(10) NOT NULL DEFAULT 'local',
+                    path VARCHAR(512) NOT NULL
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_blossom_pubkey ON blossom_blobs (pubkey)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_blossom_expires ON blossom_blobs (expires_at)"))
+            conn.commit()
+        except Exception as e:
+            logger.warning(f"[MIGRATE] Failed to ensure blossom_blobs table: {e}")
+
 
 def init_db():
-    from app.models import User, Conversation, Message, Setting, ProxyImageCache, SocialReplyMap, Bot, Reminder, SavedSearch  # noqa: F401 - registers tables for create_all
+    from app.models import User, Conversation, Message, Setting, ProxyImageCache, SocialReplyMap, Bot, Reminder, SavedSearch, BlossomBlob  # noqa: F401 - registers tables for create_all
     logger.info("[INIT] Initializing database...")
     Base.metadata.create_all(bind=engine)
 
@@ -462,6 +484,17 @@ def init_db():
             # nostr_relay_port). Default OFF; ships a starter WoT seed set so a fresh node has
             # a sane trust graph the moment it's enabled. All other knobs fall back to code
             # defaults in app/services/nostr_relay/thread.py. See docs/RELAY.md.
+            # Built-in Blossom media server (BUD-01/02), served by the app at /blossom. Default
+            # OFF; whitelist is empty (only linked users/bots may upload) and blobs never expire
+            # until configured. See docs/BLOSSOM.md. Code defaults in app/services/blossom_service.py.
+            "blossom_enabled": "false",
+            "blossom_public_url": "",
+            "blossom_blob_ttl_days": "0",
+            "blossom_max_upload_mb": "100",
+            # PosterChanAI uses the shared storage server, so blobs default to the proxy
+            # backend; falls back to local automatically when storage_server_url is unset.
+            "blossom_storage_backend": "proxy",
+            "blossom_storage_path": "",
             "nostr_relay_enabled": "false",
             "nostr_relay_port": "3052",
             "nostr_relay_wot_seeds": "\n".join([

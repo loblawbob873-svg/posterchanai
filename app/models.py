@@ -31,6 +31,9 @@ class User(Base):
     can_music = Column(Boolean, default=True)    # music generation (musicgeni)
     can_video = Column(Boolean, default=True)    # video generation (videogeni)
     can_torrent = Column(Boolean, default=True)  # torrent search / download
+    # Blossom upload privilege. Default False (opt-in): granting it lets this user's linked
+    # Nostr key (nostr_npub) upload blobs to the built-in Blossom server. See blossom_service.
+    can_blossom = Column(Boolean, default=False)
 
     # Telegram integration settings
     telegram_enabled = Column(Boolean, default=False)
@@ -273,6 +276,30 @@ class MatrixAvatarCache(Base):
     width = Column(Integer, nullable=True)
     height = Column(Integer, nullable=True)
     fetched_at = Column(DateTime, default=datetime.utcnow)
+
+
+class BlossomBlob(Base):
+    """A blob stored by the built-in Blossom server (BUD-01/02). Content-addressed:
+    the row key is the blob's sha256, so the same bytes uploaded by several users are
+    stored ONCE (the row's `pubkey` is the first/owning uploader). `storage` selects the
+    backend — `local` keeps bytes on this node under `path` (a file in the blob dir),
+    `proxy` keeps them on the configured storage server (`path` is the relative path the
+    storage node returned). `expires_at` is the per-blob TTL (0/NULL = never); the cleanup
+    sweep deletes rows + bytes past it."""
+    __tablename__ = "blossom_blobs"
+    __table_args__ = (
+        Index('ix_blossom_pubkey', 'pubkey'),
+        Index('ix_blossom_expires', 'expires_at'),
+    )
+
+    sha256 = Column(String(64), primary_key=True)
+    pubkey = Column(String(64), nullable=False)        # owning uploader (hex x-only)
+    size = Column(Integer, nullable=False)
+    mime = Column(String(120), nullable=True)
+    created_at = Column(Integer, nullable=False)        # unix seconds
+    expires_at = Column(Integer, nullable=True)         # unix seconds; 0/NULL = never
+    storage = Column(String(10), nullable=False, default="local")  # "local" | "proxy"
+    path = Column(String(512), nullable=False)          # local file path or proxy rel-path
 
 
 class MatrixNotifyMap(Base):

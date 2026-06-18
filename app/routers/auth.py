@@ -114,6 +114,7 @@ def register(user_data: UserRegister, request: Request, response: Response, db: 
         can_music=True,
         can_video=False,
         can_torrent=False,
+        can_blossom=False,
     )
     db.add(user)
     db.commit()

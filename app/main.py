@@ -25,6 +25,7 @@ from app.routers.telegram import router as telegram_router
 from app.routers.misskey import router as misskey_router
 from app.routers.pleroma import router as pleroma_router
 from app.routers.nostr import router as nostr_router
+from app.routers.blossom import router as blossom_router
 from app.routers.matrix import router as matrix_router
 from app.services.load_balancer import NoHealthyServersError
 from fastapi.responses import JSONResponse
@@ -173,6 +174,7 @@ app.include_router(telegram_router)
 app.include_router(misskey_router)
 app.include_router(pleroma_router)
 app.include_router(nostr_router)
+app.include_router(blossom_router)
 app.include_router(matrix_router)
 # OpenAI-compatible API: use OPENAI_API_PREFIX if app is behind a reverse proxy subpath
 _openai_prefix = os.getenv("OPENAI_API_PREFIX", "").strip().rstrip("/")
@@ -248,6 +250,25 @@ async def startup():
             except Exception as e:
                 logging.error(f"Error seeding Nostr relay settings: {e}")
 
+        # Turnkey Docker Blossom server: when POSTERCHANAI_BLOSSOM=1, auto-enable the built-in
+        # Blossom media server. Default backend stays "proxy" (falls back to local on the data
+        # volume if no storage server is set). Only seeds keys the admin hasn't already set.
+        if os.environ.get("POSTERCHANAI_BLOSSOM", "0") == "1":
+            try:
+                _db = SessionLocal()
+                _bdefaults = {
+                    "blossom_enabled": "true",
+                    "blossom_storage_path": "/app/data/blossom",
+                }
+                for _k, _v in _bdefaults.items():
+                    if not _db.query(Setting).filter(Setting.key == _k).first():
+                        _db.add(Setting(key=_k, value=_v))
+                _db.commit()
+                _db.close()
+                logging.info("Blossom server auto-configured from POSTERCHANAI_BLOSSOM env")
+            except Exception as e:
+                logging.error(f"Error seeding Blossom settings: {e}")
+
         # Start health check if enabled (in background, don't block startup)
         try:
             from app.services.health_check import start_health_check
@@ -298,6 +319,13 @@ async def startup():
                 start_nostr_relay()
             except Exception as e:
                 logging.error(f"Error starting Nostr relay: {e}", exc_info=True)
+
+            try:
+                # Start the Blossom expiry-cleanup thread (idle until blobs have a TTL)
+                from app.services.blossom_service import start_blossom_cleanup
+                start_blossom_cleanup()
+            except Exception as e:
+                logging.error(f"Error starting Blossom cleanup: {e}", exc_info=True)
 
         else:
             logging.info(f"Schedulers disabled on port {app_port} (only run on port 3051)")
@@ -437,6 +465,13 @@ async def shutdown():
         try:
             from app.services.nostr_relay import stop_nostr_relay
             stop_nostr_relay()
+        except Exception:
+            pass
+
+        # Stop the Blossom expiry-cleanup thread
+        try:
+            from app.services.blossom_service import stop_blossom_cleanup
+            stop_blossom_cleanup()
         except Exception:
             pass
 
