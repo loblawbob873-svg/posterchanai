@@ -6,6 +6,7 @@ Runs on the relay thread's own asyncio loop (see thread.py). All persistence goe
 so only web-of-trust pubkeys are ever accepted.
 """
 
+import re
 import json
 import asyncio
 import logging
@@ -36,6 +37,10 @@ def _match_one(flt: dict, ev: dict) -> bool:
             have = {str(t[1]) for t in ev.get("tags", []) if len(t) >= 2 and t[0] == key[1]}
             if not (want & have):
                 return False
+    if flt.get("search"):
+        low = (ev.get("content") or "").lower()
+        if not all(t in low for t in re.findall(r"\w+", flt["search"].lower())):
+            return False
     return True
 
 
@@ -91,8 +96,8 @@ class RelayServer:
             "name": c.get("name") or "PosterChanAI Relay",
             "description": c.get("description") or "Web-of-trust relay",
             "software": "https://github.com/loblawbob873-svg/posterchanai",
-            # 1 core, 2 contacts, 9 deletes, 11 info, 45 COUNT, 65 relay-list (lookup relay)
-            "supported_nips": [1, 2, 9, 11, 45, 65],
+            # 1 core, 2 contacts, 9 deletes, 11 info, 45 COUNT, 50 search, 65 relay-list
+            "supported_nips": [1, 2, 9, 11, 45, 50, 65],
             "limitation": {
                 "max_message_length": c.get("max_message_size", 262144),
                 "max_subscriptions": c.get("max_subs_per_conn", 20),

@@ -12,6 +12,7 @@ Schema mirrors a minimal NIP-01 relay: `events` + a single-letter `event_tags` i
 """
 
 import os
+import re
 import json
 import time
 import shutil
@@ -22,6 +23,13 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
+
+
+def _fts_match(search: str) -> str | None:
+    """Turn a NIP-50 search string into a safe FTS5 MATCH expression: alphanumeric tokens,
+    each quoted, AND-ed together. Quoting avoids FTS5 syntax errors from arbitrary input."""
+    toks = re.findall(r"\w+", (search or "").lower())
+    return " ".join(f'"{t}"' for t in toks[:12]) if toks else None
 
 # Replaceable event kind ranges (NIP-01): keep only the newest per (pubkey, kind) — and for
 # the parameterized range, per (pubkey, kind, d-tag).
@@ -64,6 +72,18 @@ CREATE TABLE IF NOT EXISTS relay_kv (
 );
 """
 
+# NIP-50 search: an FTS5 index over note (kind-1) content, kept in sync by triggers. Created
+# separately (with a graceful fallback) since FTS5 may not be compiled into SQLite.
+_FTS_SCHEMA = """
+CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(content, content='events', content_rowid='rowid');
+CREATE TRIGGER IF NOT EXISTS events_fts_ai AFTER INSERT ON events WHEN new.kind=1 BEGIN
+  INSERT INTO events_fts(rowid, content) VALUES (new.rowid, new.content);
+END;
+CREATE TRIGGER IF NOT EXISTS events_fts_ad AFTER DELETE ON events WHEN old.kind=1 BEGIN
+  INSERT INTO events_fts(events_fts, rowid, content) VALUES('delete', old.rowid, old.content);
+END;
+"""
+
 
 # Kinds preserved forever by the age-based auto-cleaner: profiles (0) and contact lists (3).
 # They're replaceable (one per author) so they don't grow unbounded, and clients need them
@@ -86,6 +106,7 @@ class RelayStore:
         self._read_exec = ThreadPoolExecutor(max_workers=read_workers, thread_name_prefix="relay-db-r")
         self._snap_exec = ThreadPoolExecutor(max_workers=1, thread_name_prefix="relay-db-snap")
         self._last_dv = -1   # PRAGMA data_version at last snapshot (dirty check)
+        self._fts = False    # NIP-50 full-text search available?
         self._loop: asyncio.AbstractEventLoop | None = None
 
     # --- lifecycle ----------------------------------------------------------
@@ -105,6 +126,19 @@ class RelayStore:
         conn = self._conn()
         conn.executescript(_SCHEMA)
         conn.commit()
+        # NIP-50 search index (FTS5). Graceful: if FTS5 isn't compiled in, search falls back
+        # to a LIKE scan. Populate from existing notes on first creation.
+        try:
+            conn.executescript(_FTS_SCHEMA)
+            if conn.execute("SELECT COUNT(*) FROM events_fts").fetchone()[0] == 0 and \
+                    conn.execute("SELECT 1 FROM events WHERE kind=1 LIMIT 1").fetchone():
+                conn.execute("INSERT INTO events_fts(rowid, content) "
+                             "SELECT rowid, content FROM events WHERE kind=1")
+            conn.commit()
+            self._fts = True
+        except Exception as e:
+            logger.warning("[nostr-relay] FTS5 unavailable; NIP-50 search uses LIKE: %s", e)
+            self._fts = False
 
     def close(self) -> None:
         self._write_exec.shutdown(wait=True)
@@ -266,6 +300,19 @@ class RelayStore:
         if flt.get("until") is not None:
             where.append("e.created_at <= ?")
             params.append(int(flt["until"]))
+        # NIP-50 full-text search over note content.
+        search = flt.get("search")
+        if search:
+            if self._fts:
+                m = _fts_match(search)
+                if not m:
+                    return []
+                where.append("e.rowid IN (SELECT rowid FROM events_fts WHERE events_fts MATCH ?)")
+                params.append(m)
+            else:
+                for term in re.findall(r"\w+", search.lower())[:12]:
+                    where.append("LOWER(e.content) LIKE ?")
+                    params.append("%" + term + "%")
         # Tag filters: keys like "#e", "#p", "#t" → join event_tags (AND across tag keys).
         for key, vals in flt.items():
             if not (isinstance(key, str) and key.startswith("#") and len(key) == 2 and vals):
