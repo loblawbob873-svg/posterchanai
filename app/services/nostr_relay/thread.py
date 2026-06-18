@@ -38,6 +38,7 @@ class _Relay:
         self.store: RelayStore | None = None
         self.gate: WotGate | None = None
         self.server: RelayServer | None = None
+        self.outbox = None
         self.cfg: dict = {}
 
     def is_running(self) -> bool:
@@ -105,6 +106,11 @@ def _read_config() -> dict:
             "ingest_kinds": [int(k) for k in (g("nostr_relay_ingest_kinds", "1,6,7")
                              .replace(" ", "").split(",")) if k.strip().lstrip("-").isdigit()],
             "author_batch": gi("nostr_relay_author_batch", 200),
+            # Politeness / anti-blast: pace upstream requests and outbox publishes so we don't
+            # hammer the public relays and get rate-limited or blocked.
+            "request_pace_sec": float(g("nostr_relay_request_pace_sec", "1.0") or 1.0),
+            "outbox_min_interval": float(g("nostr_relay_outbox_min_interval_sec", "1.0") or 1.0),
+            "outbox_max_queue": gi("nostr_relay_outbox_max_queue", 500),
             "fetch_ancestors": gb("nostr_relay_fetch_ancestors", True),
             "max_ancestors": gi("nostr_relay_max_ancestors", 20),
             "blocked_langs": {x.strip() for x in g("nostr_relay_blocked_langs", "")
@@ -169,10 +175,12 @@ async def _main(cfg: dict) -> None:
     gate = WotGate()
     gate.set_operator(cfg["operator"])
     await gate.load_from_store(store)              # warm from snapshot for immediate gating
-    from . import outbox as _outbox
-    server = RelayServer(store, gate, cfg,
-                         outbox_cb=lambda ev: _outbox.broadcast(cfg["upstream"], ev))
-    _relay.store, _relay.gate, _relay.server = store, gate, server
+    from .outbox import Outbox
+    outbox = Outbox(cfg["upstream"], min_interval=cfg["outbox_min_interval"],
+                    maxsize=cfg["outbox_max_queue"])
+    outbox.start()
+    server = RelayServer(store, gate, cfg, outbox_cb=outbox.enqueue)
+    _relay.store, _relay.gate, _relay.server, _relay.outbox = store, gate, server, outbox
     _relay.stop_event = asyncio.Event()
 
     # Initial WoT build (best-effort; non-fatal if upstream is slow).
@@ -207,6 +215,7 @@ async def _main(cfg: dict) -> None:
     finally:
         for t in tasks:
             t.cancel()
+        outbox.stop()
         ws.close()
         try:
             await ws.wait_closed()

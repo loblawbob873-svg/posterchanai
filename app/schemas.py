@@ -529,6 +529,9 @@ class UserSettingsUpdate(BaseModel):
     nostr_relay_overlap_sec: Optional[int] = None
     nostr_relay_ingest_kinds: Optional[str] = None
     nostr_relay_author_batch: Optional[int] = None
+    nostr_relay_request_pace_sec: Optional[float] = None       # delay between upstream queries
+    nostr_relay_outbox_min_interval_sec: Optional[float] = None  # min delay between broadcasts
+    nostr_relay_outbox_max_queue: Optional[int] = None
     nostr_relay_name: Optional[str] = None
     nostr_relay_description: Optional[str] = None
     nostr_relay_pubkey: Optional[str] = None

@@ -12,6 +12,7 @@ and new events are pushed live to matching open subscriptions.
 """
 
 import time
+import asyncio
 import logging
 
 from app.services.nostr import relay as _relay
@@ -45,6 +46,7 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
     kinds = cfg["ingest_kinds"]
     batch = cfg["author_batch"]
     blocked = cfg.get("blocked_langs")
+    pace = cfg.get("request_pace_sec", 1.0)
     deadline = time.monotonic() + cfg.get("budget_sec", 45)
 
     new_events = []
@@ -54,6 +56,8 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
             logger.info("[nostr-relay] sync budget hit (%d/%d authors); rest next tick",
                         scanned, len(members))
             break
+        if i > 0 and pace > 0:
+            await asyncio.sleep(pace)   # pace upstream REQs — don't blast the relays
         chunk = members[i:i + batch]
         scanned += len(chunk)
         try:
@@ -92,7 +96,7 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
             logger.warning("[nostr-relay] ancestor backfill failed: %s", e)
 
     try:
-        await fetch_missing_profiles(store, upstream, batch, cfg.get("profile_limit", 500))
+        await fetch_missing_profiles(store, upstream, batch, cfg.get("profile_limit", 500), pace)
     except Exception as e:
         logger.warning("[nostr-relay] profile fetch failed: %s", e)
 
@@ -141,15 +145,17 @@ async def backfill_ancestors(store, server, upstream, events, max_ancestors: int
     return fetched
 
 
-async def fetch_missing_profiles(store, upstream, batch: int, limit: int) -> int:
+async def fetch_missing_profiles(store, upstream, batch: int, limit: int, pace: float = 1.0) -> int:
     """Pull kind-0 metadata for WoT members we have no profile for, so clients render
-    names/avatars. Batched by author to respect relay filter caps."""
+    names/avatars. Batched by author to respect relay filter caps, paced to be polite."""
     missing = await store.wot_missing_profiles()
     if not missing:
         return 0
     missing = missing[:limit]
     stored = 0
     for i in range(0, len(missing), batch):
+        if i > 0 and pace > 0:
+            await asyncio.sleep(pace)
         chunk = missing[i:i + batch]
         try:
             evs = await _relay.query(upstream, [{"authors": chunk, "kinds": [0]}])

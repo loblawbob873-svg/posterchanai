@@ -105,6 +105,26 @@
     </fieldset>
 
     <fieldset>
+        <legend>Rate limiting (be a good upstream citizen)</legend>
+        <small>Pace requests to the public relays so a big sync or a post-blasting bot doesn't get us rate-limited or blocked.</small>
+        <div class="form-group">
+            <label for="nostr_relay_request_pace_sec">Delay between sync queries (seconds)</label>
+            <input type="number" step="0.1" id="nostr_relay_request_pace_sec" name="nostr_relay_request_pace_sec" placeholder="1.0">
+            <small>Pause between each batch of authors when syncing/fetching profiles.</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_outbox_min_interval_sec">Min delay between broadcasts (seconds)</label>
+            <input type="number" step="0.1" id="nostr_relay_outbox_min_interval_sec" name="nostr_relay_outbox_min_interval_sec" placeholder="1.0">
+            <small>Throttles re-broadcasting your bots'/users' posts to upstream relays.</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_outbox_max_queue">Outbox queue size</label>
+            <input type="number" id="nostr_relay_outbox_max_queue" name="nostr_relay_outbox_max_queue" placeholder="500">
+            <small>Pending broadcasts beyond this are dropped (prevents a burst ballooning memory).</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
         <legend>Storage &amp; memory</legend>
         <div class="form-group">
             <label for="nostr_relay_scratch_dir">Scratch dir (hot DB)</label>

@@ -197,14 +197,12 @@ class RelayServer:
         if stored:
             await self.subs.fanout(ev)
             if self.outbox_cb:
-                # Fire-and-forget so a slow multi-relay publish never blocks this connection.
-                asyncio.create_task(self._safe_outbox(ev))
-
-    async def _safe_outbox(self, ev) -> None:
-        try:
-            await self.outbox_cb(ev)
-        except Exception as e:
-            logger.debug("[nostr-relay] outbox_cb failed: %s", e)
+                # Non-blocking enqueue onto the paced outbox queue (drops on overflow) — a
+                # post-blasting client can't stall this connection or flood upstream relays.
+                try:
+                    self.outbox_cb(ev)
+                except Exception as e:
+                    logger.debug("[nostr-relay] outbox enqueue failed: %s", e)
 
     async def _on_req(self, conn, sub_id, filters) -> None:
         if not isinstance(sub_id, str):
