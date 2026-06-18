@@ -741,7 +741,7 @@
       <input class="input" id="dm-to" placeholder="@name, npub1…, or name@domain" autocomplete="off">
       <div id="dm-ac" class="mention-box hidden"></div>
       <textarea id="dm-body" placeholder="encrypted message…"></textarea>
-      <div class="row"><button class="mini" id="dm-attach">📎 attach</button><input type="file" id="dm-file" multiple hidden><span class="spacer"></span><button class="btn btn-neon" id="dm-go">Send ▶</button></div>
+      <div class="row cmp-tools"><button class="btn btn-ghost small" id="dm-attach">📎 Attach</button><button class="btn btn-ghost small" id="dm-files">🌸 Files</button>${CFG.gif_enabled?`<button class="btn btn-ghost small" id="dm-gif">🎬 GIF</button>`:''}<input type="file" id="dm-file" multiple hidden><span class="spacer"></span><button class="btn btn-neon" id="dm-go">Send ▶</button></div>
       <div class="muted small" id="dm-status"></div>`, root=>{
       let toPk=null; const to=$('#dm-to',root), ac=$('#dm-ac',root), body=$('#dm-body',root);
       to.addEventListener('input', ()=>{ const v=to.value.trim(); toPk=null;
@@ -754,6 +754,8 @@
       });
       $('#dm-attach',root).onclick=()=>$('#dm-file',root).click();
       $('#dm-file',root).onchange=async e=>{ const files=[...e.target.files]; for(let i=0;i<files.length;i++){ $('#dm-status',root).textContent=`uploading ${i+1}/${files.length}…`; try{ const url=await uploadBlob(files[i]); body.value+=(body.value?'\n':'')+url; }catch(err){ $('#dm-status',root).textContent='upload failed: '+err.message; return; } } $('#dm-status',root).textContent=''; };
+      $('#dm-files',root).onclick=()=>blossomPicker(body);
+      { const g=$('#dm-gif',root); if(g) g.onclick=()=>gifPicker(body); }
       $('#dm-go',root).onclick=async()=>{
         let pk=toPk||safePk(to.value.trim().replace(/^@/,''));
         const v=to.value.trim();
@@ -775,9 +777,19 @@
     if(dmActive!==pk) return;   // user switched away while decrypting
     wrap.innerHTML=`<div class="topbar"><button class="mini" id="dm-back">←</button> <b>${enc(p.name||NT().nip19.npubEncode(pk).slice(0,14))}</b></div>
       <div class="dm-msgs" id="dm-msgs">${msgs.map(m=>`<div class="bubble ${m.mine?'me':'them'}">${linkify(m.text||'')}</div>`).join('')}</div>
-      <div class="dm-compose"><input class="input" id="dm-in" placeholder="encrypted message…"><button class="btn btn-neon" id="dm-send">▶</button></div>`;
+      <div class="dm-compose">
+        <button class="mini" id="dm-attach" title="attach">📎</button>
+        <button class="mini" id="dm-files" title="your Blossom files">🌸</button>
+        ${CFG.gif_enabled?`<button class="mini" id="dm-gif" title="GIF">🎬</button>`:''}
+        <input type="file" id="dm-file" multiple hidden>
+        <input class="input" id="dm-in" placeholder="encrypted message…"><button class="btn btn-neon" id="dm-send">▶</button></div>`;
     $('#dm-back').onclick=()=>{ $('#dm-list').classList.remove('has-active'); dmActive=null; };
-    const send=async()=>{ const inp=$('#dm-in'); const t=inp.value.trim(); if(!t)return; inp.value='';
+    const inp=$('#dm-in');
+    $('#dm-attach').onclick=()=>$('#dm-file').click();
+    $('#dm-file').onchange=async e=>{ const files=[...e.target.files]; for(let i=0;i<files.length;i++){ try{ const url=await uploadBlob(files[i]); inp.value+=(inp.value?' ':'')+url; }catch(err){ toast('upload failed: '+err.message); } } e.target.value=''; inp.focus(); };
+    $('#dm-files').onclick=()=>blossomPicker(inp);
+    { const g=$('#dm-gif'); if(g) g.onclick=()=>gifPicker(inp); }
+    const send=async()=>{ const t=inp.value.trim(); if(!t)return; inp.value='';
       try{ const ct=await signer.nip04enc(pk,t); await publish(4, ct, [['p',pk]]); }catch(e){ toast('dm failed: '+e.message);} };
     $('#dm-send').onclick=send; $('#dm-in').onkeydown=e=>{ if(e.key==='Enter')send(); };
     const m=$('#dm-msgs'); if(m)m.scrollTop=m.scrollHeight;

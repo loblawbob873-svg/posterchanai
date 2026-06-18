@@ -190,8 +190,9 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 .bubble{max-width:74%;padding:9px 13px;border-radius:14px;font-size:14px;line-height:1.4;white-space:pre-wrap;word-break:break-word}
 .bubble.me{align-self:flex-end;background:linear-gradient(135deg,var(--neon),var(--neon2));color:#fff;border-bottom-right-radius:4px}
 .bubble.them{align-self:flex-start;background:var(--panel2);border:1px solid var(--line);border-bottom-left-radius:4px}
-.dm-compose{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line)}
-.dm-compose .input{margin:0}
+.dm-compose{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line);align-items:center}
+.dm-compose .input{margin:0;flex:1;min-width:60px}
+.dm-compose .mini{flex-shrink:0}
 
 /* blossom files */
 .files-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;padding:18px}
