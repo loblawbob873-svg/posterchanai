@@ -35,6 +35,19 @@ NITTER_POLL_SECONDS = int(os.getenv("NITTER_POLL_SECONDS", "300"))
 NITTER_MAX_POSTS_PER_CYCLE = int(os.getenv("NITTER_MAX_POSTS_PER_CYCLE", "3"))
 NITTER_POST_DELAY = int(os.getenv("NITTER_POST_DELAY", "5"))
 
+# Public Nitter instances are flaky: they rate-limit, time out, 403, or serve a Cloudflare
+# challenge page instead of RSS, and the working set rotates constantly. So a feed's pinned
+# host is just a starting point — we fail over across this list until one returns a REAL feed,
+# and remember the last working instance so the next poll tries it first. Override/extend with
+# the NITTER_INSTANCES env (comma/space separated hostnames), highest-preference first.
+_DEFAULT_INSTANCES = ["nitter.net", "nitter.privacyredirect.com", "xcancel.com",
+                      "nitter.poast.org", "lightbrd.com", "nitter.space"]
+NITTER_INSTANCES = [h.strip().rstrip("/") for h in
+                    os.getenv("NITTER_INSTANCES", ",".join(_DEFAULT_INSTANCES))
+                    .replace(",", " ").split() if h.strip()]
+NITTER_FETCH_TIMEOUT = int(os.getenv("NITTER_FETCH_TIMEOUT", "12"))  # per-instance, so failover is quick
+_last_good_instance = None  # remembered across polls; tried first next time
+
 # A feed entry with a "room" posts to that Matrix room; one without posts to the
 # fediverse (Pleroma/Misskey/Nostr, whichever this bot is configured for).
 _fedi_post = None
@@ -204,21 +217,53 @@ def _download(url, max_bytes=20_000_000):
     return None, None
 
 
+def _instance_order():
+    """Hostnames to try, last-known-good first."""
+    order = [h for h in NITTER_INSTANCES if h != _last_good_instance]
+    return ([_last_good_instance] if _last_good_instance else []) + order
+
+
 def _fetch_items(rss_url):
-    """Fetch and parse a Nitter RSS feed. Returns a list of dicts (newest first).
+    """Fetch a Nitter RSS feed, failing over across instances until one returns a real feed.
+
+    Public instances rotate/rate-limit/serve challenge pages, so we try the configured host
+    plus the fallback list (last-good first), validating that each response is an actual RSS
+    feed (`<channel>` present) — a 200 OK can still be a Cloudflare challenge page. Returns a
+    list of item dicts (newest first); empty if every instance failed.
+    """
+    global _last_good_instance
+    handle = _handle_from_rss(rss_url)
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; posterchan-nitter/1.0)"}
+    last_err = "no instances configured"
+    for host in _instance_order():
+        url = f"https://{host}/{handle}/rss"
+        try:
+            resp = requests.get(url, headers=headers, timeout=NITTER_FETCH_TIMEOUT)
+            resp.raise_for_status()
+            root = etree.fromstring(resp.content, parser=etree.XMLParser(recover=True))
+            if root is None or root.find(".//channel") is None:
+                last_err = f"{host}: not a valid RSS feed (blocked/challenge page)"
+                continue
+        except Exception as e:
+            last_err = f"{host}: {e}"
+            continue
+        if host != _last_good_instance:
+            print(f"[nitter] @{handle}: using instance {host}", flush=True)
+            _last_good_instance = host
+        return _parse_feed(root)
+    print(f"[nitter] @{handle}: all {len(NITTER_INSTANCES)} instance(s) failed "
+          f"(last error — {last_err})", flush=True)
+    return []
+
+
+def _parse_feed(root):
+    """Parse a validated Nitter RSS `root` into item dicts (newest first).
 
     Retweets, replies, and image-only (text-less) posts are skipped — only the
     account's own original tweets that carry text are kept. Each item also carries
     the tweet text, first media URL, author handle and date used to render the
     post-card image.
     """
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; posterchan-nitter/1.0)"}
-    resp = requests.get(rss_url, headers=headers, timeout=30)
-    resp.raise_for_status()
-    root = etree.fromstring(resp.content, parser=etree.XMLParser(recover=True))
-    if root is None:
-        return []
-
     # Channel-level <image> carries the account's profile picture and display name
     # ("Display Name / @handle"), reused for every item's card.
     avatar_url, channel_name = "", ""
