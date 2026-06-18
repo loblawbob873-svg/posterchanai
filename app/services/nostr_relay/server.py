@@ -7,6 +7,7 @@ so only web-of-trust pubkeys are ever accepted.
 """
 
 import re
+import time
 import json
 import asyncio
 import logging
@@ -19,6 +20,22 @@ from .langfilter import blocked_language, blocked_word
 from . import negentropy
 
 logger = logging.getLogger(__name__)
+
+
+def _is_ephemeral(kind: int) -> bool:
+    """NIP-01 ephemeral range: transmit to subscribers but never persist."""
+    return 20000 <= kind < 30000
+
+
+def _event_expiration(ev: dict):
+    """NIP-40: the `expiration` unix ts from an event's tags, or None if it has none/invalid."""
+    for t in ev.get("tags", []):
+        if len(t) >= 2 and t[0] == "expiration":
+            try:
+                return int(t[1])
+            except (ValueError, TypeError):
+                return None
+    return None
 
 
 def _match_one(flt: dict, ev: dict) -> bool:
@@ -123,8 +140,9 @@ class RelayServer:
             "description": c.get("description") or "Web-of-trust relay",
             "software": "https://github.com/loblawbob873-svg/posterchanai",
             # 1 core, 2 contacts, 9 deletes, 11 info, 17 private DMs, 22 comments, 23 long-form,
-            # 44 encryption, 45 COUNT, 50 search, 59 gift wrap, 65 relay-list
-            "supported_nips": [1, 2, 9, 11, 17, 22, 23, 44, 45, 50, 59, 65],
+            # 40 expiration, 44 encryption, 45 COUNT, 50 search, 59 gift wrap, 65 relay-list,
+            # 77 negentropy sync
+            "supported_nips": [1, 2, 9, 11, 17, 22, 23, 40, 44, 45, 50, 59, 65, 77],
             "limitation": {
                 "max_message_length": c.get("max_message_size", 262144),
                 "max_subscriptions": c.get("max_subs_per_conn", 20),
@@ -260,6 +278,11 @@ class RelayServer:
             self._send(conn, ["OK", eid, False, "invalid: bad id or signature"])
             return
         kind = int(ev.get("kind", 1))
+        # NIP-40: reject an event already past its expiration (don't store or relay it).
+        exp = _event_expiration(ev)
+        if exp is not None and exp <= int(time.time()):
+            self._send(conn, ["OK", eid, False, "invalid: event expired"])
+            return
         is_dm = kind in self._DM_KINDS
         if is_dm:
             if not self._dm_for_operator(ev):
@@ -282,6 +305,12 @@ class RelayServer:
                 self._send(conn, ["OK", eid, False,
                                             "blocked: contains filtered text"])
                 return
+        # NIP-01 ephemeral events (20000-29999): deliver to subscribers but NEVER persist.
+        # WoT/lang gating above still applies; we just skip storage + the upstream blaster.
+        if _is_ephemeral(kind):
+            self._send(conn, ["OK", eid, True, ""])
+            self.subs.fanout(ev, self._send)
+            return
         # origin="direct": a client chose THIS relay as a destination (entrusted data), as
         # opposed to "wot" (a mirror of the public feed we pulled via sync/firehose). Prune
         # keeps direct writes forever and only trims the reconstructable synced feed.

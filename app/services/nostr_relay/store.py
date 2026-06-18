@@ -49,11 +49,14 @@ CREATE TABLE IF NOT EXISTS events (
     tags        TEXT NOT NULL,
     sig         TEXT NOT NULL,
     raw         TEXT NOT NULL,
-    origin      TEXT NOT NULL DEFAULT 'wot'  -- 'wot' | 'ancestor' (thread-context backfill)
+    origin      TEXT NOT NULL DEFAULT 'wot',  -- 'wot' | 'ancestor' (thread-context backfill)
+    expiration  INTEGER  -- NIP-40: unix ts after which the event is gone (NULL = never expires)
 );
 CREATE INDEX IF NOT EXISTS idx_events_pubkey      ON events(pubkey);
 CREATE INDEX IF NOT EXISTS idx_events_kind_created ON events(kind, created_at);
 CREATE INDEX IF NOT EXISTS idx_events_created      ON events(created_at);
+-- NOTE: idx_events_expiration is created in open() AFTER the column is ensured (ALTER for old
+-- DBs) — putting it here would crash executescript on a pre-existing table lacking the column.
 
 CREATE TABLE IF NOT EXISTS event_tags (
     event_id TEXT NOT NULL,
@@ -128,6 +131,17 @@ class RelayStore:
         conn = self._conn()
         conn.executescript(_SCHEMA)
         conn.commit()
+        # NIP-40: add the expiration column to pre-existing DBs (created before this column).
+        # CREATE TABLE IF NOT EXISTS won't alter an existing table, so do it explicitly +
+        # idempotently. The index is created AFTER, outside the try, so it runs whether the column
+        # was just added (old DB) or already present from CREATE TABLE (fresh DB).
+        try:
+            conn.execute("ALTER TABLE events ADD COLUMN expiration INTEGER")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # column already exists
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_events_expiration ON events(expiration)")
+        conn.commit()
         # NIP-50 search index (FTS5). Graceful: if FTS5 isn't compiled in, search falls back
         # to a LIKE scan. Populate from existing notes on first creation.
         try:
@@ -183,6 +197,18 @@ class RelayStore:
         pubkey = ev["pubkey"]
         created = int(ev["created_at"])
         tags = ev.get("tags") or []
+        # NIP-40: parse the expiration timestamp (if any). An already-expired event is never
+        # stored — applies to direct writes AND synced/bulk events uniformly.
+        expiration = None
+        for t in tags:
+            if len(t) >= 2 and t[0] == "expiration":
+                try:
+                    expiration = int(t[1])
+                except (ValueError, TypeError):
+                    expiration = None
+                break
+        if expiration is not None and expiration <= int(time.time()):
+            return False
         if True:
             # Replaceable-event handling: drop older versions so only the newest survives.
             if _REPLACEABLE(kind):
@@ -212,11 +238,11 @@ class RelayStore:
 
             conn.execute(
                 "INSERT OR IGNORE INTO events "
-                "(id, pubkey, created_at, kind, content, tags, sig, raw, origin) "
-                "VALUES (?,?,?,?,?,?,?,?,?)",
+                "(id, pubkey, created_at, kind, content, tags, sig, raw, origin, expiration) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (eid, pubkey, created, kind, ev.get("content", ""),
                  json.dumps(tags, separators=(",", ":")), ev.get("sig", ""),
-                 json.dumps(ev, separators=(",", ":")), origin))
+                 json.dumps(ev, separators=(",", ":")), origin, expiration))
             # Index single-letter tags only (NIP-01 queryable tags).
             for t in tags:
                 if len(t) >= 2 and isinstance(t[0], str) and len(t[0]) == 1:
@@ -425,6 +451,10 @@ class RelayStore:
                 f"({','.join('?' * len(vals))}))")
             params.append(key[1])
             params += [str(v) for v in vals]
+        # NIP-40: never serve an event past its expiration, even before the periodic purge
+        # (see _prune_sync) has reclaimed it. Applied to every read (query/count/negentropy).
+        where.append("(e.expiration IS NULL OR e.expiration > ?)")
+        params.append(int(time.time()))
         return where, params
 
     def _query_one(self, conn: sqlite3.Connection, flt: dict) -> list:
@@ -560,6 +590,13 @@ class RelayStore:
         removed = 0
         prunable = ",".join(str(k) for k in _PRUNABLE_KINDS)
         preserve = self._preserve_clause()
+        # NIP-40 expiration sweep FIRST — unconditional: an expired event is gone per the AUTHOR's
+        # explicit intent, so unlike the age-based prune below this ignores kind allowlist AND the
+        # preserve clause (even a local user's / profile / DM event with an `expiration` tag goes).
+        cur = conn.execute(
+            "DELETE FROM events WHERE expiration IS NOT NULL AND expiration <= ?",
+            (int(time.time()),))
+        removed += cur.rowcount or 0
         # Age-based auto-cleaner: delete only old feed content (notes/reposts/reactions/comments
         # — kinds in _PRUNABLE_KINDS). Everything else (profiles, contacts, relay/identity lists,
         # DMs, articles, …) is never touched, so important events survive indefinitely.

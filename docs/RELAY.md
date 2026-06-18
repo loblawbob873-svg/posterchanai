@@ -1,6 +1,7 @@
 # Nostr Web-of-Trust Relay
 
-PosterChanAI ships a **self-contained Nostr relay** (NIP-01/09/11) built natively into the
+PosterChanAI ships a **self-contained Nostr relay** (NIP-01/02/09/11/17/22/23/40/44/45/50/59/65/77)
+built natively into the
 app — no external relay software (strfry/khatru), no extra daemon, no new dependencies. It
 runs in **its own thread + asyncio loop** (isolated from the web request loop), stores into
 its own SQLite database, and is configured entirely from **Admin → Relay**.
@@ -134,6 +135,8 @@ and a fast **libsecp256k1** verify path (see below) keeps ingest CPU-cheap.
 Size is **hard-bounded** by an event-count cap, a byte budget, and an **auto-cleaner** that
 deletes notes/reactions older than *N* days (default 30) but **keeps profiles and contact lists
 forever** — identities and follow graphs survive indefinitely while note volume stays bounded.
+The same cleaner pass also runs the **NIP-40 expiration sweep** (purges any event past its
+`expiration` timestamp, across all kinds) before the age-based prune.
 
 ### Fast signature verification
 Mass-verifying synced events is the ingest bottleneck. The relay uses **libsecp256k1 via
@@ -227,7 +230,10 @@ exact path it was reached on.
 ## Supported NIPs
 
 - **NIP-01** — events, REQ/EVENT/CLOSE subscriptions, filters (ids, authors, kinds, since,
-  until, `#<tag>`), EOSE, live fan-out.
+  until, `#<tag>`), EOSE, live fan-out, and the full **event-class semantics**: **replaceable**
+  (kind 0/3 and 10000–19999, newest-per-`(pubkey,kind)` kept), **addressable / parameterized
+  replaceable** (30000–39999, newest-per-`(pubkey,kind,d-tag)`), and **ephemeral** (20000–29999,
+  delivered to subscribers but **never persisted**).
 - **NIP-02** — contact lists (kind-3) stored & served (lookup relay).
 - **NIP-09** — event deletion (a kind-5 removes the author's own referenced events).
 - **NIP-11** — relay information document (incl. relay `icon`).
@@ -236,6 +242,13 @@ exact path it was reached on.
   (p-tag) to a relay user**, even though the gift-wrap author is a random key (so the WoT gate
   can't apply). DMs are never re-broadcast by the outbox.
 - **NIP-22 / 23** — comments (kind 1111) and **long-form articles** (kind 30023), synced + served.
+- **NIP-40** — **event expiration.** An event carrying an `["expiration", <unix-ts>]` tag is
+  honoured end-to-end: an already-expired write is rejected (`["OK", id, false, "invalid: event
+  expired"]`), the expiry is stored alongside the event, **expired events are filtered out of
+  every read** (REQ/COUNT/negentropy) the instant they pass their timestamp, and a periodic
+  sweep purges them from disk. The expiration sweep is **unconditional** — it honours the
+  author's intent across *all* kinds, even profiles/DMs/local-user events that the age-based
+  cleaner would otherwise keep forever.
 - **NIP-45** — `COUNT`.
 - **NIP-50** — full-text **search** (`{"search": "..."}` filters), backed by SQLite FTS5
   over note content with a LIKE fallback if FTS5 is unavailable.
