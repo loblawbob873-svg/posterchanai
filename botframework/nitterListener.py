@@ -48,6 +48,14 @@ NITTER_INSTANCES = [h.strip().rstrip("/") for h in
 NITTER_FETCH_TIMEOUT = int(os.getenv("NITTER_FETCH_TIMEOUT", "12"))  # per-instance, so failover is quick
 _last_good_instance = None  # remembered across polls; tried first next time
 
+# The bot inherits HTTP(S)_PROXY=Tor from its env (needed for fediverse federation), and
+# `requests` honours those by default — which routed nitter through Tor. nitter/Cloudflare
+# throttles & challenges Tor exits, causing the intermittent 30s read-timeouts and 403s. nitter
+# is just public RSS, so fetch it DIRECT: a session with trust_env=False ignores the proxy env.
+# Set NITTER_USE_PROXY=1 to route via the proxy again (e.g. if the host IP ever gets blocked).
+_session = requests.Session()
+_session.trust_env = os.getenv("NITTER_USE_PROXY", "").lower() in ("1", "true", "yes")
+
 # A feed entry with a "room" posts to that Matrix room; one without posts to the
 # fediverse (Pleroma/Misskey/Nostr, whichever this bot is configured for).
 _fedi_post = None
@@ -201,7 +209,7 @@ def _download(url, max_bytes=20_000_000):
     if not url:
         return None, None
     try:
-        with requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30, stream=True) as r:
+        with _session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30, stream=True) as r:
             if not r.ok:
                 return None, None
             ct = (r.headers.get("Content-Type") or "image/jpeg").split(";")[0].strip()
@@ -238,7 +246,7 @@ def _fetch_items(rss_url):
     for host in _instance_order():
         url = f"https://{host}/{handle}/rss"
         try:
-            resp = requests.get(url, headers=headers, timeout=NITTER_FETCH_TIMEOUT)
+            resp = _session.get(url, headers=headers, timeout=NITTER_FETCH_TIMEOUT)
             resp.raise_for_status()
             root = etree.fromstring(resp.content, parser=etree.XMLParser(recover=True))
             if root is None or root.find(".//channel") is None:
