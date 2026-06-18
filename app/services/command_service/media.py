@@ -245,6 +245,29 @@ Files are saved to your Storage.""",
                 return s[1:-1].strip()
             return s
 
+        _known_langs = {
+            "english", "spanish", "french", "german", "italian", "portuguese", "dutch", "russian",
+            "japanese", "chinese", "mandarin", "cantonese", "korean", "arabic", "hindi", "bengali",
+            "punjabi", "urdu", "turkish", "vietnamese", "thai", "indonesian", "malay", "tagalog",
+            "filipino", "polish", "ukrainian", "czech", "slovak", "romanian", "hungarian", "greek",
+            "hebrew", "swedish", "norwegian", "danish", "finnish", "icelandic", "latin", "persian",
+            "farsi", "swahili", "tamil", "telugu", "gujarati", "marathi", "serbian", "croatian",
+            "bulgarian", "catalan", "esperanto", "welsh", "irish", "latvian", "lithuanian",
+            "estonian", "slovenian", "albanian", "macedonian", "georgian", "armenian", "mongolian",
+        }
+
+        # Target-first directive form (the way users actually phrase it, esp. on Telegram):
+        # `translate to <lang>: <text>`, `translate <lang>: <text>`, `translate from <src> to
+        # <lang>: <text>`. The instruction comes first, then a colon, then the text. Without this,
+        # the colon form fell through and translated the WHOLE arg (incl. "to Japanese:") to English.
+        _dir = re.match(
+            r'^(?:from\s+([A-Za-z][A-Za-z\- ]*?)\s+)?(?:to\s+)?([A-Za-z][A-Za-z\- ]*?)\s*:\s*(.+)$',
+            arg.strip(), re.IGNORECASE | re.DOTALL)
+        if _dir and _dir.group(2).strip().lower() in _known_langs and _unquote(_dir.group(3)):
+            _src = (_dir.group(1) or "").strip().title() or None
+            return await self._translate_text(
+                _unquote(_dir.group(3)), _dir.group(2).strip().title(), source=_src)
+
         # Inline form `translate <text> [from <src>] to <lang>` (the documented syntax): translate
         # the GIVEN text, not the last response. Requires non-empty text and a target language, so
         # `translate spanish` / `translate to spanish` still fall through to last-response translation.
@@ -262,16 +285,6 @@ Files are saved to your Storage.""",
         # response into it ("translate spanish"). Otherwise the arg is TEXT to translate to English
         # ("translate dame desuyo") — do NOT treat it as a language for the last response, which
         # mis-translated the previous command's output (e.g. a nyaa listing) instead of the words.
-        _known_langs = {
-            "english", "spanish", "french", "german", "italian", "portuguese", "dutch", "russian",
-            "japanese", "chinese", "mandarin", "cantonese", "korean", "arabic", "hindi", "bengali",
-            "punjabi", "urdu", "turkish", "vietnamese", "thai", "indonesian", "malay", "tagalog",
-            "filipino", "polish", "ukrainian", "czech", "slovak", "romanian", "hungarian", "greek",
-            "hebrew", "swedish", "norwegian", "danish", "finnish", "icelandic", "latin", "persian",
-            "farsi", "swahili", "tamil", "telugu", "gujarati", "marathi", "serbian", "croatian",
-            "bulgarian", "catalan", "esperanto", "welsh", "irish", "latvian", "lithuanian",
-            "estonian", "slovenian", "albanian", "macedonian", "georgian", "armenian", "mongolian",
-        }
         _norm = re.sub(r"^to\s+", "", _unquote(arg), flags=re.IGNORECASE).strip().lower()
         if _norm not in _known_langs:
             return await self._translate_text(_unquote(arg), "English")
