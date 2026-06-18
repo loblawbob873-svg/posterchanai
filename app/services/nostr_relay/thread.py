@@ -431,6 +431,19 @@ async def _main(cfg: dict) -> None:
                     if cmd.get("cmd") == "refresh-wot":
                         logger.info("[nostr-relay] control: WoT refresh requested")
                         asyncio.create_task(_safe(_build_wot(gate, store, cfg)))
+                    elif cmd.get("cmd") == "reload-blocks":
+                        # Re-read the blocklist from the DB (admin edited it via /client/block or
+                        # the admin UI), apply it to the gate, and purge the blocked authors' events.
+                        try:
+                            fresh = _read_config()
+                            cfg["blocked_pubkeys"] = fresh["blocked_pubkeys"]
+                            gate.set_blocked(cfg["blocked_pubkeys"])
+                            if cfg["blocked_pubkeys"]:
+                                asyncio.create_task(_safe(store.delete_pubkeys(cfg["blocked_pubkeys"])))
+                            logger.info("[nostr-relay] control: reloaded %d blocked pubkey(s)",
+                                        len(cfg["blocked_pubkeys"]))
+                        except Exception as e:
+                            logger.warning("[nostr-relay] reload-blocks failed: %s", e)
                     elif cmd.get("cmd") == "backfill" and cmd.get("pubkey"):
                         logger.info("[nostr-relay] control: backfill %s", cmd["pubkey"][:12])
                         from . import ingest as _ingest
@@ -738,3 +751,8 @@ def trigger_backfill(pubkey_hex: str) -> dict:
     if not pubkey_hex:
         return {"ok": False, "error": "no nostr key on your account"}
     return _drop_control({"cmd": "backfill", "pubkey": pubkey_hex})
+
+
+def trigger_block_reload() -> dict:
+    """Re-apply the nostr_relay_blocked_pubkeys denylist (gate + purge) without a restart."""
+    return _drop_control({"cmd": "reload-blocks"})

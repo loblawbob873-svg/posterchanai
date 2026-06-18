@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#0b0118">
+    <title>PosterChan · Nostr</title>
+    <link rel="manifest" href="/client/manifest.json">
+    <link rel="apple-touch-icon" href="/static/icon-192.png">
+    <link rel="stylesheet" href="/static/css/client.css">
+    <script defer src="/static/vendor/nostr/nostr.bundle.js"></script>
+</head>
+<body>
+<div class="scanlines" aria-hidden="true"></div>
+<div class="grid-bg" aria-hidden="true"></div>
+
+<!-- ===== Login / signup gate ===== -->
+<div id="auth-gate" class="auth-gate hidden">
+    <div class="auth-card glass neon-border">
+        <img class="logo-img" src="/static/posterchan-relay.png" alt="PosterChan">
+        <h1 class="logo glitch" data-text="POSTER//CHAN">POSTER//CHAN</h1>
+        <p class="tagline">a cyberpunk nostr terminal</p>
+
+        <div id="auth-login" class="auth-pane">
+            <button id="btn-nip07" class="btn btn-neon full">⚡ Sign in with extension (NIP-07)</button>
+            <div class="divider"><span>or</span></div>
+            <input id="nsec-input" class="input" type="password" placeholder="nsec1… (stays in your browser)" autocomplete="off">
+            <button id="btn-nsec-login" class="btn btn-cyan full">Login with key</button>
+            <div class="divider"><span>new here?</span></div>
+            <button id="btn-show-signup" class="btn btn-ghost full">✦ Create a new identity</button>
+            <div id="auth-error" class="auth-error"></div>
+        </div>
+
+        <div id="auth-signup" class="auth-pane hidden">
+            <p class="muted small">We'll generate a fresh keypair in your browser. <b>Back up your nsec</b> — it's the only way back in.</p>
+            <input id="signup-name" class="input" type="text" placeholder="display name (optional)">
+            <div id="signup-keys" class="keybox hidden">
+                <label>your public key (npub)</label>
+                <div class="keyrow"><code id="signup-npub"></code><button class="mini" data-copy="signup-npub">copy</button></div>
+                <label>your secret key (nsec) — SAVE THIS</label>
+                <div class="keyrow"><code id="signup-nsec"></code><button class="mini" data-copy="signup-nsec">copy</button></div>
+            </div>
+            <button id="btn-gen-key" class="btn btn-cyan full">⚙ Generate keypair</button>
+            <button id="btn-signup-go" class="btn btn-neon full hidden">I saved it — enter ▶</button>
+            <button id="btn-back-login" class="btn btn-ghost full">← back</button>
+            <div id="signup-status" class="muted small"></div>
+        </div>
+    </div>
+</div>
+
+<!-- ===== Main app shell ===== -->
+<div id="app" class="app hidden">
+    <aside class="sidebar glass">
+        <div class="brand"><img src="/static/posterchan-relay.png" alt="PosterChan" class="brand-logo"><span class="glitch" data-text="P//C">P//C</span></div>
+        <nav class="nav">
+            <button class="nav-item active" data-view="home"><span class="ic">⌂</span><span>Home</span></button>
+            <button class="nav-item" data-view="global"><span class="ic">◎</span><span>Global</span></button>
+            <button class="nav-item" data-view="notifications"><span class="ic">◔</span><span>Notifs<i id="notif-badge" class="badge hidden"></i></span></button>
+            <button class="nav-item" data-view="messages"><span class="ic">✉</span><span>Messages<i id="dm-badge" class="badge hidden"></i></span></button>
+            <button class="nav-item" data-view="blossom"><span class="ic">❀</span><span>Files</span></button>
+            <button class="nav-item" data-view="profile"><span class="ic">☻</span><span>Profile</span></button>
+        </nav>
+        <button id="btn-compose" class="btn btn-neon compose-btn">✎ New post</button>
+        <div class="me" id="me-card"></div>
+        <button id="btn-logout" class="btn btn-ghost small full">Logout</button>
+        <div class="conn" id="conn-status"><i class="dot"></i><span>connecting…</span></div>
+    </aside>
+
+    <main class="main">
+        <header class="topbar glass">
+            <h2 id="view-title">Home</h2>
+            <div class="searchbox"><input id="search-input" class="input" type="search" placeholder="🔍 search posts &amp; profiles…"></div>
+            <button id="btn-refresh" class="mini">↻</button>
+        </header>
+        <div id="feed" class="feed"></div>
+    </main>
+</div>
+
+<!-- mobile bottom nav -->
+<nav class="mobilenav glass">
+    <button class="nav-item active" data-view="home">⌂</button>
+    <button class="nav-item" data-view="global">◎</button>
+    <button class="nav-item compose" id="btn-compose-m">✎</button>
+    <button class="nav-item" data-view="notifications">◔<i id="notif-badge-m" class="badge hidden"></i></button>
+    <button class="nav-item" data-view="messages">✉<i id="dm-badge-m" class="badge hidden"></i></button>
+</nav>
+
+<!-- ===== Modal host ===== -->
+<div id="modal-root"></div>
+<div id="toast-root"></div>
+
+<script src="/static/js/client/store.js"></script>
+<script src="/static/js/client/relay.js"></script>
+<script src="/static/js/client/app.js"></script>
+</body>
+</html>

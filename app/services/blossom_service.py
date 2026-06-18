@@ -139,9 +139,49 @@ async def _aiter_bytes(data: bytes):
 
 # --- authorization ----------------------------------------------------------
 
+_operator_cache = {"ts": 0.0, "set": frozenset()}
+_OPERATOR_TTL = 60.0
+
+
+def _operator_pubkeys(db: Session) -> frozenset:
+    """The node's OWN Nostr identities — every linked user's and bot's key (same set the relay
+    trusts as operators). These may always upload (it's how the bots post effect media). Cached
+    briefly so a busy upload stream doesn't rescan users+bots each time."""
+    now = time.time()
+    if now - _operator_cache["ts"] < _OPERATOR_TTL:
+        return _operator_cache["set"]
+    out = set()
+    try:
+        from app.models import Bot
+        for u in db.query(User).filter(User.nostr_nsec.isnot(None)).all():
+            try:
+                out.add(nostr_service.derive_pubkey(nostr_service.decode_seckey(u.nostr_nsec)))
+            except Exception:
+                pass
+        for b in db.query(Bot).all():
+            try:
+                nsec = (json.loads(b.config or "{}")).get("nostr_nsec")
+            except (ValueError, TypeError):
+                continue
+            if nsec:
+                try:
+                    out.add(nostr_service.derive_pubkey(nostr_service.decode_seckey(nsec)))
+                except Exception:
+                    pass
+        # Only cache a COMPLETE scan — a mid-scan DB error must not pin a partial set for the TTL.
+        _operator_cache["ts"] = now
+        _operator_cache["set"] = frozenset(out)
+    except Exception as e:
+        logger.debug("[blossom] operator key collection failed: %s", e)
+    return frozenset(out) if not _operator_cache["set"] else _operator_cache["set"]
+
+
 def is_pubkey_allowed(db: Session, pubkey_hex: str) -> bool:
-    """A pubkey may upload/delete iff it's the Nostr key linked by a user who is an admin
-    or has the `can_blossom` privilege. Single indexed-ish lookup by npub — no full scan."""
+    """A pubkey may upload/delete iff EITHER it's one of the node's own operator keys (linked
+    users + bots — so the bots can post effect media), OR it's the Nostr key linked by a web user
+    who is an admin or has the `can_blossom` privilege (single indexed-ish lookup by npub)."""
+    if pubkey_hex in _operator_pubkeys(db):
+        return True
     try:
         npub = nostr_service.npub_of(pubkey_hex)
     except Exception:

@@ -26,6 +26,7 @@ from app.routers.misskey import router as misskey_router
 from app.routers.pleroma import router as pleroma_router
 from app.routers.nostr import router as nostr_router
 from app.routers.blossom import router as blossom_router
+from app.routers.client import router as client_router
 from app.routers.matrix import router as matrix_router
 from app.services.load_balancer import NoHealthyServersError
 from fastapi.responses import JSONResponse
@@ -175,6 +176,7 @@ app.include_router(misskey_router)
 app.include_router(pleroma_router)
 app.include_router(nostr_router)
 app.include_router(blossom_router)
+app.include_router(client_router)
 app.include_router(matrix_router)
 # OpenAI-compatible API: use OPENAI_API_PREFIX if app is behind a reverse proxy subpath
 _openai_prefix = os.getenv("OPENAI_API_PREFIX", "").strip().rstrip("/")
