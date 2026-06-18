@@ -513,7 +513,7 @@ def _media_action_keyboard(attachments: list, user=None) -> Optional[dict]:
     has_doc = any((fn or "").lower().endswith((".pptx", ".docx", ".xlsx", ".ppt", ".doc"))
                   for fn, _, ct in attachments)
 
-    _social = bool(user and (_has_misskey(user) or _has_pleroma(user) or _has_matrix(user)))
+    _social = bool(user and (_has_misskey(user) or _has_pleroma(user) or _has_matrix(user) or _has_nostr(user)))
     rows = []
     if has_video:
         rows.append([

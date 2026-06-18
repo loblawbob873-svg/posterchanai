@@ -1,6 +1,6 @@
 """Auto-split from messages.py: _msg_command."""
 from ._common import Conversation, Message, User, _news_post_cache, asyncio, logger, re, telegram_service
-from .keyboards import _4chan_initial_keyboard, _build_torrent_keyboard, _has_matrix, _has_misskey, _has_pleroma, _help_main_keyboard, _news_menu_keyboard, _split_news_into_articles, _strip_cmd_links, _torrent_nav_keyboard, re
+from .keyboards import _4chan_initial_keyboard, _build_torrent_keyboard, _has_matrix, _has_misskey, _has_nostr, _has_pleroma, _help_main_keyboard, _news_menu_keyboard, _split_news_into_articles, _strip_cmd_links, _torrent_nav_keyboard, re
 from .senders import User, _has_matrix, _has_misskey, _has_pleroma, _offer_social_post, _offer_ytdl_video_actions, _send_4chan_catalog, _send_active_torrents, _send_budget, _send_nyaa_results, _send_torrent_results, _strip_cmd_links, _torrent_nav_keyboard, asyncio, logger, re, telegram_service
 
 
@@ -286,7 +286,7 @@ async def _msg_command(_make_tg_node_notify, arg, attachments, chat_id, command,
                         result = await command_service.execute_command(command, arg)
                         content = _strip_cmd_links(result.get("content", ""))
 
-                        has_social = _has_misskey(user_obj) or _has_pleroma(user_obj) or _has_matrix(user_obj)
+                        has_social = _has_misskey(user_obj) or _has_pleroma(user_obj) or _has_matrix(user_obj) or _has_nostr(user_obj)
 
                         articles = _split_news_into_articles(content)
                         if articles:
