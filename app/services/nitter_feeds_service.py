@@ -134,6 +134,15 @@ def _resolve_pic(url: str) -> str:
 
 def _parse_feed(content: bytes):
     """Parse RSS bytes → (items, avatar_url, channel_name). items newest-first."""
+    # Some instances (nitter.net) return a 200 valid-RSS body whose only item is a gate
+    # message ("RSS reader not yet whitelisted! Plain request with just ID will be ignored!").
+    # Drop the whole feed so it's never forwarded, rather than posting the error as a tweet.
+    try:
+        if any(s in content.decode("utf-8", "ignore").lower()
+               for s in ("not yet whitelist", "will be ignored", "rss reader")):
+            return [], "", ""
+    except Exception:
+        pass
     root = etree.fromstring(content, parser=etree.XMLParser(recover=True))
     if root is None:
         return [], "", ""

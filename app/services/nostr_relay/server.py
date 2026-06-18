@@ -129,9 +129,15 @@ class RelayServer:
                 "max_message_length": c.get("max_message_size", 262144),
                 "max_subscriptions": c.get("max_subs_per_conn", 20),
                 "max_filters": c.get("max_filters_per_req", 10),
-                "restricted_writes": True,
             },
         }
+        # Advertising restricted_writes makes outbox-model clients (e.g. Yakihonne) refuse to
+        # treat this as a sole write relay and silently inject their default relays — which
+        # resets a user who wants ONLY this relay in their NIP-65 list. The WoT gate still
+        # enforces writes at runtime regardless; this only controls what NIP-11 advertises.
+        # Off by default so single-relay setups stick; flip on to be honest to spam clients.
+        if c.get("advertise_restricted_writes", False):
+            doc["limitation"]["restricted_writes"] = True
         if icon:
             doc["icon"] = icon
             doc["banner"] = icon

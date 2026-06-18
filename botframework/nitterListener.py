@@ -110,6 +110,20 @@ def _handle_from_rss(rss_url):
         return "feed"
 
 
+# Instance gate/whitelist sentinels that arrive as a 200 RSS body but contain no real
+# tweets — must never be parsed or posted. Matched case-insensitively against the raw body
+# (fetch level) and individual item titles (defensive, in case a feed mixes them in).
+_GATE_SENTINELS = ("not yet whitelist", "will be ignored", "rss reader")
+
+
+def _is_gate_page(content) -> bool:
+    try:
+        text = (content if isinstance(content, str) else content.decode("utf-8", "ignore")).lower()
+    except Exception:
+        return False
+    return any(s in text for s in _GATE_SENTINELS)
+
+
 def _should_skip(item):
     """True if a Nitter RSS item should not be posted.
 
@@ -128,6 +142,8 @@ def _should_skip(item):
     """
     title = (item.findtext("title") or "").strip()
     if not title or title.lower() == "gif":
+        return True
+    if _is_gate_page(title):  # gate message that leaked in as an item
         return True
     return (title.startswith("RT by ") or title.startswith("RT @")
             or title.startswith("R to "))
@@ -248,6 +264,13 @@ def _fetch_items(rss_url):
         try:
             resp = _session.get(url, headers=headers, timeout=NITTER_FETCH_TIMEOUT)
             resp.raise_for_status()
+            # Some instances (notably nitter.net) return a 200 *valid-RSS* body whose only
+            # item is a gate message ("RSS reader not yet whitelisted! Plain request with
+            # just ID will be ignored!"). It has a <channel>, so it slips past the check below
+            # and would get POSTED verbatim. Treat the gate sentinel as a failure → fail over.
+            if _is_gate_page(resp.content):
+                last_err = f"{host}: RSS reader not whitelisted (gate page)"
+                continue
             root = etree.fromstring(resp.content, parser=etree.XMLParser(recover=True))
             if root is None or root.find(".//channel") is None:
                 last_err = f"{host}: not a valid RSS feed (blocked/challenge page)"

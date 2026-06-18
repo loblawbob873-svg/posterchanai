@@ -152,6 +152,11 @@ def _read_config() -> dict:
             "pubkey": nostr_service.to_pubkey_hex(g("nostr_relay_pubkey", "")) or "",
             "contact": g("nostr_relay_contact", ""),
             "icon": g("nostr_relay_icon", ""),   # blank = PosterChan mascot from this host
+            # Advertise NIP-11 restricted_writes. Off by default: outbox-model clients
+            # (Yakihonne) otherwise refuse a restricted relay as a sole write target and
+            # inject their defaults, resetting a single-relay NIP-65 list. WoT gate still
+            # enforces writes at runtime either way.
+            "advertise_restricted_writes": gb("nostr_relay_advertise_restricted_writes", False),
             # protocol limits
             "max_message_size": _MAX_MESSAGE_SIZE,
             "max_subs_per_conn": _MAX_SUBS_PER_CONN,
