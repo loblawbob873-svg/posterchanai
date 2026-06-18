@@ -19,6 +19,17 @@ from .langfilter import blocked_language, blocked_word
 logger = logging.getLogger(__name__)
 
 
+def _filt_summary(f: dict) -> dict:
+    """Compact filter description for diagnostics (don't dump huge author/id lists)."""
+    out = {}
+    for k, v in f.items():
+        if isinstance(v, list):
+            out[k] = f"[{len(v)}]"
+        else:
+            out[k] = v
+    return out
+
+
 def _match_one(flt: dict, ev: dict) -> bool:
     if "ids" in flt and ev["id"] not in flt["ids"]:
         return False
@@ -152,8 +163,8 @@ class RelayServer:
         try:
             async for raw in conn:
                 await self._dispatch(conn, raw)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.info("[relay-diag] connection handler error: %r", e)
         finally:
             self.subs.remove_conn(conn)
             self._conns -= 1
@@ -176,11 +187,15 @@ class RelayServer:
         if typ == "EVENT" and len(msg) >= 2:
             await self._on_event(conn, msg[1])
         elif typ == "REQ" and len(msg) >= 2:
+            logger.info("[relay-diag] REQ %s filters=%s",
+                        msg[1], [_filt_summary(f) for f in msg[2:] if isinstance(f, dict)])
             await self._on_req(conn, msg[1], msg[2:])
         elif typ == "CLOSE" and len(msg) >= 2:
             self.subs.remove(conn, msg[1])
         elif typ == "COUNT" and len(msg) >= 2:
             await self._on_count(conn, msg[1], msg[2:])
+        else:
+            logger.info("[relay-diag] unhandled verb=%r (len=%d)", typ, len(msg))
 
     async def _on_event(self, conn, ev) -> None:
         if not isinstance(ev, dict) or "id" not in ev:
@@ -226,7 +241,13 @@ class RelayServer:
             await conn.send(json.dumps(["CLOSED", sub_id, "rate-limited: too many subscriptions"]))
             return
         filters = [f for f in filters if isinstance(f, dict)][: self.cfg.get("max_filters_per_req", 10)]
-        events = await self.store.query(filters)
+        try:
+            events = await self.store.query(filters)
+        except Exception as e:
+            logger.warning("[relay-diag] query FAILED for %s: %s", sub_id, e)
+            await conn.send(json.dumps(["CLOSED", sub_id, f"error: {e}"]))
+            return
+        logger.info("[relay-diag] REQ %s -> %d events", sub_id, len(events))
         for ev in reversed(events):  # send oldest-first, newest last (common client expectation)
             await conn.send(json.dumps(["EVENT", sub_id, ev]))
         await conn.send(json.dumps(["EOSE", sub_id]))
