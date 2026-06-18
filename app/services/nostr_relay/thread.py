@@ -118,6 +118,9 @@ def _read_config() -> dict:
             # windowed ingestion
             "sync_window_sec": gi("nostr_relay_sync_window_sec", 600),
             "sync_interval_sec": gi("nostr_relay_sync_interval_sec", 120),
+            # Once caught up (firehose handles freshness), the sweep backs off to this so we
+            # stop sending unnecessary upstream requests.
+            "sync_idle_interval_sec": gi("nostr_relay_sync_idle_interval_sec", 1800),
             "backfill_sec": gi("nostr_relay_backfill_hours", 48) * 3600,  # initial history depth
             "overlap_sec": gi("nostr_relay_overlap_sec", 120),
             "ingest_kinds": [int(k) for k in (g("nostr_relay_ingest_kinds", "1,6,7")
@@ -262,10 +265,9 @@ async def _main(cfg: dict) -> None:
                                       lambda: _build_wot(gate, store, cfg),
                                       "wot-refresh")),
         # Windowed WoT sweep — now just BACKFILL/gap-fill (the firehose handles freshness).
-        asyncio.create_task(_periodic(_relay.stop_event, cfg["sync_interval_sec"],
-                                      lambda: _ingest.sync_tick(store, gate, server,
-                                                                cfg["upstream"], cfg),
-                                      "sync")),
+        # Self-throttling: runs often while it's still finding history, then backs WAY off
+        # once caught up so we stop hammering the upstream relays.
+        asyncio.create_task(_sync_loop(store, gate, server, cfg, _relay.stop_event)),
     ]
     # Live firehose: real-time WoT sync — keep only WoT authors from the upstream stream.
     if cfg.get("firehose_enabled", True):
@@ -297,6 +299,27 @@ async def _safe(coro):
         await coro
     except Exception as e:
         logger.warning("[nostr-relay] task error: %s", e)
+
+
+async def _sync_loop(store, gate, server, cfg, stop: asyncio.Event) -> None:
+    """Backfill/gap-fill sweep that THROTTLES itself by upstream request load: it runs at the
+    busy interval while it's still pulling history, then backs off to the idle interval once
+    caught up (the firehose keeps things fresh), so we stop sending requests we don't need."""
+    from . import ingest as _ingest
+    busy = max(30, cfg["sync_interval_sec"])
+    idle = max(busy, cfg.get("sync_idle_interval_sec", 1800))
+    while not stop.is_set():
+        try:
+            n = await _ingest.sync_tick(store, gate, server, cfg["upstream"], cfg)
+        except Exception as e:
+            logger.warning("[nostr-relay] sync error: %s", e)
+            n = 0
+        delay = busy if n > 10 else idle   # still finding history → keep going; else back off
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=delay)
+            return
+        except asyncio.TimeoutError:
+            pass
 
 
 async def _build_wot(gate, store, cfg) -> int:
