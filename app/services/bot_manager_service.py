@@ -221,6 +221,9 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
             setif("nostr_relays", "NOSTR_RELAYS")
             setif("nostr_media_service", "NOSTR_MEDIA_SERVICE")
             setif("nostr_media_endpoint", "NOSTR_MEDIA_ENDPOINT")
+            # Mention-poll cadence. With our self-hosted relay (point relays at ws://localhost:3052
+            # — no CF round-trip, no public rate limit) the bot can poll fast for snappy replies.
+            setif("nostr_poll_seconds", "NOSTR_POLL_SECONDS")
             # Abuse rate limits (per-pubkey + global per window) — Nostr is permissionless.
             setif("nostr_rate_per_user", "NOSTR_RATE_PER_USER")
             setif("nostr_rate_global", "NOSTR_RATE_GLOBAL")
