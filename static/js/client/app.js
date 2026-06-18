@@ -46,7 +46,13 @@
   async function boot(){
     CFG = await fetch('/client/config').then(r=>r.json()).catch(()=>({}));
     await Store.init();
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/client/sw.js',{scope:'/client'}).catch(()=>{});
+    if ('serviceWorker' in navigator){
+      // auto-reload once when a new SW takes control, so deploys land on installed PWAs without
+      // manual cache-clearing (the stale-app.js / "no GIF button on mobile" problem)
+      let _refreshing=false;
+      navigator.serviceWorker.addEventListener('controllerchange', ()=>{ if(_refreshing) return; _refreshing=true; location.reload(); });
+      navigator.serviceWorker.register('/client/sw.js',{scope:'/client'}).catch(()=>{});
+    }
     Relay.onStatus = renderConn;
     bindAuth();
     const s = Session.load();
@@ -247,6 +253,7 @@
   }
   function renderView(reset){
     const feed = $('#feed');
+    feed.classList.toggle('feed-dm', VIEW==='messages');   // full-height messages layout (no :has needed)
     if (reset) feed.innerHTML = '<div class="spinner"></div>';
     if (VIEW==='home' || VIEW==='global') return renderTimeline(VIEW, reset);
     if (VIEW==='notifications') return renderNotifications();
