@@ -35,6 +35,24 @@
             <small>One per line (npub or hex). The trust set = these seeds <strong>+ everyone they follow</strong> (depth 1) + your own bots/users. Rebuilt automatically <strong>daily</strong>.</small>
         </div>
         <div class="form-group">
+            <label for="nostr_relay_wot_depth">Depth</label>
+            <select id="nostr_relay_wot_depth" name="nostr_relay_wot_depth">
+                <option value="1">1 — seeds + their follows</option>
+                <option value="2">2 — also friends-of-friends</option>
+            </select>
+            <small>Depth 2 adds follows-of-follows (much larger). Pruned by the threshold below + capped.</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_wot_min_followers">Friends-of-friends threshold</label>
+            <input type="number" id="nostr_relay_wot_min_followers" name="nostr_relay_wot_min_followers" placeholder="2">
+            <small>A FoF is included only if at least this many of your follows follow them (depth 2 only). Higher = tighter/smaller.</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_wot_max">Max WoT members</label>
+            <input type="number" id="nostr_relay_wot_max" name="nostr_relay_wot_max" placeholder="50000">
+            <small>Hard cap; the most-followed FoF are kept when over. Keeps sync feasible.</small>
+        </div>
+        <div class="form-group">
             <label for="nostr_relay_wot_refresh_sec">WoT refresh interval (seconds)</label>
             <input type="number" id="nostr_relay_wot_refresh_sec" name="nostr_relay_wot_refresh_sec" placeholder="86400">
             <small>How often to rebuild the follow graph from seeds. Default 86400 (daily).</small>
@@ -164,9 +182,22 @@
     <fieldset>
         <legend>Storage &amp; memory</legend>
         <div class="form-group">
-            <label for="nostr_relay_scratch_dir">Scratch dir (hot DB)</label>
+            <label for="nostr_relay_storage_mode">Storage mode</label>
+            <select id="nostr_relay_storage_mode" name="nostr_relay_storage_mode">
+                <option value="tmpfs">tmpfs — hot DB in RAM + 10-min snapshots (small/fast)</option>
+                <option value="disk">disk — DB on disk in WAL, no snapshots (scales to many GB)</option>
+            </select>
+            <small><strong>Use <code>disk</code> for a large DB</strong> (many GB): the DB is durable by itself and there's no full-copy snapshot bottleneck. <code>tmpfs</code> is fastest for a small, bounded DB. <strong>Restart after changing.</strong></small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_wal_autocheckpoint">WAL size (pages before checkpoint)</label>
+            <input type="number" id="nostr_relay_wal_autocheckpoint" name="nostr_relay_wal_autocheckpoint" placeholder="50000">
+            <small>Larger = fewer checkpoints, faster sustained writes on a big disk DB (50000 ≈ 200 MB; 500000 ≈ 2 GB).</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_scratch_dir">Scratch dir (tmpfs hot DB)</label>
             <input type="text" id="nostr_relay_scratch_dir" name="nostr_relay_scratch_dir" placeholder="/tmp">
-            <small>The live DB lives here. <code>/tmp</code> is RAM (tmpfs) — fast, zero SSD wear. Point at a disk path on a low-RAM node.</small>
+            <small>tmpfs mode only: where the RAM-backed hot DB lives. <code>/tmp</code> is RAM — fast, zero SSD wear.</small>
         </div>
         <div class="form-group">
             <label for="nostr_relay_db_path">Snapshot path (persistent)</label>

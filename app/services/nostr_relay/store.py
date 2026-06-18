@@ -74,12 +74,13 @@ _KEEP_KINDS = (0, 3)
 class RelayStore:
     def __init__(self, hot_path: str, snapshot_path: str, *,
                  read_workers: int = 4, max_events: int = 0,
-                 retention_days: int = 30, max_db_mb: int = 0):
+                 retention_days: int = 30, max_db_mb: int = 0, wal_pages: int = 50000):
         self.hot_path = hot_path
         self.snapshot_path = snapshot_path
         self.max_events = max_events
         self.retention_days = retention_days
         self.max_db_mb = max_db_mb
+        self.wal_pages = wal_pages   # WAL autocheckpoint threshold (large = fewer checkpoints)
         self._tls = threading.local()
         self._write_exec = ThreadPoolExecutor(max_workers=1, thread_name_prefix="relay-db-w")
         self._read_exec = ThreadPoolExecutor(max_workers=read_workers, thread_name_prefix="relay-db-r")
@@ -122,7 +123,10 @@ class RelayStore:
             c.execute("PRAGMA journal_mode=WAL")
             c.execute("PRAGMA synchronous=NORMAL")
             c.execute("PRAGMA busy_timeout=5000")
-            c.execute("PRAGMA cache_size=-8000")  # ~8MB; data already lives in RAM (tmpfs)
+            c.execute("PRAGMA cache_size=-8000")  # ~8MB page cache
+            # Large WAL autocheckpoint → far fewer checkpoints, much faster sustained writes on
+            # a multi-GB disk DB (the WAL absorbs bursts; readers stay non-blocking).
+            c.execute(f"PRAGMA wal_autocheckpoint={int(self.wal_pages)}")
             self._tls.conn = c
         return c
 
@@ -360,6 +364,16 @@ class RelayStore:
 
     async def snapshot(self) -> None:
         await self._snap(self._snapshot_sync)
+
+    def _checkpoint_sync(self) -> None:
+        try:
+            self._conn().execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except Exception as e:
+            logger.warning("[nostr-relay] checkpoint failed: %s", e)
+
+    async def checkpoint(self) -> None:
+        """Fold the WAL back into the main DB (disk mode, clean shutdown)."""
+        await self._w(self._checkpoint_sync)
 
     def _prune_sync(self) -> int:
         conn = self._conn()

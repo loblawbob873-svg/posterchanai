@@ -82,8 +82,16 @@ def _read_config() -> dict:
             g("nostr_relay_upstream_relays", "")) or list(nostr_service.DEFAULT_RELAYS)
 
         scratch = g("nostr_relay_scratch_dir", "/tmp")
-        hot_path = os.path.join(scratch, "posterchanai-nostr-relay.db")
         snap_path = g("nostr_relay_db_path", os.path.join(_REPO_ROOT, "data", "nostr_relay.db"))
+        # Storage mode: 'tmpfs' = hot DB in RAM + periodic snapshot to disk (fast, for a
+        # bounded/small DB). 'disk' = DB lives directly on disk in WAL mode, NO snapshot —
+        # scales to many GB without the full-copy snapshot bottleneck (OS page cache keeps
+        # hot pages in RAM, writes are sequential WAL appends, the DB is durable by itself).
+        storage_mode = (g("nostr_relay_storage_mode", "tmpfs") or "tmpfs").lower()
+        if storage_mode == "disk":
+            hot_path = snap_path
+        else:
+            hot_path = os.path.join(scratch, "posterchanai-nostr-relay.db")
 
         cfg = {
             "enabled": gb("nostr_relay_enabled", False),
@@ -97,11 +105,16 @@ def _read_config() -> dict:
             "direct": gb("nostr_relay_disable_proxy", False),
             "hot_path": hot_path,
             "snapshot_path": snap_path,
+            "storage_mode": storage_mode,
             "snapshot_sec": gi("nostr_relay_snapshot_sec", 600),
             "retention_days": gi("nostr_relay_retention_days", 30),
             "max_events": gi("nostr_relay_max_events", 500000),
             "max_db_mb": gi("nostr_relay_max_db_mb", 1024),
+            "wal_pages": gi("nostr_relay_wal_autocheckpoint", 50000),  # ~200MB WAL before checkpoint
             "wot_refresh_sec": gi("nostr_relay_wot_refresh_sec", 86400),  # daily
+            "wot_depth": gi("nostr_relay_wot_depth", 1),                  # 1=follows, 2=+FoF
+            "wot_min_followers": gi("nostr_relay_wot_min_followers", 2),  # FoF inclusion threshold
+            "wot_max": gi("nostr_relay_wot_max", 50000),                  # cap on total members
             "max_connections": gi("nostr_relay_max_connections", 5000),
             # windowed ingestion
             "sync_window_sec": gi("nostr_relay_sync_window_sec", 600),
@@ -173,7 +186,7 @@ async def _main(cfg: dict) -> None:
     store = RelayStore(
         cfg["hot_path"], cfg["snapshot_path"],
         max_events=cfg["max_events"], retention_days=cfg["retention_days"],
-        max_db_mb=cfg["max_db_mb"])
+        max_db_mb=cfg["max_db_mb"], wal_pages=cfg["wal_pages"])
     loop = asyncio.get_running_loop()
     store.open(loop)
     gate = WotGate()
@@ -204,13 +217,10 @@ async def _main(cfg: dict) -> None:
 
     from . import ingest as _ingest
     tasks = [
-        asyncio.create_task(_periodic(_relay.stop_event, cfg["snapshot_sec"], store.snapshot,
-                                      "snapshot")),
         asyncio.create_task(_periodic(_relay.stop_event, 3600, store.prune, "prune")),
         # Daily WoT rebuild from the seeds' follow lists.
         asyncio.create_task(_periodic(_relay.stop_event, cfg["wot_refresh_sec"],
-                                      lambda: gate.build(store, cfg["upstream"], cfg["seeds"],
-                                                         direct=cfg["direct"]),
+                                      lambda: _build_wot(gate, store, cfg),
                                       "wot-refresh")),
         # Windowed WoT ingestion (the curated feed) — runs on its own cadence.
         asyncio.create_task(_periodic(_relay.stop_event, cfg["sync_interval_sec"],
@@ -218,6 +228,11 @@ async def _main(cfg: dict) -> None:
                                                                 cfg["upstream"], cfg),
                                       "sync")),
     ]
+    # Snapshot loop only in tmpfs mode; in disk mode the DB is already durable (no full-copy
+    # snapshot bottleneck as it grows to many GB).
+    if cfg["storage_mode"] != "disk":
+        tasks.append(asyncio.create_task(
+            _periodic(_relay.stop_event, cfg["snapshot_sec"], store.snapshot, "snapshot")))
     try:
         await _relay.stop_event.wait()
     finally:
@@ -229,10 +244,16 @@ async def _main(cfg: dict) -> None:
             await ws.wait_closed()
         except Exception:
             pass
-        try:
-            await store.snapshot()           # final durable snapshot
-        except Exception as e:
-            logger.warning("[nostr-relay] final snapshot failed: %s", e)
+        if cfg["storage_mode"] != "disk":
+            try:
+                await store.snapshot()           # final durable snapshot (tmpfs mode only)
+            except Exception as e:
+                logger.warning("[nostr-relay] final snapshot failed: %s", e)
+        else:
+            try:
+                await store.checkpoint()         # fold WAL into the disk DB on clean shutdown
+            except Exception as e:
+                logger.warning("[nostr-relay] final checkpoint failed: %s", e)
         store.close()
         logger.info("[nostr-relay] stopped")
 
@@ -242,6 +263,16 @@ async def _safe(coro):
         await coro
     except Exception as e:
         logger.warning("[nostr-relay] task error: %s", e)
+
+
+async def _build_wot(gate, store, cfg) -> int:
+    """Single entry point so every WoT build (initial / daily / manual) uses the same
+    depth, pacing and caps."""
+    return await gate.build(
+        store, cfg["upstream"], cfg["seeds"],
+        depth=cfg["wot_depth"], direct=cfg["direct"],
+        batch=cfg["author_batch"], pace=cfg["request_pace_sec"],
+        min_followers=cfg["wot_min_followers"], max_members=cfg["wot_max"])
 
 
 async def _initial_wot_build(gate, store, cfg, stop: asyncio.Event) -> None:
@@ -254,7 +285,7 @@ async def _initial_wot_build(gate, store, cfg, stop: asyncio.Event) -> None:
         if stop.is_set():
             return
         try:
-            n = await gate.build(store, cfg["upstream"], cfg["seeds"], direct=cfg["direct"])
+            n = await _build_wot(gate, store, cfg)
         except Exception as e:
             logger.warning("[nostr-relay] initial WoT build error: %s", e)
             n = 0
@@ -317,18 +348,17 @@ def start_nostr_relay() -> None:
     logger.info("[nostr-relay] thread started")
 
 
-def trigger_wot_refresh(timeout: float = 120) -> dict:
-    """Rebuild the WoT now (Admin button). Schedules `gate.build` on the relay's own loop
-    from the caller thread and waits for the new member count."""
+def trigger_wot_refresh() -> dict:
+    """Kick off a WoT rebuild now (Admin button). Fire-and-forget on the relay's own loop —
+    a depth-2 (friends-of-friends) build can take minutes, so we don't block; the UI polls
+    /status for the updated member count."""
     if not _relay.is_running() or _relay.loop is None or _relay.gate is None or _relay.store is None:
         return {"ok": False, "error": "relay not running"}
     cfg = _relay.cfg
     try:
-        fut = asyncio.run_coroutine_threadsafe(
-            _relay.gate.build(_relay.store, cfg["upstream"], cfg["seeds"],
-                              direct=cfg.get("direct", False)), _relay.loop)
-        n = fut.result(timeout=timeout)
-        return {"ok": True, "members": n}
+        asyncio.run_coroutine_threadsafe(
+            _safe(_build_wot(_relay.gate, _relay.store, cfg)), _relay.loop)
+        return {"ok": True, "started": True, "members": len(_relay.gate.members())}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 

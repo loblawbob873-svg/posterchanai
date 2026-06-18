@@ -522,6 +522,11 @@ class UserSettingsUpdate(BaseModel):
     nostr_relay_max_events: Optional[int] = None
     nostr_relay_max_db_mb: Optional[int] = None
     nostr_relay_wot_refresh_sec: Optional[int] = None
+    nostr_relay_wot_depth: Optional[int] = None              # 1=follows, 2=+friends-of-friends
+    nostr_relay_wot_min_followers: Optional[int] = None      # FoF inclusion threshold
+    nostr_relay_wot_max: Optional[int] = None                # cap on total WoT members
+    nostr_relay_storage_mode: Optional[str] = None           # 'tmpfs' (snapshot) | 'disk' (WAL)
+    nostr_relay_wal_autocheckpoint: Optional[int] = None     # WAL pages before checkpoint
     nostr_relay_max_connections: Optional[int] = None
     nostr_relay_fetch_ancestors: Optional[bool] = None
     nostr_relay_max_ancestors: Optional[int] = None
