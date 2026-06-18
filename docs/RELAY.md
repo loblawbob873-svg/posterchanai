@@ -81,6 +81,13 @@ member — **kind-0 profiles**, **kind-3 contact lists**, and **kind-10002 relay
 clients can use it to resolve who-is-who and *where each member posts*. Advertised as NIP-02
 + NIP-65.
 
+### Private messages — DM inbox (NIP-17)
+The relay doubles as a **DM inbox for its own users**. Gift-wrapped DMs (kind 1059) have a
+random throwaway author, so the WoT gate can't judge them — instead the relay accepts a DM
+(kind 1059, or legacy kind 4) when it's **addressed (p-tag) to one of your linked users/bots**,
+and serves it back on `{kinds:[1059], "#p":[you]}`. DMs are stored privately and **never
+re-broadcast** by the outbox.
+
 ### Content & account filters
 Three independent filters, all in Admin → Relay, all applied to **both writes and sync**:
 - **Language blocking** — reject kind-1 notes in chosen scripts (Cyrillic/CJK/Arabic/…),
@@ -223,16 +230,23 @@ exact path it was reached on.
   until, `#<tag>`), EOSE, live fan-out.
 - **NIP-02** — contact lists (kind-3) stored & served (lookup relay).
 - **NIP-09** — event deletion (a kind-5 removes the author's own referenced events).
-- **NIP-11** — relay information document.
+- **NIP-11** — relay information document (incl. relay `icon`).
+- **NIP-17 / 44 / 59** — **private direct messages**: the relay acts as a **DM inbox** for its
+  own users — gift-wrapped DMs (kind 1059) and legacy kind-4 are accepted when **addressed
+  (p-tag) to a relay user**, even though the gift-wrap author is a random key (so the WoT gate
+  can't apply). DMs are never re-broadcast by the outbox.
+- **NIP-22 / 23** — comments (kind 1111) and **long-form articles** (kind 30023), synced + served.
 - **NIP-45** — `COUNT`.
 - **NIP-50** — full-text **search** (`{"search": "..."}` filters), backed by SQLite FTS5
   over note content with a LIKE fallback if FTS5 is unavailable.
 - **NIP-65** — relay lists (kind-10002) stored & served — this relay works as an **outbox /
   lookup relay** so clients can resolve where each member posts.
+- **NIP-77** — **negentropy** set reconciliation (`NEG-OPEN`/`NEG-MSG`) for efficient sync;
+  falls back to `NEG-ERR` → normal REQ if a client's session can't be reconciled.
 
-**Writes are restricted to the Web of Trust; reads are open.** A blocked write gets
-`["OK", id, false, "blocked: not in web of trust"]` (or `"… language '…'"`, `"… filtered
-text"`).
+**Writes are restricted to the Web of Trust** (DMs excepted — see NIP-17); **reads are open.**
+A blocked write gets `["OK", id, false, "blocked: not in web of trust"]` (or `"… language '…'"`,
+`"… filtered text"`, `"… not a DM to a relay user"`).
 
 ## Notes & limits
 

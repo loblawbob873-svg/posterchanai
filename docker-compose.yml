@@ -17,8 +17,8 @@ x-common: &common
   environment:
     - POSTERCHANAI_PORT=3051
     # Turnkey Nostr relay: set POSTERCHANAI_NOSTR_RELAY=1 and the app auto-enables the
-    # web-of-trust relay (binds 0.0.0.0:3052, snapshots to the data volume). Front with TLS
-    # (e.g. nginx → wss://relay.yourdomain/). See docs/RELAY.md.
+    # web-of-trust relay (binds 0.0.0.0:3052, on-disk WAL DB on the data volume). Front with
+    # TLS (e.g. nginx → wss://relay.yourdomain/). See docs/RELAY.md.
     - POSTERCHANAI_NOSTR_RELAY=${POSTERCHANAI_NOSTR_RELAY:-0}
     # Turnkey music: set POSTERCHANAI_MUSIC=1 (with `--profile music`) and the app auto-enables
     # music pointed at the acestep container — no manual Admin config needed.
