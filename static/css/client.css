@@ -76,9 +76,9 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 .sidebar{display:flex;flex-direction:column;gap:8px;padding:18px 14px;border-right:1px solid var(--line)}
 .brand{font-size:26px;font-weight:800;text-align:center;color:var(--neon);margin-bottom:8px}
 .nav{display:flex;flex-direction:column;gap:4px}
-.nav-item{display:flex;align-items:center;gap:12px;background:transparent;border:none;color:var(--muted);
-  padding:11px 14px;border-radius:11px;cursor:pointer;font-size:15px;font-weight:600;text-align:left;transition:.15s;position:relative}
-.nav-item .ic{font-size:18px}
+.nav-item{display:flex;align-items:center;gap:13px;background:transparent;border:none;color:var(--muted);
+  padding:13px 15px;border-radius:11px;cursor:pointer;font-size:17px;font-weight:600;text-align:left;transition:.15s;position:relative}
+.nav-item .ic{font-size:23px;width:24px;text-align:center}
 .nav-item:hover{color:var(--text);background:rgba(123,97,255,.12)}
 .nav-item.active{color:#fff;background:linear-gradient(135deg,rgba(255,43,214,.22),rgba(181,55,255,.14));box-shadow:inset 0 0 0 1px var(--line)}
 .nav-item.active::before{content:"";position:absolute;left:0;top:18%;height:64%;width:3px;border-radius:3px;background:var(--neon);box-shadow:var(--glow)}
