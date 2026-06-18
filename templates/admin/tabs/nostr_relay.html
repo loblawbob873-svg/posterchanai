@@ -40,22 +40,7 @@
                 <option value="1">1 — seeds + their follows</option>
                 <option value="2">2 — also friends-of-friends</option>
             </select>
-            <small>Depth 2 adds follows-of-follows (much larger). Pruned by the threshold below + capped.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_wot_min_followers">Friends-of-friends threshold</label>
-            <input type="number" id="nostr_relay_wot_min_followers" name="nostr_relay_wot_min_followers" placeholder="2">
-            <small>A FoF is included only if at least this many of your follows follow them (depth 2 only). Higher = tighter/smaller.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_wot_max">Max WoT members</label>
-            <input type="number" id="nostr_relay_wot_max" name="nostr_relay_wot_max" placeholder="50000">
-            <small>Hard cap; the most-followed FoF are kept when over. Keeps sync feasible.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_wot_refresh_sec">WoT refresh interval (seconds)</label>
-            <input type="number" id="nostr_relay_wot_refresh_sec" name="nostr_relay_wot_refresh_sec" placeholder="86400">
-            <small>How often to rebuild the follow graph from seeds. Default 86400 (daily).</small>
+            <small>Depth 2 adds follows-of-follows (much larger). The graph rebuilds daily.</small>
         </div>
         <div class="form-group">
             <button type="button" id="relayRefreshWotBtn" class="btn-primary">↻ Refresh Web of Trust now</button>
@@ -150,63 +135,17 @@
     </fieldset>
 
     <fieldset>
-        <legend>Sync &amp; threads</legend>
-        <div class="form-group">
-            <label for="nostr_relay_sync_window_sec">Sync window (seconds)</label>
-            <input type="number" id="nostr_relay_sync_window_sec" name="nostr_relay_sync_window_sec" placeholder="600">
-            <small>Each poll re-scans at least this far back so nothing is missed (default 600 = 10 min).</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_sync_interval_sec">Sync interval (seconds)</label>
-            <input type="number" id="nostr_relay_sync_interval_sec" name="nostr_relay_sync_interval_sec" placeholder="120">
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_overlap_sec">Overlap (seconds)</label>
-            <input type="number" id="nostr_relay_overlap_sec" name="nostr_relay_overlap_sec" placeholder="120">
-            <small>Extra look-back to catch boundary stragglers (dedup makes it safe).</small>
-        </div>
+        <legend>Sync</legend>
         <div class="form-group">
             <label for="nostr_relay_ingest_kinds">Ingest kinds</label>
-            <input type="text" id="nostr_relay_ingest_kinds" name="nostr_relay_ingest_kinds" placeholder="1,6,7">
-            <small>Event kinds to sync (notes/reposts/reactions). Profiles (0) &amp; contacts (3) are fetched automatically.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_author_batch">Authors per query</label>
-            <input type="number" id="nostr_relay_author_batch" name="nostr_relay_author_batch" placeholder="200">
+            <input type="text" id="nostr_relay_ingest_kinds" name="nostr_relay_ingest_kinds" placeholder="1,6,7,1111,30023">
+            <small>Event kinds to sync (notes, reposts, reactions, comments, articles). Profiles, contacts &amp; relay lists are fetched automatically.</small>
         </div>
         <div class="form-group">
             <label for="nostr_relay_fetch_ancestors">
                 <input type="checkbox" id="nostr_relay_fetch_ancestors" name="nostr_relay_fetch_ancestors"> Backfill reply ancestors (complete threads)
             </label>
             <small>Fetch missing parent notes so replies aren't orphaned. The one place a non-WoT note is stored — only because a trusted member replied to it.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_max_ancestors">Max ancestors per thread</label>
-            <input type="number" id="nostr_relay_max_ancestors" name="nostr_relay_max_ancestors" placeholder="20">
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_max_connections">Max client connections</label>
-            <input type="number" id="nostr_relay_max_connections" name="nostr_relay_max_connections" placeholder="5000">
-        </div>
-    </fieldset>
-
-    <fieldset>
-        <legend>Rate limiting (be a good upstream citizen)</legend>
-        <small>Pace requests to the public relays so a big sync or a post-blasting bot doesn't get us rate-limited or blocked.</small>
-        <div class="form-group">
-            <label for="nostr_relay_request_pace_sec">Delay between sync queries (seconds)</label>
-            <input type="number" step="0.1" id="nostr_relay_request_pace_sec" name="nostr_relay_request_pace_sec" placeholder="1.0">
-            <small>Pause between each batch of authors when syncing/fetching profiles.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_outbox_min_interval_sec">Min delay between broadcasts (seconds)</label>
-            <input type="number" step="0.1" id="nostr_relay_outbox_min_interval_sec" name="nostr_relay_outbox_min_interval_sec" placeholder="1.0">
-            <small>Throttles re-broadcasting your bots'/users' posts to upstream relays.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_outbox_max_queue">Outbox queue size</label>
-            <input type="number" id="nostr_relay_outbox_max_queue" name="nostr_relay_outbox_max_queue" placeholder="500">
-            <small>Pending broadcasts beyond this are dropped (prevents a burst ballooning memory).</small>
         </div>
     </fieldset>
 
@@ -228,18 +167,9 @@
             <small>Memory-mapped read window — serves reads with zero syscalls. Set near your DB size for max read speed.</small>
         </div>
         <div class="form-group">
-            <label for="nostr_relay_wal_autocheckpoint">WAL size (pages before checkpoint)</label>
-            <input type="number" id="nostr_relay_wal_autocheckpoint" name="nostr_relay_wal_autocheckpoint" placeholder="50000">
-            <small>Larger = fewer checkpoints, faster sustained writes (50000 ≈ 200 MB; 500000 ≈ 2 GB). Very large can slow reads.</small>
-        </div>
-        <div class="form-group">
             <label for="nostr_relay_retention_days">Auto-clean notes older than (days)</label>
             <input type="number" id="nostr_relay_retention_days" name="nostr_relay_retention_days" placeholder="30">
-            <small>Deletes old <strong>notes/reactions/reposts</strong> past this age. <strong>Profiles and contact lists are kept forever.</strong> Set <code>0</code> to disable age-based cleanup.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_max_events">Max events</label>
-            <input type="number" id="nostr_relay_max_events" name="nostr_relay_max_events" placeholder="500000">
+            <small>Deletes old <strong>notes/reactions/reposts</strong> past this age. <strong>Profiles, contacts, articles and DMs are kept forever.</strong> Set <code>0</code> to disable.</small>
         </div>
         <div class="form-group">
             <label for="nostr_relay_max_db_mb">Max DB size (MB)</label>
