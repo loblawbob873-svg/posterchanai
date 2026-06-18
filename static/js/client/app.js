@@ -243,6 +243,7 @@
       const a=n.querySelector('.av'); if(p.picture && a) a.src=p.picture;
       const nm=n.querySelector('.name'); if(nm) nm.textContent=p.name||p.display_name||nm.textContent;
       const h=n.querySelector('.handle'); const nip=niceNip05(p.nip05); if(h && nip) h.textContent=nip;
+      decorateVerified(n.querySelector('.vchk'), n.dataset.pk, p.nip05);
     }});
     $$('.rb-item[data-pk]').forEach(n=>{ const p=Store.profile(n.dataset.pk); if(p){
       const a=n.querySelector('.rb-av'); if(p.picture && a) a.src=p.picture;
@@ -365,7 +366,7 @@
     return `<article class="note" data-id="${ev.id}" data-pk="${ev.pubkey}">
       <img class="av" src="${enc(av)}" onerror="this.src='${LOGO}'">
       <div class="body">${prefix}
-        <div class="hd"><span class="name" data-prof="${ev.pubkey}">${enc(name)}</span>
+        <div class="hd"><span class="name" data-prof="${ev.pubkey}">${enc(name)}</span><span class="vchk"></span>
           <span class="handle">${enc(handle)}</span><span class="time">${timeAgo(ev.created_at)}</span></div>
         <div class="txt">${linkify(mp.text)}</div>
         ${mp.gallery}
@@ -541,7 +542,7 @@
       const i=a.findIndex(x=>x.id===d.id); if(i>=0)a[i]=d; else a.unshift(d); this._save(a); return d.id; },
     remove(id){ this._save(this.all().filter(x=>x.id!==id)); },
   };
-  function bumpDraft(){ const n=Drafts.all().length; $$('#draft-badge').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden'); }); }
+  function bumpDraft(){ const n=Drafts.all().length; $$('#draft-badge,#draft-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden'); }); }
   function renderDrafts(){
     const feed=$('#feed'); const list=Drafts.all();
     feed.innerHTML = list.length ? list.map(d=>{
@@ -578,7 +579,7 @@
       <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
       <div id="cmp-preview" class="note-preview hidden"></div>
       <div class="row cmp-tools"><button class="btn btn-ghost small" id="cmp-img">📎 Attach</button><button class="btn btn-ghost small" id="cmp-blossom">🌸 Files</button>${CFG.gif_enabled?`<button class="btn btn-ghost small" id="cmp-gif">🎬 GIF</button>`:''}<input type="file" id="cmp-file" multiple hidden>
-      <span class="spacer"></span><button class="btn btn-ghost" id="cmp-draft">💾 Draft</button><button class="btn btn-neon" id="cmp-send">Post ▶</button></div>
+      <span class="spacer"></span><button class="btn btn-ghost small" id="cmp-draft">💾 Draft</button><button class="btn btn-neon small" id="cmp-send">Post ▶</button></div>
       <div class="muted small" id="cmp-status"></div>`, root=>{
       const ta=$('#cmp',root); attachMentionAutocomplete(ta); if(text) ta.value=text;
       $$('.cmp-tab',root).forEach(b=> b.onclick=()=>{
@@ -912,7 +913,7 @@
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
     if(!Store.haveProfile(pk)){ const e=await Relay.query([{authors:[pk],kinds:[0],limit:1}]); for(const x of e)Store.saveProfile(x); }
     const p=Store.profile(pk)||{}; const mine=pk===ME.pubkey;
-    const notes=await Relay.query([{authors:[pk],kinds:[1],limit:40}]); notes.forEach(n=>Store.saveEvent(n));
+    const notes=await Relay.query([{authors:[pk],kinds:[1],limit:80}]); notes.forEach(n=>Store.saveEvent(n));
     // following (their latest kind-3) + followers (kind-3s that p-tag them)
     const k3=await Relay.query([{authors:[pk],kinds:[3],limit:1}]);
     const following=k3.length ? (k3.sort((a,b)=>b.created_at-a.created_at)[0].tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1])) : [];
@@ -932,16 +933,27 @@
           <button class="btn btn-ghost small" id="dm-prof">Message</button>
           <button class="btn btn-ghost small" id="zap-prof">⚡ Zap</button>
           ${IS_ADMIN?`<button class="btn btn-ghost small" id="block-prof" style="color:#ff6b8b">🚫 Block (relay)</button>`:''}`}</div>
-      <div class="pbody"><h2>${enc(p.name||p.display_name||'anon')}</h2>
+      <div class="pbody"><h2>${enc(p.name||p.display_name||'anon')}<span class="vchk" id="prof-vchk"></span></h2>
         ${niceNip05(p.nip05)?`<div class="muted small">${enc(niceNip05(p.nip05))}</div>`:''}
         <div class="npubrow"><code>${enc(npub.slice(0,24))}…</code><button class="mini" id="copy-npub">📋 copy npub</button></div>
         ${p.lud16?`<button class="ln-addr" id="prof-ln" title="send a zap">⚡ ${enc(p.lud16)}</button>`:''}
         <div class="about">${linkify(p.about||'')}</div>
         <div class="follow-stats"><button class="statbtn" id="show-following"><b>${following.length}</b> Following</button><button class="statbtn" id="show-followers"><b>${followers.length}${followerEvs.length>=1000?'+':''}</b> Followers</button></div>
       </div></div>
-      <div id="prof-notes">${pinned.length?`<div class="search-section-title">📌 Pinned</div>`+pinned.map(e=>noteHtml(e)).join(''):''}
-        ${pinned.length?`<div class="search-section-title">Posts</div>`:''}${Store.feed(e=>e.pubkey===pk && !isReply(e)).slice(0,40).map(e=>noteHtml(e)).join('')||'<div class="empty">No posts.</div>'}</div>`;
+      <div class="prof-tabs"><button class="prof-tab active" data-tab="notes">Notes</button><button class="prof-tab" data-tab="replies">Replies</button></div>
+      <div id="prof-list"></div>`;
+    const pinnedHtml = pinned.length?`<div class="search-section-title">📌 Pinned</div>`+pinned.map(e=>noteHtml(e)).join(''):'';
+    const listFor=(tab)=>{
+      if(tab==='replies'){ const r=Store.feed(e=>e.pubkey===pk && isReply(e)).slice(0,40);
+        return r.length ? r.map(e=>noteHtml(e)).join('') : '<div class="empty">No replies yet.</div>'; }
+      const n=Store.feed(e=>e.pubkey===pk && !isReply(e)).slice(0,40);
+      return pinnedHtml + (n.length ? n.map(e=>noteHtml(e)).join('') : '<div class="empty">No posts yet.</div>');
+    };
+    const fillList=(tab)=>{ const el=$('#prof-list'); if(el) el.innerHTML=listFor(tab); };
+    fillList('notes');
     hydrate(feed);
+    decorateVerified($('#prof-vchk'), pk, p.nip05);
+    $$('.prof-tab',feed).forEach(t=> t.onclick=()=>{ $$('.prof-tab',feed).forEach(x=>x.classList.toggle('active',x===t)); fillList(t.dataset.tab); hydrate(feed); });
     $('#copy-npub').onclick=()=>{ navigator.clipboard.writeText(npub); toast('npub copied'); };
     { const ln=$('#prof-ln'); if(ln) ln.onclick=()=>doZap(null, pk); }
     $('#show-following').onclick=()=>peopleModal('Following', following);
@@ -1027,6 +1039,33 @@
       const j = await fetch(`https://${domain}/.well-known/nostr.json?name=${encodeURIComponent(name)}`).then(r=>r.json());
       return (j && j.names && j.names[name]) || null;
     } catch(_){ return null; }
+  }
+  // ---------- NIP-05 verification (blue check) ----------
+  // Confirm a profile's claimed name@domain actually points back to its pubkey (per NIP-05),
+  // then show a blue ✓. Each handle is fetched once per session: _vP holds the in-flight/settled
+  // promise, _vR the resolved boolean for a synchronous peek during (re)decoration.
+  const VCHECK = '<span class="verified" title="NIP-05 verified">✓</span>';
+  const _nip05vP = new Map();   // "pubkey|handle" -> Promise<bool>
+  const _nip05vR = new Map();   // "pubkey|handle" -> bool (settled)
+  function verifyNip05(pubkey, nip05){
+    if(!pubkey || !nip05 || nip05.indexOf('@') < 0) return Promise.resolve(false);
+    const key = pubkey + '|' + nip05.toLowerCase();
+    if(_nip05vP.has(key)) return _nip05vP.get(key);
+    const pr = nip05Resolve(nip05.toLowerCase())
+      .then(pk => { const ok = pk === pubkey; _nip05vR.set(key, ok); return ok; })
+      .catch(() => { _nip05vR.set(key, false); return false; });
+    _nip05vP.set(key, pr);
+    if(_nip05vP.size > 3000){ const k=_nip05vP.keys().next().value; _nip05vP.delete(k); _nip05vR.delete(k); }
+    return pr;
+  }
+  // Fill a `.vchk` slot with the blue check iff the handle verifies. Uses the settled cache for a
+  // synchronous paint on re-decoration, and only kicks off a network check the first time.
+  function decorateVerified(slot, pubkey, nip05){
+    if(!slot) return;
+    if(!nip05 || nip05.indexOf('@') < 0){ slot.innerHTML=''; return; }
+    const key = pubkey + '|' + nip05.toLowerCase();
+    if(_nip05vR.has(key)){ slot.innerHTML = _nip05vR.get(key) ? VCHECK : ''; return; }
+    verifyNip05(pubkey, nip05).then(ok => { if(ok && document.contains(slot)) slot.innerHTML = VCHECK; });
   }
   async function runSearch(q){
     VIEW='search'; $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='Search';

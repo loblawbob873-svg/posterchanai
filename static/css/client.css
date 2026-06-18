@@ -112,7 +112,7 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 .rb-github:hover{border-color:var(--cyan);color:var(--cyan);box-shadow:var(--glow-cy)}
 .topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
 .topbar h2{margin:0;font-size:24px;letter-spacing:1px;font-weight:800}
-.searchbox{flex:1;max-width:420px;margin:0 16px}
+.searchbox{flex:1;max-width:640px;margin:0 16px}
 .searchbox .input{margin:0;padding:8px 14px}
 .search-section-title{padding:14px 20px 6px;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:1.5px}
 .psearch{display:flex;gap:12px;align-items:center;padding:12px 20px;border-bottom:1px solid var(--line);cursor:pointer}
@@ -196,6 +196,17 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 .row{display:flex;gap:8px;align-items:center}
 .spacer{flex:1}
 .cmp-tools{flex-wrap:wrap;gap:8px;margin-bottom:8px}
+/* NIP-05 verified blue check */
+.vchk{display:inline-flex;vertical-align:middle}
+.verified{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;margin:0 0 1px 4px;
+  border-radius:50%;background:#1d9bf0;color:#fff;font-size:10px;font-weight:900;line-height:1;flex:none}
+.pbody h2 .verified{width:20px;height:20px;font-size:12px;margin-left:6px}
+/* profile Notes / Replies tabs */
+.prof-tabs{display:flex;border-bottom:1px solid var(--line)}
+.prof-tab{flex:1;background:transparent;border:none;color:var(--muted);cursor:pointer;padding:14px 0;font-size:15px;
+  font-weight:600;letter-spacing:.5px;border-bottom:2px solid transparent;transition:color .15s,border-color .15s}
+.prof-tab:hover{color:var(--text)}
+.prof-tab.active{color:var(--neon);border-bottom-color:var(--neon)}
 /* drafts */
 .draft-card{flex-direction:column;gap:10px}
 .draft-body{white-space:pre-wrap;word-break:break-word;width:100%}
@@ -319,4 +330,8 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
   .files-grid{grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;padding:12px}
   .modal{padding:16px}
   .auth-card{padding:22px}
+  /* compose: drop the growing spacer so every tool (incl. 💾 Draft) flows + wraps visibly
+     instead of being pushed off the narrow modal and clipped by overflow-x:hidden */
+  .cmp-tools .spacer{display:none}
+  .cmp-tools{justify-content:flex-start}
 }
