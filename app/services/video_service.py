@@ -80,6 +80,11 @@ def _idle_loop():
     while not _idle_stop.wait(30):
         inst = _instance
         if inst and inst._pipe is not None and inst._last_used:
+            # Never unload mid-generation: a Wan run can outlast _idle_timeout and `_last_used`
+            # only advances when a run COMPLETES, so it goes stale during a long generation and
+            # would trick the monitor into unloading the active pipe. Mirrors the image/LLM guard.
+            if inst._generating > 0:
+                continue
             if time.time() - inst._last_used > inst._idle_timeout:
                 logger.info("Idle timeout reached — unloading video model")
                 inst.unload_model()
@@ -100,6 +105,9 @@ class VideoService:
         self._device: Optional[str] = None
         self._idle_timeout = DEFAULT_IDLE_TIMEOUT
         self._last_used = 0.0
+        # In-flight generation counter — keeps the idle monitor from unloading the model while a
+        # (long) generation is running. See _idle_loop. Same guard as diffusers/llama services.
+        self._generating = 0
         _start_idle()
 
     def is_loaded(self) -> bool:
@@ -182,50 +190,56 @@ class VideoService:
         """Generate a clip. Returns (frames: list[np.uint8 HxWx3], fps:int). Blocking — call via the
         factory's thread + GPU lock."""
         cfg = _get_settings(db)
-        self.load_model(db)
-        import torch
-        # Wan needs width/height divisible by 16 and num_frames = 4k+1.
-        def _r16(v):
-            v = int(v); return max(16, v - (v % 16))
-        w = _r16(width or cfg["width"])
-        h = _r16(height or cfg["height"])
-        nf = int(num_frames or cfg["num_frames"])
-        # Clamp to the model/VRAM ceiling so an over-large frame count fails fast & clearly instead
-        # of OOMing the GPU (Wan1.3B is a ~5s/81-frame model; 16GB can't hold more).
-        max_nf = max(5, int(cfg["max_frames"]))
-        if nf > max_nf:
-            logger.warning(f"num_frames {nf} exceeds max {max_nf}; clamping (model/VRAM ceiling)")
-            nf = max_nf
-        nf = max(5, nf - ((nf - 1) % 4))
-        st = int(steps or cfg["steps"])
-        gs = float(guidance if guidance is not None else cfg["guidance"])
-        logger.info(f"Generating video {w}x{h} {nf}f steps={st} on {self._device}: {prompt[:60]}")
-        t0 = time.time()
+        # Bracket the whole run (model load + diffusion) so the idle monitor won't unload the
+        # pipe mid-generation. _last_used only advances on completion, so it can't protect the run.
+        self._generating += 1
         try:
-            result = self._pipe(
-                prompt=prompt,
-                negative_prompt=negative_prompt or "",
-                width=w, height=h, num_frames=nf,
-                num_inference_steps=st, guidance_scale=gs,
-            )
-        except Exception as e:
-            msg = str(e)
-            if "OUT_OF" in msg or "out of memory" in msg.lower() or "OutOfMemory" in msg:
-                raise VideoError(
-                    "Ran out of GPU memory generating the video. Lower video_num_frames / "
-                    "video_width / video_height in Admin → Video (the Arc 16GB is tight)."
+            self.load_model(db)
+            import torch
+            # Wan needs width/height divisible by 16 and num_frames = 4k+1.
+            def _r16(v):
+                v = int(v); return max(16, v - (v % 16))
+            w = _r16(width or cfg["width"])
+            h = _r16(height or cfg["height"])
+            nf = int(num_frames or cfg["num_frames"])
+            # Clamp to the model/VRAM ceiling so an over-large frame count fails fast & clearly instead
+            # of OOMing the GPU (Wan1.3B is a ~5s/81-frame model; 16GB can't hold more).
+            max_nf = max(5, int(cfg["max_frames"]))
+            if nf > max_nf:
+                logger.warning(f"num_frames {nf} exceeds max {max_nf}; clamping (model/VRAM ceiling)")
+                nf = max_nf
+            nf = max(5, nf - ((nf - 1) % 4))
+            st = int(steps or cfg["steps"])
+            gs = float(guidance if guidance is not None else cfg["guidance"])
+            logger.info(f"Generating video {w}x{h} {nf}f steps={st} on {self._device}: {prompt[:60]}")
+            t0 = time.time()
+            try:
+                result = self._pipe(
+                    prompt=prompt,
+                    negative_prompt=negative_prompt or "",
+                    width=w, height=h, num_frames=nf,
+                    num_inference_steps=st, guidance_scale=gs,
                 )
-            raise VideoError(f"Video generation failed: {e}")
-        self._last_used = time.time()
-        frames = result.frames[0]
-        out: List[np.ndarray] = []
-        for fr in frames:
-            arr = np.array(fr)
-            if arr.dtype != np.uint8:
-                arr = (np.clip(arr, 0, 1) * 255).astype(np.uint8) if arr.max() <= 1.0 else arr.astype(np.uint8)
-            out.append(arr)
-        logger.info(f"Generated {len(out)} frames in {time.time() - t0:.0f}s")
-        return out, cfg["fps"]
+            except Exception as e:
+                msg = str(e)
+                if "OUT_OF" in msg or "out of memory" in msg.lower() or "OutOfMemory" in msg:
+                    raise VideoError(
+                        "Ran out of GPU memory generating the video. Lower video_num_frames / "
+                        "video_width / video_height in Admin → Video (the Arc 16GB is tight)."
+                    )
+                raise VideoError(f"Video generation failed: {e}")
+            self._last_used = time.time()
+            frames = result.frames[0]
+            out: List[np.ndarray] = []
+            for fr in frames:
+                arr = np.array(fr)
+                if arr.dtype != np.uint8:
+                    arr = (np.clip(arr, 0, 1) * 255).astype(np.uint8) if arr.max() <= 1.0 else arr.astype(np.uint8)
+                out.append(arr)
+            logger.info(f"Generated {len(out)} frames in {time.time() - t0:.0f}s")
+            return out, cfg["fps"]
+        finally:
+            self._generating -= 1
 
 
 def get_video_service(db: Session) -> VideoService:

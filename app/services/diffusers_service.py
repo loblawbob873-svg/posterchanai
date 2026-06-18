@@ -210,6 +210,10 @@ def _idle_check_loop():
     global _diffusers_instance
     while not _idle_check_stop.wait(30):  # Check every 30 seconds
         if _diffusers_instance is not None and _diffusers_instance._pipe is not None:
+            # Never unload mid-generation: a run can outlast _idle_timeout (Arc XPU), which would
+            # leave `_last_used` stale and trick the monitor into unloading the active pipe.
+            if _diffusers_instance._generating > 0:
+                continue
             idle_time = time.time() - _diffusers_instance._last_used
             timeout = _diffusers_instance._idle_timeout
             if idle_time > timeout:
@@ -242,6 +246,12 @@ class DiffusersService:
         self._device: Optional[str] = None
         self._last_used: float = time.time()
         self._idle_timeout: int = DEFAULT_IDLE_TIMEOUT
+        # In-flight generation counter. The idle monitor must NOT unload the model while a
+        # generation is running: on the Arc XPU a single SDXL run can exceed _idle_timeout,
+        # and `_last_used` (set only at the start/end of a run) goes stale mid-generation —
+        # so without this guard the monitor unloads the pipe out from under the running
+        # generation and the call hangs. Mirrors llama_service's `_pending_requests` guard.
+        self._generating: int = 0
         self._load_settings()
         _start_idle_check()
 
@@ -909,27 +919,32 @@ class DiffusersService:
         
         loop = asyncio.get_event_loop()
 
-        # Use subprocess mode for guaranteed VRAM release (recommended for Intel XPU)
-        if self._subprocess_mode:
-            logger.info("Using subprocess mode for image generation")
-            return await loop.run_in_executor(
+        # Bracket the whole run so the idle monitor won't unload the pipe mid-generation.
+        self._generating += 1
+        try:
+            # Use subprocess mode for guaranteed VRAM release (recommended for Intel XPU)
+            if self._subprocess_mode:
+                logger.info("Using subprocess mode for image generation")
+                return await loop.run_in_executor(
+                    _executor,
+                    lambda: self._generate_subprocess(prompt, negative_prompt, width, height, steps, cfg, seed)
+                )
+
+            # Standard in-process generation
+            img_bytes = await loop.run_in_executor(
                 _executor,
-                lambda: self._generate_subprocess(prompt, negative_prompt, width, height, steps, cfg, seed)
+                lambda: self._generate_sync(prompt, negative_prompt, width, height, steps, cfg, seed)
             )
 
-        # Standard in-process generation
-        img_bytes = await loop.run_in_executor(
-            _executor,
-            lambda: self._generate_sync(prompt, negative_prompt, width, height, steps, cfg, seed)
-        )
+            # Always unload model after generation to release VRAM
+            logger.info(f"Post-generation: unloading to release VRAM")
+            self.unload_model()
 
-        # Always unload model after generation to release VRAM
-        logger.info(f"Post-generation: unloading to release VRAM")
-        self.unload_model()
-
-        if img_bytes:
-            return base64.b64encode(img_bytes).decode()
-        return None
+            if img_bytes:
+                return base64.b64encode(img_bytes).decode()
+            return None
+        finally:
+            self._generating -= 1
 
 
 def get_diffusers_service(db: Session) -> DiffusersService:
