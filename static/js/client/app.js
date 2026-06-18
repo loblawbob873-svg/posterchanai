@@ -379,11 +379,20 @@
   function compose({reply=null, replyPk=null, quote=null}={}){
     const title = reply?'Reply':quote?'Quote post':'New post';
     let qhtml=''; if(quote){ const o=Store.get(quote); if(o) qhtml=`<div class="quoted"><b>${enc((profOf(o.pubkey).name)||'anon')}</b><div class="txt">${linkify(o.content)}</div></div>`; }
-    modal(`<h3>${title}</h3>${qhtml}<textarea id="cmp" placeholder="what's happening on the net?"></textarea>
+    modal(`<h3>${title}</h3>${qhtml}
+      <div class="cmp-tabs"><button class="cmp-tab active" data-t="write">Write</button><button class="cmp-tab" data-t="preview">👁 Preview</button></div>
+      <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
+      <div id="cmp-preview" class="note-preview hidden"></div>
       <div class="row"><button class="mini" id="cmp-img">📎 attach</button><input type="file" id="cmp-file" multiple hidden>
       <span class="spacer"></span><button class="btn btn-neon" id="cmp-send">Post ▶</button></div>
       <div class="muted small" id="cmp-status"></div>`, root=>{
       const ta=$('#cmp',root); attachMentionAutocomplete(ta);
+      $$('.cmp-tab',root).forEach(b=> b.onclick=()=>{
+        $$('.cmp-tab',root).forEach(x=>x.classList.toggle('active',x===b));
+        const pv=b.dataset.t==='preview', prev=$('#cmp-preview',root);
+        ta.classList.toggle('hidden',pv); prev.classList.toggle('hidden',!pv);
+        if(pv) prev.innerHTML = ta.value.trim() ? `<div class="txt">${linkify(ta.value)}</div>` : '<div class="muted small">Nothing to preview.</div>';
+      });
       // paste image (or any file) from clipboard -> upload + append URL
       ta.addEventListener('paste', async (e)=>{
         const files=[...(e.clipboardData&&e.clipboardData.items||[])].filter(it=>it.kind==='file').map(it=>it.getAsFile()).filter(Boolean);
