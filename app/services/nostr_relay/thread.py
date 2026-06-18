@@ -290,6 +290,19 @@ async def _main(cfg: dict) -> None:
                 return
         if await store.add_event(ev, origin="wot"):
             server.subs.fanout(ev, server._send)
+            # Thread completion: a reply may e-tag parents we don't have. Backfill the ancestor
+            # chain (bounded + deduped, parents may be outside the WoT → origin='ancestor') so
+            # threads aren't orphaned. This used to run in the sync sweep (off by default now), so
+            # the firehose has to do it. Only for replies; mostly a no-op (parents already stored).
+            if cfg.get("fetch_ancestors", True) and any(
+                    t and len(t) >= 2 and t[0] == "e" for t in (ev.get("tags") or [])):
+                from . import ingest as _ingest
+                try:
+                    await _ingest.backfill_ancestors(
+                        store, server, cfg["upstream"], [ev], cfg.get("max_ancestors", 20),
+                        cfg["direct"], blocked=_bl, blocked_words=_bw)
+                except Exception as e:
+                    logger.debug("[nostr-relay] firehose ancestor backfill failed: %s", e)
 
     async def _maybe_rebuild_wot():
         # Rebuild the WoT (write-gate membership) at most ONCE A DAY — the stamp decides, not the
