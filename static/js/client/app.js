@@ -466,7 +466,9 @@
       for(let i=0;i<files.length;i++){ try{ await uploadBlob(files[i]); toast(`uploaded ${i+1}/${files.length}`); }catch(e){ toast('upload failed: '+e.message);} }
       renderBlossom(); };
     if(!server){ $('#bl-grid').innerHTML='<div class="empty">Blossom server not configured.</div>'; return; }
-    let list=[]; try{ list=await fetch(server+'/list/'+ME.pubkey).then(r=>r.json()); }catch(_){}
+    let list=[];
+    try{ const r=await fetch(server+'/list/'+ME.pubkey); if(!r.ok) throw new Error('HTTP '+r.status); list=await r.json(); }
+    catch(e){ $('#bl-grid').innerHTML='<div class="empty">Couldn\'t load files from '+enc(server)+' ('+enc(e.message)+').</div>'; return; }
     const grid=$('#bl-grid');
     grid.innerHTML = list.length ? list.map(b=>{
       const isVid=/video/.test(b.type||''); const isAud=/audio/.test(b.type||'');

@@ -1,6 +1,8 @@
-/* PosterChan Nostr PWA service worker. Caches the app shell + static assets so it installs and
- * launches offline; network-first for /client/config (live data), cache-first for static. */
-const CACHE = 'pc-nostr-v1';
+/* PosterChan Nostr PWA service worker.
+ * App code (our JS/CSS + the /client shell) is served NETWORK-FIRST so deploys reach users
+ * immediately (cache is only an offline fallback) — caching it cache-first served stale code.
+ * The large vendor bundle + icons are cache-first (they rarely change; bump CACHE to refresh). */
+const CACHE = 'pc-nostr-v3';
 const SHELL = [
   '/client',
   '/static/css/client.css',
@@ -20,19 +22,30 @@ self.addEventListener('install', e => {
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));
 });
+
+function networkFirst(req){
+  return fetch(req).then(res => {
+    const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)).catch(()=>{});
+    return res;
+  }).catch(() => caches.match(req));
+}
+function cacheFirst(req){
+  return caches.match(req).then(hit => hit || fetch(req).then(res => {
+    const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)).catch(()=>{}); return res;
+  }));
+}
+
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET') return;
-  // never cache websocket/relay or the live config
-  if (url.pathname === '/relay' || url.pathname.startsWith('/client/config')) return;
-  // app shell + our static: cache-first, fall back to network and update cache
-  if (url.pathname.startsWith('/static/') || url.pathname === '/client' || url.pathname === '/client/') {
-    e.respondWith(caches.match(e.request).then(hit => hit || fetch(e.request).then(res => {
-      const copy = res.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)).catch(()=>{}); return res;
-    }).catch(()=>hit)));
-  }
-  // everything else (blossom media etc): network, fall back to cache
-  else {
-    e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
-  }
+  if (url.pathname === '/relay' || url.pathname.startsWith('/client/config')) return;  // live data / WS
+
+  const isAppCode = url.pathname === '/client' || url.pathname === '/client/' ||
+    url.pathname.startsWith('/static/js/client/') || url.pathname === '/static/css/client.css';
+  const isVendorOrIcon = url.pathname.startsWith('/static/vendor/') ||
+    /\/static\/(icon-\d+|posterchan-relay|favicon|apple-touch-icon)\.png$/.test(url.pathname);
+
+  if (isAppCode) e.respondWith(networkFirst(e.request));
+  else if (isVendorOrIcon) e.respondWith(cacheFirst(e.request));
+  else e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));  // media etc.
 });
