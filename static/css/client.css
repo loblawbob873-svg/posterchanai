@@ -94,7 +94,7 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 
 .main{display:flex;flex-direction:column;height:100vh;overflow:hidden}
 .topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
-.topbar h2{margin:0;font-size:19px;letter-spacing:1px}
+.topbar h2{margin:0;font-size:24px;letter-spacing:1px;font-weight:800}
 .searchbox{flex:1;max-width:420px;margin:0 16px}
 .searchbox .input{margin:0;padding:8px 14px}
 .search-section-title{padding:14px 20px 6px;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:1.5px}
