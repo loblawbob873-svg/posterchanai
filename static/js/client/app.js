@@ -325,6 +325,7 @@
   function bindFeedActions(){
     $('#feed').addEventListener('click', async (e)=>{
       const mn=e.target.closest('.mention'); if(mn){ e.preventDefault(); const pk=safePk(mn.dataset.np); if(pk) renderProfileView(pk); return; }
+      const tm=e.target.closest('.time'); if(tm){ const n=e.target.closest('.note'); if(n){ renderThread(n.dataset.id); return; } }
       const av=e.target.closest('.av'); if(av){ const n=e.target.closest('.note'); if(n){ renderProfileView(n.dataset.pk); return; } }
       const prof=e.target.closest('[data-prof]'); if(prof){ renderProfileView(prof.dataset.prof); return; }
       const q=e.target.closest('[data-open]'); if(q){ openThread(q.dataset.open); return; }
