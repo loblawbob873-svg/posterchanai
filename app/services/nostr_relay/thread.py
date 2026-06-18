@@ -100,6 +100,9 @@ def _read_config() -> dict:
             # Live firehose: keep a persistent subscription to each upstream relay and store
             # only WoT authors — real-time, vs the polling sweep's per-cycle lag.
             "firehose_enabled": gb("nostr_relay_firehose_enabled", True),
+            # Mirror the WoT's public feed from upstream (sync sweep + firehose). OFF: the relay
+            # is a write-gated store, not a crawler of the whole trust graph. See _main.
+            "mirror_feeds": gb("nostr_relay_mirror_feeds", False),
             "db_path": db_path,
             "retention_days": gi("nostr_relay_retention_days", 30),
             "max_events": gi("nostr_relay_max_events", 500000),
@@ -277,21 +280,25 @@ async def _main(cfg: dict) -> None:
 
     tasks = [
         asyncio.create_task(_periodic(_relay.stop_event, 3600, store.prune, "prune")),
-        # Daily WoT rebuild from the seeds' follow lists.
+        # Daily WoT rebuild from the seeds' follow lists. This is the WRITE GATE membership —
+        # who is allowed to publish TO this relay — NOT a feed mirror.
         asyncio.create_task(_periodic(_relay.stop_event, cfg["wot_refresh_sec"],
                                       lambda: _build_wot(gate, store, cfg),
                                       "wot-refresh")),
-        # Windowed WoT sweep — now just BACKFILL/gap-fill (the firehose handles freshness).
-        # Self-throttling: runs often while it's still finding history, then backs WAY off
-        # once caught up so we stop hammering the upstream relays.
-        asyncio.create_task(_sync_loop(store, gate, server, cfg, _relay.stop_event)),
     ]
-    # Live firehose: real-time WoT sync — keep only WoT authors from the upstream stream.
-    if cfg.get("firehose_enabled", True):
-        from .firehose import run_firehose
-        tasks.append(asyncio.create_task(
-            run_firehose(cfg["upstream"], cfg["ingest_kinds"], _firehose_event,
-                         _relay.stop_event, cfg["direct"])))
+    # Feed mirroring (OFF by default): proactively pulling the whole WoT's notes from upstream
+    # via the windowed sync sweep + live firehose. This is a CRAWLER, not the relay's job — the
+    # relay is a write-gated store of what WoT members publish *to it* (+ outbox fan-out). For a
+    # large WoT (tens of thousands via depth-2 FoF) the sweep pegs a core and lags. Enable only
+    # if you actually want this node to be a read-mirror of the trust graph's public feed.
+    if cfg.get("mirror_feeds", False):
+        # Windowed WoT backfill/gap-fill sweep (self-throttling once caught up).
+        tasks.append(asyncio.create_task(_sync_loop(store, gate, server, cfg, _relay.stop_event)))
+        if cfg.get("firehose_enabled", True):
+            from .firehose import run_firehose
+            tasks.append(asyncio.create_task(
+                run_firehose(cfg["upstream"], cfg["ingest_kinds"], _firehose_event,
+                             _relay.stop_event, cfg["direct"])))
     try:
         await _relay.stop_event.wait()
     finally:
