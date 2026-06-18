@@ -141,6 +141,9 @@
     Relay.connect(CFG.relay_url);
     renderMe();
     switchView('home');
+    // Re-fetch profiles for on-screen authors still showing as npub — as the relay backfills
+    // profiles, already-displayed posts resolve to names/avatars without needing a re-render.
+    setInterval(()=>{ if(document.hidden) return; let n=0; $$('.note[data-pk]').forEach(el=>{ if(n<60 && !Store.haveProfile(el.dataset.pk)){ needProfile(el.dataset.pk); n++; } }); }, 12000);
   }
   function logout(){ Session.clear(); Relay.worker.call('clearKey',{}); location.reload(); }
 
