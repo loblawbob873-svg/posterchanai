@@ -66,10 +66,20 @@ async def _run_one(relay_url: str, kinds: list, on_event, stop: asyncio.Event, d
         backoff = min(backoff * 2, 60)  # exponential backoff on repeated failures
 
 
+# Cap how many relays we firehose. The global stream is highly redundant — popular notes
+# arrive on every relay — so subscribing to all ~12 means parsing (and deduping) the same
+# events N times for little extra coverage, which is the relay's main idle-CPU cost. A few
+# high-traffic relays cover virtually all WoT members in real time; the windowed author-batched
+# sync (ingest.sync_tick) still queries ALL upstream relays, so completeness is unaffected.
+_FIREHOSE_MAX_RELAYS = 4
+
+
 async def run_firehose(upstream, kinds: list, on_event, stop: asyncio.Event, direct: bool) -> None:
-    """Run a persistent firehose subscription against every upstream relay until `stop`."""
-    tasks = [asyncio.create_task(_run_one(u, kinds, on_event, stop, direct)) for u in upstream]
-    logger.info("[nostr-relay] firehose started on %d upstream relays", len(tasks))
+    """Run a persistent firehose subscription against a few upstream relays until `stop`."""
+    relays = list(upstream)[:_FIREHOSE_MAX_RELAYS]
+    tasks = [asyncio.create_task(_run_one(u, kinds, on_event, stop, direct)) for u in relays]
+    logger.info("[nostr-relay] firehose started on %d/%d upstream relays (rest covered by sync)",
+                len(tasks), len(upstream))
     try:
         await stop.wait()
     finally:
