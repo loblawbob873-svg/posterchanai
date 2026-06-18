@@ -373,13 +373,16 @@
     const title = reply?'Reply':quote?'Quote post':'New post';
     let qhtml=''; if(quote){ const o=Store.get(quote); if(o) qhtml=`<div class="quoted"><b>${enc((profOf(o.pubkey).name)||'anon')}</b><div class="txt">${linkify(o.content)}</div></div>`; }
     modal(`<h3>${title}</h3>${qhtml}<textarea id="cmp" placeholder="what's happening on the net?"></textarea>
-      <div class="row"><button class="mini" id="cmp-img">🖼 image</button><input type="file" id="cmp-file" accept="image/*,video/*" hidden>
+      <div class="row"><button class="mini" id="cmp-img">📎 attach</button><input type="file" id="cmp-file" multiple hidden>
       <span class="spacer"></span><button class="btn btn-neon" id="cmp-send">Post ▶</button></div>
       <div class="muted small" id="cmp-status"></div>`, root=>{
       const ta=$('#cmp',root); attachMentionAutocomplete(ta);
       $('#cmp-img',root).onclick=()=>$('#cmp-file',root).click();
-      $('#cmp-file',root).onchange=async e=>{ const f=e.target.files[0]; if(!f)return; $('#cmp-status',root).textContent='uploading…';
-        try{ const url=await uploadBlob(f); ta.value+=(ta.value?'\n':'')+url; $('#cmp-status',root).textContent=''; }catch(err){ $('#cmp-status',root).textContent='upload failed: '+err.message; } };
+      $('#cmp-file',root).onchange=async e=>{ const files=[...e.target.files]; if(!files.length)return;
+        for(let i=0;i<files.length;i++){ $('#cmp-status',root).textContent=`uploading ${i+1}/${files.length}…`;
+          try{ const url=await uploadBlob(files[i]); ta.value+=(ta.value?'\n':'')+url; }
+          catch(err){ $('#cmp-status',root).textContent='upload failed: '+err.message; return; } }
+        $('#cmp-status',root).textContent=''; e.target.value=''; };
       $('#cmp-send',root).onclick=async()=>{
         const text=ta.value.trim(); if(!text)return;
         let tags=[];
@@ -452,8 +455,10 @@
   }
   async function renderBlossom(){
     const feed=$('#feed'); const server=mediaServer();
-    feed.innerHTML=`<div class="uploader"><input type="file" id="bl-file" accept="image/*,video/*,audio/*"> <button class="btn btn-cyan small" id="bl-up">Upload</button> <span class="muted small">→ ${enc(server||'(no server)')}</span></div><div class="files-grid" id="bl-grid"><div class="spinner"></div></div>`;
-    $('#bl-up').onclick=async()=>{ const f=$('#bl-file').files[0]; if(!f)return; try{ await uploadBlob(f); toast('uploaded'); renderBlossom(); }catch(e){ toast('upload failed: '+e.message);} };
+    feed.innerHTML=`<div class="uploader"><input type="file" id="bl-file" multiple> <button class="btn btn-cyan small" id="bl-up">Upload</button> <span class="muted small">→ ${enc(server||'(no server)')}</span></div><div class="files-grid" id="bl-grid"><div class="spinner"></div></div>`;
+    $('#bl-up').onclick=async()=>{ const files=[...$('#bl-file').files]; if(!files.length)return;
+      for(let i=0;i<files.length;i++){ try{ await uploadBlob(files[i]); toast(`uploaded ${i+1}/${files.length}`); }catch(e){ toast('upload failed: '+e.message);} }
+      renderBlossom(); };
     if(!server){ $('#bl-grid').innerHTML='<div class="empty">Blossom server not configured.</div>'; return; }
     let list=[]; try{ list=await fetch(server+'/list/'+ME.pubkey).then(r=>r.json()); }catch(_){}
     const grid=$('#bl-grid');
