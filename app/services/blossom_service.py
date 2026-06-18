@@ -79,12 +79,62 @@ def _cfg(db: Session) -> dict:
         "backend": backend,
         "blob_dir": g("blossom_storage_path", "") or _DEFAULT_BLOB_DIR,
         "storage_url": storage_url,
+        "cache_mb": gi("blossom_cache_mb", 512),
     }
 
 
 def is_enabled(db: Session) -> bool:
     row = db.query(Setting).filter(Setting.key == "blossom_enabled").first()
     return bool(row and (row.value or "").lower() == "true")
+
+
+# --- in-RAM blob cache ------------------------------------------------------
+# Serves hot blobs straight from memory so repeated GETs don't re-read disk (local) or
+# re-fetch over the storage proxy (nas) — saving disk I/O and SSD wear. Bounded by the
+# `blossom_cache_mb` setting; LRU eviction; per-item cap so one huge blob can't evict
+# everything. Uploads also seed the cache (the bytes are already in RAM). The OS page
+# cache helps too, but this also eliminates the cross-node HTTP round-trip on the proxy
+# backend. Thread-safe (reads run in the event loop + the to_thread pool).
+from collections import OrderedDict  # noqa: E402
+
+_CACHE_ITEM_CAP = 16 * 1024 * 1024   # don't cache single blobs larger than this
+_cache: "OrderedDict[str, bytes]" = OrderedDict()
+_cache_bytes = 0
+_cache_lock = threading.Lock()
+
+
+def _cache_get(sha256: str) -> bytes | None:
+    with _cache_lock:
+        data = _cache.get(sha256)
+        if data is not None:
+            _cache.move_to_end(sha256)   # mark most-recently-used
+        return data
+
+
+def _cache_put(sha256: str, data: bytes, budget: int) -> None:
+    global _cache_bytes
+    n = len(data)
+    if budget <= 0 or n > _CACHE_ITEM_CAP or n > budget:
+        return
+    with _cache_lock:
+        if sha256 in _cache:
+            _cache_bytes -= len(_cache.pop(sha256))
+        _cache[sha256] = data
+        _cache_bytes += n
+        while _cache_bytes > budget and _cache:
+            _, evicted = _cache.popitem(last=False)   # evict least-recently-used
+            _cache_bytes -= len(evicted)
+
+
+def _cache_drop(sha256: str) -> None:
+    global _cache_bytes
+    with _cache_lock:
+        if sha256 in _cache:
+            _cache_bytes -= len(_cache.pop(sha256))
+
+
+async def _aiter_bytes(data: bytes):
+    yield data
 
 
 # --- authorization ----------------------------------------------------------
@@ -214,13 +264,27 @@ async def save_blob(db: Session, pubkey: str, data: bytes, mime: str) -> dict:
     )
     db.add(blob)
     db.commit()
+    # Seed the read cache — the bytes are already in RAM, so a fetch right after upload
+    # (the common case) won't touch disk or the storage proxy.
+    _cache_put(sha256, data, cfg["cache_mb"] * 1024 * 1024)
     return _descriptor_fields(blob)
 
 
 async def read_blob(db: Session, blob: BlossomBlob):
     """Return (async-byte-iterator, mime, size) for a stored blob, or None if the bytes
-    are gone. Streams from the storage server (proxy) or disk (local)."""
+    are gone. Serves from the in-RAM cache when possible; otherwise reads from the storage
+    server (proxy) or disk (local) — small blobs are buffered into the cache, large ones
+    stream straight through (never cached, to bound RAM)."""
     cfg = _cfg(db)
+    mime = blob.mime or "application/octet-stream"
+
+    cached = _cache_get(blob.sha256)
+    if cached is not None:
+        return _aiter_bytes(cached), mime, len(cached)
+
+    budget = cfg["cache_mb"] * 1024 * 1024
+    cacheable = 0 < blob.size <= _CACHE_ITEM_CAP and blob.size <= budget
+
     if blob.storage == "proxy":
         storage_url = cfg["storage_url"]
         if not storage_url:
@@ -228,6 +292,15 @@ async def read_blob(db: Session, blob: BlossomBlob):
         from urllib.parse import quote
         url = (f"{storage_url.rstrip('/')}/api/storage/view-file"
                f"?username={_PROXY_USER}&file_path={quote(blob.path)}&download=1")
+
+        if cacheable:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as client:
+                resp = await client.get(url, headers=_proxy_headers())
+            if resp.status_code != 200:
+                return None
+            data = resp.content
+            _cache_put(blob.sha256, data, budget)
+            return _aiter_bytes(data), mime, len(data)
 
         async def _proxy_stream():
             async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as client:
@@ -237,11 +310,16 @@ async def read_blob(db: Session, blob: BlossomBlob):
                     async for chunk in resp.aiter_bytes():
                         yield chunk
 
-        return _proxy_stream(), (blob.mime or "application/octet-stream"), blob.size
+        return _proxy_stream(), mime, blob.size
 
     # local
     if not os.path.isfile(blob.path):
         return None
+
+    if cacheable:
+        data = await asyncio.to_thread(lambda: open(blob.path, "rb").read())
+        _cache_put(blob.sha256, data, budget)
+        return _aiter_bytes(data), mime, len(data)
 
     async def _file_stream():
         def _open():
@@ -256,12 +334,13 @@ async def read_blob(db: Session, blob: BlossomBlob):
         finally:
             f.close()
 
-    return _file_stream(), (blob.mime or "application/octet-stream"), blob.size
+    return _file_stream(), mime, blob.size
 
 
 async def delete_blob_bytes(db: Session, blob: BlossomBlob) -> None:
     """Best-effort removal of the underlying bytes (the row is deleted by the caller)."""
     cfg = _cfg(db)
+    _cache_drop(blob.sha256)
     try:
         if blob.storage == "proxy" and cfg["storage_url"]:
             from urllib.parse import quote

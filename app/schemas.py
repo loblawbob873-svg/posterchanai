@@ -560,6 +560,7 @@ class UserSettingsUpdate(BaseModel):
     blossom_max_upload_mb: Optional[int] = None     # reject uploads over this size
     blossom_storage_backend: Optional[str] = None  # "local" | "proxy" (storage_server_url)
     blossom_storage_path: Optional[str] = None      # local blob dir (blank = ./data/blossom)
+    blossom_cache_mb: Optional[int] = None          # in-RAM read cache budget (0 = off)
 
 
 class UserSettingsResponse(BaseModel):

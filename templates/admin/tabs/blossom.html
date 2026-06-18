@@ -36,6 +36,12 @@
             <input type="number" id="blossom_max_upload_mb" name="blossom_max_upload_mb" placeholder="100">
             <small>Uploads larger than this are rejected (HTTP 413).</small>
         </div>
+        <div class="form-group">
+            <label for="blossom_cache_mb">In-RAM read cache (MB)</label>
+            <input type="number" id="blossom_cache_mb" name="blossom_cache_mb" placeholder="512">
+            <small>Serves hot blobs from memory to save disk I/O / SSD wear and skip the cross-node
+            storage fetch. LRU-evicted; blobs over 16&nbsp;MB are never cached. <code>0</code> disables it.</small>
+        </div>
     </fieldset>
 
     <fieldset>

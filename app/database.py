@@ -495,6 +495,9 @@ def init_db():
             # backend; falls back to local automatically when storage_server_url is unset.
             "blossom_storage_backend": "proxy",
             "blossom_storage_path": "",
+            # In-RAM read cache: serves hot blobs from memory to save disk I/O / SSD wear and
+            # skip the cross-node storage-proxy fetch. 0 disables it.
+            "blossom_cache_mb": "512",
             "nostr_relay_enabled": "false",
             "nostr_relay_port": "3052",
             "nostr_relay_wot_seeds": "\n".join([
