@@ -194,8 +194,13 @@ class RelayServer:
             self.subs.remove(conn, msg[1])
         elif typ == "COUNT" and len(msg) >= 2:
             await self._on_count(conn, msg[1], msg[2:])
-        else:
-            logger.info("[relay-diag] unhandled verb=%r (len=%d)", typ, len(msg))
+        elif typ == "NEG-OPEN" and len(msg) >= 2:
+            # NIP-77 negentropy reconciliation — not implemented. Reply NEG-ERR so the client
+            # falls back to a normal REQ instead of hanging waiting for a NEG-MSG (this is what
+            # broke nostrudel's timeline: it negentropy-syncs and stalled on our silence).
+            await conn.send(json.dumps(["NEG-ERR", msg[1], "unsupported: negentropy"]))
+        elif typ in ("NEG-MSG", "NEG-CLOSE", "AUTH"):
+            pass  # politely ignore unsupported control verbs
 
     async def _on_event(self, conn, ev) -> None:
         if not isinstance(ev, dict) or "id" not in ev:
