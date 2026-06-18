@@ -97,6 +97,9 @@ def _read_config() -> dict:
             # WoT). Direct is faster and avoids the proxy-startup-race log flood; doesn't change
             # the bots' proxy behavior.
             "direct": gb("nostr_relay_disable_proxy", False),
+            # Live firehose: keep a persistent subscription to each upstream relay and store
+            # only WoT authors — real-time, vs the polling sweep's per-cycle lag.
+            "firehose_enabled": gb("nostr_relay_firehose_enabled", True),
             "db_path": db_path,
             "retention_days": gi("nostr_relay_retention_days", 30),
             "max_events": gi("nostr_relay_max_events", 500000),
@@ -229,18 +232,47 @@ async def _main(cfg: dict) -> None:
                 cfg["bind"], cfg["port"], len(cfg["operator"]), len(cfg["seeds"]))
 
     from . import ingest as _ingest
+    from app.services.nostr.event import verify_event
+    from .langfilter import blocked_language, blocked_word
+    _bl, _bw = cfg["blocked_langs"], cfg["blocked_words"]
+
+    async def _firehose_event(ev):
+        """Apply the full WoT + filter chain to a live firehose event, store + fan out if kept.
+        Non-WoT (incl. blocklisted) pubkeys are dropped by is_member BEFORE any verify/DB work."""
+        if not gate.is_member(ev.get("pubkey", "")):
+            return
+        eid = ev.get("id")
+        if not isinstance(eid, str) or len(eid) != 64:
+            return
+        if await store.has_event(eid):
+            return
+        if not verify_event(ev):
+            return
+        if int(ev.get("kind", 1)) == 1:
+            content = ev.get("content", "")
+            if (_bl and blocked_language(content, _bl)) or (_bw and blocked_word(content, _bw)):
+                return
+        if await store.add_event(ev, origin="wot"):
+            await server.subs.fanout(ev)
+
     tasks = [
         asyncio.create_task(_periodic(_relay.stop_event, 3600, store.prune, "prune")),
         # Daily WoT rebuild from the seeds' follow lists.
         asyncio.create_task(_periodic(_relay.stop_event, cfg["wot_refresh_sec"],
                                       lambda: _build_wot(gate, store, cfg),
                                       "wot-refresh")),
-        # Windowed WoT ingestion (the curated feed) — runs on its own cadence.
+        # Windowed WoT sweep — now just BACKFILL/gap-fill (the firehose handles freshness).
         asyncio.create_task(_periodic(_relay.stop_event, cfg["sync_interval_sec"],
                                       lambda: _ingest.sync_tick(store, gate, server,
                                                                 cfg["upstream"], cfg),
                                       "sync")),
     ]
+    # Live firehose: real-time WoT sync — keep only WoT authors from the upstream stream.
+    if cfg.get("firehose_enabled", True):
+        from .firehose import run_firehose
+        tasks.append(asyncio.create_task(
+            run_firehose(cfg["upstream"], cfg["ingest_kinds"], _firehose_event,
+                         _relay.stop_event, cfg["direct"])))
     try:
         await _relay.stop_event.wait()
     finally:
