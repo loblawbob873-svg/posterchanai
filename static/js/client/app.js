@@ -1853,26 +1853,16 @@
       ['message','✉ Message'],
       ['mute', MUTED.has(pk)?'🔊 Unmute':'🔇 Mute'],
     ];
-    let blossomGranted=false, aiGranted=false, torrentOn=false;
     if(IS_ADMIN){
-      // admin extras: toggle this account's AI + Blossom + Torrent access + relay block. Fetch
-      // current state so each item reads Grant vs Revoke.
-      try{ const r=await fetch('/client/ai-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); aiGranted=!!(r&&r.enabled); }catch(_){}
-      try{ const r=await fetch('/client/blossom-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); blossomGranted=!!(r&&r.whitelisted); }catch(_){}
-      try{ const r=await fetch('/client/user-caps?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); torrentOn=!!(r&&r.caps&&r.caps.can_torrent); }catch(_){}
-      items.push(['ai', aiGranted?'🤖 Revoke AI access':'🤖 Grant AI access']);
-      items.push(['blossom', blossomGranted?'🌸 Revoke Blossom access':'🌸 Grant Blossom access']);
-      items.push(['torrent', torrentOn?'🧲 Revoke Torrents':'🧲 Grant Torrents']);
-      items.push(['caps','🔑 Additional AI permissions']);
+      // admin extras: one consolidated permissions panel (AI, Blossom, image/music/video/torrent)
+      // + relay block. State is fetched inside openPermissions so the menu opens instantly.
+      items.push(['caps','🔑 Additional permissions']);
       items.push(['block','🚫 Block (relay)','danger']);
     }
     openMenuPopover(anchorBtn, items, async a=>{
       if(a==='follow'){ await toggleFollow(pk); renderProfileView(pk); return; }
       if(a==='message'){ if(!dmPeers.has(pk))dmPeers.set(pk,[]); dmActive=pk; switchView('messages'); return; }
       if(a==='mute'){ await toggleMute(pk); renderProfileView(pk); return; }
-      if(a==='ai') return toggleAiAccess(pk, !aiGranted);
-      if(a==='blossom') return toggleBlossomAccess(pk, !blossomGranted);
-      if(a==='torrent') return toggleCap(pk, 'can_torrent', !torrentOn);
       if(a==='caps') return openPermissions(pk);
       if(a==='block') return doBlock(pk);
     });
@@ -1889,20 +1879,46 @@
       toast(r.ok ? (val?'access granted':'access revoked') : ('failed: '+(r.error||'')));
     }catch(e){ toast('change failed'); }
   }
+  // admin: one consolidated permissions panel for a user — AI access, Blossom uploads, and the
+  // per-feature caps (image/music/video/torrent). Each maps to its own endpoint; on save we only
+  // sign + call the ones that actually changed (fewer signer prompts).
   async function openPermissions(pk){
     if(!IS_ADMIN) return;
-    let caps={};
-    try{ const r=await fetch('/client/user-caps?pubkey='+encodeURIComponent(pk)).then(r=>r.json());
-      if(r && r.exists){ caps=r.caps||{}; } else { toast('No AI account yet — they need to open the AI tab once first'); return; } }
-    catch(_){ toast('couldn’t load permissions'); return; }
+    let caps={}, aiOn=false, blossomOn=false;
+    try{ const r=await fetch('/client/ai-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); aiOn=!!(r&&r.enabled); }catch(_){}
+    try{ const r=await fetch('/client/blossom-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); blossomOn=!!(r&&r.whitelisted); }catch(_){}
+    try{ const r=await fetch('/client/user-caps?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); if(r&&r.exists) caps=r.caps||{}; }catch(_){}
     const C=[['can_image','🖼️ Image'],['can_music','🎵 Music'],['can_video','🎬 Video'],['can_torrent','🧲 Torrents']];
-    modal(`<h3>🔑 Additional AI permissions</h3><p class="muted small">Extra AI features for this user. Grant basic AI access from the menu first.</p>${C.map(([k,l])=>`<label class="fld" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" data-cap="${k}" ${caps[k]?'checked':''}> ${l}</label>`).join('')}<button class="btn btn-neon full" id="caps-save">Save</button>`, root=>{
+    const row=(id,checked,label)=>`<label class="fld" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" ${id} ${checked?'checked':''}> ${label}</label>`;
+    modal(`<h3>🔑 Additional permissions</h3>
+      ${row('id="perm-ai"', aiOn, '🤖 AI access')}
+      ${row('id="perm-blossom"', blossomOn, '🌸 Blossom uploads')}
+      <hr style="border:none;border-top:1px solid var(--line,#333);margin:10px 0">
+      <p class="muted small">AI features</p>
+      ${C.map(([k,l])=>row('data-cap="'+k+'"', !!caps[k], l)).join('')}
+      <button class="btn btn-neon full" id="caps-save">Save</button>`, root=>{
       $('#caps-save',root).onclick=async()=>{
-        const out={}; $$('[data-cap]',root).forEach(c=>out[c.dataset.cap]=c.checked);
-        try{ const auth=await sign(27235,'user-caps',[['p',pk]]);
-          const r=await fetch('/client/user-caps',{method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({target:pk,caps:out,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
-          toast(r.ok?'permissions saved':'failed: '+((r&&r.error)||'')); closeModal();
+        const wantAi=$('#perm-ai',root).checked, wantBl=$('#perm-blossom',root).checked;
+        const out={}; let capsChanged=false;
+        $$('[data-cap]',root).forEach(c=>{ out[c.dataset.cap]=c.checked; if(c.checked!==!!caps[c.dataset.cap]) capsChanged=true; });
+        let ok=true;
+        try{
+          if(wantAi!==aiOn){
+            const auth=await sign(27235,'ai-access',[['action',wantAi?'grant':'revoke'],['p',pk]]);
+            const r=await fetch('/client/ai-access',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({target:pk,grant:wantAi,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json()); ok=ok&&r.ok;
+          }
+          if(wantBl!==blossomOn){
+            const auth=await sign(27235,'blossom',[['action',wantBl?'grant':'revoke'],['p',pk]]);
+            const r=await fetch('/client/blossom-access',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({target:pk,grant:wantBl,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json()); ok=ok&&r.ok;
+          }
+          if(capsChanged){
+            const auth=await sign(27235,'user-caps',[['p',pk]]);
+            const r=await fetch('/client/user-caps',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({target:pk,caps:out,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json()); ok=ok&&r.ok;
+          }
+          toast(ok?'permissions saved':'some changes failed'); closeModal();
         }catch(_){ toast('save failed'); }
       };
     });
