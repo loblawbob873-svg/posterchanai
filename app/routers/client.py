@@ -647,6 +647,62 @@ async def ai_access(data: AiAccessReq, db: Session = Depends(get_db)):
     return JSONResponse({"ok": True, "enabled": bool(data.grant)})
 
 
+# ----- AI files: list/delete the user's encrypted chat uploads + generated artifacts -----
+class AiFileReq(BaseModel):
+    pubkey: str
+    auth: str
+    sha: str = ""        # for delete
+
+
+@router.post("/ai-files")
+async def ai_files(data: AiFileReq, db: Session = Depends(get_db)):
+    """List the user's AI chat files (uploads + generated images) — decrypted refs, served via the
+    decrypting /api/files route. Lets the client show + manage them (they live under the storage key,
+    so they don't appear in the normal Blossom Files list)."""
+    import re
+    from urllib.parse import quote
+    from app.services import nostr_store as store
+    pk = nostr_service.to_pubkey_hex(data.pubkey)
+    if not pk:
+        return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
+    if not _verify_self_auth(data.auth, pk):
+        return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
+    user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    if not user:
+        return JSONResponse({"ok": True, "files": []})
+    sk = store.user_storage_seckey(db, user)
+    port = int(_setting(db, "nostr_relay_port", "3052"))
+    uname = quote(user.username, safe='')
+    out = []
+    for d, ref in (await store.list_docs(port, store.NS_UPLOAD, seckey=sk)).items():
+        if isinstance(ref, dict) and ref.get("sha256"):
+            conv = d[len(store.NS_UPLOAD):].split(":")[0]
+            name = ref.get("name") or "file"
+            ext = name.rsplit(".", 1)[-1] if "." in name else "bin"
+            out.append({"url": f"/api/files/{uname}/{conv}/enc_{ref['sha256']}.{ext}",
+                        "name": name, "mime": ref.get("mime") or "", "sha": ref["sha256"], "kind": "upload"})
+    for d, rec in (await store.list_docs(port, store.NS_MSG, seckey=sk)).items():
+        m = isinstance(rec, dict) and re.search(r'(enc_([0-9a-f]{64})\.\w+)$', rec.get("image_path") or "")
+        if m:
+            conv = d[len(store.NS_MSG):].split(":")[0]
+            out.append({"url": f"/api/files/{uname}/{conv}/{m.group(1)}",
+                        "name": "generated image", "mime": "image/png", "sha": m.group(2), "kind": "generated"})
+    return JSONResponse({"ok": True, "files": out})
+
+
+@router.post("/ai-file-delete")
+async def ai_file_delete(data: AiFileReq, db: Session = Depends(get_db)):
+    """Delete one AI file blob by sha (the user's own, signed)."""
+    pk = nostr_service.to_pubkey_hex(data.pubkey)
+    if not pk or not re.fullmatch(r'[0-9a-f]{64}', data.sha or ''):
+        return JSONResponse({"ok": False, "error": "invalid request"}, status_code=400)
+    if not _verify_self_auth(data.auth, pk):
+        return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
+    from app.services import artifact_store
+    await artifact_store.delete_blob(db, data.sha)
+    return JSONResponse({"ok": True})
+
+
 # ----- delete my account (the AI app account + all its data) -----
 class DeleteAccountReq(BaseModel):
     pubkey: str

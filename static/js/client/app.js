@@ -1487,6 +1487,34 @@
       return `<div class="file-card" data-sha="${b.sha256}"><a href="${enc(b.url)}" target="_blank" download>${blobThumb(b)}</a><button class="del" data-sha="${b.sha256}">✕</button><div class="meta"><span>${((b.size||0)/1024|0)}KB</span><span>${(b.type||'').split('/')[1]||''}</span></div></div>`;
     }).join('') : '<div class="empty">No files yet — upload one above.</div>';
     $$('.del',grid).forEach(b=> b.onclick=()=>delBlob(b.dataset.sha));
+    renderAiFiles(feed);
+  }
+  // AI chat files (uploads + generated images) — stored encrypted under the storage key, so they're
+  // separate from the Blossom list above; shown via the decrypting /api/files route.
+  async function renderAiFiles(feed){
+    let files=[];
+    try{ const auth=await sign(27235,'ai-files',[['p',ME.pubkey]]);
+      const r=await fetch('/client/ai-files',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
+      files=(r&&r.files)||[]; }catch(_){}
+    if(!files.length) return;
+    const sec=document.createElement('div'); sec.className='ai-files-sec';
+    sec.innerHTML=`<h3 class="rb-section" style="margin:18px 16px 8px">🤖 AI chat files (encrypted)</h3>
+      <div class="files-grid">${files.map(f=>{
+        const isImg=/^image\//.test(f.mime)||f.kind==='generated';
+        const thumb=isImg?`<img src="${enc(f.url)}" loading="lazy">`:`<div class="file-icon">📎<span>${enc((f.mime.split('/')[1]||'file').slice(0,8))}</span></div>`;
+        return `<div class="file-card" data-sha="${enc(f.sha)}"><a href="${enc(f.url)}" target="_blank">${thumb}</a><button class="del" data-sha="${enc(f.sha)}">✕</button><div class="meta"><span>${enc(f.name.slice(0,16))}</span></div></div>`;
+      }).join('')}</div>`;
+    feed.appendChild(sec);
+    $$('.del',sec).forEach(b=> b.onclick=()=>delAiFile(b.dataset.sha));
+  }
+  async function delAiFile(sha){
+    if(!confirm('Delete this AI file?')) return;
+    try{ const auth=await sign(27235,'ai-file-delete',[['p',ME.pubkey]]);
+      const r=await fetch('/client/ai-file-delete',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({pubkey:ME.pubkey,sha,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
+      if(r&&r.ok){ toast('deleted'); renderBlossom(); } else toast('delete failed');
+    }catch(_){ toast('delete failed'); }
   }
   async function delBlob(sha){
     if(!confirm('Delete this blob?'))return; const server=mediaServer();
