@@ -57,6 +57,12 @@ def user_storage_seckey(db, user) -> bytes:
     else:
         db.add(UserSetting(user_id=user.id, key="storage_nsec", value=sk.hex()))
     db.commit()
+    # New storage key → tell the relay to accept it as a writer (operator) without a restart.
+    try:
+        from app.services.nostr_relay.thread import trigger_block_reload
+        trigger_block_reload()
+    except Exception as e:
+        logger.debug("[nostr-store] operator reload after key provision failed: %s", e)
     return sk
 
 

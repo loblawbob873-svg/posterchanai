@@ -306,6 +306,15 @@ def _collect_operator_pubkeys(db) -> list:
                     out.add(nostr_service.derive_pubkey(nostr_service.decode_seckey(nsec)))
                 except Exception:
                     pass
+        # Per-user SERVER-HELD storage keys (Phase 2): these are the keys the app signs each user's
+        # encrypted chat/upload events with — our own keys, so they must be allowed to write here.
+        from app.models import UserSetting
+        for us in db.query(UserSetting).filter(UserSetting.key == "storage_nsec").all():
+            if us.value:
+                try:
+                    out.add(nostr_service.derive_pubkey(nostr_service.decode_seckey(us.value)))
+                except Exception:
+                    pass
     except Exception as e:
         logger.debug("[nostr-relay] operator key collection failed: %s", e)
     return list(out)
@@ -513,8 +522,13 @@ async def _main(cfg: dict) -> None:
                             cfg["blocked_relays"] = fresh["blocked_relays"]
                             if cfg["blocked_relays"]:
                                 asyncio.create_task(_safe(_apply_blocked_relays(store, gate, cfg["blocked_relays"])))
-                            logger.info("[nostr-relay] control: reloaded %d blocked pubkey(s), %d bridge domain(s)",
-                                        len(cfg["blocked_pubkeys"]), len(cfg["blocked_relays"]))
+                            # Refresh the operator set too, so newly-provisioned per-user storage keys
+                            # (Phase 2) are accepted as writers without a restart.
+                            cfg["operator"] = fresh["operator"]
+                            gate.set_operator(cfg["operator"])
+                            store.set_preserve_pubkeys(cfg["operator"])
+                            logger.info("[nostr-relay] control: reloaded %d blocked, %d bridge, %d operator key(s)",
+                                        len(cfg["blocked_pubkeys"]), len(cfg["blocked_relays"]), len(cfg["operator"]))
                         except Exception as e:
                             logger.warning("[nostr-relay] reload-blocks failed: %s", e)
                     elif cmd.get("cmd") == "reload-nip05":
