@@ -19,7 +19,7 @@ from app.database import get_db, SessionLocal
 from app.models import User, Conversation, Message, Setting
 from app.schemas import ConversationCreate, ConversationResponse, ConversationWithMessages, MessageResponse
 from app.auth import get_current_user, get_user_from_websocket, get_ai_user
-from app.services import chat_store   # registers the Message→relay mirror (Phase 2, flag-gated)
+from app.services import chat_store, artifact_store   # Phase 2: relay chat mirror + encrypted artifacts
 from app.services.chat_service import ChatService
 from app.services.command_service import CommandService
 from app.services.storage_service import StorageService
@@ -155,13 +155,19 @@ async def get_conversation(
     ).first()
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    def _img_url(image_path):
+        if not image_path:
+            return None
+        from urllib.parse import quote
+        name = str(image_path).rsplit("/", 1)[-1]
+        return f"/api/files/{quote(current_user.username, safe='')}/{conversation_id}/{quote(name)}"
+
     # Phase 2: when the relay backs chats, load the (decrypted) message events instead of SQLite rows.
     try:
-        from app.services import chat_store
         if chat_store.enabled(db):
             rel = await chat_store.get_messages(db, current_user, conversation_id)
             msgs = [{"id": i + 1, "role": m.get("role", ""), "content": m.get("content", ""),
-                     "image_path": None,
+                     "image_path": _img_url(m.get("image_path")),
                      "created_at": datetime.utcfromtimestamp(m.get("ts") or 0)}
                     for i, m in enumerate(rel)]
             return {"id": conversation.id, "title": conversation.title,
@@ -169,7 +175,13 @@ async def get_conversation(
                     "messages": msgs}
     except Exception as e:
         logger.warning("[CHAT] relay history load failed, falling back to sqlite: %s", e)
-    return conversation
+    # SQLite path: map each message's stored image_path to a served URL too (so the in-client AI
+    # view can render generated/uploaded images on reload).
+    return {"id": conversation.id, "title": conversation.title,
+            "created_at": conversation.created_at, "updated_at": conversation.updated_at,
+            "messages": [{"id": m.id, "role": m.role, "content": m.content,
+                          "image_path": _img_url(m.image_path), "created_at": m.created_at}
+                         for m in conversation.messages]}
 
 
 @router.delete("/conversations/{conversation_id}")
@@ -479,6 +491,18 @@ async def serve_file(
     ).first()
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Encrypted Blossom artifact (enc_<sha256>.<ext>): fetch ciphertext from Blossom + decrypt.
+    _enc = re.match(r'^enc_([0-9a-fA-F]{64})\.(\w+)$', filename)
+    if _enc:
+        from app.services import artifact_store
+        data = await artifact_store.read_bytes(db, current_user, _enc.group(1).lower())
+        if data is None:
+            raise HTTPException(status_code=404, detail="File not found")
+        from mimetypes import guess_type as _gt
+        ct = _gt("x." + _enc.group(2))[0] or "application/octet-stream"
+        disp = "inline" if ct.startswith(("image/", "video/", "audio/")) else f'attachment; filename="{filename}"'
+        return Response(content=data, media_type=ct, headers={"Content-Disposition": disp})
 
     from app.services.storage_service import StorageService, _sanitize_path_component, _validate_path_within_base, ascii_safe_header_filename
     storage = StorageService(db)
@@ -1269,13 +1293,18 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                         generated_image_path = None
                         if result.get("type") == "generated_image" and result.get("prompt"):
                             manager.last_image_prompts[user.id] = result["prompt"]
-                            # Save generated image to disk
+                            # Save generated image — encrypted in Blossom when the relay backend is on,
+                            # else to disk/storage as before.
                             if result.get("image"):
                                 try:
-                                    generated_image_path = storage_service.save_image(user.username, conversation_id, result["image"], "generated")
+                                    if chat_store.enabled(db):
+                                        import base64 as _b64g
+                                        generated_image_path = await artifact_store.save_bytes(
+                                            db, user, conversation_id, _b64g.b64decode(result["image"]), "png")
+                                    else:
+                                        generated_image_path = storage_service.save_image(user.username, conversation_id, result["image"], "generated")
                                 except Exception as save_err:
                                     logger.warning(f"Failed to save generated image to storage (non-fatal): {save_err}")
-                                    # Continue without saving - image will still be displayed to user
                                     generated_image_path = None
 
                         # Save assistant response with image path

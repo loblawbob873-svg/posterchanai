@@ -1951,7 +1951,11 @@
     let conv=null; try{ conv=await fetch('/api/conversations/'+id).then(r=>r.json()); }catch(_){}
     if(VIEW!=='ai' || _ai.convId!==id) return;
     if(box){ box.innerHTML='';
-      for(const m of (conv && conv.messages || [])) aiAddMessage(m.role, m.role==='user'?enc(m.content):mdToHtml(m.content||''));
+      for(const m of (conv && conv.messages || [])){
+        let html = m.role==='user'?enc(m.content):mdToHtml(m.content||'');
+        if(m.image_path) html += `<div class="ai-media"><img src="${enc(m.image_path)}" loading="lazy"></div>`;
+        aiAddMessage(m.role, html);
+      }
       aiScroll();
     }
     aiConnect(id);

@@ -33,13 +33,17 @@ def enabled(db) -> bool:
     return bool(row and (row.value or "").strip().lower() == "relay")
 
 
-async def add_message(db, user, conv_id: int, role: str, content: str, ts: float | None = None) -> bool:
-    """Append one chat message as an encrypted event. `seq` (ms + rand) keeps ordering + a unique d."""
+async def add_message(db, user, conv_id: int, role: str, content: str, ts: float | None = None,
+                      image_path: str | None = None) -> bool:
+    """Append one chat message as an encrypted event. `seq` (ms + rand) keeps ordering + a unique d.
+    `image_path` (a stored artifact like a generated image) is carried so it survives reload."""
     sk = user_storage_seckey(db, user)
     ts = ts if ts is not None else time.time()
     d = f"{store.NS_MSG}{conv_id}:{int(ts * 1000):015d}-{os.urandom(2).hex()}"
-    return await store.put_doc(_port(db), sk, d,
-                               {"conv": conv_id, "role": role, "content": content, "ts": ts})
+    rec = {"conv": conv_id, "role": role, "content": content, "ts": ts}
+    if image_path:
+        rec["image_path"] = image_path
+    return await store.put_doc(_port(db), sk, d, rec)
 
 
 async def get_messages(db, user, conv_id: int) -> list:
@@ -69,7 +73,7 @@ async def delete_conversation(db, user, conv_id: int) -> int:
 # ---- automatic mirror: every Message row insert → an encrypted relay event (when flag on) ----
 # Covers all the scattered save sites in the chat path without editing each. Best-effort: only fires
 # inside the async chat WS (a running loop); bot/threadpool saves aren't part of the web AI store.
-async def _mirror_insert(conv_id: int, role: str, content: str, ts: float):
+async def _mirror_insert(conv_id: int, role: str, content: str, ts: float, image_path: str | None):
     from app.database import SessionLocal
     from app.models import Conversation, User
     db = SessionLocal()
@@ -81,7 +85,7 @@ async def _mirror_insert(conv_id: int, role: str, content: str, ts: float):
             return
         user = db.query(User).filter(User.id == conv.user_id).first()
         if user:
-            await add_message(db, user, conv_id, role, content, ts=ts)
+            await add_message(db, user, conv_id, role, content, ts=ts, image_path=image_path)
     except Exception as e:
         logger.debug("[chat-store] mirror failed: %s", e)
     finally:
@@ -102,8 +106,9 @@ def install_message_mirror():
             return   # not in the async chat path — skip
         import time as _t
         conv_id, role, content = target.conversation_id, target.role, target.content or ""
+        image_path = getattr(target, "image_path", None)
         if conv_id and role:
-            loop.create_task(_mirror_insert(conv_id, role, content, _t.time()))
+            loop.create_task(_mirror_insert(conv_id, role, content, _t.time(), image_path))
 
 
 try:
