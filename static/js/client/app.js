@@ -1896,7 +1896,7 @@
 
   async function aiMount(feed){
     feed.innerHTML=`<div class="ai-chat">
-      <div class="ai-bar"><select id="ai-conv" class="input"></select><button class="btn btn-ghost small" id="ai-new">＋ New</button></div>
+      <div class="ai-bar"><select id="ai-conv" class="input"></select><button class="btn btn-ghost small" id="ai-new">＋ New</button><button class="btn btn-ghost small" id="ai-del" title="delete this chat">🗑️</button></div>
       <div class="ai-msgs" id="ai-msgs"></div>
       <div class="ai-compose">
         <button class="mini" id="ai-attach" title="attach">📎</button><input type="file" id="ai-file" multiple hidden>
@@ -1907,6 +1907,7 @@
     </div>`;
     _ai.attach=[];
     $('#ai-new').onclick=()=>aiNewConversation();
+    $('#ai-del').onclick=()=>aiDeleteConversation();
     $('#ai-conv').onchange=e=>aiOpenConversation(parseInt(e.target.value,10));
     $('#ai-attach').onclick=()=>$('#ai-file').click();
     $('#ai-file').onchange=e=>aiAddFiles([...e.target.files]).then(()=>{ e.target.value=''; });
@@ -1930,6 +1931,18 @@
       const sel=$('#ai-conv'); if(sel){ const o=document.createElement('option'); o.value=c.id; o.textContent=c.title||'New Chat'; sel.prepend(o); sel.value=c.id; }
       aiOpenConversation(c.id);
     }catch(_){ toast('could not start a chat'); }
+  }
+  async function aiDeleteConversation(){
+    const id=_ai.convId; if(!id) return;
+    if(!confirm('Delete this chat and all its messages?')) return;
+    try{ const r=await fetch('/api/conversations/'+id, { method:'DELETE' }); if(!r.ok) throw 0; }
+    catch(_){ toast('delete failed'); return; }
+    try{ if(_ai.ws){ _ai.ws.onclose=null; _ai.ws.close(); } _ai.ws=null; }catch(_){}
+    _ai.convId=null;
+    const sel=$('#ai-conv'); if(sel){ const o=sel.querySelector(`option[value="${id}"]`); if(o) o.remove(); }
+    if(sel && sel.options.length){ aiOpenConversation(parseInt(sel.options[0].value,10)); }
+    else aiNewConversation();
+    toast('chat deleted');
   }
   async function aiOpenConversation(id){
     if(!id) return; _ai.convId=id; _ai.streamEl=null; _ai.streamBuf="";
