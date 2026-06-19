@@ -39,7 +39,7 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
   padding:11px 16px;border-radius:11px;font-weight:600;font-size:14px;transition:.15s;letter-spacing:.3px}
 .btn:hover{transform:translateY(-1px)}
 .btn.full{width:100%;margin:6px 0}
-.btn.small{padding:7px 12px;font-size:12.5px}
+.btn.small{padding:7px 13px;font-size:13.5px}
 .btn-neon{background:linear-gradient(135deg,var(--neon),var(--neon2));border:none;color:#fff;box-shadow:var(--glow)}
 .btn-cyan{background:linear-gradient(135deg,#0bb6cf,var(--cyan));border:none;color:#04222a;box-shadow:var(--glow-cy)}
 .btn-ghost{background:transparent}
@@ -121,7 +121,7 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 .topbar h2{margin:0;font-size:24px;letter-spacing:1px;font-weight:800}
 .searchbox{flex:1;max-width:640px;margin:0 16px}
 .searchbox .input{margin:0;padding:9px 14px;font-size:16.5px}
-.search-section-title{padding:14px 20px 6px;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:1.5px}
+.search-section-title{padding:14px 20px 6px;color:var(--muted);font-size:13.5px;text-transform:uppercase;letter-spacing:1.5px}
 .psearch{display:flex;gap:12px;align-items:center;padding:12px 20px;border-bottom:1px solid var(--line);cursor:pointer}
 .psearch:hover{background:rgba(0,255,255,.08)}
 .psearch img{width:42px;height:42px;border-radius:50%;border:1px solid var(--line)}
@@ -168,10 +168,11 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 .link-card:empty{display:none}
 .link-card .lc-img{width:100%;max-height:260px;object-fit:cover;display:block;border:0;border-radius:0;margin:0}
 .link-card .lc-body{padding:9px 12px}
-.link-card .lc-site{color:var(--cyan);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
-.link-card .lc-title{font-weight:700;font-size:14px;margin:2px 0;line-height:1.3}
-.link-card .lc-desc{color:var(--muted);font-size:12.5px;line-height:1.4}
-.quoted .hd{font-size:13px}
+.link-card .lc-site{color:var(--cyan);font-size:12px;text-transform:uppercase;letter-spacing:.5px}
+.link-card .lc-title{font-weight:700;font-size:15.5px;margin:2px 0;line-height:1.3}
+.link-card .lc-desc{color:var(--muted);font-size:14px;line-height:1.4}
+.quoted .hd{font-size:14.5px}
+.quoted .txt{font-size:16px;line-height:1.5}
 .quoted .txt img,.quoted .txt video{max-width:100%;max-height:280px;border-radius:10px;margin-top:6px;display:block;border:1px solid var(--line)}
 .quoted .txt audio{width:100%;max-width:340px;margin-top:6px}
 .modal .quoted{max-height:46vh;overflow:auto}
@@ -230,7 +231,7 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 .prof-tab.active{color:var(--neon);border-bottom-color:var(--neon)}
 /* drafts */
 .draft-card{flex-direction:column;gap:10px}
-.draft-body{white-space:pre-wrap;word-break:break-word;width:100%}
+.draft-body{white-space:pre-wrap;word-break:break-word;width:100%;font-size:16.5px;line-height:1.5}
 .draft-foot{display:flex;align-items:center;gap:8px;width:100%;flex-wrap:wrap}
 .gif-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;max-height:55vh;overflow:auto;margin-top:10px}
 .gif-item{width:100%;height:110px;object-fit:cover;border-radius:8px;cursor:pointer;border:1px solid var(--line);background:#120c24}
@@ -299,12 +300,12 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 
 /* mention autocomplete */
 .mention-box{background:var(--panel2);border:1px solid var(--neon);border-radius:10px;margin-top:-2px;max-height:230px;overflow:auto;box-shadow:var(--glow);position:relative;z-index:5}
-.mention-opt{display:flex;gap:9px;align-items:center;padding:8px 11px;cursor:pointer}
+.mention-opt{display:flex;gap:9px;align-items:center;padding:9px 11px;cursor:pointer;font-size:15px}
 .mention-opt:hover{background:rgba(0,255,255,.15)}
 .mention-opt img{width:28px;height:28px;border-radius:50%;border:1px solid var(--line);object-fit:cover}
 .prof .phead{flex-wrap:wrap}
 
-.empty{text-align:center;color:var(--muted);padding:60px 20px;font-size:14px}
+.empty{text-align:center;color:var(--muted);padding:60px 20px;font-size:16px}
 .spinner{width:26px;height:26px;border:3px solid var(--line);border-top-color:var(--neon);border-radius:50%;animation:spin .7s linear infinite;margin:40px auto}
 @keyframes spin{to{transform:rotate(360deg)}}
 .badge{display:inline-grid;place-items:center;min-width:21px;height:21px;padding:0 6px;border-radius:11px;background:var(--neon);color:#fff;font-size:12.5px;font-weight:700;margin-left:6px;box-shadow:0 0 8px rgba(0,255,255,.5)}
