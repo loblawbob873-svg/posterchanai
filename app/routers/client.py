@@ -458,10 +458,22 @@ async def claim_admin(data: ClaimAdmin, db: Session = Depends(get_db)):
     u.can_ai = True
     u.can_image = True
     u.can_blossom = True
+    # Seed the WoT with the new admin's own npub so a fresh install self-bootstraps its trust set
+    # (operator + everyone they follow) instead of relying on any baked-in seed list. Idempotent.
+    seeds_row = db.query(Setting).filter(Setting.key == "nostr_relay_wot_seeds").first()
+    seeds_val = (seeds_row.value if seeds_row else "") or ""
+    if npub not in seeds_val:
+        new_seeds = (seeds_val.rstrip() + "\n" + npub).strip() if seeds_val.strip() else npub
+        if seeds_row:
+            seeds_row.value = new_seeds
+        else:
+            db.add(Setting(key="nostr_relay_wot_seeds", value=new_seeds))
     db.commit()
     logger.info("[client] first-run admin claimed by %s (%s)", u.username, npub[:16])
     try:
         await follow_and_admit(db, pk)
+        from app.services.nostr_relay.thread import trigger_wot_refresh
+        trigger_wot_refresh()
     except Exception as e:
         logger.warning("[client] follow/admit on claim-admin failed: %s", e)
     try:
