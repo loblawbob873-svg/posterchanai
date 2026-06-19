@@ -583,8 +583,9 @@ async def serve_file(
     
     file_data = await asyncio.to_thread(_read_file_sync)
     
-    # Return file response (ASCII-safe filename for Content-Disposition header)
-    from fastapi.responses import Response
+    # Return file response (ASCII-safe filename for Content-Disposition header). NOTE: Response is
+    # imported at module top; do NOT re-import here (a local import makes Response function-local and
+    # breaks the earlier encrypted-blob branch with UnboundLocalError).
     safe_name = ascii_safe_header_filename(filename)
     return Response(
         content=file_data,
