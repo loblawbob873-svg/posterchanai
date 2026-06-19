@@ -8,6 +8,7 @@ from starlette.requests import Request as StarletteRequest
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError, OperationalError
+from pydantic import BaseModel
 from app.database import get_db
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,80 @@ def login(user_data: UserLogin, response: Response, db: Session = Depends(get_db
     )
 
     return {"access_token": token, "token_type": "bearer"}
+
+
+def _set_auth_cookie(response: Response, token: str) -> None:
+    import os
+    is_production = os.getenv("ENVIRONMENT", "").lower() == "production"
+    response.set_cookie(
+        key="access_token", value=token,
+        httponly=False,            # JS reads it for the WebSocket auth handshake
+        secure=is_production, max_age=30 * 24 * 60 * 60, samesite="lax", path="/",
+    )
+
+
+class NostrLogin(BaseModel):
+    pubkey: str          # npub or 64-hex of the logging-in key
+    auth: str            # base64 of a recent Nostr event signed by that key (proves ownership)
+
+
+def _verify_nostr_auth(auth_b64: str, pubkey_hex: str) -> bool:
+    """A base64 signed Nostr event authored by `pubkey_hex`, within a 300s anti-replay window."""
+    import base64
+    import json
+    from app.services.nostr import event as nostr_event
+    try:
+        ev = json.loads(base64.b64decode(auth_b64))
+    except Exception:
+        return False
+    return (nostr_event.verify_event(ev) and ev.get("pubkey") == pubkey_hex
+            and abs(int(ev.get("created_at", 0)) - int(time.time())) <= 300)
+
+
+@router.post("/nostr-login")
+def nostr_login(data: NostrLogin, response: Response, db: Session = Depends(get_db)):
+    """Log in / sign up with a Nostr key (NIP-07 / Amber / nsec — signed client-side). Finds the
+    user by linked npub or creates a fresh, AI-gated account, then issues the normal session cookie
+    so the whole AI app works unchanged. New users have NO AI access until an admin approves."""
+    from app.services.nostr import nostr_service
+    pk = nostr_service.to_pubkey_hex(data.pubkey)
+    if not pk:
+        raise HTTPException(status_code=400, detail="invalid pubkey")
+    if not _verify_nostr_auth(data.auth, pk):
+        raise HTTPException(status_code=403, detail="invalid or stale Nostr signature")
+    npub = nostr_service.npub_of(pk)
+
+    user = db.query(User).filter(User.nostr_npub == npub).first()
+    created = False
+    if not user:
+        # derive a unique username from the npub; AI stays off until an admin grants it
+        base = "npub_" + npub[4:16]
+        username = base
+        for i in range(2, 100):
+            if not db.query(User).filter(User.username == username).first():
+                break
+            username = f"{base}{i}"
+        user = User(
+            username=username, email=None,
+            password_hash=get_password_hash(secrets.token_urlsafe(32)),  # unusable (Nostr-only)
+            is_admin=False, email_verified=True, nostr_npub=npub,
+            can_image=True, can_music=True, can_video=False, can_torrent=False,
+            can_blossom=False, can_ai=False,   # gated — request → admin approves
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        created = True
+        logger.info("[auth] Nostr signup: %s (%s)", username, npub[:16])
+
+    token = create_access_token({"sub": str(user.id)})
+    _set_auth_cookie(response, token)
+    return {
+        "access_token": token, "token_type": "bearer",
+        "user": {"id": user.id, "username": user.username, "npub": npub,
+                 "is_admin": bool(user.is_admin), "can_ai": bool(user.is_admin or user.can_ai),
+                 "new": created},
+    }
 
 
 @router.post("/logout")
