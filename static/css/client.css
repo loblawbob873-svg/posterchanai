@@ -494,3 +494,6 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .npubrow code{font-size:13px}
 .statbtn{font-size:15.5px}.statbtn b{font-size:16.5px}
 .psearch b{font-size:16.5px}.psearch .muted.small{font-size:14px}
+
+/* extra breathing room (+ a neon divider) between Trending hashtags and Hot */
+#rb-trending{padding-bottom:20px;margin-bottom:6px;border-bottom:1px solid var(--line)}
