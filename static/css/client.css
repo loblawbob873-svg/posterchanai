@@ -107,13 +107,13 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
   .app{grid-template-columns:300px 1fr 360px}
   .rightbar{display:flex;flex-direction:column;gap:16px;padding:18px 16px;border-left:1px solid var(--line);overflow-y:auto}
 }
-.rb-section h3{margin:0 0 8px;font-size:15px;letter-spacing:1px;color:var(--text)}
+.rb-section h3{margin:0 0 8px;font-size:16.5px;letter-spacing:1px;color:var(--text)}
 .rb-item{padding:9px 10px;border:1px solid var(--line);border-radius:11px;margin-bottom:8px;cursor:pointer;transition:.13s;background:rgba(8,5,18,.4)}
 .rb-item:hover{border-color:var(--neon);background:rgba(0,255,255,.08)}
 .rb-head{display:flex;align-items:center;gap:7px}
 .rb-av{width:24px;height:24px;border-radius:50%;border:1px solid var(--line);object-fit:cover;flex-shrink:0;background:#1a1230}
-.rb-item b{font-size:13px}.rb-item .muted{font-size:11px}
-.rb-item .rb-txt{color:var(--muted);font-size:12.5px;line-height:1.35;margin-top:3px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.rb-item b{font-size:14.5px}.rb-item .muted{font-size:12px}
+.rb-item .rb-txt{color:var(--muted);font-size:14px;line-height:1.4;margin-top:3px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .rb-github{margin-top:auto;display:flex;align-items:center;justify-content:center;gap:9px;color:var(--text);
   border:1px solid var(--line);border-radius:12px;padding:11px;font-weight:600;transition:.15s}
 .rb-github:hover{border-color:var(--cyan);color:var(--cyan);box-shadow:var(--glow-cy)}
@@ -148,7 +148,7 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 .note .hd-pin{padding:0 4px;font-size:13px;background:transparent;border:none;opacity:.6;line-height:1}
 .note .hd-pin:hover,.note .hd-pin.on{opacity:1}
 .note .time:hover{color:var(--cyan)}
-.note .txt{margin:6px 0;line-height:1.5;white-space:pre-wrap;word-wrap:break-word;overflow-wrap:anywhere}
+.note .txt{margin:6px 0;line-height:1.5;white-space:pre-wrap;word-wrap:break-word;overflow-wrap:anywhere;font-size:16.5px}
 /* ALL post-content media flows horizontally (inline-block) and is height-capped, so multiple
  * attachments form a wrapping gallery row instead of a giant vertical stack. */
 .note .txt img,.note .txt video,.note .media img,.note .media video{width:auto;max-width:100%;max-height:300px;border-radius:12px;margin:8px 6px 0 0;border:1px solid var(--line);display:inline-block;vertical-align:top;background:#0d0a1a}
