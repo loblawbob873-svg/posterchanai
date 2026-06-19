@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # Datastore-plumbing keys are always sourced from local SQLite, never hydrated/written-through —
 # so a stale relay copy can't change where/whether we connect or flip the backend off mid-flight.
 _PLUMBING_KEYS = frozenset({
-    "settings_backend", "users_backend", "chat_backend", "nostr_relay_port",
+    "settings_backend", "users_backend", "bots_backend", "chat_backend", "nostr_relay_port",
     "nostr_relay_enabled", "nostr_relay_db_path", "nostr_relay_bind",
 })
 

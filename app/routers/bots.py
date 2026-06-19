@@ -130,6 +130,8 @@ def create_bot(payload: BotPayload, db: Session = Depends(get_db),
         db.rollback()
         raise HTTPException(status_code=400, detail=f"A bot named '{payload.name}' already exists")
     db.refresh(bot)
+    from app.services import bots_store
+    bots_store.sync_bot_blocking(db, bot)
     bot_manager_service.reconcile_now()
     return _serialize(bot)
 
@@ -140,6 +142,7 @@ def update_bot(bot_id: int, payload: BotUpdate, db: Session = Depends(get_db),
     bot = db.query(Bot).filter(Bot.id == bot_id).first()
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
+    old_name = bot.name
     if payload.name is not None:
         bot.name = payload.name.strip()
     if payload.enabled is not None:
@@ -160,6 +163,10 @@ def update_bot(bot_id: int, payload: BotUpdate, db: Session = Depends(get_db),
         db.rollback()
         raise HTTPException(status_code=400, detail="Bot name must be unique")
     db.refresh(bot)
+    from app.services import bots_store
+    if old_name != bot.name:
+        bots_store.delete_bot_blocking(db, old_name)   # drop the stale relay doc on rename
+    bots_store.sync_bot_blocking(db, bot)
     # config/cred/mode changes need a respawn; nudge a reconcile and restart the running child.
     bot_manager_service.restart_bot(bot.name)
     return _serialize(bot)
@@ -174,6 +181,8 @@ def delete_bot(bot_id: int, db: Session = Depends(get_db),
     name = bot.name
     db.delete(bot)
     db.commit()
+    from app.services import bots_store
+    bots_store.delete_bot_blocking(db, name)
     bot_manager_service.reconcile_now()  # manager stops the now-absent child
     return {"status": "deleted", "name": name}
 
@@ -186,6 +195,8 @@ def start_bot(bot_id: int, db: Session = Depends(get_db),
         raise HTTPException(status_code=404, detail="Bot not found")
     bot.enabled = True
     db.commit()
+    from app.services import bots_store
+    bots_store.sync_bot_blocking(db, bot)
     bot_manager_service.reconcile_now()
     return {"status": "started", "name": bot.name}
 
@@ -198,6 +209,8 @@ def stop_bot(bot_id: int, db: Session = Depends(get_db),
         raise HTTPException(status_code=404, detail="Bot not found")
     bot.enabled = False
     db.commit()
+    from app.services import bots_store
+    bots_store.sync_bot_blocking(db, bot)
     bot_manager_service.reconcile_now()
     return {"status": "stopped", "name": bot.name}
 

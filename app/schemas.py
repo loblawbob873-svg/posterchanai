@@ -569,6 +569,7 @@ class UserSettingsUpdate(BaseModel):
     chat_backend: Optional[str] = None               # "sqlite" (default) | "relay" (encrypted chat events)
     settings_backend: Optional[str] = None           # "sqlite" (default) | "relay" (relay-authoritative settings)
     users_backend: Optional[str] = None              # "sqlite" (default) | "relay" (relay-authoritative accounts)
+    bots_backend: Optional[str] = None               # "sqlite" (default) | "relay" (relay-authoritative bot config)
     # Built-in Blossom media server (BUD-01/02). Served by the app at /blossom (front with TLS).
     blossom_enabled: Optional[bool] = None
     blossom_public_url: Optional[str] = None       # advertised base URL (blank = derive from request)

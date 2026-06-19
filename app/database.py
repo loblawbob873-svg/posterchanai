@@ -519,6 +519,9 @@ def init_db():
             # "sqlite" (default) reads the users table; "relay" makes the relay authoritative
             # (users table hydrated from it at startup; account mutations write through to it).
             "users_backend": "sqlite",
+            # Phase 3: where bot config lives. "sqlite" (default) reads the bots table; "relay"
+            # makes the relay authoritative (bots table hydrated at startup; bot edits write through).
+            "bots_backend": "sqlite",
             # WoT seeds bootstrap the relay's trust set (seeds + everyone they follow) so a fresh
             # relay has a working web-of-trust out of the box. These are well-known PUBLIC Nostr
             # accounts — deliberately NOT this deployment's admin npub (first-run claim-admin adds
