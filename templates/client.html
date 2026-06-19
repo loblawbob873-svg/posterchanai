@@ -31,12 +31,30 @@
 
         <div id="auth-login" class="auth-pane">
             <button id="btn-nip07" class="btn btn-neon full">⚡ Sign in with extension (NIP-07)</button>
+            <button id="btn-amber" class="btn btn-cyan full">📡 Sign in with Amber / remote signer</button>
             <div class="divider"><span>or</span></div>
             <input id="nsec-input" class="input" type="password" placeholder="nsec1… (stays in your browser)" autocomplete="off">
             <button id="btn-nsec-login" class="btn btn-cyan full">Login with key</button>
             <div class="divider"><span>new here?</span></div>
             <button id="btn-show-signup" class="btn btn-ghost full">✦ Create a new identity</button>
             <div id="auth-error" class="auth-error"></div>
+        </div>
+
+        <div id="auth-amber" class="auth-pane hidden">
+            <p class="muted small">Sign in with <b>Amber</b> (or any NIP-46 remote signer / bunker). In Amber, add this app and copy its <code>bunker://</code> connection string, then paste it below.</p>
+            <input id="amber-input" class="input" type="text" placeholder="bunker://… (or nostrconnect://)" autocomplete="off">
+            <button id="btn-amber-connect" class="btn btn-neon full">Connect</button>
+            <div class="divider"><span>or</span></div>
+            <p class="muted small">No bunker string? Open this app's link in Amber to approve the connection:</p>
+            <button id="btn-amber-nc" class="btn btn-cyan full">📡 Open in Amber (nostrconnect)</button>
+            <div id="amber-nc-box" class="keybox hidden">
+                <label>connection link — open in Amber, then approve</label>
+                <div class="keyrow"><code id="amber-nc-uri"></code><button class="mini" data-copy="amber-nc-uri">copy</button></div>
+                <a id="amber-nc-open" class="btn btn-neon full" href="#">Tap to open in Amber</a>
+                <div class="muted small" id="amber-nc-status">waiting for Amber to approve…</div>
+            </div>
+            <button id="btn-amber-back" class="btn btn-ghost full">← back</button>
+            <div id="amber-error" class="auth-error"></div>
         </div>
 
         <div id="auth-signup" class="auth-pane hidden">
@@ -71,6 +89,7 @@
             <button class="nav-item" data-view="streams"><span class="ic">▷</span><span>Streams</span></button>
             <button class="nav-item" data-view="blossom"><span class="ic">❀</span><span>Files</span></button>
             <button class="nav-item" data-view="profile"><span class="ic">☻</span><span>Profile</span></button>
+            <button class="nav-item" data-view="settings"><span class="ic">⚙</span><span>Settings</span></button>
         </nav>
         <button id="btn-compose" class="btn btn-neon compose-btn">✎ New post</button>
         <div class="me" id="me-card"></div>

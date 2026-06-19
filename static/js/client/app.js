@@ -35,6 +35,14 @@
         nip04dec: (peer, ct) => window.nostr.nip04.decrypt(peer, ct),
       };
     }
+    if (mode === 'nip46'){   // Amber / remote signer (NIP-46): the user's key stays in the signer
+      return {
+        mode, pubkey,
+        signEvent: (tpl) => Nip46.signEvent(tpl),
+        nip04enc: (peer, txt) => Nip46.nip04enc(peer, txt),
+        nip04dec: (peer, ct) => Nip46.nip04dec(peer, ct),
+      };
+    }
     return {  // local key — crypto in the worker
       mode, pubkey,
       signEvent: (tpl) => Relay.worker.call('sign', { event: tpl }),
@@ -57,6 +65,112 @@
     if (!r.ok) toast('relay: ' + (r.msg||'rejected'));
     return { ev, ...r };
   }
+
+  // ---------- NIP-46 remote signer (Amber / nsecbunker) ----------
+  // The user's secret key lives in the remote signer. We hold an EPHEMERAL "app key" (in the
+  // worker) purely to encrypt/sign the NIP-46 transport (kind-24133 events over the signer's relay);
+  // every user-facing sign/encrypt is forwarded to the signer, which prompts the user to approve.
+  const Nip46 = {
+    ws:null, relay:null, appSk:null, appPk:null, remotePk:null, userPk:null,
+    _pending:new Map(), _subId:null, _onEvent:null,
+    reset(){ this._wantOpen=false; try{ if(this.ws){ this.ws.onclose=null; this.ws.close(); } }catch(_){} this.ws=null; this._pending.clear(); this._onEvent=null; },
+    // NIP-46 transport is NIP-04 by default, but some signers reply with NIP-44 — try each scheme
+    // through to a valid JSON payload (a wrong scheme may return garbage rather than throw).
+    async _decode(peer, ct){
+      for(const op of ['nip04dec','nip44dec']){
+        try{ return JSON.parse((await Relay.worker.call(op,{ peer, ct })).pt); }catch(_){}
+      }
+      return null;
+    },
+    // load (or reuse) the ephemeral app key into the worker
+    async _ensureAppKey(sk){
+      const g = sk ? { sk } : await Relay.worker.call('genKey', {});
+      const r = await Relay.worker.call('setKey', { sk: g.sk });
+      this.appSk = g.sk; this.appPk = r.pubkey; return this.appPk;
+    },
+    // open a socket to the signer's relay + subscribe for responses addressed to our app key
+    _openRelay(relay){
+      this._wantOpen=true;
+      return new Promise((res,rej)=>{
+        let done=false; const ws=new WebSocket(relay); this.ws=ws; this.relay=relay;
+        ws.onopen=()=>{ this._subId='n46'+Math.random().toString(36).slice(2,8);
+          ws.send(JSON.stringify(['REQ', this._subId, { kinds:[24133], '#p':[this.appPk], since: Math.floor(Date.now()/1000)-5 }]));
+          if(!done){ done=true; res(); } };
+        ws.onmessage=(e)=>this._recv(e.data);
+        ws.onerror=()=>{ if(!done){ done=true; rej(new Error('cannot reach signer relay')); } };
+        // a remote signer is contacted only when signing, so the relay may idle-drop us — reconnect
+        // (and re-subscribe) so the next sign still gets through without forcing a re-pair.
+        ws.onclose=()=>{ if(this._wantOpen && this.ws===ws){ this.ws=null; setTimeout(()=>{ if(this._wantOpen && !this.ws) this._openRelay(relay).catch(()=>{}); }, 2000); } };
+        setTimeout(()=>{ if(!done){ done=true; rej(new Error('signer relay timed out')); } }, 9000);
+      });
+    },
+    async _recv(raw){
+      let m; try{ m=JSON.parse(raw); }catch(_){ return; }
+      if(m[0]!=='EVENT' || m[1]!==this._subId) return;
+      const ev=m[2]; if(!ev || ev.kind!==24133) return;
+      const payload=await this._decode(ev.pubkey, ev.content); if(!payload) return;
+      if(this._onEvent) try{ this._onEvent(ev, payload); }catch(_){}   // nostrconnect handshake hook
+      // the signer needs the user to approve in-app → open the deep link / approval URL
+      if(payload.result==='auth_url' || (payload.error && /^https?:\/\//i.test(payload.error||''))){
+        try{ window.open(payload.error,'_blank'); }catch(_){} return;
+      }
+      const p=this._pending.get(payload.id);
+      if(p){ this._pending.delete(payload.id); payload.error ? p.rej(new Error(payload.error)) : p.res(payload.result); }
+    },
+    async _send(method, params){
+      if(!this.remotePk || !this.ws) throw new Error('signer not connected');
+      const id='r'+Math.random().toString(36).slice(2,10);
+      const ct=(await Relay.worker.call('nip04enc',{peer:this.remotePk, text:JSON.stringify({ id, method, params })})).ct;
+      const tpl={ kind:24133, content:ct, tags:[['p',this.remotePk]], created_at:Math.floor(Date.now()/1000), pubkey:this.appPk };
+      const signed=await Relay.worker.call('sign',{ event:tpl });
+      return new Promise((res,rej)=>{
+        this._pending.set(id,{res,rej});
+        try{ this.ws.send(JSON.stringify(['EVENT', signed])); }catch(e){ this._pending.delete(id); return rej(e); }
+        // generous timeout — the user may need to physically approve on their phone
+        setTimeout(()=>{ if(this._pending.has(id)){ this._pending.delete(id); rej(new Error('signer request timed out')); } }, 120000);
+      });
+    },
+    // bunker://<remote-signer-pubkey>?relay=wss://…&secret=…  (Amber gives you this string)
+    async connectBunker(uri){
+      const mm=String(uri||'').trim().match(/^bunker:\/\/([0-9a-fA-F]{64})\??(.*)$/);
+      if(!mm) throw new Error('not a bunker:// link');
+      const remote=mm[1].toLowerCase(); const qs=new URLSearchParams(mm[2]||'');
+      const relays=qs.getAll('relay'); const secret=qs.get('secret')||'';
+      if(!relays.length) throw new Error('bunker link is missing its relay');
+      await this._ensureAppKey(); await this._openRelay(relays[0]); this.remotePk=remote;
+      await this._send('connect',[remote, secret]);     // may bounce through an auth_url first
+      const userPk=await this._send('get_public_key',[]);
+      this.userPk=userPk;
+      return { userPk, session:{ mode:'nip46', sk:this.appSk, relay:this.relay, remotePk:remote, userPk } };
+    },
+    // nostrconnect://<app-pubkey>?relay=…&secret=…  (WE present this; the signer connects to us)
+    async beginNostrConnect(relay, name){
+      await this._ensureAppKey(); await this._openRelay(relay);
+      const secret=Math.random().toString(36).slice(2,12);
+      const uri=`nostrconnect://${this.appPk}?relay=${encodeURIComponent(relay)}&secret=${secret}&name=${encodeURIComponent(name||'PosterChan')}`;
+      const done=new Promise((res,rej)=>{
+        const to=setTimeout(()=>{ this._onEvent=null; rej(new Error('timed out waiting for the signer')); }, 180000);
+        this._onEvent=async (ev, payload)=>{
+          if(!payload.result || payload.result==='auth_url') return;   // wait for the connect ack
+          this.remotePk=ev.pubkey; this._onEvent=null; clearTimeout(to);
+          try{ const pk=await this._send('get_public_key',[]); this.userPk=pk;
+            res({ userPk:pk, session:{ mode:'nip46', sk:this.appSk, relay, remotePk:this.remotePk, userPk:pk } }); }
+          catch(e){ rej(e); }
+        };
+      });
+      return { uri, done };
+    },
+    async resume(s){
+      await this._ensureAppKey(s.sk); await this._openRelay(s.relay);
+      this.remotePk=s.remotePk; this.userPk=s.userPk||null;
+      if(!this.userPk) this.userPk=await this._send('get_public_key',[]);
+      return this.userPk;
+    },
+    // signer interface — every user op is forwarded to the remote signer
+    async signEvent(tpl){ return JSON.parse(await this._send('sign_event',[JSON.stringify(tpl)])); },
+    nip04enc(peer, text){ return this._send('nip04_encrypt',[peer, text]); },
+    nip04dec(peer, ct){ return this._send('nip04_decrypt',[peer, ct]); },
+  };
 
   // ---------- boot ----------
   async function boot(){
@@ -81,6 +195,9 @@
       if (!window.nostr) throw new Error('extension gone');
       const pk = await window.nostr.getPublicKey();
       signer = makeSigner('nip07', pk); ME = { mode:'nip07', pubkey: pk, npub: NT().nip19.npubEncode(pk) };
+    } else if (s.mode === 'nip46'){
+      const pk = await Nip46.resume(s);
+      signer = makeSigner('nip46', pk); ME = { mode:'nip46', pubkey: pk, npub: NT().nip19.npubEncode(pk) };
     } else {
       const r = await Relay.worker.call('setKey', { sk: s.sk });
       signer = makeSigner('local', r.pubkey); ME = { mode:'local', pubkey: r.pubkey, npub: NT().nip19.npubEncode(r.pubkey) };
@@ -94,6 +211,10 @@
   function bindAuth(){
     $('#btn-nip07').onclick = loginNip07;
     $('#btn-nsec-login').onclick = loginNsec;
+    $('#btn-amber').onclick = ()=>{ amberErr(''); $('#auth-login').classList.add('hidden'); $('#auth-amber').classList.remove('hidden'); };
+    $('#btn-amber-back').onclick = ()=>{ Nip46.reset(); $('#amber-nc-box').classList.add('hidden'); $('#auth-amber').classList.add('hidden'); $('#auth-login').classList.remove('hidden'); };
+    $('#btn-amber-connect').onclick = loginAmberBunker;
+    $('#btn-amber-nc').onclick = loginAmberNostrConnect;
     $('#btn-show-signup').onclick = ()=>{ $('#auth-login').classList.add('hidden'); $('#auth-signup').classList.remove('hidden'); };
     $('#btn-back-login').onclick = ()=>{ $('#auth-signup').classList.add('hidden'); $('#auth-login').classList.remove('hidden'); };
     $('#btn-gen-key').onclick = genKey;
@@ -110,6 +231,34 @@
       signer = makeSigner('nip07', pk); ME = { mode:'nip07', pubkey: pk, npub: NT().nip19.npubEncode(pk) };
       Session.save({ mode:'nip07' }); startApp();
     } catch(e){ authErr('extension declined'); }
+  }
+  function amberErr(m){ const el=$('#amber-error'); if(el) el.textContent=m||''; }
+  function finishAmberLogin(pk, session){
+    signer = makeSigner('nip46', pk); ME = { mode:'nip46', pubkey: pk, npub: NT().nip19.npubEncode(pk) };
+    Session.save(session);
+    $('#auth-amber').classList.add('hidden'); $('#amber-nc-box').classList.add('hidden'); $('#auth-login').classList.remove('hidden');
+    startApp();
+  }
+  async function loginAmberBunker(){
+    amberErr(''); const uri=$('#amber-input').value.trim();
+    if(!uri){ amberErr('paste your bunker:// link'); return; }
+    if(/^nostrconnect:/i.test(uri)){ amberErr('that’s a nostrconnect link — use the button below instead'); return; }
+    const btn=$('#btn-amber-connect'); btn.disabled=true; btn.textContent='connecting…';
+    try{ const { userPk, session }=await Nip46.connectBunker(uri); finishAmberLogin(userPk, session); }
+    catch(e){ amberErr(e.message||'could not connect'); Nip46.reset(); }
+    finally{ btn.disabled=false; btn.textContent='Connect'; }
+  }
+  async function loginAmberNostrConnect(){
+    amberErr(''); const btn=$('#btn-amber-nc'); btn.disabled=true; btn.textContent='preparing…';
+    try{
+      const { uri, done }=await Nip46.beginNostrConnect('wss://relay.nsec.app', 'PosterChan');
+      $('#amber-nc-uri').textContent=uri;
+      const open=$('#amber-nc-open'); if(open) open.href=uri;
+      $('#amber-nc-status').textContent='waiting for the signer to approve…';
+      $('#amber-nc-box').classList.remove('hidden');
+      const { userPk, session }=await done; finishAmberLogin(userPk, session);
+    }catch(e){ amberErr(e.message||'could not connect'); Nip46.reset(); $('#amber-nc-box').classList.add('hidden'); }
+    finally{ btn.disabled=false; btn.textContent='📡 Open in Amber (nostrconnect)'; }
   }
   async function loginNsec(){
     authErr('');
@@ -174,7 +323,7 @@
     // and profiles/follows never resolve — names would show as raw npubs).
     Relay.onReady = ()=>{ fetchFollows(); fetchMutes(); fetchPins(); fetchBookmarks(); fetchMyProfile(); watchNotifications();
       setTimeout(()=>ensureDMs(), 3000); setTimeout(loadRightbar, 1500); };   // DMs + rightbar load after the timeline
-    Relay.connect(CFG.relay_url);
+    connectRelays();
     renderMe();
     switchView('home');
     setInterval(loadRightbar, 300000);   // refresh hot/trending every 5 min
@@ -183,6 +332,15 @@
     setInterval(()=>{ if(document.hidden) return; let n=0; $$('.note[data-pk]').forEach(el=>{ if(n<60 && !Store.haveProfile(el.dataset.pk)){ needProfile(el.dataset.pk); n++; } }); }, 12000);
   }
   function logout(){ Session.clear(); Relay.worker.call('clearKey',{}); location.reload(); }
+
+  // Decide which relays to connect: the user's own list when they've enabled it (untrusted, so the
+  // pool verifies signatures), otherwise the single built-in WoT relay (trusted).
+  function userRelays(){ return (ClientSettings.get('relays')||[]).map(u=>String(u||'').trim()).filter(Boolean); }
+  function connectRelays(){
+    const list = ClientSettings.get('relaysEnabled') ? userRelays() : [];
+    if (list.length) Relay.configure({ urls: list, verify: true });
+    else Relay.connect(CFG.relay_url);
+  }
 
   function renderConn(s){
     const map = { ok:['ok','online'], connecting:['','connecting…'], off:['off','reconnecting…'], init:['','…'] };
@@ -297,12 +455,13 @@
   function switchView(v){
     VIEW = v;
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
-    $('#view-title').textContent = { home:'Home', global:'Global', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', streams:'Streams', blossom:'Files', profile:'Profile' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Global', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', streams:'Streams', blossom:'Files', profile:'Profile', settings:'Settings' }[v]||v;
     renderView(true);
   }
   function renderView(reset){
     cleanupInlineStream();   // leaving a view tears down the inline stream player (unless popped out)
     const feed = $('#feed');
+    if(VIEW!=='home' && VIEW!=='global') _hidePill();
     feed.classList.toggle('feed-dm', VIEW==='messages');   // full-height messages layout (no :has needed)
     if (reset) feed.innerHTML = '<div class="spinner"></div>';
     if (VIEW==='home' || VIEW==='global') return renderTimeline(VIEW, reset);
@@ -313,6 +472,7 @@
     if (VIEW==='articles') return renderArticles();
     if (VIEW==='streams') return renderStreams();
     if (VIEW==='blossom') return renderBlossom();
+    if (VIEW==='settings') return renderSettings();
     if (VIEW==='profile') return renderProfile(ME.pubkey);
   }
 
@@ -325,7 +485,7 @@
   let _tl = { oldest:0, loading:false, done:false, pages:0 };
   function renderTimeline(view, reset){
     const fn = view==='home' ? (ev=>FOLLOWS.has(ev.pubkey)) : null;
-    if(reset) _tl = { oldest:0, loading:false, done:false, pages:0 };
+    if(reset){ _tl = { oldest:0, loading:false, done:false, pages:0 }; _resetLive(); }
     _drawTimeline(false);
     if (subs[view]) Relay.close(subs[view]);
     subs[view] = Relay.subscribe(timelineFilter(), {
@@ -336,16 +496,30 @@
   // Batched live updates: a busy global feed must NOT prepend + re-render per event (that pegged
   // the CPU and flashed). Buffer incoming notes and prepend them together a few times a second,
   // capping the feed and keeping scroll stable.
-  let _liveBuf=[], _liveT=null, _liveFn=null;
+  let _liveBuf=[], _liveT=null, _liveFn=null, _livePending=[];
+  const _LIVE_READ_PX=400;   // once scrolled this far down we stop auto-prepending (see below)
   function _bufferLive(ev, fn){ _liveFn=fn; _liveBuf.push(ev); if(!_liveT) _liveT=setTimeout(flushLive, 1800); }
   function flushLive(){
     _liveT=null; const evs=_liveBuf.splice(0);
     if((VIEW!=='home'&&VIEW!=='global') || !evs.length) return;
     const feed=$('#feed'); if(!feed) return;
+    // While the user is reading below the top, DON'T mutate the timeline under them (prepending +
+    // hydrating link cards shifts content and is what made it "keep refreshing"). Stash the new
+    // posts and surface them with a "↑ N new posts" pill; flush when they scroll back up / tap it.
+    if(feed.scrollTop > _LIVE_READ_PX){
+      for(const ev of evs) _livePending.push(ev);
+      if(_livePending.length>300) _livePending=_livePending.slice(-300);
+      _updateNewPostsPill(); return;
+    }
+    _prependLive(evs, feed);
+  }
+  function _prependLive(evs, feed){
     const sp=feed.querySelector('.spinner'); if(sp)sp.remove(); const em=feed.querySelector('.empty'); if(em)em.remove();
     evs.sort((a,b)=>b.created_at-a.created_at);
     const frag=document.createDocumentFragment();
     for(const ev of evs){ if(ev.kind===1&&isReply(ev))continue; if(MUTED.has(ev.pubkey))continue; if(_liveFn&&!_liveFn(ev))continue;
+      const dispId = ev.kind===6 ? ((ev.tags.find(t=>t[0]==='e')||[])[1]||ev.id) : ev.id;
+      if(feed.querySelector('.note[data-id="'+dispId+'"]')) continue;   // don't double-insert
       const div=document.createElement('div'); div.innerHTML=noteHtml(ev); const node=div.firstElementChild; if(node) frag.appendChild(node); }
     if(!frag.childElementCount) return;
     const atTop=feed.scrollTop<100, beforeH=feed.scrollHeight;
@@ -356,6 +530,25 @@
     if(_tl.pages===0){ const notes=[...feed.querySelectorAll('.note')]; for(let i=200;i<notes.length;i++) notes[i].remove(); }
     decorateProfiles(); hydrateLinkCards(feed);
   }
+  // "new posts" pill — only on the live timelines; clicking it jumps to top and shows them
+  function _newPostsPill(){
+    let p=document.getElementById('new-posts-pill');
+    if(!p){ p=document.createElement('button'); p.id='new-posts-pill'; p.className='new-posts-pill hidden';
+      p.onclick=()=>{ const feed=$('#feed'); if(feed) feed.scrollTop=0; _flushPending(); };
+      (document.querySelector('.main')||document.body).appendChild(p); }
+    return p;
+  }
+  function _updateNewPostsPill(){
+    const p=_newPostsPill(); const n=(VIEW==='home'||VIEW==='global')?_livePending.length:0;
+    if(n>0){ p.textContent='↑ '+n+' new post'+(n>1?'s':''); p.classList.remove('hidden'); } else p.classList.add('hidden');
+  }
+  function _flushPending(){
+    const feed=$('#feed'); if(!feed) return;
+    const evs=_livePending.splice(0); if(evs.length) _prependLive(evs, feed);
+    _updateNewPostsPill();
+  }
+  function _resetLive(){ _livePending=[]; _updateNewPostsPill(); }
+  function _hidePill(){ const p=document.getElementById('new-posts-pill'); if(p) p.classList.add('hidden'); }
   function _drawTimeline(preserveScroll){
     if(VIEW!=='home' && VIEW!=='global') return;
     const feed=$('#feed'); if(!feed) return;
@@ -371,6 +564,8 @@
   // ---------- infinite scroll-back ----------
   function onFeedScroll(){
     const feed=$('#feed'); if(!feed) return;
+    // scrolled back near the top → show the buffered live posts and clear the pill
+    if((VIEW==='home'||VIEW==='global') && _livePending.length && feed.scrollTop <= _LIVE_READ_PX) _flushPending();
     if(feed.scrollTop + feed.clientHeight < feed.scrollHeight - 700) return;   // not near the bottom yet
     if(VIEW==='home'||VIEW==='global') loadOlderTimeline();
     else if(VIEW==='profile') loadOlderProfile();
@@ -725,7 +920,7 @@
       <img class="av" src="${enc(av)}" onerror="this.src='${LOGO}'">
       <div class="body">${prefix}
         <div class="hd"><span class="name" data-prof="${ev.pubkey}">${enc(name)}</span><span class="vchk"></span>
-          <span class="handle">${enc(handle)}</span><span class="time">${timeAgo(ev.created_at)}</span>${mine?`<button class="act hd-pin ${PINNED.has(ev.id)?'on':''}" data-a="pin" title="pin/unpin on your profile">📌</button>`:''}</div>
+          <span class="handle">${enc(handle)}</span><span class="time">${timeAgo(ev.created_at)}</span></div>
         <div class="txt">${linkify(stripQuoteRef(mp.text, ev))}</div>
         ${mp.gallery}
         ${linkCardHtml(mp.text)}
@@ -736,11 +931,7 @@
           <button class="act actq" data-a="quote" title="quote post">❝</button>
           <button class="act ${liked?'on':''}" data-a="react" title="react">${liked||'😀'} <span class="n">${counts.reactions||''}</span></button>
           <button class="act actz ${counts.zaps?'on':''}" data-a="zap" title="zap (lightning)">⚡ <span class="n">${counts.zaps?fmtSats(counts.zaps):''}</span></button>
-          <button class="act actb ${BOOKMARKS.has(ev.id)?'on':''}" data-a="bookmark" title="bookmark">🔖</button>
-          <span class="spacer"></span>
-          ${mine?`<button class="act" data-a="delete" title="delete">🗑️</button>`:''}
-          <button class="act" data-a="copyid" title="copy event id">🆔</button>
-          ${(IS_ADMIN && !mine)?`<button class="act" data-a="block" title="block author on relay">🚫</button>`:''}
+          <button class="act actm ${BOOKMARKS.has(ev.id)?'on':''}" data-a="menu" title="more">☰</button>
         </div>
       </div></article>`;
   }
@@ -819,12 +1010,18 @@
       const ht=e.target.closest('.hashtag'); if(ht){ e.preventDefault(); renderHashtag(ht.dataset.tag); return; }
       const na=e.target.closest('.naddrlink'); if(na){ e.preventDefault(); openNaddr(na.dataset.pk, na.dataset.d, na.dataset.k); return; }
       const im=e.target.closest('.txt img, .note-preview img, .media-row img, .media-grid img'); if(im){ e.preventDefault(); openLightbox(im.currentSrc||im.src); return; }
-      const tm=e.target.closest('.time'); if(tm){ const n=e.target.closest('.note'); if(n){ renderThread(n.dataset.id); return; } }
       const av=e.target.closest('.av'); if(av){ const n=e.target.closest('.note'); if(n){ renderProfileView(n.dataset.pk); return; } }
       const prof=e.target.closest('[data-prof]'); if(prof){ renderProfileView(prof.dataset.prof); return; }
       const q=e.target.closest('[data-open]'); if(q){ openThread(q.dataset.open); return; }
-      const btn=e.target.closest('.act'); if(!btn) return;
-      const art=e.target.closest('.note'); if(!art) return;   // .act outside a note (article/stream view) binds its own handler
+      const btn=e.target.closest('.act');
+      const art=e.target.closest('.note');
+      // Click anywhere else on the card body opens the post's thread, so the user doesn't have to
+      // aim for the timestamp. Skip clicks on attachments / links / form controls (images already
+      // returned above as a lightbox; video & co. must keep their own controls), and skip when the
+      // user just drag-SELECTED text (so highlight-to-copy works instead of opening the thread).
+      const hasSelection = window.getSelection && String(window.getSelection()).length>0;
+      if(!btn){ if(art && !hasSelection && !e.target.closest('a,video,audio,button,input,textarea,select,label,.media-row,.media-grid,.link-card')) renderThread(art.dataset.id); return; }
+      if(!art) return;   // .act outside a note (article/stream view) binds its own handler
       const id=art.dataset.id; const pk=art.dataset.pk;
       const a=btn.dataset.a;
       if(a==='react') return pickEmoji(id,pk,btn);
@@ -837,6 +1034,7 @@
       if(a==='copyid'){ try{ navigator.clipboard.writeText(NT().nip19.noteEncode(id)); toast('note id copied'); }catch(_){ navigator.clipboard.writeText(id); toast('event id copied'); } return; }
       if(a==='pin') return togglePin(id);
       if(a==='block') return doBlock(pk);
+      if(a==='menu') return openPostMenu(id, pk, art, btn);
     });
   }
   // ---------- zaps (NIP-57 lightning) ----------
@@ -948,6 +1146,39 @@
     if(myReaction(id)){ toast('already reacted'); return; }
     openEmojiPopover(btn, (emoji, close)=>{ close(); publish(7,emoji,eTags(id,pk)).then(()=>{ toast('reacted '+emoji); decorateCounts(); }); });
   }
+  // Generic "☰ more" popover anchored under a button. items = [action, label, optional css class];
+  // onPick(action) fires after the menu closes. Shared by the post menu and the profile menu.
+  function openMenuPopover(anchorBtn, items, onPick){
+    document.querySelectorAll('.menu-pop,.emoji-pop').forEach(p=>p.remove());   // never stack popovers
+    const pop=document.createElement('div'); pop.className='menu-pop';
+    pop.innerHTML=items.map(([a,label,cls])=>`<button data-m="${a}"${cls?` class="${cls}"`:''}>${enc(label)}</button>`).join('');
+    document.body.appendChild(pop);
+    const r=anchorBtn.getBoundingClientRect();
+    const left=Math.max(8, Math.min(r.right-pop.offsetWidth, window.innerWidth-8-pop.offsetWidth));
+    let top=r.bottom+6; if(top+pop.offsetHeight>window.innerHeight-8) top=Math.max(8, r.top-pop.offsetHeight-6);
+    pop.style.left=left+'px'; pop.style.top=top+'px';
+    const close=()=>{ pop.remove(); document.removeEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.removeEventListener('scroll',close); };
+    const onDoc=e=>{ if(!pop.contains(e.target) && !anchorBtn.contains(e.target)) close(); };
+    setTimeout(()=>{ document.addEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.addEventListener('scroll',close,{once:true}); },0);
+    $$('[data-m]',pop).forEach(b=> b.onclick=()=>{ close(); onPick(b.dataset.m); });
+    return close;
+  }
+  // the per-post "☰ more" menu — holds the secondary actions (bookmark / copy id / pin / delete /
+  // block) so the action row stays a clean 5 across.
+  function openPostMenu(id, pk, art, anchorBtn){
+    const mine = pk===ME.pubkey;
+    const items=[['bookmark', BOOKMARKS.has(id)?'🔖 Remove bookmark':'🔖 Bookmark'], ['copyid','🆔 Copy event ID']];
+    if(mine) items.push(['pin', PINNED.has(id)?'📌 Unpin from profile':'📌 Pin to profile']);
+    if(mine) items.push(['delete','🗑️ Delete','danger']);
+    if(IS_ADMIN && !mine) items.push(['block','🚫 Block author','danger']);
+    openMenuPopover(anchorBtn, items, a=>{
+      if(a==='bookmark'){ toggleBookmark(id, null).then(()=>{ if(anchorBtn) anchorBtn.classList.toggle('on', BOOKMARKS.has(id)); }); return; }
+      if(a==='copyid'){ try{ navigator.clipboard.writeText(NT().nip19.noteEncode(id)); toast('note id copied'); }catch(_){ navigator.clipboard.writeText(id); toast('event id copied'); } return; }
+      if(a==='pin') return togglePin(id);
+      if(a==='delete') return doDelete(id, art);
+      if(a==='block') return doBlock(pk);
+    });
+  }
   async function doRepost(id,pk,btn){
     if(countsFor(id).iRt){ toast('already reposted'); return; }
     const o=Store.get(id);
@@ -974,7 +1205,7 @@
   function bumpDraft(){ const n=Drafts.all().length; $$('#draft-badge,#more-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden'); }); }
   // mobile overflow sheet — holds the secondary views so the bottom bar stays uncluttered
   function moreMenu(){
-    const items=[['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['articles','📰','Articles'],['streams','📺','Streams'],['blossom','🌸','Files'],['profile','👤','Profile']];
+    const items=[['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['articles','📰','Articles'],['streams','📺','Streams'],['blossom','🌸','Files'],['profile','👤','Profile'],['settings','⚙','Settings']];
     modal(`<h3>More</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}</span></button>`).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); if(b.dataset.v==='profile') renderProfileView(ME.pubkey); else switchView(b.dataset.v); });
     });
@@ -1151,7 +1382,15 @@
   }
 
   // ---------- Blossom uploads + file browser ----------
-  function mediaServer(){ return (ClientSettings.get('mediaServer') || CFG.blossom_url || '').replace(/\/$/,''); }
+  // The user's custom Blossom server only applies once they've enabled the override in Settings;
+  // otherwise everything uses the built-in server from /client/config.
+  function mediaServer(){
+    let s = ClientSettings.get('blossomEnabled') ? (ClientSettings.get('mediaServer')||'').trim() : '';
+    // accept a bare host ("blossom.example.com") — without a scheme fetch() would treat it as a
+    // RELATIVE path and POST to poster.place instead of the user's server.
+    if (s && !/^https?:\/\//i.test(s)) s = 'https://' + s;
+    return (s || CFG.blossom_url || '').replace(/\/+$/,'');
+  }
   async function sha256hex(buf){ const h=await crypto.subtle.digest('SHA-256', buf); return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join(''); }
   const _MIME_EXT={'image/jpeg':'jpg','image/png':'png','image/gif':'gif','image/webp':'webp','image/avif':'avif',
     'video/mp4':'mp4','video/webm':'webm','video/quicktime':'mov','audio/mpeg':'mp3','audio/ogg':'ogg','audio/wav':'wav','audio/mp4':'m4a','audio/aac':'aac','audio/flac':'flac'};
@@ -1160,7 +1399,15 @@
     const server=mediaServer(); if(!server) throw new Error('no media server set');
     const buf=await file.arrayBuffer(); const hash=await sha256hex(buf);
     const auth=await sign(24242,'Upload blob',[['t','upload'],['x',hash],['expiration',String(Math.floor(Date.now()/1000)+3600)]]);
-    const res=await fetch(server+'/upload',{ method:'PUT', headers:{ 'Authorization':'Nostr '+btoa(JSON.stringify(auth)), 'Content-Type':file.type||'application/octet-stream' }, body:buf });
+    let res;
+    try {
+      res=await fetch(server+'/upload',{ method:'PUT', headers:{ 'Authorization':'Nostr '+btoa(JSON.stringify(auth)), 'Content-Type':file.type||'application/octet-stream' }, body:buf });
+    } catch(e){
+      // fetch rejects (vs. an HTTP error) only when the browser can't complete the request at all:
+      // server unreachable, blocked mixed content (http:// on this https page), or — most often for
+      // a custom server — it doesn't send CORS headers allowing this site to upload to it.
+      throw new Error(`couldn't reach ${server} — check the URL, and that the server allows cross-origin (CORS) uploads`);
+    }
     if(!res.ok){ const t=await res.text().catch(()=>res.status); throw new Error(res.headers.get('x-reason')||t); }
     const d=await res.json();
     // Our Blossom URLs are extensionless (/<sha256>); append the file extension so clients (incl.
@@ -1456,6 +1703,7 @@
   function renderProfile(pk){ renderProfileView(pk); }
   async function renderProfileView(pk){
     cleanupInlineStream();   // e.g. tapping the host's name from a stream
+    _hidePill();
     if(VIEW!=='profile'){ VIEW='profile'; $$('.nav-item[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view==='profile')); $('#view-title').textContent='Profile'; }
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
     if(!Store.haveProfile(pk)){ const e=await Relay.query([{authors:[pk],kinds:[0],limit:1}]); for(const x of e)Store.saveProfile(x); }
@@ -1475,11 +1723,8 @@
     feed.innerHTML=`<div class="prof"><div class="banner">${p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''}</div>
       <div class="phead"><img class="pav" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
         <div style="flex:1"></div>${mine?`<button class="btn btn-cyan small" id="edit-prof">Edit</button> <button class="btn btn-ghost small" id="open-settings">⚙ Settings</button>`:`
-          <button class="btn ${FOLLOWS.has(pk)?'btn-ghost':'btn-neon'} small" id="follow-prof">${FOLLOWS.has(pk)?'Following ✓':'Follow'}</button>
-          <button class="btn btn-ghost small" id="mute-prof">${MUTED.has(pk)?'Unmute':'Mute'}</button>
-          <button class="btn btn-ghost small" id="dm-prof">Message</button>
           <button class="btn btn-ghost small" id="zap-prof">⚡ Zap</button>
-          ${IS_ADMIN?`<button class="btn btn-ghost small" id="block-prof" style="color:#ff6b8b">🚫 Block (relay)</button>`:''}`}</div>
+          <button class="btn btn-ghost small prof-menu-btn" id="prof-menu" title="more">☰</button>`}</div>
       <div class="pbody"><h2>${enc(p.name||p.display_name||'anon')}<span class="vchk" id="prof-vchk"></span></h2>
         ${niceNip05(p.nip05)?`<div class="muted small">${enc(niceNip05(p.nip05))}</div>`:''}
         <div class="npubrow"><code>${enc(npub.slice(0,24))}…</code><button class="mini" id="copy-npub">📋 copy npub</button></div>
@@ -1515,14 +1760,26 @@
     { const ln=$('#prof-ln'); if(ln) ln.onclick=()=>doZap(null, pk); }
     $('#show-following').onclick=()=>peopleModal('Following', following);
     $('#show-followers').onclick=()=>peopleModal('Followers', followers);
-    if(mine){ $('#edit-prof').onclick=()=>editProfile(p); $('#open-settings').onclick=openSettings; }
+    if(mine){ $('#edit-prof').onclick=()=>editProfile(p); $('#open-settings').onclick=()=>switchView('settings'); }
     else {
-      const d=$('#dm-prof'); if(d)d.onclick=()=>{ switchView('messages'); setTimeout(()=>{ if(!dmPeers.has(pk))dmPeers.set(pk,[]); openDm(pk); },50); };
       const z=$('#zap-prof'); if(z)z.onclick=()=>doZap(null,pk);
-      const f=$('#follow-prof'); if(f)f.onclick=async()=>{ await toggleFollow(pk); renderProfileView(pk); };
-      const m=$('#mute-prof'); if(m)m.onclick=async()=>{ await toggleMute(pk); renderProfileView(pk); };
-      const b=$('#block-prof'); if(b)b.onclick=()=>doBlock(pk);
+      const mn=$('#prof-menu'); if(mn)mn.onclick=()=>openProfileMenu(pk, mn);
     }
+  }
+  // the profile "☰ more" menu — Follow / Message / Mute / Block, kept off the header for a clean look
+  function openProfileMenu(pk, anchorBtn){
+    const items=[
+      ['follow', FOLLOWS.has(pk)?'✓ Following — unfollow':'＋ Follow'],
+      ['message','✉ Message'],
+      ['mute', MUTED.has(pk)?'🔊 Unmute':'🔇 Mute'],
+    ];
+    if(IS_ADMIN) items.push(['block','🚫 Block (relay)','danger']);
+    openMenuPopover(anchorBtn, items, async a=>{
+      if(a==='follow'){ await toggleFollow(pk); renderProfileView(pk); return; }
+      if(a==='message'){ switchView('messages'); setTimeout(()=>{ if(!dmPeers.has(pk))dmPeers.set(pk,[]); openDm(pk); },50); return; }
+      if(a==='mute'){ await toggleMute(pk); renderProfileView(pk); return; }
+      if(a==='block') return doBlock(pk);
+    });
   }
   function editProfile(p){
     modal(`<h3>Edit profile</h3>
@@ -1550,18 +1807,115 @@
       $$('[data-prof]',list).forEach(el=> el.onclick=()=>{ closeModal(); renderProfileView(el.dataset.prof); });
     });
   }
-  function openSettings(){
-    modal(`<h3>⚙ Settings</h3>
-      <label class="muted small">Media upload server (Blossom)</label>
-      <input class="input" id="set-media" placeholder="${enc(CFG.blossom_url||'')}" value="${enc(ClientSettings.get('mediaServer',''))}">
-      <div class="muted small">Leave blank to use the built-in server (${enc(CFG.blossom_url||'none')}).</div>
-      <button class="btn btn-neon full" id="set-save">Save</button>`, root=>{
-      $('#set-save',root).onclick=()=>{ ClientSettings.set('mediaServer', $('#set-media',root).value.trim()); closeModal(); toast('settings saved'); };
-    });
+  // ---------- settings view ----------
+  // Local working copy of the relay list while editing (committed to ClientSettings on Save).
+  let _setRelays = [];
+  function renderSettings(){
+    const feed=$('#feed');
+    const relaysOn = !!ClientSettings.get('relaysEnabled');
+    const blossomOn = !!ClientSettings.get('blossomEnabled');
+    _setRelays = userRelays();
+    if(!_setRelays.length) _setRelays = [''];
+    feed.innerHTML = `<div class="settings">
+      <section class="set-card">
+        <div class="set-head">
+          <div><div class="set-title">Relays</div>
+            <div class="muted small">By default this app uses the built-in relay. Turn this on to connect to your own relays instead — events from them are signature-verified.</div></div>
+          <label class="switch"><input type="checkbox" id="set-relays-on" ${relaysOn?'checked':''}><span class="slider"></span></label>
+        </div>
+        <div class="set-body ${relaysOn?'':'disabled'}" id="set-relays-body">
+          <div id="set-relay-list"></div>
+          <div class="set-actions">
+            <button class="btn btn-ghost small" id="set-relay-add">＋ Add relay</button>
+            <button class="btn btn-ghost small" id="set-relay-ext">⇣ Import from extension</button>
+          </div>
+          <div class="set-actions">
+            <input class="input" id="set-nip05" placeholder="you@domain.com" value="${enc(ME&&niceImport()||'')}">
+            <button class="btn btn-ghost small" id="set-relay-nip05">⇣ Import from NIP-05</button>
+          </div>
+          <div class="muted small">Default built-in relay: <code>${enc(CFG.relay_url||'none')}</code></div>
+        </div>
+      </section>
+
+      <section class="set-card">
+        <div class="set-head">
+          <div><div class="set-title">Media server (Blossom)</div>
+            <div class="muted small">Where your uploaded images &amp; files are stored. Turn this on to use your own Blossom server instead of the built-in one.</div></div>
+          <label class="switch"><input type="checkbox" id="set-blossom-on" ${blossomOn?'checked':''}><span class="slider"></span></label>
+        </div>
+        <div class="set-body ${blossomOn?'':'disabled'}" id="set-blossom-body">
+          <input class="input" id="set-media" placeholder="https://your-blossom-server.com" value="${enc(ClientSettings.get('mediaServer',''))}">
+          <div class="muted small">Must be an <code>https://</code> server that allows cross-origin (CORS) uploads. Default built-in: <code>${enc(CFG.blossom_url||'none')}</code></div>
+        </div>
+      </section>
+
+      <button class="btn btn-neon full" id="set-save">Save &amp; reload</button>
+      <div class="muted small set-foot">Changing relays or media server reconnects the app, so it reloads on save.</div>
+    </div>`;
+
+    drawRelayRows();
+    const syncRelays=()=>{ _setRelays = $$('#set-relay-list .relay-row input').map(i=>i.value.trim()); };
+
+    $('#set-relays-on').onchange=e=>$('#set-relays-body').classList.toggle('disabled', !e.target.checked);
+    $('#set-blossom-on').onchange=e=>$('#set-blossom-body').classList.toggle('disabled', !e.target.checked);
+    $('#set-relay-add').onclick=()=>{ syncRelays(); _setRelays.push(''); drawRelayRows(); };
+    $('#set-relay-ext').onclick=async()=>{ syncRelays(); await importExtensionRelays(); };
+    $('#set-relay-nip05').onclick=async()=>{ syncRelays(); await importNip05Relays($('#set-nip05').value.trim()); };
+    $('#set-save').onclick=()=>{
+      syncRelays();
+      const urls=[...new Set(_setRelays.map(u=>normalizeRelay(u)).filter(Boolean))];
+      ClientSettings.set('relaysEnabled', $('#set-relays-on').checked);
+      ClientSettings.set('relays', urls);
+      ClientSettings.set('blossomEnabled', $('#set-blossom-on').checked);
+      ClientSettings.set('mediaServer', $('#set-media').value.trim());
+      toast('settings saved — reloading'); setTimeout(()=>location.reload(), 600);
+    };
+  }
+  function niceImport(){ const p=Store.profile(ME.pubkey)||{}; return p.nip05?String(p.nip05).replace(/^_@/,''):''; }
+  function drawRelayRows(){
+    const wrap=$('#set-relay-list'); if(!wrap) return;
+    wrap.innerHTML = _setRelays.map((u,i)=>`<div class="relay-row"><span class="rr-dot"></span><input class="input" value="${enc(u)}" placeholder="wss://relay.example.com" data-i="${i}"><button class="mini rr-del" data-i="${i}" title="remove">✕</button></div>`).join('');
+    $$('.rr-del',wrap).forEach(b=> b.onclick=()=>{ _setRelays = $$('#set-relay-list input').map(x=>x.value.trim()); _setRelays.splice(+b.dataset.i,1); if(!_setRelays.length)_setRelays=['']; drawRelayRows(); });
+  }
+  // Normalize a relay URL: default a bare host to wss://, keep an explicit ws://, strip trailing /
+  function normalizeRelay(u){
+    u=String(u||'').trim(); if(!u) return '';
+    if(!/^wss?:\/\//i.test(u)) u='wss://'+u;
+    return u.replace(/\/+$/,'');
+  }
+  function mergeRelays(found){
+    const have=new Set(_setRelays.map(normalizeRelay).filter(Boolean));
+    let added=0; for(const u of found){ const n=normalizeRelay(u); if(n && !have.has(n)){ have.add(n); added++; } }
+    _setRelays=[...have]; if(!_setRelays.length)_setRelays=['']; drawRelayRows();
+    return added;
+  }
+  // NIP-07: window.nostr.getRelays() -> { url: {read,write} }
+  async function importExtensionRelays(){
+    if(!window.nostr || !window.nostr.getRelays){ toast('no extension relay list'); return; }
+    try{ const r=await window.nostr.getRelays(); const urls=Array.isArray(r)?r:Object.keys(r||{});
+      const n=mergeRelays(urls); toast(n?`added ${n} relay${n>1?'s':''}`:'no new relays'); }
+    catch(_){ toast('extension import failed'); }
+  }
+  // NIP-05: resolve to a pubkey, then pull its relays from the nostr.json `relays` map, falling
+  // back to the author's kind:10002 (NIP-65) relay-list event on the currently connected relay.
+  async function importNip05Relays(addr){
+    addr=(addr||'').trim().replace(/^@/,''); if(!addr.includes('@')){ toast('enter a name@domain address'); return; }
+    const [name,domain]=addr.split('@');
+    try{
+      const j=await fetch(`https://${domain}/.well-known/nostr.json?name=${encodeURIComponent(name)}`).then(r=>r.json());
+      const pk=j&&j.names&&j.names[name];
+      let urls=(pk && j.relays && j.relays[pk]) ? j.relays[pk] : [];
+      if((!urls||!urls.length) && pk){
+        const ev=await Relay.query([{ authors:[pk], kinds:[10002], limit:1 }]);
+        if(ev[0]) urls=ev[0].tags.filter(t=>t[0]==='r').map(t=>t[1]);
+      }
+      if(!urls||!urls.length){ toast('no relays found for that NIP-05'); return; }
+      const n=mergeRelays(urls); toast(n?`added ${n} relay${n>1?'s':''}`:'no new relays');
+    }catch(_){ toast('NIP-05 lookup failed'); }
   }
   function openThread(id){ renderThread(id); }
   async function renderThread(id){
-    VIEW='thread'; $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='Thread';
+    VIEW='thread'; _hidePill(); $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='Thread';
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
     let ev=Store.get(id);
     if(!ev){ const r=await Relay.query([{ ids:[id] }]); if(r[0]){ Store.saveEvent(r[0]); ev=r[0]; } }
@@ -1817,7 +2171,7 @@
   let _hashtag={ tag:'', oldest:0, loading:false, done:false };
   async function renderHashtag(tag){
     tag=String(tag||'').toLowerCase().replace(/^#/,''); if(!tag) return;
-    VIEW='hashtag'; $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='#'+tag;
+    VIEW='hashtag'; _hidePill(); $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='#'+tag;
     cleanupInlineStream();
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
     let evs=[]; try{ evs=await Relay.query([{ kinds:[1], '#t':[tag], limit:60 }]); }catch(_){}
