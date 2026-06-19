@@ -309,6 +309,7 @@
   function startApp(){
     IS_ADMIN = Array.isArray(CFG.admin_npubs) && CFG.admin_npubs.includes(ME.npub);
     { const na=$('#nav-admin'); if(na) na.classList.toggle('hidden', !IS_ADMIN); }   // in-app Admin (admins only)
+    if(IS_ADMIN) setTimeout(()=>{ try{ ensureAiSession(); }catch(_){} }, 2500);   // warm the admin session so Admin opens instantly
     try{ if(window.Notification && Notification.permission==='default') Notification.requestPermission(); }catch(_){}
     $('#auth-gate').classList.add('hidden'); $('#app').classList.remove('hidden');
     $('#btn-logout').onclick = logout;
@@ -1880,16 +1881,20 @@
   }
   // In-app Admin: the standalone admin panel embedded in the client (same-origin, the Nostr-login
   // cookie authorizes it). Admins only.
-  async function renderAdmin(){
+  function _adminFrame(feed){ feed.innerHTML='<iframe class="admin-frame" src="/admin" title="Admin"></iframe>'; }
+  function renderAdmin(){
     const feed=$('#feed');
     if(!IS_ADMIN){ feed.innerHTML='<div class="empty">Admins only.</div>'; return; }
+    // /admin needs the session cookie nostr-login sets. If it's already established, render the
+    // iframe SYNCHRONOUSLY (no await → no window for a re-render to clobber it). Otherwise show a
+    // spinner and render when it resolves.
+    if(_aiAuth && _aiAuth.is_admin){ _adminFrame(feed); return; }
     feed.innerHTML='<div class="spinner"></div>';
-    // /admin needs the session cookie nostr-login sets; establish it first, else /admin → /login →
-    // /client and the iframe would just show the client again ("same UI in the UI").
-    const a = await ensureAiSession();
-    if(VIEW!=='admin') return;
-    if(!a || a.error || !a.is_admin){ feed.innerHTML='<div class="empty">Admin session unavailable — make sure you logged in with your admin Nostr key.</div>'; return; }
-    feed.innerHTML='<iframe class="admin-frame" src="/admin" title="Admin"></iframe>';
+    ensureAiSession().then(a=>{
+      if(VIEW!=='admin') return;
+      if(a && a.is_admin) _adminFrame(feed);
+      else feed.innerHTML='<div class="empty">Admin session unavailable — log in with your admin Nostr key.</div>';
+    });
   }
   async function renderAI(){
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
@@ -2105,7 +2110,6 @@
         <div class="set-body">
           <div class="set-actions">
             <button class="btn btn-ghost small" id="set-sync-posts">⤓ Sync my posts to this relay</button>
-            ${IS_ADMIN?`<button class="btn btn-ghost small" id="set-admin">🛠 Admin Panel</button>`:''}
             <button class="btn btn-ghost small" id="set-del-account" style="color:#ff6b8b">🗑️ Delete my account</button>
           </div>
           <div class="muted small" id="set-sync-status">Pulls your posts from other relays into this one.</div>
