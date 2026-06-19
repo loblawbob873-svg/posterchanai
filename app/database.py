@@ -515,6 +515,10 @@ def init_db():
             # "relay" makes the relay authoritative — the Setting table is hydrated from it at startup
             # and admin saves write through to it.
             "settings_backend": "sqlite",
+            # Phase 2: where account-authority records (identity + admin + feature caps) live.
+            # "sqlite" (default) reads the users table; "relay" makes the relay authoritative
+            # (users table hydrated from it at startup; account mutations write through to it).
+            "users_backend": "sqlite",
             "nostr_relay_wot_seeds": "\n".join([
                 "npub1gu9wxzm9y3uwunva2d6tedef64r33dfdessjhuvp5hf8zampj5nseec39q",
                 "npub153xmex42x4chdf757hp3q6zxagykkek7pdgwuwd074964dkyha9s82ryu8",

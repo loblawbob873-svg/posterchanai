@@ -464,6 +464,11 @@ async def claim_admin(data: ClaimAdmin, db: Session = Depends(get_db)):
         await follow_and_admit(db, pk)
     except Exception as e:
         logger.warning("[client] follow/admit on claim-admin failed: %s", e)
+    try:
+        from app.services import users_store
+        await users_store.sync_user(db, u)
+    except Exception as e:
+        logger.warning("[client] account sync after claim-admin failed: %s", e)
     return JSONResponse({"ok": True, "npub": npub})
 
 
@@ -664,6 +669,11 @@ async def user_caps_set(data: UserCapsReq, db: Session = Depends(get_db)):
             setattr(u, c, bool(data.caps[c]))
     db.commit()
     logger.info("[client] caps for %s set: %s", u.username, {c: getattr(u, c) for c in _USER_CAPS})
+    try:
+        from app.services import users_store
+        await users_store.sync_user(db, u)
+    except Exception as e:
+        logger.warning("[client] account sync after caps failed: %s", e)
     return JSONResponse({"ok": True, "caps": {c: bool(getattr(u, c, False)) for c in _USER_CAPS}})
 
 
@@ -693,6 +703,11 @@ async def ai_access(data: AiAccessReq, db: Session = Depends(get_db)):
     u.can_ai = bool(data.grant)
     db.commit()
     logger.info("[client] AI access %s for %s", "granted" if data.grant else "revoked", u.username)
+    try:
+        from app.services import users_store
+        await users_store.sync_user(db, u)
+    except Exception as e:
+        logger.warning("[client] account sync after ai-access failed: %s", e)
     return JSONResponse({"ok": True, "enabled": bool(data.grant)})
 
 

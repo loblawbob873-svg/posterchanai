@@ -1261,7 +1261,14 @@ async def nostr_migrate(db: Session = Depends(get_db), admin: User = Depends(get
     except Exception as e:
         logger.error("[admin] nostr settings migration failed: %s", e, exc_info=True)
         return {"ok": False, "error": f"migration failed: {e}"}
-    return {"ok": True, "settings": report, "operator_npub": op.nostr_npub}
+    users_report = None
+    try:
+        from app.services import users_store
+        users_report = await users_store.migrate(db)
+    except Exception as e:
+        logger.error("[admin] nostr users migration failed: %s", e, exc_info=True)
+        users_report = {"error": str(e)}
+    return {"ok": True, "settings": report, "users": users_report, "operator_npub": op.nostr_npub}
 
 
 @router.post("/nostr-purge")

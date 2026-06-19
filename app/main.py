@@ -335,6 +335,11 @@ async def startup():
                         await settings_store.hydrate(_db)
                     except Exception as e:
                         logging.warning(f"Settings hydrate from relay failed: {e}")
+                    try:
+                        from app.services import users_store
+                        await users_store.hydrate(_db)
+                    except Exception as e:
+                        logging.warning(f"Users hydrate from relay failed: {e}")
                     finally:
                         _db.close()
                 _aio.create_task(_hydrate_settings())

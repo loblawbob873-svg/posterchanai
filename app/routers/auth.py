@@ -132,6 +132,13 @@ async def nostr_login(data: NostrLogin, response: Response, db: Session = Depend
     except Exception as e:
         logger.warning("[auth] storage key provisioning failed for %s: %s", npub[:16], e)
 
+    # Mirror the account-authority record to the relay (no-op unless users_backend == relay).
+    try:
+        from app.services import users_store
+        await users_store.sync_user(db, user)
+    except Exception as e:
+        logger.warning("[auth] account sync to relay failed for %s: %s", npub[:16], e)
+
     token = create_access_token({"sub": str(user.id)})
     _set_auth_cookie(response, token)
     return {
