@@ -16,19 +16,25 @@ logger = logging.getLogger(__name__)
 # relay.damus.io / relay.ditto.pub excluded: they reject our WS connections (HTTP 503) or
 # time out during the opening handshake on nearly every poll, so each poll waited out a
 # connect timeout and mention pickup/replies were delayed minutes.
+# Default upstream relays for fresh installs (the set this deployment syncs with). Used as the
+# fallback whenever a relay list is blank — the built-in relay's upstream sync AND the bots'
+# fetch/post. Existing installs keep whatever they've saved in nostr_relay_upstream_relays.
 DEFAULT_RELAYS = [
+    "wss://relay.snort.social/",
     "wss://nos.lol/",
+    "wss://relay.primal.net/",
     "wss://nostr.mom/",
+    "wss://nostr.oxtr.dev/",
     "wss://purplepag.es/",
     "wss://offchain.pub/",
-    "wss://relay.snort.social/",
-    "wss://relay.0xchat.com/",
+    "wss://relay.ditto.pub/",
     "wss://relay.froth.zone/",
-    "wss://relay.primal.net/",
-    "wss://frens.nostr1.com/onyx-bravo",
+    "wss://frens.nostr1.com/",
     "wss://nostr.chaima.info/",
+    "wss://relay.wisp.talk/",
+    "wss://eden.nostr.land/",
     "wss://nostr.corebreach.com/",
-    "wss://social.amanah.eblessing.co/titan",
+    "wss://social.amanah.eblessing.co/",
     "wss://relay.sovrgn.co.za/",
 ]
 
