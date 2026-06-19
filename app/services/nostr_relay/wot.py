@@ -28,6 +28,12 @@ class WotGate:
         self._bridged: set = set()
         self.built_at: float = 0.0
 
+    def add_members(self, pubkeys) -> None:
+        """Add members immediately (e.g. a freshly-followed signup) without a full rebuild."""
+        extra = {p for p in (pubkeys or []) if p}
+        if extra:
+            self._members = self._members | frozenset(extra)
+
     def set_operator(self, operator_hex) -> None:
         self._operator = frozenset(operator_hex or [])
 

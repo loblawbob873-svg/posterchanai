@@ -82,7 +82,7 @@ def _verify_nostr_auth(auth_b64: str, pubkey_hex: str) -> bool:
 
 
 @router.post("/nostr-login")
-def nostr_login(data: NostrLogin, response: Response, db: Session = Depends(get_db)):
+async def nostr_login(data: NostrLogin, response: Response, db: Session = Depends(get_db)):
     """Log in / sign up with a Nostr key (NIP-07 / Amber / nsec — signed client-side). Finds the
     user by linked npub or creates a fresh, AI-gated account, then issues the normal session cookie
     so the whole AI app works unchanged. New users have NO AI access until an admin approves."""
@@ -116,6 +116,13 @@ def nostr_login(data: NostrLogin, response: Response, db: Session = Depends(get_
         db.refresh(user)
         created = True
         logger.info("[auth] Nostr signup: %s (%s)", username, npub[:16])
+        # Admit the new account to the relay WoT (+ operator follow) so it can post & receive DMs
+        # immediately — covers login-with-existing-key users, not just the create-identity flow.
+        try:
+            from app.routers.client import follow_and_admit
+            await follow_and_admit(db, pk)
+        except Exception as e:
+            logger.warning("[auth] follow/admit on nostr-login failed: %s", e)
 
     # Provision the server-held per-user storage key (used to encrypt this user's chats/uploads at
     # rest in the relay and decrypt them for the AI). Created once, reused thereafter.

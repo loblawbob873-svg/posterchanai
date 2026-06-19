@@ -563,6 +563,19 @@ class RelayStore:
     async def wot_replace(self, members: list, extra: list | None = None) -> int:
         return await self._w(self._wot_replace_sync, members, extra)
 
+    def _wot_add_sync(self, pubkeys: list) -> int:
+        conn = self._conn()
+        now = int(time.time())
+        conn.executemany("INSERT OR IGNORE INTO wot (pubkey, depth, added_at) VALUES (?,1,?)",
+                         [(p, now) for p in pubkeys if p])
+        conn.commit()
+        return len([p for p in pubkeys if p])
+
+    async def wot_add(self, pubkeys: list) -> int:
+        """Incrementally add members (new signups followed by the operator) WITHOUT a full rebuild —
+        so they can post + receive DMs immediately, not after the daily upstream-driven rebuild."""
+        return await self._w(self._wot_add_sync, list(pubkeys))
+
     def _wot_members_sync(self) -> set:
         return {r["pubkey"] for r in self._conn().execute("SELECT pubkey FROM wot").fetchall()}
 

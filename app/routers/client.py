@@ -369,45 +369,53 @@ async def _fetch_latest_kind3(port: int, pubkey: str, timeout: float = 6.0) -> d
     return latest
 
 
-@router.post("/signup-follow")
-async def signup_follow(data: SignupFollow, db: Session = Depends(get_db)):
-    """Operator auto-follows a freshly-created account so the WoT-gated relay accepts its posts."""
-    new_pk = nostr_service.to_pubkey_hex(data.pubkey)
+async def follow_and_admit(db: Session, new_pk: str) -> tuple[bool, str]:
+    """Operator follows the new account AND admits it to the relay WoT IMMEDIATELY — so a fresh user
+    can post + receive DMs right away, not after the daily upstream-driven rebuild. Reused by signup
+    AND nostr-login (so login-with-existing-key users are admitted too). Returns (ok, message)."""
     if not new_pk:
-        return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
-
+        return False, "invalid pubkey"
+    # Admit to the WoT now (this is what actually unblocks their posts + DMs-to-them on the relay),
+    # regardless of how fast the kind-3 follow propagates upstream.
+    try:
+        from app.services.nostr_relay.thread import trigger_wot_add
+        trigger_wot_add([new_pk])
+    except Exception as e:
+        logger.warning("[client] wot-add failed: %s", e)
     op = _operator(db)
     if not op or not op.nostr_nsec:
-        return JSONResponse({"ok": False, "error": "no operator account on this node to follow you"},
-                            status_code=503)
+        return True, "admitted (no operator to follow you)"
     try:
         seckey = nostr_service.decode_seckey(op.nostr_nsec)
     except ValueError:
-        return JSONResponse({"ok": False, "error": "operator key invalid"}, status_code=500)
+        return True, "admitted (operator key invalid)"
     op_pk = nostr_service.derive_pubkey(seckey)
-
     port = int(_setting(db, "nostr_relay_port", "3052"))
     existing = await _fetch_latest_kind3(port, op_pk)
-    # Preserve the operator's ENTIRE contact list (all tags + content — relay hints etc.); only
-    # append the new follow. Filtering to 'p' tags would wipe NIP-65/relay metadata each signup.
     tags = [list(t) for t in (existing.get("tags", []) if existing else [])]
     if any(len(t) >= 2 and t[0] == "p" and t[1] == new_pk for t in tags):
-        return JSONResponse({"ok": True, "message": "already followed"})
+        return True, "already followed"
     tags.append(["p", new_pk])
-
     ev = nostr_event.build_event(seckey, 3, (existing.get("content", "") if existing else ""), tags=tags)
     accepted, msg = await _publish_to_relay(port, ev)
-    if not accepted:
-        return JSONResponse({"ok": False, "error": f"relay rejected follow: {msg}"}, status_code=502)
+    if accepted:
+        try:
+            from app.services.nostr_relay.thread import trigger_wot_refresh
+            trigger_wot_refresh()
+        except Exception:
+            pass
+        return True, "operator followed you + admitted"
+    return True, f"admitted (follow not stored: {msg})"   # WoT-add already done → still usable
 
-    # Pull the newcomer into the trust graph now (otherwise it waits for the daily rebuild).
-    try:
-        from app.services.nostr_relay.thread import trigger_wot_refresh
-        trigger_wot_refresh()
-    except Exception as e:
-        logger.warning("[client] WoT refresh after signup failed: %s", e)
 
-    return JSONResponse({"ok": True, "message": "operator followed you; you can post shortly"})
+@router.post("/signup-follow")
+async def signup_follow(data: SignupFollow, db: Session = Depends(get_db)):
+    """Operator auto-follows + admits a freshly-created account so the WoT relay accepts its posts."""
+    new_pk = nostr_service.to_pubkey_hex(data.pubkey)
+    if not new_pk:
+        return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
+    ok, msg = await follow_and_admit(db, new_pk)
+    return JSONResponse({"ok": ok, "message": msg})
 
 
 class BlockReq(BaseModel):

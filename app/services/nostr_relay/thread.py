@@ -509,6 +509,11 @@ async def _main(cfg: dict) -> None:
                     if cmd.get("cmd") == "refresh-wot":
                         logger.info("[nostr-relay] control: WoT refresh requested")
                         asyncio.create_task(_safe(_build_wot(gate, store, cfg)))
+                    elif cmd.get("cmd") == "wot-add" and cmd.get("pubkeys"):
+                        pks = [p for p in cmd["pubkeys"] if p]
+                        gate.add_members(pks)                          # immediate (in-memory)
+                        asyncio.create_task(_safe(store.wot_add(pks)))  # persist
+                        logger.info("[nostr-relay] control: added %d member(s) to WoT now", len(pks))
                     elif cmd.get("cmd") == "reload-blocks":
                         # Re-read the blocklist from the DB (admin edited it via /client/block or
                         # the admin UI), apply it to the gate, and purge the blocked authors' events.
@@ -840,6 +845,14 @@ def _drop_control(cmd: dict) -> dict:
 def trigger_wot_refresh() -> dict:
     """Admin button: ask the relay subprocess to rebuild the WoT now (it polls /status after)."""
     return _drop_control({"cmd": "refresh-wot"})
+
+
+def trigger_wot_add(pubkeys: list) -> dict:
+    """Add pubkeys to the relay WoT immediately (new signups), so they can post + get DMs at once."""
+    pks = [p for p in (pubkeys or []) if p]
+    if not pks:
+        return {"ok": True, "added": 0}
+    return _drop_control({"cmd": "wot-add", "pubkeys": pks})
 
 
 def trigger_backfill(pubkey_hex: str) -> dict:
