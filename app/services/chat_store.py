@@ -64,3 +64,49 @@ async def delete_conversation(db, user, conv_id: int) -> int:
         except Exception as e:
             logger.warning("[chat-store] delete %s failed: %s", d, e)
     return removed
+
+
+# ---- automatic mirror: every Message row insert → an encrypted relay event (when flag on) ----
+# Covers all the scattered save sites in the chat path without editing each. Best-effort: only fires
+# inside the async chat WS (a running loop); bot/threadpool saves aren't part of the web AI store.
+async def _mirror_insert(conv_id: int, role: str, content: str, ts: float):
+    from app.database import SessionLocal
+    from app.models import Conversation, User
+    db = SessionLocal()
+    try:
+        if not enabled(db):
+            return
+        conv = db.query(Conversation).filter(Conversation.id == conv_id).first()
+        if not conv:
+            return
+        user = db.query(User).filter(User.id == conv.user_id).first()
+        if user:
+            await add_message(db, user, conv_id, role, content, ts=ts)
+    except Exception as e:
+        logger.debug("[chat-store] mirror failed: %s", e)
+    finally:
+        db.close()
+
+
+def install_message_mirror():
+    """Register the after_insert listener once (called at import)."""
+    import asyncio
+    from sqlalchemy import event
+    from app.models import Message
+
+    @event.listens_for(Message, "after_insert")
+    def _after_insert(mapper, connection, target):   # noqa: ARG001
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return   # not in the async chat path — skip
+        import time as _t
+        conv_id, role, content = target.conversation_id, target.role, target.content or ""
+        if conv_id and role:
+            loop.create_task(_mirror_insert(conv_id, role, content, _t.time()))
+
+
+try:
+    install_message_mirror()
+except Exception as _e:   # pragma: no cover
+    logger.warning("[chat-store] could not install message mirror: %s", _e)

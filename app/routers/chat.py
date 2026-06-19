@@ -19,6 +19,7 @@ from app.database import get_db, SessionLocal
 from app.models import User, Conversation, Message, Setting
 from app.schemas import ConversationCreate, ConversationResponse, ConversationWithMessages, MessageResponse
 from app.auth import get_current_user, get_user_from_websocket, get_ai_user
+from app.services import chat_store   # registers the Message→relay mirror (Phase 2, flag-gated)
 from app.services.chat_service import ChatService
 from app.services.command_service import CommandService
 from app.services.storage_service import StorageService
@@ -143,7 +144,7 @@ def create_conversation(
 
 
 @router.get("/conversations/{conversation_id}", response_model=ConversationWithMessages)
-def get_conversation(
+async def get_conversation(
     conversation_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -154,6 +155,20 @@ def get_conversation(
     ).first()
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    # Phase 2: when the relay backs chats, load the (decrypted) message events instead of SQLite rows.
+    try:
+        from app.services import chat_store
+        if chat_store.enabled(db):
+            rel = await chat_store.get_messages(db, current_user, conversation_id)
+            msgs = [{"id": i + 1, "role": m.get("role", ""), "content": m.get("content", ""),
+                     "image_path": None,
+                     "created_at": datetime.utcfromtimestamp(m.get("ts") or 0)}
+                    for i, m in enumerate(rel)]
+            return {"id": conversation.id, "title": conversation.title,
+                    "created_at": conversation.created_at, "updated_at": conversation.updated_at,
+                    "messages": msgs}
+    except Exception as e:
+        logger.warning("[CHAT] relay history load failed, falling back to sqlite: %s", e)
     return conversation
 
 
