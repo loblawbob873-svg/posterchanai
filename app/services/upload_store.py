@@ -57,10 +57,17 @@ def store_port(db) -> int:
 
 
 async def delete_uploads(db, user, conv_id: int) -> int:
-    """Delete a conversation's upload refs (NIP-09). Blob bytes age out via Blossom TTL."""
+    """Delete a conversation's uploads: the encrypted Blossom blobs AND their refs (NIP-09)."""
+    from . import artifact_store
     sk = user_storage_seckey(db, user)
     port = store_port(db)
-    docs = await store.list_docs(port, f"{store.NS_UPLOAD}{conv_id}:", seckey=sk, encrypt=False)
+    docs = await store.list_docs(port, f"{store.NS_UPLOAD}{conv_id}:", seckey=sk)   # decrypted refs
+    for ref in docs.values():
+        if isinstance(ref, dict) and ref.get("sha256"):
+            try:
+                await artifact_store.delete_blob(db, ref["sha256"])
+            except Exception:
+                pass
     n = 0
     for d in docs.keys():
         try:

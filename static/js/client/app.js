@@ -1604,6 +1604,10 @@
   // 200 on load jams the worker and stalls timeline verification). Decrypt lazily on view.
   function ingestDM(ev){
     const mine = ev.pubkey===ME.pubkey;
+    // Only DMs that involve ME. The relay stores other WoT members' kind-4 DMs and the client
+    // caches them (Store.byKind(4)) — without this guard they'd show as "couldn't decrypt".
+    const toMe = (ev.tags||[]).some(t=>t[0]==='p' && t[1]===ME.pubkey);
+    if(!mine && !toMe) return false;
     const peer = mine ? (ev.tags.find(t=>t[0]==='p')||[])[1] : ev.pubkey;
     if(!peer) return false; needProfile(peer);
     if(!dmPeers.has(peer)) dmPeers.set(peer, []);

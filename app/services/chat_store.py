@@ -56,9 +56,20 @@ async def get_messages(db, user, conv_id: int) -> list:
 
 
 async def delete_conversation(db, user, conv_id: int) -> int:
-    """Delete (NIP-09) every message event of a conversation — the user's own key signs the delete."""
+    """Delete (NIP-09) every message event of a conversation — and the generated-artifact blobs the
+    messages reference (image_path enc_<sha>) — so deleting a chat cleans up its files too."""
+    import re as _re
+    from . import artifact_store
     sk = user_storage_seckey(db, user)
     port = _port(db)
+    # remove referenced artifact blobs (generated images etc.) from Blossom
+    for m in await get_messages(db, user, conv_id):
+        mm = _re.search(r'enc_([0-9a-f]{64})', m.get("image_path") or "")
+        if mm:
+            try:
+                await artifact_store.delete_blob(db, mm.group(1))
+            except Exception:
+                pass
     docs = await store.list_docs(port, f"{store.NS_MSG}{conv_id}:", seckey=sk, encrypt=False)
     removed = 0
     for d in docs.keys():

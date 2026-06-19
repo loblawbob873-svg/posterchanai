@@ -33,6 +33,21 @@ async def save_bytes(db, user, conv_id: int, data: bytes, ext: str) -> str | Non
         return None
 
 
+async def delete_blob(db, sha256: str) -> bool:
+    """Remove an artifact's Blossom blob (bytes + row) — used when a chat/its files are deleted."""
+    from app.models import BlossomBlob
+    blob = db.query(BlossomBlob).filter(BlossomBlob.sha256 == sha256).first()
+    if not blob:
+        return False
+    try:
+        await blossom_service.delete_blob_bytes(db, blob)
+    except Exception as e:
+        logger.debug("[artifact-store] blob bytes delete failed for %s: %s", sha256[:12], e)
+    db.delete(blob)
+    db.commit()
+    return True
+
+
 async def read_bytes(db, user, sha256: str) -> bytes | None:
     """Fetch + decrypt an artifact's bytes (for serve_file)."""
     from app.models import BlossomBlob
