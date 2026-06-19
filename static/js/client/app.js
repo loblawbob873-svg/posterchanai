@@ -726,7 +726,7 @@
       <div class="body">${prefix}
         <div class="hd"><span class="name" data-prof="${ev.pubkey}">${enc(name)}</span><span class="vchk"></span>
           <span class="handle">${enc(handle)}</span><span class="time">${timeAgo(ev.created_at)}</span>${mine?`<button class="act hd-pin ${PINNED.has(ev.id)?'on':''}" data-a="pin" title="pin/unpin on your profile">📌</button>`:''}</div>
-        <div class="txt">${linkify(mp.text)}</div>
+        <div class="txt">${linkify(stripQuoteRef(mp.text, ev))}</div>
         ${mp.gallery}
         ${linkCardHtml(mp.text)}
         ${quoteHtml(ev)}
@@ -743,6 +743,24 @@
           ${(IS_ADMIN && !mine)?`<button class="act" data-a="block" title="block author on relay">🚫</button>`:''}
         </div>
       </div></article>`;
+  }
+  // A NIP-18 quote post carries both a `q` tag (rendered by quoteHtml) AND usually the same
+  // nostr:nevent inline — strip the inline one so the quoted note doesn't embed twice.
+  function stripQuoteRef(text, ev){
+    const q=(ev.tags.find(t=>t[0]==='q')||[])[1]; if(!q) return text;
+    return (text||'').replace(/(?:nostr:)?(?:nevent1|note1)[0-9a-z]{20,}/gi, m=>{
+      try{ const d=NT().nip19.decode(m.replace(/^nostr:/i,'')); const id=d.type==='note'?d.data:(d.data&&d.data.id); return id===q?'':m; }catch(_){ return m; }
+    }).replace(/[ \t]+\n/g,'\n').replace(/\n{3,}/g,'\n\n').trim();
+  }
+  // Open an addressable event (naddr): articles (k30023) open in the reader, else as a thread.
+  async function openNaddr(pk, d, kind){
+    kind=parseInt(kind,10)||0;
+    const filt={ authors:[pk], kinds:[kind] }; if(d) filt['#d']=[d];
+    let evs=[]; try{ evs=await Relay.query([filt]); }catch(_){}
+    const ev=evs.sort((a,b)=>b.created_at-a.created_at)[0];
+    if(!ev){ toast('referenced post not found on the relay'); return; }
+    Store.saveEvent(ev); needProfile(ev.pubkey);
+    if(kind===30023) openArticle(ev); else renderThread(ev.id);
   }
   function quoteHtml(ev){
     const q=(ev.tags.find(t=>t[0]==='q')||[])[1]; if(!q) return '';
@@ -799,6 +817,7 @@
       const mn=e.target.closest('.mention'); if(mn){ e.preventDefault(); const pk=safePk(mn.dataset.np); if(pk) renderProfileView(pk); return; }
       const evl=e.target.closest('.evlink'); if(evl){ e.preventDefault(); renderThread(evl.dataset.ev); return; }
       const ht=e.target.closest('.hashtag'); if(ht){ e.preventDefault(); renderHashtag(ht.dataset.tag); return; }
+      const na=e.target.closest('.naddrlink'); if(na){ e.preventDefault(); openNaddr(na.dataset.pk, na.dataset.d, na.dataset.k); return; }
       const im=e.target.closest('.txt img, .note-preview img, .media-row img, .media-grid img'); if(im){ e.preventDefault(); openLightbox(im.currentSrc||im.src); return; }
       const tm=e.target.closest('.time'); if(tm){ const n=e.target.closest('.note'); if(n){ renderThread(n.dataset.id); return; } }
       const av=e.target.closest('.av'); if(av){ const n=e.target.closest('.note'); if(n){ renderProfileView(n.dataset.pk); return; } }
@@ -1680,8 +1699,9 @@
       else tag=`<a href="${u}" target="_blank" rel="noopener">${u}</a>`;
       return tag+tail;
     });
-    // nostr entities (npub/nprofile -> profile mention; note/nevent -> thread link)
-    h=h.replace(/(?:nostr:)?((?:npub1|nprofile1|nevent1|note1)[0-9a-z]{20,})/gi, (m,ent)=>{
+    // nostr entities: npub/nprofile → profile mention; note/nevent → EMBEDDED note preview
+    // (fetched + patched in place, like a quote); naddr → openable article/addressable link.
+    h=h.replace(/(?:nostr:)?((?:npub1|nprofile1|nevent1|note1|naddr1)[0-9a-z]{20,})/gi, (m,ent)=>{
       try{
         const d=NT().nip19.decode(ent);
         if(d.type==='npub' || d.type==='nprofile'){
@@ -1691,7 +1711,14 @@
         }
         if(d.type==='note' || d.type==='nevent'){
           const id = d.type==='note' ? d.data : d.data.id;
-          return `<a href="#" class="evlink" data-ev="${id}">🔗 note</a>`;
+          const o = Store.get(id);
+          if(o) return quotedDiv(o);                       // already cached → embed now
+          needEvent(id);                                   // else fetch; patchLoaded swaps it in
+          return `<div class="quoted muted small" data-qload="${id}">referenced note loading…</div>`;
+        }
+        if(d.type==='naddr'){                              // addressable event (e.g. NIP-23 article)
+          const a=d.data||{};
+          return `<a href="#" class="naddrlink" data-pk="${enc(a.pubkey||'')}" data-d="${enc(a.identifier||'')}" data-k="${enc(String(a.kind||''))}">📄 ${a.kind===30023?'article':'view'}</a>`;
         }
       }catch(_){}
       return m;
