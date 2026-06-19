@@ -14,7 +14,7 @@
     }
     call(op, args){ return new Promise((res,rej)=>{ const id = ++this.seq; this.pending.set(id,{res,rej}); this.w.postMessage({ id, op, args }); }); }
   }
-  const worker = new WorkerRPC('/static/js/client/signer-worker.js');
+  const worker = new WorkerRPC('/static/js/client/signer-worker.js?v=' + (self.__VER || ''));
 
   const Relay = {
     url: null, ws: null, status: 'init',

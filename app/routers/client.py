@@ -58,10 +58,27 @@ def _operator(db: Session) -> User | None:
     return q.filter(User.is_admin == True).first() or q.first()  # noqa: E712
 
 
+def _static_version() -> str:
+    """A cache-busting token derived from the newest mtime of the client's CSS/JS. Cloudflare
+    rewrites these assets' Cache-Control to a 31-day max-age, so without a versioned URL a browser
+    keeps serving a stale client.css/app.js for weeks after a deploy. Appending `?v=<this>` makes
+    each change a brand-new URL no cache can answer with old bytes. Computed per request from
+    mtimes, so it updates on every file change — even UI-only deploys that don't restart Python."""
+    rels = ["css/client.css", "js/client/store.js", "js/client/relay.js", "js/client/app.js",
+            "js/client/signer-worker.js"]
+    mt = 0.0
+    for r in rels:
+        try:
+            mt = max(mt, os.path.getmtime(os.path.join(_STATIC, *r.split("/"))))
+        except OSError:
+            pass
+    return str(int(mt))
+
+
 @router.get("", response_class=HTMLResponse)
 @router.get("/", response_class=HTMLResponse)
 async def client_app(request: Request):
-    return _TEMPLATES.TemplateResponse("client.html", {"request": request})
+    return _TEMPLATES.TemplateResponse("client.html", {"request": request, "ver": _static_version()})
 
 
 @router.get("/config")

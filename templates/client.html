@@ -14,7 +14,8 @@
     <link rel="icon" type="image/png" href="/static/posterchan-relay.png">
     <link rel="shortcut icon" href="/static/favicon.png">
     <link rel="apple-touch-icon" href="/static/icon-192.png">
-    <link rel="stylesheet" href="/static/css/client.css">
+    <link rel="stylesheet" href="/static/css/client.css?v={{ ver }}">
+    <script>window.__VER="{{ ver }}";</script>
     <script defer src="/static/vendor/nostr/nostr.bundle.js"></script>
 </head>
 <body>
@@ -110,8 +111,8 @@
 <div id="modal-root"></div>
 <div id="toast-root"></div>
 
-<script src="/static/js/client/store.js"></script>
-<script src="/static/js/client/relay.js"></script>
-<script src="/static/js/client/app.js"></script>
+<script src="/static/js/client/store.js?v={{ ver }}"></script>
+<script src="/static/js/client/relay.js?v={{ ver }}"></script>
+<script src="/static/js/client/app.js?v={{ ver }}"></script>
 </body>
 </html>
