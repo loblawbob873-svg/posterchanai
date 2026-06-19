@@ -1553,10 +1553,13 @@
     if(modern) filt.push({ kinds:[1059], '#p':[ME.pubkey], limit:400 });
     const evs=await Relay.query(filt);
     for(const e of evs){ Store.saveEvent(e); if(e.kind===1059) await ingestWrap(e, false); else ingestDM(e); }
+    // Persistent unread badge (like Notifications): count incoming DMs newer than the last time the
+    // Messages view was opened, so DMs received while away still alert — not just live ones.
+    recountDmUnread();
     // live sub for legacy DMs (since now is fine — kind-4 timestamps are real)
     const since=Math.floor(Date.now()/1000)-60;
     Relay.subscribe([{ kinds:[4], '#p':[ME.pubkey], since }, { kinds:[4], authors:[ME.pubkey], since }], {
-      onEvent: ev => { Store.saveEvent(ev); if(ingestDM(ev) && ev.pubkey!==ME.pubkey){ _dmUnread++; bumpDm(); } if(VIEW==='messages') renderMessages(); }
+      onEvent: ev => { Store.saveEvent(ev); if(ingestDM(ev) && ev.pubkey!==ME.pubkey){ _dmUnread++; bumpDm(); _dmNotify(); } if(VIEW==='messages') renderMessages(); }
     });
     // NIP-17 gift wraps carry RANDOMIZED past timestamps, so a `since` filter would drop them —
     // subscribe with no `since` and let Store dedup skip the ones we've already unwrapped.
@@ -1577,7 +1580,7 @@
     if(!dmPeers.has(peer)) dmPeers.set(peer, []);
     const arr=dmPeers.get(peer); if(arr.find(m=>m.id===ev.id)) return false;
     arr.push({ id:ev.id, mine, text:rumor.content, t:rumor.created_at, nip17:true }); arr.sort((a,b)=>a.t-b.t);
-    if(live && !mine){ _dmUnread++; bumpDm(); }
+    if(live && !mine){ _dmUnread++; bumpDm(); _dmNotify(); }
     if(VIEW==='messages'){ if(dmActive===peer) renderDmThread(peer); else renderMessages(); }
     return true;
   }
@@ -1594,6 +1597,9 @@
     }
   }
   function bumpDm(){ $$('#dm-badge,#dm-badge-m').forEach(b=>{ if(_dmUnread){ b.textContent=_dmUnread>99?'99+':_dmUnread; b.classList.remove('hidden'); } else b.classList.add('hidden'); }); }
+  function recountDmUnread(){ const seen=ClientSettings.get('dmSeen',0); let n=0;
+    for(const [,arr] of dmPeers){ for(const m of arr){ if(!m.mine && (m.t||0)>seen) n++; } } _dmUnread=n; bumpDm(); }
+  function _dmNotify(){ try{ if(window.Notification && Notification.permission==='granted') new Notification('✉ New message', {body:'You have a new direct message', tag:'pc-dm'}); }catch(_){} }
   // Index DMs WITHOUT decrypting (decryption is CPU-heavy ECDH+AES in the worker; decrypting all
   // 200 on load jams the worker and stalls timeline verification). Decrypt lazily on view.
   function ingestDM(ev){
@@ -1612,7 +1618,7 @@
     return m.text;
   }
   function renderMessages(){
-    _dmUnread=0; bumpDm();
+    _dmUnread=0; ClientSettings.set('dmSeen', Math.floor(Date.now()/1000)); bumpDm();   // mark DMs read (persistent)
     if(!_dmLoaded){ ensureDMs(); }   // lazy-load on first open
     const feed=$('#feed');
     feed.innerHTML=`<div class="dm-wrap"><div class="dm-list" id="dm-list"></div><div class="dm-thread" id="dm-thread"><div class="empty">${_dmLoaded?'Select a conversation, or start one.':'Loading…'}</div></div></div>`;

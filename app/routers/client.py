@@ -554,6 +554,20 @@ class AiAccessReq(BaseModel):
     auth: str            # base64 signed admin event (p-tags target), same proof as /block
 
 
+@router.get("/ai-requests")
+async def ai_requests(db: Session = Depends(get_db)):
+    """Pending AI-access requests (users who asked, not yet granted), for admins to see + approve in
+    the client. Sensitive only insofar as it lists requesters; returns just npub + name + when."""
+    from app.models import UserSetting
+    out = []
+    for r in db.query(UserSetting).filter(UserSetting.key == "ai_requested").all():
+        u = db.query(User).filter(User.id == r.user_id).first()
+        if u and u.nostr_npub and not (u.is_admin or u.can_ai):
+            out.append({"npub": u.nostr_npub, "name": u.username, "ts": r.value})
+    out.sort(key=lambda x: x.get("ts") or "", reverse=True)
+    return JSONResponse({"ok": True, "requests": out})
+
+
 @router.get("/ai-access")
 async def ai_access_status(pubkey: str, db: Session = Depends(get_db)):
     """Is AI enabled for this account? Drives Grant vs Revoke in the client profile menu."""
