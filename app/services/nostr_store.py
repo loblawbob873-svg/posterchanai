@@ -34,6 +34,7 @@ NS_BOT     = "pcai:bot:"         # bot config                              (oper
 NS_CONV    = "pcai:conv:"        # a user's conversation doc               (user-signed)
 NS_KV      = "pcai:kv:"          # misc operational key/value              (operator-signed)
 NS_MSG     = "pcai:msg:"         # a single chat message (user-signed, deletable via NIP-09)
+NS_UPLOAD  = "pcai:upload:"      # encrypted upload ref → ciphertext blob in Blossom (user-signed)
 NS_AIREQ   = "pcai:ai-request:"  # pending AI-access request               (user-signed)
 
 

@@ -191,10 +191,11 @@ async def delete_conversation(
 
     # Phase 2: also purge the conversation's encrypted message events from the relay store.
     try:
-        from app.services import chat_store
+        from app.services import chat_store, upload_store
         if chat_store.enabled(db):
             removed = await chat_store.delete_conversation(db, current_user, conversation_id)
-            logger.info("[CHAT] purged %d relay message event(s) for conv %s", removed, conversation_id)
+            ups = await upload_store.delete_uploads(db, current_user, conversation_id)
+            logger.info("[CHAT] purged %d message + %d upload event(s) for conv %s", removed, ups, conversation_id)
     except Exception as e:
         logger.warning("[CHAT] relay message purge failed: %s", e)
 
@@ -824,6 +825,39 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                         document_data = documents[0].get("base64") if documents else None
                     if files and not file_content:
                         file_content = files[0].get("content") if files else None
+
+                    # Phase 2: persist every AI upload to the built-in Blossom server, ENCRYPTED to
+                    # the user's storage key (background, additive). The plaintext arrays below are
+                    # still used in-memory by vision/commands, so all upload features keep working.
+                    if chat_store.enabled(db):
+                        try:
+                            import base64 as _b64u
+                            _ups = []
+                            for _img in (images or ([{"base64": image_data, "filename": "image"}] if image_data else [])):
+                                if _img.get("base64"):
+                                    _ups.append((_img.get("filename") or "image", _b64u.b64decode(_img["base64"]), "image/*"))
+                            for _p in (pdfs or ([{"base64": pdf_data, "filename": "document.pdf"}] if pdf_data else [])):
+                                if _p.get("base64"):
+                                    _ups.append((_p.get("filename") or "document.pdf", _b64u.b64decode(_p["base64"]), "application/pdf"))
+                            for _d in (documents or []):
+                                if _d.get("base64"):
+                                    _ups.append((_d.get("filename") or "document", _b64u.b64decode(_d["base64"]), _d.get("type") or "application/octet-stream"))
+                            for _f in (files or []):
+                                if _f.get("content") is not None:
+                                    _ups.append((_f.get("filename") or "file.txt", str(_f["content"]).encode("utf-8", "replace"), "text/plain"))
+                            if _ups:
+                                from app.services import upload_store
+                                async def _persist_uploads(items, uid=user.id, cid=conversation_id):
+                                    _db = SessionLocal()
+                                    try:
+                                        _u = _db.query(User).filter(User.id == uid).first()
+                                        for name, b, mime in items:
+                                            await upload_store.store_encrypted(_db, _u, cid, name, b, mime)
+                                    finally:
+                                        _db.close()
+                                asyncio.create_task(_persist_uploads(_ups))
+                        except Exception as _e:
+                            logger.warning("[CHAT] encrypted upload persist failed: %s", _e)
                     # PDFs: detect merge/combine intent early — do it server-side, independent of analysis
                     import base64 as _b64
                     _is_merge_intent = (
