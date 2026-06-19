@@ -143,7 +143,13 @@ def _decode(content: str, seckey: bytes | None, encrypt: bool):
 # ---- document CRUD (the repository API the rest of the app uses) ----
 async def put_doc(port: int, seckey: bytes, d_tag: str, data,
                   *, encrypt: bool = True, kind: int = APP_KIND, tags: list | None = None) -> bool:
-    """Create/replace the document `d_tag`, signed (and by default NIP-44-encrypted) with `seckey`."""
+    """Create/replace the document `d_tag`, signed (and by default NIP-44-encrypted) with `seckey`.
+
+    PRUNE-SAFETY INVARIANT: these app-data docs are the system of record. They survive the relay's
+    prune ONLY because (1) APP_KIND (30078) is not in RelayStore._PRUNABLE_KINDS, (2) the relay
+    stores client-published events as origin='direct' (excluded by _preserve_clause), and (3) the
+    signer pubkey is in preserve_pubkeys. NEVER add a NIP-40 `expiration` tag here — the expiration
+    sweep ignores kind AND preserve, so it WOULD delete settings/accounts/chats. (See store.py.)"""
     payload = data if isinstance(data, str) else json.dumps(data, separators=(",", ":"))
     content = nip44.encrypt_self(seckey, payload) if encrypt else payload
     ev = build_event(seckey, kind, content, tags=[["d", d_tag]] + (tags or []))
