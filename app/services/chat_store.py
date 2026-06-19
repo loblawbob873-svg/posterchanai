@@ -78,7 +78,67 @@ async def delete_conversation(db, user, conv_id: int) -> int:
                 removed += 1
         except Exception as e:
             logger.warning("[chat-store] delete %s failed: %s", d, e)
+    # drop the conversation index doc too
+    try:
+        await store.delete_doc(port, sk, f"{store.NS_CONV}{conv_id}")
+    except Exception as e:
+        logger.warning("[chat-store] delete conv index %s failed: %s", conv_id, e)
     return removed
+
+
+# ---- conversation index (title/timestamps) as a per-user encrypted doc, so the chat LIST survives
+# on a fresh node, not just the messages. Keyed by the SQLite conv id (the d-tag suffix). ----
+async def mirror_conversation(db, user, conv) -> bool:
+    """Write/replace a conversation's index doc (title + timestamps), encrypted to the user's key."""
+    if not enabled(db) or conv is None:
+        return False
+    try:
+        sk = user_storage_seckey(db, user)
+        rec = {"title": conv.title or "New Chat",
+               "created_at": conv.created_at.isoformat() if conv.created_at else None,
+               "updated_at": conv.updated_at.isoformat() if conv.updated_at else None}
+        return await store.put_doc(_port(db), sk, f"{store.NS_CONV}{conv.id}", rec)
+    except Exception as e:
+        logger.warning("[chat-store] mirror_conversation %s failed: %s", getattr(conv, "id", "?"), e)
+        return False
+
+
+async def hydrate_conversations(db) -> int:
+    """relay → conversations cache. Recreate missing Conversation rows for every user from their
+    NS_CONV docs (so a fresh node restores the chat list). Additive only — never edits existing rows.
+    Returns the number of conversations recreated."""
+    if not enabled(db):
+        return 0
+    from datetime import datetime
+    from app.models import Conversation, User
+    made = 0
+    for user in db.query(User).filter(User.nostr_npub.isnot(None)).all():
+        try:
+            sk = user_storage_seckey(db, user)
+            docs = await store.list_docs(_port(db), store.NS_CONV, seckey=sk)
+        except Exception:
+            continue
+        for d_tag, rec in (docs or {}).items():
+            if not isinstance(rec, dict):
+                continue
+            try:
+                conv_id = int(d_tag[len(store.NS_CONV):])
+            except (TypeError, ValueError):
+                continue
+            if db.query(Conversation).filter(Conversation.id == conv_id).first():
+                continue
+            def _dt(v):
+                try:
+                    return datetime.fromisoformat(v) if v else None
+                except (TypeError, ValueError):
+                    return None
+            db.add(Conversation(id=conv_id, user_id=user.id, title=rec.get("title") or "New Chat",
+                                created_at=_dt(rec.get("created_at")), updated_at=_dt(rec.get("updated_at"))))
+            made += 1
+    if made:
+        db.commit()
+    logger.info("[chat-store] hydrated %d conversation(s) from relay", made)
+    return made
 
 
 # ---- automatic mirror: every Message row insert → an encrypted relay event (when flag on) ----

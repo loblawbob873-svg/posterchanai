@@ -345,6 +345,11 @@ async def startup():
                         await bots_store.hydrate(_db)
                     except Exception as e:
                         logging.warning(f"Bots hydrate from relay failed: {e}")
+                    try:
+                        from app.services import chat_store
+                        await chat_store.hydrate_conversations(_db)
+                    except Exception as e:
+                        logging.warning(f"Conversations hydrate from relay failed: {e}")
                     finally:
                         _db.close()
                 _aio.create_task(_hydrate_settings())

@@ -140,6 +140,14 @@ def create_conversation(
     db.add(conversation)
     db.commit()
     db.refresh(conversation)
+    # mirror the conversation index to the relay (no-op unless chat_backend == relay)
+    try:
+        from app.services import chat_store
+        if chat_store.enabled(db):
+            import asyncio as _aio
+            _aio.run(chat_store.mirror_conversation(db, current_user, conversation))
+    except Exception as e:
+        logger.warning(f"[chat] conversation mirror failed: {e}")
     return conversation
 
 
@@ -993,11 +1001,18 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                     db.commit()
 
                     # Update conversation title if it's the first message
-                    if len(conversation.messages) <= 1:
+                    first_msg = len(conversation.messages) <= 1
+                    if first_msg:
                         conversation.title = content[:50] + ("..." if len(content) > 50 else "")
 
                     conversation.updated_at = datetime.utcnow()
                     db.commit()
+                    # mirror the conversation index (title/timestamp) to the relay on first message
+                    if first_msg and chat_store.enabled(db):
+                        try:
+                            await chat_store.mirror_conversation(db, user, conversation)
+                        except Exception as e:
+                            logger.warning(f"[chat] conversation mirror failed: {e}")
 
                     # Check for commands
                     command, arg = command_service.parse_command(content)
