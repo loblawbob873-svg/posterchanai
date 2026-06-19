@@ -1,0 +1,140 @@
+"""Repository layer for the Nostr-backed datastore (see docs/NOSTR_DATASTORE.md).
+
+The system of record is the built-in WoT relay's event store. This module is the app's interface
+to it: it reads/writes records as **NIP-78 app-data events (kind 30078)** over the relay's local
+WebSocket — the same `ws://127.0.0.1:<port>/relay` path `client.py:signup-follow` already uses, so
+it works whether the relay runs in-thread or out-of-process and never touches `RelayStore` across
+threads.
+
+Each record is a *document* identified by a `d` tag in the `pcai:` namespace. kind 30078 is
+parameterized-replaceable, so re-`put`ting the same `d` replaces it in place (the store keeps only
+the latest per pubkey+kind+d). Content is **NIP-44-encrypted to the signing key** by default, so:
+  - operator-signed docs (settings/bots/maps) are readable only with the operator key (server-held),
+  - user-signed docs (chats/profile) are readable only with that user's storage key (server-held).
+These are app-specific kinds, encrypted, and never fanned to upstream relays — so they never appear
+in any Nostr client timeline.
+"""
+
+import os
+import json
+import asyncio
+import logging
+
+from app.services.nostr import bip340, nip44
+from app.services.nostr.event import build_event
+
+logger = logging.getLogger(__name__)
+
+APP_KIND = 30078        # NIP-78 application-specific data (parameterized-replaceable)
+
+# `d`-tag namespaces — one document per record. Keep these stable; they ARE the schema.
+NS_SETTING = "pcai:setting:"     # global settings, one doc per key       (operator-signed)
+NS_USER    = "pcai:user:"        # per-user account record (admin/can_ai)  (operator-signed)
+NS_BOT     = "pcai:bot:"         # bot config                              (operator-signed)
+NS_CONV    = "pcai:conv:"        # a user's conversation doc               (user-signed)
+NS_KV      = "pcai:kv:"          # misc operational key/value              (operator-signed)
+NS_AIREQ   = "pcai:ai-request:"  # pending AI-access request               (user-signed)
+
+
+# ---- local-relay WebSocket I/O (mirrors client.py's proven signup-follow path) ----
+async def _ws_publish(port: int, event: dict, timeout: float = 8.0) -> tuple[bool, str]:
+    import websockets
+    uri = f"ws://127.0.0.1:{port}/relay"
+    try:
+        async with websockets.connect(uri, open_timeout=timeout, close_timeout=2) as ws:
+            await ws.send(json.dumps(["EVENT", event]))
+            while True:
+                msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
+                if msg[0] == "OK" and msg[1] == event["id"]:
+                    return bool(msg[2]), (msg[3] if len(msg) > 3 else "")
+    except Exception as e:
+        return False, str(e)
+
+
+async def _ws_query(port: int, filters: list, timeout: float = 6.0) -> list:
+    import websockets
+    uri = f"ws://127.0.0.1:{port}/relay"
+    sub = "repo" + os.urandom(4).hex()
+    out: list = []
+    try:
+        async with websockets.connect(uri, open_timeout=timeout, close_timeout=2) as ws:
+            await ws.send(json.dumps(["REQ", sub, *filters]))
+            while True:
+                msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
+                if msg[0] == "EVENT" and msg[1] == sub:
+                    out.append(msg[2])
+                elif msg[0] in ("EOSE", "CLOSED") and msg[1] == sub:
+                    break
+    except Exception as e:
+        logger.debug("[nostr-store] query failed: %s", e)
+    return out
+
+
+def _decode(content: str, seckey: bytes | None, encrypt: bool):
+    """Decrypt (if needed) + JSON-parse a doc's content; fall back to the raw string."""
+    raw = content
+    if encrypt and seckey is not None and content:
+        try:
+            raw = nip44.decrypt_self(seckey, content)
+        except Exception:
+            return None
+    try:
+        return json.loads(raw)
+    except Exception:
+        return raw
+
+
+# ---- document CRUD (the repository API the rest of the app uses) ----
+async def put_doc(port: int, seckey: bytes, d_tag: str, data,
+                  *, encrypt: bool = True, kind: int = APP_KIND, tags: list | None = None) -> bool:
+    """Create/replace the document `d_tag`, signed (and by default NIP-44-encrypted) with `seckey`."""
+    payload = data if isinstance(data, str) else json.dumps(data, separators=(",", ":"))
+    content = nip44.encrypt_self(seckey, payload) if encrypt else payload
+    ev = build_event(seckey, kind, content, tags=[["d", d_tag]] + (tags or []))
+    ok, msg = await _ws_publish(port, ev)
+    if not ok:
+        logger.warning("[nostr-store] put %s rejected: %s", d_tag, msg)
+    return ok
+
+
+async def get_doc(port: int, d_tag: str, *, seckey: bytes | None = None, pubkey: str | None = None,
+                  encrypt: bool = True, kind: int = APP_KIND):
+    """Read document `d_tag`. Supply `seckey` (owner) to decrypt, or `pubkey` for a plaintext doc."""
+    pk = pubkey or (bip340.pubkey_from_seckey(seckey).hex() if seckey else None)
+    if not pk:
+        raise ValueError("get_doc needs seckey or pubkey")
+    evs = await _ws_query(port, [{"authors": [pk], "kinds": [kind], "#d": [d_tag], "limit": 1}])
+    if not evs:
+        return None
+    evs.sort(key=lambda e: e.get("created_at", 0), reverse=True)   # newest wins (defensive)
+    return _decode(evs[0].get("content", ""), seckey, encrypt)
+
+
+async def list_docs(port: int, prefix: str, *, seckey: bytes | None = None, pubkey: str | None = None,
+                    encrypt: bool = True, kind: int = APP_KIND) -> dict:
+    """Return {d_tag: data} for every doc whose `d` tag starts with `prefix`, newest per d_tag."""
+    pk = pubkey or (bip340.pubkey_from_seckey(seckey).hex() if seckey else None)
+    if not pk:
+        raise ValueError("list_docs needs seckey or pubkey")
+    evs = await _ws_query(port, [{"authors": [pk], "kinds": [kind], "limit": 5000}])
+    best: dict = {}
+    for ev in evs:
+        d = next((t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "d"), None)
+        if not d or not d.startswith(prefix):
+            continue
+        if d not in best or ev.get("created_at", 0) > best[d].get("created_at", 0):
+            best[d] = ev
+    return {d: _decode(ev.get("content", ""), seckey, encrypt) for d, ev in best.items()}
+
+
+async def delete_doc(port: int, seckey: bytes, d_tag: str, *, kind: int = APP_KIND) -> bool:
+    """Delete document `d_tag` (NIP-09 kind-5 referencing the current event + its addressable coord)."""
+    pk = bip340.pubkey_from_seckey(seckey).hex()
+    evs = await _ws_query(port, [{"authors": [pk], "kinds": [kind], "#d": [d_tag], "limit": 1}])
+    if not evs:
+        return True   # nothing to delete
+    eid = evs[0].get("id")
+    tags = [["e", eid], ["a", f"{kind}:{pk}:{d_tag}"]]
+    ev = build_event(seckey, 5, "", tags=tags)
+    ok, _ = await _ws_publish(port, ev)
+    return ok
