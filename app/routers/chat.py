@@ -897,7 +897,10 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                 _pdf_names = [p.get("filename", f"file{i}.pdf") for i, p in enumerate(pdfs)]
                                 try:
                                     from urllib.parse import quote
-                                    _saved_rel = storage_service.save_file_bytes(user.username, conversation_id, _merged, "merged.pdf")
+                                    if chat_store.enabled(db):
+                                        _saved_rel = await artifact_store.save_bytes(db, user, conversation_id, _merged, "pdf")
+                                    else:
+                                        _saved_rel = storage_service.save_file_bytes(user.username, conversation_id, _merged, "merged.pdf")
                                     _saved_filename = Path(_saved_rel).name
                                     _dl_url = f"/api/files/{quote(user.username, safe='')}/{conversation_id}/{quote(_saved_filename)}"
                                     _reply = f"✅ Merged {len(_pdf_bytes_list)} PDFs: {', '.join(_pdf_names)}\n\n[⬇️ Download merged.pdf]({_dl_url})"
@@ -961,10 +964,17 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                     if not content and not file_content and not image_data:
                         continue
 
-                    # Save uploaded files to disk and get paths
+                    # Save the uploaded image — encrypted in Blossom (relay backend) or to disk.
                     user_image_path = None
                     if image_data:
-                        user_image_path = storage_service.save_image(user.username, conversation_id, image_data, "upload")
+                        if chat_store.enabled(db):
+                            import base64 as _b64u2
+                            try:
+                                user_image_path = await artifact_store.save_bytes(db, user, conversation_id, _b64u2.b64decode(image_data), "png")
+                            except Exception:
+                                user_image_path = None
+                        else:
+                            user_image_path = storage_service.save_image(user.username, conversation_id, image_data, "upload")
                     if file_content:
                         # Save file content for persistence (non-blocking - chat will work even if this fails)
                         try:
@@ -1265,9 +1275,13 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                 if not _fbytes:
                                     continue
                                 try:
-                                    _rel = storage_service.save_file_bytes(
-                                        user.username, conversation_id, _fbytes, _fname
-                                    )
+                                    if chat_store.enabled(db):
+                                        _ext = (Path(_fname).suffix.lstrip(".") or "bin")
+                                        _rel = await artifact_store.save_bytes(db, user, conversation_id, _fbytes, _ext)
+                                    else:
+                                        _rel = storage_service.save_file_bytes(
+                                            user.username, conversation_id, _fbytes, _fname
+                                        )
                                     _saved_name = Path(_rel).name
                                     # Encode the filename too — spaces/parens (e.g. "image (2).png")
                                     # otherwise leave a raw ")" that truncates the markdown link.
