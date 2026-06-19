@@ -43,6 +43,8 @@ def create_saved_search(db: Session, user: User, query: str) -> Optional[SavedSe
     db.add(s)
     db.commit()
     db.refresh(s)
+    from app.services import record_store
+    record_store.mirror_search_blocking(db, user, s)
     return s
 
 
@@ -61,4 +63,6 @@ def delete_saved_search(db: Session, user: User, sid: int) -> bool:
         return False
     db.delete(s)
     db.commit()
+    from app.services import record_store
+    record_store.delete_search_blocking(db, user, sid)
     return True

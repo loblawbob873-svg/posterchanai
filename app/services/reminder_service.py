@@ -170,6 +170,8 @@ def create_reminder(db: Session, user: User, text: str, due_at: datetime) -> Rem
     db.add(r)
     db.commit()
     db.refresh(r)
+    from app.services import record_store
+    record_store.mirror_reminder_blocking(db, user, r)
     return r
 
 
@@ -192,6 +194,8 @@ def cancel_reminder(db: Session, user: User, rid: int) -> bool:
         return False
     r.status = "cancelled"
     db.commit()
+    from app.services import record_store
+    record_store.mirror_reminder_blocking(db, user, r)
     return True
 
 
@@ -205,6 +209,8 @@ def snooze_reminder(db: Session, user: User, rid: int, minutes: int) -> Optional
     r.delivered_at = None
     db.commit()
     db.refresh(r)
+    from app.services import record_store
+    record_store.mirror_reminder_blocking(db, user, r)
     return r
 
 
@@ -306,6 +312,14 @@ async def poll_once(db: Session) -> None:
         if not claimed:
             continue  # another claim already took it — never deliver twice
         r = db.query(Reminder).filter(Reminder.id == rid).first()
+        try:
+            from app.services import record_store
+            if record_store.enabled(db):
+                u = db.query(User).filter(User.id == r.user_id).first()
+                if u:
+                    await record_store.mirror_reminder(db, u, r)   # persist the done/delivered state
+        except Exception as e:
+            logger.debug(f"reminder mirror (delivered) failed: {e}")
         try:
             await deliver(db, r)
             logger.info(f"delivered reminder #{rid} to user {r.user_id}")
