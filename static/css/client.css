@@ -468,3 +468,29 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 @keyframes pop{from{opacity:0;transform:translateY(-6px) scale(.96)}to{opacity:1;transform:none}}
 .emoji-pop button{background:transparent;border:none;font-size:22px;cursor:pointer;padding:5px 7px;border-radius:9px;line-height:1;transition:.1s}
 .emoji-pop button:hover{background:rgba(0,255,255,.18);transform:scale(1.18)}
+
+/* ===== trending hashtag chips + inline #hashtags — cyberpunk, spaced out ===== */
+.tag-cloud{display:flex;flex-wrap:wrap;gap:10px 11px;padding:4px 0 2px}
+.tag-chip{display:inline-flex;align-items:center;gap:7px;cursor:pointer;
+  background:linear-gradient(135deg,rgba(0,255,255,.12),rgba(255,0,255,.07));
+  border:1px solid rgba(0,255,255,.4);color:var(--cyan);
+  padding:8px 15px;font-family:'Rajdhani','Orbitron',sans-serif;font-size:14.5px;font-weight:700;
+  letter-spacing:.7px;text-transform:uppercase;transition:.16s;position:relative;
+  /* angular clipped corners = cyberpunk tag */
+  clip-path:polygon(9px 0,100% 0,100% calc(100% - 9px),calc(100% - 9px) 100%,0 100%,0 9px);
+  box-shadow:inset 0 0 8px rgba(0,255,255,.12)}
+.tag-chip:hover{color:#fff;border-color:var(--neon2);
+  background:linear-gradient(135deg,rgba(0,255,255,.24),rgba(255,0,255,.18));
+  box-shadow:0 0 14px rgba(0,255,255,.5),0 0 24px rgba(255,0,255,.3);transform:translateY(-2px)}
+.tag-chip .tag-n{color:var(--neon2);font-size:12px;font-weight:600;letter-spacing:0;
+  text-shadow:0 0 6px rgba(255,0,255,.5)}
+a.hashtag{color:var(--cyan);font-weight:600}
+a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
+
+/* ===== profile info + search text sized to match posts ===== */
+.prof .about{font-size:18.5px;line-height:1.55}
+.prof .pbody h2{font-size:24px}
+.prof .pbody .muted.small{font-size:14.5px}
+.npubrow code{font-size:13px}
+.statbtn{font-size:15.5px}.statbtn b{font-size:16.5px}
+.psearch b{font-size:16.5px}.psearch .muted.small{font-size:14px}

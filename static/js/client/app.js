@@ -375,6 +375,7 @@
     if(VIEW==='home'||VIEW==='global') loadOlderTimeline();
     else if(VIEW==='profile') loadOlderProfile();
     else if(VIEW==='search') loadOlderSearch();
+    else if(VIEW==='hashtag') loadOlderHashtag();
   }
   function loadSentinel(feed){
     let s=feed.querySelector('.load-sentinel'); if(s) return s;
@@ -797,6 +798,7 @@
       if(e.target.closest('.yt-embed')) return;  // YouTube facade → handled by the player loader; don't lightbox the thumb
       const mn=e.target.closest('.mention'); if(mn){ e.preventDefault(); const pk=safePk(mn.dataset.np); if(pk) renderProfileView(pk); return; }
       const evl=e.target.closest('.evlink'); if(evl){ e.preventDefault(); renderThread(evl.dataset.ev); return; }
+      const ht=e.target.closest('.hashtag'); if(ht){ e.preventDefault(); renderHashtag(ht.dataset.tag); return; }
       const im=e.target.closest('.txt img, .note-preview img, .media-row img, .media-grid img'); if(im){ e.preventDefault(); openLightbox(im.currentSrc||im.src); return; }
       const tm=e.target.closest('.time'); if(tm){ const n=e.target.closest('.note'); if(n){ renderThread(n.dataset.id); return; } }
       const av=e.target.closest('.av'); if(av){ const n=e.target.closest('.note'); if(n){ renderProfileView(n.dataset.pk); return; } }
@@ -1694,6 +1696,8 @@
       }catch(_){}
       return m;
     });
+    // #hashtags → clickable (only when preceded by start/space, so URL #fragments aren't touched)
+    h=h.replace(/(^|\s)#([a-z0-9_]{2,30})\b/gi, (m,pre,tag)=>`${pre}<a href="#" class="hashtag" data-tag="${tag.toLowerCase()}">#${tag}</a>`);
     return h;
   }
 
@@ -1706,8 +1710,61 @@
   // ---------- right column: Hot / Trending (desktop) ----------
   async function loadRightbar(){
     if(!document.querySelector('.rightbar')) return;
-    rankInto('rb-hot', 4*3600, 9);        // most engaged in the last 4h
-    rankInto('rb-trending', 24*3600, 9);  // most engaged in the last 24h
+    rankInto('rb-hot', 4*3600, 9);   // Hot = most-engaged posts (last 4h)
+    loadTrendingTags();              // Trending = trending hashtags (last 24h)
+  }
+  // Trending HASHTAGS: tally #tags across recent notes (explicit `t` tags + inline #hashtags),
+  // rank by how many distinct posts used each, render clickable chips → a #tag feed.
+  async function loadTrendingTags(){
+    const el=document.getElementById('rb-trending'); if(!el) return;
+    const since=Math.floor(Date.now()/1000)-24*3600;
+    let evs=[]; try{ evs=await Relay.query([{ kinds:[1], since, limit:600 }]); }catch(_){}
+    const tally={};
+    for(const e of evs){
+      const seen=new Set();
+      for(const t of (e.tags||[])){ if(t[0]==='t' && t[1]){ const g=String(t[1]).toLowerCase().replace(/^#/,''); if(/^[a-z0-9_]{2,30}$/.test(g)) seen.add(g); } }
+      for(const m of (e.content||'').matchAll(/(?:^|\s)#([a-z0-9_]{2,30})\b/gi)) seen.add(m[1].toLowerCase());
+      for(const g of seen) tally[g]=(tally[g]||0)+1;
+    }
+    const top=Object.entries(tally).filter(([,c])=>c>=2).sort((a,b)=>b[1]-a[1]).slice(0,14);
+    if(!top.length){ el.innerHTML='<div class="muted small">No trending tags yet.</div>'; return; }
+    el.innerHTML=`<div class="tag-cloud">${top.map(([g,c])=>`<button class="tag-chip" data-tag="${enc(g)}">#${enc(g)} <span class="tag-n">${c}</span></button>`).join('')}</div>`;
+    el.querySelectorAll('.tag-chip').forEach(b=> b.onclick=()=>renderHashtag(b.dataset.tag));
+  }
+  // a feed of every post carrying a hashtag (NIP-12 `t` filter), with scroll-back pagination
+  let _hashtag={ tag:'', oldest:0, loading:false, done:false };
+  async function renderHashtag(tag){
+    tag=String(tag||'').toLowerCase().replace(/^#/,''); if(!tag) return;
+    VIEW='hashtag'; $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='#'+tag;
+    cleanupInlineStream();
+    const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
+    let evs=[]; try{ evs=await Relay.query([{ kinds:[1], '#t':[tag], limit:60 }]); }catch(_){}
+    evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
+    if(VIEW!=='hashtag') return;
+    const posts=evs.filter(e=>e.kind===1).sort((a,b)=>b.created_at-a.created_at);
+    feed.innerHTML = `<div class="search-section-title"># ${enc(tag)}</div>` +
+      (posts.length ? `<div id="hashtag-posts">${posts.map(noteHtml).join('')}</div>` : `<div class="empty">No posts found for #${enc(tag)} yet.</div>`);
+    hydrate(feed);
+    _hashtag={ tag, loading:false, done:posts.length<60, oldest: posts.length?posts[posts.length-1].created_at:0 };
+  }
+  async function loadOlderHashtag(){
+    if(_hashtag.loading || _hashtag.done || !_hashtag.tag || !_hashtag.oldest) return;
+    const cont=$('#hashtag-posts'); if(!cont){ _hashtag.done=true; return; }
+    _hashtag.loading=true; const tag=_hashtag.tag; const feed=$('#feed'); loadSentinel(feed);
+    const until=_hashtag.oldest;
+    let evs=[]; try{ evs=await Relay.query([{ kinds:[1], '#t':[tag], until:until-1, limit:40 }]); }catch(_){}
+    clearSentinel(feed);
+    if(VIEW!=='hashtag' || _hashtag.tag!==tag){ _hashtag.loading=false; return; }
+    evs.sort((a,b)=>b.created_at-a.created_at);
+    let minTs=until; const frag=document.createDocumentFragment();
+    for(const ev of evs){ Store.saveEvent(ev); needProfile(ev.pubkey); if(ev.created_at<minTs) minTs=ev.created_at;
+      if(cont.querySelector('.note[data-id="'+ev.id+'"]')) continue;
+      const div=document.createElement('div'); div.innerHTML=noteHtml(ev); const node=div.firstElementChild; if(node) frag.appendChild(node); }
+    invalidateCounts();
+    if(frag.childElementCount){ cont.appendChild(frag); decorateProfiles(); hydrateLinkCards(feed); hydrateCounts(); }
+    if(minTs<_hashtag.oldest) _hashtag.oldest=minTs;
+    if(!evs.length || minTs>=until) _hashtag.done=true;
+    _hashtag.loading=false;
   }
   async function rankInto(elId, windowSec, n){
     const el=document.getElementById(elId); if(!el) return;
