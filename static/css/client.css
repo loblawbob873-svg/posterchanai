@@ -509,3 +509,6 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 /* font consistency: compose/reply textarea, preview + tool buttons larger */
 #cmp,.note-preview .txt{font-size:16.5px}
 .cmp-tools .btn{font-size:14px}
+
+/* live "mentioning @name" hint under the composer */
+.mention-hint{color:var(--cyan);font-size:13.5px;margin:2px 2px 8px;letter-spacing:.2px}

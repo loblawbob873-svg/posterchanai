@@ -1013,11 +1013,13 @@
     modal(`<h3>${title}</h3>${qhtml}
       <div class="cmp-tabs"><button class="cmp-tab active" data-t="write">Write</button><button class="cmp-tab" data-t="preview">👁 Preview</button></div>
       <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
+      <div class="muted small mention-hint hidden" id="cmp-mentions"></div>
       <div id="cmp-preview" class="note-preview hidden"></div>
       <div class="row cmp-tools"><button class="btn btn-ghost small" id="cmp-img">📎 Attach</button><button class="btn btn-ghost small" id="cmp-blossom">🌸 Files</button><button class="btn btn-ghost small" id="cmp-emoji">😀 Emoji</button>${CFG.gif_enabled?`<button class="btn btn-ghost small" id="cmp-gif">🎬 GIF</button>`:''}<input type="file" id="cmp-file" multiple hidden>
       <span class="spacer"></span><button class="btn btn-ghost small" id="cmp-draft">💾 Draft</button><button class="btn btn-neon small" id="cmp-send">Post ▶</button></div>
       <div class="muted small" id="cmp-status"></div>`, root=>{
       const ta=$('#cmp',root); attachMentionAutocomplete(ta); if(text) ta.value=text;
+      const _mh=$('#cmp-mentions',root); ta.addEventListener('input', ()=>updateMentionHint(ta,_mh)); updateMentionHint(ta,_mh);
       ta.addEventListener('keydown', e=>{ if((e.ctrlKey||e.metaKey) && e.key==='Enter'){ e.preventDefault(); const sb=$('#cmp-send',root); if(sb) sb.click(); } });   // Ctrl/⌘+Enter to post
       $$('.cmp-tab',root).forEach(b=> b.onclick=()=>{
         $$('.cmp-tab',root).forEach(x=>x.classList.toggle('active',x===b));
@@ -1077,22 +1079,38 @@
   }
   function niceNip05(n){ if(!n) return null; n=String(n).trim(); if(!n) return null; return n.startsWith('_@')?('@'+n.slice(2)):n; }
 
-  // @-autocomplete: type "@name" and pick a known profile -> inserts a nostr:npub mention
+  async function _ensureProfile(pk){ if(!pk || Store.haveProfile(pk)) return; try{ const e=await Relay.query([{ authors:[pk], kinds:[0], limit:1 }]); if(e[0]) Store.saveProfile(e[0]); }catch(_){} }
+  // @-autocomplete: type "@name" (local profiles), a full NIP-05 "@name@domain.tld", or an
+  // "@npub1…/@nprofile1…" — the latter two are resolved live (NIP-05 lookup / decode + profile
+  // fetch) so you can mention people who aren't cached yet. Picking inserts a nostr:npub mention.
   function attachMentionAutocomplete(ta){
-    let box=null; const close=()=>{ if(box){box.remove();box=null;} };
-    ta.addEventListener('input', ()=>{
-      const pos=ta.selectionStart, left=ta.value.slice(0,pos), m=left.match(/(?:^|\s)@([^\s@]{1,40})$/);
-      if(!m){ close(); return; }
-      const q=m[1].toLowerCase();
-      const matches=Store.profileList().filter(p=>(((p.meta.name||'')+(p.meta.display_name||'')+(p.meta.nip05||'')).toLowerCase().includes(q))).slice(0,6);
-      if(!matches.length){ close(); return; }
-      close(); box=document.createElement('div'); box.className='mention-box';
-      box.innerHTML=matches.map(p=>`<div class="mention-opt" data-pk="${p.pubkey}"><img src="${enc(p.meta.picture||LOGO)}" onerror="this.src='${LOGO}'"><span><b>${enc(p.meta.name||p.meta.display_name||'anon')}</b> <span class="muted small">${enc(niceNip05(p.meta.nip05)||'')}</span></span></div>`).join('');
+    let box=null, seq=0;
+    const close=()=>{ if(box){box.remove();box=null;} };
+    const local=q=>Store.profileList().filter(p=>(((p.meta.name||'')+(p.meta.display_name||'')+(p.meta.nip05||'')).toLowerCase().includes(q))).slice(0,6);
+    function render(list, left, pos){
+      close(); if(!list.length) return;
+      box=document.createElement('div'); box.className='mention-box';
+      box.innerHTML=list.map(p=>`<div class="mention-opt" data-pk="${p.pubkey}"><img src="${enc((p.meta||{}).picture||LOGO)}" onerror="this.src='${LOGO}'"><span><b>${enc((p.meta||{}).name||(p.meta||{}).display_name||'anon')}</b> <span class="muted small">${enc(niceNip05((p.meta||{}).nip05)||(NT().nip19.npubEncode(p.pubkey).slice(0,14)+'…'))}</span></span></div>`).join('');
       ta.insertAdjacentElement('afterend', box);
       box.querySelectorAll('[data-pk]').forEach(el=> el.onmousedown=ev=>{ ev.preventDefault();
         const np=NT().nip19.npubEncode(el.dataset.pk);
-        const newLeft=left.replace(/@[^\s@]{1,40}$/,'nostr:'+np+' ');
+        const newLeft=left.replace(/@[^\s@]+(?:@[^\s@]*)?$/,'nostr:'+np+' ');
         ta.value=newLeft+ta.value.slice(pos); ta.focus(); ta.selectionStart=ta.selectionEnd=newLeft.length; close(); });
+    }
+    ta.addEventListener('input', ()=>{
+      const pos=ta.selectionStart, left=ta.value.slice(0,pos), m=left.match(/(?:^|\s)@([^\s@]+(?:@[^\s@]*)?)$/);
+      if(!m){ close(); return; }
+      const q=m[1].toLowerCase(); const my=++seq;
+      let list=local(q); render(list, left, pos);
+      // remote resolution for a typed NIP-05 address or npub/nprofile not in the cache
+      (async()=>{
+        let pk=null;
+        if(/^(?:nostr:)?(?:npub1|nprofile1)[0-9a-z]{20,}$/i.test(q)) pk=refToPk(q);
+        else if(/^[\w.\-]+@[\w.\-]+\.[a-z]{2,}$/i.test(q)) pk=await nip05Resolve(q);
+        if(!pk || my!==seq) return;
+        await _ensureProfile(pk); if(my!==seq) return;
+        if(!list.some(p=>p.pubkey===pk)){ const meta=Store.profile(pk)||{nip05:q.includes('@')?q:''}; list=[{pubkey:pk, meta}, ...list].slice(0,6); render(list, left, pos); }
+      })();
     });
     ta.addEventListener('blur', ()=>setTimeout(close,200));
   }
@@ -1119,6 +1137,17 @@
       if(hits.length===1) add(hits[0].pubkey);
     }
     return out;
+  }
+  // live hint under the composer: resolve any npub/nprofile in the text to a readable @name so a
+  // pasted "nostr:npub1…" gives immediate feedback about who you're mentioning.
+  function updateMentionHint(ta, hintEl){
+    if(!hintEl) return;
+    const uniq=[...new Set([...(ta.value||'').matchAll(/(?:nostr:)?((?:npub1|nprofile1)[0-9a-z]{20,})/gi)].map(m=>refToPk(m[1])).filter(Boolean))];
+    if(!uniq.length){ hintEl.textContent=''; hintEl.classList.add('hidden'); return; }
+    let missing=false;
+    const names=uniq.map(pk=>{ const p=Store.profile(pk); if(!p){ needProfile(pk); missing=true; return '@'+NT().nip19.npubEncode(pk).slice(0,12)+'…'; } return '@'+(p.name||p.display_name||'anon'); });
+    hintEl.textContent='↳ mentioning '+names.join(', '); hintEl.classList.remove('hidden');
+    if(missing && !hintEl._t){ hintEl._t=setTimeout(()=>{ hintEl._t=null; updateMentionHint(ta,hintEl); }, 800); }
   }
 
   // ---------- Blossom uploads + file browser ----------
