@@ -308,6 +308,7 @@
   // ---------- app start ----------
   function startApp(){
     IS_ADMIN = Array.isArray(CFG.admin_npubs) && CFG.admin_npubs.includes(ME.npub);
+    { const na=$('#nav-admin'); if(na) na.classList.toggle('hidden', !IS_ADMIN); }   // in-app Admin (admins only)
     try{ if(window.Notification && Notification.permission==='default') Notification.requestPermission(); }catch(_){}
     $('#auth-gate').classList.add('hidden'); $('#app').classList.remove('hidden');
     $('#btn-logout').onclick = logout;
@@ -466,7 +467,7 @@
   function switchView(v){
     VIEW = v;
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
-    $('#view-title').textContent = { home:'Home', global:'Global', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', streams:'Streams', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Global', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', streams:'Streams', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', admin:'Admin' }[v]||v;
     renderView(true);
   }
   function renderView(reset){
@@ -476,6 +477,7 @@
     if(VIEW!=='home' && VIEW!=='global') _hidePill();
     feed.classList.toggle('feed-dm', VIEW==='messages');   // full-height messages layout (no :has needed)
     feed.classList.toggle('feed-ai', VIEW==='ai');         // full-height chat layout (msgs scroll inside)
+    feed.classList.toggle('feed-admin', VIEW==='admin');   // full-height admin iframe
     if (reset) feed.innerHTML = '<div class="spinner"></div>';
     if (VIEW==='home' || VIEW==='global') return renderTimeline(VIEW, reset);
     if (VIEW==='notifications') return renderNotifications();
@@ -487,6 +489,7 @@
     if (VIEW==='blossom') return renderBlossom();
     if (VIEW==='settings') return renderSettings();
     if (VIEW==='ai') return renderAI();
+    if (VIEW==='admin') return renderAdmin();
     if (VIEW==='profile') return renderProfile(ME.pubkey);
   }
 
@@ -1875,6 +1878,13 @@
     }catch(_){ _aiAuth = { can_ai:false, error:true }; }
     return _aiAuth;
   }
+  // In-app Admin: the standalone admin panel embedded in the client (same-origin, the Nostr-login
+  // cookie authorizes it). Admins only.
+  function renderAdmin(){
+    const feed=$('#feed');
+    if(!IS_ADMIN){ feed.innerHTML='<div class="empty">Admins only.</div>'; return; }
+    feed.innerHTML='<iframe class="admin-frame" src="/admin" title="Admin"></iframe>';
+  }
   async function renderAI(){
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
     const a = await ensureAiSession();
@@ -2089,7 +2099,7 @@
         <div class="set-body">
           <div class="set-actions">
             <button class="btn btn-ghost small" id="set-sync-posts">⤓ Sync my posts to this relay</button>
-            ${IS_ADMIN?`<a class="btn btn-ghost small" href="/admin" target="_blank">🛠 Admin Panel</a>`:''}
+            ${IS_ADMIN?`<button class="btn btn-ghost small" id="set-admin">🛠 Admin Panel</button>`:''}
           </div>
           <div class="muted small" id="set-sync-status">Pulls your posts from other relays into this one.</div>
         </div>
@@ -2133,6 +2143,7 @@
     drawRelayRows();
     const syncRelays=()=>{ _setRelays = $$('#set-relay-list .relay-row input').map(i=>i.value.trim()); };
 
+    { const ab=$('#set-admin'); if(ab) ab.onclick=()=>switchView('admin'); }
     { const sp=$('#set-sync-posts'); if(sp) sp.onclick=async()=>{
         const st=$('#set-sync-status'); if(st) st.textContent='syncing… pulling your posts from other relays.';
         try{ const auth=await sign(27235,'sync-posts',[['p',ME.pubkey]]);
