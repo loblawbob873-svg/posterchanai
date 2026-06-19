@@ -397,7 +397,18 @@ def update_settings(
                 trigger_nip05_reload()
             except Exception as e:
                 logger.warning(f"[Admin] relay NIP-05 reload after settings save failed: {e}")
-        
+
+        # Write-through to the relay so it stays the authoritative store (settings_backend == relay).
+        # No-op otherwise. Sync handler runs in a threadpool → drive the coroutine with asyncio.run.
+        try:
+            from app.services import settings_store
+            if settings_store.enabled(db):
+                import asyncio as _aio
+                mirror = {k: v for k, v in data.settings.items() if v != ""}
+                _aio.run(settings_store.write_through(db, mirror))
+        except Exception as e:
+            logger.warning(f"[Admin] settings write-through to relay failed: {e}")
+
     except IntegrityError as e:
         # Handle constraint violations (e.g., unique constraint, foreign key)
         db.rollback()

@@ -511,6 +511,10 @@ def init_db():
             # Phase 2: where AI chat history lives. "sqlite" (default, app.db) until the relay-backed
             # encrypted message store is fully wired; "relay" routes chats to encrypted Nostr events.
             "chat_backend": "sqlite",
+            # Phase 1: where global settings are sourced. "sqlite" (default) reads the Setting table;
+            # "relay" makes the relay authoritative — the Setting table is hydrated from it at startup
+            # and admin saves write through to it.
+            "settings_backend": "sqlite",
             "nostr_relay_wot_seeds": "\n".join([
                 "npub1gu9wxzm9y3uwunva2d6tedef64r33dfdessjhuvp5hf8zampj5nseec39q",
                 "npub153xmex42x4chdf757hp3q6zxagykkek7pdgwuwd074964dkyha9s82ryu8",

@@ -323,6 +323,25 @@ async def startup():
                 logging.error(f"Error starting Nostr relay: {e}", exc_info=True)
 
             try:
+                # Settings read-path: hydrate the local Setting cache from the relay (authoritative
+                # when settings_backend == relay). Deferred so the relay's WS is up first; no-op
+                # otherwise. Runs in the background so startup isn't blocked.
+                import asyncio as _aio
+                async def _hydrate_settings():
+                    await _aio.sleep(6)
+                    _db = SessionLocal()
+                    try:
+                        from app.services import settings_store
+                        await settings_store.hydrate(_db)
+                    except Exception as e:
+                        logging.warning(f"Settings hydrate from relay failed: {e}")
+                    finally:
+                        _db.close()
+                _aio.create_task(_hydrate_settings())
+            except Exception as e:
+                logging.error(f"Error scheduling settings hydrate: {e}", exc_info=True)
+
+            try:
                 # Start the Blossom expiry-cleanup thread (idle until blobs have a TTL)
                 from app.services.blossom_service import start_blossom_cleanup
                 start_blossom_cleanup()
