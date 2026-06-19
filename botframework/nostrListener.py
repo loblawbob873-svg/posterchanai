@@ -169,7 +169,9 @@ def _gather_media(note):
             # so the effect/media command gets a correct image/video content-type.
             ct = f.get("type") or _nk.sniff_mime(data)
             media.append((f.get("name") or "file", data, ct or ""))
-    return media
+    # `had_files` lets the caller tell "no media on the post" apart from "media was there but the
+    # download failed" (transient) so it can ask the user to retry instead of "attach a file".
+    return media, bool(files)
 
 
 def _sender_brand(note):
@@ -179,12 +181,17 @@ def _sender_brand(note):
 
 def _handle_media_command(note, command, arg):
     brand_handle, brand_avatar = _sender_brand(note)
-    media = _gather_media(note)
+    media, had_files = _gather_media(note)
     if not media:
         if command == "glow" and arg.strip():
             _gsum, _gout = process_media("glow", arg, [], brand_handle, brand_avatar)
             imgs = [(f["data"], f["content_type"]) for f in _gout if f["content_type"].startswith("image/")]
             send_reply(note, "" if imgs else (_gsum or "Couldn't make that glow post."), image_bytes=imgs or None)
+            return
+        if had_files:
+            # The post DID carry media; we just couldn't download it (transient CDN/network blip).
+            # Don't tell the user to attach a file — tell them to retry.
+            send_reply(note, "⚠️ I found the media on that post but couldn't download it just now — try again in a moment.")
             return
         send_reply(note, "📎 Attach or link a file, then add `compress`, `clip 0:10 0:30`, `convert`, `meme <text>` or `glow <text>`.")
         return

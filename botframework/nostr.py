@@ -14,6 +14,7 @@ import re
 import sys
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 
 import requests
@@ -330,15 +331,24 @@ def get_thread_images(note_id, max_depth=10):
     return images
 
 
-def download_image_from_url(url, timeout=30):
-    try:
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; PosterChanBot/1.0)"}
-        r = requests.get(url, timeout=timeout, headers=headers)
-        r.raise_for_status()
-        return r.content
-    except requests.exceptions.RequestException as e:
-        logger.warning(f"[nostr] download {url[:80]} failed: {e}")
-        return None
+def download_image_from_url(url, timeout=30, retries=3):
+    """Fetch media bytes, retrying transient failures. A single failed GET (catbox/CDN blip,
+    timeout, reset) used to leave the media-effect path with nothing to work on, which then looked
+    identical to "no media attached" — so an effect would intermittently reply with the attach-a-file
+    help even though the post HAD an image (worked on retry). Retrying makes that path reliable."""
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; PosterChanBot/1.0)"}
+    last = None
+    for attempt in range(retries):
+        try:
+            r = requests.get(url, timeout=timeout, headers=headers)
+            r.raise_for_status()
+            return r.content
+        except requests.exceptions.RequestException as e:
+            last = e
+            if attempt < retries - 1:
+                time.sleep(1.5 * (attempt + 1))
+    logger.warning(f"[nostr] download {url[:80]} failed after {retries} tries: {last}")
+    return None
 
 
 def _to_media_list(image_bytes=None, video_bytes=None, audio_bytes=None) -> list:
