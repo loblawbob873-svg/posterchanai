@@ -306,8 +306,19 @@ def _collect_operator_pubkeys(db) -> list:
                     out.add(nostr_service.derive_pubkey(nostr_service.decode_seckey(nsec)))
                 except Exception:
                     pass
-        # Per-user SERVER-HELD storage keys (Phase 2): these are the keys the app signs each user's
-        # encrypted chat/upload events with — our own keys, so they must be allowed to write here.
+        # Per-user SERVER-HELD storage keys: these are the keys the app signs each user's encrypted
+        # chat/upload events with — our own keys, so they must be allowed to write here. They live in
+        # the local keyfile (authoritative); also read the legacy UserSetting location for any not yet
+        # migrated. Union of both so a key is accepted regardless of where it currently lives.
+        try:
+            from app.services import keystore
+            for hexsk in (keystore._load().get("storage", {}) or {}).values():
+                try:
+                    out.add(nostr_service.derive_pubkey(nostr_service.decode_seckey(hexsk)))
+                except Exception:
+                    pass
+        except Exception:
+            pass
         from app.models import UserSetting
         for us in db.query(UserSetting).filter(UserSetting.key == "storage_nsec").all():
             if us.value:

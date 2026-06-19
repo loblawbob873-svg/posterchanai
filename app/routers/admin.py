@@ -356,22 +356,27 @@ def update_settings(
     # Track if cache settings changed
     cache_settings_changed = False
     cache_keys = {"file_cache_enabled", "file_cache_ttl", "file_cache_max_size"}
-    
+    # The admin UI sends ALL fields on every save; only the keys whose value actually CHANGED need to
+    # be mirrored to the relay (each is its own replaceable event — don't rewrite ~250 on every save).
+    changed_keys = set()
+
     try:
         for key, value in data.settings.items():
             setting = db.query(Setting).filter(Setting.key == key).first()
             if setting:
                 # Only update if value is not empty string - prevents accidental clearing
                 # This protects against admin UI sending partial updates with empty values
-                if value != "":
+                if value != "" and (setting.value or "") != value:
                     setting.value = value
+                    changed_keys.add(key)
                 # If value is empty and setting exists, preserve existing value
                 # (prevents accidental erasure when admin UI sends all settings)
             else:
                 # Only create new setting if value is not empty
                 if value != "":
                     db.add(Setting(key=key, value=value))
-            
+                    changed_keys.add(key)
+
             if key in cache_keys:
                 cache_settings_changed = True
         
@@ -402,9 +407,9 @@ def update_settings(
         # No-op otherwise. Sync handler runs in a threadpool → drive the coroutine with asyncio.run.
         try:
             from app.services import settings_store
-            if settings_store.enabled(db):
+            if changed_keys and settings_store.enabled(db):
                 import asyncio as _aio
-                mirror = {k: v for k, v in data.settings.items() if v != ""}
+                mirror = {k: data.settings[k] for k in changed_keys}
                 _aio.run(settings_store.write_through(db, mirror))
         except Exception as e:
             logger.warning(f"[Admin] settings write-through to relay failed: {e}")

@@ -50,15 +50,22 @@ def enabled(db) -> bool:
 
 
 def _operator_seckey(db):
-    """The operator's secret key (an admin with a linked Nostr secret) — needed to read/write the
-    operator-signed setting docs. Returns None if no operator key is configured."""
-    from app.models import User
+    """The operator's secret key — needed to read/write the operator-signed docs. Sourced from the
+    local keyfile (authoritative); falls back to the admin's `User.nostr_nsec` and migrates it into
+    the keyfile on first use (so it survives the app DB being eliminated). None if not configured."""
+    from app.services import keystore
     from app.services.nostr import nostr_service
-    op = db.query(User).filter(User.is_admin == True, User.nostr_nsec.isnot(None)).first()  # noqa: E712
-    if not op or not op.nostr_nsec:
+    nsec = keystore.get_operator_nsec()
+    if not nsec:
+        from app.models import User
+        op = db.query(User).filter(User.is_admin == True, User.nostr_nsec.isnot(None)).first()  # noqa: E712
+        if op and op.nostr_nsec:
+            nsec = op.nostr_nsec
+            keystore.set_operator_nsec(nsec)   # migrate into the keyfile
+    if not nsec:
         return None
     try:
-        return nostr_service.decode_seckey(op.nostr_nsec)
+        return nostr_service.decode_seckey(nsec)
     except Exception:
         return None
 

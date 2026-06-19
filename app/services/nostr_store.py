@@ -45,19 +45,34 @@ NS_AIREQ   = "pcai:ai-request:"  # pending AI-access request               (user
 # hex; decode_seckey accepts hex or nsec.
 def user_storage_seckey(db, user) -> bytes:
     from app.models import UserSetting
+    from app.services import keystore
+    npub = getattr(user, "nostr_npub", None)
+    # 1) keyfile (authoritative — survives the app DB being in-memory/eliminated), keyed by npub
+    if npub:
+        sk = keystore.get_storage_seckey(npub)
+        if sk:
+            return sk
+    # 2) legacy app.db location (UserSetting) → migrate into the keyfile on first touch
     row = db.query(UserSetting).filter(UserSetting.user_id == user.id,
                                        UserSetting.key == "storage_nsec").first()
     if row and row.value:
         try:
-            return bytes.fromhex(row.value)
+            sk = bytes.fromhex(row.value)
+            if npub:
+                keystore.set_storage_seckey(npub, sk)
+            return sk
         except ValueError:
             pass
+    # 3) generate a fresh key → keyfile (npub users) or legacy UserSetting (no-npub legacy users)
     sk = os.urandom(32)   # valid secp256k1 scalar w/ overwhelming probability
-    if row:
-        row.value = sk.hex()
+    if npub:
+        keystore.set_storage_seckey(npub, sk)
     else:
-        db.add(UserSetting(user_id=user.id, key="storage_nsec", value=sk.hex()))
-    db.commit()
+        if row:
+            row.value = sk.hex()
+        else:
+            db.add(UserSetting(user_id=user.id, key="storage_nsec", value=sk.hex()))
+        db.commit()
     # New storage key → tell the relay to accept it as a writer (operator) without a restart.
     # Debounced: a burst of new users (e.g. a busy bot) would otherwise trigger a reload storm; at
     # most one reload per _RELOAD_DEBOUNCE. A key not yet picked up just mirrors on the next reload.
