@@ -508,6 +508,9 @@ def init_db():
             # client's relay. Existing installs keep their saved value (defaults are seed-only).
             "nostr_relay_enabled": "true",
             "nostr_relay_port": "3052",
+            # Phase 2: where AI chat history lives. "sqlite" (default, app.db) until the relay-backed
+            # encrypted message store is fully wired; "relay" routes chats to encrypted Nostr events.
+            "chat_backend": "sqlite",
             "nostr_relay_wot_seeds": "\n".join([
                 "npub1gu9wxzm9y3uwunva2d6tedef64r33dfdessjhuvp5hf8zampj5nseec39q",
                 "npub153xmex42x4chdf757hp3q6zxagykkek7pdgwuwd074964dkyha9s82ryu8",

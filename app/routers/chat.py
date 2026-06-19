@@ -158,7 +158,7 @@ def get_conversation(
 
 
 @router.delete("/conversations/{conversation_id}")
-def delete_conversation(
+async def delete_conversation(
     conversation_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -173,6 +173,15 @@ def delete_conversation(
     # Delete associated files
     storage = StorageService(db)
     storage.delete_conversation_files(current_user.username, conversation_id)
+
+    # Phase 2: also purge the conversation's encrypted message events from the relay store.
+    try:
+        from app.services import chat_store
+        if chat_store.enabled(db):
+            removed = await chat_store.delete_conversation(db, current_user, conversation_id)
+            logger.info("[CHAT] purged %d relay message event(s) for conv %s", removed, conversation_id)
+    except Exception as e:
+        logger.warning("[CHAT] relay message purge failed: %s", e)
 
     db.delete(conversation)
     db.commit()
