@@ -148,7 +148,7 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 .note .hd-pin{padding:0 4px;font-size:13px;background:transparent;border:none;opacity:.6;line-height:1}
 .note .hd-pin:hover,.note .hd-pin.on{opacity:1}
 .note .time:hover{color:var(--cyan)}
-.note .txt{margin:6px 0;line-height:1.5;white-space:pre-wrap;word-wrap:break-word;overflow-wrap:anywhere;font-size:16.5px}
+.note .txt{margin:6px 0;line-height:1.55;white-space:pre-wrap;word-wrap:break-word;overflow-wrap:anywhere;font-size:18.5px}
 /* ALL post-content media flows horizontally (inline-block) and is height-capped, so multiple
  * attachments form a wrapping gallery row instead of a giant vertical stack. */
 .note .txt img,.note .txt video,.note .media img,.note .media video{width:auto;max-width:100%;max-height:300px;border-radius:12px;margin:8px 6px 0 0;border:1px solid var(--line);display:inline-block;vertical-align:top;background:#0d0a1a}
