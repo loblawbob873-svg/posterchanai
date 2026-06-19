@@ -147,7 +147,16 @@
     async beginNostrConnect(relay, name){
       await this._ensureAppKey(); await this._openRelay(relay);
       const secret=Math.random().toString(36).slice(2,12);
-      const uri=`nostrconnect://${this.appPk}?relay=${encodeURIComponent(relay)}&secret=${secret}&name=${encodeURIComponent(name||'PosterChan')}`;
+      // Permissions we request up front. Amber prompts per-action so an empty list still works,
+      // but iOS signers like Clave PRE-authorize from this list and deny anything not in it
+      // ("No permission"). List every op/kind the client signs so the first connect grants them all.
+      const kinds=[0,1,3,4,5,6,7,1059,9734,10000,10002,10003,27235,30078];
+      const perms=['get_public_key','nip04_encrypt','nip04_decrypt','nip44_encrypt','nip44_decrypt']
+        .concat(kinds.map(k=>'sign_event:'+k)).join(',');
+      const origin=(location && location.origin) || '';
+      const uri=`nostrconnect://${this.appPk}?relay=${encodeURIComponent(relay)}&secret=${secret}`
+        +`&perms=${encodeURIComponent(perms)}&name=${encodeURIComponent(name||'PosterChan')}`
+        +(origin?`&url=${encodeURIComponent(origin)}`:'');
       const done=new Promise((res,rej)=>{
         const to=setTimeout(()=>{ this._onEvent=null; rej(new Error('timed out waiting for the signer')); }, 180000);
         this._onEvent=async (ev, payload)=>{
@@ -305,11 +314,26 @@
     if (nip05) toast('your handle: ' + nip05);
   }
 
+  // First-run setup: fresh install with no admin → offer to claim it (chicken/egg: nobody can
+  // grant AI access until an admin exists). Server re-checks + locks once any admin npub exists.
+  async function maybeClaimAdmin(){
+    if(!CFG.admin_unclaimed || IS_ADMIN || !ME) return;
+    if(!confirm('This instance has no admin yet.\n\nBecome the admin? You\'ll be able to grant AI/Blossom access to users and manage settings.')) return;
+    try{
+      const auth=await sign(27235,'claim-admin',[['p',ME.pubkey]]);
+      const r=await fetch('/client/claim-admin',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
+      if(r&&r.ok){ toast('you are now the admin — reloading'); setTimeout(()=>location.reload(),900); }
+      else toast('setup failed: '+((r&&r.error)||''));
+    }catch(e){ toast('setup failed'); }
+  }
+
   // ---------- app start ----------
   function startApp(){
     IS_ADMIN = Array.isArray(CFG.admin_npubs) && CFG.admin_npubs.includes(ME.npub);
     { const na=$('#nav-admin'); if(na) na.classList.toggle('hidden', !IS_ADMIN); }   // in-app Admin (admins only)
     if(IS_ADMIN) setTimeout(()=>{ try{ ensureAiSession(); }catch(_){} }, 2500);   // warm the admin session so Admin opens instantly
+    else if(CFG.admin_unclaimed) setTimeout(maybeClaimAdmin, 1200);   // fresh install: offer first-run admin setup
     try{ if(window.Notification && Notification.permission==='default') Notification.requestPermission(); }catch(_){}
     $('#auth-gate').classList.add('hidden'); $('#app').classList.remove('hidden');
     $('#btn-logout').onclick = logout;
@@ -1839,7 +1863,7 @@
       items.push(['ai', aiGranted?'🤖 Revoke AI access':'🤖 Grant AI access']);
       items.push(['blossom', blossomGranted?'🌸 Revoke Blossom access':'🌸 Grant Blossom access']);
       items.push(['torrent', torrentOn?'🧲 Revoke Torrents':'🧲 Grant Torrents']);
-      items.push(['caps','🔑 More permissions']);
+      items.push(['caps','🔑 Additional AI permissions']);
       items.push(['block','🚫 Block (relay)','danger']);
     }
     openMenuPopover(anchorBtn, items, async a=>{
@@ -1869,10 +1893,10 @@
     if(!IS_ADMIN) return;
     let caps={};
     try{ const r=await fetch('/client/user-caps?pubkey='+encodeURIComponent(pk)).then(r=>r.json());
-      if(r && r.exists){ caps=r.caps||{}; } else { toast('that user hasn’t opened the app yet'); return; } }
+      if(r && r.exists){ caps=r.caps||{}; } else { toast('No AI account yet — they need to open the AI tab once first'); return; } }
     catch(_){ toast('couldn’t load permissions'); return; }
     const C=[['can_image','🖼️ Image'],['can_music','🎵 Music'],['can_video','🎬 Video'],['can_torrent','🧲 Torrents']];
-    modal(`<h3>🔑 Permissions</h3>${C.map(([k,l])=>`<label class="fld" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" data-cap="${k}" ${caps[k]?'checked':''}> ${l}</label>`).join('')}<button class="btn btn-neon full" id="caps-save">Save</button>`, root=>{
+    modal(`<h3>🔑 Additional AI permissions</h3><p class="muted small">Extra AI features for this user. Grant basic AI access from the menu first.</p>${C.map(([k,l])=>`<label class="fld" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" data-cap="${k}" ${caps[k]?'checked':''}> ${l}</label>`).join('')}<button class="btn btn-neon full" id="caps-save">Save</button>`, root=>{
       $('#caps-save',root).onclick=async()=>{
         const out={}; $$('[data-cap]',root).forEach(c=>out[c.dataset.cap]=c.checked);
         try{ const auth=await sign(27235,'user-caps',[['p',pk]]);

@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import time
 
 from fastapi import APIRouter, Depends, Request
@@ -97,6 +98,9 @@ async def client_config(request: Request, db: Session = Depends(get_db)):
         "blossom_enabled": _setting(db, "blossom_enabled", "false").lower() == "true",
         "operator_npub": op_npub,
         "admin_npubs": admin_npubs,
+        # Fresh install with no admin yet → the client offers first-run "become admin" setup
+        # (solves the chicken/egg: nobody can grant AI access until an admin exists).
+        "admin_unclaimed": len(admin_npubs) == 0,
         "gif_enabled": bool(_setting(db, "tenor_api_key") or _setting(db, "giphy_api_key")),
         "name": _setting(db, "site_name", "PosterChan"),
     })
@@ -416,6 +420,51 @@ async def signup_follow(data: SignupFollow, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
     ok, msg = await follow_and_admit(db, new_pk)
     return JSONResponse({"ok": ok, "message": msg})
+
+
+class ClaimAdmin(BaseModel):
+    pubkey: str          # npub/hex claiming admin
+    auth: str            # base64 signed event proving they hold the key
+
+
+@router.post("/claim-admin")
+async def claim_admin(data: ClaimAdmin, db: Session = Depends(get_db)):
+    """First-run setup: on a fresh install with NO admin yet, the first key to sign in here claims
+    admin (solves the chicken/egg — nobody can grant AI access until an admin exists). Locked down
+    once any admin has an npub, so it can't be used to take over a configured instance."""
+    pk = nostr_service.to_pubkey_hex(data.pubkey)
+    if not pk:
+        return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
+    if not _verify_self_auth(data.auth, pk):
+        return JSONResponse({"ok": False, "error": "signature required (or stale request)"}, status_code=403)
+    # Re-check server-side: refuse if any admin already has an npub (instance already set up).
+    if db.query(User).filter(User.is_admin == True, User.nostr_npub.isnot(None)).first():  # noqa: E712
+        return JSONResponse({"ok": False, "error": "an admin already exists"}, status_code=409)
+    npub = nostr_service.npub_of(pk)
+    u = db.query(User).filter(User.nostr_npub == npub).first()
+    if not u:
+        from app.auth import get_password_hash
+        base = "npub_" + npub[4:16]
+        username = base
+        for i in range(2, 100):
+            if not db.query(User).filter(User.username == username).first():
+                break
+            username = f"{base}{i}"
+        u = User(username=username, email=None,
+                 password_hash=get_password_hash(secrets.token_urlsafe(32)),
+                 email_verified=True, nostr_npub=npub)
+        db.add(u)
+    u.is_admin = True
+    u.can_ai = True
+    u.can_image = True
+    u.can_blossom = True
+    db.commit()
+    logger.info("[client] first-run admin claimed by %s (%s)", u.username, npub[:16])
+    try:
+        await follow_and_admit(db, pk)
+    except Exception as e:
+        logger.warning("[client] follow/admit on claim-admin failed: %s", e)
+    return JSONResponse({"ok": True, "npub": npub})
 
 
 class BlockReq(BaseModel):
