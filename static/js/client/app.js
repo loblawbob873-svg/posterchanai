@@ -1915,7 +1915,10 @@
     const ta=$('#ai-input');
     ta.addEventListener('keydown',e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); aiSend(); } });
     ta.addEventListener('input',()=>{ ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,200)+'px'; });
-    $('#ai-msgs').addEventListener('click',e=>{ const im=e.target.closest('img'); if(im){ openLightbox(im.dataset.full||im.src); } });
+    $('#ai-msgs').addEventListener('click',e=>{
+      const mag=e.target.closest('.ai-magnet'); if(mag){ const ta=$('#ai-input'); if(ta){ ta.value='torrents add '+mag.dataset.magnet; aiSend(); } return; }
+      const im=e.target.closest('img'); if(im){ openLightbox(im.dataset.full||im.src); }
+    });
     await aiLoadConversations();
   }
   async function aiLoadConversations(){
@@ -1952,7 +1955,7 @@
     if(VIEW!=='ai' || _ai.convId!==id) return;
     if(box){ box.innerHTML='';
       for(const m of (conv && conv.messages || [])){
-        let html = m.role==='user'?enc(m.content):mdToHtml(m.content||'');
+        let html = m.role==='user'?enc(m.content):aiFormat(m.content||'');
         if(m.image_path) html += `<div class="ai-media"><img src="${enc(m.image_path)}" loading="lazy"></div>`;
         aiAddMessage(m.role, html);
       }
@@ -1981,10 +1984,10 @@
     } else if(d.type==='stream_clear'){
       _ai.streamBuf=''; if(_ai.streamEl){ const b=_ai.streamEl.querySelector('.ai-bubble'); if(b) b.textContent=''; }
     } else if(d.type==='stream_end'){
-      if(_ai.streamEl){ const b=_ai.streamEl.querySelector('.ai-bubble'); if(b) b.innerHTML=mdToHtml(_ai.streamBuf); }
+      if(_ai.streamEl){ const b=_ai.streamEl.querySelector('.ai-bubble'); if(b) b.innerHTML=aiFormat(_ai.streamBuf); }
       _ai.streamEl=null; _ai.streamBuf=''; aiScroll();
     } else if(d.type==='text'){
-      aiAddMessage('assistant', mdToHtml(d.content||''));
+      aiAddMessage('assistant', aiFormat(d.content||''));
     } else if(d.type==='response'){
       aiAddMessage('assistant', aiRenderResponse(d.data||{}));
     } else if(d.type==='error'){
@@ -1992,13 +1995,28 @@
       _ai.streamEl=null; _ai.streamBuf='';
     }
   }
-  // Render the rich command payloads (image/music/video gen, search, files) the backend streams.
+  // Markdown + the backend's custom inline markup the old web UI rendered: !video[](url), !audio[](url),
+  // ![](url) images, links, and magnet/.torrent → an "add torrent" action. So command outputs
+  // (musicgeni/videogeni/compress/clip = !video/!audio; torrents = magnet) display right, not as text.
+  function aiFormat(src){
+    src=String(src||''); const slots=[]; const stash=h=>{ slots.push(h); return ` S${slots.length-1} `; };
+    src=src.replace(/!video\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><video controls src="${enc(u)}"></video></div>`));
+    src=src.replace(/!audio\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><audio controls src="${enc(u)}"></audio></div>`));
+    src=src.replace(/magnet:\?[^\s)<]+/gi,u=>stash(`<button class="ai-magnet" data-magnet="${enc(u)}">🧲 Add torrent</button>`));
+    let html=mdToHtml(src);
+    return html.replace(/ S(\d+) /g,(m,i)=>slots[+i]||'');
+  }
+  // Render the rich command payloads the backend streams as a `response`.
   function aiRenderResponse(d){
-    const head = d.content ? mdToHtml(d.content) : '';
+    const head = d.content ? aiFormat(d.content) : '';
     if(d.type==='generated_image' && d.image) return head+`<div class="ai-media"><img src="data:image/png;base64,${d.image}" alt="generated"></div>`;
     if(d.type==='generated_video' && d.video) return head+`<div class="ai-media"><video controls src="data:video/mp4;base64,${d.video}"></video></div>`;
     if(d.type==='generated_audio' && d.audio){ const fmt=(d.format||'mp3').toLowerCase(); const mime=({mp3:'audio/mpeg',wav:'audio/wav',flac:'audio/flac',opus:'audio/ogg',aac:'audio/aac'})[fmt]||'audio/mpeg';
       return head+`<div class="ai-media"><audio controls src="data:${mime};base64,${d.audio}"></audio></div>`; }
+    if((d.type==='meme') && d.image) return head+`<div class="ai-media"><img src="data:image/png;base64,${d.image}" alt="meme"></div>`;
+    if(d.type==='mail_attachment' && d.data){ const mime=d.mime_type||'application/octet-stream';
+      if(mime.startsWith('image/')) return head+`<div class="ai-media"><img src="data:${mime};base64,${d.data}"></div>`;
+      return head+`<a class="ai-file" href="data:${mime};base64,${d.data}" download="${enc(d.filename||'attachment')}">📎 ${enc(d.filename||'attachment')}</a>`; }
     if(d.type==='images' && Array.isArray(d.images)){
       const items=d.images.slice(0,12).map(im=>{ const src=im.thumb_id?('/api/proxy-image/'+im.thumb_id):(im.img_src||im.thumbnail_src||im.thumbnail||''); const full=im.img_src||src; return src?`<img loading="lazy" src="${enc(src)}" data-full="${enc(full)}">`:''; }).join('');
       return head+`<div class="ai-imggrid">${items}</div>`;
@@ -2006,10 +2024,11 @@
     if(d.type==='search' && Array.isArray(d.results)){
       return head+'<div class="ai-search">'+d.results.map(r=>`<div class="ai-sr"><a href="${enc(r.url||'')}" target="_blank" rel="noopener">${enc(r.title||r.url||'')}</a><div class="muted small">${enc((r.content||'').slice(0,200))}</div></div>`).join('')+'</div>';
     }
-    if(d.type==='files' && Array.isArray(d.files)){
-      return head+'<div class="ai-files">'+d.files.map(f=>{ const u=f.url||f.path||''; const n=f.filename||f.name||u; return `<a class="ai-file" href="${enc(u)}" target="_blank" rel="noopener">📄 ${enc(n)}</a>`; }).join('')+'</div>';
+    if((d.type==='files'||d.type==='saved_searches'||d.type==='reminders') && Array.isArray(d.files||d.saved_searches||d.reminders)){
+      const arr=d.files||d.saved_searches||d.reminders;
+      return head+'<div class="ai-files">'+arr.map(f=>{ const u=f.url||f.path||''; const n=f.filename||f.name||f.query||f.text||u||'item'; return u?`<a class="ai-file" href="${enc(u)}" target="_blank" rel="noopener">📄 ${enc(n)}</a>`:`<span class="ai-file">${enc(n)}</span>`; }).join('')+'</div>';
     }
-    return head || mdToHtml(d.text||d.message||'');   // graceful fallback: never drop a payload
+    return head || aiFormat(d.text||d.message||'');   // graceful fallback: never drop a payload
   }
   async function aiAddFiles(files){
     for(const f of files){

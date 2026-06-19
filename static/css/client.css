@@ -610,3 +610,4 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .tag-chip.disc{background:linear-gradient(135deg,rgba(0,255,255,.10),rgba(255,0,255,.08));border-color:var(--line)}
 .tag-chip.disc:hover{border-color:var(--neon2);color:#fff}
 .tag-chip.disc .disc-ic{margin-right:2px}
+.ai-magnet{display:inline-block;margin:4px 0;background:linear-gradient(135deg,var(--neon),var(--neon2));color:#fff;border:none;border-radius:9px;padding:7px 13px;font-weight:600;cursor:pointer;font-size:14px}
