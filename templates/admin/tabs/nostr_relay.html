@@ -2,6 +2,17 @@
 <div class="tab-content" id="tab-relay">
 
     <fieldset>
+        <legend>Datastore migration (Nostr-as-DB)</legend>
+        <p class="muted small">Copy app data into the relay's event store. AI notes are encrypted
+        kind-30078 docs (not timeline posts). Settings migrate now; chats/users follow.</p>
+        <div class="form-group" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <button type="button" class="btn-secondary btn-small" onclick="migrateNostr()">⬆️ Migrate settings → relay</button>
+            <button type="button" class="btn-secondary btn-small" onclick="purgeNostrNotes()">🗑️ Delete AI notes (relay)</button>
+            <span id="nostr-migrate-out" class="muted small"></span>
+        </div>
+    </fieldset>
+
+    <fieldset>
         <legend>Built-in Nostr Relay (Web of Trust)</legend>
         <div class="form-group">
             <label for="nostr_relay_enabled">

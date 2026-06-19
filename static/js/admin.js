@@ -262,6 +262,25 @@ async function updateStorageQuota(userId, username) {
     }
 }
 
+async function migrateNostr() {
+    const out = document.getElementById('nostr-migrate-out');
+    if (out) out.textContent = 'migrating…';
+    try {
+        const r = await csrfFetch('/api/admin/nostr-migrate', { method: 'POST' }).then(r => r.json());
+        if (out) out.textContent = r.ok
+            ? `✓ settings: wrote ${r.settings.written}/${r.settings.db}, ${r.settings.missing.length} missing`
+            : ('failed: ' + (r.error || ''));
+    } catch (e) { if (out) out.textContent = 'migration failed'; }
+}
+async function purgeNostrNotes() {
+    if (!confirm('Delete the AI app-data notes (settings/etc.) from the relay store? Users\' own content is not touched.')) return;
+    const out = document.getElementById('nostr-migrate-out');
+    if (out) out.textContent = 'deleting…';
+    try {
+        const r = await csrfFetch('/api/admin/nostr-purge', { method: 'POST' }).then(r => r.json());
+        if (out) out.textContent = r.ok ? `✓ deleted ${r.removed} AI note(s)` : ('failed: ' + (r.error || ''));
+    } catch (e) { if (out) out.textContent = 'delete failed'; }
+}
 async function updateCapabilities(userId, username) {
     const cap = (k) => document.getElementById(`cap_${k}_${userId}`).checked;
     const params = new URLSearchParams({

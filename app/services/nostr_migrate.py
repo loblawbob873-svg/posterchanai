@@ -55,3 +55,19 @@ async def settings_all(port: int, operator_seckey: bytes) -> dict:
     for d, v in docs.items():
         out[d[len(store.NS_SETTING):]] = v.get("value") if isinstance(v, dict) else v
     return out
+
+
+async def purge_app_docs(port: int, operator_seckey: bytes, prefix: str = "pcai:") -> int:
+    """Delete the operator-signed app-data docs (kind-30078, `pcai:` d-tags) from the relay — the
+    'delete AI notes' action for testing / re-running the migration. Returns how many were removed.
+    (User-signed content like chats uses each user's own key and isn't touched here.)"""
+    docs = await store.list_docs(port, prefix, seckey=operator_seckey, encrypt=False)  # keys only
+    removed = 0
+    for d in docs.keys():
+        try:
+            if await store.delete_doc(port, operator_seckey, d):
+                removed += 1
+        except Exception as e:
+            logger.warning("[migrate] purge of %s failed: %s", d, e)
+    logger.info("[migrate] purged %d app-data doc(s) under %s", removed, prefix)
+    return removed
