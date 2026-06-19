@@ -153,6 +153,7 @@ async function loadUsers() {
         if (response.ok) {
             const users = await response.json();
             const list = document.getElementById('userList');
+            if (!list) return;   // Users tab retired — accounts managed from the Nostr client
             list.innerHTML = users.map(u => {
                 const quota_mb = u.storage_quota > 0 ? (u.storage_quota / (1024 * 1024)).toFixed(1) : '∞';
                 return `
@@ -378,7 +379,8 @@ async function generateThumbnailsForUser(userId, username) {
 }
 
 // Create user
-document.getElementById('createUserForm').addEventListener('submit', async (e) => {
+// Users tab retired — guard so a missing #createUserForm doesn't abort the whole script.
+document.getElementById('createUserForm')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const username = document.getElementById('newUsername').value;
     const password = document.getElementById('newPassword').value;
