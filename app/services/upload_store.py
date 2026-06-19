@@ -8,13 +8,12 @@ upload-consuming feature keeps working — this only adds encrypted at-rest stor
 (via the storage proxy that Blossom already uses).
 """
 
-import base64
 import logging
 
 from . import nostr_store as store
 from .nostr_store import user_storage_seckey
-from .nostr import nip44, bip340
-from . import blossom_service
+from .nostr import bip340
+from . import blossom_service, blobcrypt
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +23,7 @@ async def store_encrypted(db, user, conv_id: int, filename: str, data: bytes, mi
     metadata ref tied to the conversation. Returns the ref ({sha256,name,mime}) or None on failure."""
     try:
         sk = user_storage_seckey(db, user)
-        ct = nip44.encrypt_self(sk, base64.b64encode(data).decode()).encode()   # ASCII ciphertext
+        ct = blobcrypt.encrypt(sk, data)          # AES-256-GCM (handles large files)
         pub = bip340.pubkey_from_seckey(sk).hex()
         desc = await blossom_service.save_blob(db, pub, ct, "application/octet-stream")
         sha = desc.get("sha256")
@@ -48,7 +47,7 @@ async def read_decrypted(db, user, sha256: str) -> bytes | None:
     ct = await blossom_service.read_full(db, blob)
     if not ct:
         return None
-    return base64.b64decode(nip44.decrypt_self(sk, ct.decode()))
+    return blobcrypt.decrypt(sk, ct)
 
 
 def store_port(db) -> int:

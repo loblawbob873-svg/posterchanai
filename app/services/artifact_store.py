@@ -7,12 +7,11 @@ the ciphertext from Blossom and decrypts it — so existing `/api/files/...` URL
 plaintext never hits disk. Blossom still uses the storage proxy it's configured with.
 """
 
-import base64
 import logging
 
 from .nostr_store import user_storage_seckey
-from .nostr import nip44, bip340
-from . import blossom_service
+from .nostr import bip340
+from . import blossom_service, blobcrypt
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +20,7 @@ async def save_bytes(db, user, conv_id: int, data: bytes, ext: str) -> str | Non
     """Encrypt + store an artifact in Blossom; return an image_path the chat references (+ serves)."""
     try:
         sk = user_storage_seckey(db, user)
-        ct = nip44.encrypt_self(sk, base64.b64encode(data).decode()).encode()
+        ct = blobcrypt.encrypt(sk, data)          # AES-256-GCM (handles large images/files)
         pub = bip340.pubkey_from_seckey(sk).hex()
         desc = await blossom_service.save_blob(db, pub, ct, "application/octet-stream")
         sha = desc.get("sha256")
@@ -44,4 +43,4 @@ async def read_bytes(db, user, sha256: str) -> bytes | None:
     ct = await blossom_service.read_full(db, blob)
     if not ct:
         return None
-    return base64.b64decode(nip44.decrypt_self(sk, ct.decode()))
+    return blobcrypt.decrypt(sk, ct)
