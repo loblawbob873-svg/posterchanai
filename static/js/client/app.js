@@ -2074,6 +2074,17 @@
     if(!_setRelays.length) _setRelays = [''];
     feed.innerHTML = `<div class="settings">
       <section class="set-card">
+        <div class="set-head"><div><div class="set-title">Account</div>
+          <div class="muted small">${enc(ME.npub.slice(0,20))}…</div></div></div>
+        <div class="set-body">
+          <div class="set-actions">
+            <button class="btn btn-ghost small" id="set-sync-posts">⤓ Sync my posts to this relay</button>
+            ${IS_ADMIN?`<a class="btn btn-ghost small" href="/admin" target="_blank">🛠 Admin Panel</a>`:''}
+          </div>
+          <div class="muted small" id="set-sync-status">Pulls your posts from other relays into this one.</div>
+        </div>
+      </section>
+      <section class="set-card">
         <div class="set-head">
           <div><div class="set-title">Relays</div>
             <div class="muted small">By default this app uses the built-in relay. Turn this on to connect to your own relays instead — events from them are signature-verified.</div></div>
@@ -2112,6 +2123,14 @@
     drawRelayRows();
     const syncRelays=()=>{ _setRelays = $$('#set-relay-list .relay-row input').map(i=>i.value.trim()); };
 
+    { const sp=$('#set-sync-posts'); if(sp) sp.onclick=async()=>{
+        const st=$('#set-sync-status'); if(st) st.textContent='syncing… pulling your posts from other relays.';
+        try{ const auth=await sign(27235,'sync-posts',[['p',ME.pubkey]]);
+          const r=await fetch('/client/sync-posts',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
+          if(st) st.textContent = r.ok ? '✓ Sync started — your posts will appear shortly.' : ('failed: '+(r.error||''));
+        }catch(_){ if(st) st.textContent='sync failed'; }
+      }; }
     $('#set-relays-on').onchange=e=>$('#set-relays-body').classList.toggle('disabled', !e.target.checked);
     $('#set-blossom-on').onchange=e=>$('#set-blossom-body').classList.toggle('disabled', !e.target.checked);
     $('#set-relay-add').onclick=()=>{ syncRelays(); _setRelays.push(''); drawRelayRows(); };

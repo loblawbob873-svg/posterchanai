@@ -583,6 +583,29 @@ async def ai_access(data: AiAccessReq, db: Session = Depends(get_db)):
     return JSONResponse({"ok": True, "enabled": bool(data.grant)})
 
 
+# ----- sync my posts to this relay (backfill the user's own Nostr history) -----
+class SyncPostsReq(BaseModel):
+    pubkey: str
+    auth: str            # base64 signed event BY this pubkey (proves ownership)
+
+
+@router.post("/sync-posts")
+async def sync_posts(data: SyncPostsReq, db: Session = Depends(get_db)):
+    """Pull the user's OWN Nostr history (from the upstream relays) into this relay's store, so their
+    posts from other clients show up here. (Merged from the old 'sync my posts to the relay' setting.)"""
+    pk = nostr_service.to_pubkey_hex(data.pubkey)
+    if not pk:
+        return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
+    if not _verify_self_auth(data.auth, pk):
+        return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
+    try:
+        from app.services.nostr_relay.thread import trigger_backfill
+        trigger_backfill(pk)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+    return JSONResponse({"ok": True})
+
+
 # ----- auto NIP-05 name on signup -----
 class ClaimNip05(BaseModel):
     pubkey: str
