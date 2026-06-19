@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 from app.database import get_db, SessionLocal
 from app.models import User, Conversation, Message, Setting
 from app.schemas import ConversationCreate, ConversationResponse, ConversationWithMessages, MessageResponse
-from app.auth import get_current_user, get_user_from_websocket
+from app.auth import get_current_user, get_user_from_websocket, get_ai_user
 from app.services.chat_service import ChatService
 from app.services.command_service import CommandService
 from app.services.storage_service import StorageService
@@ -130,7 +130,7 @@ def list_conversations(
 def create_conversation(
     data: ConversationCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_ai_user)   # starting a chat needs AI access
 ):
     conversation = Conversation(
         user_id=current_user.id,
@@ -710,6 +710,12 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
         if not user:
             await websocket.send_json({"type": "error", "message": "Please log in again"})
             await websocket.close(code=4001)
+            return
+        # AI gate: admins always; everyone else needs the admin-granted can_ai flag (Nostr-signup
+        # users start gated and request access). Enforced here so the UI gate isn't the only check.
+        if not (getattr(user, "is_admin", False) or getattr(user, "can_ai", False)):
+            await websocket.send_json({"type": "error", "message": "AI access not enabled — request access and an admin will approve."})
+            await websocket.close(code=4003)
             return
 
         # Verify conversation belongs to user (eagerly load messages to avoid N+1 queries)

@@ -1787,11 +1787,13 @@
       ['message','✉ Message'],
       ['mute', MUTED.has(pk)?'🔊 Unmute':'🔇 Mute'],
     ];
-    let blossomGranted=false;
+    let blossomGranted=false, aiGranted=false;
     if(IS_ADMIN){
-      // admin extras: toggle this account's Blossom upload access + relay block. Fetch the current
-      // whitelist state so the item reads Grant vs Revoke.
+      // admin extras: toggle this account's AI + Blossom access + relay block. Fetch current state
+      // so each item reads Grant vs Revoke.
+      try{ const r=await fetch('/client/ai-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); aiGranted=!!(r&&r.enabled); }catch(_){}
       try{ const r=await fetch('/client/blossom-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); blossomGranted=!!(r&&r.whitelisted); }catch(_){}
+      items.push(['ai', aiGranted?'🤖 Revoke AI access':'🤖 Grant AI access']);
       items.push(['blossom', blossomGranted?'🌸 Revoke Blossom access':'🌸 Grant Blossom access']);
       items.push(['block','🚫 Block (relay)','danger']);
     }
@@ -1799,9 +1801,20 @@
       if(a==='follow'){ await toggleFollow(pk); renderProfileView(pk); return; }
       if(a==='message'){ switchView('messages'); setTimeout(()=>{ if(!dmPeers.has(pk))dmPeers.set(pk,[]); openDm(pk); },50); return; }
       if(a==='mute'){ await toggleMute(pk); renderProfileView(pk); return; }
+      if(a==='ai') return toggleAiAccess(pk, !aiGranted);
       if(a==='blossom') return toggleBlossomAccess(pk, !blossomGranted);
       if(a==='block') return doBlock(pk);
     });
+  }
+  // admin: grant/revoke this account's AI access (the can_ai flag). Signed like doBlock.
+  async function toggleAiAccess(pk, grant){
+    if(!IS_ADMIN) return;
+    try{
+      const auth = await sign(27235, 'ai-access', [['action', grant?'grant':'revoke'],['p',pk]]);
+      const r = await fetch('/client/ai-access', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ target: pk, grant, auth: btoa(JSON.stringify(auth)) }) }).then(r=>r.json());
+      toast(r.ok ? (grant?'granted AI access 🤖':'revoked AI access') : ('failed: '+(r.error||'')));
+    }catch(e){ toast('AI access change failed'); }
   }
   // admin: grant/revoke this account's Blossom upload access (adds/removes its npub from the
   // blossom_whitelist setting — Admin → Blossom). Signed like doBlock so the server checks admin.

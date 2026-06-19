@@ -547,6 +547,42 @@ async def blossom_access(data: BlossomAccessReq, db: Session = Depends(get_db)):
     return JSONResponse({"ok": True, "whitelisted": data.grant, "count": len(cur)})
 
 
+# ----- AI access (admin approves a user's AI request from the client profile menu) -----
+class AiAccessReq(BaseModel):
+    target: str          # npub/hex to grant/revoke
+    grant: bool = True
+    auth: str            # base64 signed admin event (p-tags target), same proof as /block
+
+
+@router.get("/ai-access")
+async def ai_access_status(pubkey: str, db: Session = Depends(get_db)):
+    """Is AI enabled for this account? Drives Grant vs Revoke in the client profile menu."""
+    h = nostr_service.to_pubkey_hex(pubkey)
+    if not h:
+        return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
+    u = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(h)).first()
+    return JSONResponse({"ok": True, "exists": bool(u),
+                         "enabled": bool(u and (u.is_admin or u.can_ai))})
+
+
+@router.post("/ai-access")
+async def ai_access(data: AiAccessReq, db: Session = Depends(get_db)):
+    """Admin-only: grant/revoke a user's AI access (the can_ai flag). The user must have signed in
+    to the AI app at least once (so a User row exists for their npub)."""
+    target = nostr_service.to_pubkey_hex(data.target)
+    if not target:
+        return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
+    if not _verify_admin_auth(db, data.auth, target):
+        return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
+    u = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(target)).first()
+    if not u:
+        return JSONResponse({"ok": False, "error": "that user hasn't opened the AI app yet"}, status_code=404)
+    u.can_ai = bool(data.grant)
+    db.commit()
+    logger.info("[client] AI access %s for %s", "granted" if data.grant else "revoked", u.username)
+    return JSONResponse({"ok": True, "enabled": bool(data.grant)})
+
+
 # ----- auto NIP-05 name on signup -----
 class ClaimNip05(BaseModel):
     pubkey: str

@@ -127,10 +127,39 @@ def nostr_login(data: NostrLogin, response: Response, db: Session = Depends(get_
     }
 
 
+async def _notify_admins_ai_request(db: Session, requester: User, npub: str) -> None:
+    """DM every admin (with a linked npub) over Nostr that this user wants AI access, sent from the
+    node operator's key via the local relay (kind-4 NIP-04 — shows in their client's Messages)."""
+    from app.services.nostr import nostr_service, nip04
+    from app.services.nostr.event import build_event
+    from app.services import nostr_store
+    op = db.query(User).filter(User.is_admin == True, User.nostr_nsec.isnot(None)).first()  # noqa: E712
+    if not op:
+        return
+    try:
+        op_sk = nostr_service.decode_seckey(op.nostr_nsec)
+    except Exception:
+        return
+    prow = db.query(Setting).filter(Setting.key == "nostr_relay_port").first()
+    port = int(prow.value) if prow and prow.value else 3052
+    text = (f"🤖 AI access requested by {requester.username} ({npub}). "
+            f"Approve from their profile ☰ menu or Admin → Users.")
+    admins = db.query(User).filter(User.is_admin == True, User.nostr_npub.isnot(None)).all()  # noqa: E712
+    for a in admins:
+        apk = nostr_service.to_pubkey_hex(a.nostr_npub)
+        if not apk:
+            continue
+        try:
+            ev = build_event(op_sk, 4, nip04.encrypt(op_sk, bytes.fromhex(apk), text), tags=[["p", apk]])
+            await nostr_store._ws_publish(port, ev)
+        except Exception as e:
+            logger.debug("[auth] ai-request DM to %s failed: %s", apk[:8], e)
+
+
 @router.post("/ai-request")
-def ai_request(data: NostrLogin, db: Session = Depends(get_db)):
+async def ai_request(data: NostrLogin, db: Session = Depends(get_db)):
     """A Nostr-signup user requests AI access; an admin approves it (profile ☰ menu / Admin → Users).
-    Records the pending request (visible to admins) — see can_ai flow."""
+    Records the pending request and DMs the admins over Nostr."""
     from app.services.nostr import nostr_service
     from app.models import UserSetting
     pk = nostr_service.to_pubkey_hex(data.pubkey)
@@ -152,7 +181,10 @@ def ai_request(data: NostrLogin, db: Session = Depends(get_db)):
         db.add(UserSetting(user_id=user.id, key="ai_requested", value=str(int(time.time()))))
     db.commit()
     logger.info("[auth] AI access requested by %s (%s)", user.username, npub[:16])
-    # TODO(next): notify admins over Nostr (DM/notification event) — needs server-side NIP-17 send.
+    try:
+        await _notify_admins_ai_request(db, user, npub)
+    except Exception as e:
+        logger.warning("[auth] ai-request admin notify failed: %s", e)
     return {"ok": True}
 
 
