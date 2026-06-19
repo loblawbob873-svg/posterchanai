@@ -195,11 +195,10 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 .act .n{font-variant-numeric:tabular-nums;font-size:13px;font-weight:600}
 
 /* compose / modal */
-.modal-bg{position:fixed;inset:0;background:rgba(4,2,12,.72);backdrop-filter:blur(4px);z-index:100;display:grid;place-items:start center;padding:8vh 16px;overflow:auto}
-.modal{width:min(720px,96vw);border-radius:18px;padding:22px}
+.modal-bg{position:fixed;inset:0;background:rgba(4,2,12,.72);backdrop-filter:blur(4px);z-index:100;display:grid;place-items:center;padding:24px 16px;overflow:auto}
+.modal{width:min(720px,96vw);max-height:92vh;overflow:auto;border-radius:18px;padding:22px}
 .modal h3{margin:0 0 12px;letter-spacing:1px;font-size:21px}
 .modal textarea{min-height:220px;resize:vertical;font-size:15px}
-.modal-bg{padding-top:6vh}
 .cmp-tabs{display:flex;gap:6px;margin-bottom:6px}
 .cmp-tab{background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:9px 9px 0 0;padding:7px 15px;cursor:pointer;font-weight:600;font-size:15px}
 .cmp-tab.active{color:#fff;border-color:var(--neon);background:rgba(0,255,255,.12)}
@@ -362,6 +361,8 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
   .media-grid{gap:3px;padding:3px}   /* tighter phone gallery, still 3 across */
   .media-grid img,.media-grid video{border-radius:6px}
   .modal{padding:16px}
+  /* mobile: top-align the modal so the on-screen keyboard doesn't shove it off-center */
+  .modal-bg{place-items:start center;padding:6vh 12px}
   .auth-card{padding:22px}
   /* compose: drop the growing spacer so every tool (incl. 💾 Draft) flows + wraps visibly
      instead of being pushed off the narrow modal and clipped by overflow-x:hidden */
