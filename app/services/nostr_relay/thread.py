@@ -214,11 +214,12 @@ def _read_config() -> dict:
             "sync_idle_interval_sec": gi("nostr_relay_sync_idle_interval_sec", 1800),
             "backfill_sec": gi("nostr_relay_backfill_hours", 48) * 3600,  # initial history depth
             "overlap_sec": gi("nostr_relay_overlap_sec", 120),
-            # profile (0), contacts (3), notes (1), reposts (6), reactions (7), NIP-22 comments
-            # (1111), NIP-65 relay list (10002), NIP-23 long-form (30023). Including 0/3/10002 lets
-            # the firehose stream WoT members' IDENTITY metadata too, so the relay serves profiles
-            # without a separate fetch — same stream-and-filter path, no extra crawl.
-            "ingest_kinds": [int(k) for k in (g("nostr_relay_ingest_kinds", "0,1,3,6,7,1111,9735,10002,30023")
+            # profile (0), contacts (3), notes (1), reposts (6), reactions (7), zap receipts (9735),
+            # NIP-22 comments (1111), NIP-65 relay list (10002), NIP-23 long-form (30023), NIP-53
+            # live events (30311). Including 0/3/10002 lets the firehose stream WoT members' IDENTITY
+            # metadata too, so the relay serves profiles without a separate fetch — same
+            # stream-and-filter path, no extra crawl. (30311 powers the client's Streams view.)
+            "ingest_kinds": [int(k) for k in (g("nostr_relay_ingest_kinds", "0,1,3,6,7,1111,9735,10002,30023,30311")
                              .replace(" ", "").split(",")) if k.strip().lstrip("-").isdigit()],
             "author_batch": gi("nostr_relay_author_batch", 200),
             # Politeness / anti-blast: pace upstream requests and outbox publishes so we don't

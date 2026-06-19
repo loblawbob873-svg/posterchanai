@@ -6,8 +6,9 @@
   const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
   const enc = s => (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const LOGO = '/static/posterchan-relay.png';
+  const isDesktop = () => !window.matchMedia('(max-width:820px)').matches;   // pop-out player is desktop-only
 
-  let CFG = {}, ME = null, FOLLOWS = new Set(), MUTED = new Set(), PINNED = new Set(), VIEW = 'home', IS_ADMIN = false;
+  let CFG = {}, ME = null, FOLLOWS = new Set(), MUTED = new Set(), PINNED = new Set(), BOOKMARKS = new Set(), VIEW = 'home', IS_ADMIN = false;
   let signer = null;
   const subs = {};                 // view -> subId
   const seenNotif = { last: 0 };
@@ -27,6 +28,9 @@
       signEvent: (tpl) => Relay.worker.call('sign', { event: tpl }),
       nip04enc: (peer, txt) => Relay.worker.call('nip04enc', { peer, text: txt }).then(r=>r.ct),
       nip04dec: (peer, ct) => Relay.worker.call('nip04dec', { peer, ct }).then(r=>r.pt),
+      // NIP-17 gift-wrapped DMs (local-key only — needs the secret key the extension never exposes)
+      nip17wrap: (peer, text) => Relay.worker.call('nip17wrap', { peer, text }),
+      nip17unwrap: (wrap) => Relay.worker.call('nip17unwrap', { wrap }).then(r=>r.rumor),
     };
   }
   // build + sign an event from a template
@@ -138,9 +142,12 @@
     $('#me-card').onclick = ()=>renderProfileView(ME.pubkey);
     $$('.nav-item[data-view]').forEach(b=> b.onclick = ()=>switchView(b.dataset.view));
     $('#btn-compose').onclick = ()=>compose(); $('#btn-compose-m').onclick = ()=>compose();
+    // mobile overflow sheet — delegated so the tap is caught even if the node is re-created
+    document.addEventListener('click', e=>{ if(e.target.closest && e.target.closest('#btn-more-m')){ e.preventDefault(); moreMenu(); } });
     $('#btn-refresh').onclick = ()=>renderView(true);
     bindSearch();
     bindFeedActions();
+    $('#feed').addEventListener('scroll', onFeedScroll, { passive:true });   // infinite scroll-back
     bumpDraft();   // show the saved-drafts count on the nav badge
     // YouTube facade → load the real player iframe on click (kept out of the timeline until then
     // for performance), and don't let the click bubble up to open the note thread.
@@ -153,7 +160,7 @@
     });
     // Run initial queries only once the relay socket is open (otherwise the REQs are dropped
     // and profiles/follows never resolve — names would show as raw npubs).
-    Relay.onReady = ()=>{ fetchFollows(); fetchMutes(); fetchPins(); fetchMyProfile(); watchNotifications();
+    Relay.onReady = ()=>{ fetchFollows(); fetchMutes(); fetchPins(); fetchBookmarks(); fetchMyProfile(); watchNotifications();
       setTimeout(()=>ensureDMs(), 3000); setTimeout(loadRightbar, 1500); };   // DMs + rightbar load after the timeline
     Relay.connect(CFG.relay_url);
     renderMe();
@@ -228,6 +235,20 @@
     have?PINNED.delete(id):PINNED.add(id); toast(have?'unpinned':'pinned 📌');
     if(VIEW==='profile') renderProfileView(ME.pubkey);
   }
+  // ---------- bookmarks (NIP-51 kind 10003 — replaceable e-tag list) ----------
+  async function fetchBookmarks(){
+    const evs=await Relay.query([{ authors:[ME.pubkey], kinds:[10003], limit:1 }]);
+    if(evs.length){ const e=evs.sort((a,b)=>b.created_at-a.created_at)[0];
+      BOOKMARKS=new Set(e.tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1])); }
+    if(VIEW==='bookmarks') renderBookmarks();
+    else try{ decorateCounts(); }catch(_){}   // light up the 🔖 on any posts already on screen
+  }
+  async function toggleBookmark(id, btn){
+    const have=BOOKMARKS.has(id); await _editEList(10003, id, !have);
+    have?BOOKMARKS.delete(id):BOOKMARKS.add(id); toast(have?'removed bookmark':'bookmarked 🔖');
+    if(btn) btn.classList.toggle('on', !have);
+    if(VIEW==='bookmarks') renderBookmarks();
+  }
   const _profQ = new Set(); let _profT = null;
   const _profMiss = new Map();   // pubkey -> ts of a lookup that returned nothing (throttle retries)
   const _PROF_MISS_TTL = 300000; // 5 min before re-asking the relay for a not-found profile
@@ -264,10 +285,11 @@
   function switchView(v){
     VIEW = v;
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
-    $('#view-title').textContent = { home:'Home', global:'Global', notifications:'Notifications', messages:'Messages', drafts:'Drafts', blossom:'Files', profile:'Profile' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Global', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', streams:'Streams', blossom:'Files', profile:'Profile' }[v]||v;
     renderView(true);
   }
   function renderView(reset){
+    cleanupInlineStream();   // leaving a view tears down the inline stream player (unless popped out)
     const feed = $('#feed');
     feed.classList.toggle('feed-dm', VIEW==='messages');   // full-height messages layout (no :has needed)
     if (reset) feed.innerHTML = '<div class="spinner"></div>';
@@ -275,6 +297,9 @@
     if (VIEW==='notifications') return renderNotifications();
     if (VIEW==='messages') return renderMessages();
     if (VIEW==='drafts') return renderDrafts();
+    if (VIEW==='bookmarks') return renderBookmarks();
+    if (VIEW==='articles') return renderArticles();
+    if (VIEW==='streams') return renderStreams();
     if (VIEW==='blossom') return renderBlossom();
     if (VIEW==='profile') return renderProfile(ME.pubkey);
   }
@@ -284,8 +309,11 @@
     if (VIEW==='home') return [{ kinds:[1,6], authors:[...FOLLOWS], limit:80 }];
     return [{ kinds:[1,6], limit:120 }];
   }
+  // pagination state for the home/global timelines (infinite scroll-back via `until`)
+  let _tl = { oldest:0, loading:false, done:false, pages:0 };
   function renderTimeline(view, reset){
     const fn = view==='home' ? (ev=>FOLLOWS.has(ev.pubkey)) : null;
+    if(reset) _tl = { oldest:0, loading:false, done:false, pages:0 };
     _drawTimeline(false);
     if (subs[view]) Relay.close(subs[view]);
     subs[view] = Relay.subscribe(timelineFilter(), {
@@ -311,7 +339,9 @@
     const atTop=feed.scrollTop<100, beforeH=feed.scrollHeight;
     feed.insertBefore(frag, feed.firstChild);
     if(!atTop) feed.scrollTop += (feed.scrollHeight - beforeH);   // keep scroll stable on prepend
-    const notes=[...feed.querySelectorAll('.note')]; for(let i=200;i<notes.length;i++) notes[i].remove();  // cap feed
+    // cap the feed at 200 — but NOT once the user has paginated older posts, or we'd delete the
+    // scroll-back history they just loaded as soon as a new live note arrives at the top.
+    if(_tl.pages===0){ const notes=[...feed.querySelectorAll('.note')]; for(let i=200;i<notes.length;i++) notes[i].remove(); }
     decorateProfiles(); hydrateLinkCards(feed);
   }
   function _drawTimeline(preserveScroll){
@@ -321,7 +351,54 @@
     const fn = VIEW==='home' ? (e=>FOLLOWS.has(e.pubkey)) : null;
     const notes = Store.feed(e=>(!fn||fn(e))&&!MUTED.has(e.pubkey)).filter(e=>!isReply(e)).slice(0,200);
     feed.innerHTML = notes.length ? notes.map(noteHtml).join('') : `<div class="empty">No posts yet. ${VIEW==='home'?'Follow people or check Global.':''}</div>`;
+    // seed the scroll-back cursor from the initial draw only — once the user has paged older, a late
+    // EOSE redraw must NOT move the cursor forward (it would re-query an already-loaded range)
+    if(notes.length && _tl.pages===0) _tl.oldest = notes[notes.length-1].created_at;
     hydrate(feed); if(preserveScroll) feed.scrollTop=top;
+  }
+  // ---------- infinite scroll-back ----------
+  function onFeedScroll(){
+    const feed=$('#feed'); if(!feed) return;
+    if(feed.scrollTop + feed.clientHeight < feed.scrollHeight - 700) return;   // not near the bottom yet
+    if(VIEW==='home'||VIEW==='global') loadOlderTimeline();
+    else if(VIEW==='profile') loadOlderProfile();
+    else if(VIEW==='search') loadOlderSearch();
+  }
+  function loadSentinel(feed){
+    let s=feed.querySelector('.load-sentinel'); if(s) return s;
+    s=document.createElement('div'); s.className='load-sentinel'; s.innerHTML='<div class="spinner"></div>';
+    feed.appendChild(s); return s;
+  }
+  function clearSentinel(feed){ const s=feed.querySelector('.load-sentinel'); if(s) s.remove(); }
+  async function loadOlderTimeline(){
+    if(_tl.loading || _tl.done || !_tl.oldest) return;
+    _tl.loading=true; const view=VIEW; const feed=$('#feed'); loadSentinel(feed);
+    const until=_tl.oldest;
+    const filt = view==='home' ? [{ kinds:[1,6], authors:[...FOLLOWS], until:until-1, limit:50 }]
+                               : [{ kinds:[1,6], until:until-1, limit:60 }];
+    let evs=[]; try{ evs=await Relay.query(filt); }catch(_){}
+    clearSentinel(feed);
+    if(VIEW!==view){ _tl.loading=false; return; }   // user navigated away mid-fetch
+    evs.sort((a,b)=>b.created_at-a.created_at);
+    let minTs=until; const frag=document.createDocumentFragment();
+    for(const ev of evs){
+      Store.saveEvent(ev); needProfile(ev.pubkey);
+      if(ev.created_at<minTs) minTs=ev.created_at;
+      if(ev.kind===1 && isReply(ev)) continue;
+      if(MUTED.has(ev.pubkey)) continue;
+      if(view==='home' && !FOLLOWS.has(ev.pubkey)) continue;
+      // a repost (kind 6) renders with the ORIGINAL's data-id, so dedupe against that, not the
+      // repost's own id — otherwise a repost of an already-shown note appends a duplicate card.
+      const dispId = ev.kind===6 ? ((ev.tags.find(t=>t[0]==='e')||[])[1]||ev.id) : ev.id;
+      if(feed.querySelector('.note[data-id="'+dispId+'"]')) continue;   // already on screen
+      const div=document.createElement('div'); div.innerHTML=noteHtml(ev); const node=div.firstElementChild; if(node) frag.appendChild(node);
+    }
+    invalidateCounts();
+    if(frag.childElementCount){ feed.appendChild(frag); decorateProfiles(); hydrateLinkCards(feed); hydrateCounts(); }
+    _tl.pages++;
+    if(minTs<_tl.oldest) _tl.oldest=minTs;
+    if(!evs.length || minTs>=until) _tl.done=true;   // relay returned nothing older → end of feed
+    _tl.loading=false;
   }
   let _redrawT=null;
   function scheduleRedraw(){ if(_redrawT) return; _redrawT=setTimeout(()=>{ _redrawT=null; _drawTimeline(true); }, 350); }
@@ -342,6 +419,256 @@
     const feed=$('#feed'); const sp=feed.querySelector('.spinner'); if(sp)sp.remove(); const em=feed.querySelector('.empty'); if(em)em.remove();
     const div=document.createElement('div'); div.innerHTML=noteHtml(ev); const node=div.firstElementChild;
     if(node){ feed.insertBefore(node, feed.firstChild); hydrate(node.parentElement); }
+  }
+
+  // ---------- bookmarks timeline ----------
+  async function renderBookmarks(){
+    const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
+    const ids=[...BOOKMARKS];
+    if(!ids.length){ feed.innerHTML='<div class="empty">No bookmarks yet. Tap 🔖 on a post to save it here.</div>'; return; }
+    const missing=ids.filter(id=>!Store.get(id));
+    if(missing.length){ try{ const evs=await Relay.query([{ ids:missing }]); evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); }); }catch(_){} }
+    if(VIEW!=='bookmarks') return;   // user navigated away while fetching
+    const notes=ids.map(id=>Store.get(id)).filter(Boolean).sort((a,b)=>b.created_at-a.created_at);
+    feed.innerHTML = notes.length ? notes.map(noteHtml).join('')
+      : '<div class="empty">Couldn\'t load your bookmarked posts from the relay.</div>';
+    hydrate(feed);
+  }
+
+  // ---------- minimal, SAFE markdown renderer (for NIP-23 articles) ----------
+  // Everything is HTML-escaped FIRST, so author content can't inject markup; the markdown
+  // transforms then run over the escaped text. URLs in links/images are scheme-checked so a
+  // `javascript:` payload can never become an href/src.
+  function _mdUrl(u){ u=(u||'').trim(); return /^(https?:\/\/|\/)/i.test(u) ? u : ''; }
+  function mdInline(s){
+    s=s.replace(/`([^`]+)`/g,(m,c)=>`<code>${c}</code>`);
+    s=s.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;[^)]*)?\)/g,(m,alt,url)=>{ const u=_mdUrl(url); return u?`<img src="${u}" alt="${alt}" loading="lazy">`:m; });
+    s=s.replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+&quot;[^)]*)?\)/g,(m,txt,url)=>{ const u=_mdUrl(url); return u?`<a href="${u}" target="_blank" rel="noopener">${txt}</a>`:m; });
+    s=s.replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>').replace(/__([^_]+)__/g,'<b>$1</b>');
+    s=s.replace(/(^|[^*])\*([^*\s][^*]*?)\*(?!\*)/g,'$1<i>$2</i>');
+    s=s.replace(/(^|\s)_([^_\s][^_]*?)_(?=\s|$)/g,'$1<i>$2</i>');
+    // bare URLs not already inside an href/src
+    s=s.replace(/(^|[^"\/>=])(https?:\/\/[^\s<]+)/g,(m,pre,url)=>`${pre}<a href="${url}" target="_blank" rel="noopener">${url}</a>`);
+    return s;
+  }
+  function mdToHtml(src){
+    const lines=enc(src||'').split('\n'); let html='', i=0, para=[];
+    const flush=()=>{ if(para.length){ html+='<p>'+mdInline(para.join('<br>'))+'</p>'; para=[]; } };
+    while(i<lines.length){
+      const ln=lines[i];
+      if(/^```/.test(ln)){ flush(); i++; const code=[]; while(i<lines.length && !/^```/.test(lines[i])){ code.push(lines[i]); i++; } i++; html+='<pre><code>'+code.join('\n')+'</code></pre>'; continue; }
+      const h=ln.match(/^(#{1,6})\s+(.*)$/); if(h){ flush(); const lvl=Math.min(h[1].length+1,6); html+=`<h${lvl}>${mdInline(h[2])}</h${lvl}>`; i++; continue; }
+      if(/^\s*([-*_])\1\1+\s*$/.test(ln)){ flush(); html+='<hr>'; i++; continue; }
+      if(/^\s*&gt;\s?/.test(ln)){ flush(); const q=[]; while(i<lines.length && /^\s*&gt;\s?/.test(lines[i])){ q.push(lines[i].replace(/^\s*&gt;\s?/,'')); i++; } html+='<blockquote>'+mdInline(q.join('<br>'))+'</blockquote>'; continue; }
+      if(/^\s*[-*]\s+/.test(ln)){ flush(); const it=[]; while(i<lines.length && /^\s*[-*]\s+/.test(lines[i])){ it.push('<li>'+mdInline(lines[i].replace(/^\s*[-*]\s+/,''))+'</li>'); i++; } html+='<ul>'+it.join('')+'</ul>'; continue; }
+      if(/^\s*\d+\.\s+/.test(ln)){ flush(); const it=[]; while(i<lines.length && /^\s*\d+\.\s+/.test(lines[i])){ it.push('<li>'+mdInline(lines[i].replace(/^\s*\d+\.\s+/,''))+'</li>'); i++; } html+='<ol>'+it.join('')+'</ol>'; continue; }
+      if(/^\s*$/.test(ln)){ flush(); i++; continue; }
+      para.push(ln); i++;
+    }
+    flush(); return html;
+  }
+
+  // ---------- long-form articles (NIP-23, kind 30023) ----------
+  function artTime(e){ const p=parseInt((e.tags.find(t=>t[0]==='published_at')||[])[1],10); return p||e.created_at; }
+  // collapse to the newest event per (pubkey, d-tag) — 30023 is a parameterized replaceable event
+  function _dedupAddr(evs){
+    const m=new Map();
+    for(const e of evs){ const d=(e.tags.find(t=>t[0]==='d')||[])[1]||''; const k=e.pubkey+':'+d; const cur=m.get(k); if(!cur||cur.created_at<e.created_at) m.set(k,e); }
+    return [...m.values()];
+  }
+  async function renderArticles(){
+    const feed=$('#feed');
+    feed.innerHTML=`<div class="art-top"><button class="btn btn-neon small" id="art-new">✎ Write article</button></div><div id="art-list"><div class="spinner"></div></div>`;
+    $('#art-new').onclick=()=>renderArticleEditor();
+    let evs=[]; try{ evs=await Relay.query([{ kinds:[30023], limit:80 }]); }catch(_){}
+    evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
+    if(VIEW!=='articles') return;
+    const arts=_dedupAddr(evs).sort((a,b)=>artTime(b)-artTime(a));
+    const list=$('#art-list'); if(!list) return;
+    list.innerHTML = arts.length ? arts.map(articleCard).join('') : '<div class="empty">No articles yet. Tap “Write article” to publish the first one.</div>';
+    decorateProfiles();
+    $$('.article-card',list).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const a=Store.get(c.dataset.id); if(a) openArticle(a); });
+  }
+  function articleCard(e){
+    const p=profOf(e.pubkey); needProfile(e.pubkey);
+    const title=(e.tags.find(t=>t[0]==='title')||[])[1]||'(untitled)';
+    const summary=(e.tags.find(t=>t[0]==='summary')||[])[1]||'';
+    const img=(e.tags.find(t=>t[0]==='image')||[])[1]||'';
+    return `<article class="article-card" data-id="${e.id}" data-pk="${e.pubkey}">
+      ${img?`<img class="art-img" src="${enc(img)}" loading="lazy" onerror="this.remove()">`:''}
+      <div class="art-meta"><h3 class="art-title">${enc(title)}</h3>
+        ${summary?`<div class="art-sum">${enc(summary.slice(0,200))}</div>`:''}
+        <div class="art-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(artTime(e))}</span></div>
+      </div></article>`;
+  }
+  function openArticle(e){
+    VIEW='article'; $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='Article';
+    const feed=$('#feed'); const p=profOf(e.pubkey); needProfile(e.pubkey);
+    const title=(e.tags.find(t=>t[0]==='title')||[])[1]||'(untitled)';
+    const img=(e.tags.find(t=>t[0]==='image')||[])[1]||'';
+    const mine=e.pubkey===ME.pubkey;
+    feed.innerHTML=`<div class="article-view">
+      <button class="btn btn-ghost small" id="art-back">← Articles</button>
+      ${img?`<img class="av-banner" src="${enc(img)}" onerror="this.remove()">`:''}
+      <h1 class="av-title">${enc(title)}</h1>
+      <div class="av-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(artTime(e))}</span></div>
+      <div class="av-actions">
+        <button class="act actb ${BOOKMARKS.has(e.id)?'on':''}" id="av-bm" title="bookmark">🔖</button>
+        <button class="act actz" id="av-zap" title="zap">⚡</button>
+        ${mine?`<button class="act" id="av-edit" title="edit">✏</button>`:''}
+        <button class="act" id="av-copy" title="copy link">🔗</button>
+      </div>
+      <div class="markdown av-body">${mdToHtml(e.content)}</div>
+    </div>`;
+    $('#art-back').onclick=()=>switchView('articles');
+    $('#av-bm').onclick=ev=>toggleBookmark(e.id, ev.currentTarget);
+    $('#av-zap').onclick=()=>doZap(e.id, e.pubkey);
+    { const ed=$('#av-edit'); if(ed) ed.onclick=()=>renderArticleEditor(e); }
+    $('#av-copy').onclick=()=>{ try{ const naddr=NT().nip19.naddrEncode({ identifier:(e.tags.find(t=>t[0]==='d')||[])[1]||'', pubkey:e.pubkey, kind:30023 }); navigator.clipboard.writeText('nostr:'+naddr); toast('article link copied'); }catch(_){ navigator.clipboard.writeText(e.id); toast('id copied'); } };
+    feed.querySelectorAll('[data-prof]').forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
+    feed.querySelectorAll('.markdown img').forEach(im=> im.onclick=()=>openLightbox(im.currentSrc||im.src));
+    decorateProfiles();
+  }
+  function _insertAt(ta, text){ const s=ta.selectionStart||0, en=ta.selectionEnd||0; ta.value=ta.value.slice(0,s)+text+ta.value.slice(en); const c=s+text.length; ta.selectionStart=ta.selectionEnd=c; ta.focus(); }
+  function renderArticleEditor(existing){
+    VIEW='article'; $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent=existing?'Edit article':'Write article';
+    const feed=$('#feed'); const g=(k)=>existing?((existing.tags.find(t=>t[0]===k)||[])[1]||''):'';
+    feed.innerHTML=`<div class="article-editor">
+      <button class="btn btn-ghost small" id="ae-back">← Cancel</button>
+      <label class="fld">Title<input class="input" id="ae-title" placeholder="Article title" value="${enc(g('title'))}"></label>
+      <label class="fld">Summary<input class="input" id="ae-sum" placeholder="One-line summary (optional)" value="${enc(g('summary'))}"></label>
+      <label class="fld">Header image<div class="row"><input class="input" id="ae-img" placeholder="https://… (optional)" value="${enc(g('image'))}"><button class="btn btn-ghost small" id="ae-img-up">🖼 Upload</button></div></label>
+      <input type="file" id="ae-img-file" accept="image/*" hidden>
+      <div class="cmp-tabs"><button class="cmp-tab active" data-t="write">Write</button><button class="cmp-tab" data-t="preview">👁 Preview</button></div>
+      <div class="row cmp-tools"><button class="btn btn-ghost small" id="ae-insert">📎 Insert image</button><input type="file" id="ae-body-file" accept="image/*" multiple hidden><span class="spacer"></span><span class="muted small">Markdown</span></div>
+      <textarea id="ae-body" class="article-body" placeholder="Write your article in markdown…">${enc(existing?existing.content:'')}</textarea>
+      <div id="ae-preview" class="markdown article-preview hidden"></div>
+      <div class="row"><span class="muted small" id="ae-status"></span><span class="spacer"></span><button class="btn btn-neon" id="ae-pub">Publish ▶</button></div>
+    </div>`;
+    $('#ae-back').onclick=()=>switchView('articles');
+    const body=$('#ae-body');
+    $$('.cmp-tab',feed).forEach(b=> b.onclick=()=>{ $$('.cmp-tab',feed).forEach(x=>x.classList.toggle('active',x===b)); const pv=b.dataset.t==='preview'; body.classList.toggle('hidden',pv); const prev=$('#ae-preview'); prev.classList.toggle('hidden',!pv); if(pv) prev.innerHTML=mdToHtml(body.value)||'<div class="muted small">Nothing to preview.</div>'; });
+    $('#ae-img-up').onclick=()=>$('#ae-img-file').click();
+    $('#ae-img-file').onchange=async ev=>{ const f=ev.target.files[0]; if(!f)return; $('#ae-status').textContent='uploading image…'; try{ $('#ae-img').value=await uploadBlob(f); $('#ae-status').textContent='image uploaded'; }catch(err){ $('#ae-status').textContent='upload failed: '+err.message; } };
+    $('#ae-insert').onclick=()=>$('#ae-body-file').click();
+    $('#ae-body-file').onchange=async ev=>{ const files=[...ev.target.files]; for(let i=0;i<files.length;i++){ $('#ae-status').textContent=`uploading ${i+1}/${files.length}…`; try{ const url=await uploadBlob(files[i]); _insertAt(body, `\n![](${url})\n`); }catch(err){ $('#ae-status').textContent='upload failed: '+err.message; return; } } $('#ae-status').textContent=''; ev.target.value=''; };
+    $('#ae-pub').onclick=()=>publishArticle({ title:$('#ae-title').value.trim(), summary:$('#ae-sum').value.trim(), image:$('#ae-img').value.trim(), body:body.value, d:g('d') });
+  }
+  async function publishArticle({title, summary, image, body, d}){
+    if(!title){ toast('add a title'); return; }
+    if(!body.trim()){ toast('write something first'); return; }
+    const slug = d || ((title.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,60) || 'post') + '-' + Math.random().toString(36).slice(2,7));
+    const tags=[['d',slug],['title',title],['published_at',String(Math.floor(Date.now()/1000))]];
+    if(summary) tags.push(['summary',summary]);
+    if(image) tags.push(['image',image]);
+    mentionTags(body).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
+    $('#ae-status') && ($('#ae-status').textContent='publishing…');
+    try{ const r=await publish(30023, body, tags); if(r && r.ok===false){ toast('relay: '+(r.msg||'rejected')); if($('#ae-status'))$('#ae-status').textContent=''; } else { toast('article published'); switchView('articles'); } }
+    catch(e){ toast('publish failed: '+e.message); }
+  }
+
+  // ---------- live streams (NIP-53 Live Activities, kind 30311) ----------
+  function streamStatus(e){ return ((e.tags.find(t=>t[0]==='status')||[])[1]||'').toLowerCase(); }
+  function streamHost(e){ const h=e.tags.find(t=>t[0]==='p'&&(t[3]||'').toLowerCase()==='host'); return (h&&h[1])||e.pubkey; }
+  async function renderStreams(){
+    const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
+    let evs=[]; try{ evs=await Relay.query([{ kinds:[30311], limit:80 }]); }catch(_){}
+    evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
+    if(VIEW!=='streams') return;
+    const rank=e=>({live:0,planned:1,ended:2}[streamStatus(e)] ?? 3);
+    const streams=_dedupAddr(evs).sort((a,b)=> rank(a)-rank(b) || b.created_at-a.created_at);
+    feed.innerHTML = streams.length ? `<div class="stream-grid">${streams.map(streamCard).join('')}</div>` : '<div class="empty">No streams found yet.</div>';
+    decorateProfiles();
+    $$('.stream-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const s=Store.get(c.dataset.id); if(s) openStream(s); });
+  }
+  function streamCard(e){
+    const hpk=streamHost(e); const p=profOf(hpk); needProfile(hpk);
+    const title=(e.tags.find(t=>t[0]==='title')||[])[1]||'(untitled stream)';
+    const img=(e.tags.find(t=>t[0]==='image')||[])[1]||(e.tags.find(t=>t[0]==='thumbnail')||[])[1]||'';
+    const st=streamStatus(e);
+    const badge = st==='live'?'<span class="live-badge">● LIVE</span>' : st==='ended'?'<span class="ended-badge">ended</span>' : st==='planned'?'<span class="planned-badge">soon</span>' : '';
+    const viewers=(e.tags.find(t=>t[0]==='current_participants')||[])[1];
+    return `<article class="stream-card" data-id="${e.id}" data-pk="${hpk}">
+      <div class="stream-thumb">${img?`<img src="${enc(img)}" loading="lazy" onerror="this.parentElement.classList.add('noimg')">`:'<span class="stream-play">▶</span>'}${badge}</div>
+      <div class="stream-meta"><div class="stream-title">${enc(title)}</div>
+        <div class="art-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${hpk}">${enc(p.name||p.display_name||'anon')}</span>${viewers?`<span class="muted small">· ${enc(viewers)} watching</span>`:''}</div>
+      </div></article>`;
+  }
+  function openStream(e){
+    VIEW='stream'; $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='Stream';
+    const feed=$('#feed'); const hpk=streamHost(e); const p=profOf(hpk); needProfile(hpk);
+    const title=(e.tags.find(t=>t[0]==='title')||[])[1]||'(untitled stream)';
+    const summary=(e.tags.find(t=>t[0]==='summary')||[])[1]||'';
+    const url=(e.tags.find(t=>t[0]==='streaming')||[])[1]||(e.tags.find(t=>t[0]==='recording')||[])[1]||'';
+    const st=streamStatus(e);
+    feed.innerHTML=`<div class="stream-view">
+      <button class="btn btn-ghost small" id="st-back">← Streams</button>
+      <h1 class="av-title">${enc(title)}${st==='live'?' <span class="live-badge">● LIVE</span>':''}</h1>
+      <div class="av-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${hpk}">${enc(p.name||p.display_name||'anon')}</span>${st?`<span class="muted small">· ${enc(st)}</span>`:''}</div>
+      ${url?`<video class="stream-player" id="st-video" controls playsinline></video>
+        <div class="muted small" id="st-note"></div>
+        <div class="row">${isDesktop()?`<button class="btn btn-ghost small" id="st-pop">⧉ Pop out player</button>`:''}<a class="btn btn-ghost small" href="${enc(url)}" target="_blank" rel="noopener">▶ Open stream URL</a></div>`:'<div class="empty">No stream URL provided.</div>'}
+      ${summary?`<div class="about">${linkify(summary)}</div>`:''}
+    </div>`;
+    $('#st-back').onclick=()=>switchView('streams');
+    feed.querySelectorAll('[data-prof]').forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
+    decorateProfiles();
+    if(url) attachStream(url);
+    { const pb=$('#st-pop'); if(pb) pb.onclick=()=>popOutStream(e); }
+  }
+  // ---------- floating mini-player: keep a stream playing while you browse other views ----------
+  // Moving the live <video> node (with its attached hls.js) OUT of #feed and into a fixed,
+  // persistent container means a feed re-render can't kill it — playback simply continues.
+  // _streamHls = the hls bound to the INLINE player; _miniHls = the one handed to the floating
+  // mini-player. Keeping them separate means a feed re-render (cleanupInlineStream) can't tear down
+  // a popped-out stream, and closing the mini can't tear down a newer inline stream.
+  let _streamHls=null, _miniHls=null, _miniEv=null;
+  function cleanupInlineStream(){ if(_streamHls){ try{ _streamHls.destroy(); }catch(_){} _streamHls=null; } }
+  function popOutStream(ev){
+    const v=$('#st-video'); if(!v) return;
+    closeMini();   // only one mini at a time
+    let mp=$('#mini-player'); if(!mp){ mp=document.createElement('div'); mp.id='mini-player'; mp.className='mini-player'; document.body.appendChild(mp); }
+    const title=(ev.tags.find(t=>t[0]==='title')||[])[1]||'stream';
+    mp.innerHTML=`<div class="mini-bar"><span class="mini-title">▶ ${enc(title)}</span><button class="mini-x" id="mini-open" title="back to stream">⤢</button><button class="mini-x" id="mini-close" title="close">✕</button></div>`;
+    mp.appendChild(v); v.removeAttribute('id');   // MOVE the playing element (hls stays attached → no interruption)
+    _miniHls=_streamHls; _streamHls=null;          // hand hls ownership to the mini
+    _miniEv=ev; mp.classList.add('on');
+    $('#mini-close').onclick=()=>closeMini();
+    $('#mini-open').onclick=()=>{ const e2=_miniEv; closeMini(); if(e2) openStream(e2); };
+    v.play().catch(()=>{});
+    toast('stream popped out — keeps playing while you browse');
+  }
+  function closeMini(){
+    const mp=$('#mini-player'); if(!mp) return;
+    if(_miniHls){ try{ _miniHls.destroy(); }catch(_){} _miniHls=null; }
+    _miniEv=null; mp.classList.remove('on'); mp.innerHTML='';
+  }
+  // lazy-load the vendored hls.js only when a stream is actually opened (it's ~400 KB)
+  let _hlsP=null;
+  function loadHls(){
+    if(window.Hls) return Promise.resolve();
+    if(_hlsP) return _hlsP;
+    _hlsP=new Promise((res,rej)=>{ const s=document.createElement('script'); s.src='/static/vendor/hls/hls.min.js'; s.onload=()=>res(); s.onerror=()=>rej(new Error('hls load failed')); document.head.appendChild(s); });
+    return _hlsP;
+  }
+  // Most Nostr streams are HLS (.m3u8). Chrome/Firefox can't play that natively ("invalid MIME
+  // type") — only Safari can — so route HLS through hls.js; play everything else (mp4/webm
+  // recordings, native-HLS Safari) straight off the <video> src.
+  function attachStream(url){
+    const v=$('#st-video'); if(!v) return;
+    cleanupInlineStream();   // drop any previous inline hls before attaching a new one
+    const isHls=/\.m3u8(\?|#|$)/i.test(url);
+    if(isHls && !v.canPlayType('application/vnd.apple.mpegurl')){
+      loadHls().then(()=>{
+        if(window.Hls && window.Hls.isSupported()){
+          const h=new window.Hls({ maxBufferLength:30 }); _streamHls=h;
+          h.loadSource(url); h.attachMedia(v);
+          h.on(window.Hls.Events.ERROR,(_e,d)=>{ if(d&&d.fatal){ const n=$('#st-note'); if(n) n.textContent='Could not play this stream here — try the “Open stream URL” link below.'; } });
+        } else { v.src=url; }
+      }).catch(()=>{ v.src=url; });
+    } else {
+      v.src=url;
+    }
   }
 
   // ---------- note rendering ----------
@@ -394,9 +721,9 @@
           <button class="act" data-a="reply" title="reply">💬 <span class="n">${counts.replies||''}</span></button>
           <button class="act rt ${counts.iRt?'on':''}" data-a="repost" title="repost">🔁 <span class="n">${counts.reposts||''}</span></button>
           <button class="act actq" data-a="quote" title="quote post">❝</button>
-          <button class="act ${liked?'on':''}" data-a="like" title="like">${liked||'🤍'} <span class="n">${counts.reactions||''}</span></button>
-          <button class="act actz" data-a="zap" title="zap (lightning)">⚡</button>
-          <button class="act" data-a="react" title="react">😀</button>
+          <button class="act ${liked?'on':''}" data-a="react" title="react">${liked||'😀'} <span class="n">${counts.reactions||''}</span></button>
+          <button class="act actz ${counts.zaps?'on':''}" data-a="zap" title="zap (lightning)">⚡ <span class="n">${counts.zaps?fmtSats(counts.zaps):''}</span></button>
+          <button class="act actb ${BOOKMARKS.has(ev.id)?'on':''}" data-a="bookmark" title="bookmark">🔖</button>
           <span class="spacer"></span>
           ${mine?`<button class="act" data-a="delete" title="delete">🗑️</button>`:''}
           <button class="act" data-a="copyid" title="copy event id">🆔</button>
@@ -437,19 +764,20 @@
   let CIDX = null;
   function invalidateCounts(){ CIDX = null; }
   function buildCounts(){
-    const c = { replies:{}, reactions:{}, reposts:{}, myRt:new Set(), myReact:{} };
+    const c = { replies:{}, reactions:{}, reposts:{}, zaps:{}, zapN:{}, myRt:new Set(), myReact:{} };
     const lastE = e => { for(let i=e.tags.length-1;i>=0;i--) if(e.tags[i][0]==='e') return e.tags[i][1]; return null; };
     for(const e of Store.all()){
       const id = lastE(e); if(!id) continue;
       if(e.kind===1) c.replies[id]=(c.replies[id]||0)+1;
       else if(e.kind===7){ c.reactions[id]=(c.reactions[id]||0)+1; if(e.pubkey===ME.pubkey) c.myReact[id]=(e.content==='+'||e.content===''?'❤️':e.content); }
       else if(e.kind===6){ c.reposts[id]=(c.reposts[id]||0)+1; if(e.pubkey===ME.pubkey) c.myRt.add(id); }
+      else if(e.kind===9735){ const sats=zapAmount(e); if(sats){ c.zaps[id]=(c.zaps[id]||0)+sats; c.zapN[id]=(c.zapN[id]||0)+1; } }
     }
     CIDX = c;
   }
-  function countsFor(id){ if(!CIDX) buildCounts(); return { replies:CIDX.replies[id]||0, reactions:CIDX.reactions[id]||0, reposts:CIDX.reposts[id]||0, iRt:CIDX.myRt.has(id) }; }
+  function countsFor(id){ if(!CIDX) buildCounts(); return { replies:CIDX.replies[id]||0, reactions:CIDX.reactions[id]||0, reposts:CIDX.reposts[id]||0, zaps:CIDX.zaps[id]||0, zapN:CIDX.zapN[id]||0, iRt:CIDX.myRt.has(id) }; }
   function myReaction(id){ if(!CIDX) buildCounts(); return CIDX.myReact[id]||null; }
-  // (reaction display: '+' shows as ❤️, custom emoji shown as-is — see buildCounts/doReact)
+  // (reaction display: '+' shows as ❤️, custom emoji shown as-is — see buildCounts/pickEmoji)
 
   // ---------- interactions ----------
   function bindFeedActions(){
@@ -463,28 +791,63 @@
       const prof=e.target.closest('[data-prof]'); if(prof){ renderProfileView(prof.dataset.prof); return; }
       const q=e.target.closest('[data-open]'); if(q){ openThread(q.dataset.open); return; }
       const btn=e.target.closest('.act'); if(!btn) return;
-      const art=e.target.closest('.note'); const id=art.dataset.id; const pk=art.dataset.pk;
+      const art=e.target.closest('.note'); if(!art) return;   // .act outside a note (article/stream view) binds its own handler
+      const id=art.dataset.id; const pk=art.dataset.pk;
       const a=btn.dataset.a;
-      if(a==='like') return doReact(id,pk,'+',btn);
       if(a==='react') return pickEmoji(id,pk,btn);
       if(a==='repost') return doRepost(id,pk,btn);
       if(a==='quote') return compose({quote:id});
       if(a==='reply') return compose({reply:id, replyPk:pk});
       if(a==='delete') return doDelete(id,art);
       if(a==='zap') return doZap(id,pk);
+      if(a==='bookmark') return toggleBookmark(id,btn);
       if(a==='copyid'){ try{ navigator.clipboard.writeText(NT().nip19.noteEncode(id)); toast('note id copied'); }catch(_){ navigator.clipboard.writeText(id); toast('event id copied'); } return; }
       if(a==='pin') return togglePin(id);
       if(a==='block') return doBlock(pk);
     });
   }
   // ---------- zaps (NIP-57 lightning) ----------
+  // sats in a zap RECEIPT (kind 9735): trust the embedded zap-request `amount` tag (millisats)
+  // first — it's what the sender asked to pay — then fall back to decoding the bolt11 invoice.
+  function zapAmount(ev){
+    try{
+      const desc=(ev.tags.find(t=>t[0]==='description')||[])[1];
+      if(desc){ const zr=JSON.parse(desc); const a=(zr.tags||[]).find(t=>t[0]==='amount'); if(a&&a[1]){ const s=Math.round(parseInt(a[1],10)/1000); if(s>0) return s; } }
+    }catch(_){}
+    const b=(ev.tags.find(t=>t[0]==='bolt11')||[])[1]; if(b){ const s=bolt11Sats(b); if(s>0) return s; }
+    const a=(ev.tags.find(t=>t[0]==='amount')||[])[1]; if(a){ const s=Math.round(parseInt(a,10)/1000); if(s>0) return s; }
+    return 0;
+  }
+  // decode the amount out of a BOLT11 invoice HRP (lnbc<amount><multiplier>) → sats
+  function bolt11Sats(inv){
+    // require the '1' separator after the optional multiplier so an amountless invoice (lnbc1…)
+    // doesn't misparse its separator digit as the amount
+    try{ const m=/^ln(?:bc|tb|bcrt)(\d+)([munp])?1/i.exec(String(inv).trim().toLowerCase()); if(!m) return 0;
+      const num=parseInt(m[1],10); const map={m:1e-3,u:1e-6,n:1e-9,p:1e-12};
+      const btc = m[2] ? num*map[m[2]] : num; return Math.round(btc*1e8);
+    }catch(_){ return 0; }
+  }
+  // the zapper (sender) pubkey — the receipt is signed by the LNURL server, so read the request
+  function zapSender(ev){
+    try{ const desc=(ev.tags.find(t=>t[0]==='description')||[])[1]; if(desc){ const zr=JSON.parse(desc); if(zr.pubkey) return zr.pubkey; } }catch(_){}
+    return (ev.tags.find(t=>t[0]==='P')||[])[1] || null;
+  }
+  function fmtSats(n){ n=n||0; if(n>=1000000) return (n/1000000).toFixed(n>=10000000?0:1).replace(/\.0$/,'')+'M'; if(n>=1000) return (n/1000).toFixed(n>=10000?0:1).replace(/\.0$/,'')+'k'; return String(n); }
+  // direct fetch first (most LNURL endpoints set CORS); on failure fall back to the node's proxy
+  // (handles services that DON'T send CORS headers, same fix as NIP-05 verification).
+  async function corsJson(url){
+    try{ const r=await fetch(url); if(r.ok) return await r.json(); }catch(_){}
+    try{ const r=await fetch('/client/lnurl?url='+encodeURIComponent(url)); if(r.ok) return await r.json(); }catch(_){}
+    return null;
+  }
   async function lnurlResolve(addr){
     addr=(addr||'').trim(); if(!addr) return null;
     let url=null;
     if(addr.includes('@')){ const [name,domain]=addr.split('@'); url=`https://${domain}/.well-known/lnurlp/${encodeURIComponent(name)}`; }
     else if(/^lnurl1/i.test(addr)){ try{ const d=NT().nip19.decode(addr); url=d&&d.data; }catch(_){ try{ url=new TextDecoder().decode(bech32ToBytes(addr)); }catch(__){} } }
     if(!url) return null;
-    try{ const j=await fetch(url).then(r=>r.json()); return { callback:j.callback, allowsNostr:!!j.allowsNostr, min:j.minSendable, max:j.maxSendable }; }catch(_){ return null; }
+    const j=await corsJson(url); if(!j) return null;
+    return { callback:j.callback, allowsNostr:!!j.allowsNostr, min:j.minSendable, max:j.maxSendable };
   }
   async function doZap(noteId, pk){
     const p=profOf(pk); const addr=p.lud16||p.lud06;
@@ -500,7 +863,7 @@
         const zr=await sign(9734,'',[['relays',CFG.relay_url||''],['amount',String(msat)],['p',pk]].concat(noteId?[['e',noteId]]:[]));
         url+='&nostr='+encodeURIComponent(JSON.stringify(zr));
       }
-      const inv=await fetch(url).then(r=>r.json());
+      const inv=await corsJson(url);
       const pr=inv && inv.pr; if(!pr){ toast('no invoice'+(inv&&inv.reason?': '+inv.reason:'')); return; }
       if(window.webln){ try{ await window.webln.enable(); await window.webln.sendPayment(pr); toast('⚡ zapped '+amt+' sats'); return; }catch(e){} }
       invoiceModal(pr, amt);
@@ -526,17 +889,25 @@
     } catch(e){ toast('block failed'); }
   }
   function eTags(id,pk){ const t=[['e',id]]; if(pk)t.push(['p',pk]); return t; }
-  async function doReact(id,pk,emoji,btn){
+  // The emoji picker is the only way to react now (the dedicated 🤍 like button was removed). After
+  // publishing, refresh the counters in place (decorateCounts) so the reaction count goes up and the
+  // react button shows your chosen emoji — without re-rendering/resetting the whole feed.
+  function pickEmoji(id,pk,btn){
     if(myReaction(id)){ toast('already reacted'); return; }
-    await publish(7, emoji, eTags(id,pk));
-    btn.classList.add('on'); btn.firstChild.textContent = (emoji==='+'?'❤️':emoji)+' ';
-    const n=btn.querySelector('.n'); n.textContent=(parseInt(n.textContent||'0')+1);
-  }
-  function pickEmoji(id,pk){
     const emojis=['❤️','🔥','😂','😮','😢','👍','🤙','💀','⚡','🚀'];
-    modal(`<h3>react</h3><div class="emoji-pick">${emojis.map(x=>`<button data-e="${x}">${x}</button>`).join('')}</div>`, root=>{
-      $$('[data-e]',root).forEach(b=> b.onclick=async()=>{ closeModal(); await publish(7,b.dataset.e,eTags(id,pk)); toast('reacted '+b.dataset.e); renderView(); });
-    });
+    document.querySelectorAll('.emoji-pop').forEach(p=>p.remove());   // never stack pickers
+    const pop=document.createElement('div'); pop.className='emoji-pop';
+    pop.innerHTML=emojis.map(x=>`<button data-e="${x}">${x}</button>`).join('');
+    document.body.appendChild(pop);
+    // anchor it right under the react button (fixed = viewport coords; flip up if no room below)
+    const r=(btn||document.body).getBoundingClientRect();
+    let left=Math.max(8, Math.min(r.left, window.innerWidth-8-pop.offsetWidth));
+    let top=r.bottom+6; if(top+pop.offsetHeight>window.innerHeight-8) top=Math.max(8, r.top-pop.offsetHeight-6);
+    pop.style.left=left+'px'; pop.style.top=top+'px';
+    const close=()=>{ pop.remove(); document.removeEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.removeEventListener('scroll',close); };
+    const onDoc=e=>{ if(!pop.contains(e.target)) close(); };
+    setTimeout(()=>{ document.addEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.addEventListener('scroll',close,{once:true}); },0);
+    $$('[data-e]',pop).forEach(b=> b.onclick=async()=>{ close(); await publish(7,b.dataset.e,eTags(id,pk)); toast('reacted '+b.dataset.e); decorateCounts(); });
   }
   async function doRepost(id,pk,btn){
     if(countsFor(id).iRt){ toast('already reposted'); return; }
@@ -561,7 +932,14 @@
       const i=a.findIndex(x=>x.id===d.id); if(i>=0)a[i]=d; else a.unshift(d); this._save(a); return d.id; },
     remove(id){ this._save(this.all().filter(x=>x.id!==id)); },
   };
-  function bumpDraft(){ const n=Drafts.all().length; $$('#draft-badge,#draft-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden'); }); }
+  function bumpDraft(){ const n=Drafts.all().length; $$('#draft-badge,#more-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden'); }); }
+  // mobile overflow sheet — holds the secondary views so the bottom bar stays uncluttered
+  function moreMenu(){
+    const items=[['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['articles','📰','Articles'],['streams','📺','Streams'],['blossom','🌸','Files'],['profile','👤','Profile']];
+    modal(`<h3>More</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}</span></button>`).join('')}</div>`, root=>{
+      $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); if(b.dataset.v==='profile') renderProfileView(ME.pubkey); else switchView(b.dataset.v); });
+    });
+  }
   function renderDrafts(){
     const feed=$('#feed'); const list=Drafts.all();
     feed.innerHTML = list.length ? list.map(d=>{
@@ -767,16 +1145,18 @@
   let _notifReady=false;
   function watchNotifications(){
     seenNotif.last = +(localStorage.getItem('pc_notif_seen')||0);
-    Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7], limit:60 }], {
-      onEvent: ev => { if(ev.pubkey===ME.pubkey) return; if(Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.pubkey);
+    Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7,9735], limit:60 }], {
+      onEvent: ev => { if(ev.pubkey===ME.pubkey) return; if(Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey);
         if(ev.created_at>seenNotif.last){ bumpNotif(); if(_notifReady) notifPing(ev); }
         if(VIEW==='notifications') renderNotifications(); } },
       onEose: ()=>{ _notifReady=true; if(VIEW==='notifications') renderNotifications(); else bumpNotif(); }   // show unseen count on load; ping LIVE ones
     });
   }
   function notifPing(ev){
-    const p=profOf(ev.pubkey); const who=p.name||p.display_name||'someone';
-    const what = ev.kind===7?`reacted ${ev.content==='+'||ev.content===''?'❤️':enc(ev.content)}`
+    const fromPk = ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey;
+    const p=profOf(fromPk); const who=p.name||p.display_name||'someone';
+    const what = ev.kind===9735?`⚡ zapped you ${fmtSats(zapAmount(ev))} sats`
+      : ev.kind===7?`reacted ${ev.content==='+'||ev.content===''?'❤️':enc(ev.content)}`
       : ev.kind===6?'reposted you' : isReply(ev)?'replied to you' : 'mentioned you';
     notifToast(`🔔 ${who} ${what}`, p.picture);
     try{ if(window.Notification && Notification.permission==='granted') new Notification('PosterChan', { body:`${who} ${what}`, icon:p.picture||LOGO }); }catch(_){}
@@ -787,42 +1167,81 @@
     t.onclick=()=>{ switchView('notifications'); t.remove(); };
     $('#toast-root').appendChild(t); setTimeout(()=>t.remove(),5000);
   }
-  function notifList(){ return Store.all().filter(e=>[1,6,7].includes(e.kind) && e.pubkey!==ME.pubkey && !MUTED.has(e.pubkey) && e.tags.some(t=>t[0]==='p'&&t[1]===ME.pubkey)).sort((a,b)=>b.created_at-a.created_at).slice(0,100); }
+  function notifList(){ return Store.all().filter(e=>[1,6,7,9735].includes(e.kind) && e.pubkey!==ME.pubkey && !MUTED.has(e.pubkey) && e.tags.some(t=>t[0]==='p'&&t[1]===ME.pubkey)).sort((a,b)=>b.created_at-a.created_at).slice(0,100); }
   function bumpNotif(){ const n=notifList().filter(e=>e.created_at>seenNotif.last).length; $$('#notif-badge,#notif-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden');}); }
   function renderNotifications(){
     const list=notifList(); const feed=$('#feed');
     feed.innerHTML = list.length ? list.map(notifHtml).join('') : '<div class="empty">No notifications.</div>';
-    list.forEach(e=>needProfile(e.pubkey));
+    list.forEach(e=>needProfile(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey));
     seenNotif.last = Math.floor(Date.now()/1000); localStorage.setItem('pc_notif_seen', seenNotif.last);
     $$('#notif-badge,#notif-badge-m').forEach(b=>b.classList.add('hidden'));
     feed.querySelectorAll('[data-open]').forEach(n=> n.onclick=()=>openThread(n.dataset.open));
   }
   function notifHtml(e){
-    const p=profOf(e.pubkey); const av=p.picture||LOGO; const tgt=(e.tags.filter(t=>t[0]==='e').pop()||[])[1]||'';
+    const fromPk = e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey;
+    const p=profOf(fromPk); const av=p.picture||LOGO; const tgt=(e.tags.filter(t=>t[0]==='e').pop()||[])[1]||'';
     let cls,ic,txt;
-    if(e.kind===7){cls='like';ic='♥';txt=`reacted ${enc(e.content==='+'?'❤️':e.content)} to your post`;}
+    if(e.kind===9735){cls='zap';ic='⚡';txt=`zapped you <b>${fmtSats(zapAmount(e))} sats</b>`;}
+    else if(e.kind===7){cls='like';ic='♥';txt=`reacted ${enc(e.content==='+'?'❤️':e.content)} to your post`;}
     else if(e.kind===6){cls='rt';ic='↻';txt='reposted your note';}
     else if(isReply(e)){cls='reply';ic='💬';txt='replied: '+enc((e.content||'').slice(0,80));}
     else {cls='mention';ic='@';txt='mentioned you: '+enc((e.content||'').slice(0,80));}
     return `<div class="notif ${cls}" data-open="${tgt}"><span class="ic">${ic}</span><img src="${enc(av)}" onerror="this.src='${LOGO}'"><div><b>${enc(p.name||p.display_name||'anon')}</b> ${txt}<div class="muted small">${timeAgo(e.created_at)}</div></div></div>`;
   }
 
-  // ---------- DMs (NIP-04) ----------
+  // ---------- DMs: NIP-17 gift-wrapped (modern, local-key) + NIP-04 (legacy, read-compat) ----------
   const dmPeers = new Map();  // peer -> [{ev, text}]
   let dmActive = null;
   let _dmLoaded=false, _dmUnread=0;
   async function ensureDMs(){
     if(_dmLoaded) return; _dmLoaded=true;
-    Store.byKind(4).forEach(ingestDM);   // show anything already cached instantly
+    const modern = !!(signer && signer.nip17unwrap);   // gift wraps need the local secret key
+    Store.byKind(4).forEach(ingestDM);                 // show cached legacy DMs instantly
+    if(modern) Store.byKind(1059).forEach(w=>ingestWrap(w, false));   // unwrap cached gift wraps (async)
     if(VIEW==='messages') renderMessages();
-    const evs=await Relay.query([{ kinds:[4], '#p':[ME.pubkey], limit:300 }, { kinds:[4], authors:[ME.pubkey], limit:300 }]);
-    evs.forEach(e=>{ Store.saveEvent(e); ingestDM(e); });   // ingest ALWAYS (not gated on saveEvent dedup)
-    // live sub for new DMs only (since now)
+    const filt=[{ kinds:[4], '#p':[ME.pubkey], limit:300 }, { kinds:[4], authors:[ME.pubkey], limit:300 }];
+    if(modern) filt.push({ kinds:[1059], '#p':[ME.pubkey], limit:400 });
+    const evs=await Relay.query(filt);
+    for(const e of evs){ Store.saveEvent(e); if(e.kind===1059) await ingestWrap(e, false); else ingestDM(e); }
+    // live sub for legacy DMs (since now is fine — kind-4 timestamps are real)
     const since=Math.floor(Date.now()/1000)-60;
     Relay.subscribe([{ kinds:[4], '#p':[ME.pubkey], since }, { kinds:[4], authors:[ME.pubkey], since }], {
       onEvent: ev => { Store.saveEvent(ev); if(ingestDM(ev) && ev.pubkey!==ME.pubkey){ _dmUnread++; bumpDm(); } if(VIEW==='messages') renderMessages(); }
     });
+    // NIP-17 gift wraps carry RANDOMIZED past timestamps, so a `since` filter would drop them —
+    // subscribe with no `since` and let Store dedup skip the ones we've already unwrapped.
+    if(modern) Relay.subscribe([{ kinds:[1059], '#p':[ME.pubkey] }], {
+      onEvent: async ev => { if(!Store.saveEvent(ev)) return; await ingestWrap(ev, true); }
+    });
     if(VIEW==='messages') renderMessages();
+  }
+  // Unwrap a NIP-17 gift wrap (kind 1059) → its inner kind-14 chat rumor (already plaintext). `live`
+  // bumps the unread badge for incoming (non-self) messages.
+  async function ingestWrap(ev, live){
+    if(!signer || !signer.nip17unwrap) return false;
+    let rumor; try{ rumor=await signer.nip17unwrap(ev); }catch(_){ return false; }
+    if(!rumor || rumor.kind!==14 || rumor.content==null) return false;
+    const mine = rumor.pubkey===ME.pubkey;
+    const peer = mine ? (rumor.tags.find(t=>t[0]==='p')||[])[1] : rumor.pubkey;
+    if(!peer) return false; needProfile(peer);
+    if(!dmPeers.has(peer)) dmPeers.set(peer, []);
+    const arr=dmPeers.get(peer); if(arr.find(m=>m.id===ev.id)) return false;
+    arr.push({ id:ev.id, mine, text:rumor.content, t:rumor.created_at, nip17:true }); arr.sort((a,b)=>a.t-b.t);
+    if(live && !mine){ _dmUnread++; bumpDm(); }
+    if(VIEW==='messages'){ if(dmActive===peer) renderDmThread(peer); else renderMessages(); }
+    return true;
+  }
+  // Send a DM: NIP-17 gift wraps for local-key users, legacy NIP-04 for NIP-07 (no exposed secret).
+  async function sendDm(pk, text){
+    if(signer && signer.nip17wrap){
+      const { toPeer, toSelf } = await signer.nip17wrap(pk, text);
+      Store.saveEvent(toSelf); await ingestWrap(toSelf, false);   // show our own message right away
+      const r1=await Relay.publish(toPeer); await Relay.publish(toSelf);
+      if(r1 && r1.ok===false) toast('relay: '+(r1.msg||'message rejected'));
+      if(VIEW==='messages') renderMessages();
+    } else {
+      const ct=await signer.nip04enc(pk, text); await publish(4, ct, [['p',pk]]);
+    }
   }
   function bumpDm(){ $$('#dm-badge,#dm-badge-m').forEach(b=>{ if(_dmUnread){ b.textContent=_dmUnread>99?'99+':_dmUnread; b.classList.remove('hidden'); } else b.classList.add('hidden'); }); }
   // Index DMs WITHOUT decrypting (decryption is CPU-heavy ECDH+AES in the worker; decrypting all
@@ -889,7 +1308,7 @@
         if(!pk){ $('#dm-status',root).textContent='pick a valid recipient (npub / NIP-05)'; return; }
         const txt=body.value.trim(); if(!txt){ $('#dm-status',root).textContent='write a message'; return; }
         closeModal();
-        try{ const ct=await signer.nip04enc(pk,txt); const r=await publish(4,ct,[['p',pk]]); if(r.ok===false){} if(!dmPeers.has(pk))dmPeers.set(pk,[]); needProfile(pk); switchView('messages'); setTimeout(()=>openDm(pk),80); }
+        try{ await sendDm(pk, txt); if(!dmPeers.has(pk))dmPeers.set(pk,[]); needProfile(pk); switchView('messages'); setTimeout(()=>openDm(pk),80); }
         catch(e){ toast('dm failed: '+e.message); }
       };
       to.focus();
@@ -920,14 +1339,34 @@
     $('#dm-files').onclick=()=>blossomPicker(inp);
     { const g=$('#dm-gif'); if(g) g.onclick=()=>gifPicker(inp); }
     const send=async()=>{ const t=inp.value.trim(); if(!t)return; inp.value='';
-      try{ const ct=await signer.nip04enc(pk,t); await publish(4, ct, [['p',pk]]); }catch(e){ toast('dm failed: '+e.message);} };
+      try{ await sendDm(pk, t); }catch(e){ toast('dm failed: '+e.message);} };
     $('#dm-send').onclick=send; $('#dm-in').onkeydown=e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } };
     const m=$('#dm-msgs'); if(m)m.scrollTop=m.scrollHeight;
   }
 
   // ---------- profile ----------
+  let _prof = { pk:null, tab:'notes', oldest:0, loading:false, done:false, limit:40, fill:null };
+  // scroll-back for the active profile tab — pull older author notes, then re-fill the tab list
+  // (notes/replies/media all derive from the author's kind-1 stream, so one fetch grows all three).
+  async function loadOlderProfile(){
+    if(_prof.loading || _prof.done || !_prof.pk || !_prof.oldest) return;
+    _prof.loading=true; const pk=_prof.pk; const feed=$('#feed'); loadSentinel(feed);
+    const until=_prof.oldest;
+    let evs=[]; try{ evs=await Relay.query([{ authors:[pk], kinds:[1], until:until-1, limit:60 }]); }catch(_){}
+    clearSentinel(feed);
+    if(VIEW!=='profile' || _prof.pk!==pk){ _prof.loading=false; return; }
+    let minTs=until;
+    for(const e of evs){ Store.saveEvent(e); needProfile(e.pubkey); if(e.created_at<minTs) minTs=e.created_at; }
+    invalidateCounts();
+    _prof.limit += 60;
+    if(minTs<_prof.oldest) _prof.oldest=minTs;
+    if(!evs.length || minTs>=until) _prof.done=true;
+    if(_prof.fill){ _prof.fill(_prof.tab); hydrate(feed); }
+    _prof.loading=false;
+  }
   function renderProfile(pk){ renderProfileView(pk); }
   async function renderProfileView(pk){
+    cleanupInlineStream();   // e.g. tapping the host's name from a stream
     if(VIEW!=='profile'){ VIEW='profile'; $$('.nav-item[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view==='profile')); $('#view-title').textContent='Profile'; }
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
     if(!Store.haveProfile(pk)){ const e=await Relay.query([{authors:[pk],kinds:[0],limit:1}]); for(const x of e)Store.saveProfile(x); }
@@ -963,21 +1402,26 @@
       <div id="prof-list"></div>`;
     const pinnedHtml = pinned.length?`<div class="search-section-title">📌 Pinned</div>`+pinned.map(e=>noteHtml(e)).join(''):'';
     const listFor=(tab)=>{
-      if(tab==='replies'){ const r=Store.feed(e=>e.pubkey===pk && isReply(e)).slice(0,40);
+      const lim=_prof.limit;
+      if(tab==='replies'){ const r=Store.feed(e=>e.pubkey===pk && isReply(e)).slice(0,lim);
         return r.length ? r.map(e=>noteHtml(e)).join('') : '<div class="empty">No replies yet.</div>'; }
-      if(tab==='media'){ const m=Store.feed(e=>e.pubkey===pk && hasMedia(e)).slice(0,60);
+      if(tab==='media'){ const m=Store.feed(e=>e.pubkey===pk && hasMedia(e)).slice(0,lim);
         if(!m.length) return '<div class="empty">No media yet.</div>';
         // gallery only — pull each post's media tags out of its mediaParts() gallery and grid them
         const items=m.map(e=>mediaParts(e.content).gallery.replace(/^<div class="media-row">/,'').replace(/<\/div>$/,'')).join('');
         return `<div class="media-grid">${items}</div>`; }
-      const n=Store.feed(e=>e.pubkey===pk && !isReply(e)).slice(0,40);
+      const n=Store.feed(e=>e.pubkey===pk && !isReply(e)).slice(0,lim);
       return pinnedHtml + (n.length ? n.map(e=>noteHtml(e)).join('') : '<div class="empty">No posts yet.</div>');
     };
     const fillList=(tab)=>{ const el=$('#prof-list'); if(el) el.innerHTML=listFor(tab); };
+    // pagination cursor: oldest author kind-1 we hold (drives loadOlderProfile via `until`)
+    const authorNotes=Store.feed(e=>e.pubkey===pk);
+    _prof = { pk, tab:'notes', loading:false, done:false, limit:40, fill:fillList,
+              oldest: authorNotes.length ? authorNotes[authorNotes.length-1].created_at : 0 };
     fillList('notes');
     hydrate(feed);
     decorateVerified($('#prof-vchk'), pk, p.nip05);
-    $$('.prof-tab',feed).forEach(t=> t.onclick=()=>{ $$('.prof-tab',feed).forEach(x=>x.classList.toggle('active',x===t)); fillList(t.dataset.tab); hydrate(feed); });
+    $$('.prof-tab',feed).forEach(t=> t.onclick=()=>{ $$('.prof-tab',feed).forEach(x=>x.classList.toggle('active',x===t)); _prof.tab=t.dataset.tab; fillList(t.dataset.tab); hydrate(feed); });
     $('#copy-npub').onclick=()=>{ navigator.clipboard.writeText(npub); toast('npub copied'); };
     { const ln=$('#prof-ln'); if(ln) ln.onclick=()=>doZap(null, pk); }
     $('#show-following').onclick=()=>peopleModal('Following', following);
@@ -1059,6 +1503,15 @@
   }
   async function nip05Resolve(addr){
     let [name, domain] = addr.split('@'); if(!domain){ domain=name; name='_'; }
+    // Go through the node's CORS proxy FIRST: most domains' /.well-known/nostr.json lack the
+    // Access-Control-Allow-Origin header, so a direct browser fetch fails and the blue check never
+    // shows. The proxy fetches server-side (SSRF-guarded) and returns the name→pubkey mapping.
+    try {
+      const j = await fetch(`/client/nip05?domain=${encodeURIComponent(domain)}&name=${encodeURIComponent(name)}`).then(r=>r.json());
+      const pk = (j && ((j.names && j.names[name]) || j.pubkey)) || null;
+      if(pk) return pk;
+    } catch(_){}
+    // fallback: direct (works for the minority of domains that do send CORS headers)
     try {
       const j = await fetch(`https://${domain}/.well-known/nostr.json?name=${encodeURIComponent(name)}`).then(r=>r.json());
       return (j && j.names && j.names[name]) || null;
@@ -1111,9 +1564,35 @@
     if(profs.length){ html+='<div class="search-section-title">Profiles</div>'; for(const p of profs){ const m=p.meta; html+=`<div class="psearch" data-prof="${p.pubkey}"><img src="${enc(m.picture||LOGO)}" onerror="this.src='${LOGO}'"><div><b>${enc(m.name||m.display_name||'anon')}</b><div class="muted small">${enc(niceNip05(m.nip05)||(m.about||'').slice(0,60))}</div></div></div>`; } }
     const posts=postEvs.sort((a,b)=>b.created_at-a.created_at);
     html+='<div class="search-section-title">Posts</div>';
-    html+= posts.length ? posts.map(e=>noteHtml(e)).join('') : '<div class="empty">No matching posts.</div>';
+    html+= posts.length ? `<div id="search-posts">${posts.map(e=>noteHtml(e)).join('')}</div>` : '<div class="empty">No matching posts.</div>';
     feed.innerHTML=html; hydrate(feed);
     $$('[data-prof]',feed).forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
+    // pagination cursor for scroll-back through more search hits
+    _search = { q, loading:false, done:posts.length<40, oldest: posts.length ? posts[posts.length-1].created_at : 0 };
+  }
+  // scroll-back for NIP-50 search results (appends older matching posts under #search-posts)
+  let _search = { q:'', oldest:0, loading:false, done:false };
+  async function loadOlderSearch(){
+    if(_search.loading || _search.done || !_search.q || !_search.oldest) return;
+    const cont=$('#search-posts'); if(!cont){ _search.done=true; return; }
+    _search.loading=true; const q=_search.q; const feed=$('#feed'); loadSentinel(feed);
+    const until=_search.oldest;
+    let evs=[]; try{ evs=await Relay.query([{ kinds:[1], search:q, until:until-1, limit:30 }]); }catch(_){}
+    clearSentinel(feed);
+    if(VIEW!=='search' || _search.q!==q){ _search.loading=false; return; }
+    evs.sort((a,b)=>b.created_at-a.created_at);
+    let minTs=until; const frag=document.createDocumentFragment();
+    for(const ev of evs){
+      Store.saveEvent(ev); needProfile(ev.pubkey);
+      if(ev.created_at<minTs) minTs=ev.created_at;
+      if(cont.querySelector('.note[data-id="'+ev.id+'"]')) continue;
+      const div=document.createElement('div'); div.innerHTML=noteHtml(ev); const node=div.firstElementChild; if(node) frag.appendChild(node);
+    }
+    invalidateCounts();
+    if(frag.childElementCount){ cont.appendChild(frag); decorateProfiles(); hydrateLinkCards(feed); hydrateCounts(); }
+    if(minTs<_search.oldest) _search.oldest=minTs;
+    if(!evs.length || minTs>=until) _search.done=true;
+    _search.loading=false;
   }
 
   // ---------- helpers ----------
@@ -1125,7 +1604,7 @@
     _ixT=null;
     const ids=[...new Set($$('.note[data-id]').map(n=>n.dataset.id))].slice(0,200);
     if(!ids.length) return;
-    try{ const evs=await Relay.query([{ kinds:[1,6,7], '#e':ids, limit:500 }]);
+    try{ const evs=await Relay.query([{ kinds:[1,6,7,9735], '#e':ids, limit:600 }]);
       let any=false; for(const e of evs){ if(Store.saveEvent(e)){ any=true; needProfile(e.pubkey); } }
       if(any){ invalidateCounts(); }
     }catch(_){}
@@ -1135,9 +1614,11 @@
     $$('.note[data-id]').forEach(n=>{
       const id=n.dataset.id, c=countsFor(id), mr=myReaction(id);
       const setN=(a,v)=>{ const s=n.querySelector('.act[data-a="'+a+'"] .n'); if(s) s.textContent=v||''; };
-      setN('reply',c.replies); setN('repost',c.reposts); setN('like',c.reactions);
-      const lk=n.querySelector('.act[data-a="like"]'); if(lk){ lk.classList.toggle('on',!!mr); if(lk.firstChild) lk.firstChild.textContent=(mr||'🤍')+' '; }
+      setN('reply',c.replies); setN('repost',c.reposts); setN('react',c.reactions); setN('zap',c.zaps?fmtSats(c.zaps):'');
+      const rk=n.querySelector('.act[data-a="react"]'); if(rk){ rk.classList.toggle('on',!!mr); if(rk.firstChild) rk.firstChild.textContent=(mr||'😀')+' '; }
       const rt=n.querySelector('.act[data-a="repost"]'); if(rt) rt.classList.toggle('on',c.iRt);
+      const zp=n.querySelector('.act[data-a="zap"]'); if(zp) zp.classList.toggle('on',!!c.zaps);
+      const bm=n.querySelector('.act[data-a="bookmark"]'); if(bm) bm.classList.toggle('on',BOOKMARKS.has(id));
     });
   }
   function timeAgo(ts){ const s=Math.floor(Date.now()/1000)-ts; if(s<60)return s+'s'; if(s<3600)return (s/60|0)+'m'; if(s<86400)return (s/3600|0)+'h'; return (s/86400|0)+'d'; }

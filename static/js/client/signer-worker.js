@@ -51,6 +51,20 @@ self.onmessage = async (e) => {
         if (!SK) return reply(id, false, null, 'no local key');
         return reply(id, true, { pt: await NT.nip04.decrypt(SK, args.peer, args.ct) });
       }
+      // ---- NIP-17 private DMs (gift-wrapped via NIP-59 seal + NIP-44 encryption), local key only ----
+      case 'nip17wrap': {                      // args.peer (hex), args.text -> two kind-1059 wraps
+        if (!SK) return reply(id, false, null, 'no local key');
+        const rumor = { kind: 14, created_at: Math.floor(Date.now()/1000),
+                        tags: [['p', args.peer]], content: args.text };
+        // a gift wrap for the recipient AND one to ourselves so we keep a copy of what we sent
+        const toPeer = NT.nip59.wrapEvent(rumor, SK, args.peer);
+        const toSelf = NT.nip59.wrapEvent(rumor, SK, PK);
+        return reply(id, true, { toPeer, toSelf });
+      }
+      case 'nip17unwrap': {                     // args.wrap (kind 1059) -> inner kind-14 rumor
+        if (!SK) return reply(id, false, null, 'no local key');
+        return reply(id, true, { rumor: NT.nip59.unwrapEvent(args.wrap, SK) });
+      }
       default: return reply(id, false, null, 'unknown op ' + op);
     }
   } catch (err) { reply(id, false, null, String(err && err.message || err)); }

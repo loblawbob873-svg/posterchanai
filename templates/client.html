@@ -65,6 +65,9 @@
             <button class="nav-item" data-view="notifications"><span class="ic">◔</span><span>Notifications<i id="notif-badge" class="badge hidden"></i></span></button>
             <button class="nav-item" data-view="messages"><span class="ic">✉</span><span>Messages<i id="dm-badge" class="badge hidden"></i></span></button>
             <button class="nav-item" data-view="drafts"><span class="ic">✐</span><span>Drafts<i id="draft-badge" class="badge hidden"></i></span></button>
+            <button class="nav-item" data-view="bookmarks"><span class="ic">★</span><span>Bookmarks</span></button>
+            <button class="nav-item" data-view="articles"><span class="ic">¶</span><span>Articles</span></button>
+            <button class="nav-item" data-view="streams"><span class="ic">▷</span><span>Streams</span></button>
             <button class="nav-item" data-view="blossom"><span class="ic">❀</span><span>Files</span></button>
             <button class="nav-item" data-view="profile"><span class="ic">☻</span><span>Profile</span></button>
         </nav>
@@ -93,14 +96,14 @@
     </aside>
 </div>
 
-<!-- mobile bottom nav -->
+<!-- mobile bottom nav — kept to a tidy 5 + compose; everything else lives in the ☰ More sheet -->
 <nav class="mobilenav glass">
     <button class="nav-item active" data-view="home">🏠</button>
     <button class="nav-item" data-view="global">🌐</button>
     <button class="nav-item compose" id="btn-compose-m">✏️</button>
     <button class="nav-item" data-view="notifications">🔔<i id="notif-badge-m" class="badge hidden"></i></button>
     <button class="nav-item" data-view="messages">✉️<i id="dm-badge-m" class="badge hidden"></i></button>
-    <button class="nav-item" data-view="drafts">✐<i id="draft-badge-m" class="badge hidden"></i></button>
+    <button class="nav-item" id="btn-more-m">☰<i id="more-badge-m" class="badge hidden"></i></button>
 </nav>
 
 <!-- ===== Modal host ===== -->

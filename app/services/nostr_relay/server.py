@@ -322,10 +322,14 @@ class RelayServer:
                 self._send(conn, ["OK", eid, False, "blocked: sender not in web of trust"])
                 return
         elif kind in (13, 1059):
-            # Gift-wrap / seal: the outer author is a random throwaway key, so the WoT gate can't
-            # apply — only accept when addressed (p-tag) to one of our own relay users.
-            if not self._dm_for_operator(ev):
-                self._send(conn, ["OK", eid, False, "blocked: not a DM to a relay user"])
+            # Gift-wrap / seal (NIP-59 / NIP-17): the outer author is a random throwaway key, so the
+            # WoT gate can't apply to it — gate on the RECIPIENT instead. Accept when the wrap p-tags
+            # a web-of-trust member (so WoT members can DM each other via NIP-17) OR one of our own
+            # relay users (operator inbox). The p-tag is the real recipient per NIP-59, so this is
+            # the same routing relays rely on.
+            if not (any(len(t) >= 2 and t[0] == "p" and self.gate.is_member(t[1]) for t in ev.get("tags", []))
+                    or self._dm_for_operator(ev)):
+                self._send(conn, ["OK", eid, False, "blocked: zap/DM not for a web-of-trust member"])
                 return
         elif kind == 9735:
             # NIP-57 zap receipt — authored by the zapper SERVICE (lnurl provider), not the zapper,

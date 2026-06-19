@@ -228,6 +228,88 @@ async def link_preview(url: str):
     return JSONResponse(data)
 
 
+_nip05_cache: dict[str, tuple[float, dict]] = {}   # "domain|name" -> (expires, data)
+_NIP05_TTL = 600.0
+
+
+@router.get("/nip05")
+async def nip05_proxy(domain: str, name: str = "_"):
+    """CORS proxy for NIP-05 verification. The blue check verifies a profile's claimed name@domain
+    by fetching `https://domain/.well-known/nostr.json?name=NAME` and checking the returned pubkey.
+    Most domains DON'T send `Access-Control-Allow-Origin`, so a direct browser fetch fails and the
+    check never shows — so the page asks the node to fetch it (server-side, SSRF-guarded) instead.
+    Returns just the queried name's mapping: {"names": {name: pubkey}, "pubkey": pubkey}."""
+    import re
+    domain = (domain or "").strip().lower()
+    name = (name or "_").strip()
+    if not re.match(r"^[a-z0-9]([a-z0-9\-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]*[a-z0-9])?)+$", domain) \
+            or len(name) > 64 or not re.match(r"^[a-z0-9_.\-]+$", name, re.I):
+        return JSONResponse({"names": {}}, status_code=400)
+    key = f"{domain}|{name}"
+    now = time.time()
+    hit = _nip05_cache.get(key)
+    if hit and hit[0] > now:
+        return JSONResponse(hit[1])
+    if not _is_public_host(domain):
+        # cache the negative too, so a bad/unresolvable domain shared by many profiles isn't
+        # re-resolved on every blue-check attempt
+        _nip05_cache[key] = (now + _NIP05_TTL, {"names": {}})
+        return JSONResponse({"names": {}}, status_code=400)
+    from urllib.parse import quote
+    url = f"https://{domain}/.well-known/nostr.json?name={quote(name)}"
+    out = {"names": {}}
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=httpx.Timeout(6.0, connect=4.0), follow_redirects=True,
+                                     headers={"User-Agent": "Mozilla/5.0 (compatible; PosterChanBot/1.0)"}) as client:
+            async with client.stream("GET", url) as resp:
+                if resp.status_code == 200:
+                    body = b""
+                    async for chunk in resp.aiter_bytes():
+                        body += chunk
+                        if len(body) > 262144:   # 256 KB cap (some servers return the full registry)
+                            break
+                    j = json.loads(body.decode("utf-8", "ignore"))
+                    names = j.get("names", {}) if isinstance(j, dict) else {}
+                    pk = names.get(name)
+                    if isinstance(pk, str):
+                        out = {"names": {name: pk}, "pubkey": pk}
+    except Exception as e:
+        logger.debug("[client] nip05 proxy failed for %s: %s", url, e)
+    _nip05_cache[key] = (now + _NIP05_TTL, out)
+    if len(_nip05_cache) > 5000:
+        _nip05_cache.clear()
+    return JSONResponse(out)
+
+
+@router.get("/lnurl")
+async def lnurl_proxy(url: str):
+    """CORS fallback for NIP-57 zaps: fetch an LNURL-pay endpoint (the lnurlp well-known params or
+    the invoice callback) server-side when the wallet service doesn't send CORS headers. HTTPS-only
+    and SSRF-guarded, returns the parsed JSON. The client tries a direct fetch first and only falls
+    back here on failure."""
+    from urllib.parse import urlparse
+    if not url.startswith("https://"):
+        return JSONResponse({"status": "ERROR", "reason": "https required"}, status_code=400)
+    host = urlparse(url).hostname or ""
+    if not host or not _is_public_host(host):
+        return JSONResponse({"status": "ERROR", "reason": "host not allowed"}, status_code=400)
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=4.0), follow_redirects=True,
+                                     headers={"User-Agent": "Mozilla/5.0 (compatible; PosterChanBot/1.0)"}) as client:
+            async with client.stream("GET", url) as resp:
+                body = b""
+                async for chunk in resp.aiter_bytes():
+                    body += chunk
+                    if len(body) > 131072:   # 128 KB cap — LNURL responses are tiny JSON
+                        break
+                return JSONResponse(json.loads(body.decode("utf-8", "ignore")))
+    except Exception as e:
+        logger.debug("[client] lnurl proxy failed for %s: %s", url, e)
+        return JSONResponse({"status": "ERROR", "reason": "fetch_failed"}, status_code=502)
+
+
 class SignupFollow(BaseModel):
     pubkey: str   # new account's npub or 64-hex
 

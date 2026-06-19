@@ -200,8 +200,9 @@ async def backfill_author(store, server, upstream, pubkey: str, *, direct: bool 
     articles, reposts, reactions, comments, profile, contacts, relay list) AND the private
     DMs ADDRESSED to them (NIP-17 gift wraps + legacy kind-4). Writes straight to the store
     (origin='wot'), so it does NOT go through the WS write path and is NOT re-broadcast."""
-    # profile, notes, contacts, reposts, reactions, comments, relay list, long-form articles.
-    kinds = kinds or [0, 1, 3, 6, 7, 1111, 10002, 30023]
+    # profile, notes, contacts, reposts, reactions, comments, relay list, long-form articles,
+    # NIP-53 live events (30311, for the Streams view).
+    kinds = kinds or [0, 1, 3, 6, 7, 1111, 10002, 30023, 30311]
     common = dict(direct=direct, pace=pace, max_total=max_total, max_pages=max_pages)
     stored = await _backfill_filter(store, server, upstream,
                                     {"authors": [pubkey], "kinds": kinds},
