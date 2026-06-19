@@ -613,3 +613,6 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .ai-magnet{display:inline-block;margin:4px 0;background:linear-gradient(135deg,var(--neon),var(--neon2));color:#fff;border:none;border-radius:9px;padding:7px 13px;font-weight:600;cursor:pointer;font-size:14px}
 .feed.feed-admin{padding:0;overflow:hidden}
 .admin-frame{width:100%;height:100%;border:none;display:block;background:var(--bg)}
+
+.uploader{font-size:15px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 16px}
+.uploader .muted.small{font-size:14px}

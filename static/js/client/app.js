@@ -1829,15 +1829,17 @@
       ['message','✉ Message'],
       ['mute', MUTED.has(pk)?'🔊 Unmute':'🔇 Mute'],
     ];
-    let blossomGranted=false, aiGranted=false;
+    let blossomGranted=false, aiGranted=false, torrentOn=false;
     if(IS_ADMIN){
-      // admin extras: toggle this account's AI + Blossom access + relay block. Fetch current state
-      // so each item reads Grant vs Revoke.
+      // admin extras: toggle this account's AI + Blossom + Torrent access + relay block. Fetch
+      // current state so each item reads Grant vs Revoke.
       try{ const r=await fetch('/client/ai-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); aiGranted=!!(r&&r.enabled); }catch(_){}
       try{ const r=await fetch('/client/blossom-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); blossomGranted=!!(r&&r.whitelisted); }catch(_){}
+      try{ const r=await fetch('/client/user-caps?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); torrentOn=!!(r&&r.caps&&r.caps.can_torrent); }catch(_){}
       items.push(['ai', aiGranted?'🤖 Revoke AI access':'🤖 Grant AI access']);
       items.push(['blossom', blossomGranted?'🌸 Revoke Blossom access':'🌸 Grant Blossom access']);
-      items.push(['caps','🔑 Permissions']);
+      items.push(['torrent', torrentOn?'🧲 Revoke Torrents':'🧲 Grant Torrents']);
+      items.push(['caps','🔑 More permissions']);
       items.push(['block','🚫 Block (relay)','danger']);
     }
     openMenuPopover(anchorBtn, items, async a=>{
@@ -1846,12 +1848,23 @@
       if(a==='mute'){ await toggleMute(pk); renderProfileView(pk); return; }
       if(a==='ai') return toggleAiAccess(pk, !aiGranted);
       if(a==='blossom') return toggleBlossomAccess(pk, !blossomGranted);
+      if(a==='torrent') return toggleCap(pk, 'can_torrent', !torrentOn);
       if(a==='caps') return openPermissions(pk);
       if(a==='block') return doBlock(pk);
     });
   }
   // admin: per-user feature permissions (image/music/video/torrent) from the profile menu — replaces
   // the Admin → Users capability toggles.
+  // admin: toggle a single per-user capability (e.g. can_torrent) inline from the profile menu.
+  async function toggleCap(pk, cap, val){
+    if(!IS_ADMIN) return;
+    try{
+      const auth = await sign(27235, 'user-caps', [['p',pk]]);
+      const r = await fetch('/client/user-caps', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ target: pk, caps:{[cap]:val}, auth: btoa(JSON.stringify(auth)) }) }).then(r=>r.json());
+      toast(r.ok ? (val?'access granted':'access revoked') : ('failed: '+(r.error||'')));
+    }catch(e){ toast('change failed'); }
+  }
   async function openPermissions(pk){
     if(!IS_ADMIN) return;
     let caps={};
