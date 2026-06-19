@@ -21,7 +21,6 @@
         <button class="tab-btn" data-tab="relay">Relay</button>
         <button class="tab-btn" data-tab="blossom">Blossom</button>
         <button class="tab-btn" data-tab="site">Site</button>
-        <button class="tab-btn" data-tab="users">Users</button>
     </div>
 
     <div class="admin-content">
@@ -38,8 +37,8 @@
 
             <button type="submit" class="btn-primary save-btn">Save Settings</button>
         </form>
-
-        {% include 'admin/tabs/users.html' %}
+        <!-- Admin → Users retired: accounts are relay-authoritative (users_backend) and per-user
+             permissions are managed from the Nostr client profile menu ("Additional permissions"). -->
     </div>
 </div>
 

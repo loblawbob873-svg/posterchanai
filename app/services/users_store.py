@@ -38,6 +38,23 @@ ACCOUNT_FIELDS = (
     "storage_quota",
 )
 
+# Per-user CONFIG (the old "User Settings" UI) — also mirrored so settings live in the relay and a
+# fresh node restores them. Excludes secrets that bootstrap encryption (nostr_nsec), transient link
+# tokens (telegram_key*), and per-node runtime cursors (*_notif_since) which must stay local.
+CONFIG_FIELDS = (
+    "notification_email", "avatar",
+    "news_schedule_enabled", "news_schedule_time", "news_sources",
+    "telegram_enabled", "telegram_chat_id", "telegram_notifications",
+    "misskey_enabled", "misskey_instance_url", "misskey_api_token",
+    "pleroma_enabled", "pleroma_instance_url", "pleroma_access_token",
+    "nostr_enabled", "nostr_relays", "nostr_media_service", "nostr_media_endpoint",
+    "matrix_enabled", "matrix_homeserver", "matrix_user_id", "matrix_access_token",
+    "matrix_dm_bot_user_id",
+    "finance_api_key", "social_notif_enabled", "matrix_notif_enabled",
+)
+
+_SYNCED = ACCOUNT_FIELDS + CONFIG_FIELDS
+
 
 def enabled(db) -> bool:
     """True when accounts should be sourced from the relay (setting users_backend == 'relay')."""
@@ -47,7 +64,7 @@ def enabled(db) -> bool:
 
 
 def _record(u: User) -> dict:
-    rec = {f: getattr(u, f, None) for f in ACCOUNT_FIELDS}
+    rec = {f: getattr(u, f, None) for f in _SYNCED}
     rec["nostr_npub"] = u.nostr_npub
     return rec
 
@@ -91,8 +108,12 @@ def _apply(db, rec: dict) -> bool:
                  nostr_npub=npub)
         db.add(u)
         created = True
+    # Authority fields (admin/caps) are mutated only via synced endpoints, so always reconcile them.
+    # Config fields can be changed by flows that don't write-through (e.g. telegram_chat_id on link),
+    # so only restore them when reconstructing a MISSING account — never revert a live node's config.
+    fields = _SYNCED if created else ACCOUNT_FIELDS
     changed = created
-    for f in ACCOUNT_FIELDS:
+    for f in fields:
         if f == "username" and not created:
             continue  # don't rename an existing local account out from under its FK rows
         if f in rec and getattr(u, f, None) != rec[f]:

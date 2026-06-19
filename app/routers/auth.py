@@ -794,6 +794,15 @@ def update_user_settings(
         # Commit the transaction - ensure this succeeds
         db.commit()
         logger.info(f"[Auth] Successfully saved user settings for user {current_user.username}")
+        # Mirror per-user config to the relay (no-op unless users_backend == relay). Sync handler →
+        # drive the coroutine with asyncio.run.
+        try:
+            from app.services import users_store
+            if users_store.enabled(db):
+                import asyncio as _aio
+                _aio.run(users_store.sync_user(db, current_user))
+        except Exception as e:
+            logger.warning(f"[Auth] account sync to relay after settings save failed: {e}")
     except IntegrityError as e:
         # Handle constraint violations (e.g., unique constraint, foreign key)
         db.rollback()
