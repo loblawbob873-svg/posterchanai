@@ -925,22 +925,28 @@
   // The emoji picker is the only way to react now (the dedicated 🤍 like button was removed). After
   // publishing, refresh the counters in place (decorateCounts) so the reaction count goes up and the
   // react button shows your chosen emoji — without re-rendering/resetting the whole feed.
-  function pickEmoji(id,pk,btn){
-    if(myReaction(id)){ toast('already reacted'); return; }
-    const emojis=['❤️','🔥','😂','🤣','😮','😯','😢','😭','👍','👎','🤙','💀','⚡','🚀','🤔','🥰','😍','😘','😎','🤩','🥳','😏','😊','🙂','😉','😌','😋','😛','😜','🤪','😅','😆','😁','😄','😀','🙃','😇','🤗','🤭','🤫','🫡','🧐','🤓','🥸','😐','😑','😶','🙄','😬','🤨','😴','🤤','😪','😷','🤒','🤕','🤢','🤮','🥵','🥶','🥴','😵','🤯','😳','🥺','😤','😠','😡','🤬','😱','😨','😰','😥','😓','🥱','🤠','😈','👿','👹','👺','🤡','💩','👻','👽','👾','🤖','🎃','👀','👏','🙌','🙏','🤝','💪','👊','✌️','🤞','🤟','🤘','👌','🫶','💯','💔','🧡','💛','💚','💙','💜','🖤','🤍','⭐','✨','💥','🎉'];
+  const REACTION_EMOJIS=['❤️','🔥','😂','🤣','😮','😯','😢','😭','👍','👎','🤙','💀','⚡','🚀','🤔','🥰','😍','😘','😎','🤩','🥳','😏','😊','🙂','😉','😌','😋','😛','😜','🤪','😅','😆','😁','😄','😀','🙃','😇','🤗','🤭','🤫','🫡','🧐','🤓','🥸','😐','😑','😶','🙄','😬','🤨','😴','🤤','😪','😷','🤒','🤕','🤢','🤮','🥵','🥶','🥴','😵','🤯','😳','🥺','😤','😠','😡','🤬','😱','😨','😰','😥','😓','🥱','🤠','😈','👿','👹','👺','🤡','💩','👻','👽','👾','🤖','🎃','👀','👏','🙌','🙏','🤝','💪','👊','✌️','🤞','🤟','🤘','👌','🫶','💯','💔','🧡','💛','💚','💙','💜','🖤','🤍','⭐','✨','💥','🎉'];
+  // Shared emoji popover anchored under a button. onPick(emoji, close) decides what to do (react,
+  // or insert into a textarea — for the latter it can keep the picker open for multiple inserts).
+  function openEmojiPopover(anchorBtn, onPick){
     document.querySelectorAll('.emoji-pop').forEach(p=>p.remove());   // never stack pickers
     const pop=document.createElement('div'); pop.className='emoji-pop';
-    pop.innerHTML=emojis.map(x=>`<button data-e="${x}">${x}</button>`).join('');
+    pop.innerHTML=REACTION_EMOJIS.map(x=>`<button data-e="${x}">${x}</button>`).join('');
     document.body.appendChild(pop);
-    // anchor it right under the react button (fixed = viewport coords; flip up if no room below)
-    const r=(btn||document.body).getBoundingClientRect();
+    const r=(anchorBtn||document.body).getBoundingClientRect();
     let left=Math.max(8, Math.min(r.left, window.innerWidth-8-pop.offsetWidth));
     let top=r.bottom+6; if(top+pop.offsetHeight>window.innerHeight-8) top=Math.max(8, r.top-pop.offsetHeight-6);
     pop.style.left=left+'px'; pop.style.top=top+'px';
     const close=()=>{ pop.remove(); document.removeEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.removeEventListener('scroll',close); };
-    const onDoc=e=>{ if(!pop.contains(e.target)) close(); };
+    const onDoc=e=>{ if(!pop.contains(e.target) && !(anchorBtn && anchorBtn.contains(e.target))) close(); };
     setTimeout(()=>{ document.addEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.addEventListener('scroll',close,{once:true}); },0);
-    $$('[data-e]',pop).forEach(b=> b.onclick=async()=>{ close(); await publish(7,b.dataset.e,eTags(id,pk)); toast('reacted '+b.dataset.e); decorateCounts(); });
+    // mousedown + preventDefault keeps the textarea focused so insert-at-cursor works
+    $$('[data-e]',pop).forEach(b=> b.onmousedown=ev=>{ ev.preventDefault(); onPick(b.dataset.e, close); });
+    return close;
+  }
+  function pickEmoji(id,pk,btn){
+    if(myReaction(id)){ toast('already reacted'); return; }
+    openEmojiPopover(btn, (emoji, close)=>{ close(); publish(7,emoji,eTags(id,pk)).then(()=>{ toast('reacted '+emoji); decorateCounts(); }); });
   }
   async function doRepost(id,pk,btn){
     if(countsFor(id).iRt){ toast('already reposted'); return; }
@@ -1008,7 +1014,7 @@
       <div class="cmp-tabs"><button class="cmp-tab active" data-t="write">Write</button><button class="cmp-tab" data-t="preview">👁 Preview</button></div>
       <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
       <div id="cmp-preview" class="note-preview hidden"></div>
-      <div class="row cmp-tools"><button class="btn btn-ghost small" id="cmp-img">📎 Attach</button><button class="btn btn-ghost small" id="cmp-blossom">🌸 Files</button>${CFG.gif_enabled?`<button class="btn btn-ghost small" id="cmp-gif">🎬 GIF</button>`:''}<input type="file" id="cmp-file" multiple hidden>
+      <div class="row cmp-tools"><button class="btn btn-ghost small" id="cmp-img">📎 Attach</button><button class="btn btn-ghost small" id="cmp-blossom">🌸 Files</button><button class="btn btn-ghost small" id="cmp-emoji">😀 Emoji</button>${CFG.gif_enabled?`<button class="btn btn-ghost small" id="cmp-gif">🎬 GIF</button>`:''}<input type="file" id="cmp-file" multiple hidden>
       <span class="spacer"></span><button class="btn btn-ghost small" id="cmp-draft">💾 Draft</button><button class="btn btn-neon small" id="cmp-send">Post ▶</button></div>
       <div class="muted small" id="cmp-status"></div>`, root=>{
       const ta=$('#cmp',root); attachMentionAutocomplete(ta); if(text) ta.value=text;
@@ -1030,6 +1036,7 @@
       });
       $('#cmp-img',root).onclick=()=>$('#cmp-file',root).click();
       $('#cmp-blossom',root).onclick=()=>blossomPicker(ta);
+      $('#cmp-emoji',root).onclick=(e)=>{ e.stopPropagation(); openEmojiPopover($('#cmp-emoji',root), (emoji)=>{ _insertAt(ta, emoji); }); };
       { const gb=$('#cmp-gif',root); if(gb) gb.onclick=()=>gifPicker(ta); }
       $('#cmp-file',root).onchange=async e=>{ const files=[...e.target.files]; if(!files.length)return;
         for(let i=0;i<files.length;i++){ $('#cmp-status',root).textContent=`uploading ${i+1}/${files.length}…`;
