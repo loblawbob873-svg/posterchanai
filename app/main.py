@@ -511,20 +511,10 @@ async def index(request: Request):
 
 
 @app.get("/login")
-async def login_page(
-    request: Request,
-    next: str = None,
-    current_user: User = Depends(get_current_user_optional)
-):
-    if current_user:
-        # Redirect to next URL if provided, otherwise home
-        return RedirectResponse(url=next or "/", status_code=302)
-    resp = templates.TemplateResponse("login.html", {
-        "request": request,
-        "next": next or "/"
-    })
-    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    return resp
+async def login_page(request: Request, next: str = None):
+    # Old password login UI retired — log in with your Nostr key in the unified client. (The session
+    # cookie nostr-login sets is what /admin needs, so admins reach the panel from Settings → Admin.)
+    return RedirectResponse(url="/client", status_code=302)
 
 
 @app.get("/admin")
