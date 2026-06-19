@@ -605,6 +605,45 @@ async def ai_access(data: AiAccessReq, db: Session = Depends(get_db)):
     return JSONResponse({"ok": True, "enabled": bool(data.grant)})
 
 
+# ----- delete my account (the AI app account + all its data) -----
+class DeleteAccountReq(BaseModel):
+    pubkey: str
+    auth: str            # base64 signed event BY this pubkey (proves ownership)
+
+
+@router.post("/delete-account")
+async def delete_account(data: DeleteAccountReq, db: Session = Depends(get_db)):
+    """Delete the user's PosterChan account: their conversations + messages (app.db), their encrypted
+    relay chat events + uploads + Blossom blobs, their storage key, and the account row. (Does not,
+    and cannot, delete their Nostr identity globally — only their data on this node.)"""
+    pk = nostr_service.to_pubkey_hex(data.pubkey)
+    if not pk:
+        return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
+    if not _verify_self_auth(data.auth, pk):
+        return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
+    user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    if not user:
+        return JSONResponse({"ok": True, "already": True})
+    if user.is_admin:
+        return JSONResponse({"ok": False, "error": "admin accounts can't self-delete (use Admin → Users)"}, status_code=400)
+    from app.models import Conversation, Message, UserSetting
+    from app.services import chat_store, upload_store
+    convs = db.query(Conversation).filter(Conversation.user_id == user.id).all()
+    for c in convs:
+        try:
+            await chat_store.delete_conversation(db, user, c.id)   # relay msg events + artifact blobs
+            await upload_store.delete_uploads(db, user, c.id)      # upload blobs + refs
+        except Exception as e:
+            logger.warning("[client] delete-account relay purge (conv %s) failed: %s", c.id, e)
+        db.query(Message).filter(Message.conversation_id == c.id).delete()
+        db.delete(c)
+    db.query(UserSetting).filter(UserSetting.user_id == user.id).delete()
+    db.delete(user)
+    db.commit()
+    logger.info("[client] account deleted: %s", pk[:16])
+    return JSONResponse({"ok": True})
+
+
 # ----- sync my posts to this relay (backfill the user's own Nostr history) -----
 class SyncPostsReq(BaseModel):
     pubkey: str

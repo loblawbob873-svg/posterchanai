@@ -2106,6 +2106,7 @@
           <div class="set-actions">
             <button class="btn btn-ghost small" id="set-sync-posts">⤓ Sync my posts to this relay</button>
             ${IS_ADMIN?`<button class="btn btn-ghost small" id="set-admin">🛠 Admin Panel</button>`:''}
+            <button class="btn btn-ghost small" id="set-del-account" style="color:#ff6b8b">🗑️ Delete my account</button>
           </div>
           <div class="muted small" id="set-sync-status">Pulls your posts from other relays into this one.</div>
         </div>
@@ -2150,6 +2151,15 @@
     const syncRelays=()=>{ _setRelays = $$('#set-relay-list .relay-row input').map(i=>i.value.trim()); };
 
     { const ab=$('#set-admin'); if(ab) ab.onclick=()=>switchView('admin'); }
+    { const da=$('#set-del-account'); if(da) da.onclick=async()=>{
+        if(!confirm('Permanently delete your account and all your AI chats + files on this server? This cannot be undone.')) return;
+        try{ const auth=await sign(27235,'delete-account',[['p',ME.pubkey]]);
+          const r=await fetch('/client/delete-account',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
+          if(r && r.ok){ toast('account deleted'); Session.clear(); try{Relay.worker.call('clearKey',{});}catch(_){} setTimeout(()=>location.reload(),800); }
+          else toast('delete failed: '+((r&&r.error)||''));
+        }catch(_){ toast('delete failed'); }
+      }; }
     { const sp=$('#set-sync-posts'); if(sp) sp.onclick=async()=>{
         const st=$('#set-sync-status'); if(st) st.textContent='syncing… pulling your posts from other relays.';
         try{ const auth=await sign(27235,'sync-posts',[['p',ME.pubkey]]);
