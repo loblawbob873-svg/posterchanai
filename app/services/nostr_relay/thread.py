@@ -373,7 +373,15 @@ async def _main(cfg: dict) -> None:
     async def _firehose_event(ev):
         """Apply the full WoT + filter chain to a live firehose event, store + fan out if kept.
         Non-WoT (incl. blocklisted) pubkeys are dropped by is_member BEFORE any verify/DB work."""
-        if not gate.is_member(ev.get("pubkey", "")):
+        _kind = int(ev.get("kind", 1))
+        if _kind in (9735, 1059):
+            # Zap receipts (9735) are authored by the LNURL zap SERVICE and gift wraps (1059) by a
+            # throwaway ephemeral key — neither author is in the WoT, so gate on the RECIPIENT p-tag
+            # instead (same as the WS write path). Without this the firehose drops every zap, so
+            # posts never show a zap total.
+            if not any(len(t) >= 2 and t[0] == "p" and gate.is_member(t[1]) for t in (ev.get("tags") or [])):
+                return
+        elif not gate.is_member(ev.get("pubkey", "")):
             return
         eid = ev.get("id")
         if not isinstance(eid, str) or len(eid) != 64:
