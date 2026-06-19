@@ -927,7 +927,7 @@
   // react button shows your chosen emoji — without re-rendering/resetting the whole feed.
   function pickEmoji(id,pk,btn){
     if(myReaction(id)){ toast('already reacted'); return; }
-    const emojis=['❤️','🔥','😂','😮','😢','👍','🤙','💀','⚡','🚀'];
+    const emojis=['❤️','🔥','😂','🤣','😮','😯','😢','😭','👍','👎','🤙','💀','⚡','🚀','🤔','🥰','😍','😘','😎','🤩','🥳','😏','😊','🙂','😉','😌','😋','😛','😜','🤪','😅','😆','😁','😄','😀','🙃','😇','🤗','🤭','🤫','🫡','🧐','🤓','🥸','😐','😑','😶','🙄','😬','🤨','😴','🤤','😪','😷','🤒','🤕','🤢','🤮','🥵','🥶','🥴','😵','🤯','😳','🥺','😤','😠','😡','🤬','😱','😨','😰','😥','😓','🥱','🤠','😈','👿','👹','👺','🤡','💩','👻','👽','👾','🤖','🎃','👀','👏','🙌','🙏','🤝','💪','👊','✌️','🤞','🤟','🤘','👌','🫶','💯','💔','🧡','💛','💚','💙','💜','🖤','🤍','⭐','✨','💥','🎉'];
     document.querySelectorAll('.emoji-pop').forEach(p=>p.remove());   // never stack pickers
     const pop=document.createElement('div'); pop.className='emoji-pop';
     pop.innerHTML=emojis.map(x=>`<button data-e="${x}">${x}</button>`).join('');
