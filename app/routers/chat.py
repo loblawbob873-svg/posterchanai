@@ -1215,10 +1215,13 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                         # Long output: save the full thing and link it (inline shows only the tail).
                                         if len(_out) > _IL:
                                             try:
-                                                _rel = StorageService(_db).save_file_bytes(
-                                                    _uname, _conv, (job.output or "").encode("utf-8", "replace"),
-                                                    f"node-{job.node}-job{job.id}.txt",
-                                                )
+                                                _ob = (job.output or "").encode("utf-8", "replace")
+                                                if chat_store.enabled(_db):
+                                                    _nu = _db.query(User).filter(User.id == _uid).first()
+                                                    _rel = await artifact_store.save_bytes(_db, _nu, _conv, _ob, "txt")
+                                                else:
+                                                    _rel = StorageService(_db).save_file_bytes(
+                                                        _uname, _conv, _ob, f"node-{job.node}-job{job.id}.txt")
                                                 _saved = _rel.replace("\\", "/").split("/")[-1]
                                                 _text += f"\n\n[⬇️ full output](/api/files/{_q(_uname, safe='')}/{_conv}/{_q(_saved)})"
                                             except Exception as _fe:
