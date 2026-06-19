@@ -33,7 +33,31 @@ NS_USER    = "pcai:user:"        # per-user account record (admin/can_ai)  (oper
 NS_BOT     = "pcai:bot:"         # bot config                              (operator-signed)
 NS_CONV    = "pcai:conv:"        # a user's conversation doc               (user-signed)
 NS_KV      = "pcai:kv:"          # misc operational key/value              (operator-signed)
+NS_MSG     = "pcai:msg:"         # a single chat message (user-signed, deletable via NIP-09)
 NS_AIREQ   = "pcai:ai-request:"  # pending AI-access request               (user-signed)
+
+
+# ---- per-user server-held storage key ----
+# Identity = the user's login npub (NIP-07/Amber/nsec, key never on the server). The STORAGE key is
+# a separate keypair the server generates + holds, used to encrypt-at-rest the user's chats/uploads
+# to the relay and decrypt them to run the AI. Kept in UserSetting (no schema migration). Stored as
+# hex; decode_seckey accepts hex or nsec.
+def user_storage_seckey(db, user) -> bytes:
+    from app.models import UserSetting
+    row = db.query(UserSetting).filter(UserSetting.user_id == user.id,
+                                       UserSetting.key == "storage_nsec").first()
+    if row and row.value:
+        try:
+            return bytes.fromhex(row.value)
+        except ValueError:
+            pass
+    sk = os.urandom(32)   # valid secp256k1 scalar w/ overwhelming probability
+    if row:
+        row.value = sk.hex()
+    else:
+        db.add(UserSetting(user_id=user.id, key="storage_nsec", value=sk.hex()))
+    db.commit()
+    return sk
 
 
 # ---- local-relay WebSocket I/O (mirrors client.py's proven signup-follow path) ----

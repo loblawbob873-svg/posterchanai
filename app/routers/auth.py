@@ -117,6 +117,14 @@ def nostr_login(data: NostrLogin, response: Response, db: Session = Depends(get_
         created = True
         logger.info("[auth] Nostr signup: %s (%s)", username, npub[:16])
 
+    # Provision the server-held per-user storage key (used to encrypt this user's chats/uploads at
+    # rest in the relay and decrypt them for the AI). Created once, reused thereafter.
+    try:
+        from app.services import nostr_store
+        nostr_store.user_storage_seckey(db, user)
+    except Exception as e:
+        logger.warning("[auth] storage key provisioning failed for %s: %s", npub[:16], e)
+
     token = create_access_token({"sub": str(user.id)})
     _set_auth_cookie(response, token)
     return {
