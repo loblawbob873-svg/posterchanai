@@ -1814,7 +1814,7 @@
     }
     openMenuPopover(anchorBtn, items, async a=>{
       if(a==='follow'){ await toggleFollow(pk); renderProfileView(pk); return; }
-      if(a==='message'){ switchView('messages'); setTimeout(()=>{ if(!dmPeers.has(pk))dmPeers.set(pk,[]); openDm(pk); },50); return; }
+      if(a==='message'){ if(!dmPeers.has(pk))dmPeers.set(pk,[]); dmActive=pk; switchView('messages'); return; }
       if(a==='mute'){ await toggleMute(pk); renderProfileView(pk); return; }
       if(a==='ai') return toggleAiAccess(pk, !aiGranted);
       if(a==='blossom') return toggleBlossomAccess(pk, !blossomGranted);
