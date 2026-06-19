@@ -472,8 +472,10 @@
   function renderView(reset){
     cleanupInlineStream();   // leaving a view tears down the inline stream player (unless popped out)
     const feed = $('#feed');
+    if(VIEW!=='ai' && _ai && _ai.ws){ try{ _ai.ws.onclose=null; _ai.ws.close(); }catch(_){} _ai.ws=null; }
     if(VIEW!=='home' && VIEW!=='global') _hidePill();
     feed.classList.toggle('feed-dm', VIEW==='messages');   // full-height messages layout (no :has needed)
+    feed.classList.toggle('feed-ai', VIEW==='ai');         // full-height chat layout (msgs scroll inside)
     if (reset) feed.innerHTML = '<div class="spinner"></div>';
     if (VIEW==='home' || VIEW==='global') return renderTimeline(VIEW, reset);
     if (VIEW==='notifications') return renderNotifications();
@@ -1855,11 +1857,7 @@
     const a = await ensureAiSession();
     if(VIEW!=='ai') return;
     if(a.error){ feed.innerHTML='<div class="empty">Could not start an AI session — try again.</div>'; return; }
-    if(a.can_ai){
-      // TODO (Phase 1c): mount the chat UI here, talking to the AI backend over this session.
-      feed.innerHTML='<div class="ai-view"><div class="empty">🤖 AI access is enabled. The chat interface is being merged in here next.</div></div>';
-      return;
-    }
+    if(a.can_ai){ return aiMount(feed); }
     feed.innerHTML=`<div class="ai-view ai-gate">
       <h2>🤖 PosterChan AI</h2>
       <p class="muted">AI access isn't enabled for your account yet. Request access and an admin will approve it.</p>
@@ -1877,6 +1875,143 @@
       if(s) s.textContent = (r && r.ok) ? '✓ Request sent — an admin will approve it.' : ('Could not send request: '+((r&&r.error)||''));
     }catch(_){ if(s) s.textContent='Could not send request.'; }
     if(b) b.disabled=false;
+  }
+
+  // ----- the chat itself (ported from the old web UI; talks to /api/ws/chat over the session) -----
+  let _ai = { ws:null, convId:null, streamEl:null, streamBuf:"", attach:[] };
+  function _cookie(name){ const m=document.cookie.match(new RegExp('(?:^|; )'+name+'=([^;]*)')); return m?decodeURIComponent(m[1]):''; }
+
+  async function aiMount(feed){
+    feed.innerHTML=`<div class="ai-chat">
+      <div class="ai-bar"><select id="ai-conv" class="input"></select><button class="btn btn-ghost small" id="ai-new">＋ New</button></div>
+      <div class="ai-msgs" id="ai-msgs"></div>
+      <div class="ai-compose">
+        <button class="mini" id="ai-attach" title="attach">📎</button><input type="file" id="ai-file" multiple hidden>
+        <textarea id="ai-input" class="input" rows="1" placeholder="Message PosterChan AI…  (try: geni a neon city, or /help)"></textarea>
+        <button class="btn btn-neon" id="ai-send">▶</button>
+      </div>
+      <div class="ai-attachbar" id="ai-attachbar"></div>
+    </div>`;
+    _ai.attach=[];
+    $('#ai-new').onclick=()=>aiNewConversation();
+    $('#ai-conv').onchange=e=>aiOpenConversation(parseInt(e.target.value,10));
+    $('#ai-attach').onclick=()=>$('#ai-file').click();
+    $('#ai-file').onchange=e=>aiAddFiles([...e.target.files]).then(()=>{ e.target.value=''; });
+    $('#ai-send').onclick=aiSend;
+    const ta=$('#ai-input');
+    ta.addEventListener('keydown',e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); aiSend(); } });
+    ta.addEventListener('input',()=>{ ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,200)+'px'; });
+    $('#ai-msgs').addEventListener('click',e=>{ const im=e.target.closest('img'); if(im){ openLightbox(im.dataset.full||im.src); } });
+    await aiLoadConversations();
+  }
+  async function aiLoadConversations(){
+    let convs=[]; try{ convs=await fetch('/api/conversations').then(r=>r.json()); }catch(_){}
+    const sel=$('#ai-conv'); if(!sel) return;
+    sel.innerHTML=(convs||[]).map(c=>`<option value="${c.id}">${enc(c.title||'New Chat')}</option>`).join('');
+    if(convs && convs.length) aiOpenConversation(convs[0].id);
+    else aiNewConversation();
+  }
+  async function aiNewConversation(){
+    try{
+      const c=await fetch('/api/conversations',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({title:'New Chat'}) }).then(r=>r.json());
+      const sel=$('#ai-conv'); if(sel){ const o=document.createElement('option'); o.value=c.id; o.textContent=c.title||'New Chat'; sel.prepend(o); sel.value=c.id; }
+      aiOpenConversation(c.id);
+    }catch(_){ toast('could not start a chat'); }
+  }
+  async function aiOpenConversation(id){
+    if(!id) return; _ai.convId=id; _ai.streamEl=null; _ai.streamBuf="";
+    const sel=$('#ai-conv'); if(sel && sel.value!=String(id)) sel.value=String(id);
+    const box=$('#ai-msgs'); if(box) box.innerHTML='<div class="spinner"></div>';
+    let conv=null; try{ conv=await fetch('/api/conversations/'+id).then(r=>r.json()); }catch(_){}
+    if(VIEW!=='ai' || _ai.convId!==id) return;
+    if(box){ box.innerHTML='';
+      for(const m of (conv && conv.messages || [])) aiAddMessage(m.role, m.role==='user'?enc(m.content):mdToHtml(m.content||''));
+      aiScroll();
+    }
+    aiConnect(id);
+  }
+  function aiConnect(id){
+    try{ if(_ai.ws){ _ai.ws.onclose=null; _ai.ws.close(); } }catch(_){}
+    const proto = location.protocol==='https:'?'wss':'ws';
+    const tok=_cookie('access_token');
+    _ai.ws=new WebSocket(`${proto}://${location.host}/api/ws/chat/${id}`+(tok?`?token=${encodeURIComponent(tok)}`:''));
+    _ai.ws.onmessage=e=>{ let d; try{ d=JSON.parse(e.data); }catch(_){ return; } aiHandle(d); };
+  }
+  function aiAddMessage(role, html){
+    const box=$('#ai-msgs'); if(!box) return null;
+    const el=document.createElement('div'); el.className='ai-msg '+(role==='user'?'user':'assistant');
+    el.innerHTML=`<div class="ai-bubble">${html}</div>`; box.appendChild(el); aiScroll(); return el;
+  }
+  function aiScroll(){ const box=$('#ai-msgs'); if(box) box.scrollTop=box.scrollHeight; }
+  function aiHandle(d){
+    if(d.type==='stream'){
+      const c=(d.data&&d.data.content)??d.content??''; if(typeof c!=='string') return;
+      if(!_ai.streamEl){ _ai.streamBuf=''; _ai.streamEl=aiAddMessage('assistant',''); }
+      _ai.streamBuf+=c; const b=_ai.streamEl.querySelector('.ai-bubble'); if(b){ b.textContent=_ai.streamBuf; } aiScroll();
+    } else if(d.type==='stream_clear'){
+      _ai.streamBuf=''; if(_ai.streamEl){ const b=_ai.streamEl.querySelector('.ai-bubble'); if(b) b.textContent=''; }
+    } else if(d.type==='stream_end'){
+      if(_ai.streamEl){ const b=_ai.streamEl.querySelector('.ai-bubble'); if(b) b.innerHTML=mdToHtml(_ai.streamBuf); }
+      _ai.streamEl=null; _ai.streamBuf=''; aiScroll();
+    } else if(d.type==='text'){
+      aiAddMessage('assistant', mdToHtml(d.content||''));
+    } else if(d.type==='response'){
+      aiAddMessage('assistant', aiRenderResponse(d.data||{}));
+    } else if(d.type==='error'){
+      aiAddMessage('assistant', `<span class="ai-err">⚠ ${enc(d.message||'error')}</span>`);
+      _ai.streamEl=null; _ai.streamBuf='';
+    }
+  }
+  // Render the rich command payloads (image/music/video gen, search, files) the backend streams.
+  function aiRenderResponse(d){
+    const head = d.content ? mdToHtml(d.content) : '';
+    if(d.type==='generated_image' && d.image) return head+`<div class="ai-media"><img src="data:image/png;base64,${d.image}" alt="generated"></div>`;
+    if(d.type==='generated_video' && d.video) return head+`<div class="ai-media"><video controls src="data:video/mp4;base64,${d.video}"></video></div>`;
+    if(d.type==='generated_audio' && d.audio){ const fmt=(d.format||'mp3').toLowerCase(); const mime=({mp3:'audio/mpeg',wav:'audio/wav',flac:'audio/flac',opus:'audio/ogg',aac:'audio/aac'})[fmt]||'audio/mpeg';
+      return head+`<div class="ai-media"><audio controls src="data:${mime};base64,${d.audio}"></audio></div>`; }
+    if(d.type==='images' && Array.isArray(d.images)){
+      const items=d.images.slice(0,12).map(im=>{ const src=im.thumb_id?('/api/proxy-image/'+im.thumb_id):(im.img_src||im.thumbnail_src||im.thumbnail||''); const full=im.img_src||src; return src?`<img loading="lazy" src="${enc(src)}" data-full="${enc(full)}">`:''; }).join('');
+      return head+`<div class="ai-imggrid">${items}</div>`;
+    }
+    if(d.type==='search' && Array.isArray(d.results)){
+      return head+'<div class="ai-search">'+d.results.map(r=>`<div class="ai-sr"><a href="${enc(r.url||'')}" target="_blank" rel="noopener">${enc(r.title||r.url||'')}</a><div class="muted small">${enc((r.content||'').slice(0,200))}</div></div>`).join('')+'</div>';
+    }
+    if(d.type==='files' && Array.isArray(d.files)){
+      return head+'<div class="ai-files">'+d.files.map(f=>{ const u=f.url||f.path||''; const n=f.filename||f.name||u; return `<a class="ai-file" href="${enc(u)}" target="_blank" rel="noopener">📄 ${enc(n)}</a>`; }).join('')+'</div>';
+    }
+    return head || mdToHtml(d.text||d.message||'');   // graceful fallback: never drop a payload
+  }
+  async function aiAddFiles(files){
+    for(const f of files){
+      const ext=(f.name.split('.').pop()||'').toLowerCase();
+      const kind = /^image\//.test(f.type)?'image' : (f.type==='application/pdf'||ext==='pdf')?'pdf'
+                 : /^text\/|json|xml|csv|^$/.test(f.type)?'text' : 'doc';
+      try{
+        if(kind==='text'){ _ai.attach.push({kind, name:f.name, text:await f.text()}); }
+        else { const b64=await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(String(r.result).split(',')[1]||''); r.onerror=rej; r.readAsDataURL(f); }); _ai.attach.push({kind, name:f.name, ext, b64}); }
+      }catch(_){}
+    }
+    aiRenderAttach();
+  }
+  function aiRenderAttach(){
+    const bar=$('#ai-attachbar'); if(!bar) return;
+    bar.innerHTML=_ai.attach.map((a,i)=>`<span class="ai-chip">${enc(a.name)} <button data-i="${i}" class="ai-chip-x">✕</button></span>`).join('');
+    $$('.ai-chip-x',bar).forEach(b=> b.onclick=()=>{ _ai.attach.splice(+b.dataset.i,1); aiRenderAttach(); });
+  }
+  function aiSend(){
+    const ta=$('#ai-input'); if(!ta) return; const text=ta.value.trim();
+    if(!text && !_ai.attach.length) return;
+    if(!_ai.ws || _ai.ws.readyState!==1){ toast('connecting… try again in a moment'); aiConnect(_ai.convId); return; }
+    const att=_ai.attach.slice(); _ai.attach=[]; aiRenderAttach();
+    const labels=att.map(a=>`📎 ${enc(a.name)}`).join(' ');
+    aiAddMessage('user', (text?enc(text):'') + (labels?`<div class="ai-userfiles">${labels}</div>`:''));
+    const payload={ type:'message', content:text };
+    const imgs=att.filter(a=>a.kind==='image').map(a=>({base64:a.b64, filename:a.name}));   if(imgs.length) payload.images=imgs;
+    const pdfs=att.filter(a=>a.kind==='pdf').map(a=>({base64:a.b64, filename:a.name}));       if(pdfs.length) payload.pdfs=pdfs;
+    const docs=att.filter(a=>a.kind==='doc').map(a=>({base64:a.b64, filename:a.name, type:a.ext})); if(docs.length) payload.documents=docs;
+    const txts=att.filter(a=>a.kind==='text').map(a=>({content:a.text, filename:a.name}));     if(txts.length) payload.files=txts;
+    try{ _ai.ws.send(JSON.stringify(payload)); }catch(_){ toast('send failed'); }
+    ta.value=''; ta.style.height='auto';
   }
 
   // ---------- settings view ----------
