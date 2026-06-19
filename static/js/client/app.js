@@ -1809,6 +1809,7 @@
       try{ const r=await fetch('/client/blossom-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); blossomGranted=!!(r&&r.whitelisted); }catch(_){}
       items.push(['ai', aiGranted?'🤖 Revoke AI access':'🤖 Grant AI access']);
       items.push(['blossom', blossomGranted?'🌸 Revoke Blossom access':'🌸 Grant Blossom access']);
+      items.push(['caps','🔑 Permissions']);
       items.push(['block','🚫 Block (relay)','danger']);
     }
     openMenuPopover(anchorBtn, items, async a=>{
@@ -1817,7 +1818,28 @@
       if(a==='mute'){ await toggleMute(pk); renderProfileView(pk); return; }
       if(a==='ai') return toggleAiAccess(pk, !aiGranted);
       if(a==='blossom') return toggleBlossomAccess(pk, !blossomGranted);
+      if(a==='caps') return openPermissions(pk);
       if(a==='block') return doBlock(pk);
+    });
+  }
+  // admin: per-user feature permissions (image/music/video/torrent) from the profile menu — replaces
+  // the Admin → Users capability toggles.
+  async function openPermissions(pk){
+    if(!IS_ADMIN) return;
+    let caps={};
+    try{ const r=await fetch('/client/user-caps?pubkey='+encodeURIComponent(pk)).then(r=>r.json());
+      if(r && r.exists){ caps=r.caps||{}; } else { toast('that user hasn’t opened the app yet'); return; } }
+    catch(_){ toast('couldn’t load permissions'); return; }
+    const C=[['can_image','🖼️ Image'],['can_music','🎵 Music'],['can_video','🎬 Video'],['can_torrent','🧲 Torrents']];
+    modal(`<h3>🔑 Permissions</h3>${C.map(([k,l])=>`<label class="fld" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" data-cap="${k}" ${caps[k]?'checked':''}> ${l}</label>`).join('')}<button class="btn btn-neon full" id="caps-save">Save</button>`, root=>{
+      $('#caps-save',root).onclick=async()=>{
+        const out={}; $$('[data-cap]',root).forEach(c=>out[c.dataset.cap]=c.checked);
+        try{ const auth=await sign(27235,'user-caps',[['p',pk]]);
+          const r=await fetch('/client/user-caps',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({target:pk,caps:out,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
+          toast(r.ok?'permissions saved':'failed: '+((r&&r.error)||'')); closeModal();
+        }catch(_){ toast('save failed'); }
+      };
     });
   }
   // admin: grant/revoke this account's AI access (the can_ai flag). Signed like doBlock.

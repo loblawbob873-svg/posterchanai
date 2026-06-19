@@ -576,6 +576,48 @@ async def ai_requests(db: Session = Depends(get_db)):
     return JSONResponse({"ok": True, "requests": out})
 
 
+_USER_CAPS = ("can_image", "can_music", "can_video", "can_torrent")
+
+
+class UserCapsReq(BaseModel):
+    target: str
+    caps: dict           # {can_torrent: true, ...}
+    auth: str            # admin-signed event (p-tags target)
+
+
+@router.get("/user-caps")
+async def user_caps_status(pubkey: str, db: Session = Depends(get_db)):
+    """A user's feature capabilities (image/music/video/torrent), so an admin can toggle them from
+    the client profile menu instead of Admin → Users."""
+    h = nostr_service.to_pubkey_hex(pubkey)
+    if not h:
+        return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
+    u = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(h)).first()
+    if not u:
+        return JSONResponse({"ok": True, "exists": False})
+    return JSONResponse({"ok": True, "exists": True, "is_admin": bool(u.is_admin),
+                         "caps": {c: bool(getattr(u, c, False)) for c in _USER_CAPS}})
+
+
+@router.post("/user-caps")
+async def user_caps_set(data: UserCapsReq, db: Session = Depends(get_db)):
+    """Admin-only: set a user's feature capabilities by npub (replaces the Admin → Users toggles)."""
+    target = nostr_service.to_pubkey_hex(data.target)
+    if not target:
+        return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
+    if not _verify_admin_auth(db, data.auth, target):
+        return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
+    u = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(target)).first()
+    if not u:
+        return JSONResponse({"ok": False, "error": "that user hasn't opened the app yet"}, status_code=404)
+    for c in _USER_CAPS:
+        if c in data.caps:
+            setattr(u, c, bool(data.caps[c]))
+    db.commit()
+    logger.info("[client] caps for %s set: %s", u.username, {c: getattr(u, c) for c in _USER_CAPS})
+    return JSONResponse({"ok": True, "caps": {c: bool(getattr(u, c, False)) for c in _USER_CAPS}})
+
+
 @router.get("/ai-access")
 async def ai_access_status(pubkey: str, db: Session = Depends(get_db)):
     """Is AI enabled for this account? Drives Grant vs Revoke in the client profile menu."""
