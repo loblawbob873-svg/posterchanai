@@ -1096,9 +1096,28 @@
     });
     ta.addEventListener('blur', ()=>setTimeout(close,200));
   }
+  // decode an npub/nprofile (with or without the nostr: prefix) to a hex pubkey
+  function refToPk(v){
+    try{ const d=NT().nip19.decode(String(v).replace(/^nostr:/i,'')); if(d.type==='npub') return d.data; if(d.type==='nprofile') return d.data.pubkey; }catch(_){}
+    return safePk(v);
+  }
+  // p-tags that drive the recipient's notification. Catches: explicit npub/nprofile refs (with or
+  // without `nostr:`), AND bare `@name` typed without picking the autocomplete — resolved against
+  // cached profiles by an EXACT name / display-name / nip05 local-part match (1 unique hit only, so
+  // it never mis-tags the wrong person). Without this, an un-converted @mention sent no p-tag, so
+  // the mentioned user never got notified.
   function mentionTags(text){
-    const out=[];
-    for(const m of text.matchAll(/nostr:(npub1[0-9a-z]+)/gi)){ const pk=safePk(m[1]); if(pk && !out.some(t=>t[1]===pk)) out.push(['p',pk]); }
+    const out=[]; const add=pk=>{ if(pk && !out.some(t=>t[1]===pk)) out.push(['p',pk]); };
+    for(const m of (text||'').matchAll(/(?:nostr:)?((?:npub1|nprofile1)[0-9a-z]{20,})/gi)) add(refToPk(m[1]));
+    for(const m of (text||'').matchAll(/(?:^|\s)@([a-z0-9_.\-]{2,40})/gi)){
+      const q=m[1].toLowerCase();
+      const hits=Store.profileList().filter(p=>{
+        const nm=(p.meta.name||'').toLowerCase(), dn=(p.meta.display_name||'').toLowerCase();
+        const n5=(niceNip05(p.meta.nip05)||'').replace(/^@/,'').split('@')[0].toLowerCase();
+        return nm===q || dn===q || n5===q;
+      });
+      if(hits.length===1) add(hits[0].pubkey);
+    }
     return out;
   }
 
