@@ -7,6 +7,18 @@
   const enc = s => (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const LOGO = '/static/posterchan-relay.png';
   const isDesktop = () => !window.matchMedia('(max-width:820px)').matches;   // pop-out player is desktop-only
+  // Extensionless Blossom blobs (/<sha256>) carry NO type in the URL, so we render them as <img>;
+  // if that fails the blob is likely a video (bots post bare video URLs) — try <video>, and only
+  // if THAT fails fall back to a plain link. (Fixes videos showing as a link instead of playing.)
+  window.__blobFallback = function(el){
+    const src = el.currentSrc || el.src;
+    if(el.tagName === 'IMG'){
+      const v=document.createElement('video'); v.src=src; v.controls=true; v.playsInline=true;
+      v.preload='metadata'; v.className=el.className; v.onerror=()=>window.__blobFallback(v); el.replaceWith(v);
+    } else {
+      const a=document.createElement('a'); a.href=src; a.target='_blank'; a.rel='noopener'; a.textContent=src; el.replaceWith(a);
+    }
+  };
 
   let CFG = {}, ME = null, FOLLOWS = new Set(), MUTED = new Set(), PINNED = new Set(), BOOKMARKS = new Set(), VIEW = 'home', IS_ADMIN = false;
   let signer = null;
@@ -694,7 +706,7 @@
       const u=url.replace(/[)\].,!?]+$/,''); const tail=url.slice(u.length); const E=enc(u);
       if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)){ media.push(`<img src="${E}" loading="lazy">`); return tail; }
       if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)){ media.push(`<video src="${E}" controls preload="metadata" playsinline></video>`); return tail; }
-      if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)){ media.push(`<img src="${E}" loading="lazy" onerror="this.onerror=null;var a=document.createElement('a');a.href=this.src;a.target='_blank';a.rel='noopener';a.textContent=this.src;this.replaceWith(a);">`); return tail; }
+      if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)){ media.push(`<img src="${E}" loading="lazy" onerror="this.onerror=null;window.__blobFallback(this);">`); return tail; }
       return url;  // non-media URL: leave for linkify
     });
     return { text, gallery: media.length?`<div class="media-row">${media.join('')}</div>`:'' };
@@ -1662,7 +1674,7 @@
       else if(/\.(mp3|ogg|wav|m4a|aac|flac)(\?|#|$)/i.test(u)) tag=`<br><audio src="${u}" controls preload="none"></audio>`;
       // extensionless Blossom hash URLs (e.g. media.poster.place/<sha256>) — bots post these for
       // nitter/fedi media. Try as an image; if it isn't one, swap to a plain link on error.
-      else if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)) tag=`<img class="m" src="${u}" loading="lazy" onerror="this.onerror=null;var a=document.createElement('a');a.href=this.src;a.target='_blank';a.rel='noopener';a.textContent=this.src;this.replaceWith(a);">`;
+      else if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)) tag=`<img class="m" src="${u}" loading="lazy" onerror="this.onerror=null;window.__blobFallback(this);">`;
       else tag=`<a href="${u}" target="_blank" rel="noopener">${u}</a>`;
       return tag+tail;
     });
