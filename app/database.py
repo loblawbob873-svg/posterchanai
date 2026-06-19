@@ -282,6 +282,9 @@ def _run_migrations():
         ("can_video", "BOOLEAN DEFAULT 1"),
         ("can_torrent", "BOOLEAN DEFAULT 1"),
         ("can_blossom", "BOOLEAN DEFAULT 0"),  # opt-in: allow Blossom uploads (see blossom_service)
+        # AI access. ALTER DEFAULT 1 so EXISTING users keep their access; the ORM model default is
+        # False, so brand-new (Nostr) signups are gated until an admin approves. Admins always bypass.
+        ("can_ai", "BOOLEAN DEFAULT 1"),
         # Scheduled news / custom news sources
         ("news_schedule_enabled", "BOOLEAN DEFAULT 0"),
         ("news_schedule_time", "VARCHAR(5) DEFAULT '12:00'"),
@@ -501,7 +504,9 @@ def init_db():
             "blossom_whitelist": "",   # npub/hex allowed to upload to Blossom (no AI account needed)
             "tenor_api_key": "",   # GIF picker in the Nostr client (Tenor v2); blank = hidden
             "giphy_api_key": "",   # GIF picker alternative (Giphy; easier to obtain) — used if set
-            "nostr_relay_enabled": "false",
+            # Relay ON by default for fresh installs — it's now the app's datastore + the Nostr
+            # client's relay. Existing installs keep their saved value (defaults are seed-only).
+            "nostr_relay_enabled": "true",
             "nostr_relay_port": "3052",
             "nostr_relay_wot_seeds": "\n".join([
                 "npub1gu9wxzm9y3uwunva2d6tedef64r33dfdessjhuvp5hf8zampj5nseec39q",

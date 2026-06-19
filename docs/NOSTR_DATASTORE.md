@@ -64,6 +64,12 @@ sign up with their key; existing password admins keep working and are linked to 
 3. **Operational → relay**: settings, bots, maps, blob-meta as operator app-data events; retire the
    corresponding `app.db` tables. Bots/services read through the repository.
 
+## UI consolidation notes
+- The old per-user **Files/Photos** feature (`shared_files` / user uploads) is **obsolete** — the
+  Blossom **Files** view (in the Nostr client) replaces it. Blossom still uses the **storage proxy**
+  (`blossom_storage_backend=proxy`, `storage_server_url`) — keep that. Migration step: drop the old
+  Files/Photos UI + routes once Blossom Files is the single file surface.
+
 ## Compatibility
 Every bot/service keeps using a single **repository API** (`repo.*`) instead of `db.query(...)`.
 The repo is backed by `app.db` today and swapped to the relay store per-domain behind the flag, so

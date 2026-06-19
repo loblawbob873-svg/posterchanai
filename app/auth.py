@@ -207,6 +207,17 @@ def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
     return current_user
 
 
+def get_ai_user(current_user: User = Depends(get_current_user)) -> User:
+    """Gate AI features: admins always pass; everyone else needs the admin-granted `can_ai` flag.
+    Nostr-signup users start without it and request access (admin approves) — see the can_ai flow."""
+    if not (current_user.is_admin or getattr(current_user, "can_ai", False)):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="AI access not enabled for this account — request access and an admin will approve."
+        )
+    return current_user
+
+
 async def get_user_from_websocket(websocket: WebSocket, db: Session) -> Optional[User]:
     # Try to get token from query params or cookies (cookie may be URL-encoded)
     token = websocket.query_params.get("token")

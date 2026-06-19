@@ -181,6 +181,7 @@ async function loadUsers() {
                             <label class="cap-toggle"><input type="checkbox" id="cap_video_${u.id}" ${u.can_video ? 'checked' : ''}> 🎬 Video</label>
                             <label class="cap-toggle"><input type="checkbox" id="cap_torrent_${u.id}" ${u.can_torrent ? 'checked' : ''}> 🧲 Torrent</label>
                             <label class="cap-toggle"><input type="checkbox" id="cap_blossom_${u.id}" ${u.can_blossom ? 'checked' : ''}> 🌸 Blossom</label>
+                            <label class="cap-toggle"><input type="checkbox" id="cap_ai_${u.id}" ${u.can_ai ? 'checked' : ''}> 🤖 AI</label>
                             <button class="btn-secondary btn-small" onclick="updateCapabilities(${u.id}, '${escapeHtml(u.username)}')">Save Access</button>
                             ${u.is_admin ? '<span class="cap-note">admin: always allowed</span>' : ''}
                         </div>
@@ -269,6 +270,7 @@ async function updateCapabilities(userId, username) {
         can_video: cap('video'),
         can_torrent: cap('torrent'),
         can_blossom: cap('blossom'),
+        can_ai: cap('ai'),
     });
     try {
         const response = await csrfFetch(`/api/admin/users/${userId}/capabilities?${params.toString()}`, {

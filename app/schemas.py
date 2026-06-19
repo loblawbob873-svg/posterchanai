@@ -32,6 +32,7 @@ class UserResponse(BaseModel):
     can_video: bool = True
     can_torrent: bool = True
     can_blossom: bool = False
+    can_ai: bool = False
     telegram_enabled: bool = False
     telegram_chat_id: Optional[str] = None
     telegram_notifications: str = ""
