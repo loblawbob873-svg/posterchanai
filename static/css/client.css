@@ -240,12 +240,12 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 .emoji-pick button:hover{border-color:var(--neon)}
 
 /* dms */
-.dm-wrap{display:grid;grid-template-columns:260px 1fr;height:100%}
+.dm-wrap{display:grid;grid-template-columns:320px 1fr;height:100%}
 .dm-list{border-right:1px solid var(--line);overflow-y:auto}
 .dm-peer{display:flex;gap:10px;align-items:center;padding:12px 14px;cursor:pointer;border-bottom:1px solid var(--line)}
 .dm-peer:hover,.dm-peer.active{background:rgba(0,255,255,.1)}
 .dm-peer img{width:36px;height:36px;border-radius:50%;border:1px solid var(--line)}
-.dm-peer b{font-size:15.5px}.dm-peer .muted.small{font-size:13px}
+.dm-peer b{font-size:17px}.dm-peer .muted.small{font-size:14.5px}
 .dm-thread{display:flex;flex-direction:column;height:100%}
 .dm-msgs{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:8px}
 .bubble{max-width:74%;padding:11px 15px;border-radius:14px;font-size:18.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
