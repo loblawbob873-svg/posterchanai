@@ -127,6 +127,35 @@ def nostr_login(data: NostrLogin, response: Response, db: Session = Depends(get_
     }
 
 
+@router.post("/ai-request")
+def ai_request(data: NostrLogin, db: Session = Depends(get_db)):
+    """A Nostr-signup user requests AI access; an admin approves it (profile ☰ menu / Admin → Users).
+    Records the pending request (visible to admins) — see can_ai flow."""
+    from app.services.nostr import nostr_service
+    from app.models import UserSetting
+    pk = nostr_service.to_pubkey_hex(data.pubkey)
+    if not pk:
+        raise HTTPException(status_code=400, detail="invalid pubkey")
+    if not _verify_nostr_auth(data.auth, pk):
+        raise HTTPException(status_code=403, detail="invalid or stale Nostr signature")
+    npub = nostr_service.npub_of(pk)
+    user = db.query(User).filter(User.nostr_npub == npub).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="log in with your Nostr key first")
+    if user.is_admin or user.can_ai:
+        return {"ok": True, "already": True}
+    row = db.query(UserSetting).filter(UserSetting.user_id == user.id,
+                                       UserSetting.key == "ai_requested").first()
+    if row:
+        row.value = str(int(time.time()))
+    else:
+        db.add(UserSetting(user_id=user.id, key="ai_requested", value=str(int(time.time()))))
+    db.commit()
+    logger.info("[auth] AI access requested by %s (%s)", user.username, npub[:16])
+    # TODO(next): notify admins over Nostr (DM/notification event) — needs server-side NIP-17 send.
+    return {"ok": True}
+
+
 @router.post("/logout")
 def logout(response: Response):
     response.delete_cookie("access_token")

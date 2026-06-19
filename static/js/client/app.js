@@ -466,7 +466,7 @@
   function switchView(v){
     VIEW = v;
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
-    $('#view-title').textContent = { home:'Home', global:'Global', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', streams:'Streams', blossom:'Files', profile:'Profile', settings:'Settings' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Global', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', streams:'Streams', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI' }[v]||v;
     renderView(true);
   }
   function renderView(reset){
@@ -484,6 +484,7 @@
     if (VIEW==='streams') return renderStreams();
     if (VIEW==='blossom') return renderBlossom();
     if (VIEW==='settings') return renderSettings();
+    if (VIEW==='ai') return renderAI();
     if (VIEW==='profile') return renderProfile(ME.pubkey);
   }
 
@@ -1837,6 +1838,47 @@
       $$('[data-prof]',list).forEach(el=> el.onclick=()=>{ closeModal(); renderProfileView(el.dataset.prof); });
     });
   }
+  // ---------- AI view (the old PosterChan AI web UI, merged in as a client view) ----------
+  let _aiAuth = null;   // cached {can_ai, is_admin, username} for this session
+  async function ensureAiSession(){
+    if(_aiAuth) return _aiAuth;
+    try{
+      const auth = await sign(27235, 'ai-login', [['p', ME.pubkey]]);   // prove key ownership
+      const r = await fetch('/api/auth/nostr-login', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ pubkey: ME.pubkey, auth: btoa(JSON.stringify(auth)) }) }).then(r=>r.json());
+      _aiAuth = (r && r.user) ? r.user : { can_ai:false, error:!r };
+    }catch(_){ _aiAuth = { can_ai:false, error:true }; }
+    return _aiAuth;
+  }
+  async function renderAI(){
+    const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
+    const a = await ensureAiSession();
+    if(VIEW!=='ai') return;
+    if(a.error){ feed.innerHTML='<div class="empty">Could not start an AI session — try again.</div>'; return; }
+    if(a.can_ai){
+      // TODO (Phase 1c): mount the chat UI here, talking to the AI backend over this session.
+      feed.innerHTML='<div class="ai-view"><div class="empty">🤖 AI access is enabled. The chat interface is being merged in here next.</div></div>';
+      return;
+    }
+    feed.innerHTML=`<div class="ai-view ai-gate">
+      <h2>🤖 PosterChan AI</h2>
+      <p class="muted">AI access isn't enabled for your account yet. Request access and an admin will approve it.</p>
+      <button class="btn btn-neon" id="ai-request">Request AI access</button>
+      <div class="muted small" id="ai-request-status"></div></div>`;
+    $('#ai-request').onclick=requestAiAccess;
+  }
+  async function requestAiAccess(){
+    const s=$('#ai-request-status'); const b=$('#ai-request'); if(b) b.disabled=true;
+    if(s) s.textContent='sending request…';
+    try{
+      const auth = await sign(27235, 'ai-request', [['p', ME.pubkey]]);
+      const r = await fetch('/api/auth/ai-request', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ pubkey: ME.pubkey, auth: btoa(JSON.stringify(auth)) }) }).then(r=>r.json());
+      if(s) s.textContent = (r && r.ok) ? '✓ Request sent — an admin will approve it.' : ('Could not send request: '+((r&&r.error)||''));
+    }catch(_){ if(s) s.textContent='Could not send request.'; }
+    if(b) b.disabled=false;
+  }
+
   // ---------- settings view ----------
   // Local working copy of the relay list while editing (committed to ClientSettings on Save).
   let _setRelays = [];

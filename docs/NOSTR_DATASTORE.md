@@ -64,6 +64,16 @@ sign up with their key; existing password admins keep working and are linked to 
 3. **Operational → relay**: settings, bots, maps, blob-meta as operator app-data events; retire the
    corresponding `app.db` tables. Bots/services read through the repository.
 
+## UI = the Nostr client (old webui retired)
+The standalone PosterChan AI web UI is **replaced**: the AI chat becomes a **view inside the Nostr
+client** (`static/js/client/`), like Home/Settings. An **AI** nav button does `switchView('ai')`.
+The client already has the signers (NIP-07/Amber/nsec), so the AI view authenticates by signing a
+NIP event → `POST /api/auth/nostr-login` (sets the normal session cookie) → then talks to the AI
+chat backend over that session. No separate login page. The old `templates/index.html` chat UI +
+its routes are retired once the in-client AI view reaches parity.
+- Non-`can_ai` users: the AI view shows **"Request AI access"** → writes a request event + notifies
+  admins; admin approves from the profile ☰ menu → `can_ai` flips → the view unlocks.
+
 ## UI consolidation notes
 - The old per-user **Files/Photos** feature (`shared_files` / user uploads) is **obsolete** — the
   Blossom **Files** view (in the Nostr client) replaces it. Blossom still uses the **storage proxy**
