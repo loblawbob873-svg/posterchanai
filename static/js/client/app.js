@@ -1880,9 +1880,15 @@
   }
   // In-app Admin: the standalone admin panel embedded in the client (same-origin, the Nostr-login
   // cookie authorizes it). Admins only.
-  function renderAdmin(){
+  async function renderAdmin(){
     const feed=$('#feed');
     if(!IS_ADMIN){ feed.innerHTML='<div class="empty">Admins only.</div>'; return; }
+    feed.innerHTML='<div class="spinner"></div>';
+    // /admin needs the session cookie nostr-login sets; establish it first, else /admin → /login →
+    // /client and the iframe would just show the client again ("same UI in the UI").
+    const a = await ensureAiSession();
+    if(VIEW!=='admin') return;
+    if(!a || a.error || !a.is_admin){ feed.innerHTML='<div class="empty">Admin session unavailable — make sure you logged in with your admin Nostr key.</div>'; return; }
     feed.innerHTML='<iframe class="admin-frame" src="/admin" title="Admin"></iframe>';
   }
   async function renderAI(){
