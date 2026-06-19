@@ -24,6 +24,13 @@ from app.services import nostr_migrate as _mig
 
 logger = logging.getLogger(__name__)
 
+# Datastore-plumbing keys are always sourced from local SQLite, never hydrated/written-through —
+# so a stale relay copy can't change where/whether we connect or flip the backend off mid-flight.
+_PLUMBING_KEYS = frozenset({
+    "settings_backend", "chat_backend", "nostr_relay_port", "nostr_relay_enabled",
+    "nostr_relay_db_path", "nostr_relay_bind",
+})
+
 
 def enabled(db) -> bool:
     """True when settings should be sourced from the relay (setting settings_backend == 'relay')."""
@@ -85,8 +92,10 @@ async def hydrate(db) -> int:
         return 0
     changed = 0
     for key, value in relay.items():
-        # never let a stale relay copy of these break the path used to reach the relay itself
-        if key in ("nostr_relay_port",):
+        # Never hydrate the datastore-plumbing keys: a stale relay copy of these must not be able
+        # to change the port/db we connect to, or silently flip the backend off (locking us out).
+        # These are always read from local SQLite.
+        if key in _PLUMBING_KEYS:
             continue
         if _upsert(db, key, value):
             changed += 1
@@ -107,6 +116,8 @@ async def write_through(db, changes: dict) -> int:
     port = _port(db)
     wrote = 0
     for key, value in changes.items():
+        if key in _PLUMBING_KEYS:
+            continue
         try:
             ok = await store.put_doc(port, op_sk, store.NS_SETTING + key, {"value": value})
             if ok:
