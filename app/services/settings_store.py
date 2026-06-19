@@ -31,6 +31,17 @@ _PLUMBING_KEYS = frozenset({
     "nostr_relay_enabled", "nostr_relay_db_path", "nostr_relay_bind",
 })
 
+# Per-node RUNTIME-STATE settings (sync cursors / seen-sets) are advanced directly in SQLite by the
+# pollers, NOT via admin Save — so write-through never sees them and the relay copy goes stale. They
+# are also inherently per-node (each node has its own sync position), so they must stay local: never
+# hydrate (a stale relay cursor would reset progress → re-post old content) and never write-through.
+_RUNTIME_KEYS = frozenset({"nitter_seen", "autopost_last_runs", "fedi_timeline_since"})
+_RUNTIME_SUFFIXES = ("_since", "_seen", "_cursor", "_last_runs", "_next_batch")
+
+
+def _is_local_only(key: str) -> bool:
+    return key in _PLUMBING_KEYS or key in _RUNTIME_KEYS or key.endswith(_RUNTIME_SUFFIXES)
+
 
 def enabled(db) -> bool:
     """True when settings should be sourced from the relay (setting settings_backend == 'relay')."""
@@ -92,10 +103,9 @@ async def hydrate(db) -> int:
         return 0
     changed = 0
     for key, value in relay.items():
-        # Never hydrate the datastore-plumbing keys: a stale relay copy of these must not be able
-        # to change the port/db we connect to, or silently flip the backend off (locking us out).
-        # These are always read from local SQLite.
-        if key in _PLUMBING_KEYS:
+        # Plumbing + per-node runtime-state keys are always local (see _is_local_only): a stale relay
+        # copy must not change where we connect, flip the backend off, or reset a sync cursor.
+        if _is_local_only(key):
             continue
         if _upsert(db, key, value):
             changed += 1
@@ -116,7 +126,7 @@ async def write_through(db, changes: dict) -> int:
     port = _port(db)
     wrote = 0
     for key, value in changes.items():
-        if key in _PLUMBING_KEYS:
+        if _is_local_only(key):
             continue
         try:
             ok = await store.put_doc(port, op_sk, store.NS_SETTING + key, {"value": value})
