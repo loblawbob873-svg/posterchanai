@@ -59,12 +59,22 @@ def user_storage_seckey(db, user) -> bytes:
         db.add(UserSetting(user_id=user.id, key="storage_nsec", value=sk.hex()))
     db.commit()
     # New storage key → tell the relay to accept it as a writer (operator) without a restart.
-    try:
-        from app.services.nostr_relay.thread import trigger_block_reload
-        trigger_block_reload()
-    except Exception as e:
-        logger.debug("[nostr-store] operator reload after key provision failed: %s", e)
+    # Debounced: a burst of new users (e.g. a busy bot) would otherwise trigger a reload storm; at
+    # most one reload per _RELOAD_DEBOUNCE. A key not yet picked up just mirrors on the next reload.
+    import time as _t
+    global _last_op_reload
+    if _t.time() - _last_op_reload > _RELOAD_DEBOUNCE:
+        _last_op_reload = _t.time()
+        try:
+            from app.services.nostr_relay.thread import trigger_block_reload
+            trigger_block_reload()
+        except Exception as e:
+            logger.debug("[nostr-store] operator reload after key provision failed: %s", e)
     return sk
+
+
+_last_op_reload = 0.0
+_RELOAD_DEBOUNCE = 20.0
 
 
 # ---- local-relay WebSocket I/O (mirrors client.py's proven signup-follow path) ----
