@@ -22,6 +22,10 @@ class WotGate:
         self._members: frozenset = frozenset()
         self._operator: frozenset = frozenset()
         self._blocked: frozenset = frozenset()
+        # Accounts detected as living on a blocked bridge relay (mostr.pub etc.). Like _blocked,
+        # but grown at runtime as a bridge account's profile/relay-list flows through, and reseeded
+        # from a store scan on (re)load — kept separate so the daily WoT rebuild can't undo it.
+        self._bridged: set = set()
         self.built_at: float = 0.0
 
     def set_operator(self, operator_hex) -> None:
@@ -30,12 +34,22 @@ class WotGate:
     def set_blocked(self, blocked_hex) -> None:
         self._blocked = frozenset(blocked_hex or [])
 
+    def set_bridged(self, bridged_hex) -> None:
+        self._bridged = set(bridged_hex or [])
+
+    def add_bridged(self, pubkeys) -> None:
+        self._bridged |= {p for p in (pubkeys or []) if p}
+
+    def mark_bridged(self, pubkey: str) -> None:
+        if pubkey:
+            self._bridged.add(pubkey)
+
     def is_blocked(self, pubkey: str) -> bool:
-        return bool(pubkey) and pubkey in self._blocked
+        return bool(pubkey) and (pubkey in self._blocked or pubkey in self._bridged)
 
     def is_member(self, pubkey: str) -> bool:
-        if not pubkey or pubkey in self._blocked:
-            return False  # explicit denylist overrides everything, even operator
+        if not pubkey or pubkey in self._blocked or pubkey in self._bridged:
+            return False  # explicit denylist / blocked bridge overrides everything, even operator
         return pubkey in self._members or pubkey in self._operator
 
     def is_operator(self, pubkey: str) -> bool:

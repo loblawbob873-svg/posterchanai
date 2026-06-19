@@ -25,6 +25,7 @@ from app.services.nostr import nostr_service
 from .store import RelayStore
 from .wot import WotGate
 from .server import RelayServer
+from .bridges import relay_domain as _bridge_domain, reveals_blocked_bridge
 
 logger = logging.getLogger(__name__)
 
@@ -245,6 +246,12 @@ def _read_config() -> dict:
                                 (nostr_service.to_pubkey_hex(t.strip()) for t in
                                  g("nostr_relay_blocked_pubkeys", "").replace(",", "\n").split())
                                 if pk],
+            # Bridge/relay domains to block (mostr.pub, brid.gy, …). Accounts whose profile nip05 or
+            # relay list lives on one of these are denied + purged (suffix match → covers subdomains).
+            "blocked_relays": {d for d in
+                               (_bridge_domain(t) for t in
+                                g("nostr_relay_blocked_relays", "").replace(",", "\n").split())
+                               if d},
             # Built-in NIP-05 identity server (served over HTTP by the relay subprocess at
             # /.well-known/nostr.json). Defaults preserve the entries previously on router.lan.
             "nip05": {
@@ -336,6 +343,8 @@ async def _main(cfg: dict) -> None:
         if rl:
             logger.info("[nostr-relay] purged %d stored note(s) in %d blocked language(s)",
                         rl, len(cfg["blocked_langs"]))
+    if cfg["blocked_relays"]:
+        await _apply_blocked_relays(store, gate, cfg["blocked_relays"])
     from .outbox import Outbox
     outbox = Outbox(cfg["upstream"], min_interval=cfg["outbox_min_interval"],
                     maxsize=cfg["outbox_max_queue"], direct=cfg["direct"],
@@ -372,7 +381,13 @@ async def _main(cfg: dict) -> None:
 
     async def _firehose_event(ev):
         """Apply the full WoT + filter chain to a live firehose event, store + fan out if kept.
-        Non-WoT (incl. blocklisted) pubkeys are dropped by is_member BEFORE any verify/DB work."""
+        Non-WoT (incl. blocklisted/bridged) pubkeys are dropped by is_member BEFORE any verify/DB work."""
+        # Learn bridge accounts as their profile/relay-list streams by: mark + drop so every event
+        # they author is then rejected by the is_member gate below. Read the list live (reloadable).
+        _br = cfg.get("blocked_relays")
+        if _br and reveals_blocked_bridge(ev, _br):
+            gate.mark_bridged(ev.get("pubkey", ""))
+            return
         _kind = int(ev.get("kind", 1))
         if _kind in (9735, 1059):
             # Zap receipts (9735) are authored by the LNURL zap SERVICE and gift wraps (1059) by a
@@ -430,7 +445,8 @@ async def _main(cfg: dict) -> None:
     async def _meta_backfill():
         from . import ingest as _ingest
         await _ingest.fetch_lookup_metadata(store, cfg["upstream"], cfg["author_batch"],
-                                             cfg.get("profile_limit", 1500), cfg["request_pace_sec"], cfg["direct"])
+                                             cfg.get("profile_limit", 1500), cfg["request_pace_sec"], cfg["direct"],
+                                             gate=gate, blocked_relays=cfg.get("blocked_relays"))
     tasks.append(asyncio.create_task(_periodic(_relay.stop_event, 45, _meta_backfill, "metadata-backfill")))
     # Heavy WoT BACKFILL SWEEP — OFF by default. This is the windowed crawl that walks the WHOLE
     # trust graph (tens of thousands of members via depth-2 FoF) re-fetching history; it pegs a
@@ -493,8 +509,12 @@ async def _main(cfg: dict) -> None:
                             gate.set_blocked(cfg["blocked_pubkeys"])
                             if cfg["blocked_pubkeys"]:
                                 asyncio.create_task(_safe(store.delete_pubkeys(cfg["blocked_pubkeys"])))
-                            logger.info("[nostr-relay] control: reloaded %d blocked pubkey(s)",
-                                        len(cfg["blocked_pubkeys"]))
+                            # Bridge/relay blocklist: re-read (firehose reads cfg live), scan + purge.
+                            cfg["blocked_relays"] = fresh["blocked_relays"]
+                            if cfg["blocked_relays"]:
+                                asyncio.create_task(_safe(_apply_blocked_relays(store, gate, cfg["blocked_relays"])))
+                            logger.info("[nostr-relay] control: reloaded %d blocked pubkey(s), %d bridge domain(s)",
+                                        len(cfg["blocked_pubkeys"]), len(cfg["blocked_relays"]))
                         except Exception as e:
                             logger.warning("[nostr-relay] reload-blocks failed: %s", e)
                     elif cmd.get("cmd") == "reload-nip05":
@@ -813,6 +833,26 @@ def trigger_backfill(pubkey_hex: str) -> dict:
     if not pubkey_hex:
         return {"ok": False, "error": "no nostr key on your account"}
     return _drop_control({"cmd": "backfill", "pubkey": pubkey_hex})
+
+
+async def _apply_blocked_relays(store, gate, domains) -> None:
+    """Find accounts living on the blocked bridge domains, add them to the gate's bridge denylist,
+    and purge their stored events. Safe to call repeatedly (startup + on a live blocklist reload)."""
+    try:
+        pks = await store.bridged_pubkeys(domains)
+    except Exception as e:
+        logger.warning("[nostr-relay] bridge scan failed: %s", e)
+        return
+    if not pks:
+        return
+    gate.add_bridged(pks)
+    try:
+        removed = await store.delete_pubkeys(list(pks))
+    except Exception as e:
+        removed = 0
+        logger.warning("[nostr-relay] bridge purge failed: %s", e)
+    logger.info("[nostr-relay] blocked %d bridged account(s) on %d relay domain(s), purged %d event(s)",
+                len(pks), len(domains), removed)
 
 
 def trigger_block_reload() -> dict:

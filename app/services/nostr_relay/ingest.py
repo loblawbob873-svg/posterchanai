@@ -18,6 +18,7 @@ import logging
 from app.services.nostr import relay as _relay
 from app.services.nostr.event import verify_event
 from .langfilter import blocked_language, blocked_word
+from .bridges import reveals_blocked_bridge
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,7 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
     batch = cfg["author_batch"]
     blocked = cfg.get("blocked_langs")
     blocked_words = cfg.get("blocked_words")
+    blocked_relays = cfg.get("blocked_relays")
     pace = cfg.get("request_pace_sec", 1.0)
     direct = cfg.get("direct", False)
     deadline = time.monotonic() + cfg.get("sync_budget_sec", cfg.get("budget_sec", 100))
@@ -108,6 +110,10 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
             eid = ev.get("id")
             if not _is_evid(eid) or eid in existing:
                 continue
+            # Learn + drop bridge accounts (mostr.pub etc.) so the gate rejects everything they post.
+            if blocked_relays and reveals_blocked_bridge(ev, blocked_relays):
+                gate.mark_bridged(ev.get("pubkey", ""))
+                continue
             if not gate.is_member(ev.get("pubkey", "")):
                 continue
             if not verify_event(ev):
@@ -145,7 +151,7 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
 
     try:
         await fetch_lookup_metadata(store, upstream, batch, cfg.get("profile_limit", 1500),
-                                    pace, direct)
+                                    pace, direct, gate=gate, blocked_relays=blocked_relays)
     except Exception as e:
         logger.warning("[nostr-relay] metadata fetch failed: %s", e)
 
@@ -268,7 +274,7 @@ _LOOKUP_KINDS = [0, 3, 10002]
 
 
 async def fetch_lookup_metadata(store, upstream, batch: int, limit: int, pace: float = 1.0,
-                                direct: bool = False) -> int:
+                                direct: bool = False, *, gate=None, blocked_relays=None) -> int:
     """Pull lookup metadata (kind-0 profile, kind-3 contacts, kind-10002 relay list) for WoT
     members that lack it, so clients can use this relay to resolve who-is-who and where each
     member posts (the outbox / NIP-65 lookup-relay role). Batched + paced; replaceable events
@@ -294,6 +300,10 @@ async def fetch_lookup_metadata(store, upstream, batch: int, limit: int, pace: f
             if key[0] is not None and ev.get("created_at", 0) >= latest.get(key, {}).get("created_at", -1):
                 latest[key] = ev
         for ev in latest.values():
+            if blocked_relays and reveals_blocked_bridge(ev, blocked_relays):
+                if gate is not None:
+                    gate.mark_bridged(ev.get("pubkey", ""))
+                continue   # never store a bridge account's profile/relay-list
             if verify_event(ev) and await store.add_event(ev, origin="wot"):
                 stored += 1
     if stored:

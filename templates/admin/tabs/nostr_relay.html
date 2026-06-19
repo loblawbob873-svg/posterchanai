@@ -125,6 +125,11 @@
             <textarea id="nostr_relay_blocked_pubkeys" name="nostr_relay_blocked_pubkeys" rows="4" placeholder="npub1…&#10;or 64-char hex"></textarea>
             <small>Hard denylist — these accounts are rejected <strong>even if in the Web of Trust</strong>, and their stored notes are purged on restart. npub or hex, one per line.</small>
         </div>
+        <div class="form-group">
+            <label for="nostr_relay_blocked_relays">Blocked bridges / relays</label>
+            <textarea id="nostr_relay_blocked_relays" name="nostr_relay_blocked_relays" rows="3" placeholder="mostr.pub&#10;brid.gy&#10;momostr.pink"></textarea>
+            <small>Block fediverse/Bluesky <strong>bridges</strong>. Any account whose profile NIP-05 or relay list lives on one of these domains is denied + purged. One domain per line; suffix match, so <code>mostr.pub</code> also covers <code>bsky-bridge.mostr.pub</code>.</small>
+        </div>
     </fieldset>
 
     <fieldset>
@@ -138,7 +143,12 @@
         <div class="form-group">
             <label for="nostr_relay_nip05_names">Identities</label>
             <textarea id="nostr_relay_nip05_names" name="nostr_relay_nip05_names" rows="4" placeholder="verita84 npub1…&#10;alice 64-char-hex"></textarea>
-            <small>One per line: <code>&lt;name&gt; &lt;npub-or-hex&gt;</code>. Use <code>_</code> as the name for the domain root identity (<code>_@yourdomain</code>).</small>
+            <small>One per line: <code>&lt;name&gt; &lt;npub-or-hex&gt;</code>. Use <code>_</code> as the name for the domain root identity (<code>_@yourdomain</code>). New web-client signups are auto-assigned a name here.</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_nip05_domain">Signup name domain</label>
+            <input type="text" id="nostr_relay_nip05_domain" name="nostr_relay_nip05_domain" placeholder="poster.place (blank = use the site's host)">
+            <small>Domain used for the <code>name@domain</code> auto-assigned to new web-client signups. Leave blank to use the host the client was served from.</small>
         </div>
         <div class="form-group">
             <label for="nostr_relay_nip05_relays">Advertised relays</label>

@@ -17,6 +17,7 @@ from websockets.http11 import Response
 
 from app.services.nostr.event import verify_event
 from .langfilter import blocked_language, blocked_word
+from .bridges import reveals_blocked_bridge
 from . import negentropy
 
 logger = logging.getLogger(__name__)
@@ -313,6 +314,13 @@ class RelayServer:
         exp = _event_expiration(ev)
         if exp is not None and exp <= int(time.time()):
             self._send(conn, ["OK", eid, False, "invalid: event expired"])
+            return
+        # Bridge blocklist: an account on a blocked bridge relay (mostr.pub etc.) is denied; learning
+        # it from this event's profile/relay-list also bars everything else it posts (via is_member).
+        _br = self.cfg.get("blocked_relays")
+        if _br and reveals_blocked_bridge(ev, _br):
+            self.gate.mark_bridged(ev.get("pubkey", ""))
+            self._send(conn, ["OK", eid, False, "blocked: bridged relay not accepted"])
             return
         if kind == 4:
             # NIP-04: the author IS the real sender, so apply the normal WoT gate to them (lets

@@ -553,6 +553,7 @@ class UserSettingsUpdate(BaseModel):
     nostr_relay_blocked_langs: Optional[str] = None    # CSV of blocked language codes
     nostr_relay_blocked_words: Optional[str] = None    # newline list; reject notes containing these
     nostr_relay_blocked_pubkeys: Optional[str] = None  # npub/hex denylist (purged + rejected)
+    nostr_relay_blocked_relays: Optional[str] = None   # bridge/relay domains to block (e.g. mostr.pub)
     # Built-in NIP-05 identity server — served by the relay subprocess at /.well-known/nostr.json
     # (front it with TLS; nginx proxies the well-known path to the relay port).
     # Defaults mirror nostr_relay.thread._DEFAULT_NIP05_* so the UI pre-fills the entries the
@@ -563,6 +564,7 @@ class UserSettingsUpdate(BaseModel):
         "posterchan c7de13bab5818ab7918b5b47a05de11735c4e519e49c8577fd7ce7267fe84d4b"
     )
     nostr_relay_nip05_relays: Optional[str] = "wss://relay.poster.place"  # advertised for every name
+    nostr_relay_nip05_domain: Optional[str] = None   # domain for auto-assigned signup names (blank = request host)
     # Built-in Blossom media server (BUD-01/02). Served by the app at /blossom (front with TLS).
     blossom_enabled: Optional[bool] = None
     blossom_public_url: Optional[str] = None       # advertised base URL (blank = derive from request)

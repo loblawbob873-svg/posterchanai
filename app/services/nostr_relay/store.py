@@ -388,6 +388,30 @@ class RelayStore:
     async def delete_by_langs(self, blocked) -> int:
         return await self._w(self._delete_by_langs_sync, set(blocked))
 
+    def _bridged_pubkeys_sync(self, domains) -> set:
+        """Scan the identity/relay-list events (+ anything carrying a `proxy` tag) and return the
+        pubkeys whose author lives on a blocked bridge domain. Caller blocks + purges them."""
+        domains = {d for d in domains if d}
+        if not domains:
+            return set()
+        from .bridges import reveals_blocked_bridge
+        conn = self._conn()
+        out: set = set()
+        rows = conn.execute("SELECT pubkey, kind, content, tags FROM events "
+                            "WHERE kind IN (0,3,10002) OR tags LIKE '%\"proxy\"%'")
+        for r in rows:
+            try:
+                tags = json.loads(r["tags"] or "[]")
+            except Exception:
+                tags = []
+            ev = {"pubkey": r["pubkey"], "kind": r["kind"], "content": r["content"] or "", "tags": tags}
+            if r["pubkey"] and reveals_blocked_bridge(ev, domains):
+                out.add(r["pubkey"])
+        return out
+
+    async def bridged_pubkeys(self, domains) -> set:
+        return await self._w(self._bridged_pubkeys_sync, set(domains))
+
     def _has_sync(self, eid: str) -> bool:
         return self._conn().execute(
             "SELECT 1 FROM events WHERE id=? LIMIT 1", (eid,)).fetchone() is not None

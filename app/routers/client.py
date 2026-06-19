@@ -17,6 +17,7 @@ import base64
 import json
 import logging
 import os
+import re
 import time
 
 from fastapi import APIRouter, Depends, Request
@@ -486,3 +487,139 @@ async def block_pubkey(data: BlockReq, db: Session = Depends(get_db)):
         logger.warning("[client] block reload failed: %s", e)
 
     return JSONResponse({"ok": True, "blocked": not data.remove, "count": len(cur)})
+
+
+# ----- Blossom upload access (admin grants/revokes via the client's profile menu) -----
+class BlossomAccessReq(BaseModel):
+    target: str          # npub/hex to grant/revoke
+    grant: bool = True
+    auth: str            # base64 signed admin event (p-tags target), same proof as /block
+
+
+def _whitelist_hex(db: Session) -> set:
+    """Current `blossom_whitelist` setting as a hex pubkey set."""
+    row = db.query(Setting).filter(Setting.key == "blossom_whitelist").first()
+    out = set()
+    if row and row.value:
+        for tok in row.value.replace(",", "\n").split():
+            h = nostr_service.to_pubkey_hex(tok.strip())
+            if h:
+                out.add(h)
+    return out
+
+
+@router.get("/blossom-access")
+async def blossom_access_status(pubkey: str, db: Session = Depends(get_db)):
+    """Is this pubkey on the Blossom upload whitelist? Lets the client show Grant vs Revoke."""
+    h = nostr_service.to_pubkey_hex(pubkey)
+    if not h:
+        return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
+    return JSONResponse({"ok": True, "whitelisted": h in _whitelist_hex(db)})
+
+
+@router.post("/blossom-access")
+async def blossom_access(data: BlossomAccessReq, db: Session = Depends(get_db)):
+    """Admin-only: add/remove a pubkey on the Blossom upload whitelist (Admin → Blossom tab)."""
+    target = nostr_service.to_pubkey_hex(data.target)
+    if not target:
+        return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
+    if not _verify_admin_auth(db, data.auth, target):
+        return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
+    cur = _whitelist_hex(db)
+    if data.grant:
+        cur.add(target)
+    else:
+        cur.discard(target)
+    # store as npubs (readable in Admin → Blossom; blossom_service accepts npub or hex)
+    out = []
+    for h in sorted(cur):
+        try:
+            out.append(nostr_service.npub_of(h))
+        except Exception:
+            out.append(h)
+    value = "\n".join(out)
+    row = db.query(Setting).filter(Setting.key == "blossom_whitelist").first()
+    if row:
+        row.value = value
+    else:
+        db.add(Setting(key="blossom_whitelist", value=value))
+    db.commit()   # blossom_service re-reads the setting on its next (short-TTL) cache miss — no reload
+    return JSONResponse({"ok": True, "whitelisted": data.grant, "count": len(cur)})
+
+
+# ----- auto NIP-05 name on signup -----
+class ClaimNip05(BaseModel):
+    pubkey: str
+    name: str = ""
+    auth: str            # base64 signed event BY this pubkey (proves key ownership → no squatting)
+
+
+def _verify_self_auth(auth_b64: str, pubkey_hex: str) -> bool:
+    """Verify a base64 signed Nostr event authored by `pubkey_hex` within the replay window."""
+    try:
+        ev = json.loads(base64.b64decode(auth_b64))
+    except Exception:
+        return False
+    return (nostr_event.verify_event(ev) and ev.get("pubkey") == pubkey_hex
+            and abs(int(ev.get("created_at", 0)) - int(time.time())) <= 300)
+
+
+def _nip05_domain(request: Request, db: Session) -> str:
+    """Domain for the assigned NIP-05 address (`name@<domain>`). The admin can pin it; otherwise
+    use the host the client was served from (where /.well-known/nostr.json is proxied)."""
+    d = _setting(db, "nostr_relay_nip05_domain").strip().lstrip("@")
+    if d:
+        return d.lower()
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    return (host or "").split(",")[0].split(":")[0].strip().lower()
+
+
+def _sanitize_nip05_name(s: str) -> str:
+    s = re.sub(r"[^a-z0-9_.\-]", "", (s or "").strip().lower())
+    return s.strip("._-")[:30]
+
+
+@router.post("/claim-nip05")
+async def claim_nip05(data: ClaimNip05, request: Request, db: Session = Depends(get_db)):
+    """Assign a fresh account a NIP-05 name on this node's identity server (Admin → Relay → NIP-05),
+    so new web-client signups get a verified `name@domain` automatically. Idempotent per pubkey."""
+    pk = nostr_service.to_pubkey_hex(data.pubkey)
+    if not pk:
+        return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
+    if not _verify_self_auth(data.auth, pk):
+        return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
+    from app.services.nostr_relay.thread import _parse_nip05
+    row = db.query(Setting).filter(Setting.key == "nostr_relay_nip05_names").first()
+    raw = row.value if row and row.value else ""
+    names, _ = _parse_nip05(raw, "")
+    domain = _nip05_domain(request, db)
+    # Already named (re-signup / retry) → return the existing one, don't duplicate.
+    existing = next((n for n, h in names.items() if h == pk), None)
+    if existing:
+        return JSONResponse({"ok": True, "name": existing, "nip05": f"{existing}@{domain}", "existing": True})
+    base = _sanitize_nip05_name(data.name) or ("user" + pk[:8])
+    name, taken = base, set(names.keys())
+    i = 1
+    while name in taken:
+        i += 1
+        name = f"{base}{i}"
+        if i > 9999:
+            name = "user" + pk[:12]
+            break
+    try:
+        npub = nostr_service.npub_of(pk)
+    except Exception:
+        npub = pk
+    new_line = f"{name} {npub}"
+    value = (raw.rstrip() + "\n" + new_line) if raw.strip() else new_line
+    if row:
+        row.value = value
+    else:
+        db.add(Setting(key="nostr_relay_nip05_names", value=value))
+    db.commit()
+    try:
+        from app.services.nostr_relay.thread import trigger_nip05_reload
+        trigger_nip05_reload()
+    except Exception as e:
+        logger.warning("[client] nip05 reload after claim failed: %s", e)
+    return JSONResponse({"ok": True, "name": name, "nip05": f"{name}@{domain}"})

@@ -288,10 +288,21 @@
         body: JSON.stringify({ pubkey: _gen.pubkey }) }).then(r=>r.json());
       if (!res.ok) toast('note: ' + (res.error||'could not auto-follow'));
     } catch(_){}
-    // publish initial profile if a name was given
+    // claim a NIP-05 name on this node's identity server (proves key ownership with a self-signed
+    // event so names can't be squatted). The node assigns a free name@domain and returns it.
     const nm = $('#signup-name').value.trim();
+    let nip05 = null;
+    try {
+      const auth = await sign(27235, 'claim-nip05', [['p', _gen.pubkey]]);
+      const r = await fetch('/client/claim-nip05', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ pubkey: _gen.pubkey, name: nm, auth: btoa(JSON.stringify(auth)) }) }).then(r=>r.json());
+      if (r && r.ok) nip05 = r.nip05;
+    } catch(_){}
+    // publish the initial profile (name + the assigned NIP-05 so the verified badge shows)
+    const prof = {}; if (nm) prof.name = nm; if (nip05) prof.nip05 = nip05;
     startApp();
-    if (nm){ try { await publish(0, JSON.stringify({ name: nm }), []); } catch(_){}}
+    if (Object.keys(prof).length){ try { await publish(0, JSON.stringify(prof), []); } catch(_){}}
+    if (nip05) toast('your handle: ' + nip05);
   }
 
   // ---------- app start ----------
@@ -1767,19 +1778,38 @@
     }
   }
   // the profile "☰ more" menu — Follow / Message / Mute / Block, kept off the header for a clean look
-  function openProfileMenu(pk, anchorBtn){
+  async function openProfileMenu(pk, anchorBtn){
     const items=[
       ['follow', FOLLOWS.has(pk)?'✓ Following — unfollow':'＋ Follow'],
       ['message','✉ Message'],
       ['mute', MUTED.has(pk)?'🔊 Unmute':'🔇 Mute'],
     ];
-    if(IS_ADMIN) items.push(['block','🚫 Block (relay)','danger']);
+    let blossomGranted=false;
+    if(IS_ADMIN){
+      // admin extras: toggle this account's Blossom upload access + relay block. Fetch the current
+      // whitelist state so the item reads Grant vs Revoke.
+      try{ const r=await fetch('/client/blossom-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); blossomGranted=!!(r&&r.whitelisted); }catch(_){}
+      items.push(['blossom', blossomGranted?'🌸 Revoke Blossom access':'🌸 Grant Blossom access']);
+      items.push(['block','🚫 Block (relay)','danger']);
+    }
     openMenuPopover(anchorBtn, items, async a=>{
       if(a==='follow'){ await toggleFollow(pk); renderProfileView(pk); return; }
       if(a==='message'){ switchView('messages'); setTimeout(()=>{ if(!dmPeers.has(pk))dmPeers.set(pk,[]); openDm(pk); },50); return; }
       if(a==='mute'){ await toggleMute(pk); renderProfileView(pk); return; }
+      if(a==='blossom') return toggleBlossomAccess(pk, !blossomGranted);
       if(a==='block') return doBlock(pk);
     });
+  }
+  // admin: grant/revoke this account's Blossom upload access (adds/removes its npub from the
+  // blossom_whitelist setting — Admin → Blossom). Signed like doBlock so the server checks admin.
+  async function toggleBlossomAccess(pk, grant){
+    if(!IS_ADMIN) return;
+    try{
+      const auth = await sign(27235, 'blossom', [['action', grant?'grant':'revoke'],['p',pk]]);
+      const r = await fetch('/client/blossom-access', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ target: pk, grant, auth: btoa(JSON.stringify(auth)) }) }).then(r=>r.json());
+      toast(r.ok ? (grant?'granted Blossom access 🌸':'revoked Blossom access') : ('failed: '+(r.error||'')));
+    }catch(e){ toast('blossom access change failed'); }
   }
   function editProfile(p){
     modal(`<h3>Edit profile</h3>
