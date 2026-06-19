@@ -142,8 +142,8 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 .note .av{width:52px;height:52px;border-radius:50%;object-fit:cover;flex-shrink:0;border:1px solid var(--line);background:#1a1230;cursor:pointer}
 .note .body{flex:1;min-width:0}
 .note .hd{display:flex;gap:7px;align-items:baseline;flex-wrap:wrap}
-.note .name{font-weight:700;cursor:pointer}
-.note .handle{color:var(--muted);font-size:12.5px}
+.note .name{font-weight:700;cursor:pointer;font-size:16.5px}
+.note .handle{color:var(--muted);font-size:14px}
 .note .time{color:var(--muted);font-size:15px;margin-left:auto;cursor:pointer}
 .note .hd-pin{padding:0 4px;font-size:13px;background:transparent;border:none;opacity:.6;line-height:1}
 .note .hd-pin:hover,.note .hd-pin.on{opacity:1}
