@@ -504,27 +504,10 @@ async def shutdown():
 
 
 @app.get("/")
-async def index(
-    request: Request,
-    response: Response,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_optional)
-):
-    if not current_user:
-        # Preserve ?q= search parameter through login
-        query_string = str(request.query_params)
-        if query_string:
-            return RedirectResponse(url=f"/login?next=/?{query_string}", status_code=302)
-        return RedirectResponse(url="/login", status_code=302)
-    resp = templates.TemplateResponse("index.html", {
-        "request": request,
-        "user": current_user
-    })
-    # Prevent caching so back button after logout doesn't show cached page
-    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    resp.headers["Pragma"] = "no-cache"
-    resp.headers["Expires"] = "0"
-    return resp
+async def index(request: Request):
+    # Unified UI: the Nostr client is the single face of the app (old index.html chat UI retired).
+    # Everyone lands on /client and logs in with their Nostr key; the AI lives in its tab.
+    return RedirectResponse(url="/client", status_code=302)
 
 
 @app.get("/login")
