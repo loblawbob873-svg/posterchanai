@@ -2385,6 +2385,16 @@
     if(!document.querySelector('.rightbar')) return;
     rankInto('rb-hot', 4*3600, 9);   // Hot = most-engaged posts (last 4h)
     loadTrendingTags();              // Trending = trending hashtags (last 24h)
+    loadDiscover();                  // curated hashtag shortcuts for newcomers
+  }
+  // Curated hashtag shortcuts — friendly entry points into popular communities for new users.
+  const DISCOVER_TAGS = [['foodstr','🍔'], ['asknostr','💬'], ['AI','🤖'], ['Bitcoin','₿'],
+                         ['nostr','🟣'], ['art','🎨'], ['news','📰'], ['memes','😂']];
+  function loadDiscover(){
+    const el=document.getElementById('rb-discover'); if(!el) return;
+    el.innerHTML=`<div class="tag-cloud">${DISCOVER_TAGS.map(([t,ic])=>
+      `<button class="tag-chip disc" data-tag="${t.toLowerCase()}"><span class="disc-ic">${ic}</span> #${enc(t)}</button>`).join('')}</div>`;
+    el.querySelectorAll('.tag-chip').forEach(b=> b.onclick=()=>renderHashtag(b.dataset.tag));
   }
   // Trending HASHTAGS: tally #tags across recent notes (explicit `t` tags + inline #hashtags),
   // rank by how many distinct posts used each, render clickable chips → a #tag feed.

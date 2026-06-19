@@ -605,3 +605,8 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .ai-chip{font-size:12.5px;color:var(--cyan);border:1px solid var(--line);border-radius:8px;padding:3px 8px}
 .ai-chip-x{background:none;border:none;color:var(--muted);cursor:pointer}
 @media(max-width:820px){ .ai-bubble{max-width:90%} .ai-compose{padding-bottom:calc(12px + env(safe-area-inset-bottom))} }
+
+/* curated "Discover" hashtag chips (rightbar, for newcomers) */
+.tag-chip.disc{background:linear-gradient(135deg,rgba(0,255,255,.10),rgba(255,0,255,.08));border-color:var(--line)}
+.tag-chip.disc:hover{border-color:var(--neon2);color:#fff}
+.tag-chip.disc .disc-ic{margin-right:2px}
