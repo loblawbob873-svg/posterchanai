@@ -979,6 +979,7 @@
       <span class="spacer"></span><button class="btn btn-ghost small" id="cmp-draft">💾 Draft</button><button class="btn btn-neon small" id="cmp-send">Post ▶</button></div>
       <div class="muted small" id="cmp-status"></div>`, root=>{
       const ta=$('#cmp',root); attachMentionAutocomplete(ta); if(text) ta.value=text;
+      ta.addEventListener('keydown', e=>{ if((e.ctrlKey||e.metaKey) && e.key==='Enter'){ e.preventDefault(); const sb=$('#cmp-send',root); if(sb) sb.click(); } });   // Ctrl/⌘+Enter to post
       $$('.cmp-tab',root).forEach(b=> b.onclick=()=>{
         $$('.cmp-tab',root).forEach(x=>x.classList.toggle('active',x===b));
         const pv=b.dataset.t==='preview', prev=$('#cmp-preview',root);
