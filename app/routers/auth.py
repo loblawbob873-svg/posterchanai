@@ -475,6 +475,8 @@ def create_api_key(
     db.add(new_key)
     db.commit()
     db.refresh(new_key)
+    from app.services import record_store
+    record_store.mirror_apikey_blocking(db, current_user, new_key)
 
     return APIKeyResponse(
         id=new_key.id,
@@ -521,6 +523,8 @@ def delete_api_key(
 
     db.delete(api_key)
     db.commit()
+    from app.services import record_store
+    record_store.delete_apikey_blocking(db, current_user, key_id)
     return {"message": "API key deleted"}
 
 
@@ -541,6 +545,8 @@ def toggle_api_key(
 
     api_key.is_active = not api_key.is_active
     db.commit()
+    from app.services import record_store
+    record_store.mirror_apikey_blocking(db, current_user, api_key)
     return {"message": "API key toggled", "is_active": api_key.is_active}
 
 

@@ -12,7 +12,7 @@ import asyncio
 import logging
 from datetime import datetime
 
-from app.models import Setting, Reminder, SavedSearch, User
+from app.models import Setting, Reminder, SavedSearch, APIKey, User
 from app.services import nostr_store as store
 from app.services.nostr_store import user_storage_seckey
 from app.services import settings_store as _ss
@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 NS_REMINDER = "pcai:reminder:"
 NS_SEARCH = "pcai:search:"
+NS_APIKEY = "pcai:apikey:"
 
 
 def enabled(db) -> bool:
@@ -100,6 +101,27 @@ def delete_search_blocking(db, user, search_id) -> None:
         logger.warning("[record-store] delete_search_blocking failed: %s", e)
 
 
+# ---- API keys (last_used_at deliberately NOT mirrored — it churns on every API call) ----
+def _apikey_rec(k: APIKey) -> dict:
+    return {"key": k.key, "name": k.name, "is_active": k.is_active, "created_at": _iso(k.created_at)}
+
+
+def mirror_apikey_blocking(db, user, k: APIKey) -> None:
+    try:
+        if enabled(db):
+            asyncio.run(_put(db, user, NS_APIKEY, k.id, _apikey_rec(k), force=False))
+    except Exception as e:
+        logger.warning("[record-store] mirror_apikey_blocking failed: %s", e)
+
+
+def delete_apikey_blocking(db, user, key_id) -> None:
+    try:
+        if enabled(db):
+            asyncio.run(_delete(db, user, NS_APIKEY, key_id, force=False))
+    except Exception as e:
+        logger.warning("[record-store] delete_apikey_blocking failed: %s", e)
+
+
 # ---- hydrate (relay → cache) ----
 async def hydrate(db) -> int:
     """Recreate missing Reminder + SavedSearch rows for every user from their relay docs. Additive."""
@@ -111,8 +133,23 @@ async def hydrate(db) -> int:
             sk = user_storage_seckey(db, user)
             rem = await store.list_docs(_ss._port(db), NS_REMINDER, seckey=sk)
             srch = await store.list_docs(_ss._port(db), NS_SEARCH, seckey=sk)
+            keys = await store.list_docs(_ss._port(db), NS_APIKEY, seckey=sk)
         except Exception:
             continue
+        for d_tag, rec in (keys or {}).items():
+            if not isinstance(rec, dict) or not rec.get("key"):
+                continue
+            try:
+                kid = int(d_tag[len(NS_APIKEY):])
+            except (TypeError, ValueError):
+                continue
+            if db.query(APIKey).filter(APIKey.id == kid).first():
+                continue
+            if db.query(APIKey).filter(APIKey.key == rec["key"]).first():
+                continue  # key value is UNIQUE — don't violate the constraint on a re-key collision
+            db.add(APIKey(id=kid, user_id=user.id, key=rec["key"], name=rec.get("name") or "Default",
+                          is_active=bool(rec.get("is_active", True)), created_at=_dt(rec.get("created_at"))))
+            made += 1
         for d_tag, rec in (rem or {}).items():
             if not isinstance(rec, dict):
                 continue
@@ -157,4 +194,9 @@ async def migrate(db) -> dict:
         u = users.get(s.user_id)
         if u and await _put(db, u, NS_SEARCH, s.id, _search_rec(s), force=True):
             sav += 1
-    return {"reminders": rem, "saved_searches": sav}
+    keys = 0
+    for k in db.query(APIKey).all():
+        u = users.get(k.user_id)
+        if u and await _put(db, u, NS_APIKEY, k.id, _apikey_rec(k), force=True):
+            keys += 1
+    return {"reminders": rem, "saved_searches": sav, "api_keys": keys}
