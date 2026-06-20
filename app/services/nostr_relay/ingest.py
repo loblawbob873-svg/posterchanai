@@ -209,6 +209,7 @@ async def backfill_author(store, server, upstream, pubkey: str, *, direct: bool 
     # profile, notes, contacts, reposts, reactions, comments, relay list, long-form articles,
     # NIP-53 live events (30311, for the Streams view).
     kinds = kinds or [0, 1, 3, 6, 7, 1111, 10002, 30023, 30311]
+    logger.info("[nostr-relay] sync started for %s…", pubkey[:12])
     common = dict(direct=direct, pace=pace, max_total=max_total, max_pages=max_pages)
     stored = await _backfill_filter(store, server, upstream,
                                     {"authors": [pubkey], "kinds": kinds},

@@ -473,7 +473,7 @@ async def _main(cfg: dict) -> None:
         if fresh["blocked_langs"]:
             total += await store.delete_by_langs(fresh["blocked_langs"]) or 0
         if fresh["blocked_relays"]:
-            await _apply_blocked_relays(store, gate, fresh["blocked_relays"])
+            total += await _apply_blocked_relays(store, gate, fresh["blocked_relays"]) or 0
         _purge_state["count"] = total
         _purge_state["ts"] = int(time.time())
         return total
@@ -951,17 +951,23 @@ async def _mark_blocked_relays(store, gate, domains) -> list:
     except Exception as e:
         logger.warning("[nostr-relay] bridge scan failed: %s", e)
         return []
+    # Never treat a REGISTERED user as a bridge to block: they may legitimately cross-post from the
+    # fediverse (so a synced post carries a proxy/relay hint to a blocked bridge). Excluding them
+    # keeps them postable and (with delete_pubkeys preserve-aware) un-purged.
+    preserve = getattr(store, "preserve_pubkeys", frozenset()) or frozenset()
+    pks = [p for p in (pks or []) if p not in preserve]
     if pks:
         gate.add_bridged(list(pks))
     return list(pks)
 
 
-async def _apply_blocked_relays(store, gate, domains) -> None:
+async def _apply_blocked_relays(store, gate, domains) -> int:
     """Mark bridged accounts in the gate AND purge their stored events — the retroactive cleanup
-    used by the nightly / manual block-purge. Startup + reload use _mark_blocked_relays (mark only)."""
+    used by the nightly / manual block-purge. Startup + reload use _mark_blocked_relays (mark only).
+    Returns the number of events removed (so the purge total reported to the UI includes bridges)."""
     pks = await _mark_blocked_relays(store, gate, domains)
     if not pks:
-        return
+        return 0
     try:
         removed = await store.delete_pubkeys(list(pks))
     except Exception as e:
@@ -969,6 +975,7 @@ async def _apply_blocked_relays(store, gate, domains) -> None:
         logger.warning("[nostr-relay] bridge purge failed: %s", e)
     logger.info("[nostr-relay] bridge purge: %d account(s) on %d domain(s), removed %d event(s)",
                 len(pks), len(domains), removed)
+    return removed
 
 
 def trigger_block_reload() -> dict:

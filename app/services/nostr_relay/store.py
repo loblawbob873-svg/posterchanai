@@ -343,6 +343,12 @@ class RelayStore:
         conn = self._conn()
         removed = 0
         for pk in pubkeys:
+            # NEVER purge a registered user's events — even if they're flagged as a bridge (e.g. they
+            # cross-post from the fediverse so a synced post carries a proxy/relay hint to a blocked
+            # bridge) or explicitly blocklisted. Their history (incl. synced posts) is their data;
+            # block/bridge handling only gates NEW writes, it must not delete first-party accounts.
+            if pk in self.preserve_pubkeys:
+                continue
             conn.execute("DELETE FROM event_tags WHERE event_id IN "
                          "(SELECT id FROM events WHERE pubkey=?)", (pk,))
             cur = conn.execute("DELETE FROM events WHERE pubkey=?", (pk,))
