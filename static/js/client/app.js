@@ -283,7 +283,7 @@
       $('#amber-nc-box').classList.remove('hidden');
       const { userPk, session }=await done; finishAmberLogin(userPk, session);
     }catch(e){ amberErr(e.message||'could not connect'); Nip46.reset(); $('#amber-nc-box').classList.add('hidden'); }
-    finally{ btn.disabled=false; btn.textContent='📱 Sign in with QR code'; }
+    finally{ btn.disabled=false; btn.textContent='📲 Open in Amber / scan QR'; }
   }
   async function loginNsec(){
     authErr('');

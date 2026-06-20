@@ -45,13 +45,13 @@
             <input id="amber-input" class="input" type="text" placeholder="bunker://… (or nostrconnect://)" autocomplete="off">
             <button id="btn-amber-connect" class="btn btn-neon full">Connect</button>
             <div class="divider"><span>or</span></div>
-            <p class="muted small">No bunker string? Generate a <b>QR code</b> and scan it with your phone's signer (Amber, nsec.app, Primal…) — your key stays on your phone.</p>
-            <button id="btn-amber-nc" class="btn btn-cyan full">📱 Sign in with QR code</button>
+            <p class="muted small">No bunker string? Generate a connection link — <b>tap to open in Amber</b> on this phone, or <b>scan the QR</b> with a signer on another device (Amber, nsec.app, Primal…). Your key stays on your phone.</p>
+            <button id="btn-amber-nc" class="btn btn-cyan full">📲 Open in Amber / scan QR</button>
             <div id="amber-nc-box" class="keybox hidden">
-                <label>scan with your mobile Nostr signer</label>
+                <a id="amber-nc-open" class="btn btn-neon full" href="#">📲 Tap to open in Amber</a>
+                <label>…or scan with a signer on another device</label>
                 <img id="amber-nc-qr" class="nc-qr hidden" alt="scan to sign in">
                 <div class="keyrow"><code id="amber-nc-uri"></code><button class="mini" data-copy="amber-nc-uri">copy</button></div>
-                <a id="amber-nc-open" class="btn btn-neon full" href="#">On this phone? Tap to open in your signer</a>
                 <div class="muted small" id="amber-nc-status">waiting for the signer to approve…</div>
             </div>
             <button id="btn-amber-back" class="btn btn-ghost full">← back</button>
