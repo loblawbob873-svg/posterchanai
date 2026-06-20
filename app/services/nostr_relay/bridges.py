@@ -34,6 +34,18 @@ def _match(host: str, domains) -> bool:
     return bool(host) and any(host == d or host.endswith("." + d) for d in domains)
 
 
+def has_proxy_tag(ev: dict) -> bool:
+    """NIP-48: the event is MIRRORED from another protocol (ActivityPub / atproto / …) via a bridge.
+    Any `proxy` tag means bridged-from-elsewhere — the only reliable signal for fediverse / Bluesky
+    bridge content (mostr.pub, momostr.pink, ditto.pub, brid.gy, …), because the bridge domain
+    itself never appears in the event (the nip05 is on a normal domain, the proxy URL points at the
+    ORIGINAL instance). Used by the opt-in "block bridged posts" relay setting."""
+    for t in ev.get("tags") or []:
+        if len(t) >= 2 and t[0] == "proxy" and t[1]:
+            return True
+    return False
+
+
 def author_on_blocked_bridge(ev: dict, domains) -> bool:
     """nostrify-style DomainPolicy signal: the author's OWN profile (kind 0) declares a `nip05`
     whose domain — or a subdomain of it — is blocklisted. This is the DEFINITIVE "this account

@@ -544,6 +544,7 @@ class UserSettingsUpdate(BaseModel):
     nostr_relay_blocked_words: Optional[str] = None    # newline list; reject notes containing these
     nostr_relay_blocked_pubkeys: Optional[str] = None  # npub/hex denylist (purged + rejected)
     nostr_relay_blocked_relays: Optional[str] = None   # bridge/relay domains to block (e.g. mostr.pub)
+    nostr_relay_block_bridged: Optional[bool] = False  # drop ALL NIP-48 proxy (fediverse/Bluesky-bridged) posts
     # Built-in NIP-05 identity server — served by the relay subprocess at /.well-known/nostr.json
     # (front it with TLS; nginx proxies the well-known path to the relay port).
     # Defaults mirror nostr_relay.thread._DEFAULT_NIP05_* so the UI pre-fills the entries the

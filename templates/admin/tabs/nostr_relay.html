@@ -170,9 +170,15 @@
             <small>Hard denylist — these accounts are rejected <strong>even if in the Web of Trust</strong> (new posts blocked at ingest). Their already-stored notes are removed by the nightly purge or the “Purge now” button below. npub or hex, one per line.</small>
         </div>
         <div class="form-group">
-            <label for="nostr_relay_blocked_relays">Blocked bridges / relays</label>
+            <label for="nostr_relay_block_bridged">
+                <input type="checkbox" id="nostr_relay_block_bridged" name="nostr_relay_block_bridged"> Block ALL fediverse / Bluesky-bridged posts
+            </label>
+            <small>Drops every post carrying a NIP-48 <code>proxy</code> tag (ActivityPub / atproto mirror content) — <strong>any</strong> bridge: mostr.pub, momostr.pink, ditto.pub, brid.gy, etc. This is the reliable catch-all: a mirror’s NIP-05 is on a normal domain and its proxy URL points at the original instance, so the domain list below can’t see it. Your own registered users’ cross-posts are exempt. With this on you don’t need to list the bridges below.</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_relay_blocked_relays">Blocked bridges / relays (by domain)</label>
             <textarea id="nostr_relay_blocked_relays" name="nostr_relay_blocked_relays" rows="3" placeholder="mostr.pub&#10;brid.gy&#10;momostr.pink"></textarea>
-            <small>Block fediverse/Bluesky <strong>bridges</strong>. Any account whose profile NIP-05 or relay list lives on one of these domains is denied at ingest; already-stored posts are removed by the nightly purge / “Purge now”. One domain per line; suffix match, so <code>mostr.pub</code> also covers <code>bsky-bridge.mostr.pub</code>.</small>
+            <small>Domain-based denylist: any account whose profile NIP-05 or relay list lives on one of these domains is denied at ingest; already-stored posts are removed by the nightly purge / “Purge now”. One domain per line; suffix match, so <code>mostr.pub</code> also covers <code>bsky-bridge.mostr.pub</code>. Use this for real Nostr relays you want to exclude — the checkbox above already covers the AP/Bluesky bridges.</small>
         </div>
         <div class="form-group">
             <button type="button" id="relayPurgeBlocksBtn" class="btn-secondary">🧹 Purge existing notes now</button>

@@ -18,7 +18,7 @@ import logging
 from app.services.nostr import relay as _relay
 from app.services.nostr.event import verify_event
 from .langfilter import blocked_language, blocked_word
-from .bridges import reveals_blocked_bridge, author_on_blocked_bridge
+from .bridges import reveals_blocked_bridge, author_on_blocked_bridge, has_proxy_tag
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +51,7 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
     blocked = cfg.get("blocked_langs")
     blocked_words = cfg.get("blocked_words")
     blocked_relays = cfg.get("blocked_relays")
+    block_bridged = cfg.get("block_bridged")
     pace = cfg.get("request_pace_sec", 1.0)
     direct = cfg.get("direct", False)
     deadline = time.monotonic() + cfg.get("sync_budget_sec", cfg.get("budget_sec", 100))
@@ -119,6 +120,10 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
                 else:
                     gate.mark_bridged(ev.get("pubkey", ""))
                 continue
+            # Opt-in: drop any bridged (NIP-48 proxy) post, whatever bridge relayed it. Operators
+            # are exempt (their own cross-posts are first-party).
+            if block_bridged and has_proxy_tag(ev) and not gate.is_operator(ev.get("pubkey", "")):
+                continue
             if not gate.is_member(ev.get("pubkey", "")):
                 continue
             if not verify_event(ev):
@@ -150,7 +155,8 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
         try:
             await backfill_ancestors(store, server, upstream, new_events,
                                      cfg.get("max_ancestors", 20), direct,
-                                     blocked=blocked, blocked_words=blocked_words, gate=gate)
+                                     blocked=blocked, blocked_words=blocked_words, gate=gate,
+                                     block_bridged=block_bridged)
         except Exception as e:
             logger.warning("[nostr-relay] ancestor backfill failed: %s", e)
 
@@ -228,7 +234,8 @@ async def backfill_author(store, server, upstream, pubkey: str, *, direct: bool 
 
 
 async def backfill_ancestors(store, server, upstream, events, max_ancestors: int,
-                             direct: bool = False, blocked=None, blocked_words=None, gate=None) -> int:
+                             direct: bool = False, blocked=None, blocked_words=None, gate=None,
+                             block_bridged=False) -> int:
     """Walk reply-to (`e`-tag) references up to the thread root, fetching by id any event we
     don't have. Parents may be outside the WoT (stored as origin='ancestor') — the deliberate,
     bounded relaxation that keeps threads whole. Still honours the language/word content
@@ -259,6 +266,8 @@ async def backfill_ancestors(store, server, upstream, events, max_ancestors: int
             # A parent may be outside the WoT (that's the point), but NEVER store a blocked
             # author's event — otherwise blocklisted spam leaks in as a thread ancestor.
             if gate is not None and gate.is_blocked(ev.get("pubkey", "")):
+                continue
+            if block_bridged and has_proxy_tag(ev) and not (gate is not None and gate.is_operator(ev.get("pubkey", ""))):
                 continue
             if _content_blocked(ev, blocked, blocked_words):
                 continue

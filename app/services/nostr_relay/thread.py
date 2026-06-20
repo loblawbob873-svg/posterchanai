@@ -26,7 +26,8 @@ from app.services.nostr import nostr_service
 from .store import RelayStore
 from .wot import WotGate
 from .server import RelayServer
-from .bridges import relay_domain as _bridge_domain, reveals_blocked_bridge
+from .bridges import (relay_domain as _bridge_domain, reveals_blocked_bridge,
+                      author_on_blocked_bridge, has_proxy_tag)
 
 logger = logging.getLogger(__name__)
 
@@ -240,6 +241,10 @@ def _read_config() -> dict:
                                (_bridge_domain(t) for t in
                                 g("nostr_relay_blocked_relays", "").replace(",", "\n").split())
                                if d},
+            # Drop ALL fediverse/Bluesky-bridged posts (any NIP-48 `proxy` tag), regardless of which
+            # bridge relayed them. The domain blocklist above can't catch these — a mirror's nip05 is
+            # on a normal domain and its proxy URL points at the original instance, never the bridge.
+            "block_bridged": gb("nostr_relay_block_bridged", False),
             # Built-in NIP-05 identity server (served over HTTP by the relay subprocess at
             # /.well-known/nostr.json). Defaults preserve the entries previously on router.lan.
             "nip05": {
@@ -412,7 +417,14 @@ async def _main(cfg: dict) -> None:
         # they author is then rejected by the is_member gate below. Read the list live (reloadable).
         _br = cfg.get("blocked_relays")
         if _br and reveals_blocked_bridge(ev, _br):
-            gate.mark_bridged(ev.get("pubkey", ""))
+            if author_on_blocked_bridge(ev, _br):
+                gate.mark_bridged_identity(ev.get("pubkey", ""))   # kind-0 nip05 → block even members
+            else:
+                gate.mark_bridged(ev.get("pubkey", ""))
+            return
+        # Opt-in: drop any bridged (NIP-48 proxy) post from the live firehose, whatever bridge relayed
+        # it. Operators / registered local users are exempt (first-party cross-posts).
+        if cfg.get("block_bridged") and has_proxy_tag(ev) and not gate.is_operator(ev.get("pubkey", "")):
             return
         _kind = int(ev.get("kind", 1))
         if _kind in (9735, 1059):
@@ -447,7 +459,8 @@ async def _main(cfg: dict) -> None:
                 try:
                     await _ingest.backfill_ancestors(
                         store, server, cfg["upstream"], [ev], cfg.get("max_ancestors", 20),
-                        cfg["direct"], blocked=_bl, blocked_words=_bw, gate=gate)
+                        cfg["direct"], blocked=_bl, blocked_words=_bw, gate=gate,
+                        block_bridged=cfg.get("block_bridged", False))
                 except Exception as e:
                     logger.debug("[nostr-relay] firehose ancestor backfill failed: %s", e)
 
@@ -469,10 +482,12 @@ async def _main(cfg: dict) -> None:
         by_word = (await store.delete_by_words(fresh["blocked_words"]) or 0) if fresh["blocked_words"] else 0
         by_lang = (await store.delete_by_langs(fresh["blocked_langs"]) or 0) if fresh["blocked_langs"] else 0
         by_bridge = (await _apply_blocked_relays(store, gate, fresh["blocked_relays"]) or 0) if fresh["blocked_relays"] else 0
-        total = by_pk + by_word + by_lang + by_bridge
+        # Bridged-post purge (NIP-48 proxy tag) — preserve-aware (local users / direct-published spared).
+        by_proxy = (await store.delete_by_proxy() or 0) if fresh.get("block_bridged") else 0
+        total = by_pk + by_word + by_lang + by_bridge + by_proxy
         if total:
-            logger.info("[nostr-relay] block-purge breakdown: total=%d (pubkeys=%d words=%d langs=%d bridge=%d) — WoT members preserved",
-                        total, by_pk, by_word, by_lang, by_bridge)
+            logger.info("[nostr-relay] block-purge breakdown: total=%d (pubkeys=%d words=%d langs=%d bridge=%d proxy=%d) — WoT members preserved",
+                        total, by_pk, by_word, by_lang, by_bridge, by_proxy)
         _purge_state["count"] = total
         _purge_state["ts"] = int(time.time())
         return total
@@ -593,6 +608,7 @@ async def _main(cfg: dict) -> None:
                             cfg["blocked_words"] = fresh["blocked_words"]   # server reads these live
                             cfg["blocked_langs"] = fresh["blocked_langs"]   # for on-the-fly filtering
                             cfg["blocked_relays"] = fresh["blocked_relays"]
+                            cfg["block_bridged"] = fresh.get("block_bridged", False)   # proxy-tag filter, live
                             cfg["operator"] = fresh["operator"]
                             gate.set_blocked(cfg["blocked_pubkeys"])
                             gate.set_operator(cfg["operator"])

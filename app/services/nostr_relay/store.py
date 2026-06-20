@@ -464,6 +464,38 @@ class RelayStore:
     async def bridge_identity_pubkeys(self, domains) -> set:
         return await self._w(self._bridge_identity_pubkeys_sync, set(domains))
 
+    def _delete_by_proxy_sync(self) -> int:
+        """Purge bridged events: any stored event carrying a NIP-48 `proxy` tag (ActivityPub / atproto
+        mirror content from mostr.pub, momostr.pink, ditto.pub, brid.gy, …). Preserve-aware — a local
+        user's own events (direct-published / operators) are never deleted (same guard as prune), so
+        this can't repeat the data-loss bug. The LIKE pre-filter is the index-cheap pass; has_proxy_tag
+        confirms the exact tag (no params on this query → literal % is preserved by the conn shim)."""
+        from .bridges import has_proxy_tag
+        conn = self._conn()
+        preserve = self._preserve_clause()
+        rows = conn.execute(
+            f"SELECT id, tags FROM events WHERE {preserve} AND tags LIKE '%\"proxy\"%'").fetchall()
+        ids = []
+        for r in rows:
+            try:
+                tags = json.loads(r["tags"] or "[]")
+            except Exception:
+                tags = []
+            if has_proxy_tag({"tags": tags}):
+                ids.append(r["id"])
+        removed = 0
+        for i in range(0, len(ids), 900):
+            chunk = ids[i:i + 900]
+            ph = ",".join("?" * len(chunk))
+            conn.execute(f"DELETE FROM event_tags WHERE event_id IN ({ph})", chunk)
+            conn.execute(f"DELETE FROM events WHERE id IN ({ph})", chunk)
+            removed += len(chunk)
+        conn.commit()
+        return removed
+
+    async def delete_by_proxy(self) -> int:
+        return await self._w(self._delete_by_proxy_sync)
+
     def _has_sync(self, eid: str) -> bool:
         return self._conn().execute(
             "SELECT 1 FROM events WHERE id=? LIMIT 1", (eid,)).fetchone() is not None

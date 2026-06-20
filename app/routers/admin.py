@@ -425,7 +425,7 @@ def update_settings(
 
         # If the relay blocklist/filters were edited in the UI, push them to the running relay
         # immediately (otherwise the change wouldn't apply until restart / daily refresh).
-        if any(k in data.settings for k in ("nostr_relay_blocked_pubkeys", "nostr_relay_blocked_words", "nostr_relay_blocked_langs", "nostr_relay_blocked_relays")):
+        if any(k in data.settings for k in ("nostr_relay_blocked_pubkeys", "nostr_relay_blocked_words", "nostr_relay_blocked_langs", "nostr_relay_blocked_relays", "nostr_relay_block_bridged")):
             try:
                 from app.services.nostr_relay.thread import trigger_block_reload
                 trigger_block_reload()
