@@ -220,6 +220,10 @@ def init_db():
             # Relay ON by default for fresh installs — it's now the app's datastore + the Nostr
             # client's relay. Existing installs keep their saved value (defaults are seed-only).
             "nostr_relay_enabled": "true",
+            # Web of Trust ON by default. Turn OFF on a processing node whose relay is internal:
+            # publishing becomes open (no trust gate) and ALL cross-node background work stops —
+            # trust-graph build/refresh, metadata backfill, sync sweep, firehose, and NIP-05 serving.
+            "nostr_relay_wot_enabled": "true",
             "nostr_relay_port": "3052",
             "nostr_relay_prune_interval_sec": "86400",   # auto-prune NIGHTLY (not hourly)
             # The relay (and thus the app's datastore) runs on PostgreSQL — no SQLite. libpq DSN.

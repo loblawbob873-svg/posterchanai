@@ -322,11 +322,15 @@ class RelayServer:
             self.gate.mark_bridged(ev.get("pubkey", ""))
             self._send(conn, ["OK", eid, False, "blocked: bridged relay not accepted"])
             return
+        # WoT publishing gate — skippable. When wot_enabled is off (e.g. a processing node whose
+        # relay is internal/localhost-bound and shouldn't run the trust graph), every author is
+        # accepted; the bridge/language/word filters above + below still apply.
+        _wot = self.cfg.get("wot_enabled", True)
         if kind == 4:
             # NIP-04: the author IS the real sender, so apply the normal WoT gate to them (lets
             # our web-of-trust members DM each other THROUGH this relay) OR accept it as an
             # operator's inbox (a DM addressed to one of our own users).
-            if not (self.gate.is_member(ev.get("pubkey", "")) or self._dm_for_operator(ev)):
+            if _wot and not (self.gate.is_member(ev.get("pubkey", "")) or self._dm_for_operator(ev)):
                 self._send(conn, ["OK", eid, False, "blocked: sender not in web of trust"])
                 return
         elif kind in (13, 1059):
@@ -335,7 +339,7 @@ class RelayServer:
             # a web-of-trust member (so WoT members can DM each other via NIP-17) OR one of our own
             # relay users (operator inbox). The p-tag is the real recipient per NIP-59, so this is
             # the same routing relays rely on.
-            if not (any(len(t) >= 2 and t[0] == "p" and self.gate.is_member(t[1]) for t in ev.get("tags", []))
+            if _wot and not (any(len(t) >= 2 and t[0] == "p" and self.gate.is_member(t[1]) for t in ev.get("tags", []))
                     or self._dm_for_operator(ev)):
                 self._send(conn, ["OK", eid, False, "blocked: zap/DM not for a web-of-trust member"])
                 return
@@ -343,10 +347,10 @@ class RelayServer:
             # NIP-57 zap receipt — authored by the zapper SERVICE (lnurl provider), not the zapper,
             # so the WoT gate can't apply to its author. Accept when it concerns (p-tags) a WoT
             # member, so members' zaps are stored + counted.
-            if not any(len(t) >= 2 and t[0] == "p" and self.gate.is_member(t[1]) for t in ev.get("tags", [])):
+            if _wot and not any(len(t) >= 2 and t[0] == "p" and self.gate.is_member(t[1]) for t in ev.get("tags", [])):
                 self._send(conn, ["OK", eid, False, "blocked: zap not for a web-of-trust member"])
                 return
-        elif not self.gate.is_member(ev.get("pubkey", "")):
+        elif _wot and not self.gate.is_member(ev.get("pubkey", "")):
             self._send(conn, ["OK", eid, False, "blocked: not in web of trust"])
             return
         if kind == 1:

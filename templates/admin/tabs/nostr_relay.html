@@ -2,17 +2,6 @@
 <div class="tab-content" id="tab-relay">
 
     <fieldset>
-        <legend>Datastore migration (Nostr-as-DB)</legend>
-        <p class="muted small">Copy app data into the relay's event store. AI notes are encrypted
-        kind-30078 docs (not timeline posts). Settings migrate now; chats/users follow.</p>
-        <div class="form-group" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-            <button type="button" class="btn-secondary btn-small" onclick="migrateNostr()">⬆️ Migrate settings → relay</button>
-            <button type="button" class="btn-secondary btn-small" onclick="purgeNostrNotes()">🗑️ Delete AI notes (relay)</button>
-            <span id="nostr-migrate-out" class="muted small"></span>
-        </div>
-    </fieldset>
-
-    <fieldset>
         <legend>Built-in Nostr Relay (Web of Trust)</legend>
         <div class="form-group">
             <label for="nostr_relay_enabled">
@@ -40,6 +29,12 @@
 
     <fieldset>
         <legend>Web of Trust</legend>
+        <div class="form-group">
+            <label for="nostr_relay_wot_enabled">
+                <input type="checkbox" id="nostr_relay_wot_enabled" name="nostr_relay_wot_enabled"> Enforce Web of Trust (and run its background tasks)
+            </label>
+            <small>On: publishing is gated to the trust set, and the relay runs the trust-graph build, metadata backfill, firehose sync, and NIP-05 serving. <strong>Off</strong> (e.g. a processing node whose relay is internal): publishing is open and <strong>all of that background/cross-node work stops</strong> — the relay is a pure local store. <strong>Restart after changing.</strong></small>
+        </div>
         <div class="form-group">
             <label for="nostr_relay_wot_seeds">Seed npubs</label>
             <textarea id="nostr_relay_wot_seeds" name="nostr_relay_wot_seeds" rows="6" placeholder="npub1…&#10;npub1…"></textarea>
