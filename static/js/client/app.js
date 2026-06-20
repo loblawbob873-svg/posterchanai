@@ -1693,25 +1693,36 @@
       try{
         await aiNewConversation();
         let blob=null;
-        try{ blob=await fetch('/api/proxy-image?url='+encodeURIComponent(url)).then(r=>r.ok?r.blob():null); }catch(_){}
+        try{ blob=await fetch('/client/proxy-image?url='+encodeURIComponent(url)).then(r=>r.ok?r.blob():null); }catch(_){}
         if(!blob){ try{ blob=await fetch(url).then(r=>r.blob()); }catch(_){} }
         if(!blob){ toast('could not load the post image'); return; }
         const ext=((url.split(/[?#]/)[0].split('.').pop())||'jpg').toLowerCase();
         _ai.fxImage=new File([blob], 'effect-source.'+ext, { type:blob.type||'image/jpeg' });
         await aiAddFiles([_ai.fxImage]);
-        aiAddMessage('assistant', effectGuideHtml());
+        showEffectGuide();
       }catch(_){ toast('could not open the Effects studio'); }
     };
     let tries=0; (function wait(){ if($('#ai-input')) start(); else if(tries++<50) setTimeout(wait,80); })();
   }
-  // Guidance shown when the effects studio opens — tappable effect commands (run on the attached
-  // image). Telegram-style: pick a look, optionally add motion + a `meme TEXT` caption, then reply.
-  function effectGuideHtml(){
-    const fx=[['glow','🌟 Glow'],['alive','✨ Alive (3D)'],['dildo','🍆 Dildo'],['fire','🔥 Fire'],['blood','🩸 Blood'],['bullethole','🔫 Bullethole'],['cum','💦 Cum'],['poo','💩 Poo'],['whoabuddy','🤠 Whoabuddy']];
-    const chip=(cmd,label)=>`<button class="fx-cmd" data-cmd="${enc(cmd)}">${enc(label)}</button>`;
-    return '<div class="fx-guide"><b>🎬 Effects studio</b> — your image is attached. Tap an effect to run it on the image; when the result appears, tap <b>↩ Send the Reply</b>.'+
-      '<div class="muted small" style="margin:8px 0 4px">Effect</div><div class="fx-row" style="display:flex;flex-wrap:wrap;gap:6px">'+fx.map(([c,l])=>chip(c,l)).join('')+'</div>'+
-      '<div class="muted small" style="margin:10px 0 0">Tip: add <b>motion</b> + a <b>caption</b> by editing the box before sending — e.g. <code>dildo zoom trippy meme TOP TEXT</code>. Motions: zoom · shake · pulse · trippy.</div></div>';
+  // Telegram-style Effects studio: pick an effect → add motion → optional caption → send. The full
+  // effect catalog comes from /client/effects so it never drifts from the bot. Cached after first load.
+  let _fxCatalog=null;
+  async function showEffectGuide(){
+    if(!_fxCatalog){ try{ _fxCatalog=await fetch('/client/effects').then(r=>r.json()); }catch(_){ _fxCatalog={enhance:[],effects:[],motions:[]}; } }
+    aiAddMessage('assistant', effectGuideHtml(_fxCatalog));
+  }
+  function effectGuideHtml(cat){
+    cat=cat||{};
+    const chip=o=>`<button class="fx-cmd" data-cmd="${enc(o.name)}" title="${enc(o.desc||o.name)}">${enc(o.name)}</button>`;
+    const mot=c=>`<button class="fx-mot" data-add="${enc(c)}">${enc(c)}</button>`;
+    const enh=(cat.enhance||[]).map(chip).join('');
+    const eff=(cat.effects||[]).map(chip).join('');
+    const mots=(cat.motions||['zoom','shake','pulse','trippy']).map(mot).join('');
+    return '<div class="fx-guide"><b>🎬 Effects studio</b> — your image is attached. <b>1)</b> pick an effect → <b>2)</b> add motion → <b>3)</b> optional caption, then ▶ Send. When the result appears, tap <b>↩ Send the Reply</b>.'+
+      (enh?'<div class="muted small" style="margin:10px 0 4px">✨ Enhance</div><div class="fx-grid">'+enh+'</div>':'')+
+      '<div class="muted small" style="margin:10px 0 4px">🎭 Effects — tap one ('+((cat.effects||[]).length)+')</div><div class="fx-grid">'+eff+'</div>'+
+      '<div class="muted small" style="margin:10px 0 4px">🌀 Add motion (appends)</div><div class="fx-row" style="display:flex;flex-wrap:wrap;gap:6px">'+mots+'</div>'+
+      '<div class="muted small" style="margin:10px 0 4px">💬 Caption</div><div class="fx-row" style="display:flex;gap:6px"><button class="fx-mot" data-add="meme ">＋ meme text</button></div></div>';
   }
   // Post the generated effect media (data:base64 in _ai.fxMedia) back as a reply to the source post.
   async function sendEffectReply(mid, btn){
@@ -2694,7 +2705,10 @@
     $('#ai-msgs').addEventListener('click',e=>{
       const eg=e.target.closest('.ai-eg'); if(eg){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ ta.value=eg.dataset.cmd; ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // welcome example → prefill, let the user type
       const cmd=e.target.closest('.ai-cmd'); if(cmd){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ ta.value=cmd.dataset.cmd; aiSend(); } return; }
-      const fxc=e.target.closest('.fx-cmd'); if(fxc){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ if(_ai.fxImage && !_ai.attach.length) aiAddFiles([_ai.fxImage]); ta.value=fxc.dataset.cmd; ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // effect chip → re-attach image + prefill (user can add motion/meme, then send)
+      const fxc=e.target.closest('.fx-cmd'); if(fxc){ e.preventDefault();
+        if(fxc.dataset.cmd==='__fxguide'){ showEffectGuide(); return; }   // 🎬 Effects → open the studio picker
+        const ta=$('#ai-input'); if(ta){ if(_ai.fxImage && !_ai.attach.length) aiAddFiles([_ai.fxImage]); ta.value=fxc.dataset.cmd; ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // effect chip → re-attach image + prefill
+      const fxm=e.target.closest('.fx-mot'); if(fxm){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ if(_ai.fxImage && !_ai.attach.length) aiAddFiles([_ai.fxImage]); const v=ta.value.trim(); ta.value=(v?v+' ':'')+fxm.dataset.add; ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // motion/caption → APPEND to the current effect
       const rfx=e.target.closest('.ai-reply-fx'); if(rfx){ e.preventDefault(); sendEffectReply(rfx.dataset.mid, rfx); return; }   // post the generated effect back as a reply
       const mag=e.target.closest('.ai-magnet'); if(mag){ const ta=$('#ai-input'); if(ta){ ta.value='torrents add '+mag.dataset.magnet; aiSend(); } return; }
       const im=e.target.closest('img'); if(im){ openLightbox(im.dataset.full||im.src); }
@@ -2897,7 +2911,19 @@
   }
   function aiRenderAttach(){
     const bar=$('#ai-attachbar'); if(!bar) return;
-    bar.innerHTML=_ai.attach.map((a,i)=>`<span class="ai-chip">${enc(a.name)} <button data-i="${i}" class="ai-chip-x">✕</button></span>`).join('');
+    if(!_ai.attach.length){ bar.innerHTML=''; return; }
+    const chips=_ai.attach.map((a,i)=>`<span class="ai-chip">${enc(a.name)} <button data-i="${i}" class="ai-chip-x">✕</button></span>`).join('');
+    // media-action guide buttons (restored from the old web UI / Telegram): once a file is attached,
+    // show what you can do with it. They prefill the command (the file is sent with it); 🎬 Effects
+    // opens the effect picker. Tailored to the attached file kind.
+    const kinds=new Set(_ai.attach.map(a=>a.kind));
+    let acts=[];
+    if(kinds.has('image')) acts=[['🎬 Effects','__fxguide'],['🌟 Glow','glow'],['😂 Meme','meme '],['🗜 Compress','compress'],['🔄 Convert','convert png'],['🔤 Read text','readtext'],['🪄 Remove BG','removebackground']];
+    else if(kinds.has('pdf')||kinds.has('doc')) acts=[['🎴 Flashcards','flashcards'],['🔤 Read text','readtext']];
+    else acts=[['🗜 Compress','compress'],['✂️ Clip','clip '],['🔄 Convert','convert mp4']];
+    const actions='<div class="fx-row" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">'+
+      acts.map(([l,c])=>`<button class="fx-cmd" data-cmd="${enc(c)}">${enc(l)}</button>`).join('')+'</div>';
+    bar.innerHTML='<div class="ai-chips" style="display:flex;flex-wrap:wrap;gap:6px">'+chips+'</div>'+actions;
     $$('.ai-chip-x',bar).forEach(b=> b.onclick=()=>{ _ai.attach.splice(+b.dataset.i,1); aiRenderAttach(); });
   }
   function aiSend(){

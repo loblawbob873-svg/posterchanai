@@ -21,7 +21,7 @@ import re
 import secrets
 import time
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Request, Response, Query, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -212,6 +212,46 @@ async def client_summarize(request: Request, db: Session = Depends(get_db)):
     except Exception as e:
         logger.warning(f"[client] summarize failed: {e}")
         return JSONResponse({"error": "summary unavailable"}, status_code=503)
+
+
+@router.get("/effects")
+async def client_effects():
+    """The image/video effects available to the Nostr client's Effects studio (names + descriptions,
+    straight from CommandService so the studio never drifts from what the bot/Telegram support)."""
+    from app.services.command_service import CommandService as CS
+    motion = list(getattr(CS, "MOTION_EFFECTS", ()) or ())
+    cmds = getattr(CS, "COMMANDS", {}) or {}
+
+    def desc(n):
+        v = cmds.get(n, "")
+        if isinstance(v, dict):
+            v = v.get("description") or v.get("help") or ""
+        return str(v or "").strip()[:90]
+
+    enhance = [n for n in ("glow", "alive") if n in motion]
+    effects = [n for n in motion if n not in enhance]
+    if "removebackground" in cmds:
+        effects.append("removebackground")
+    return JSONResponse({
+        "enhance": [{"name": n, "desc": desc(n)} for n in enhance],
+        "effects": [{"name": n, "desc": desc(n)} for n in effects],
+        "motions": ["zoom", "shake", "medshake", "beginshake", "pulse", "glow", "alive", "trippy"],
+    })
+
+
+@router.get("/proxy-image")
+async def client_proxy_image(url: str = Query(...)):
+    """Same-origin image proxy for the Nostr web client (e.g. the Effects studio grabbing a post's
+    image to apply an effect — the browser can't fetch a cross-origin Blossom blob as bytes). Reuses
+    the SSRF-guarded fetch; returns image bytes only."""
+    from app.routers.chat import _proxy_fetch
+    try:
+        content, media_type = await _proxy_fetch(url)
+        return Response(content=content, media_type=media_type)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=502, detail="failed to fetch image")
 
 
 @router.get("/gif")
