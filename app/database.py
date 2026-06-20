@@ -146,23 +146,28 @@ Base = declarative_base()
 # (posterchanai.service has PrivateTmp=no, so it survives ordinary restarts/deploys). The model
 # (MatrixAvatarCache) is shared; only the engine/session differ.
 FEDI_CACHE_DB_PATH = os.getenv("FEDI_CACHE_DB", "/tmp/posterchanai_fedi_cache.db")
-cache_engine = create_engine(
-    f"sqlite:///{FEDI_CACHE_DB_PATH}",
-    connect_args={"check_same_thread": False, "timeout": 30.0},
-    poolclass=QueuePool, pool_size=5, max_overflow=10, pool_recycle=3600, pool_pre_ping=True,
-)
+if "sqlite" in DATABASE_URL:
+    # SQLite main DB → keep the high-churn media cache in its OWN tmpfs SQLite (so it doesn't
+    # contend on the main DB's single write-lock). On Postgres this reason evaporates (row-level
+    # locking), so the cache just lives in the main PG DB — no separate SQLite file anywhere.
+    cache_engine = create_engine(
+        f"sqlite:///{FEDI_CACHE_DB_PATH}",
+        connect_args={"check_same_thread": False, "timeout": 30.0},
+        poolclass=QueuePool, pool_size=5, max_overflow=10, pool_recycle=3600, pool_pre_ping=True,
+    )
 
+    @event.listens_for(cache_engine, "connect")
+    def _set_cache_pragma(dbapi_conn, _rec):
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA journal_mode = WAL")
+        cur.execute("PRAGMA synchronous = NORMAL")
+        cur.execute("PRAGMA busy_timeout = 30000")
+        cur.close()
 
-@event.listens_for(cache_engine, "connect")
-def _set_cache_pragma(dbapi_conn, _rec):
-    cur = dbapi_conn.cursor()
-    cur.execute("PRAGMA journal_mode = WAL")
-    cur.execute("PRAGMA synchronous = NORMAL")
-    cur.execute("PRAGMA busy_timeout = 30000")
-    cur.close()
-
-
-CacheSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=cache_engine)
+    CacheSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=cache_engine)
+else:
+    cache_engine = engine
+    CacheSessionLocal = SessionLocal
 
 
 def init_fedi_cache_db():
@@ -171,6 +176,8 @@ def init_fedi_cache_db():
     Setting in the (durable) main DB, so after a host reboot wipes /tmp the cache simply rewarms
     from live traffic rather than re-seeding from an increasingly stale main-DB snapshot."""
     from app.models import MatrixAvatarCache, Setting
+    if cache_engine is engine:
+        return   # Postgres: the cache lives in the main DB (created by create_all) — no separate cache, no migration
     MatrixAvatarCache.__table__.create(bind=cache_engine, checkfirst=True)
     cs = CacheSessionLocal()
     ms = SessionLocal()
@@ -266,7 +273,12 @@ def safe_query_settings(db: Session) -> dict:
 
 
 def _run_migrations():
-    """Add new columns to existing tables if they don't exist."""
+    """Add new columns to existing tables if they don't exist (legacy SQLite upgrade path).
+
+    No-op on Postgres: create_all() builds the complete current schema, and these ALTERs use
+    SQLite-flavored DDL (e.g. BOOLEAN DEFAULT 1) that isn't valid PG — so guard them out entirely."""
+    if "sqlite" not in DATABASE_URL:
+        return
 
     inspector = inspect(engine)
 

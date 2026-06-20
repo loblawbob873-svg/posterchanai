@@ -149,7 +149,7 @@ class APIKey(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    key = Column(String(64), unique=True, nullable=False, index=True)
+    key = Column(String(100), unique=True, nullable=False, index=True)  # "sk-" + 64 hex = 67 chars
     name = Column(String(100), default="Default")
     created_at = Column(DateTime, default=datetime.utcnow)
     last_used_at = Column(DateTime, nullable=True)
