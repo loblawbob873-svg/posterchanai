@@ -337,7 +337,11 @@ a.btn.full{display:block}
 .dm-peer:hover,.dm-peer.active{background:rgba(0,255,255,.1)}
 .dm-peer img{width:36px;height:36px;border-radius:50%;border:1px solid var(--line)}
 .dm-peer b{font-size:18px}.dm-peer .muted.small{font-size:15.5px}
-.dm-thread{display:flex;flex-direction:column;height:100%}
+.dm-thread{display:flex;flex-direction:column;height:100%;min-height:0}
+/* When the feed holds the DM thread, the feed must NOT scroll too — otherwise the unsquished
+   (flex:none) bubbles overflow and the inner .dm-msgs never gets to scroll. Make .dm-msgs the
+   sole, bounded scroller. (:has supported in current Firefox/Chrome.) */
+.feed:has(.dm-wrap){overflow:hidden;padding:0;min-height:0}
 .dm-msgs{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px;display:flex;flex-direction:column;gap:8px}
 .bubble{flex:none;width:-moz-fit-content;width:fit-content;max-width:74%;min-width:0;padding:11px 15px;border-radius:14px;font-size:18.5px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
 /* own messages: simple cyberpunk cyan (no magenta gradient) */
