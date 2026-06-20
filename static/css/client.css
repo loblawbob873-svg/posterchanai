@@ -110,7 +110,7 @@ a.btn.full{display:block}
 #btn-logout{font-size:15px;padding:11px 14px;color:#ff6b8b;border-color:rgba(255,60,90,.5);
   text-shadow:0 0 8px rgba(255,40,80,.55);box-shadow:0 0 12px rgba(255,40,80,.22);transition:.15s}
 #btn-logout:hover{color:#fff;border-color:#ff3b5c;background:rgba(255,40,80,.14);box-shadow:0 0 20px rgba(255,40,80,.45)}
-.conn{display:flex;align-items:center;justify-content:center;gap:10px;font-size:16px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);padding:10px 8px;margin-top:6px;border-top:1px solid var(--line)}
+.conn{display:flex;align-items:center;justify-content:center;gap:9px;font-size:14px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--muted);padding:6px 8px 10px}
 .conn .dot{width:14px;height:14px;border-radius:50%;background:var(--amber);box-shadow:0 0 10px var(--amber);animation:conn-pulse 1.6s ease-in-out infinite}
 .conn.ok{color:var(--green)}
 .conn.ok .dot{background:var(--green);box-shadow:0 0 12px var(--green),0 0 22px var(--green)}
