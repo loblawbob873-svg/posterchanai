@@ -6,11 +6,12 @@
 
 ### Your own AI assistant — self-hosted, private, and ridiculously capable.
 
-One FastAPI backend that does chat, image generation, voice, email, news, torrents, and runs autonomous bots on **Telegram, Matrix, Misskey, Pleroma & Nostr**. Cloud LLMs or fully local. Your hardware, your data, your rules.
+**Nostr-native at the core:** a built-in web-of-trust relay (on PostgreSQL) *is* the datastore — your settings, accounts, and AI chats are **encrypted Nostr events you own**, and the app's face is a full cyberpunk **Nostr web client**. One FastAPI backend that also does chat, image generation, voice, email, news, torrents, and runs autonomous bots on **Telegram, Matrix, Misskey, Pleroma & Nostr**. Cloud LLMs or fully local. Your hardware, your keys, your rules.
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![SQLite](https://img.shields.io/badge/SQLite-backed-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
+[![Nostr-native](https://img.shields.io/badge/Nostr-native-8e44ad?logo=nostr&logoColor=white)](docs/NOSTR_DATASTORE.md)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-datastore-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![OpenAI-compatible](https://img.shields.io/badge/API-OpenAI--compatible-412991?logo=openai&logoColor=white)](#chat--ai)
 [![Self-hosted](https://img.shields.io/badge/Self--hosted-100%25-success)](#quick-start-backend-and-web-ui)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20GPU%20optional-FCC624?logo=linux&logoColor=black)](#requirements)
@@ -27,7 +28,8 @@ One FastAPI backend that does chat, image generation, voice, email, news, torren
 
 ## Why Poster-chan?
 
-- 🏠 **Truly self-hosted** — runs on your own box, SQLite-backed, no telemetry, single-admin multi-user. Your conversations and keys never leave your network.
+- 🟣 **Nostr-native datastore** — the built-in **web-of-trust relay** (backed by PostgreSQL) is the source of truth. Settings, accounts, API keys, and AI chats live as **NIP-44-encrypted `kind-30078` events** signed by your node — not rows in some app DB. Log in with your **Nostr key** (NIP-07/NIP-46), and the web UI is a full Nostr client. No SQLite, no proprietary schema you don't control.
+- 🏠 **Truly self-hosted** — runs on your own box, no telemetry, single-admin multi-user. Your conversations and keys never leave your network; the only local secret is a gitignored keyfile.
 - 🔌 **Bring any model** — cloud (any OpenAI-compatible API) or local: **Ollama** or **llama.cpp** (CPU / CUDA / HIP / **Intel Arc SYCL**). Round-robin load-balance across several backends.
 - 🤖 **It's also a bot platform** — drive everything from **Telegram & Matrix**, and run autonomous **Pleroma / Misskey / Matrix / Nostr** bots from a single admin tab.
 - 🎨 **More than chat** — image generation, TTS/STT, website screenshots, YouTube/X summarize & download, media tools, interactive study flashcards, email, news, finance, torrents — all behind one chat box.

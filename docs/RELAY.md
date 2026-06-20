@@ -4,7 +4,12 @@ PosterChanAI ships a **self-contained Nostr relay** (NIP-01/02/09/11/17/22/23/40
 built natively into the
 app — no external relay software (strfry/khatru), no extra daemon, no new dependencies. It
 runs in **its own thread + asyncio loop** (isolated from the web request loop), stores into
-its own SQLite database, and is configured entirely from **Admin → Relay**.
+its own **PostgreSQL** database, and is configured entirely from **Admin → Relay**.
+
+> **The relay is also the app's datastore.** PosterChanAI is Nostr-native: settings, accounts,
+> API keys, bot config, and AI chats are stored as **NIP-44-encrypted `kind-30078` events**
+> in this relay (the Postgres tables are just a hydrated read-cache). There is no separate
+> app DB and no SQLite. See [NOSTR_DATASTORE.md](NOSTR_DATASTORE.md).
 
 Its purpose is a **curated, spam-free feed**: it only ever accepts or syncs notes from a
 **Web of Trust (WoT)**, automatically completes broken reply threads, and fetches profile
@@ -18,7 +23,7 @@ point your bots/clients at it and it re-broadcasts what you publish to the wider
 ```
           ┌──────────────────────── PosterChanAI ────────────────────────┐
  clients  │   relay thread (own asyncio loop, own port :3052)            │
-   ⇄ wss ─┼─▶  NIP-01 WS ──▶ WoT gate ──▶ SQLite (on disk / WAL) ────┼─▶ durable
+   ⇄ wss ─┼─▶  NIP-01 WS ──▶ WoT gate ──▶ PostgreSQL (GIN/tsvector) ─┼─▶ durable
           │        ▲                          ▲     │                     │
           │        │  outbox (your writes)    │     └─▶ live fan-out ─────┼─▶ subscribers
           │        └──────────────┐           │                          │
@@ -73,8 +78,8 @@ re-broadcast by the outbox. Safe to re-run (it dedupes).
 
 ### Search (NIP-50)
 Clients can full-text **search** the relay's notes with a `{"search": "..."}` filter, backed
-by a **SQLite FTS5** index over note content (kept in sync by triggers; LIKE fallback if FTS5
-isn't compiled in). Multiple words are AND-ed. Advertised as NIP-50 in the relay info doc.
+by a **PostgreSQL `tsvector`** index (GIN) over note content. Multiple words are AND-ed.
+Advertised as NIP-50 in the relay info doc.
 
 ### Lookup relay (NIP-65 / outbox model)
 Beyond the timeline, the relay stores and serves the **lookup metadata** for every WoT
@@ -105,32 +110,52 @@ profile fetch), and the **outbox is a bounded paced queue** (a minimum interval 
 broadcasts; drops on overflow) — so a big sync or a post-blasting bot won't trip relay rate
 limits.
 
-### Tor proxy (optional bypass)
-By default the relay routes its upstream traffic through the app's built-in Tor proxy (like
-the bots). You can **bypass it for the relay** (`Bypass Tor proxy`) so sync/outbox/WoT connect
-directly — faster, and it avoids the proxy-startup error spam. This only affects the relay,
-not the bots.
+### Tor proxy (proxy-first, direct fallback)
+By default the relay routes its upstream connections through the app's built-in Tor proxy (like
+the bots) and **falls back to a direct connection if the proxy connect fails** — so a flaky/down
+Tor proxy degrades gracefully instead of dropping federation. `Bypass Tor proxy` forces direct
+only (never attempt Tor). This only affects the relay, not the bots.
+
+### Web of Trust on/off — full node vs processing node
+`Enforce Web of Trust` (Admin → Relay, default **on**) is the master switch for whether this node
+does relay/social work:
+- **On** — publishing is gated to the trust set, and the relay runs the trust-graph build, metadata
+  backfill, firehose sync, and **NIP-05** serving. The full primary node.
+- **Off** — publishing is **open** (bridge/language/word filters still apply) and **all** cross-node
+  background work stops (no trust-graph build, metadata backfill, sync, firehose; NIP-05 serving is
+  forced off too). The relay becomes a pure local store. Use this on a secondary/processing node
+  whose relay is internal, so it doesn't duplicate the primary's WoT + NIP-05 work.
+
+### Send-only (broadcast, don't mirror)
+`Send-only` (under **Upstream relays**) keeps **broadcasting** this node's own events to the upstream
+relays via the outbox, but skips **all receive-direction** work (firehose, sync, metadata backfill) —
+so a secondary node's local DB never fills with a mirror of upstream content. It's the *direction*
+control for the upstream list (which is just *where* to send). Pair it with a primary relay in the
+upstream list to push a node's events up without pulling everything back down.
+
+### Operator key (auto-minted)
+The relay signs its datastore docs (settings/users/etc.) with an **operator key**. A fresh node
+**auto-mints** one on first use and stores it in the local keyfile (`data/keys.json`, gitignored) —
+so "relay-backed by default" works out of the box. To let another node accept this node's
+broadcasts, add this node's **operator npub** (Admin → Relay → *Relay identity → Copy npub*) to that
+node's Web-of-Trust **seed npubs**.
 
 ---
 
-## Storage (on-disk WAL, RAM-cached)
+## Storage (PostgreSQL)
 
-The DB lives **directly on disk in WAL mode** (`nostr_relay.db` + `-wal` + `-shm`) — durable by
-itself, scales to many GB (a depth-2 WoT is multi-GB), with no snapshot/restore machinery to
-get in the way. RAM is used where it matters: a large **SQLite page cache** + a big **mmap read
-window** + `temp_store=MEMORY` keep hot pages and sorts in RAM (Nostr is read/write intense),
-and a fast **libsecp256k1** verify path (see below) keeps ingest CPU-cheap.
+The relay stores into **PostgreSQL** — the *same* database the app uses, since the relay **is**
+the app's datastore. Events live in an `events` table with a **GIN `tsvector`** index for NIP-50
+full-text search and proper row-level locking (no single-writer WAL lock — concurrent ingest and
+client reads don't block each other). It scales to many GB (a depth-2 WoT is multi-GB), and a
+fast **libsecp256k1** verify path (see below) keeps ingest CPU-cheap.
 
-**How DB writes work in WAL mode:**
-- New writes append to the **`-wal`** file, not the main DB; the main file is updated at a
-  *checkpoint*.
-- **One writer at a time globally**, serialized by the WAL lock (waiters block up to
-  `busy_timeout`, not error). **Readers never block** and read a consistent snapshot — so
-  client subscriptions keep working during heavy ingest/backfill.
-- A **larger WAL** (`WAL size`, default 50 000 pages ≈ 200 MB) means fewer checkpoints and
-  faster sustained writes; very large (e.g. 500 000 ≈ 2 GB) can slightly slow reads.
-- **RAM caches** (Admin → Relay): `Page cache` (default 512 MB) and `mmap window` (default up
-  to SQLite's ~2 GB cap) — size them toward your DB for max read speed.
+- **Connection:** passwordless localhost `trust` by default (`host=127.0.0.1 dbname=posterchan_relay
+  user=posterchan`); override with the `NOSTR_RELAY_PG_DSN` / `DATABASE_URL` env for a password or
+  a remote/Docker server. Provisioned by `install.sh` (or the `postgres` Docker service).
+- **App tables vs relay events:** `Base.metadata` (the app's operational/cache tables) and the
+  relay's raw `events`/`event_tags`/`wot` tables share one DB. The app's authoritative data is the
+  encrypted `kind-30078` events; the SQL tables are a hydrated read-cache.
 
 Size is **hard-bounded** by an event-count cap, a byte budget, and an **auto-cleaner** that
 deletes notes/reactions older than *N* days (default 30) but **keeps profiles and contact lists
@@ -235,9 +260,9 @@ Edits in the admin UI apply immediately (no restart).
 | Delay between sync queries | 1.0 s | Pace upstream requests |
 | Outbox min interval / queue | 1.0 s / 500 | Throttle + bound broadcasts |
 | Max connections | 5000 | Concurrent client cap |
-| WAL size | 50000 pages | Larger = fewer checkpoints, faster writes |
-| Database path | data/nostr_relay.db | On-disk DB (WAL) |
-| Page cache / mmap (MB RAM) | 512 / 4096 | SQLite read caches |
+| Enforce Web of Trust | on | Off = open publishing + no WoT/firehose/sync/NIP-05 work (processing node) |
+| Send-only | off | Broadcast to upstream but don't pull/store their events |
+| PostgreSQL DSN | host=127.0.0.1 dbname=posterchan_relay | `NOSTR_RELAY_PG_DSN` / `DATABASE_URL` env; passwordless localhost trust by default |
 | Auto-clean notes older than | 30 days (0=off) | Old notes only — **profiles & contacts kept forever** |
 | Max events / Max DB MB | 500k / 1024 | Hard bounds (trim oldest notes first) |
 | NIP-11 name/description/pubkey/contact | — | Relay info document |
@@ -267,8 +292,8 @@ Edits in the admin UI apply immediately (no restart).
   author's intent across *all* kinds, even profiles/DMs/local-user events that the age-based
   cleaner would otherwise keep forever.
 - **NIP-45** — `COUNT`.
-- **NIP-50** — full-text **search** (`{"search": "..."}` filters), backed by SQLite FTS5
-  over note content with a LIKE fallback if FTS5 is unavailable.
+- **NIP-50** — full-text **search** (`{"search": "..."}` filters), backed by a PostgreSQL
+  `tsvector`/GIN index over note content.
 - **NIP-65** — relay lists (kind-10002) stored & served — this relay works as an **outbox /
   lookup relay** so clients can resolve where each member posts.
 - **NIP-77** — **negentropy** set reconciliation (`NEG-OPEN`/`NEG-MSG`) for efficient sync;
