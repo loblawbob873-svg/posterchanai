@@ -128,10 +128,14 @@ CREATE TABLE IF NOT EXISTS relay_kv (
 # of these: notes (1), reposts (6), reactions (7), NIP-22 comments (1111). EVERYTHING else is
 # kept indefinitely — profiles (0), contacts (3), ALL replaceable identity/relay lists
 # (10000-19999: relay list 10002, DM relays 10050, search relays 10007, blossom servers 10063,
-# mute/bookmark/etc.), private DMs (legacy 4, NIP-59 seal 13, NIP-17 gift wrap 1059), long-form
-# articles (30023), and any other/unknown kind. (Client-published `origin='direct'` events are
-# additionally never pruned regardless of kind.)
-_PRUNABLE_KINDS = (1, 6, 7, 1111)
+# mute/bookmark/etc.), private DMs (legacy 4, NIP-59 seal 13, NIP-17 gift wrap 1059), and any
+# other/unknown kind. (Client-published `origin='direct'` events are additionally never pruned
+# regardless of kind — so the instance's OWN chat/articles/streams survive; only synced-in copies
+# from the WoT firehose age out.) Prunable feed content: notes/reposts/reactions/comments, plus
+# public-chat messages (42), long-form articles (30023) and live-stream events (30311) — all of
+# which accumulate from the sync. Channel/community DEFINITIONS (40/34550) are kept (tiny, and
+# needed to render rooms).
+_PRUNABLE_KINDS = (1, 6, 7, 42, 1111, 30023, 30311)
 
 
 class RelayStore:
@@ -672,9 +676,10 @@ class RelayStore:
             "DELETE FROM events WHERE expiration IS NOT NULL AND expiration <= ?",
             (int(time.time()),))
         removed += cur.rowcount or 0
-        # Age-based auto-cleaner: delete only old feed content (notes/reposts/reactions/comments
-        # — kinds in _PRUNABLE_KINDS). Everything else (profiles, contacts, relay/identity lists,
-        # DMs, articles, …) is never touched, so important events survive indefinitely.
+        # Age-based auto-cleaner: delete only old feed content (kinds in _PRUNABLE_KINDS — notes/
+        # reposts/reactions/comments + public chat/articles/streams), and only synced copies (the
+        # preserve clause keeps origin='direct' and local users'). Everything else (profiles,
+        # contacts, relay/identity lists, DMs, channel/community defs, …) is never touched.
         if self.retention_days:
             cutoff = int(time.time()) - self.retention_days * 86400
             cur = conn.execute(
