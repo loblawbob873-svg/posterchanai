@@ -140,7 +140,10 @@ class _TorrentsMixin:
         elif subcommand == "add" and len(parts) > 1:
             if not bt_service:
                 return {"type": "text", "content": bt_error}
-            target = parts[1].strip()
+            # Capture the WHOLE remainder, not just parts[1] — a magnet URI can contain spaces
+            # (unencoded &dn=/&tr= values), and splitting on whitespace truncated it past the
+            # info-hash ("missing info-hash from URI"). Strip surrounding angle brackets too.
+            target = arg.strip().split(None, 1)[1].strip().strip("<>").strip()
 
             # A `.torrent` URL: add it (magnets fall through to the parse_magnet path below).
             if not target.startswith("magnet:") and re.match(r'^https?://', target, re.IGNORECASE):
@@ -180,7 +183,13 @@ class _TorrentsMixin:
                         "content": f"Added torrent: `{result['info_hash']}`\n\nUse `torrents list` to check progress.",
                     }
                 return {"type": "text", "content": "Failed to add torrent to remote server"}
-            info_hash = bt_service.add_magnet(magnet, user_id=self.user.id if self.user else None)
+            try:
+                info_hash = bt_service.add_magnet(magnet, user_id=self.user.id if self.user else None)
+            except Exception as e:
+                logger.warning(f"[torrents] add_magnet failed: {e}")
+                return {"type": "text", "content": (
+                    "Couldn't add that magnet — it looks malformed (no info-hash). "
+                    "Paste the full `magnet:?xt=urn:btih:…` link.")}
             return {
                 "type": "text",
                 "content": f"Added torrent: `{info_hash}`\n\nUse `torrents list` to check progress.",

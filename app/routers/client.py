@@ -618,6 +618,14 @@ async def blossom_access(data: BlossomAccessReq, db: Session = Depends(get_db)):
     else:
         db.add(Setting(key="blossom_whitelist", value=value))
     db.commit()   # blossom_service re-reads the setting on its next (short-TTL) cache miss — no reload
+    # Persist past restart: with settings_backend=relay, the startup hydrate would otherwise revert
+    # this Setting to the relay's copy. Write the change through to the relay (no-op if backend off).
+    try:
+        from app.services import settings_store
+        if settings_store.enabled(db):
+            await settings_store.write_through(db, {"blossom_whitelist": value})
+    except Exception as e:
+        logger.warning("[client] blossom_whitelist write-through failed: %s", e)
     return JSONResponse({"ok": True, "whitelisted": data.grant, "count": len(cur)})
 
 
@@ -665,17 +673,48 @@ async def user_caps_status(pubkey: str, db: Session = Depends(get_db)):
                          "caps": {c: bool(getattr(u, c, False)) for c in _USER_CAPS}})
 
 
+async def _find_or_create_user(db, hex_pk: str):
+    """Find a user by npub, or CREATE a gated account so an admin can PRE-GRANT access by npub
+    (before the person has ever signed in). New accounts are admitted to the WoT + get a storage key,
+    same as a fresh nostr-login. Returns the User."""
+    npub = nostr_service.npub_of(hex_pk)
+    u = db.query(User).filter(User.nostr_npub == npub).first()
+    if u:
+        return u
+    from app.auth import get_password_hash
+    base = "npub_" + npub[4:16]
+    username = base
+    for i in range(2, 1000):
+        if not db.query(User).filter(User.username == username).first():
+            break
+        username = f"{base[:46]}{i}"
+    u = User(username=username, email=None,
+             password_hash=get_password_hash(secrets.token_urlsafe(32)),
+             email_verified=True, nostr_npub=npub,
+             can_image=True, can_music=True, can_video=False, can_torrent=False,
+             can_blossom=False, can_ai=False)
+    db.add(u)
+    db.commit()
+    db.refresh(u)
+    try:
+        from app.services import nostr_store
+        nostr_store.user_storage_seckey(db, u)
+        await follow_and_admit(db, hex_pk)
+    except Exception as e:
+        logger.warning("[client] provisioning pre-granted account failed: %s", e)
+    return u
+
+
 @router.post("/user-caps")
 async def user_caps_set(data: UserCapsReq, db: Session = Depends(get_db)):
-    """Admin-only: set a user's feature capabilities by npub (replaces the Admin → Users toggles)."""
+    """Admin-only: set a user's feature capabilities by npub (replaces the Admin → Users toggles).
+    Creates the account if it doesn't exist yet (pre-grant)."""
     target = nostr_service.to_pubkey_hex(data.target)
     if not target:
         return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
     if not _verify_admin_auth(db, data.auth, target):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
-    u = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(target)).first()
-    if not u:
-        return JSONResponse({"ok": False, "error": "that user hasn't opened the app yet"}, status_code=404)
+    u = await _find_or_create_user(db, target)
     for c in _USER_CAPS:
         if c in data.caps:
             setattr(u, c, bool(data.caps[c]))
@@ -709,9 +748,7 @@ async def ai_access(data: AiAccessReq, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
     if not _verify_admin_auth(db, data.auth, target):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
-    u = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(target)).first()
-    if not u:
-        return JSONResponse({"ok": False, "error": "that user hasn't opened the AI app yet"}, status_code=404)
+    u = await _find_or_create_user(db, target)   # pre-grant: create the account if it doesn't exist
     u.can_ai = bool(data.grant)
     db.commit()
     logger.info("[client] AI access %s for %s", "granted" if data.grant else "revoked", u.username)
