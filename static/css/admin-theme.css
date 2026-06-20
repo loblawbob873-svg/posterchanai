@@ -61,6 +61,7 @@ legend{ color: var(--accent); font-weight:700; padding:0 6px; }
   background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
   color:#04020c; border:none; border-radius: 11px; padding: 10px 18px; font-weight:700; cursor:pointer;
   box-shadow: var(--glow-cyan);
+  align-self: flex-start; width: auto;   /* .settings-form is a flex column (align-items:stretch) — don't stretch the button full width */
 }
 .admin-page .btn-primary:hover, .admin-page .save-btn:hover{ filter: brightness(1.08); }
 .admin-page .btn-secondary{

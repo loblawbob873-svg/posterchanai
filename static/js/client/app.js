@@ -487,6 +487,13 @@
       const a=n.querySelector('.rb-av'); if(p.picture && a) a.src=p.picture;
       const b=n.querySelector('b'); if(b) b.textContent=p.name||p.display_name||b.textContent;
     }});
+    // embedded/quoted notes — fill avatar + name + nip05 once the referenced author's profile loads
+    $$('.quoted .name[data-prof]').forEach(nm=>{ const pk=nm.dataset.prof; const p=Store.profile(pk); if(p){
+      const q=nm.closest('.quoted'); const a=q&&q.querySelector('.qav'); if(p.picture && a) a.src=p.picture;
+      nm.textContent=p.name||p.display_name||nm.textContent;
+      const h=q&&q.querySelector('.handle'); const nip=niceNip05(p.nip05); if(h && nip) h.textContent=nip;
+      decorateVerified(q&&q.querySelector('.vchk'), pk, p.nip05);
+    }});
   }
 
   // ---------- view routing ----------
@@ -505,7 +512,9 @@
     feed.classList.toggle('feed-dm', VIEW==='messages');   // full-height messages layout (no :has needed)
     feed.classList.toggle('feed-ai', VIEW==='ai');         // full-height chat layout (msgs scroll inside)
     feed.classList.toggle('feed-admin', VIEW==='admin');   // full-height admin iframe
-    if (reset) feed.innerHTML = '<div class="spinner"></div>';
+    // Skip the blanket spinner for views that paint instantly (settings renders synchronously;
+    // admin shows its own spinner/iframe) — otherwise every open flashes spinner→content.
+    if (reset && VIEW!=='settings' && VIEW!=='admin') feed.innerHTML = '<div class="spinner"></div>';
     if (VIEW==='home' || VIEW==='global') return renderTimeline(VIEW, reset);
     if (VIEW==='notifications') return renderNotifications();
     if (VIEW==='messages') return renderMessages();
@@ -1009,7 +1018,14 @@
     return quotedDiv(o);
   }
   function quotedDiv(o){ const p=profOf(o.pubkey); needProfile(o.pubkey);
-    return `<div class="quoted" data-open="${o.id}"><div class="hd"><b>${enc(p.name||'anon')}</b> <span class="handle">${timeAgo(o.created_at)}</span></div><div class="txt">${linkify(o.content)}</div></div>`; }
+    const name = p.name||p.display_name||(NT().nip19.npubEncode(o.pubkey).slice(0,12)+'…');
+    const av = p.picture || LOGO;
+    const handle = niceNip05(p.nip05) || ('@'+NT().nip19.npubEncode(o.pubkey).slice(4,12));
+    const mp = mediaParts(o.content);
+    return `<div class="quoted" data-open="${o.id}">
+      <div class="hd"><img class="qav" src="${enc(av)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${o.pubkey}">${enc(name)}</span><span class="vchk" data-pk="${o.pubkey}"></span><span class="handle">${enc(handle)}</span><span class="time">${timeAgo(o.created_at)}</span></div>
+      <div class="txt">${linkify(stripQuoteRef(mp.text, o))}</div>
+      ${mp.gallery}</div>`; }
   const _evQ=new Set(); let _evT=null;
   function needEvent(id){ if(id&&!Store.get(id)){ _evQ.add(id); if(!_evT)_evT=setTimeout(flushEvents,150);} }
   async function flushEvents(){
@@ -2389,7 +2405,7 @@
         </div>
       </section>
 
-      <button class="btn btn-neon full" id="set-save">Save &amp; reload</button>
+      <button class="btn btn-neon" id="set-save">Save &amp; reload</button>
       <div class="muted small set-foot">Changing relays or media server reconnects the app, so it reloads on save.</div>
     </div>`;
 
@@ -2769,6 +2785,10 @@
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
     // 1. direct npub/hex -> jump to that profile
     const pk=safePk(q); if(pk){ return renderProfileView(pk); }
+    // 1b. note/nevent (optionally nostr:-prefixed) -> open that note's thread
+    if(/^(?:nostr:)?(?:note1|nevent1)[0-9a-z]{20,}$/i.test(q)){
+      try{ const d=NT().nip19.decode(q.replace(/^nostr:/i,'')); const id=d.type==='note'?d.data:(d.data&&d.data.id); if(id) return renderThread(id); }catch(_){}
+    }
     // 2. NIP-05 address (name@domain) -> resolve to a pubkey -> jump
     if(/^[\w.\-+]+@[\w.\-]+\.[a-z]{2,}$/i.test(q)){
       const rp=await nip05Resolve(q.toLowerCase());
