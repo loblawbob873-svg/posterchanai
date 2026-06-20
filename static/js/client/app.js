@@ -1509,16 +1509,23 @@
     $('#bl-up').onclick=async()=>{ const files=[...$('#bl-file').files]; if(!files.length)return;
       for(let i=0;i<files.length;i++){ try{ await uploadBlob(files[i]); toast(`uploaded ${i+1}/${files.length}`); }catch(e){ toast('upload failed: '+e.message);} }
       renderBlossom(); };
-    if(!server){ $('#bl-grid').innerHTML='<div class="empty">Blossom server not configured.</div>'; return; }
-    let list=[];
-    try{ const r=await fetch(server+'/list/'+ME.pubkey); if(!r.ok) throw new Error('HTTP '+r.status); list=await r.json(); }
-    catch(e){ $('#bl-grid').innerHTML='<div class="empty">Couldn\'t load files from '+enc(server)+' ('+enc(e.message)+').</div>'; return; }
-    const grid=$('#bl-grid');
-    grid.innerHTML = list.length ? list.map(b=>{
-      return `<div class="file-card" data-sha="${b.sha256}"><a href="${enc(b.url)}" target="_blank" download>${blobThumb(b)}</a><button class="del" data-sha="${b.sha256}">✕</button><div class="meta"><span>${((b.size||0)/1024|0)}KB</span><span>${(b.type||'').split('/')[1]||''}</span></div></div>`;
-    }).join('') : '<div class="empty">No files yet — upload one above.</div>';
-    $$('.del',grid).forEach(b=> b.onclick=()=>delBlob(b.dataset.sha));
-    renderAiFiles(feed);
+    // Blossom-server files (your own/built-in Blossom). On no-server or a list error, show a note —
+    // but DON'T return: the AI chat files below are independent of this and must always render.
+    if(!server){
+      $('#bl-grid').innerHTML='<div class="empty">Blossom server not configured.</div>';
+    } else {
+      let list=null;
+      try{ const r=await fetch(server+'/list/'+ME.pubkey); if(!r.ok) throw new Error('HTTP '+r.status); list=await r.json(); }
+      catch(e){ $('#bl-grid').innerHTML='<div class="empty">Couldn\'t load files from '+enc(server)+' ('+enc(e.message)+').</div>'; }
+      if(list!==null){
+        const grid=$('#bl-grid');
+        grid.innerHTML = list.length ? list.map(b=>
+          `<div class="file-card" data-sha="${b.sha256}"><a href="${enc(b.url)}" target="_blank" download>${blobThumb(b)}</a><button class="del" data-sha="${b.sha256}">✕</button><div class="meta"><span>${((b.size||0)/1024|0)}KB</span><span>${(b.type||'').split('/')[1]||''}</span></div></div>`
+        ).join('') : '<div class="empty">No files yet — upload one above.</div>';
+        $$('.del',grid).forEach(b=> b.onclick=()=>delBlob(b.dataset.sha));
+      }
+    }
+    renderAiFiles(feed);   // always — AI chat files (encrypted, under the storage key) are separate
   }
   // AI chat files (uploads + generated images) — stored encrypted under the storage key, so they're
   // separate from the Blossom list above; shown via the decrypting /api/files route.
