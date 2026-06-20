@@ -89,6 +89,11 @@ a.btn.full{display:block}
 .sidebar{display:flex;flex-direction:column;gap:8px;padding:18px 14px;border-right:1px solid var(--line);min-height:0;overflow-y:auto}
 .brand{font-size:26px;font-weight:800;text-align:center;color:var(--neon);margin-bottom:8px}
 .nav{display:flex;flex-direction:column;gap:4px}
+.nav-group{display:flex;flex-direction:column;gap:4px}
+.nav-grouphd .chev{margin-left:auto;font-size:12px;opacity:.65}
+.nav-sub{display:flex;flex-direction:column;gap:4px;overflow:hidden}
+.nav-sub.collapsed{display:none}
+.nav-item.sub{padding-left:30px;font-size:15.5px}
 .nav-item{display:flex;align-items:center;gap:13px;background:transparent;border:none;color:var(--muted);
   padding:13px 15px;border-radius:11px;cursor:pointer;font-size:17px;font-weight:600;text-align:left;transition:.15s;position:relative}
 .nav-item .ic{font-size:23px;width:24px;text-align:center}

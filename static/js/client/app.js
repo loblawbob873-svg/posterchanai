@@ -496,6 +496,11 @@
           try{ await _deferredInstall.userChoice; }catch(_){} _deferredInstall=null; b.classList.add('hidden'); }; } }
     $('#me-card').onclick = ()=>renderProfileView(ME.pubkey);
     $$('.nav-item[data-view]').forEach(b=> b.onclick = ()=>switchView(b.dataset.view));
+    // Collapsible "Discover" group (Articles / Streams / Communities) in the sidebar.
+    { const dt=$('#disc-toggle'); if(dt){ const sub=$('#disc-sub'), chev=$('#disc-chev');
+        const apply=o=>{ if(sub) sub.classList.toggle('collapsed', !o); if(chev) chev.textContent=o?'▾':'▸'; };
+        apply(ClientSettings.get('discOpen', true));
+        dt.onclick=()=>{ const o=!ClientSettings.get('discOpen', true); ClientSettings.set('discOpen', o); apply(o); }; } }
     $('#btn-compose').onclick = ()=>compose(); $('#btn-compose-m').onclick = ()=>compose();
     // mobile overflow sheet — delegated so the tap is caught even if the node is re-created
     document.addEventListener('click', e=>{ if(e.target.closest && e.target.closest('#btn-more-m')){ e.preventDefault(); moreMenu(); } });
@@ -703,6 +708,7 @@
     if (VIEW==='bookmarks') return renderBookmarks();
     if (VIEW==='articles') return renderArticles();
     if (VIEW==='streams') return renderStreams();
+    if (VIEW==='communities') return renderCommunities();
     if (VIEW==='blossom') return renderBlossom();
     if (VIEW==='settings') return renderSettings();
     if (VIEW==='ai') return renderAI();
@@ -1120,6 +1126,57 @@
     if(url) attachStream(url);
     { const pb=$('#st-pop'); if(pb) pb.onclick=()=>popOutStream(e); }
   }
+  // ---------- communities (NIP-72 moderated communities, kind 34550) ----------
+  async function renderCommunities(){
+    const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
+    let evs=[]; try{ evs=await Relay.query([{ kinds:[34550], limit:100 }]); }catch(_){}
+    evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
+    if(VIEW!=='communities') return;
+    const comms=_dedupAddr(evs).sort((a,b)=>b.created_at-a.created_at);
+    feed.innerHTML = comms.length
+      ? `<div class="stream-grid">${comms.map(communityCard).join('')}</div>`
+      : '<div class="empty">No communities yet. They show up here as people in your network create or post in NIP-72 communities.</div>';
+    decorateProfiles();
+    $$('.community-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const x=Store.get(c.dataset.id); if(x) openCommunity(x); });
+  }
+  function communityCard(e){
+    const p=profOf(e.pubkey); needProfile(e.pubkey);
+    const name=(e.tags.find(t=>t[0]==='name')||[])[1]||(e.tags.find(t=>t[0]==='d')||[])[1]||'(unnamed)';
+    const desc=(e.tags.find(t=>t[0]==='description')||[])[1]||'';
+    const img=(e.tags.find(t=>t[0]==='image')||[])[1]||'';
+    return `<article class="stream-card community-card" data-id="${e.id}" data-pk="${e.pubkey}">
+      <div class="stream-thumb">${img?`<img src="${enc(img)}" loading="lazy" onerror="this.parentElement.classList.add('noimg')">`:'<span class="stream-play">☷</span>'}</div>
+      <div class="stream-meta"><div class="stream-title">${enc(name)}</div>
+        ${desc?`<div class="muted small">${enc(desc.slice(0,120))}</div>`:''}
+        <div class="art-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span></div>
+      </div></article>`;
+  }
+  async function openCommunity(e){
+    VIEW='community'; $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='Community';
+    const feed=$('#feed'); const p=profOf(e.pubkey); needProfile(e.pubkey);
+    const d=(e.tags.find(t=>t[0]==='d')||[])[1]||'';
+    const name=(e.tags.find(t=>t[0]==='name')||[])[1]||d||'(unnamed)';
+    const desc=(e.tags.find(t=>t[0]==='description')||[])[1]||'';
+    const addr='34550:'+e.pubkey+':'+d;
+    feed.innerHTML=`<div class="article-view">
+      <button class="btn btn-ghost small" id="comm-back">← Communities</button>
+      <h1 class="av-title">${enc(name)}</h1>
+      ${desc?`<div class="about">${linkify(desc)}</div>`:''}
+      <div class="search-section-title">Recent posts</div>
+      <div id="comm-posts"><div class="spinner"></div></div>
+    </div>`;
+    $('#comm-back').onclick=()=>switchView('communities');
+    feed.querySelectorAll('[data-prof]').forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
+    // Posts reference the community via an `a` tag (34550:pubkey:d). Show them newest-first; note
+    // actions work via #feed's delegated click handler.
+    let posts=[]; try{ posts=await Relay.query([{ kinds:[1], '#a':[addr], limit:80 }]); }catch(_){}
+    posts.forEach(x=>{ Store.saveEvent(x); needProfile(x.pubkey); });
+    if(VIEW!=='community') return;
+    const box=$('#comm-posts'); if(!box) return;
+    posts=posts.filter(x=>!MUTED.has(x.pubkey)&&!mutedByWord(x)).sort((a,b)=>b.created_at-a.created_at);
+    box.innerHTML = posts.length ? posts.map(x=>noteCard(x)).join('') : '<div class="empty">No posts in this community yet.</div>';
+    decorateProfiles();
+  }
   // ---------- floating mini-player: keep a stream playing while you browse other views ----------
   // Moving the live <video> node (with its attached hls.js) OUT of #feed and into a fixed,
   // persistent container means a feed re-render can't kill it — playback simply continues.
@@ -1342,6 +1399,7 @@
       if(a==='zap') return doZap(id,pk);
       if(a==='bookmark') return toggleBookmark(id,btn);
       if(a==='copyid'){ try{ navigator.clipboard.writeText(NT().nip19.noteEncode(id)); toast('note id copied'); }catch(_){ navigator.clipboard.writeText(id); toast('event id copied'); } return; }
+      if(a==='translate') return translatePost(id);
       if(a==='pin') return togglePin(id);
       if(a==='block') return doBlock(pk);
       if(a==='menu') return openPostMenu(id, pk, art, btn);
@@ -1519,16 +1577,36 @@
   function openPostMenu(id, pk, art, anchorBtn){
     const mine = pk===ME.pubkey;
     const items=[['bookmark', BOOKMARKS.has(id)?'🔖 Remove bookmark':'🔖 Bookmark'], ['copyid','🆔 Copy event ID']];
+    if(!window.PC_NOSTR_ONLY) items.push(['translate','🌐 Translate']);   // uses the node's AI backend
     if(mine) items.push(['pin', PINNED.has(id)?'📌 Unpin from profile':'📌 Pin to profile']);
     if(mine) items.push(['delete','🗑️ Delete','danger']);
     if(IS_ADMIN && !mine) items.push(['block','🚫 Block author','danger']);
     openMenuPopover(anchorBtn, items, a=>{
       if(a==='bookmark'){ toggleBookmark(id, null).then(()=>{ if(anchorBtn) anchorBtn.classList.toggle('on', BOOKMARKS.has(id)); }); return; }
       if(a==='copyid'){ try{ navigator.clipboard.writeText(NT().nip19.noteEncode(id)); toast('note id copied'); }catch(_){ navigator.clipboard.writeText(id); toast('event id copied'); } return; }
+      if(a==='translate') return translatePost(id);
       if(a==='pin') return togglePin(id);
       if(a==='delete') return doDelete(id, art);
       if(a==='block') return doBlock(pk);
     });
+  }
+  // Translate a post in-place via the node's AI backend. Only edits the DOM (the stored event is
+  // untouched), so switching views / refreshing restores the original — exactly as asked.
+  async function translatePost(id){
+    const ev=Store.get(id); if(!ev){ toast('post not loaded'); return; }
+    const src=(mediaParts(ev.content).text || ev.content || '').trim();
+    if(!src){ toast('nothing to translate'); return; }
+    const nodes=$$('.note[data-id="'+id+'"] > .body > .txt');
+    if(!nodes.length){ toast('open the timeline to translate this'); return; }
+    nodes.forEach(n=>{ if(!n.dataset.orig) n.dataset.orig=n.innerHTML; n.style.opacity='.5'; });
+    try{
+      const r=await fetch('/client/translate',{ method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ text:src, to:(navigator.language||'en') }) });
+      const j=await r.json().catch(()=>({}));
+      if(!r.ok || !j.text){ toast(j.error||'translation unavailable'); nodes.forEach(n=>n.style.opacity=''); return; }
+      nodes.forEach(n=>{ n.style.opacity='';
+        n.innerHTML=linkify(j.text)+'<div class="muted small tr-tag">🌐 translated · refresh to restore</div>'; });
+    }catch(_){ toast('translate failed'); nodes.forEach(n=>n.style.opacity=''); }
   }
   async function doRepost(id,pk,btn){
     if(countsFor(id).iRt){ toast('already reposted'); return; }
@@ -1575,7 +1653,7 @@
   function moreMenu(){
     const dn=Drafts.all().length;   // per-item counts so the ☰ badge is explained once opened
     const counts={drafts:dn};
-    const items=[['ai','🤖','PosterChan AI'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['articles','📰','Articles'],['streams','📺','Streams'],['blossom','🌸','Files'],['profile','👤','Profile'],['settings','⚙','Settings']]
+    const items=[['ai','🤖','PosterChan AI'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['articles','📰','Articles'],['streams','📺','Streams'],['communities','☷','Communities'],['blossom','🌸','Files'],['profile','👤','Profile'],['settings','⚙','Settings']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='ai'));   // hide AI in Nostr-only deployments
     modal(`<h3>More</h3><div class="more-grid">${items.map(([v,ic,lbl])=>{const c=counts[v]||0;return `<button class="more-item" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}${c?` <i class="badge">${c>99?'99+':c}</i>`:''}</span></button>`;}).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); if(b.dataset.v==='profile') renderProfileView(ME.pubkey); else switchView(b.dataset.v); });

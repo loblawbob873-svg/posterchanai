@@ -136,6 +136,38 @@ async def client_qr(request: Request):
         return Response(status_code=500)
 
 
+@router.post("/translate")
+async def client_translate(request: Request, db: Session = Depends(get_db)):
+    """Translate a post's text via the node's own LLM — powers the timeline 'Translate' action.
+    Same-origin helper (like /gif, /lnurl); returns 503 where there's no LLM (e.g. a Nostr-only
+    node), which the client treats as 'translation unavailable'."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    text = (body.get("text") or "").strip()
+    to = (str(body.get("to") or "English")).strip()[:40] or "English"
+    if not text:
+        return JSONResponse({"error": "no text"}, status_code=400)
+    text = text[:4000]   # cap: posts are short; bounds the LLM work
+    try:
+        from app.services.inference_factory import get_inference_service
+        svc = get_inference_service(db)
+        res = await svc.chat_completion(
+            [{"role": "system", "content": f"You are a translation engine. Translate the user's "
+              f"message into the language with BCP-47 code '{to}'. Preserve @mentions, #hashtags, "
+              f"URLs and emoji unchanged. Output ONLY the translation — no notes, no quotes."},
+             {"role": "user", "content": text}],
+            max_tokens=1200, temperature=0.2)
+        out = (res.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+        if not out:
+            return JSONResponse({"error": "translation unavailable"}, status_code=503)
+        return JSONResponse({"text": out})
+    except Exception as e:
+        logger.warning(f"[client] translate failed: {e}")
+        return JSONResponse({"error": "translation unavailable"}, status_code=503)
+
+
 @router.get("/gif")
 async def gif_search(q: str = "", db: Session = Depends(get_db)):
     """GIF picker — proxies Giphy or Tenor (key server-side, never exposed). Giphy wins if both set."""
