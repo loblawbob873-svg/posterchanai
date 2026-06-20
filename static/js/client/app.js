@@ -1441,6 +1441,20 @@
       <div class="hd"><img class="qav" src="${enc(av)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${o.pubkey}">${enc(name)}</span><span class="vchk" data-pk="${o.pubkey}"></span><span class="handle">${enc(handle)}</span><span class="time">${timeAgo(o.created_at)}</span></div>
       <div class="txt">${linkify(stripQuoteRef(mp.text, o))}</div>
       ${mp.gallery}</div>`; }
+  // NIP-10 parent of a reply: the explicit `reply` marker, else `root`, else the last e-tag.
+  function replyParentId(ev){
+    const es=(ev.tags||[]).filter(t=>t[0]==='e'&&t[1]);
+    const t=es.find(t=>t[3]==='reply')||es.find(t=>t[3]==='root')||es[es.length-1];
+    return t?t[1]:null;
+  }
+  // "↩ replying to" context block shown ABOVE a reply (e.g. on a profile's Replies tab) so you can
+  // see what's being answered. Reuses quotedDiv + the data-qload fetch/patch path for the parent.
+  function replyContextHtml(ev){
+    const pid=replyParentId(ev); if(!pid) return '';
+    const o=Store.get(pid);
+    const inner=o?quotedDiv(o):(needEvent(pid),`<div class="quoted muted small" data-qload="${pid}">post loading…</div>`);
+    return `<div class="reply-ctx"><span class="reply-ctx-lbl">↩ replying to</span>${inner}</div>`;
+  }
   const _evQ=new Set(); let _evT=null;
   function needEvent(id){ if(id&&!Store.get(id)){ _evQ.add(id); if(!_evT)_evT=setTimeout(flushEvents,150);} }
   async function flushEvents(){
@@ -2611,7 +2625,7 @@
     const listFor=(tab)=>{
       const lim=_prof.limit;
       if(tab==='replies'){ const r=Store.feed(e=>e.pubkey===pk && isReply(e)).slice(0,lim);
-        return r.length ? r.map(e=>noteHtml(e)).join('') : '<div class="empty">No replies yet.</div>'; }
+        return r.length ? r.map(e=>`<div class="reply-pair">${replyContextHtml(e)}${noteHtml(e)}</div>`).join('') : '<div class="empty">No replies yet.</div>'; }
       if(tab==='media'){ const m=Store.feed(e=>e.pubkey===pk && hasMedia(e)).slice(0,lim);
         if(!m.length) return '<div class="empty">No media yet.</div>';
         // gallery only — pull each post's media tags out of its mediaParts() gallery and grid them
