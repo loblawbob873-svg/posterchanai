@@ -465,15 +465,14 @@ async def _main(cfg: dict) -> None:
         """Apply the configured block filters to ALREADY-STORED events (one-shot, heavy). Returns the
         number of events removed. Re-reads config so it always reflects the current Relay settings."""
         fresh = _read_config()
-        total = 0
-        if fresh["blocked_pubkeys"]:
-            total += await store.delete_pubkeys(fresh["blocked_pubkeys"]) or 0
-        if fresh["blocked_words"]:
-            total += await store.delete_by_words(fresh["blocked_words"]) or 0
-        if fresh["blocked_langs"]:
-            total += await store.delete_by_langs(fresh["blocked_langs"]) or 0
-        if fresh["blocked_relays"]:
-            total += await _apply_blocked_relays(store, gate, fresh["blocked_relays"]) or 0
+        by_pk = (await store.delete_pubkeys(fresh["blocked_pubkeys"]) or 0) if fresh["blocked_pubkeys"] else 0
+        by_word = (await store.delete_by_words(fresh["blocked_words"]) or 0) if fresh["blocked_words"] else 0
+        by_lang = (await store.delete_by_langs(fresh["blocked_langs"]) or 0) if fresh["blocked_langs"] else 0
+        by_bridge = (await _apply_blocked_relays(store, gate, fresh["blocked_relays"]) or 0) if fresh["blocked_relays"] else 0
+        total = by_pk + by_word + by_lang + by_bridge
+        if total:
+            logger.info("[nostr-relay] block-purge breakdown: total=%d (pubkeys=%d words=%d langs=%d bridge=%d) — WoT members preserved",
+                        total, by_pk, by_word, by_lang, by_bridge)
         _purge_state["count"] = total
         _purge_state["ts"] = int(time.time())
         return total
