@@ -80,7 +80,12 @@ def _static_version() -> str:
 @router.get("", response_class=HTMLResponse)
 @router.get("/", response_class=HTMLResponse)
 async def client_app(request: Request):
-    return _TEMPLATES.TemplateResponse("client.html", {"request": request, "ver": _static_version()})
+    # `secure` gates the upgrade-insecure-requests CSP: harmless over HTTPS (server1 via Cloudflare),
+    # but over plain HTTP (e.g. http://nas.lan:3051 on the LAN) it would force every script/CSS to
+    # https://<host> — which a node serving bare HTTP doesn't have — breaking the whole page.
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    return _TEMPLATES.TemplateResponse("client.html",
+        {"request": request, "ver": _static_version(), "secure": proto == "https"})
 
 
 @router.get("/config")
