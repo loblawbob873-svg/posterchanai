@@ -1381,24 +1381,32 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             except Exception as _fc_err:
                                 logger.warning(f"[CHAT] flashcards persist marker failed (non-fatal): {_fc_err}")
 
-                        # Save assistant response with image path
+                        # Save assistant response with image path.
+                        # A long command (e.g. flashcards: fetch + LLM building 20+ cards) can idle the
+                        # DB transaction past Postgres' idle_in_transaction_session_timeout (60s), so the
+                        # connection is dead by the time we INSERT here ("server closed the connection
+                        # unexpectedly") and the reply persists NOWHERE — gone on reload. Retry once: the
+                        # rollback discards the dead connection, and pool_pre_ping hands the retry a fresh
+                        # one. (This is also what mirrors the message to the relay, the sole read store.)
                         assistant_msg = None
-                        try:
-                            assistant_msg = Message(
-                                conversation_id=conversation_id,
-                                role="assistant",
-                                content=_save_content,
-                                image_path=generated_image_path
-                            )
-                            db.add(assistant_msg)
-                            db.commit()
-                        except Exception as save_err:
-                            logger.error(f"Failed to save assistant message: {save_err}")
-                            assistant_msg = None
+                        for _attempt in (1, 2):
                             try:
-                                db.rollback()
-                            except Exception:
-                                pass
+                                assistant_msg = Message(
+                                    conversation_id=conversation_id,
+                                    role="assistant",
+                                    content=_save_content,
+                                    image_path=generated_image_path
+                                )
+                                db.add(assistant_msg)
+                                db.commit()
+                                break
+                            except Exception as save_err:
+                                logger.error(f"Failed to save assistant message (attempt {_attempt}): {save_err}")
+                                assistant_msg = None
+                                try:
+                                    db.rollback()   # discards a dead connection → retry gets a fresh one
+                                except Exception:
+                                    pass
 
                         # Send response (with conn_id to ensure it goes to correct chat, queue if stale)
                         # Log image generation responses for debugging
