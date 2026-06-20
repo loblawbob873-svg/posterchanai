@@ -111,7 +111,19 @@ async def client_config(request: Request, db: Session = Depends(get_db)):
         "admin_unclaimed": len(admin_npubs) == 0,
         "gif_enabled": bool(_setting(db, "tenor_api_key") or _setting(db, "giphy_api_key")),
         "name": _setting(db, "site_name", "PosterChan"),
+        # Community size — the relay's web-of-trust member count (cached in its status file; cheap).
+        "users": _relay_user_count(),
     })
+
+
+def _relay_user_count() -> int:
+    """WoT member count from the relay status (community size shown in the client). Cheap + cached;
+    returns 0 if the relay isn't running."""
+    try:
+        from app.services.nostr_relay.thread import relay_status
+        return int(relay_status().get("members", 0) or 0)
+    except Exception:
+        return 0
 
 
 @router.post("/qr")

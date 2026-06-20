@@ -326,6 +326,7 @@
   // ---------- boot ----------
   async function boot(){
     CFG = await fetch('/client/config').then(r=>r.json()).catch(()=>({}));
+    { const uc=$('#user-count'); if(uc && CFG.users>0){ uc.textContent='👥 '+CFG.users.toLocaleString()+' users'; uc.classList.remove('hidden'); } }
     await Store.init();
     if ('serviceWorker' in navigator){
       // auto-reload once when a NEW SW takes control (a deploy update), so it lands on installed
