@@ -15,7 +15,7 @@
     <link rel="shortcut icon" href="/static/favicon.png">
     <link rel="apple-touch-icon" href="/static/icon-192.png">
     <link rel="stylesheet" href="/static/css/client.css?v={{ ver }}">
-    <script>window.__VER="{{ ver }}";</script>
+    <script>window.__VER="{{ ver }}";window.PC_NOSTR_ONLY={{ 'true' if nostr_only else 'false' }};</script>
     <script defer src="/static/vendor/nostr/nostr.bundle.js"></script>
 </head>
 <body>
@@ -79,7 +79,7 @@
     <aside class="sidebar glass">
         <div class="brand"><img src="/static/posterchan-relay.png" alt="PosterChan" class="brand-logo"></div>
         <nav class="nav">
-            <button class="nav-item nav-ai" data-view="ai"><span class="ic">🤖</span><span>AI</span></button>
+            {% if not nostr_only %}<button class="nav-item nav-ai" data-view="ai"><span class="ic">🤖</span><span>AI</span></button>{% endif %}
             <button class="nav-item active" data-view="home"><span class="ic">⌂</span><span>Home</span></button>
             <button class="nav-item" data-view="global"><span class="ic">◎</span><span>Global</span></button>
             <button class="nav-item" data-view="notifications"><span class="ic">◔</span><span>Notifications<i id="notif-badge" class="badge hidden"></i></span></button>

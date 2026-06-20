@@ -1,0 +1,65 @@
+# Nostr-only build (GPU=nostr): the relay + Nostr web client + Blossom + the non-AI app features
+# (mail / news / torrents / file manager / TTS / social bridges). NO AI stack — no torch,
+# llama-cpp-python, diffusers, transformers, and none of the heavy ML extras (faster-whisper,
+# insightface, opencv, onnxruntime, rembg). Result: a small, fast image for people who just want
+# a self-hosted Nostr relay + client. The app boots fine without the AI libs (all ML imports are
+# lazy); AI commands/endpoints are hidden in nostr-only mode (POSTERCHANAI_NOSTR_ONLY=1).
+#
+# Keep this in sync with the non-AI deps in requirements.txt.
+
+# Core web framework
+fastapi>=0.109.0,<1.0.0
+starlette>=0.40.0,<0.51.0
+uvicorn[standard]>=0.27.0,<1.0.0
+python-multipart>=0.0.6
+python-jose[cryptography]>=3.3.0
+cryptography>=42.0.0          # NIP-44 (ChaCha20/HMAC/HKDF) for the Nostr datastore
+bcrypt>=4.0.0,<5.0.0
+sqlalchemy>=2.0.25,<3.0.0
+aiosqlite>=0.19.0
+pydantic>=2.5.0,<3.0.0
+pydantic-settings>=2.1.0
+jinja2>=3.1.3
+apscheduler>=3.10.0
+
+# HTTP clients (proxy routing, RSS, fediverse, Nostr media uploads)
+httpx>=0.28.0
+aiohttp>=3.9.0
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+
+# PostgreSQL — the one datastore (app + built-in Nostr relay)
+psycopg2-binary>=2.9.0
+
+# Nostr: wss relay client + fast BIP340 verify
+websockets>=14.0
+coincurve>=19.0
+websocket-client>=1.7.0       # drives headless Chrome for screenshots / post cards (optional)
+
+# Documents + images (file manager, convert, thumbnails, Blossom, post cards, drawn effects)
+PyMuPDF>=1.24.0
+python-docx>=1.1.0
+openpyxl>=3.1.0
+python-pptx>=1.0.0
+Pillow>=10.1.0
+pillow-heif>=0.16.0
+numpy
+
+# TTS (cloud edge-tts — no local model), feeds, media fetch
+edge-tts>=6.1.10
+youtube-transcript-api
+yt-dlp
+feedparser>=6.0.0
+
+# Date/time
+python-dateutil>=2.8.0
+pytz>=2024.1
+tzdata>=2024.1
+
+# Misc server
+cheroot>=10.0.0,<12.0.0
+
+# Built-in torrent client (optional feature; keep — not AI)
+libtorrent>=2.0.0
+torpy

@@ -8,6 +8,9 @@
 #   docker build -t posterchanai:cuda  --build-arg GPU=cuda  .   # NVIDIA
 #   docker build -t posterchanai:rocm  --build-arg GPU=rocm  .   # AMD
 #   docker build -t posterchanai:intel --build-arg GPU=intel .   # Intel Arc / XPU
+#   docker build -t posterchanai:nostr --build-arg GPU=nostr --build-arg INSTALL_BROWSER=false .
+#                                                # Nostr-only: relay + Nostr web client + Blossom,
+#                                                # NO AI (no torch/llama/diffusers) → small image.
 #
 # Run (see docs/DOCKER.md for the full matrix):
 #   cpu  : docker run -p 3051:3051 -v pc-data:/var/lib/posterchanai posterchanai:cpu
@@ -39,6 +42,7 @@ ARG ROCM_BASE=ubuntu:24.04
 ARG INTEL_BASE=intel/oneapi-basekit:2025.2.2-0-devel-ubuntu24.04
 
 FROM ${CPU_BASE}   AS base-cpu
+FROM ${CPU_BASE}   AS base-nostr
 FROM ${CUDA_BASE}  AS base-cuda
 FROM ${INTEL_BASE} AS base-intel
 
@@ -134,6 +138,9 @@ ARG AMDGPU_TARGETS=gfx1030;gfx1031;gfx1100;gfx1101;gfx1102
 
 RUN set -eux; \
     case "$GPU" in \
+      nostr) \
+        echo "Nostr-only build: skipping torch / llama-cpp-python / diffusers (no AI features)" ; \
+        ;; \
       cpu) \
         pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu ; \
         CMAKE_ARGS="-DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON" \
@@ -164,7 +171,7 @@ RUN set -eux; \
             pip install "llama-cpp-python==${LLAMA_CPP_VERSION:-0.3.28}"' \
         || pip install "llama-cpp-python==${LLAMA_CPP_VERSION:-0.3.28}" ; \
         ;; \
-      *) echo "Unknown GPU '$GPU' (use cpu|cuda|rocm|intel)"; exit 1 ;; \
+      *) echo "Unknown GPU '$GPU' (use nostr|cpu|cuda|rocm|intel)"; exit 1 ;; \
     esac
 
 # --- application python deps --------------------------------------------------
@@ -174,9 +181,17 @@ RUN set -eux; \
 # diffusers stack = native image generation (transformers pinned <5 for SDXL) AND text-to-video
 # (videogeni — Wan2.1/LTX/CogVideoX); sentencepiece is REQUIRED for the T5 video text-encoder.
 COPY requirements.txt /tmp/requirements.txt
+COPY requirements-nostr.txt /tmp/requirements-nostr.txt
 COPY botframework/requirements.txt /tmp/requirements-bot.txt
-RUN pip install -r /tmp/requirements.txt -r /tmp/requirements-bot.txt \
-    && pip install "transformers<5" diffusers accelerate safetensors huggingface_hub sentencepiece ftfy
+# Nostr-only (GPU=nostr) installs the lean Nostr/web requirements and SKIPS the diffusers/
+# transformers image-gen stack entirely; all other builds get the full app + image-gen deps.
+RUN if [ "$GPU" = "nostr" ]; then \
+        pip install -r /tmp/requirements-nostr.txt 2>/dev/null \
+          || pip install -r /tmp/requirements.txt -r /tmp/requirements-bot.txt ; \
+    else \
+        pip install -r /tmp/requirements.txt -r /tmp/requirements-bot.txt \
+          && pip install "transformers<5" diffusers accelerate safetensors huggingface_hub sentencepiece ftfy ; \
+    fi
 
 # --- app source ---------------------------------------------------------------
 COPY . /app

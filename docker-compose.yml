@@ -20,6 +20,9 @@ x-common: &common
     # web-of-trust relay (binds 0.0.0.0:3052, on-disk WAL DB on the data volume). Front with
     # TLS (e.g. nginx → wss://relay.yourdomain/). See docs/RELAY.md.
     - POSTERCHANAI_NOSTR_RELAY=${POSTERCHANAI_NOSTR_RELAY:-0}
+    # Nostr-only deployment (no AI): hides the AI tab + AI compose actions in the web client.
+    # The `nostr` profile/image already ships without the AI stack; this flag just tidies the UI.
+    - POSTERCHANAI_NOSTR_ONLY=${POSTERCHANAI_NOSTR_ONLY:-0}
     # Turnkey Blossom media server (BUD-01/02): set POSTERCHANAI_BLOSSOM=1 and the app serves
     # Blossom at /blossom (same port as the app; front with TLS). Blobs default to the storage
     # server (proxy) and fall back to local on the data volume. See docs/BLOSSOM.md.
@@ -76,6 +79,26 @@ services:
     build:
       context: .
       args: { GPU: cpu }
+
+  # Nostr-only: a self-hosted Nostr relay + the Nostr web client + Blossom, with NO AI stack
+  # (no torch/llama/diffusers) — a small, fast image for people who don't care about AI. The relay
+  # + nostr-only UI are turned ON by default here. Just:
+  #   docker compose --profile nostr up -d --build
+  nostr:
+    <<: *common
+    profiles: ["nostr"]
+    build:
+      context: .
+      args:
+        GPU: nostr
+        INSTALL_BROWSER: "false"   # screenshots/post-cards need Chrome; skip it for a lean image
+    environment:
+      - POSTERCHANAI_PORT=3051
+      - POSTERCHANAI_NOSTR_RELAY=1
+      - POSTERCHANAI_NOSTR_ONLY=1
+      - POSTERCHANAI_BLOSSOM=${POSTERCHANAI_BLOSSOM:-0}
+      - DATABASE_URL=postgresql+psycopg2://posterchan:${POSTGRES_PASSWORD:-posterchan_local}@postgres:5432/posterchan_relay
+      - NOSTR_RELAY_PG_DSN=host=postgres port=5432 dbname=posterchan_relay user=posterchan password=${POSTGRES_PASSWORD:-posterchan_local}
 
   cuda:
     <<: *common

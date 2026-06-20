@@ -84,8 +84,11 @@ async def client_app(request: Request):
     # but over plain HTTP (e.g. http://nas.lan:3051 on the LAN) it would force every script/CSS to
     # https://<host> — which a node serving bare HTTP doesn't have — breaking the whole page.
     proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    # Nostr-only deployments hide the AI tab + AI compose actions (POSTERCHANAI_NOSTR_ONLY=1).
+    nostr_only = os.getenv("POSTERCHANAI_NOSTR_ONLY", "0").lower() in ("1", "true", "yes", "on")
     return _TEMPLATES.TemplateResponse("client.html",
-        {"request": request, "ver": _static_version(), "secure": proto == "https"})
+        {"request": request, "ver": _static_version(), "secure": proto == "https",
+         "nostr_only": nostr_only})
 
 
 @router.get("/config")
