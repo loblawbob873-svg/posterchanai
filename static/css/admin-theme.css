@@ -12,7 +12,8 @@
 body.admin-page{
   /* explicit Inter + comfortable sizing for the whole admin (high specificity so it always wins) */
   font-family:'Inter','Segoe UI',system-ui,-apple-system,'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif;
-  font-size: 15.5px; line-height: 1.55; letter-spacing: .1px;
+  font-size: 16px; line-height: 1.55; letter-spacing: .1px;
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; text-rendering: optimizeLegibility;
   background:
     radial-gradient(1200px 600px at 80% -10%, rgba(255,0,255,.06), transparent 60%),
     radial-gradient(1000px 500px at -10% 10%, rgba(0,255,255,.06), transparent 60%),
