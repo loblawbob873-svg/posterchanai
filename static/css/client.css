@@ -15,7 +15,7 @@ html,body{margin:0;height:100%}
 body{
   /* Inter for all UI/body/input text — clean + highly readable. Rajdhani (condensed display) read
      as cramped/"plain" for body & form text; Orbitron stays for the brand/headings below. */
-  font-family:'Inter','Segoe UI',system-ui,-apple-system,sans-serif;
+  font-family:'Inter','Segoe UI',system-ui,-apple-system,'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif;
   font-weight:400;
   background:
     radial-gradient(ellipse 900px 600px at 50% -8%,rgba(0,255,255,.06) 0%,transparent 55%),
