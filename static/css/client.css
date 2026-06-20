@@ -48,7 +48,7 @@ a.btn.full{display:block}
 .btn-ghost{background:transparent}
 .btn-ghost:hover{border-color:var(--neon);color:var(--neon)}
 .input,textarea{width:100%;background:rgba(8,5,18,.7);border:1px solid var(--line);border-radius:11px;
-  color:var(--text);padding:12px 14px;font-size:14px;outline:none;margin:6px 0;font-family:inherit}
+  color:var(--text);padding:12px 14px;font-size:15.5px;outline:none;margin:6px 0;font-family:inherit}
 .input:focus,textarea:focus{border-color:var(--cyan);box-shadow:var(--glow-cy)}
 .mini{cursor:pointer;background:transparent;border:1px solid var(--line);color:var(--muted);
   border-radius:8px;padding:4px 9px;font-size:12px;transition:.15s}
@@ -499,6 +499,7 @@ a.btn.full{display:block}
 .article-preview{min-height:46vh;padding:8px 2px}
 
 /* shared markdown typography (articles + previews) */
+.markdown{font-size:17.5px;line-height:1.65}
 .markdown h2{font-size:25px;margin:24px 0 10px;font-weight:800;color:var(--text);border-bottom:1px solid var(--line);padding-bottom:6px}
 .markdown h3{font-size:20px;margin:20px 0 8px;color:var(--cyan)}
 .markdown h4,.markdown h5,.markdown h6{font-size:17px;margin:16px 0 6px;color:var(--neon)}
@@ -620,7 +621,7 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 #rb-trending{padding-bottom:20px;margin-bottom:6px;border-bottom:1px solid var(--line)}
 
 /* font consistency: compose/reply textarea, preview + tool buttons larger */
-#cmp,.note-preview .txt{font-size:16.5px}
+#cmp,.note-preview .txt{font-size:18px;line-height:1.55;letter-spacing:.2px}
 .cmp-tools .btn{font-size:14px}
 
 /* live "mentioning @name" hint under the composer */
