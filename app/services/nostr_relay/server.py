@@ -18,6 +18,22 @@ from websockets.http11 import Response
 from app.services.nostr.event import verify_event
 from .langfilter import blocked_language, blocked_word
 from .bridges import reveals_blocked_bridge
+
+
+def _broadcastable(ev) -> bool:
+    """Whether a direct write should be re-broadcast to the upstream relays. Notes, profiles,
+    PUBLISHED articles (kind 30023), reactions, DMs — yes, blast them everywhere. NOT private/
+    internal events: NIP-23 **drafts** (kind 30024) stay on this relay until published, and the
+    app's own encrypted **datastore** docs (kind 30078 with a `pcai:` d-tag — settings/users/chats)
+    are this node's internal state, never the public network's business."""
+    k = ev.get("kind")
+    if k == 30024:
+        return False
+    if k == 30078:
+        d = next((t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "d"), "")
+        if d.startswith("pcai:"):
+            return False
+    return True
 from . import negentropy
 
 logger = logging.getLogger(__name__)
@@ -380,12 +396,12 @@ class RelayServer:
         self._send(conn, ["OK", eid, True, ""])
         if stored:
             self.subs.fanout(ev, self._send)
-            if self.outbox_cb:
-                # Blaster: re-broadcast EVERY inbound write to the upstream relays — notes,
-                # profile updates, articles, AND DMs. DMs are encrypted (gift wraps / NIP-04),
-                # so broadcasting leaks no content and is what delivers them to recipients when
-                # a user treats this as their only relay. Non-blocking enqueue (drops on
-                # overflow) so a post-blasting client can't stall this connection.
+            if self.outbox_cb and _broadcastable(ev):
+                # Blaster: re-broadcast inbound writes to the upstream relays — notes, profile
+                # updates, published articles, AND DMs (encrypted, so no content leaks; this is how
+                # they reach recipients when a user treats this as their only relay). EXCEPT private/
+                # internal events (drafts, the app's own datastore docs) — see _broadcastable. Non-
+                # blocking enqueue (drops on overflow) so a post-blasting client can't stall this.
                 try:
                     self.outbox_cb(ev)
                 except Exception as e:

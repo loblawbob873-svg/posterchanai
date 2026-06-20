@@ -762,11 +762,28 @@
   }
   async function renderArticles(){
     const feed=$('#feed');
-    feed.innerHTML=`<div class="art-top"><button class="btn btn-neon small" id="art-new">✎ Write article</button></div><div id="art-list"><div class="spinner"></div></div>`;
+    feed.innerHTML=`<div class="art-top"><button class="btn btn-neon small" id="art-new">✎ Write article</button></div><div id="art-drafts"></div><div id="art-list"><div class="spinner"></div></div>`;
     $('#art-new').onclick=()=>renderArticleEditor();
-    let evs=[]; try{ evs=await Relay.query([{ kinds:[30023], limit:80 }]); }catch(_){}
+    let evs=[], drafts=[];
+    try{ evs=await Relay.query([{ kinds:[30023], limit:80 }]); }catch(_){}
+    try{ drafts=await Relay.query([{ kinds:[30024], authors:[ME.pubkey], limit:50 }]); }catch(_){}   // my NIP-23 drafts
     evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
+    drafts.forEach(e=>Store.saveEvent(e));
     if(VIEW!=='articles') return;
+    // Drafts (your unpublished kind-30024) — resume or delete.
+    const db=$('#art-drafts');
+    if(db){
+      const dd=_dedupAddr(drafts).sort((a,b)=>(b.created_at||0)-(a.created_at||0));
+      db.innerHTML = dd.length ? '<div class="search-section-title">📝 Drafts</div>'+dd.map(d=>{
+        const t=(d.tags.find(x=>x[0]==='title')||[])[1]||'(untitled)';
+        const slug=(d.tags.find(x=>x[0]==='d')||[])[1]||'';
+        return `<div class="draft-art" data-id="${d.id}" data-slug="${enc(slug)}"><span class="da-title">📝 ${enc(t)}</span><span class="spacer"></span><button class="btn btn-ghost small da-edit">Resume</button><button class="btn btn-ghost small da-del" style="color:#ff6b8b">✕</button></div>`;
+      }).join('') : '';
+      $$('.draft-art',db).forEach(c=>{
+        c.querySelector('.da-edit').onclick=()=>{ const e=Store.get(c.dataset.id); if(e) renderArticleEditor(e); };
+        c.querySelector('.da-del').onclick=async()=>{ if(!confirm('Delete this draft?'))return; await _deleteArticleDraft(c.dataset.slug); c.remove(); toast('draft deleted'); };
+      });
+    }
     const arts=_dedupAddr(evs).sort((a,b)=>artTime(b)-artTime(a));
     const list=$('#art-list'); if(!list) return;
     list.innerHTML = arts.length ? arts.map(articleCard).join('') : '<div class="empty">No articles yet. Tap “Write article” to publish the first one.</div>';
@@ -800,6 +817,7 @@
         <button class="act actb ${BOOKMARKS.has(e.id)?'on':''}" id="av-bm" title="bookmark">🔖</button>
         <button class="act actz" id="av-zap" title="zap">⚡</button>
         ${mine?`<button class="act" id="av-edit" title="edit">✏</button>`:''}
+        ${mine?`<button class="act" id="av-del" title="delete" style="color:#ff6b8b">🗑</button>`:''}
         <button class="act" id="av-copy" title="copy link">🔗</button>
       </div>
       <div class="markdown av-body">${mdToHtml(e.content)}</div>
@@ -808,19 +826,25 @@
     $('#av-bm').onclick=ev=>toggleBookmark(e.id, ev.currentTarget);
     $('#av-zap').onclick=()=>doZap(e.id, e.pubkey);
     { const ed=$('#av-edit'); if(ed) ed.onclick=()=>renderArticleEditor(e); }
+    { const dl=$('#av-del'); if(dl) dl.onclick=()=>deleteArticle(e); }
     $('#av-copy').onclick=()=>{ try{ const naddr=NT().nip19.naddrEncode({ identifier:(e.tags.find(t=>t[0]==='d')||[])[1]||'', pubkey:e.pubkey, kind:30023 }); navigator.clipboard.writeText('nostr:'+naddr); toast('article link copied'); }catch(_){ navigator.clipboard.writeText(e.id); toast('id copied'); } };
     feed.querySelectorAll('[data-prof]').forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
     feed.querySelectorAll('.markdown img').forEach(im=> im.onclick=()=>openLightbox(im.currentSrc||im.src));
     decorateProfiles();
   }
   function _insertAt(ta, text){ const s=ta.selectionStart||0, en=ta.selectionEnd||0; ta.value=ta.value.slice(0,s)+text+ta.value.slice(en); const c=s+text.length; ta.selectionStart=ta.selectionEnd=c; ta.focus(); }
-  // Local article drafts (per-account) — so a long-form post survives a refresh/navigation and can
-  // be saved explicitly. Kept in localStorage (not published until you hit Publish); cleared on publish.
+  // Article drafts are NIP-23 **kind-30024** (draft long-form) events — same shape as a published
+  // 30023 but a draft, so they live on your relay, sync across devices/clients, and you own them.
+  // "Save draft" publishes/updates the 30024; publishing the article (30023) deletes the draft.
   let _aeDraftT=null;
-  function _articleDraftKey(){ return 'pc_article_draft_' + ((typeof ME!=='undefined' && ME && ME.pubkey) || 'anon'); }
-  function _saveArticleDraft(o){ try{ localStorage.setItem(_articleDraftKey(), JSON.stringify(o)); }catch(_){} }
-  function _loadArticleDraft(){ try{ return JSON.parse(localStorage.getItem(_articleDraftKey()) || 'null'); }catch(_){ return null; } }
-  function _clearArticleDraft(){ try{ localStorage.removeItem(_articleDraftKey()); }catch(_){} }
+  function _slugFor(title){ return ((title||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,60) || 'draft') + '-' + Math.random().toString(36).slice(2,7); }
+  async function _saveArticleDraft(slug, a){
+    const tags=[['d',slug],['title',a.title||'']];
+    if(a.summary) tags.push(['summary',a.summary]);
+    if(a.image) tags.push(['image',a.image]);
+    return await publish(30024, a.body||'', tags);   // NIP-23 draft long-form
+  }
+  async function _deleteArticleDraft(slug){ if(!slug) return; try{ await publish(5, 'draft published', [['a', `30024:${ME.pubkey}:${slug}`]]); }catch(_){} }
   function renderArticleEditor(existing){
     VIEW='article'; $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent=existing?'Edit article':'Write article';
     const feed=$('#feed'); const g=(k)=>existing?((existing.tags.find(t=>t[0]===k)||[])[1]||''):'';
@@ -839,24 +863,36 @@
     </div>`;
     $('#ae-back').onclick=()=>switchView('articles');
     const body=$('#ae-body');
-    // Restore a locally-saved draft into a NEW article editor (not when editing a published one).
-    if(!existing){ const dr=_loadArticleDraft();
-      if(dr && (dr.title||dr.body||dr.image||dr.summary)){
-        $('#ae-title').value=dr.title||''; $('#ae-sum').value=dr.summary||''; $('#ae-img').value=dr.image||''; body.value=dr.body||'';
-        if($('#ae-status')) $('#ae-status').textContent='restored draft';
-      } }
+    // Slug (d-tag): reused when editing a published article OR resuming a draft, so saving updates
+    // the SAME 30024 (not a duplicate). Generated on first save for a brand-new article.
+    let _aeSlug = g('d') || null;
     const _grabArticle=()=>({title:$('#ae-title').value, summary:$('#ae-sum').value, image:$('#ae-img').value, body:body.value});
-    { const d=$('#ae-draft'); if(d) d.onclick=()=>{ const a=_grabArticle();
-        if(!(a.title||a.body||a.image||a.summary)){ toast('nothing to save yet'); return; }
-        _saveArticleDraft(a); toast('draft saved'); if($('#ae-status')) $('#ae-status').textContent='draft saved'; }; }
-    // Light auto-save so a refresh/navigation doesn't lose work (cleared on publish).
-    body.addEventListener('input', ()=>{ clearTimeout(_aeDraftT); _aeDraftT=setTimeout(()=>_saveArticleDraft(_grabArticle()), 1200); });
+    async function _doSaveDraft(announce){
+      const a=_grabArticle();
+      if(!(a.title||a.body||a.image||a.summary)){ if(announce) toast('nothing to save yet'); return; }
+      if(!_aeSlug) _aeSlug=_slugFor(a.title);
+      if($('#ae-status')) $('#ae-status').textContent='saving draft…';
+      try{ await _saveArticleDraft(_aeSlug, a); if($('#ae-status')) $('#ae-status').textContent='✓ draft saved'; if(announce) toast('draft saved (in Articles)'); }
+      catch(e){ if($('#ae-status')) $('#ae-status').textContent='draft save failed'; }
+    }
+    { const d=$('#ae-draft'); if(d) d.onclick=()=>_doSaveDraft(true); }
+    // Gentle auto-save to a 30024 so work survives a refresh (cleared when you publish).
+    body.addEventListener('input', ()=>{ clearTimeout(_aeDraftT); _aeDraftT=setTimeout(()=>_doSaveDraft(false), 4000); });
     $$('.cmp-tab',feed).forEach(b=> b.onclick=()=>{ $$('.cmp-tab',feed).forEach(x=>x.classList.toggle('active',x===b)); const pv=b.dataset.t==='preview'; body.classList.toggle('hidden',pv); const prev=$('#ae-preview'); prev.classList.toggle('hidden',!pv); if(pv) prev.innerHTML=mdToHtml(body.value)||'<div class="muted small">Nothing to preview.</div>'; });
     $('#ae-img-up').onclick=()=>$('#ae-img-file').click();
     $('#ae-img-file').onchange=async ev=>{ const f=ev.target.files[0]; if(!f)return; $('#ae-status').textContent='uploading image…'; try{ $('#ae-img').value=await uploadBlob(f); $('#ae-status').textContent='image uploaded'; }catch(err){ $('#ae-status').textContent='upload failed: '+err.message; } };
     $('#ae-insert').onclick=()=>$('#ae-body-file').click();
     $('#ae-body-file').onchange=async ev=>{ const files=[...ev.target.files]; for(let i=0;i<files.length;i++){ $('#ae-status').textContent=`uploading ${i+1}/${files.length}…`; try{ const url=await uploadBlob(files[i]); _insertAt(body, `\n![](${url})\n`); }catch(err){ $('#ae-status').textContent='upload failed: '+err.message; return; } } $('#ae-status').textContent=''; ev.target.value=''; };
-    $('#ae-pub').onclick=()=>publishArticle({ title:$('#ae-title').value.trim(), summary:$('#ae-sum').value.trim(), image:$('#ae-img').value.trim(), body:body.value, d:g('d') });
+    $('#ae-pub').onclick=()=>publishArticle({ title:$('#ae-title').value.trim(), summary:$('#ae-sum').value.trim(), image:$('#ae-img').value.trim(), body:body.value, d:_aeSlug });
+  }
+  async function deleteArticle(e){
+    // NIP-09: a kind-5 deletion referencing the article by event id AND addressable coordinate.
+    // It broadcasts to all upstream relays (deletions are broadcastable), so they remove it too.
+    if(!confirm('Delete this article? This asks every relay (NIP-09) to remove it.')) return;
+    const slug=(e.tags.find(t=>t[0]==='d')||[])[1]||'';
+    const tags=[['e',e.id]]; if(slug) tags.push(['a',`30023:${e.pubkey}:${slug}`]);
+    try{ await publish(5, 'deleted', tags); toast('deletion requested'); switchView('articles'); }
+    catch(err){ toast('delete failed: '+(err.message||'')); }
   }
   async function publishArticle({title, summary, image, body, d}){
     if(!title){ toast('add a title'); return; }
@@ -867,7 +903,7 @@
     if(image) tags.push(['image',image]);
     mentionTags(body).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
     $('#ae-status') && ($('#ae-status').textContent='publishing…');
-    try{ const r=await publish(30023, body, tags); if(r && r.ok===false){ toast('relay: '+(r.msg||'rejected')); if($('#ae-status'))$('#ae-status').textContent=''; } else { _clearArticleDraft(); toast('article published'); switchView('articles'); } }
+    try{ const r=await publish(30023, body, tags); if(r && r.ok===false){ toast('relay: '+(r.msg||'rejected')); if($('#ae-status'))$('#ae-status').textContent=''; } else { _deleteArticleDraft(slug); toast('article published'); switchView('articles'); } }
     catch(e){ toast('publish failed: '+e.message); }
   }
 
