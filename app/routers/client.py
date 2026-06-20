@@ -153,23 +153,24 @@ async def client_translate(request: Request, db: Session = Depends(get_db)):
     try:
         from app.services.inference_factory import get_inference_service
         svc = get_inference_service(db)
-        res = await svc.chat_completion(
-            [{"role": "system", "content": f"You are a translation engine. Translate the user's "
-              f"message into {to}. The message OFTEN MIXES languages (English with Tagalog/Filipino, "
-              f"Cebuano, Spanish, Indonesian…) and is often colloquial, run-on, and unpunctuated. "
-              f"Translate the ENTIRE message into natural {to} — EVERY non-{to} word or phrase, "
-              f"including code-switched and slang text. Do NOT leave any Tagalog/Filipino (or other "
-              f"non-{to}) words in the output, and do not just re-punctuate the original. Keep "
-              f"@mentions, #hashtags, URLs and emoji exactly as-is. Output ONLY the translated text — "
-              f"no preamble, notes, or quotes."},
-             # one-shot: English-dominant with embedded Tagalog → fully translated
-             {"role": "user", "content": "My babies! ang cute nila kahit pagod na pagod ako kakaalaga. Hook Needle"},
-             {"role": "assistant", "content": "My babies! They're so cute even though I'm exhausted from taking care of them. Hook Needle"},
-             # two-shot: a long, run-on, code-switched colloquial Tagalog message → fully translated (no Tagalog left)
-             {"role": "user", "content": "Good evening guys ayon bago palang kami nag karoon ng kuryente magmula kasi kanina alas 6 ng umaga nawala tapus ngayon lang nag karoon kumusta ang lahat kumain na ba kayo"},
-             {"role": "assistant", "content": "Good evening guys, we only just got electricity back — it had been out since 6 this morning and only returned just now. How is everyone, have you eaten yet?"},
-             {"role": "user", "content": text}],
-            max_tokens=1200, temperature=0.2)
+        msgs = [{"role": "system", "content": f"You are a translation engine. Translate the user's "
+              f"message into {to}. The message is often colloquial, run-on, code-switched and "
+              f"unpunctuated. Translate the ENTIRE message into natural {to} — EVERY word or phrase "
+              f"that is not already {to}. Do NOT leave any source-language words in the output, and "
+              f"do not just re-punctuate the original. Keep @mentions, #hashtags, URLs and emoji "
+              f"exactly as-is. Output ONLY the translated text — no preamble, notes, or quotes."}]
+        # The echo-fixing examples translate INTO ENGLISH (they fix the 'English-dominant mixed text
+        # gets echoed' case). They bias the model toward ENGLISH output, so ONLY include them when the
+        # target IS English — otherwise translating to (say) Japanese would wrongly echo the English.
+        if to.strip().lower() in ("english", "en", "en-us", "en-gb"):
+            msgs += [
+                {"role": "user", "content": "My babies! ang cute nila kahit pagod na pagod ako kakaalaga. Hook Needle"},
+                {"role": "assistant", "content": "My babies! They're so cute even though I'm exhausted from taking care of them. Hook Needle"},
+                {"role": "user", "content": "Good evening guys ayon bago palang kami nag karoon ng kuryente magmula kasi kanina alas 6 ng umaga nawala tapus ngayon lang nag karoon kumusta ang lahat kumain na ba kayo"},
+                {"role": "assistant", "content": "Good evening guys, we only just got electricity back — it had been out since 6 this morning and only returned just now. How is everyone, have you eaten yet?"},
+            ]
+        msgs.append({"role": "user", "content": text})
+        res = await svc.chat_completion(msgs, max_tokens=1200, temperature=0.2)
         out = (res.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
         if not out:
             return JSONResponse({"error": "translation unavailable"}, status_code=503)
