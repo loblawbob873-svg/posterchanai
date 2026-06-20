@@ -103,4 +103,12 @@ if [ "${DOWNLOAD_U2NET_MODEL:-1}" = "1" ] && [ -n "${U2NET_MODEL_URL:-}" ] && \
     ) &
 fi
 
+# Provision the relay's instance (operator) key + seed the Web of Trust with it, and print the
+# instance npub (idempotent). The app also mints this lazily on first start, but doing it here gives
+# parity with install.sh and surfaces the npub in the container logs. Best-effort — never block
+# startup (postgres is already healthy via compose depends_on by the time the entrypoint runs).
+if [ -f /app/scripts/init_instance_key.py ]; then
+    python /app/scripts/init_instance_key.py || echo "[entrypoint] instance key init deferred to app start"
+fi
+
 exec "$@"

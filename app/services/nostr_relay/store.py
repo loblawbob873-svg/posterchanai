@@ -361,10 +361,13 @@ class RelayStore:
             return 0
         conn = self._conn()
         removed = 0
+        # Never delete a local user's own posts: exclude direct-published + preserved pubkeys, the
+        # same guard prune uses. Content filters target synced feed spam, not first-party notes.
+        preserve = self._preserve_clause()
         for w in words:
             like = "%" + w.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
             ids = [r["id"] for r in conn.execute(
-                "SELECT id FROM events WHERE kind=1 AND LOWER(content) LIKE ? ESCAPE '\\'",
+                f"SELECT id FROM events WHERE kind=1 AND {preserve} AND LOWER(content) LIKE ? ESCAPE '\\'",
                 (like,)).fetchall()]
             for i in range(0, len(ids), 900):
                 chunk = ids[i:i + 900]
@@ -388,7 +391,9 @@ class RelayStore:
             return 0
         from .langfilter import detect_languages
         conn = self._conn()
-        ids = [r["id"] for r in conn.execute("SELECT id, content FROM events WHERE kind=1")
+        # Exclude direct-published + preserved pubkeys (local users' own notes) — same guard as prune.
+        ids = [r["id"] for r in conn.execute(
+                   f"SELECT id, content FROM events WHERE kind=1 AND {self._preserve_clause()}")
                if detect_languages(r["content"]) & blocked]
         removed = 0
         for i in range(0, len(ids), 900):

@@ -10,6 +10,7 @@ port-3051 guard. Both are no-ops unless `nostr_relay_enabled` is set.
 import os
 import sys
 import time
+import datetime
 import json
 import glob
 import uuid
@@ -37,6 +38,10 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..",
 _MAX_MESSAGE_SIZE = 512 * 1024
 _MAX_SUBS_PER_CONN = 500
 _MAX_FILTERS_PER_REQ = 25
+
+# Local-clock hours in which the heavy nightly block-purge is allowed to run (small hours, low
+# traffic). Checked hourly; a daily stamp ensures it fires at most once even across restarts.
+_PURGE_HOURS = (2, 3, 4)
 
 
 class _Relay:
@@ -353,22 +358,16 @@ async def _main(cfg: dict) -> None:
     gate.set_blocked(cfg["blocked_pubkeys"])
     store.set_preserve_pubkeys(cfg["operator"])   # local users' notes are never pruned
     await gate.load_from_store(store)              # warm from snapshot for immediate gating
-    if cfg["blocked_pubkeys"]:
-        removed = await store.delete_pubkeys(cfg["blocked_pubkeys"])
-        logger.info("[nostr-relay] purged %d events from %d blocklisted pubkey(s)",
-                    removed, len(cfg["blocked_pubkeys"]))
-    if cfg["blocked_words"]:
-        rw = await store.delete_by_words(cfg["blocked_words"])
-        if rw:
-            logger.info("[nostr-relay] purged %d stored note(s) matching %d blocked word(s)",
-                        rw, len(cfg["blocked_words"]))
-    if cfg["blocked_langs"]:
-        rl = await store.delete_by_langs(cfg["blocked_langs"])
-        if rl:
-            logger.info("[nostr-relay] purged %d stored note(s) in %d blocked language(s)",
-                        rl, len(cfg["blocked_langs"]))
+    # Moderation is ON THE FLY at ingest (server._on_event + the sync sweep): every post is checked
+    # BEFORE it is written — WoT membership first, then blocked npubs + words + languages + bridges —
+    # so nothing matching is ever stored. We do NOT delete already-stored notes on startup/reload;
+    # that retroactive purge is what was deleting legitimate notes. The ONE thing re-applied here is
+    # bridge MARKING: the gate's bridged set is in-memory (load_from_store restores members only), so
+    # re-scan identity/relay-list events to keep on-the-fly bridge rejection working after a restart.
+    # One-shot cleanup of content stored before a rule existed (or illegal content) is the admin
+    # "Purge now" button only (cmd: purge-blocks).
     if cfg["blocked_relays"]:
-        await _apply_blocked_relays(store, gate, cfg["blocked_relays"])
+        await _mark_blocked_relays(store, gate, cfg["blocked_relays"])
     from .outbox import Outbox
     outbox = Outbox(cfg["upstream"], min_interval=cfg["outbox_min_interval"],
                     maxsize=cfg["outbox_max_queue"], direct=cfg["direct"],
@@ -460,12 +459,52 @@ async def _main(cfg: dict) -> None:
                         int(cfg["wot_refresh_sec"] / 3600))
             await _build_wot(gate, store, cfg)
 
+    _purge_state = {"count": None, "ts": 0}   # last block-purge result, surfaced in relay status
+
+    async def _purge_blocks_now() -> int:
+        """Apply the configured block filters to ALREADY-STORED events (one-shot, heavy). Returns the
+        number of events removed. Re-reads config so it always reflects the current Relay settings."""
+        fresh = _read_config()
+        total = 0
+        if fresh["blocked_pubkeys"]:
+            total += await store.delete_pubkeys(fresh["blocked_pubkeys"]) or 0
+        if fresh["blocked_words"]:
+            total += await store.delete_by_words(fresh["blocked_words"]) or 0
+        if fresh["blocked_langs"]:
+            total += await store.delete_by_langs(fresh["blocked_langs"]) or 0
+        if fresh["blocked_relays"]:
+            await _apply_blocked_relays(store, gate, fresh["blocked_relays"])
+        _purge_state["count"] = total
+        _purge_state["ts"] = int(time.time())
+        return total
+
+    async def _maybe_purge_blocks() -> None:
+        # Nightly retroactive purge: heavy full-corpus scans, so run at most ONCE A DAY and only in
+        # the small hours (low traffic). A persisted stamp — not the timer — decides, so frequent
+        # restarts can't re-trigger it (mirrors the daily WoT rebuild). Live ingest filtering is the
+        # primary gate; this only cleans content stored before a rule existed.
+        now = time.time()
+        try:
+            last = float(await store.kv_get("block_purge_last") or 0)
+        except (TypeError, ValueError):
+            last = 0.0
+        if (now - last) < 20 * 3600:
+            return
+        if datetime.datetime.now().hour not in _PURGE_HOURS:
+            return
+        removed = await _purge_blocks_now()
+        await store.kv_set("block_purge_last", str(int(now)))
+        _write_status()
+        logger.info("[nostr-relay] nightly block-purge removed %d stored event(s)", removed)
+
     # prune is the only LOCAL maintenance task — always runs. Everything else below is cross-node /
     # trust-graph work, gated on wot_enabled: with WoT OFF (a processing node) the relay is a pure
     # local store — no WoT rebuild, metadata backfill, sync sweep, or firehose. (NIP-05 serving is
     # also forced off when WoT is off — see the nip05 cfg.)
     tasks = [
         asyncio.create_task(_periodic(_relay.stop_event, cfg["prune_interval_sec"], store.prune, "prune")),
+        # Nightly block-purge: checked hourly, fires once in the small hours (see _maybe_purge_blocks).
+        asyncio.create_task(_periodic(_relay.stop_event, 3600, _maybe_purge_blocks, "block-purge")),
     ]
     if cfg["wot_enabled"]:
         # WoT rebuild — checked hourly, actually rebuilt only when a day has elapsed (staleness),
@@ -503,16 +542,20 @@ async def _main(cfg: dict) -> None:
     _paths = _relay_paths(_relay_db_path())
     os.makedirs(_paths["control"], exist_ok=True)
 
+    def _write_status():
+        try:
+            tmp = _paths["status"] + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump({"running": True, "members": len(gate.members()),
+                           "pid": os.getpid(), "ts": int(time.time()),
+                           "block_purge": dict(_purge_state)}, f)
+            os.replace(tmp, _paths["status"])
+        except Exception:
+            pass
+
     async def _status_writer():
         while not _relay.stop_event.is_set():
-            try:
-                tmp = _paths["status"] + ".tmp"
-                with open(tmp, "w") as f:
-                    json.dump({"running": True, "members": len(gate.members()),
-                               "pid": os.getpid(), "ts": int(time.time())}, f)
-                os.replace(tmp, _paths["status"])
-            except Exception:
-                pass
+            _write_status()
             try:
                 await asyncio.wait_for(_relay.stop_event.wait(), timeout=15)
             except asyncio.TimeoutError:
@@ -540,27 +583,38 @@ async def _main(cfg: dict) -> None:
                         asyncio.create_task(_safe(store.wot_add(pks)))  # persist
                         logger.info("[nostr-relay] control: added %d member(s) to WoT now", len(pks))
                     elif cmd.get("cmd") == "reload-blocks":
-                        # Re-read the blocklist from the DB (admin edited it via /client/block or
-                        # the admin UI), apply it to the gate, and purge the blocked authors' events.
+                        # Admin/web-UI edited the blocklist (Admin → Relay, or the web client's
+                        # "Block author"). Apply it to the LIVE ingest gate ONLY, so the updated
+                        # npubs/words/langs/bridges filter NEW posts on the fly. No stored-note
+                        # deletion here — cleanup of already-stored matches (missed filtering) is the
+                        # nightly purge or the "Purge now" button.
                         try:
                             fresh = _read_config()
                             cfg["blocked_pubkeys"] = fresh["blocked_pubkeys"]
-                            gate.set_blocked(cfg["blocked_pubkeys"])
-                            if cfg["blocked_pubkeys"]:
-                                asyncio.create_task(_safe(store.delete_pubkeys(cfg["blocked_pubkeys"])))
-                            # Bridge/relay blocklist: re-read (firehose reads cfg live), scan + purge.
+                            cfg["blocked_words"] = fresh["blocked_words"]   # server reads these live
+                            cfg["blocked_langs"] = fresh["blocked_langs"]   # for on-the-fly filtering
                             cfg["blocked_relays"] = fresh["blocked_relays"]
-                            if cfg["blocked_relays"]:
-                                asyncio.create_task(_safe(_apply_blocked_relays(store, gate, cfg["blocked_relays"])))
-                            # Refresh the operator set too, so newly-provisioned per-user storage keys
-                            # (Phase 2) are accepted as writers without a restart.
                             cfg["operator"] = fresh["operator"]
+                            gate.set_blocked(cfg["blocked_pubkeys"])
                             gate.set_operator(cfg["operator"])
                             store.set_preserve_pubkeys(cfg["operator"])
+                            # Re-mark bridged accounts in the live gate (load_from_store doesn't keep them).
+                            if cfg["blocked_relays"]:
+                                asyncio.create_task(_safe(_mark_blocked_relays(store, gate, cfg["blocked_relays"])))
                             logger.info("[nostr-relay] control: reloaded %d blocked, %d bridge, %d operator key(s)",
                                         len(cfg["blocked_pubkeys"]), len(cfg["blocked_relays"]), len(cfg["operator"]))
                         except Exception as e:
                             logger.warning("[nostr-relay] reload-blocks failed: %s", e)
+                    elif cmd.get("cmd") == "purge-blocks":
+                        # Admin "Purge now" (e.g. illegal content just arrived): apply the block
+                        # filters to already-stored events immediately, off the nightly schedule.
+                        try:
+                            removed = await _purge_blocks_now()
+                            await store.kv_set("block_purge_last", str(int(time.time())))
+                            _write_status()
+                            logger.info("[nostr-relay] control: purge-blocks removed %d stored event(s)", removed)
+                        except Exception as e:
+                            logger.warning("[nostr-relay] purge-blocks failed: %s", e)
                     elif cmd.get("cmd") == "reload-nip05":
                         # Admin edited the NIP-05 identities — re-read and swap in place (the
                         # server reads cfg["nip05"] live, so no restart needed).
@@ -836,15 +890,17 @@ def relay_status() -> dict:
     from that file since the gate lives in the relay's own process now."""
     alive = _relay.proc is not None and _relay.proc.poll() is None
     members = 0
+    block_purge = None
     try:
         with open(_relay_paths(_relay_db_path())["status"]) as f:
             st = json.load(f)
         members = int(st.get("members", 0))
+        block_purge = st.get("block_purge")
         if not alive:
             alive = (time.time() - st.get("ts", 0)) < 90 and _pid_alive(st.get("pid"))
     except Exception:
         pass
-    return {"running": bool(alive), "members": members}
+    return {"running": bool(alive), "members": members, "block_purge": block_purge}
 
 
 def _drop_control(cmd: dict) -> dict:
@@ -885,29 +941,47 @@ def trigger_backfill(pubkey_hex: str) -> dict:
     return _drop_control({"cmd": "backfill", "pubkey": pubkey_hex})
 
 
-async def _apply_blocked_relays(store, gate, domains) -> None:
-    """Find accounts living on the blocked bridge domains, add them to the gate's bridge denylist,
-    and purge their stored events. Safe to call repeatedly (startup + on a live blocklist reload)."""
+async def _mark_blocked_relays(store, gate, domains) -> list:
+    """Find accounts on the blocked bridge domains and add them to the gate's bridge denylist so
+    their writes are rejected at ingest. Returns the pubkeys; does NOT purge stored events. The
+    gate denylist is in-memory (load_from_store restores members, not bridged), so this must run on
+    every start and on a live blocklist reload to keep live filtering correct."""
     try:
         pks = await store.bridged_pubkeys(domains)
     except Exception as e:
         logger.warning("[nostr-relay] bridge scan failed: %s", e)
-        return
+        return []
+    if pks:
+        gate.add_bridged(list(pks))
+    return list(pks)
+
+
+async def _apply_blocked_relays(store, gate, domains) -> None:
+    """Mark bridged accounts in the gate AND purge their stored events — the retroactive cleanup
+    used by the nightly / manual block-purge. Startup + reload use _mark_blocked_relays (mark only)."""
+    pks = await _mark_blocked_relays(store, gate, domains)
     if not pks:
         return
-    gate.add_bridged(pks)
     try:
         removed = await store.delete_pubkeys(list(pks))
     except Exception as e:
         removed = 0
         logger.warning("[nostr-relay] bridge purge failed: %s", e)
-    logger.info("[nostr-relay] blocked %d bridged account(s) on %d relay domain(s), purged %d event(s)",
+    logger.info("[nostr-relay] bridge purge: %d account(s) on %d domain(s), removed %d event(s)",
                 len(pks), len(domains), removed)
 
 
 def trigger_block_reload() -> dict:
-    """Re-apply the nostr_relay_blocked_pubkeys denylist (gate + purge) without a restart."""
+    """Re-read the block filters into the running relay's live ingest gate (no restart). Does NOT
+    touch already-stored events — use trigger_block_purge() for that."""
     return _drop_control({"cmd": "reload-blocks"})
+
+
+def trigger_block_purge() -> dict:
+    """Admin "Purge now": one-shot retroactive purge of already-stored events matching the configured
+    blocked pubkeys / words / languages / bridges. Heavy (full-corpus scan); normally runs nightly,
+    this forces it immediately (e.g. illegal content just arrived)."""
+    return _drop_control({"cmd": "purge-blocks"})
 
 
 def trigger_nip05_reload() -> dict:

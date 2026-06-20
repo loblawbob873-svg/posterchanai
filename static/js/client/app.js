@@ -499,8 +499,8 @@
     // Collapsible "Discover" group (Articles / Streams / Communities) in the sidebar.
     { const dt=$('#disc-toggle'); if(dt){ const sub=$('#disc-sub'), chev=$('#disc-chev');
         const apply=o=>{ if(sub) sub.classList.toggle('collapsed', !o); if(chev) chev.textContent=o?'▾':'▸'; };
-        apply(ClientSettings.get('discOpen', true));
-        dt.onclick=()=>{ const o=!ClientSettings.get('discOpen', true); ClientSettings.set('discOpen', o); apply(o); }; } }
+        apply(ClientSettings.get('discOpen', false));   // collapsed on first load — Discover is too cluttery open
+        dt.onclick=()=>{ const o=!ClientSettings.get('discOpen', false); ClientSettings.set('discOpen', o); apply(o); }; } }
     $('#btn-compose').onclick = ()=>compose(); $('#btn-compose-m').onclick = ()=>compose();
     // mobile overflow sheet — delegated so the tap is caught even if the node is re-created
     document.addEventListener('click', e=>{ if(e.target.closest && e.target.closest('#btn-more-m')){ e.preventDefault(); moreMenu(); } });
@@ -569,6 +569,9 @@
       MUTED = new Set(e.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]));
       // NIP-51 muted words/phrases (lowercase) — hide matching posts from the timeline.
       MUTED_WORDS = new Set(e.tags.filter(t=>t[0]==='word'&&t[1]).map(t=>t[1].toLowerCase())); }
+    // mutes can finish loading AFTER the first view render — refresh a filtered view so already-
+    // shown muted users drop out of the feed / notifications / messages without a manual reload.
+    if(['home','global','notifications','messages'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
   }
   // Replace the `word` tags on the kind-10000 mute list, preserving p/t/e mutes. NIP-51, so the
   // list follows the user to any client.
@@ -588,6 +591,21 @@
     for(const w of MUTED_WORDS){ if(c.includes(w)) return true; }
     return false;
   }
+  // Should this timeline event be hidden by mutes? Covers REPOSTS (kind 6): a repost of a muted
+  // author — or of a note containing a muted word — is hidden too, by resolving the original
+  // (embedded JSON, else the store; author from the p-tag as a fallback before it loads).
+  function isMutedView(ev){
+    if(!ev) return false;
+    if(MUTED.has(ev.pubkey) || mutedByWord(ev)) return true;
+    if(ev.kind===6){
+      let inner=null; try{ inner=JSON.parse(ev.content); }catch(_){}
+      const orig = inner || Store.get((ev.tags.find(t=>t[0]==='e')||[])[1]);
+      const origPk = (orig && orig.pubkey) || (ev.tags.find(t=>t[0]==='p')||[])[1];
+      if(origPk && MUTED.has(origPk)) return true;
+      if(orig && mutedByWord(orig)) return true;
+    }
+    return false;
+  }
   // replaceable-list edit helper: fetch newest (kind), add/remove a p-tag, republish preserving content+tags
   async function _editPList(kind, pk, add){
     const evs = await Relay.query([{ authors:[ME.pubkey], kinds:[kind], limit:1 }]);
@@ -605,7 +623,7 @@
   }
   async function toggleMute(pk){
     const have=MUTED.has(pk); await _editPList(10000, pk, !have);
-    have?MUTED.delete(pk):MUTED.add(pk); toast(have?'unmuted':'muted'); if(VIEW==='home'||VIEW==='global') renderView(true);
+    have?MUTED.delete(pk):MUTED.add(pk); toast(have?'unmuted':'muted'); if(['home','global','notifications','messages'].includes(VIEW)) renderView(true);
   }
   async function fetchPins(){
     const evs=await Relay.query([{ authors:[ME.pubkey], kinds:[10001], limit:1 }]);
@@ -763,7 +781,7 @@
     const sp=feed.querySelector('.spinner'); if(sp)sp.remove(); const em=feed.querySelector('.empty'); if(em)em.remove();
     evs.sort((a,b)=>b.created_at-a.created_at);
     const frag=document.createDocumentFragment();
-    for(const ev of evs){ if(ev.kind===1&&isReply(ev))continue; if(MUTED.has(ev.pubkey)||mutedByWord(ev))continue; if(_liveFn&&!_liveFn(ev))continue;
+    for(const ev of evs){ if(ev.kind===1&&isReply(ev))continue; if(isMutedView(ev))continue; if(_liveFn&&!_liveFn(ev))continue;
       const dispId = ev.kind===6 ? ((ev.tags.find(t=>t[0]==='e')||[])[1]||ev.id) : ev.id;
       if(feed.querySelector('.note[data-id="'+dispId+'"]')) continue;   // don't double-insert
       const div=document.createElement('div'); div.innerHTML=noteHtml(ev); const node=div.firstElementChild; if(node) frag.appendChild(node); }
@@ -800,7 +818,7 @@
     const feed=$('#feed'); if(!feed) return;
     const top=preserveScroll?feed.scrollTop:0;
     const fn = VIEW==='home' ? (e=>FOLLOWS.has(e.pubkey)) : null;
-    const notes = Store.feed(e=>(!fn||fn(e))&&!MUTED.has(e.pubkey)&&!mutedByWord(e)).filter(e=>!isReply(e)).slice(0,200);
+    const notes = Store.feed(e=>(!fn||fn(e))&&!isMutedView(e)).filter(e=>!isReply(e)).slice(0,200);
     feed.innerHTML = notes.length ? notes.map(noteHtml).join('') : `<div class="empty">No posts yet. ${VIEW==='home'?'Follow people or check Global.':''}</div>`;
     // seed the scroll-back cursor from the initial draw only — once the user has paged older, a late
     // EOSE redraw must NOT move the cursor forward (it would re-query an already-loaded range)
@@ -839,7 +857,7 @@
       Store.saveEvent(ev); needProfile(ev.pubkey);
       if(ev.created_at<minTs) minTs=ev.created_at;
       if(ev.kind===1 && isReply(ev)) continue;
-      if(MUTED.has(ev.pubkey) || mutedByWord(ev)) continue;
+      if(isMutedView(ev)) continue;
       if(view==='home' && !FOLLOWS.has(ev.pubkey)) continue;
       // a repost (kind 6) renders with the ORIGINAL's data-id, so dedupe against that, not the
       // repost's own id — otherwise a repost of an already-shown note appends a duplicate card.
@@ -868,7 +886,7 @@
   }
   function prependNote(ev, fn){
     if (ev.kind===1 && isReply(ev)) return;
-    if (MUTED.has(ev.pubkey) || mutedByWord(ev)) return;
+    if (isMutedView(ev)) return;
     if (fn && !fn(ev)) return;
     const feed=$('#feed'); const sp=feed.querySelector('.spinner'); if(sp)sp.remove(); const em=feed.querySelector('.empty'); if(em)em.remove();
     const div=document.createElement('div'); div.innerHTML=noteHtml(ev); const node=div.firstElementChild;
@@ -1176,7 +1194,7 @@
     posts.forEach(x=>{ Store.saveEvent(x); needProfile(x.pubkey); });
     if(VIEW!=='community') return;
     const box=$('#comm-posts'); if(!box) return;
-    posts=posts.filter(x=>!MUTED.has(x.pubkey)&&!mutedByWord(x)).sort((a,b)=>b.created_at-a.created_at);
+    posts=posts.filter(x=>!isMutedView(x)).sort((a,b)=>b.created_at-a.created_at);
     box.innerHTML = posts.length ? posts.map(x=>noteCard(x)).join('') : '<div class="empty">No posts in this community yet.</div>';
     decorateProfiles();
   }
@@ -2004,6 +2022,7 @@
   }
   function notifPing(ev){
     const fromPk = ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey;
+    if(MUTED.has(fromPk)) return;   // no toast / OS notification for a muted author
     const p=profOf(fromPk); const who=p.name||p.display_name||'someone';
     const what = ev.kind===9735?`⚡ zapped you ${fmtSats(zapAmount(ev))} sats`
       : ev.kind===7?`reacted ${ev.content==='+'||ev.content===''?'❤️':enc(ev.content)}`
@@ -2017,7 +2036,7 @@
     t.onclick=()=>{ switchView('notifications'); t.remove(); };
     $('#toast-root').appendChild(t); setTimeout(()=>t.remove(),5000);
   }
-  function notifList(){ return Store.all().filter(e=>[1,6,7,9735].includes(e.kind) && e.pubkey!==ME.pubkey && !MUTED.has(e.pubkey) && e.tags.some(t=>t[0]==='p'&&t[1]===ME.pubkey)).sort((a,b)=>b.created_at-a.created_at).slice(0,2000); }
+  function notifList(){ return Store.all().filter(e=>[1,6,7,9735].includes(e.kind) && e.pubkey!==ME.pubkey && !MUTED.has(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey) && e.tags.some(t=>t[0]==='p'&&t[1]===ME.pubkey)).sort((a,b)=>b.created_at-a.created_at).slice(0,2000); }
   function bumpNotif(){ const n=notifList().filter(e=>e.created_at>seenNotif.last).length; $$('#notif-badge,#notif-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden');}); }
   let _notifShown = 25;   // paginate: render a page at a time, "Load more" reveals the next
   function renderNotifications(){
@@ -2086,7 +2105,7 @@
     // live sub for legacy DMs (since now is fine — kind-4 timestamps are real)
     const since=Math.floor(Date.now()/1000)-60;
     Relay.subscribe([{ kinds:[4], '#p':[ME.pubkey], since }, { kinds:[4], authors:[ME.pubkey], since }], {
-      onEvent: ev => { Store.saveEvent(ev); if(ingestDM(ev) && ev.pubkey!==ME.pubkey){ _dmUnread++; bumpDm(); _dmNotify(); } if(VIEW==='messages') renderMessages(); }
+      onEvent: ev => { Store.saveEvent(ev); if(ingestDM(ev) && ev.pubkey!==ME.pubkey && !MUTED.has(ev.pubkey)){ _dmUnread++; bumpDm(); _dmNotify(); } if(VIEW==='messages') renderMessages(); }
     });
     // NIP-17 gift wraps carry RANDOMIZED past timestamps, so a `since` filter would drop them —
     // subscribe with no `since` and let Store dedup skip the ones we've already unwrapped.
@@ -2107,7 +2126,7 @@
     if(!dmPeers.has(peer)) dmPeers.set(peer, []);
     const arr=dmPeers.get(peer); if(arr.find(m=>m.id===ev.id)) return false;
     arr.push({ id:ev.id, mine, text:rumor.content, t:rumor.created_at, nip17:true }); arr.sort((a,b)=>a.t-b.t);
-    if(live && !mine){ _dmUnread++; bumpDm(); _dmNotify(); }
+    if(live && !mine && !MUTED.has(peer)){ _dmUnread++; bumpDm(); _dmNotify(); }
     if(VIEW==='messages'){ if(dmActive===peer) renderDmThread(peer); else renderMessages(); }
     return true;
   }
@@ -2125,7 +2144,7 @@
   }
   function bumpDm(){ $$('#dm-badge,#dm-badge-m').forEach(b=>{ if(_dmUnread){ b.textContent=_dmUnread>99?'99+':_dmUnread; b.classList.remove('hidden'); } else b.classList.add('hidden'); }); }
   function recountDmUnread(){ const seen=ClientSettings.get('dmSeen',0); let n=0;
-    for(const [,arr] of dmPeers){ for(const m of arr){ if(!m.mine && (m.t||0)>seen) n++; } } _dmUnread=n; bumpDm(); }
+    for(const [pk,arr] of dmPeers){ if(MUTED.has(pk)) continue; for(const m of arr){ if(!m.mine && (m.t||0)>seen) n++; } } _dmUnread=n; bumpDm(); }
   function _dmNotify(){ try{ if(window.Notification && Notification.permission==='granted') new Notification('✉ New message', {body:'You have a new direct message', tag:'pc-dm'}); }catch(_){} }
   // Index DMs WITHOUT decrypting (decryption is CPU-heavy ECDH+AES in the worker; decrypting all
   // 200 on load jams the worker and stalls timeline verification). Decrypt lazily on view.
@@ -2154,7 +2173,7 @@
     const feed=$('#feed');
     feed.innerHTML=`<div class="dm-wrap"><div class="dm-list" id="dm-list"></div><div class="dm-thread" id="dm-thread"><div class="empty">${_dmLoaded?'Select a conversation, or start one.':'Loading…'}</div></div></div>`;
     const list=$('#dm-list');
-    const peers=[...dmPeers.keys()].sort((a,b)=>{ const la=dmPeers.get(a).slice(-1)[0]||{}, lb=dmPeers.get(b).slice(-1)[0]||{}; return (lb.t||0)-(la.t||0); });
+    const peers=[...dmPeers.keys()].filter(pk=>!MUTED.has(pk)).sort((a,b)=>{ const la=dmPeers.get(a).slice(-1)[0]||{}, lb=dmPeers.get(b).slice(-1)[0]||{}; return (lb.t||0)-(la.t||0); });
     list.innerHTML = `<div class="dm-peer" id="dm-new"><span class="ic">＋</span><b>New message</b></div>` + peers.map(pk=>{
       const p=profOf(pk); const last=dmPeers.get(pk).slice(-1)[0]||{};
       const prev = last.text!=null ? enc(last.text.slice(0,28)) : '🔒 …';
@@ -2207,7 +2226,7 @@
     // decrypt this conversation's messages on open (bounded to one peer's thread)
     for(const m of msgs){ if(m.text==null) await decryptMsg(pk,m); }
     if(dmActive!==pk) return;   // user switched away while decrypting
-    wrap.innerHTML=`<div class="topbar"><button class="mini" id="dm-back">←</button> <b>${enc(p.name||NT().nip19.npubEncode(pk).slice(0,14))}</b></div>
+    wrap.innerHTML=`<div class="topbar"><button class="mini" id="dm-back">←</button> <b class="dm-peer-name" data-prof="${pk}" style="cursor:pointer">${enc(p.name||NT().nip19.npubEncode(pk).slice(0,14))}</b><span class="spacer"></span><button class="mini" id="dm-mute" title="Mute this sender">${MUTED.has(pk)?'🔊 Unmute':'🔇 Mute'}</button></div>
       <div class="dm-msgs" id="dm-msgs">${msgs.map(m=>`<div class="bubble ${m.mine?'me':'them'}">${linkify(m.text||'')}</div>`).join('')}</div>
       <div class="dm-compose">
         <textarea class="input" id="dm-in" rows="2" placeholder="encrypted message…"></textarea>
@@ -2220,6 +2239,10 @@
           <button class="btn btn-neon" id="dm-send">Send ▶</button>
         </div></div>`;
     $('#dm-back').onclick=()=>{ $('#dm-list').classList.remove('has-active'); dmActive=null; };
+    { const nm=wrap.querySelector('.dm-peer-name'); if(nm) nm.onclick=()=>renderProfileView(pk); }
+    // Mute the DM sender straight from the conversation. Muting drops back to the list (the thread
+    // is filtered out); toggleMute re-renders Messages so it disappears immediately.
+    { const mb=$('#dm-mute'); if(mb) mb.onclick=async()=>{ if(!MUTED.has(pk)){ dmActive=null; const dl=$('#dm-list'); if(dl) dl.classList.remove('has-active'); } await toggleMute(pk); }; }
     const inp=$('#dm-in');
     $('#dm-attach').onclick=()=>$('#dm-file').click();
     $('#dm-file').onchange=async e=>{ const files=[...e.target.files]; for(let i=0;i<files.length;i++){ try{ const url=await uploadBlob(files[i]); inp.value+=(inp.value?' ':'')+url; }catch(err){ toast('upload failed: '+err.message); } } e.target.value=''; inp.focus(); };

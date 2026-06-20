@@ -326,6 +326,14 @@ def nostr_relay_backfill(npub: str = Query(...), admin: User = Depends(get_admin
     return {**r, "pubkey": pk}
 
 
+@router.post("/nostr-relay/purge-blocks")
+def nostr_relay_purge_blocks(admin: User = Depends(get_admin_user)):
+    """Apply the relay's blocked pubkeys/words/langs/bridge filters to already-stored notes now.
+    Filtering is live at ingest and a purge runs nightly; this is the on-demand cleanup (heavy)."""
+    from app.services.nostr_relay.thread import trigger_block_purge
+    return trigger_block_purge()
+
+
 @router.get("/nostr-relay/status")
 def nostr_relay_status(admin: User = Depends(get_admin_user)):
     from app.services.nostr_relay.thread import relay_status

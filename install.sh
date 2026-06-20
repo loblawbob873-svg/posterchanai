@@ -92,6 +92,9 @@ install_nostr_only() {
     setup_postgres           # the one and only database (app + built-in Nostr relay)
     setup_python_env         # honours NOSTR_ONLY -> installs requirements-nostr.txt
 
+    # Provision the relay's instance (operator) key now, seed the WoT with it, and print the npub.
+    venv/bin/python scripts/init_instance_key.py || print_warning "instance key init deferred to first run"
+
     # Turnkey runtime flags (the run script sources data/secrets.env): enable the relay and the
     # nostr-only UI. DATABASE_URL defaults to the local-trust Postgres set up above.
     mkdir -p data
@@ -163,6 +166,9 @@ main() {
 
     # Step 7: Setup Python environment
     setup_python_env
+
+    # Step 7b: Provision the relay's instance (operator) key + seed the WoT; prints the instance npub.
+    venv/bin/python scripts/init_instance_key.py || print_warning "instance key init deferred to first run"
 
     # Step 8: Install LLM dependencies (if selected and not Ollama)
     if [ "$INSTALL_LLM" = "1" ] && [ "$LLM_BACKEND" != "ollama" ]; then

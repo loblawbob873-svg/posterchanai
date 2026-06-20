@@ -102,6 +102,35 @@
                 .then(function(j){ bstat.textContent=(j&&j.ok)?('✓ syncing '+String(j.pubkey||'').slice(0,12)+'… (a few sec)'):('✗ '+((j&&j.error)||'failed')); })
                 .catch(function(e){ bstat.textContent='✗ '+e; }).finally(function(){ bbtn.disabled=false; });
             }); }
+            var pbtn=document.getElementById('relayPurgeBlocksBtn'), pstat=document.getElementById('relayPurgeBlocksStatus');
+            if(pbtn){
+                var f=(window.csrfFetch||fetch);
+                function relayStatus(){ return f('/api/admin/nostr-relay/status').then(function(r){return r.json();}).catch(function(){return null;}); }
+                pbtn.addEventListener('click', function(){
+                    if(!confirm('Apply the blocked words / languages / accounts / bridges to ALREADY-STORED notes and delete matches now? This cannot be undone.')) return;
+                    pbtn.disabled=true; pstat.textContent='purging…';
+                    relayStatus().then(function(s0){
+                        var baseTs=(s0&&s0.block_purge&&s0.block_purge.ts)||0;
+                        return f('/api/admin/nostr-relay/purge-blocks',{method:'POST'}).then(function(r){return r.json();}).then(function(j){
+                            if(!(j&&j.ok)) throw new Error((j&&j.error)||'failed');
+                            var tries=0;
+                            return new Promise(function(resolve){
+                                (function poll(){
+                                    tries++;
+                                    relayStatus().then(function(s){
+                                        var bp=s&&s.block_purge;
+                                        if(bp&&bp.ts>baseTs) resolve('✓ removed '+(bp.count==null?0:bp.count)+' note(s)');
+                                        else if(tries>=30) resolve('✓ purge running — count in the relay log');
+                                        else setTimeout(poll, 2000);
+                                    });
+                                })();
+                            });
+                        });
+                    }).then(function(msg){ pstat.textContent=msg; })
+                    .catch(function(e){ pstat.textContent='✗ '+((e&&e.message)||e); })
+                    .finally(function(){ pbtn.disabled=false; });
+                });
+            }
         }
         if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded', init); }
         else { init(); }
@@ -138,12 +167,17 @@
         <div class="form-group">
             <label for="nostr_relay_blocked_pubkeys">Blocked accounts (pubkeys)</label>
             <textarea id="nostr_relay_blocked_pubkeys" name="nostr_relay_blocked_pubkeys" rows="4" placeholder="npub1…&#10;or 64-char hex"></textarea>
-            <small>Hard denylist — these accounts are rejected <strong>even if in the Web of Trust</strong>, and their stored notes are purged on restart. npub or hex, one per line.</small>
+            <small>Hard denylist — these accounts are rejected <strong>even if in the Web of Trust</strong> (new posts blocked at ingest). Their already-stored notes are removed by the nightly purge or the “Purge now” button below. npub or hex, one per line.</small>
         </div>
         <div class="form-group">
             <label for="nostr_relay_blocked_relays">Blocked bridges / relays</label>
             <textarea id="nostr_relay_blocked_relays" name="nostr_relay_blocked_relays" rows="3" placeholder="mostr.pub&#10;brid.gy&#10;momostr.pink"></textarea>
-            <small>Block fediverse/Bluesky <strong>bridges</strong>. Any account whose profile NIP-05 or relay list lives on one of these domains is denied + purged. One domain per line; suffix match, so <code>mostr.pub</code> also covers <code>bsky-bridge.mostr.pub</code>.</small>
+            <small>Block fediverse/Bluesky <strong>bridges</strong>. Any account whose profile NIP-05 or relay list lives on one of these domains is denied at ingest; already-stored posts are removed by the nightly purge / “Purge now”. One domain per line; suffix match, so <code>mostr.pub</code> also covers <code>bsky-bridge.mostr.pub</code>.</small>
+        </div>
+        <div class="form-group">
+            <button type="button" id="relayPurgeBlocksBtn" class="btn-secondary">🧹 Purge existing notes now</button>
+            <span id="relayPurgeBlocksStatus" style="margin-left:.5rem;"></span>
+            <small>Block filters apply automatically to <strong>new</strong> notes at ingest, and a purge of already-stored matches runs <strong>nightly</strong> (small hours). Click to apply the blocked words / languages / accounts / bridges to already-stored notes <strong>right now</strong> — e.g. when illegal content has just arrived and shouldn’t wait. One-shot and heavy on a large store. Counts are logged.</small>
         </div>
     </fieldset>
 
