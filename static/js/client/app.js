@@ -2053,15 +2053,21 @@
   }
   // ---------- AI view (the old PosterChan AI web UI, merged in as a client view) ----------
   let _aiAuth = null;   // cached {can_ai, is_admin, username} for this session
+  let _aiAuthP=null;
   async function ensureAiSession(){
     if(_aiAuth) return _aiAuth;
-    try{
-      const auth = await sign(27235, 'ai-login', [['p', ME.pubkey]]);   // prove key ownership
-      const r = await fetch('/api/auth/nostr-login', { method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ pubkey: ME.pubkey, auth: btoa(JSON.stringify(auth)) }) }).then(r=>r.json());
-      _aiAuth = (r && r.user) ? r.user : { can_ai:false, error:!r };
-    }catch(_){ _aiAuth = { can_ai:false, error:true }; }
-    return _aiAuth;
+    if(_aiAuthP) return _aiAuthP;   // dedupe concurrent callers (e.g. the 2.5s warm + a click) → one sign(), one login
+    _aiAuthP = (async()=>{
+      try{
+        const auth = await sign(27235, 'ai-login', [['p', ME.pubkey]]);   // prove key ownership
+        const r = await fetch('/api/auth/nostr-login', { method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ pubkey: ME.pubkey, auth: btoa(JSON.stringify(auth)) }) }).then(r=>r.json());
+        if(r && r.user){ _aiAuth = r.user; return _aiAuth; }   // cache only a GOOD session
+        return { can_ai:false, error:!r };                      // transient failure → not cached, retryable
+      }catch(_){ return { can_ai:false, error:true }; }
+      finally{ _aiAuthP=null; }
+    })();
+    return _aiAuthP;
   }
   // In-app Admin: the standalone admin panel embedded in the client (same-origin, the Nostr-login
   // cookie authorizes it). Admins only.
@@ -2453,6 +2459,11 @@
   let _usMail=[];
   async function renderUserSettings(){
     const host=$('#user-settings'); if(!host) return;
+    // /api/auth/settings needs the nostr-login session cookie. Establish it FIRST — otherwise the
+    // very first open 401s (cookie not set yet) and shows "Couldn't load", and you had to click
+    // Settings a second time once the session warmed (the flicker/"do it twice" bug).
+    await ensureAiSession();
+    if(VIEW!=='settings') return;   // navigated away during the (first-time) sign/login
     // Load settings FIRST. If this fails we must NOT render an empty editable form — saving it would
     // wipe the user's real settings with blanks (that's how telegram_notifications got cleared).
     let s=null; try{ const r=await fetch('/api/auth/settings'); if(r.ok) s=await r.json(); }catch(_){}
