@@ -2083,6 +2083,13 @@
     const ta=$('#ai-input');
     ta.addEventListener('keydown',e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); aiSend(); } });
     ta.addEventListener('input',()=>{ ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,200)+'px'; });
+    // Ctrl/⌘-V an image from the clipboard → attach it (so you can paste a screenshot then `post`, etc.)
+    ta.addEventListener('paste', async e=>{
+      const items=(e.clipboardData && e.clipboardData.items)||[]; const files=[];
+      for(const it of items){ if(it.type && it.type.startsWith('image/')){ const f=it.getAsFile();
+        if(f) files.push(f.name?f:new File([f],'pasted-'+Date.now()+'.png',{type:f.type||'image/png'})); } }
+      if(files.length){ e.preventDefault(); await aiAddFiles(files); toast(files.length+' image'+(files.length>1?'s':'')+' attached'); }
+    });
     $('#ai-msgs').addEventListener('click',e=>{
       const cmd=e.target.closest('.ai-cmd'); if(cmd){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ ta.value=cmd.dataset.cmd; aiSend(); } return; }
       const mag=e.target.closest('.ai-magnet'); if(mag){ const ta=$('#ai-input'); if(ta){ ta.value='torrents add '+mag.dataset.magnet; aiSend(); } return; }
@@ -2376,8 +2383,14 @@
   let _usMail=[];
   async function renderUserSettings(){
     const host=$('#user-settings'); if(!host) return;
-    let s={}; try{ s=await fetch('/api/auth/settings').then(r=>r.json()); }catch(_){}
+    // Load settings FIRST. If this fails we must NOT render an empty editable form — saving it would
+    // wipe the user's real settings with blanks (that's how telegram_notifications got cleared).
+    let s=null; try{ const r=await fetch('/api/auth/settings'); if(r.ok) s=await r.json(); }catch(_){}
     if(!host || VIEW!=='settings') return;
+    if(!s || typeof s!=='object'){
+      host.innerHTML='<section class="set-card"><div class="set-body"><div class="muted">Couldn’t load your settings.</div><button class="btn btn-ghost small" id="us-retry">Retry</button></div></section>';
+      const rt=$('#us-retry'); if(rt) rt.onclick=renderUserSettings; return;
+    }
     _usMail = Array.isArray(s.mail_accounts)? s.mail_accounts.slice() : [];
     const tabs=[['profile','Profile'],['mail','Mail'],['telegram','Telegram'],['social','Social'],['finance','Finance'],['keys','API Keys']];
     host.innerHTML=`<section class="set-card us">
