@@ -190,10 +190,14 @@
     CFG = await fetch('/client/config').then(r=>r.json()).catch(()=>({}));
     await Store.init();
     if ('serviceWorker' in navigator){
-      // auto-reload once when a new SW takes control, so deploys land on installed PWAs without
-      // manual cache-clearing (the stale-app.js / "no GIF button on mobile" problem)
+      // auto-reload once when a NEW SW takes control (a deploy update), so it lands on installed
+      // PWAs without manual cache-clearing. Only arm this when a controller ALREADY exists at load:
+      // on the very first visit the SW's install→clients.claim() also fires controllerchange, which
+      // used to trigger a spurious second reload right after login/first load.
       let _refreshing=false;
-      navigator.serviceWorker.addEventListener('controllerchange', ()=>{ if(_refreshing) return; _refreshing=true; location.reload(); });
+      if(navigator.serviceWorker.controller){
+        navigator.serviceWorker.addEventListener('controllerchange', ()=>{ if(_refreshing) return; _refreshing=true; location.reload(); });
+      }
       navigator.serviceWorker.register('/client/sw.js',{scope:'/client'}).catch(()=>{});
     }
     Relay.onStatus = renderConn;
