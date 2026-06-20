@@ -573,11 +573,12 @@ document.getElementById('viewTelegramUsersBtn').addEventListener('click', async 
 
         if (response.ok) {
             if (data.length === 0) {
-                statusDiv.className = 'test-result';
+                statusDiv.className = 'test-result success';   // base .test-result is display:none — need a state class to show
                 statusDiv.textContent = 'No users have linked Telegram yet';
             } else {
                 const userList = data.map(u => `@${u.username}: ${u.telegram_chat_id}`).join('\n');
-                statusDiv.className = 'test-result';
+                statusDiv.className = 'test-result success';
+                statusDiv.style.whiteSpace = 'pre-line';        // keep one user per line
                 statusDiv.textContent = `Linked users:\n${userList}`;
             }
         } else {
