@@ -48,6 +48,19 @@ def enabled(db) -> bool:
     return True
 
 
+def ensure_operator_key(db) -> bool:
+    """Resolve (and on a fresh node, MINT) the datastore operator/signer key into the keyfile.
+    Must run BEFORE the relay starts so the relay's operator set includes this pubkey — otherwise
+    the relay rejects its own first settings doc as "not in web of trust" (the operator key was
+    minted lazily, after the relay had already read an empty operator set). Returns True if a key
+    is available. Idempotent."""
+    try:
+        return _operator_seckey(db) is not None
+    except Exception as e:
+        logger.warning("[settings-store] ensure_operator_key failed: %s", e)
+        return False
+
+
 def _operator_seckey(db):
     """The operator's secret key — needed to read/write the operator-signed docs. Sourced from the
     local keyfile (authoritative); falls back to the admin's `User.nostr_nsec` and migrates it into

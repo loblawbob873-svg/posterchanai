@@ -315,6 +315,20 @@ async def startup():
                 logging.error(f"Error starting reminder scheduler: {e}", exc_info=True)
 
             try:
+                # Resolve/mint the datastore operator key into the keyfile BEFORE the relay starts,
+                # so the relay's operator set includes this signer from its first boot. Otherwise a
+                # fresh node (no linked users) starts the relay with an empty operator set and then
+                # rejects its own settings docs as "not in web of trust".
+                from app.services import settings_store as _ss
+                _kdb = SessionLocal()
+                try:
+                    _ss.ensure_operator_key(_kdb)
+                finally:
+                    _kdb.close()
+            except Exception as e:
+                logging.warning(f"Could not pre-mint operator key: {e}")
+
+            try:
                 # Start the built-in Nostr WoT relay (own thread; no-op unless enabled)
                 from app.services.nostr_relay import start_nostr_relay
                 start_nostr_relay()

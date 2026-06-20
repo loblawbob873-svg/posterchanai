@@ -60,7 +60,10 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-posterchan_local}
       - POSTGRES_DB=posterchan_relay
     volumes:
-      - pc-pg:/var/lib/postgresql/data
+      # postgres:18+ stores data in a major-version subdir and wants the mount at
+      # /var/lib/postgresql (NOT .../data, which it rejects as an "unused mount"). See
+      # docker-library/postgres#1259. One mount here = clean pg_upgrade later.
+      - pc-pg:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U posterchan -d posterchan_relay"]
       interval: 5s

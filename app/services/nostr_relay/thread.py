@@ -301,6 +301,17 @@ def _collect_operator_pubkeys(db) -> list:
                     out.add(nostr_service.derive_pubkey(nostr_service.decode_seckey(nsec)))
                 except Exception:
                     pass
+        # The DATASTORE OPERATOR/SIGNER key: settings/users/bots/chat docs (kind-30078 `pcai:`) are
+        # signed with it. On a fresh node with no linked users this is the ONLY operator pubkey, so
+        # the relay MUST trust it or it rejects its own settings docs ("not in web of trust") and the
+        # whole Nostr-as-datastore write path silently fails. Lives in the local keyfile.
+        try:
+            from app.services import keystore
+            op_nsec = keystore.get_operator_nsec()
+            if op_nsec:
+                out.add(nostr_service.derive_pubkey(nostr_service.decode_seckey(op_nsec)))
+        except Exception:
+            pass
         # Per-user SERVER-HELD storage keys: these are the keys the app signs each user's encrypted
         # chat/upload events with — our own keys, so they must be allowed to write here. They live in
         # the local keyfile (authoritative); also read the legacy UserSetting location for any not yet
