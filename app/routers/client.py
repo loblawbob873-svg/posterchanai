@@ -126,6 +126,18 @@ def _relay_user_count() -> int:
         return 0
 
 
+@router.get("/stats")
+async def client_stats():
+    """Live community stats for the sidebar: `users` = WoT network size (cached), `online` = current
+    relay client connections (people using the site right now). Cheap status-file read; polled."""
+    try:
+        from app.services.nostr_relay.thread import relay_status
+        st = relay_status()
+        return JSONResponse({"users": int(st.get("members", 0) or 0), "online": int(st.get("conns", 0) or 0)})
+    except Exception:
+        return JSONResponse({"users": 0, "online": 0})
+
+
 @router.post("/qr")
 async def client_qr(request: Request):
     """Render arbitrary text as a QR-code SVG. Used for Primal-style mobile sign-in: the web shows
