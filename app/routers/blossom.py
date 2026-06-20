@@ -38,6 +38,32 @@ def _err(status: int, reason: str) -> JSONResponse:
                         headers={**_CORS, "X-Reason": reason})
 
 
+# Small in-RAM thumbnail cache for the Files grid (`?thumb=1`). Thumbs are tiny (~10-20 KB), so a
+# few hundred entries is a few MB — bounded to avoid unbounded growth. Saves re-encoding + serving
+# full-resolution images just to render a grid cell.
+from collections import OrderedDict
+import threading
+_thumb_cache: "OrderedDict[str, bytes]" = OrderedDict()
+_thumb_lock = threading.Lock()
+_THUMB_MAX = 400
+
+
+def _thumb_get(sha: str):
+    with _thumb_lock:
+        t = _thumb_cache.get(sha)
+        if t is not None:
+            _thumb_cache.move_to_end(sha)
+        return t
+
+
+def _thumb_put(sha: str, data: bytes):
+    with _thumb_lock:
+        _thumb_cache[sha] = data
+        _thumb_cache.move_to_end(sha)
+        while len(_thumb_cache) > _THUMB_MAX:
+            _thumb_cache.popitem(last=False)
+
+
 def _strip_ext(token: str) -> str:
     return token.split(".", 1)[0].strip().lower()
 
@@ -143,6 +169,22 @@ async def get_blob(sha256: str, request: Request, db: Session = Depends(get_db))
     if request.method == "HEAD":
         return Response(status_code=200, media_type=mime,
                         headers={**headers, "Content-Length": str(blob.size)})
+
+    # ?thumb=1 → a downscaled JPEG for grid cells (saves serving the full-res image). Cached in RAM.
+    if request.query_params.get("thumb") and mime.startswith("image/"):
+        t = _thumb_get(sha)
+        if t is None:
+            data = await blossom_service.read_full(db, blob)
+            if data is None:
+                return _err(404, "blob bytes unavailable")
+            try:
+                from app.services.media_service import compress_image
+                t = await asyncio.to_thread(compress_image, data, 320, 70)
+            except Exception:
+                t = data   # undecodable → fall back to the original bytes
+            _thumb_put(sha, t)
+        return Response(t, media_type="image/jpeg",
+                        headers={**headers, "Content-Length": str(len(t))})
 
     # HTTP Range (video/audio seeking + MP4s with a trailing moov atom). Buffer-and-slice for
     # blobs up to _RANGE_MAX (kept in the RAM cache); larger blobs stream whole.

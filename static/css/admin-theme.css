@@ -1,0 +1,74 @@
+/* Admin visual skin — makes the Admin panel match the Nostr client's cyberpunk look.
+ * Purely cosmetic: colors, glass panels, neon accents, rounded inputs. No layout/JS changes.
+ * Loaded AFTER admin-tabs.css so it overrides. Palette comes from style.css :root. */
+
+:root{
+  /* vars admin-tabs.css references but style.css didn't define — map to the palette */
+  --accent-color: var(--accent);
+  --border: var(--border-color);
+  --text-muted: var(--text-secondary);
+}
+
+body.admin-page{
+  background:
+    radial-gradient(1200px 600px at 80% -10%, rgba(255,0,255,.06), transparent 60%),
+    radial-gradient(1000px 500px at -10% 10%, rgba(0,255,255,.06), transparent 60%),
+    var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.admin-container{ max-width: none; width: 100%; margin: 0; padding: 22px 28px 60px; box-sizing: border-box; }
+.admin-header h1{
+  font-weight: 800; letter-spacing: 1px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+
+/* tab bar → glass pills with a neon active state */
+.admin-tabs{ display:flex; flex-wrap:wrap; gap:8px; margin:14px 0 18px; }
+.admin-tabs .tab-btn{
+  background: rgba(26,26,42,.7); border:1px solid var(--border-color); color: var(--text-primary);
+  border-radius: 11px; padding: 8px 15px; font-weight:600; cursor:pointer; transition: all .15s;
+}
+.admin-tabs .tab-btn:hover{ border-color: var(--accent); }
+.admin-tabs .tab-btn.active{
+  background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
+  color:#04020c; border-color: transparent; box-shadow: var(--glow-cyan);
+}
+
+/* fieldsets → glassy rounded cards */
+.tab-content fieldset, .settings-form fieldset, fieldset{
+  background: rgba(18,18,28,.66); border:1px solid var(--border-color);
+  border-radius: 14px; padding: 16px 18px; margin: 0 0 16px;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+legend{ color: var(--accent); font-weight:700; padding:0 6px; }
+.fieldset-info, .form-hint, small{ color: var(--text-secondary); }
+
+/* inputs → dark, rounded, neon focus */
+.admin-page input[type=text], .admin-page input[type=email], .admin-page input[type=url],
+.admin-page input[type=password], .admin-page input[type=number], .admin-page input[type=time],
+.admin-page select, .admin-page textarea{
+  background: rgba(10,10,16,.7); border:1px solid var(--border-color); color: var(--text-primary);
+  border-radius: 10px; padding: 9px 12px;
+}
+.admin-page input:focus, .admin-page select:focus, .admin-page textarea:focus{
+  outline:none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(0,255,255,.15);
+}
+
+/* primary buttons → neon gradient */
+.admin-page .btn-primary, .admin-page .save-btn{
+  background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
+  color:#04020c; border:none; border-radius: 11px; padding: 10px 18px; font-weight:700; cursor:pointer;
+  box-shadow: var(--glow-cyan);
+}
+.admin-page .btn-primary:hover, .admin-page .save-btn:hover{ filter: brightness(1.08); }
+.admin-page .btn-secondary{
+  background: rgba(26,26,42,.8); border:1px solid var(--border-color); color: var(--text-primary);
+  border-radius: 10px; padding: 8px 14px; cursor:pointer;
+}
+.admin-page .btn-secondary:hover{ border-color: var(--accent); }
+.admin-page .btn-danger{ background: rgba(255,51,102,.16); border:1px solid var(--danger); color:#ff90a8; border-radius:10px; padding:8px 14px; cursor:pointer; }
+
+/* bot cards → glass */
+.bot-card{ background: rgba(18,18,28,.66); border:1px solid var(--border-color); border-radius:13px; backdrop-filter: blur(8px); }

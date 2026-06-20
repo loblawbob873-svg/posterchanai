@@ -21,7 +21,7 @@ import re
 import secrets
 import time
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -785,22 +785,53 @@ async def ai_files(data: AiFileReq, db: Session = Depends(get_db)):
         return JSONResponse({"ok": True, "files": []})
     sk = store.user_storage_seckey(db, user)
     port = int(_setting(db, "nostr_relay_port", "3052"))
-    uname = quote(user.username, safe='')
+    np = nostr_service.npub_of(pk)
     out = []
     for d, ref in (await store.list_docs(port, store.NS_UPLOAD, seckey=sk)).items():
         if isinstance(ref, dict) and ref.get("sha256"):
             conv = d[len(store.NS_UPLOAD):].split(":")[0]
             name = ref.get("name") or "file"
             ext = name.rsplit(".", 1)[-1] if "." in name else "bin"
-            out.append({"url": f"/api/files/{uname}/{conv}/enc_{ref['sha256']}.{ext}",
+            out.append({"url": f"/client/file/{np}/{conv}/enc_{ref['sha256']}.{ext}",
                         "name": name, "mime": ref.get("mime") or "", "sha": ref["sha256"], "kind": "upload"})
     for d, rec in (await store.list_docs(port, store.NS_MSG, seckey=sk)).items():
         m = isinstance(rec, dict) and re.search(r'(enc_([0-9a-f]{64})\.\w+)$', rec.get("image_path") or "")
         if m:
             conv = d[len(store.NS_MSG):].split(":")[0]
-            out.append({"url": f"/api/files/{uname}/{conv}/{m.group(1)}",
+            out.append({"url": f"/client/file/{np}/{conv}/{m.group(1)}",
                         "name": "generated image", "mime": "image/png", "sha": m.group(2), "kind": "generated"})
     return JSONResponse({"ok": True, "files": out})
+
+
+@router.get("/file/{npub}/{conv}/{name}")
+async def client_file(npub: str, conv: str, name: str, request: Request, db: Session = Depends(get_db)):
+    """Serve a decrypted AI-chat artifact for the Nostr client. The client has NO server session, so
+    unlike /api/files (session-gated) this is addressed by the encrypted blob's **sha256** — which is
+    the secret stored inside the owner's NIP-44-encrypted NS_UPLOAD doc (knowing it == owning it, the
+    same capability model as Blossom GET). `?thumb=1` returns a small JPEG to save bandwidth."""
+    from app.services import artifact_store
+    pk = nostr_service.to_pubkey_hex(npub)
+    if not pk:
+        return JSONResponse({"error": "invalid npub"}, status_code=400)
+    user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    m = re.match(r'^enc_([0-9a-fA-F]{64})\.(\w+)$', name or "")
+    if not user or not m:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    data = await artifact_store.read_bytes(db, user, m.group(1).lower())
+    if data is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    from mimetypes import guess_type as _gt
+    ct = _gt("x." + m.group(2))[0] or "application/octet-stream"
+    if request.query_params.get("thumb") and ct.startswith("image/"):
+        try:
+            from app.services.media_service import compress_image
+            data = compress_image(data, max_dimension=320, quality=70)
+            ct = "image/jpeg"
+        except Exception:
+            pass
+    disp = "inline" if ct.startswith(("image/", "video/", "audio/")) else f'attachment; filename="{name}"'
+    return Response(content=data, media_type=ct,
+                    headers={"Content-Disposition": disp, "Cache-Control": "private, max-age=86400"})
 
 
 @router.post("/ai-file-delete")

@@ -509,7 +509,7 @@
     if (VIEW==='home' || VIEW==='global') return renderTimeline(VIEW, reset);
     if (VIEW==='notifications') return renderNotifications();
     if (VIEW==='messages') return renderMessages();
-    if (VIEW==='drafts') return renderDrafts();
+    if (VIEW==='drafts'){ Drafts.pull(); return renderDrafts(); }   // re-sync from the relay on each entry
     if (VIEW==='bookmarks') return renderBookmarks();
     if (VIEW==='articles') return renderArticles();
     if (VIEW==='streams') return renderStreams();
@@ -1059,6 +1059,9 @@
       const evl=e.target.closest('.evlink'); if(evl){ e.preventDefault(); renderThread(evl.dataset.ev); return; }
       const ht=e.target.closest('.hashtag'); if(ht){ e.preventDefault(); renderHashtag(ht.dataset.tag); return; }
       const na=e.target.closest('.naddrlink'); if(na){ e.preventDefault(); openNaddr(na.dataset.pk, na.dataset.d, na.dataset.k); return; }
+      // Files grid: thumbnails load ?thumb=1, so open the parent link's FULL url in the lightbox
+      // (images) — videos/docs fall through to their <a> (new tab / download).
+      const fa=e.target.closest('.file-card a'); if(fa){ if(fa.querySelector('img')){ e.preventDefault(); openLightbox(fa.getAttribute('href')); } return; }
       const im=e.target.closest('.txt img, .note-preview img, .media-row img, .media-grid img'); if(im){ e.preventDefault(); openLightbox(im.currentSrc||im.src); return; }
       const av=e.target.closest('.av'); if(av){ const n=e.target.closest('.note'); if(n){ renderProfileView(n.dataset.pk); return; } }
       const prof=e.target.closest('[data-prof]'); if(prof){ renderProfileView(prof.dataset.prof); return; }
@@ -1481,14 +1484,19 @@
     // linkify below) can detect the media type and embed/play it. The server ignores the suffix.
     const ext=extFor(file); return (d.url||server+'/'+hash) + (ext?('.'+ext):'');
   }
+  // Grid thumbnail. Images load a small server-side JPEG (?thumb=1) instead of the full file, and
+  // videos show an icon rather than downloading the whole clip — both to save bandwidth in the grid.
+  function thumbUrl(u){ return u + (u.indexOf('?')<0?'?':'&') + 'thumb=1'; }
   function blobThumb(b){
     const t=b.type||'', ext=(t.split('/')[1]||'file').slice(0,10);
-    if(/image/.test(t)) return `<img src="${enc(b.url)}" loading="lazy">`;
-    if(/video/.test(t)) return `<video src="${enc(b.url)}" muted></video>`;
+    if(/image/.test(t)) return `<img src="${enc(thumbUrl(b.url))}" loading="lazy">`;
+    if(/video/.test(t)) return `<div class="file-icon">🎬<span>${enc(ext)}</span></div>`;
     if(/audio/.test(t)) return `<div class="file-icon">🎵<span>${enc(ext)}</span></div>`;
     const icon = /zip|compress|tar|gzip|7z|rar/.test(t)?'📦' : /pdf/.test(t)?'📕' : /text|json|xml|csv/.test(t)?'📄' : '📎';
     return `<div class="file-icon">${icon}<span>${enc(ext)}</span></div>`;
   }
+  function copyUrl(u){ try{ u=new URL(u, location.href).href; }catch(_){}
+    try{ navigator.clipboard.writeText(u); toast('URL copied'); }catch(_){ const t=document.createElement('textarea'); t.value=u; document.body.appendChild(t); t.select(); try{document.execCommand('copy'); toast('URL copied');}catch(e){toast('copy failed');} t.remove(); } }
   function gifPicker(ta){
     const bg=document.createElement('div'); bg.className='modal-bg'; bg.style.zIndex='200';
     bg.innerHTML=`<div class="modal glass neon-border"><h3>🎬 GIFs</h3><input class="input" id="gif-q" placeholder="search GIFs…" autocomplete="off"><div id="gif-grid" class="gif-grid"><div class="spinner"></div></div></div>`;
@@ -1538,9 +1546,10 @@
       if(list!==null){
         const grid=$('#bl-grid');
         grid.innerHTML = list.length ? list.map(b=>
-          `<div class="file-card" data-sha="${b.sha256}"><a href="${enc(b.url)}" target="_blank" download>${blobThumb(b)}</a><button class="del" data-sha="${b.sha256}">✕</button><div class="meta"><span>${((b.size||0)/1024|0)}KB</span><span>${(b.type||'').split('/')[1]||''}</span></div></div>`
+          `<div class="file-card" data-sha="${b.sha256}"><a href="${enc(b.url)}" target="_blank" download>${blobThumb(b)}</a><button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button><button class="del" data-sha="${b.sha256}">✕</button><div class="meta"><span>${((b.size||0)/1024|0)}KB</span><span>${(b.type||'').split('/')[1]||''}</span></div></div>`
         ).join('') : '<div class="empty">No files yet — upload one above.</div>';
         $$('.del',grid).forEach(b=> b.onclick=()=>delBlob(b.dataset.sha));
+        $$('.copy',grid).forEach(b=> b.onclick=()=>copyUrl(b.dataset.url));
       }
     }
     renderAiFiles(feed);   // always — AI chat files (encrypted, under the storage key) are separate
@@ -1548,21 +1557,28 @@
   // AI chat files (uploads + generated images) — stored encrypted under the storage key, so they're
   // separate from the Blossom list above; shown via the decrypting /api/files route.
   async function renderAiFiles(feed){
-    let files=[];
+    let files=[], err='';
     try{ const auth=await sign(27235,'ai-files',[['p',ME.pubkey]]);
       const r=await fetch('/client/ai-files',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
-      files=(r&&r.files)||[]; }catch(_){}
-    if(!files.length) return;
+      if(r && r.ok===false) err=r.error||'request failed';
+      files=(r&&r.files)||[]; }catch(e){ err=e.message||'sign/fetch failed'; }
+    // Always show the section so it's discoverable. Surface errors/empty rather than vanishing.
     const sec=document.createElement('div'); sec.className='ai-files-sec';
+    if(!files.length){
+      sec.innerHTML=`<h3 class="rb-section" style="margin:18px 16px 8px">🤖 AI chat files (encrypted)</h3>`
+        + `<div class="empty" style="margin:0 16px">${err?('Couldn\'t load: '+enc(err)):'No AI chat files yet — upload a file or generate an image in PosterChan AI.'}</div>`;
+      feed.appendChild(sec); return;
+    }
     sec.innerHTML=`<h3 class="rb-section" style="margin:18px 16px 8px">🤖 AI chat files (encrypted)</h3>
       <div class="files-grid">${files.map(f=>{
         const isImg=/^image\//.test(f.mime)||f.kind==='generated';
-        const thumb=isImg?`<img src="${enc(f.url)}" loading="lazy">`:`<div class="file-icon">📎<span>${enc((f.mime.split('/')[1]||'file').slice(0,8))}</span></div>`;
-        return `<div class="file-card" data-sha="${enc(f.sha)}"><a href="${enc(f.url)}" target="_blank">${thumb}</a><button class="del" data-sha="${enc(f.sha)}">✕</button><div class="meta"><span>${enc(f.name.slice(0,16))}</span></div></div>`;
+        const thumb=isImg?`<img src="${enc(thumbUrl(f.url))}" loading="lazy">`:`<div class="file-icon">📎<span>${enc((f.mime.split('/')[1]||'file').slice(0,8))}</span></div>`;
+        return `<div class="file-card" data-sha="${enc(f.sha)}"><a href="${enc(f.url)}" target="_blank">${thumb}</a><button class="copy" data-url="${enc(f.url)}" title="Copy URL">⧉</button><button class="del" data-sha="${enc(f.sha)}">✕</button><div class="meta"><span>${enc(f.name.slice(0,16))}</span></div></div>`;
       }).join('')}</div>`;
     feed.appendChild(sec);
     $$('.del',sec).forEach(b=> b.onclick=()=>delAiFile(b.dataset.sha));
+    $$('.copy',sec).forEach(b=> b.onclick=()=>copyUrl(b.dataset.url));
   }
   async function delAiFile(sha){
     if(!confirm('Delete this AI file?')) return;
@@ -2885,7 +2901,8 @@
   function modal(html, onMount){ const bg=document.createElement('div'); bg.className='modal-bg'; bg.innerHTML=`<div class="modal glass neon-border">${html}</div>`; bg.onclick=e=>{ if(e.target===bg) closeModal(); }; $('#modal-root').appendChild(bg); document.body.classList.add('modal-open'); if(onMount)onMount(bg.querySelector('.modal')); }
   function closeModal(){ $('#modal-root').innerHTML=''; document.body.classList.remove('modal-open'); }
   function toast(m){ const t=document.createElement('div'); t.className='toast'; t.textContent=m; $('#toast-root').appendChild(t); setTimeout(()=>t.remove(),3200); }
-  function openLightbox(src){ const bg=document.createElement('div'); bg.className='lightbox'; const i=document.createElement('img'); i.src=src; bg.appendChild(i); bg.onclick=()=>bg.remove(); document.body.appendChild(bg); }
+  function openLightbox(src){ try{ const x=new URL(src, location.href); x.searchParams.delete('thumb'); src=x.href; }catch(_){}  // always full-res, never the ?thumb=1 grid image
+    const bg=document.createElement('div'); bg.className='lightbox'; const i=document.createElement('img'); i.src=src; bg.appendChild(i); bg.onclick=()=>bg.remove(); document.body.appendChild(bg); }
 
   // ---------- right column: Hot / Trending (desktop) ----------
   async function loadRightbar(){
