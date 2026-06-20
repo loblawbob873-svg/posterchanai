@@ -147,10 +147,43 @@ def safe_query_settings(db: Session) -> dict:
             return {}
 
 
+def _run_migrations():
+    """Auto-add any model columns that are missing from an EXISTING table — run on every startup
+    after create_all(). create_all only ever creates missing *tables*; it never alters a table that
+    already exists, so when a model gains a column this is what adds it. Generic + idempotent
+    (no-op when the schema is already current); emits standard PostgreSQL ALTER ... ADD COLUMN."""
+    insp = inspect(engine)
+    for table in Base.metadata.sorted_tables:
+        if not insp.has_table(table.name):
+            continue   # brand-new table — create_all already built it with the full schema
+        existing = {c["name"] for c in insp.get_columns(table.name)}
+        for col in table.columns:
+            if col.name in existing:
+                continue
+            try:
+                coltype = col.type.compile(dialect=engine.dialect)
+            except Exception:
+                continue
+            ddl = f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {coltype}'
+            d = col.default
+            if d is not None and getattr(d, "is_scalar", False):   # carry a simple scalar default
+                v = d.arg
+                if isinstance(v, bool):            ddl += f" DEFAULT {'true' if v else 'false'}"
+                elif isinstance(v, (int, float)):  ddl += f" DEFAULT {v}"
+                elif isinstance(v, str):           ddl += " DEFAULT '" + v.replace("'", "''") + "'"
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text(ddl))
+                logger.info(f"[MIGRATE] added {table.name}.{col.name}")
+            except Exception as e:
+                logger.warning(f"[MIGRATE] could not add {table.name}.{col.name}: {e}")
+
+
 def init_db():
     from app.models import User, Conversation, Message, Setting, ProxyImageCache, SocialReplyMap, Bot, Reminder, SavedSearch, BlossomBlob  # noqa: F401 - registers tables for create_all
     logger.info("[INIT] Initializing database...")
     Base.metadata.create_all(bind=engine)
+    _run_migrations()   # add any columns missing from pre-existing tables (automatic schema upgrade)
 
     # Set up the ephemeral /tmp media-cache DB and one-time-migrate existing cache rows.
     try:
