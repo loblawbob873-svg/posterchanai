@@ -155,14 +155,19 @@ async def client_translate(request: Request, db: Session = Depends(get_db)):
         svc = get_inference_service(db)
         res = await svc.chat_completion(
             [{"role": "system", "content": f"You are a translation engine. Translate the user's "
-              f"message into {to}. The message OFTEN MIXES languages (e.g. English with Tagalog/"
-              f"Filipino, Cebuano, Spanish, Indonesian). Translate EVERY word or phrase that is not "
-              f"already {to}, even when most of the message is already {to} — never return the message "
-              f"unchanged if it contains ANY non-{to} text. Keep @mentions, #hashtags, URLs and emoji "
-              f"exactly as-is. Output ONLY the translated text — no preamble, notes, or quotes."},
-             # one-shot: an English-dominant message with embedded Tagalog must still be fully translated
+              f"message into {to}. The message OFTEN MIXES languages (English with Tagalog/Filipino, "
+              f"Cebuano, Spanish, Indonesian…) and is often colloquial, run-on, and unpunctuated. "
+              f"Translate the ENTIRE message into natural {to} — EVERY non-{to} word or phrase, "
+              f"including code-switched and slang text. Do NOT leave any Tagalog/Filipino (or other "
+              f"non-{to}) words in the output, and do not just re-punctuate the original. Keep "
+              f"@mentions, #hashtags, URLs and emoji exactly as-is. Output ONLY the translated text — "
+              f"no preamble, notes, or quotes."},
+             # one-shot: English-dominant with embedded Tagalog → fully translated
              {"role": "user", "content": "My babies! ang cute nila kahit pagod na pagod ako kakaalaga. Hook Needle"},
-             {"role": "assistant", "content": "My babies! they are so cute even though I'm exhausted from taking care of them. Hook Needle"},
+             {"role": "assistant", "content": "My babies! They're so cute even though I'm exhausted from taking care of them. Hook Needle"},
+             # two-shot: a long, run-on, code-switched colloquial Tagalog message → fully translated (no Tagalog left)
+             {"role": "user", "content": "Good evening guys ayon bago palang kami nag karoon ng kuryente magmula kasi kanina alas 6 ng umaga nawala tapus ngayon lang nag karoon kumusta ang lahat kumain na ba kayo"},
+             {"role": "assistant", "content": "Good evening guys, we only just got electricity back — it had been out since 6 this morning and only returned just now. How is everyone, have you eaten yet?"},
              {"role": "user", "content": text}],
             max_tokens=1200, temperature=0.2)
         out = (res.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
