@@ -561,7 +561,7 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .set-body .btn.small{font-size:15px;padding:9px 15px}
 .set-actions{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin:10px 0}
 .set-actions .input{flex:1;min-width:180px;margin:0}
-.settings #set-save{font-size:16.5px;padding:14px 16px}
+.settings #set-save,.settings #us-save{font-size:16.5px;padding:14px 24px;display:block;width:fit-content;max-width:100%;margin:18px auto 6px}
 .set-foot{text-align:center;margin-top:12px;font-size:14.5px}
 .relay-row{display:flex;align-items:center;gap:10px;margin:8px 0}
 .relay-row .input{margin:0;flex:1}
@@ -654,6 +654,7 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .reminder-card{max-width:520px;width:100%;text-align:center;background:var(--bg2);border:2px solid var(--neon);border-radius:16px;padding:34px 26px;animation:reminderPulse 1.4s ease-in-out infinite}
 .feed.feed-admin{padding:0;overflow:hidden}
 .admin-frame{width:100%;height:100%;border:none;display:block;background:var(--bg)}
+#admin-host{flex:1;min-height:0;overflow:hidden;display:none}   /* persistent admin iframe host (sibling of #feed) */
 
 .uploader{font-size:15px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 16px}
 .uploader .muted.small{font-size:14px}

@@ -512,9 +512,12 @@
     feed.classList.toggle('feed-dm', VIEW==='messages');   // full-height messages layout (no :has needed)
     feed.classList.toggle('feed-ai', VIEW==='ai');         // full-height chat layout (msgs scroll inside)
     feed.classList.toggle('feed-admin', VIEW==='admin');   // full-height admin iframe
-    // Skip the blanket spinner for views that paint instantly (settings renders synchronously;
-    // admin shows its own spinner/iframe) — otherwise every open flashes spinner→content.
-    if (reset && VIEW!=='settings' && VIEW!=='admin') feed.innerHTML = '<div class="spinner"></div>';
+    // Admin uses a PERSISTENT iframe (loaded once, kept alive) so revisiting it doesn't reload
+    // /admin every time — that reload was the flicker / "not loading". Hide it + restore #feed for
+    // every other view; renderAdmin shows it for admin.
+    const _ah=document.getElementById('admin-host');
+    if(VIEW!=='admin'){ if(_ah) _ah.style.display='none'; feed.style.display=''; }
+    if (reset && VIEW!=='admin') feed.innerHTML = '<div class="spinner"></div>';
     if (VIEW==='home' || VIEW==='global') return renderTimeline(VIEW, reset);
     if (VIEW==='notifications') return renderNotifications();
     if (VIEW==='messages') return renderMessages();
@@ -2087,7 +2090,20 @@
   }
   // In-app Admin: the standalone admin panel embedded in the client (same-origin, the Nostr-login
   // cookie authorizes it). Admins only.
-  function _adminFrame(feed){ feed.innerHTML='<iframe class="admin-frame" src="/admin" title="Admin"></iframe>'; }
+  // Persistent admin iframe: create once, then just show/hide it (it lives as a sibling of #feed in
+  // .main). Revisiting Admin no longer recreates+reloads /admin — which is what flickered, reloaded,
+  // and sometimes failed to finish loading (and left admin-theme.css un-applied → wide buttons).
+  function _adminFrame(feed){
+    let host=document.getElementById('admin-host');
+    if(!host){
+      host=document.createElement('div'); host.id='admin-host';
+      const ifr=document.createElement('iframe'); ifr.className='admin-frame'; ifr.src='/admin'; ifr.title='Admin';
+      host.appendChild(ifr);
+      (feed.parentNode||document.body).appendChild(host);
+    }
+    feed.style.display='none';   // hide the feed; the persistent iframe fills the main area
+    host.style.display='block';
+  }
   function renderAdmin(){
     const feed=$('#feed');
     if(!IS_ADMIN){ feed.innerHTML='<div class="empty">Admins only.</div>'; return; }
@@ -2555,7 +2571,7 @@
           <div id="us-key-list"></div>
         </div>
       </div>
-      <button class="btn btn-neon full" id="us-save">Save settings</button>
+      <button class="btn btn-neon" id="us-save">Save settings</button>
       <div class="muted small set-foot" id="us-save-status"></div>
     </section>`;
     // tab switching
