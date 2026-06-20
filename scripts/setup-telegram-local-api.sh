@@ -14,7 +14,9 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DB_PATH="${POSTERCHANAI_DB:-$REPO_DIR/posterchanai.db}"
+# The app + relay share ONE PostgreSQL database (no SQLite). libpq conninfo; matches the
+# database.py default and NOSTR_RELAY_PG_DSN. Override via PG_DSN=… if your DB differs.
+PG_DSN="${PG_DSN:-${NOSTR_RELAY_PG_DSN:-host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan}}"
 
 err()  { echo "ERROR: $*" >&2; exit 1; }
 info() { echo -e "\033[1;34m==>\033[0m $*"; }
@@ -23,15 +25,18 @@ info() { echo -e "\033[1;34m==>\033[0m $*"; }
 SUDO=""
 [ "$(id -u)" = "0" ] || SUDO="sudo"
 
-command -v sqlite3 >/dev/null 2>&1 || err "sqlite3 is required."
+command -v psql >/dev/null 2>&1 || err "psql is required (PostgreSQL client)."
 
+# Escape single quotes for SQL string literals.
+_sqlq() { printf "%s" "$1" | sed "s/'/''/g"; }
 _db_get() {
-    [ -f "$DB_PATH" ] || return 0
-    sqlite3 "$DB_PATH" "SELECT value FROM settings WHERE key='$1';" 2>/dev/null
+    psql "$PG_DSN" -tAc "SELECT value FROM settings WHERE key='$(_sqlq "$1")';" 2>/dev/null
 }
+# NOTE: with settings_backend=relay the Setting table is hydrated from the relay on startup, so a
+# direct write here can be reverted on the next restart — set telegram_api_base in Admin -> Services
+# to persist it. The credential *reads* above are always correct.
 _db_set() {
-    [ -f "$DB_PATH" ] || return 0
-    sqlite3 "$DB_PATH" "INSERT OR REPLACE INTO settings (key, value) VALUES ('$1', '$2');" 2>/dev/null
+    psql "$PG_DSN" -c "INSERT INTO settings (key, value) VALUES ('$(_sqlq "$1")', '$(_sqlq "$2")') ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value;" >/dev/null 2>&1 || true
 }
 
 # Credentials: env overrides, else the database.

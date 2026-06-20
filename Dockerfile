@@ -181,8 +181,8 @@ RUN pip install -r /tmp/requirements.txt -r /tmp/requirements-bot.txt \
 # --- app source ---------------------------------------------------------------
 COPY . /app
 
-# Runtime data lives on a volume: uploads, downloaded models, sqlite db,
-# HF caches. The entrypoint symlinks the db onto the volume so it persists too.
+# Runtime data lives on a volume: uploads, downloaded models, HF caches, and /app/data
+# (the keyfile). Durable app/relay state is in PostgreSQL (the compose `postgres` service).
 RUN mkdir -p /var/lib/posterchanai/models /var/lib/posterchanai/torrents \
              /var/lib/posterchanai/tor /var/lib/posterchanai/hf /app/data
 VOLUME ["/var/lib/posterchanai", "/app/data"]

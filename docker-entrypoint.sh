@@ -1,21 +1,14 @@
 #!/usr/bin/env bash
 # PosterChanAI container entrypoint.
 #   - prepares the runtime data dirs (mounted volume)
-#   - keeps the sqlite DB on the data volume so it survives container recreation
 #   - optionally sources Intel oneAPI (only needed for the SYCL llama.cpp LLM path)
 #   - then execs the CMD (python run.py)
+# The app + relay use PostgreSQL (the `postgres` service in docker-compose), not SQLite —
+# durable state lives in PG; the data volume holds uploads/models/HF caches + /app/data (keyfile).
 set -e
 
 DATA_HOME="${POSTERCHANAI_DATA:-/var/lib/posterchanai}"
 mkdir -p "$DATA_HOME"/{models,torrents,tor,hf,miopen,assets} /app/data
-
-# Persist the sqlite DB on the data volume: the app opens ./posterchanai.db in
-# /app, so point that path at the volume (symlink target is created by sqlite on
-# first run). Move an existing in-image DB onto the volume once.
-if [ ! -L /app/posterchanai.db ]; then
-    [ -f /app/posterchanai.db ] && mv -n /app/posterchanai.db "$DATA_HOME/posterchanai.db"
-    ln -sf "$DATA_HOME/posterchanai.db" /app/posterchanai.db
-fi
 
 # AMD only: consumer RDNA cards aren't in ROCm's official support list, so torch /
 # HIP need HSA_OVERRIDE_GFX_VERSION pointed at the nearest supported arch. Auto-set
