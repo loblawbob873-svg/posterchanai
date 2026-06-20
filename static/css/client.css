@@ -425,9 +425,12 @@ a.btn.full{display:block}
   /* mobile: top-align the modal so the on-screen keyboard doesn't shove it off-center */
   .modal-bg{place-items:start center;padding:6vh 12px}
   .auth-card{padding:22px}
-  /* compose: on the narrow modal let both tool groups flow + wrap visibly instead of being
-     pushed off and clipped; the action group (Draft/Post) still hugs the right via margin-left:auto */
+  /* compose: on the narrow modal lay the tool buttons out 2-per-row (tap-friendly, no ragged
+     gaps) and drop the action group (Draft/Post) onto its own full-width row, right-aligned. */
   .cmp-tools{justify-content:flex-start}
+  .cmp-left{flex:1 1 100%}
+  .cmp-left .btn{flex:1 1 calc(50% - 4px)}
+  .cmp-right{width:100%;justify-content:flex-end}
 }
 
 /* ===== More sheet (mobile overflow) — glassy neon tiles ===== */

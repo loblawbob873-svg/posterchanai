@@ -1970,7 +1970,7 @@
       <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
       <div class="muted small mention-hint hidden" id="cmp-mentions"></div>
       <div id="cmp-preview" class="note-preview hidden"></div>
-      <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-img">📎 Attach</button><button class="btn btn-ghost small" id="cmp-blossom">🌸 Files</button><button class="btn btn-ghost small" id="cmp-emoji">😀 Emoji</button>${CFG.gif_enabled?`<button class="btn btn-ghost small" id="cmp-gif">🎬 GIF</button>`:''}<button class="btn btn-ghost small" id="cmp-translate">🌐 Translate</button><input type="file" id="cmp-file" multiple hidden></div>
+      <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach">📎 Attach</button><button class="btn btn-ghost small" id="cmp-react">😀 React</button><button class="btn btn-ghost small" id="cmp-translate">🌐 Translate</button><button class="btn btn-ghost small" id="cmp-ai" disabled title="Paste a link to summarize it into a post">🤖 AI</button><input type="file" id="cmp-file" multiple hidden></div>
       <div class="cmp-right"><button class="btn btn-ghost small" id="cmp-draft">💾 Draft</button><button class="btn btn-neon small" id="cmp-send">Post ▶</button></div></div>
       <div class="muted small" id="cmp-status"></div>`, root=>{
       const ta=$('#cmp',root); attachMentionAutocomplete(ta); if(text) ta.value=text;
@@ -1991,11 +1991,35 @@
           catch(err){ $('#cmp-status',root).textContent='upload failed: '+err.message; return; } }
         $('#cmp-status',root).textContent='';
       });
-      $('#cmp-img',root).onclick=()=>$('#cmp-file',root).click();
-      $('#cmp-blossom',root).onclick=()=>blossomPicker(ta);
-      $('#cmp-emoji',root).onclick=(e)=>{ e.stopPropagation(); openEmojiPopover($('#cmp-emoji',root), (emoji)=>{ _insertAt(ta, emoji); }); };
-      { const gb=$('#cmp-gif',root); if(gb) gb.onclick=()=>gifPicker(ta); }
+      // 📎 Attach → pick Local (this device) or Blossom (your uploaded files)
+      $('#cmp-attach',root).onclick=()=>openMenuPopover($('#cmp-attach',root), [['local','💻 Local'],['blossom','🌸 Blossom']], a=>{
+        if(a==='local') $('#cmp-file',root).click(); else if(a==='blossom') blossomPicker(ta); });
+      // 😀 React → insert an Emoji or a GIF
+      $('#cmp-react',root).onclick=(e)=>{ e.stopPropagation();
+        const items=[['emoji','😀 Emoji']]; if(CFG.gif_enabled) items.push(['gif','🎬 GIF']);
+        openMenuPopover($('#cmp-react',root), items, a=>{
+          if(a==='emoji') openEmojiPopover($('#cmp-react',root), (emoji)=>{ _insertAt(ta, emoji); });
+          else if(a==='gif') gifPicker(ta); }); };
       { const tb=$('#cmp-translate',root); if(tb) tb.onclick=()=>composeTranslate(ta, tb); }
+      // 🤖 AI → summarize a pasted link into a detailed post (web pages + YouTube videos). Stays
+      // disabled until the draft contains a URL.
+      { const aiBtn=$('#cmp-ai',root);
+        const firstUrl=()=>{ const m=(ta.value||'').match(/https?:\/\/[^\s]+/i); return m?m[0]:null; };
+        const syncAi=()=>{ if(aiBtn) aiBtn.disabled=!firstUrl(); };
+        ta.addEventListener('input', syncAi); syncAi();
+        if(aiBtn) aiBtn.onclick=async()=>{
+          const url=firstUrl(); if(!url){ toast('paste a link first'); return; }
+          const label=aiBtn.textContent; aiBtn.disabled=true; aiBtn.textContent='🤖 …';
+          $('#cmp-status',root).textContent='summarizing link…';
+          try{
+            const r=await fetch('/client/compose-from-url',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({url})}).then(r=>r.json());
+            if(r&&r.text){ ta.value=r.text; $('#cmp-status',root).textContent=''; ta.dispatchEvent(new Event('input')); }
+            else $('#cmp-status',root).textContent='couldn\'t summarize: '+((r&&r.error)||'no content');
+          }catch(_){ $('#cmp-status',root).textContent='summarize failed'; }
+          aiBtn.textContent=label; syncAi();
+        };
+      }
       $('#cmp-file',root).onchange=async e=>{ const files=[...e.target.files]; if(!files.length)return;
         for(let i=0;i<files.length;i++){ $('#cmp-status',root).textContent=`uploading ${i+1}/${files.length}…`;
           try{ const url=await uploadBlob(files[i]); ta.value+=(ta.value?'\n':'')+url; }

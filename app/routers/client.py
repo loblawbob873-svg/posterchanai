@@ -223,6 +223,54 @@ async def client_summarize(request: Request, db: Session = Depends(get_db)):
         return JSONResponse({"error": "summary unavailable"}, status_code=503)
 
 
+@router.post("/compose-from-url")
+async def compose_from_url(request: Request, db: Session = Depends(get_db)):
+    """Draft a social-media post from a pasted link via the node's own LLM — powers the composer's
+    🤖 AI button. Fetches the page text (or, for a YouTube link, the video's transcript) and writes
+    one engaging summary post, with the original link appended at the end. Same-origin helper; 503
+    where there's no LLM (e.g. a Nostr-only node), shown as 'summary unavailable'."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    url = (body.get("url") or "").strip()
+    if not url or not re.match(r"^https?://", url, re.I):
+        return JSONResponse({"error": "no link"}, status_code=400)
+    # fetch_url_content centralises page extraction + YouTube transcript handling, so a video link
+    # is summarized from its captions (not the contentless watch page).
+    try:
+        from app.services.search_service import SearchService
+        fetched = await SearchService(db).fetch_url_content(url)
+    except Exception as e:
+        logger.warning(f"[client] compose-from-url fetch failed: {e}")
+        return JSONResponse({"error": "could not read that link"}, status_code=502)
+    if not fetched or fetched.get("error") or not (fetched.get("content") or "").strip():
+        err = (fetched or {}).get("error") or "no readable content (a video may lack captions)"
+        return JSONResponse({"error": err}, status_code=422)
+    title = (fetched.get("title") or "").strip()
+    src = (("Title: " + title + "\n\n") if title else "") + (fetched.get("content") or "").strip()[:6000]
+    try:
+        from app.services.inference_factory import get_inference_service
+        svc = get_inference_service(db)
+        res = await svc.chat_completion(
+            [{"role": "system", "content": (
+                "You write engaging social-media posts. The user gives you the text (or video "
+                "transcript) of a web page. Write ONE detailed, natural-sounding post that summarizes "
+                "it for a general audience: open with a hook, cover the key points and specifics in a "
+                "few short paragraphs, and keep an authentic voice (informative, not clickbait). Do "
+                "NOT invent facts, do NOT include the link or any URL (it is added separately), and "
+                "do NOT add a preamble like 'Here is a post'. Output ONLY the post text.")},
+             {"role": "user", "content": src}],
+            max_tokens=700, temperature=0.5)
+        out = (res.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+        if not out:
+            return JSONResponse({"error": "summary unavailable"}, status_code=503)
+        return JSONResponse({"text": out.rstrip() + "\n\n" + url})
+    except Exception as e:
+        logger.warning(f"[client] compose-from-url failed: {e}")
+        return JSONResponse({"error": "summary unavailable"}, status_code=503)
+
+
 @router.get("/effects")
 async def client_effects():
     """The image/video effects available to the Nostr client's Effects studio (names + descriptions,
