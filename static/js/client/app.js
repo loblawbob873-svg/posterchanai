@@ -1162,10 +1162,12 @@
       <button class="btn btn-ghost small" id="comm-back">← Communities</button>
       <h1 class="av-title">${enc(name)}</h1>
       ${desc?`<div class="about">${linkify(desc)}</div>`:''}
+      <div class="row"><button class="btn btn-neon small" id="comm-post">✎ Post to this community</button></div>
       <div class="search-section-title">Recent posts</div>
       <div id="comm-posts"><div class="spinner"></div></div>
     </div>`;
     $('#comm-back').onclick=()=>switchView('communities');
+    { const cp=$('#comm-post'); if(cp) cp.onclick=()=>compose({community:e}); }
     feed.querySelectorAll('[data-prof]').forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
     // Posts reference the community via an `a` tag (34550:pubkey:d). Modern NIP-72 clients post as
     // NIP-22 comments (kind 1111); older ones use kind 1 — query both. Note actions work via the
@@ -1688,8 +1690,15 @@
     try{ await publish(1, d.text, tags); Drafts.remove(id); toast('posted'); if(VIEW==='drafts') renderDrafts(); }
     catch(e){ toast('post failed: '+e.message); }
   }
-  function compose({reply=null, replyPk=null, quote=null, draftId=null, text=''}={}){
-    const title = reply?'Reply':quote?'Quote post':'New post';
+  // Tags for a top-level community post (NIP-72 + NIP-22 comment, kind 1111). Uppercase A/K/P =
+  // root scope (the community); lowercase a/k/p = parent (== root for a top-level post). Including
+  // the lowercase `a` also makes it match our own `#a` community-posts query.
+  function communityPostTags(c){
+    const d=(c.tags.find(t=>t[0]==='d')||[])[1]||''; const addr='34550:'+c.pubkey+':'+d; const r=CFG.relay_url||'';
+    return [['A',addr,r],['K','34550'],['P',c.pubkey,r],['a',addr,r],['k','34550'],['p',c.pubkey,r]];
+  }
+  function compose({reply=null, replyPk=null, quote=null, draftId=null, text='', community=null}={}){
+    const title = community?('Post to '+((community.tags.find(t=>t[0]==='name')||[])[1]||(community.tags.find(t=>t[0]==='d')||[])[1]||'community')):reply?'Reply':quote?'Quote post':'New post';
     let qhtml=''; if(quote){ const o=Store.get(quote); if(o) qhtml=`<div class="quoted"><b>${enc((profOf(o.pubkey).name)||'anon')}</b><div class="txt">${linkify(o.content)}</div></div>`; }
     modal(`<h3>${title}</h3>${qhtml}
       <div class="cmp-tabs"><button class="cmp-tab active" data-t="write">Write</button><button class="cmp-tab" data-t="preview">👁 Preview</button></div>
@@ -1733,6 +1742,13 @@
       };
       $('#cmp-send',root).onclick=async()=>{
         const text=ta.value.trim(); if(!text)return;
+        // Community post → NIP-22 comment (kind 1111) scoped to the community.
+        if(community){
+          let tags=communityPostTags(community);
+          mentionTags(text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
+          closeModal(); try{ await publish(1111, text, tags); toast('posted to community'); if(VIEW==='community') openCommunity(community); }
+          catch(e){ toast('post failed: '+((e&&e.message)||e)); } return;
+        }
         let tags=[];
         if(reply){ const o=Store.get(reply); tags=replyTags(o, reply, replyPk); }
         if(quote){ tags.push(['q',quote]); const o=Store.get(quote); if(o)tags.push(['p',o.pubkey]); }
