@@ -338,6 +338,7 @@ async def startup():
                     try:
                         from app.services import users_store
                         await users_store.hydrate(_db)
+                        await users_store.hydrate_user_kv(_db)   # mail/nitter/caldav kv from relay
                     except Exception as e:
                         logging.warning(f"Users hydrate from relay failed: {e}")
                     try:

@@ -2432,17 +2432,6 @@
               : `<button class="btn btn-ghost small" id="us-mk-conn">Connect with MiAuth</button>`}
             <div class="us-stat muted small" id="us-mk-stat"></div>
           </div>
-          <div class="us-conn"><div class="set-title small">Nostr (posting key)</div>
-            ${s.nostr_has_key
-              ? `<div class="muted small">✓ Connected as ${enc((s.nostr_npub||'').slice(0,20))}…</div><button class="btn btn-ghost small" id="us-nostr-disc" style="color:#ff6b8b">Disconnect</button>`
-              : `<label class="fld">Secret key<input class="input" id="us-nostr-key" type="password" placeholder="nsec1… or hex"></label>`}
-            <label class="fld">Relays <span class="muted small">(one per line; blank = defaults)</span><textarea class="input" id="us-nostr-relays" rows="3">${enc(s.nostr_relays||'')}</textarea></label>
-            <label class="fld">Media host<select class="input" id="us-nostr-media"><option value="blossom"${s.nostr_media_service==='blossom'?' selected':''}>Blossom</option><option value="nip96"${s.nostr_media_service==='nip96'?' selected':''}>NIP-96</option></select></label>
-            <label class="fld">Media host URL<input class="input" id="us-nostr-endpoint" value="${enc(s.nostr_media_endpoint||'')}" placeholder="https://blossom.primal.net"></label>
-            ${s.nostr_has_key?'':'<button class="btn btn-ghost small" id="us-nostr-conn">Connect</button>'}
-            <button class="btn btn-ghost small" id="us-nostr-backfill">⭳ Sync my posts to the relay</button>
-            <div class="us-stat muted small" id="us-nostr-stat"></div>
-          </div>
         </div>
         <div class="us-pane" data-pane="finance">
           <div class="muted small">Budget Manager API key — drives <code>budget</code>, <code>bills</code>, <code>pay</code>, <code>addbill</code>.</div>
@@ -2464,6 +2453,7 @@
       if(b.dataset.tab==='keys') usLoadKeys();
     });
     usRenderMail();
+    usLoadKeys();   // populate API Keys immediately (not only on tab click)
     $('#us-mail-add').onclick=()=>{ _usMail.push({email:'',imap_server:'',imap_port:993,smtp_server:'',smtp_port:587,password:''}); usRenderMail(); };
     // Telegram link key
     { const k=$('#us-tg-key'); if(k) k.onclick=async()=>{ const box=$('#us-tg-keybox'); box.textContent='generating…';
@@ -2488,13 +2478,6 @@
         if(!r.ok){ st.textContent=d.detail||'failed'; return; } window.open(d.auth_url,'_blank'); st.textContent='waiting for authorization…';
         const h=e=>{ if(e.data==='misskey_connected'){ window.removeEventListener('message',h); renderUserSettings(); } }; window.addEventListener('message',h); }; }
     { const d=$('#us-mk-disc'); if(d) d.onclick=async()=>{ if(!confirm('Disconnect Misskey?'))return; await fetch('/api/misskey/disconnect',{method:'DELETE'}); renderUserSettings(); }; }
-    // Nostr posting key
-    { const c=$('#us-nostr-conn'); if(c) c.onclick=async()=>{ const st=$('#us-nostr-stat'); const key=($('#us-nostr-key')||{}).value||''; if(!key.trim()){st.textContent='paste your nsec/hex';return;} st.textContent='connecting…';
-        const r=await fetch('/api/nostr/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({secret_key:key.trim(),relays:$('#us-nostr-relays').value.trim(),media_service:$('#us-nostr-media').value,media_endpoint:$('#us-nostr-endpoint').value.trim()})});
-        const d=await r.json().catch(()=>({})); if(r.ok){ toast('Nostr connected'); renderUserSettings(); } else st.textContent=d.detail||'failed'; }; }
-    { const d=$('#us-nostr-disc'); if(d) d.onclick=async()=>{ if(!confirm('Disconnect Nostr posting key?'))return; await fetch('/api/nostr/disconnect',{method:'POST'}); renderUserSettings(); }; }
-    { const b=$('#us-nostr-backfill'); if(b) b.onclick=async()=>{ const st=$('#us-nostr-stat'); st.textContent='pulling your history…'; b.disabled=true;
-        try{ const d=await fetch('/api/nostr/backfill-relay',{method:'POST'}).then(r=>r.json()); st.textContent=d.message||d.detail||'syncing…'; }catch(_){ st.textContent='failed'; } finally{ b.disabled=false; } }; }
     // API keys
     $('#us-key-new').onclick=async()=>{ const name=$('#us-key-name').value.trim();
       const d=await fetch('/api/auth/api-keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}).then(r=>r.json()).catch(()=>({}));
@@ -2507,8 +2490,7 @@
         matrix_notif_enabled:$('#us-mx-notif').checked, matrix_homeserver:$('#us-mx-hs').value.trim(),
         matrix_dm_bot_user_id:$('#us-mx-bot').value.trim(), pleroma_instance_url:$('#us-plr-url').value.trim(),
         misskey_instance_url:$('#us-mk-url').value.trim(), nitter_feeds:$('#us-nitter').value,
-        nostr_relays:$('#us-nostr-relays').value.trim(), nostr_media_service:$('#us-nostr-media').value,
-        nostr_media_endpoint:$('#us-nostr-endpoint').value.trim(), mail_accounts:usCollectMail() };
+        mail_accounts:usCollectMail() };
       const fin=$('#us-fin').value.trim(); if(fin) body.finance_api_key=fin;
       const st=$('#us-save-status'); if(st) st.textContent='saving…';
       try{ const r=await fetch('/api/auth/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});

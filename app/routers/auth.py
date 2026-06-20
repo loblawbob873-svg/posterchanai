@@ -701,7 +701,10 @@ def update_user_settings(
             from app.services import users_store
             if users_store.enabled(db):
                 import asyncio as _aio
-                _aio.run(users_store.sync_user(db, current_user))
+                async def _mirror():
+                    await users_store.sync_user(db, current_user)        # account cols → event
+                    await users_store.sync_user_kv(db, current_user)     # mail/nitter/caldav kv → event
+                _aio.run(_mirror())
         except Exception as e:
             logger.warning(f"[Auth] account sync to relay after settings save failed: {e}")
     except IntegrityError as e:

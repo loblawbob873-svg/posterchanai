@@ -150,8 +150,66 @@ async def hydrate(db) -> int:
 async def migrate(db) -> dict:
     """Push every existing npub-keyed account into the relay (idempotent). Returns a small report."""
     users = db.query(User).filter(User.nostr_npub.isnot(None)).all()
-    wrote = 0
+    wrote = kv = 0
     for u in users:
         if await sync_user(db, u, force=True):
             wrote += 1
-    return {"accounts": len(users), "written": wrote}
+        if await sync_user_kv(db, u, force=True):
+            kv += 1
+    return {"accounts": len(users), "written": wrote, "kv_written": kv}
+
+
+# ---- UserSetting key/value (mail accounts, nitter feeds, caldav/webdav/music configs, etc.) ----
+# Mirrored to a per-user encrypted doc so these are Nostr events too, not just a SQLite/PG cache. The
+# server runs these features (mail/nitter/caldav), so it must read them → operator-key encrypted at
+# rest (same model as the account doc + chats). EXEMPT: storage_nsec (it bootstraps the encryption —
+# lives in the keyfile), per-node sync cursors (*_since/_seen), and transient scratch.
+def _kv_exempt(key: str) -> bool:
+    return (key in ("storage_nsec", "ai_requested")
+            or key.endswith(("_since", "_seen")) or key.startswith("matrix_pending"))
+
+
+async def sync_user_kv(db, user, *, force: bool = False) -> bool:
+    """Write a user's (non-exempt) UserSetting kv to one encrypted doc. No-op when disabled."""
+    if user is None or not getattr(user, "nostr_npub", None) or (not force and not enabled(db)):
+        return False
+    op_sk = _ss._operator_seckey(db)
+    if not op_sk:
+        return False
+    from app.models import UserSetting
+    kv = {r.key: r.value for r in db.query(UserSetting).filter(UserSetting.user_id == user.id).all()
+          if not _kv_exempt(r.key)}
+    try:
+        return await store.put_doc(_ss._port(db), op_sk, store.NS_USERCFG + user.nostr_npub, kv)
+    except Exception as e:
+        logger.warning("[users-store] sync_user_kv failed for %s: %s", user.nostr_npub[:16], e)
+        return False
+
+
+async def hydrate_user_kv(db) -> int:
+    """relay → UserSetting cache. Restore each user's non-exempt kv from their usercfg doc (fills only
+    MISSING keys — never clobbers a live local value like a freshly-linked token). Returns rows made."""
+    if not enabled(db):
+        return 0
+    op_sk = _ss._operator_seckey(db)
+    if not op_sk:
+        return 0
+    from app.models import UserSetting
+    made = 0
+    for user in db.query(User).filter(User.nostr_npub.isnot(None)).all():
+        try:
+            doc = await store.get_doc(_ss._port(db), store.NS_USERCFG + user.nostr_npub, seckey=op_sk)
+        except Exception:
+            doc = None
+        if not isinstance(doc, dict):
+            continue
+        for k, v in doc.items():
+            if _kv_exempt(k):
+                continue
+            if db.query(UserSetting).filter(UserSetting.user_id == user.id, UserSetting.key == k).first() is None:
+                db.add(UserSetting(user_id=user.id, key=k, value=v))
+                made += 1
+    if made:
+        db.commit()
+    logger.info("[users-store] hydrated %d user-setting kv row(s) from relay", made)
+    return made
