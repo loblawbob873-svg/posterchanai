@@ -44,10 +44,13 @@ class WotGate:
         self._bridged = set(bridged_hex or [])
 
     def add_bridged(self, pubkeys) -> None:
-        self._bridged |= {p for p in (pubkeys or []) if p}
+        # Never bridge-block a WoT member (the trust set: follows + operators). They may legitimately
+        # cross-post from the fediverse, so a synced post can carry a proxy/relay hint to a blocked
+        # bridge — that must not get the whole trusted account marked as a bridge and purged.
+        self._bridged |= {p for p in (pubkeys or []) if p and p not in self._members and p not in self._operator}
 
     def mark_bridged(self, pubkey: str) -> None:
-        if pubkey:
+        if pubkey and pubkey not in self._members and pubkey not in self._operator:
             self._bridged.add(pubkey)
 
     def is_blocked(self, pubkey: str) -> bool:

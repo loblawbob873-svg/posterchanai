@@ -373,7 +373,8 @@ class RelayStore:
         for w in words:
             like = "%" + w.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
             ids = [r["id"] for r in conn.execute(
-                f"SELECT id FROM events WHERE kind=1 AND {preserve} AND LOWER(content) LIKE ? ESCAPE '\\'",
+                f"SELECT id FROM events WHERE kind=1 AND {preserve} "
+                "AND pubkey NOT IN (SELECT pubkey FROM wot) AND LOWER(content) LIKE ? ESCAPE '\\'",
                 (like,)).fetchall()]
             for i in range(0, len(ids), 900):
                 chunk = ids[i:i + 900]
@@ -399,7 +400,8 @@ class RelayStore:
         conn = self._conn()
         # Exclude direct-published + preserved pubkeys (local users' own notes) — same guard as prune.
         ids = [r["id"] for r in conn.execute(
-                   f"SELECT id, content FROM events WHERE kind=1 AND {self._preserve_clause()}")
+                   f"SELECT id, content FROM events WHERE kind=1 AND {self._preserve_clause()} "
+                   "AND pubkey NOT IN (SELECT pubkey FROM wot)")
                if detect_languages(r["content"]) & blocked]
         removed = 0
         for i in range(0, len(ids), 900):

@@ -951,11 +951,11 @@ async def _mark_blocked_relays(store, gate, domains) -> list:
     except Exception as e:
         logger.warning("[nostr-relay] bridge scan failed: %s", e)
         return []
-    # Never treat a REGISTERED user as a bridge to block: they may legitimately cross-post from the
-    # fediverse (so a synced post carries a proxy/relay hint to a blocked bridge). Excluding them
-    # keeps them postable and (with delete_pubkeys preserve-aware) un-purged.
-    preserve = getattr(store, "preserve_pubkeys", frozenset()) or frozenset()
-    pks = [p for p in (pks or []) if p not in preserve]
+    # Never treat a WoT member as a bridge to block — anyone in the trust set (follows + operators)
+    # is trusted and may legitimately cross-post from the fediverse. Filter against the full WoT so
+    # a trusted account is never bridged/purged just because a synced post hints at a blocked bridge.
+    wot = gate.members()   # _members | _operator
+    pks = [p for p in (pks or []) if p not in wot]
     if pks:
         gate.add_bridged(list(pks))
     return list(pks)
