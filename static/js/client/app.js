@@ -1061,7 +1061,10 @@
       const na=e.target.closest('.naddrlink'); if(na){ e.preventDefault(); openNaddr(na.dataset.pk, na.dataset.d, na.dataset.k); return; }
       // Files grid: thumbnails load ?thumb=1, so open the parent link's FULL url in the lightbox
       // (images) — videos/docs fall through to their <a> (new tab / download).
-      const fa=e.target.closest('.file-card a'); if(fa){ if(fa.querySelector('img')){ e.preventDefault(); openLightbox(fa.getAttribute('href')); } return; }
+      const fa=e.target.closest('.file-card a'); if(fa){ const fm=fa.dataset.mime||'';
+        if(/^video\//.test(fm)){ e.preventDefault(); openLightbox(fa.getAttribute('href'), true); }
+        else if(/^image\//.test(fm) || fa.querySelector('img')){ e.preventDefault(); openLightbox(fa.getAttribute('href')); }
+        return; }   // audio/docs: fall through to the link (download / new tab)
       const im=e.target.closest('.txt img, .note-preview img, .media-row img, .media-grid img'); if(im){ e.preventDefault(); openLightbox(im.currentSrc||im.src); return; }
       const av=e.target.closest('.av'); if(av){ const n=e.target.closest('.note'); if(n){ renderProfileView(n.dataset.pk); return; } }
       const prof=e.target.closest('[data-prof]'); if(prof){ renderProfileView(prof.dataset.prof); return; }
@@ -1546,7 +1549,7 @@
       if(list!==null){
         const grid=$('#bl-grid');
         grid.innerHTML = list.length ? list.map(b=>
-          `<div class="file-card" data-sha="${b.sha256}"><a href="${enc(b.url)}" target="_blank" download>${blobThumb(b)}</a><button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button><button class="del" data-sha="${b.sha256}">✕</button><div class="meta"><span>${((b.size||0)/1024|0)}KB</span><span>${(b.type||'').split('/')[1]||''}</span></div></div>`
+          `<div class="file-card" data-sha="${b.sha256}"><a href="${enc(b.url)}" data-mime="${enc(b.type||'')}" target="_blank">${blobThumb(b)}</a><button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button><button class="del" data-sha="${b.sha256}">✕</button><div class="meta"><span>${((b.size||0)/1024|0)}KB</span><span>${(b.type||'').split('/')[1]||''}</span></div></div>`
         ).join('') : '<div class="empty">No files yet — upload one above.</div>';
         $$('.del',grid).forEach(b=> b.onclick=()=>delBlob(b.dataset.sha));
         $$('.copy',grid).forEach(b=> b.onclick=()=>copyUrl(b.dataset.url));
@@ -1574,7 +1577,7 @@
       <div class="files-grid">${files.map(f=>{
         const isImg=/^image\//.test(f.mime)||f.kind==='generated';
         const thumb=isImg?`<img src="${enc(thumbUrl(f.url))}" loading="lazy">`:`<div class="file-icon">📎<span>${enc((f.mime.split('/')[1]||'file').slice(0,8))}</span></div>`;
-        return `<div class="file-card" data-sha="${enc(f.sha)}"><a href="${enc(f.url)}" target="_blank">${thumb}</a><button class="copy" data-url="${enc(f.url)}" title="Copy URL">⧉</button><button class="del" data-sha="${enc(f.sha)}">✕</button><div class="meta"><span>${enc(f.name.slice(0,16))}</span></div></div>`;
+        return `<div class="file-card" data-sha="${enc(f.sha)}"><a href="${enc(f.url)}" data-mime="${enc(f.mime||'')}" target="_blank">${thumb}</a><button class="copy" data-url="${enc(f.url)}" title="Copy URL">⧉</button><button class="del" data-sha="${enc(f.sha)}">✕</button><div class="meta"><span>${enc(f.name.slice(0,16))}</span></div></div>`;
       }).join('')}</div>`;
     feed.appendChild(sec);
     $$('.del',sec).forEach(b=> b.onclick=()=>delAiFile(b.dataset.sha));
@@ -2901,8 +2904,14 @@
   function modal(html, onMount){ const bg=document.createElement('div'); bg.className='modal-bg'; bg.innerHTML=`<div class="modal glass neon-border">${html}</div>`; bg.onclick=e=>{ if(e.target===bg) closeModal(); }; $('#modal-root').appendChild(bg); document.body.classList.add('modal-open'); if(onMount)onMount(bg.querySelector('.modal')); }
   function closeModal(){ $('#modal-root').innerHTML=''; document.body.classList.remove('modal-open'); }
   function toast(m){ const t=document.createElement('div'); t.className='toast'; t.textContent=m; $('#toast-root').appendChild(t); setTimeout(()=>t.remove(),3200); }
-  function openLightbox(src){ try{ const x=new URL(src, location.href); x.searchParams.delete('thumb'); src=x.href; }catch(_){}  // always full-res, never the ?thumb=1 grid image
-    const bg=document.createElement('div'); bg.className='lightbox'; const i=document.createElement('img'); i.src=src; bg.appendChild(i); bg.onclick=()=>bg.remove(); document.body.appendChild(bg); }
+  function openLightbox(src, video){ try{ const x=new URL(src, location.href); x.searchParams.delete('thumb'); src=x.href; }catch(_){}  // always full-res, never the ?thumb=1 grid image
+    const bg=document.createElement('div'); bg.className='lightbox';
+    let el;
+    if(video){ el=document.createElement('video'); el.src=src; el.controls=true; el.autoplay=true; el.playsInline=true; el.setAttribute('playsinline',''); }
+    else { el=document.createElement('img'); el.src=src; }
+    bg.appendChild(el);
+    bg.onclick=(e)=>{ if(e.target===bg) bg.remove(); };   // click backdrop (not the media/controls) to close
+    document.body.appendChild(bg); }
 
   // ---------- right column: Hot / Trending (desktop) ----------
   async function loadRightbar(){

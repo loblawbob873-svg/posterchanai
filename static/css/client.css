@@ -328,7 +328,7 @@ a.btn.full{display:block}
 .badge{display:inline-grid;place-items:center;min-width:21px;height:21px;padding:0 6px;border-radius:11px;background:var(--neon);color:#fff;font-size:12.5px;font-weight:700;margin-left:6px;box-shadow:0 0 8px rgba(0,255,255,.5)}
 
 .lightbox{position:fixed;inset:0;z-index:400;background:rgba(4,2,12,.92);backdrop-filter:blur(6px);display:grid;place-items:center;padding:20px;cursor:zoom-out;animation:fade .15s}
-.lightbox img{max-width:96vw;max-height:94vh;border-radius:10px;border:1px solid var(--neon);box-shadow:0 0 40px rgba(0,255,255,.4)}
+.lightbox img,.lightbox video{width:96vw;height:94vh;object-fit:contain;border-radius:10px;box-shadow:0 0 40px rgba(0,255,255,.4)}
 #toast-root{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:300;display:flex;flex-direction:column;gap:8px}
 .toast{background:var(--panel2);border:1px solid var(--neon);border-radius:11px;padding:12px 18px;font-size:16px;box-shadow:var(--glow);animation:fade .2s}
 .notif-toast{display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px 14px}
