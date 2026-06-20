@@ -208,7 +208,7 @@ def _read_config() -> dict:
             # live events (30311). Including 0/3/10002 lets the firehose stream WoT members' IDENTITY
             # metadata too, so the relay serves profiles without a separate fetch — same
             # stream-and-filter path, no extra crawl. (30311 powers the client's Streams view.)
-            "ingest_kinds": [int(k) for k in (g("nostr_relay_ingest_kinds", "0,1,3,6,7,1111,9735,10002,30023,30311,34550")
+            "ingest_kinds": [int(k) for k in (g("nostr_relay_ingest_kinds", "0,1,3,6,7,40,42,1111,9735,10002,30023,30311,34550")
                              .replace(" ", "").split(",")) if k.strip().lstrip("-").isdigit()],
             "author_batch": gi("nostr_relay_author_batch", 200),
             # Politeness / anti-blast: pace upstream requests and outbox publishes so we don't

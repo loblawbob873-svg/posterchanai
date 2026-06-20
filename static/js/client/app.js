@@ -1215,14 +1215,20 @@
   function _chanMeta(e){ let m={}; try{ m=JSON.parse(e.content||'{}')||{}; }catch(_){} return { name:(m.name||'').trim()||'(unnamed)', about:m.about||'', picture:m.picture||'' }; }
   async function renderChatrooms(){
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
-    let evs=[]; try{ evs=await Relay.query([{ kinds:[40], limit:100 }]); }catch(_){}
-    evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
+    // Instance-local: the relay holds many synced channel DEFINITIONS (kind-40) but only messages
+    // (kind-42) from WoT members. Showing 50 empty foreign channels is noise — list only channels
+    // that have activity HERE, plus your own, newest-active first.
+    let chans=[], msgs=[];
+    try{ [chans, msgs] = await Promise.all([ Relay.query([{ kinds:[40], limit:200 }]), Relay.query([{ kinds:[42], limit:500 }]) ]); }catch(_){}
+    chans.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
     if(VIEW!=='chat') return;
-    const chans=evs.sort((a,b)=>b.created_at-a.created_at);
+    const active=new Map(); msgs.forEach(m=>{ const r=(m.tags.find(t=>t[0]==='e')||[])[1]; if(r) active.set(r, Math.max(active.get(r)||0, m.created_at)); });
+    const shown=chans.filter(c=> active.has(c.id) || (ME && c.pubkey===ME.pubkey))
+      .sort((a,b)=> (active.get(b.id)||b.created_at) - (active.get(a.id)||a.created_at));
     feed.innerHTML=`<div class="chat-list">
       <div class="row" style="margin-bottom:12px"><button class="btn btn-neon small" id="ch-new">＋ New channel</button></div>
-      ${chans.length?`<div class="stream-grid">${chans.map(channelCard).join('')}</div>`
-        :'<div class="empty">No chat channels yet. Create one — or they appear here as people in your network start public channels.</div>'}</div>`;
+      ${shown.length?`<div class="stream-grid">${shown.map(channelCard).join('')}</div>`
+        :'<div class="empty">No active channels yet. Tap ＋ New channel to start one — channels appear here once they have messages on this instance.</div>'}</div>`;
     decorateProfiles();
     { const b=$('#ch-new'); if(b) b.onclick=createChannel; }
     $$('.channel-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const x=Store.get(c.dataset.id); if(x) openChannel(x); });
@@ -1915,7 +1921,7 @@
   function moreMenu(){
     const dn=Drafts.all().length;   // per-item counts so the ☰ badge is explained once opened
     const counts={drafts:dn};
-    const items=[['ai','🤖','PosterChan AI'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['articles','📰','Articles'],['streams','📺','Streams'],['communities','☷','Communities'],['blossom','🌸','Files'],['profile','👤','Profile'],['settings','⚙','Settings']]
+    const items=[['ai','🤖','PosterChan AI'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['articles','📰','Articles'],['streams','📺','Streams'],['communities','☷','Communities'],['chat','✺','Chat'],['blossom','🌸','Files'],['profile','👤','Profile'],['settings','⚙','Settings']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='ai'));   // hide AI in Nostr-only deployments
     modal(`<h3>More</h3><div class="more-grid">${items.map(([v,ic,lbl])=>{const c=counts[v]||0;return `<button class="more-item" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}${c?` <i class="badge">${c>99?'99+':c}</i>`:''}</span></button>`;}).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); if(b.dataset.v==='profile') renderProfileView(ME.pubkey); else switchView(b.dataset.v); });
