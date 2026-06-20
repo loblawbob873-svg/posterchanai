@@ -1443,10 +1443,11 @@
       }
       const inv=await corsJson(url);
       const pr=inv && inv.pr; if(!pr){ toast('no invoice'+(inv&&inv.reason?': '+inv.reason:'')); return; }
-      // 1) one-tap via a connected NWC wallet (NIP-47) → 2) WebLN → 3) show the invoice to copy.
+      // 1) an installed WebLN extension (Alby etc.) — the most direct one-click path → 2) a
+      // configured NWC wallet (great when there's no extension, e.g. on mobile) → 3) show the invoice.
+      if(window.webln){ try{ await window.webln.enable(); await window.webln.sendPayment(pr); toast('⚡ zapped '+amt+' sats'); return; }catch(e){} }
       if(Nwc.configured()){ try{ toast('paying via your wallet…'); await Nwc.payInvoice(pr); toast('⚡ zapped '+amt+' sats'); return; }
         catch(e){ toast('wallet: '+((e&&e.message)||e)); } }
-      if(window.webln){ try{ await window.webln.enable(); await window.webln.sendPayment(pr); toast('⚡ zapped '+amt+' sats'); return; }catch(e){} }
       invoiceModal(pr, amt);
     }catch(e){ toast('zap failed: '+e.message); }
   }
@@ -2706,6 +2707,7 @@
         <div class="set-body">
           <div class="set-actions">
             <button class="btn btn-ghost small" id="set-sync-posts">⤓ Sync my posts to this relay</button>
+            <button class="btn btn-ghost small" id="set-logout">🚪 Logout</button>
             <button class="btn btn-ghost small" id="set-del-account" style="color:#ff6b8b">🗑️ Delete my account</button>
           </div>
           <div class="muted small" id="set-sync-status">Pulls your posts from other relays into this one.</div>
@@ -2758,13 +2760,14 @@
       <section class="set-card">
         <div class="set-head"><div>
           <div class="set-title">Lightning wallet (one-tap zaps)</div>
-          <div class="muted small">Paste a Nostr Wallet Connect string (NIP-47) from Alby, Primal, Coinos… Zaps then pay instantly — no invoice popups. Stored only in this browser.</div>
+          <div class="muted small">Got the <b>Alby</b> (or any WebLN) browser extension? Zaps already use it — just tap ⚡. Otherwise connect a wallet with a <b>Nostr Wallet Connect</b> string (NIP-47) — handy on mobile or with Alby Hub / Coinos / Primal. Stored only in this browser.</div>
         </div></div>
         <div class="set-body">
-          <input class="input" id="set-nwc" type="password" placeholder="nostr+walletconnect://…" value="${enc(ClientSettings.get('nwc',''))}">
+          <div class="set-actions"><button class="btn btn-cyan small" id="set-webln">⚡ Connect Alby / WebLN extension</button></div>
+          <input class="input" id="set-nwc" type="password" placeholder="nostr+walletconnect://… (for wallets without an extension)" value="${enc(ClientSettings.get('nwc',''))}">
           <div class="set-actions"><button class="btn btn-ghost small" id="set-nwc-save">Save wallet</button>
             <button class="btn btn-ghost small" id="set-nwc-clear">Disconnect</button></div>
-          <div class="muted small" id="set-nwc-status">${Nwc.configured()?'✓ Wallet connected — zaps pay instantly':''}</div>
+          <div class="muted small" id="set-nwc-status">${Nwc.configured()?'✓ NWC wallet connected — zaps pay instantly':''}</div>
         </div>
       </section>
       <section class="set-card">
@@ -2787,6 +2790,10 @@
     const syncRelays=()=>{ _setRelays = $$('#set-relay-list .relay-row input').map(i=>i.value.trim()); };
 
     { const sq=$('#set-scan-qr'); if(sq) sq.onclick=()=>openQrScanner(); }
+    { const we=$('#set-webln'); if(we) we.onclick=async()=>{ const st=$('#set-nwc-status');
+        if(!window.webln){ if(st) st.textContent='No WebLN extension found — install Alby, or paste an NWC string below.'; return; }
+        try{ await window.webln.enable(); if(st) st.textContent='✓ Extension connected — tap ⚡ on any post to zap'; toast('⚡ wallet extension connected'); }
+        catch(e){ if(st) st.textContent='Extension declined: '+((e&&e.message)||e); } }; }
     { const nb=$('#set-nwc-save'); if(nb) nb.onclick=()=>{ const st=$('#set-nwc-status'); const u=($('#set-nwc').value||'').trim();
         if(u && !Nwc.parse(u)){ if(st) st.textContent='Not a valid nostr+walletconnect:// string'; return; }
         ClientSettings.set('nwc', u); if(st) st.textContent=u?'✓ Wallet connected — zaps pay instantly':'cleared'; toast(u?'wallet saved':'wallet cleared'); }; }
@@ -2808,6 +2815,7 @@
           else toast('delete failed: '+((r&&r.error)||''));
         }catch(_){ toast('delete failed'); }
       }; }
+    { const lo=$('#set-logout'); if(lo) lo.onclick=()=>{ if(confirm('Log out of this device?')) logout(); }; }
     { const sp=$('#set-sync-posts'); if(sp) sp.onclick=async()=>{
         const st=$('#set-sync-status'); if(st) st.textContent='syncing… pulling your posts from other relays.';
         try{ const auth=await sign(27235,'sync-posts',[['p',ME.pubkey]]);

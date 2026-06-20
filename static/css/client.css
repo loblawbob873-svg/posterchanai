@@ -678,3 +678,13 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 
 .uploader{font-size:15px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 16px}
 .uploader .muted.small{font-size:14px}
+
+/* ---- Desktop scaling --------------------------------------------------------
+   The UI's sizing is px-based and tuned for a large / 4K display; on smaller desktops (1080p and
+   OS-scaled laptops) those fixed sizes read as oversized. Scale the whole app down with `zoom` in
+   steps, compensating the full-height containers (height:100vh/zoom) so they still fill the screen
+   with no blank strip. Bounded to >820px so the mobile layout (≤820px) is left completely alone;
+   true 4K (>1920px CSS px) gets no zoom. */
+@media (min-width:821px) and (max-width:1920px){ body{ zoom:.92 } .app,.main{ height:calc(100vh / .92) } }
+@media (min-width:821px) and (max-width:1500px){ body{ zoom:.84 } .app,.main{ height:calc(100vh / .84) } }
+@media (min-width:821px) and (max-width:1280px){ body{ zoom:.76 } .app,.main{ height:calc(100vh / .76) } }
