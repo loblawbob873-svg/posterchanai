@@ -1,34 +1,33 @@
-"""SQLite storage for the built-in Nostr relay.
+"""PostgreSQL storage for the built-in Nostr relay.
 
-The hot DB lives on tmpfs (RAM) for fast write churn; a periodic online snapshot
-(`sqlite3.Connection.backup`) persists it to a disk file, restored on startup. All
-DB I/O is run off the relay's asyncio loop via executors so connection handling never
-blocks: writes are funneled through a single-thread executor (serialized, no lock
-contention), reads use a small pool over WAL (concurrent readers). Memory is hard-bounded
-by `prune()` (retention window + event count + byte budget).
+Postgres is the relay's (and the app's) one and only database — there is no SQLite. PG's shared
+buffers keep the hot set in RAM; durability + concurrency are the server's job. All DB I/O still
+runs off the relay's asyncio loop via executors so the loop never blocks: writes go through a
+single-thread executor (serialized), reads use a small pool of executor threads — each thread holds
+its own psycopg2 connection (autocommit; bulk inserts wrap a transaction). Memory/retention is
+bounded by `prune()` (retention window + event count + byte budget via pg_database_size).
 
 Schema mirrors a minimal NIP-01 relay: `events` + a single-letter `event_tags` index for
-`#<letter>` filters, plus `wot` (the trust set) and `relay_kv` (cursors).
+`#<letter>` filters, plus `wot` (the trust set) and `relay_kv` (cursors). NIP-50 search uses a
+GIN `to_tsvector` index instead of SQLite's FTS5.
 """
 
 import os
 import re
 import json
 import time
-import sqlite3
 import asyncio
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
+import psycopg2
+import psycopg2.extras
+
 logger = logging.getLogger(__name__)
 
-
-def _fts_match(search: str) -> str | None:
-    """Turn a NIP-50 search string into a safe FTS5 MATCH expression: alphanumeric tokens,
-    each quoted, AND-ed together. Quoting avoids FTS5 syntax errors from arbitrary input."""
-    toks = re.findall(r"\w+", (search or "").lower())
-    return " ".join(f'"{t}"' for t in toks[:12]) if toks else None
+_DEFAULT_DSN = ("host=127.0.0.1 port=5432 dbname=posterchan_relay "
+                "user=posterchan password=posterchan_local")
 
 # Replaceable event kind ranges (NIP-01): keep only the newest per (pubkey, kind) — and for
 # the parameterized range, per (pubkey, kind, d-tag).
@@ -39,28 +38,71 @@ _HEXSET = frozenset("0123456789abcdef")
 def _is_hex64(s) -> bool:
     return isinstance(s, str) and len(s) == 64 and set(s) <= _HEXSET
 
+
+class _PgConn:
+    """Thin shim giving a psycopg2 connection the sqlite3-style `.execute()/.executemany()/
+    .commit()` surface the relay code was written against — so the query bodies stay unchanged.
+    Translates the placeholder style (`?` → `%s`) and, when params are bound, escapes literal `%`
+    (so `LIKE '%x%'` survives). Rows come back as DictRows (support both r[0] and r["col"])."""
+
+    def __init__(self, raw):
+        self._raw = raw
+
+    def execute(self, sql, params=None):
+        cur = self._raw.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        if params is None:
+            cur.execute(sql.replace("?", "%s"))               # no binds → don't touch literal %
+        else:
+            cur.execute(sql.replace("%", "%%").replace("?", "%s"), params)
+        return cur
+
+    def executemany(self, sql, seq):
+        cur = self._raw.cursor()
+        cur.executemany(sql.replace("%", "%%").replace("?", "%s"), list(seq))
+        return cur
+
+    def executescript(self, script):
+        cur = self._raw.cursor()
+        cur.execute(script)        # multi-statement DDL, no binds / no % placeholders
+        cur.close()
+
+    def commit(self):
+        self._raw.commit()
+
+    def rollback(self):
+        self._raw.rollback()
+
+    @property
+    def autocommit(self):
+        return self._raw.autocommit
+
+    @autocommit.setter
+    def autocommit(self, v):
+        self._raw.autocommit = v
+
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
     id          TEXT PRIMARY KEY,
     pubkey      TEXT NOT NULL,
-    created_at  INTEGER NOT NULL,
+    created_at  BIGINT NOT NULL,
     kind        INTEGER NOT NULL,
     content     TEXT NOT NULL,
     tags        TEXT NOT NULL,
     sig         TEXT NOT NULL,
     raw         TEXT NOT NULL,
-    origin      TEXT NOT NULL DEFAULT 'wot',  -- 'wot' | 'ancestor' (thread-context backfill)
-    expiration  INTEGER  -- NIP-40: unix ts after which the event is gone (NULL = never expires)
+    origin      TEXT NOT NULL DEFAULT 'wot',
+    expiration  BIGINT
 );
-CREATE INDEX IF NOT EXISTS idx_events_pubkey      ON events(pubkey);
+CREATE INDEX IF NOT EXISTS idx_events_pubkey       ON events(pubkey);
 CREATE INDEX IF NOT EXISTS idx_events_kind_created ON events(kind, created_at);
 CREATE INDEX IF NOT EXISTS idx_events_created      ON events(created_at);
--- NOTE: idx_events_expiration is created in open() AFTER the column is ensured (ALTER for old
--- DBs) — putting it here would crash executescript on a pre-existing table lacking the column.
+CREATE INDEX IF NOT EXISTS idx_events_expiration   ON events(expiration);
+CREATE INDEX IF NOT EXISTS idx_events_content_fts  ON events USING gin (to_tsvector('simple', content));
 
 CREATE TABLE IF NOT EXISTS event_tags (
     event_id TEXT NOT NULL,
-    tag      TEXT NOT NULL,   -- single-letter tag name (NIP-01 queryable)
+    tag      TEXT NOT NULL,
     value    TEXT NOT NULL,
     PRIMARY KEY (event_id, tag, value)
 );
@@ -69,25 +111,13 @@ CREATE INDEX IF NOT EXISTS idx_event_tags_tv ON event_tags(tag, value);
 CREATE TABLE IF NOT EXISTS wot (
     pubkey   TEXT PRIMARY KEY,
     depth    INTEGER NOT NULL DEFAULT 0,
-    added_at INTEGER NOT NULL
+    added_at BIGINT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS relay_kv (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
-"""
-
-# NIP-50 search: an FTS5 index over note (kind-1) content, kept in sync by triggers. Created
-# separately (with a graceful fallback) since FTS5 may not be compiled into SQLite.
-_FTS_SCHEMA = """
-CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(content, content='events', content_rowid='rowid');
-CREATE TRIGGER IF NOT EXISTS events_fts_ai AFTER INSERT ON events WHEN new.kind=1 BEGIN
-  INSERT INTO events_fts(rowid, content) VALUES (new.rowid, new.content);
-END;
-CREATE TRIGGER IF NOT EXISTS events_fts_ad AFTER DELETE ON events WHEN old.kind=1 BEGIN
-  INSERT INTO events_fts(events_fts, rowid, content) VALUES('delete', old.rowid, old.content);
-END;
 """
 
 
@@ -103,81 +133,45 @@ _PRUNABLE_KINDS = (1, 6, 7, 1111)
 
 
 class RelayStore:
-    def __init__(self, db_path: str, *,
+    def __init__(self, dsn: str = None, *,
                  read_workers: int = 4, max_events: int = 0,
                  retention_days: int = 30, max_db_mb: int = 0, wal_pages: int = 50000,
                  cache_mb: int = 64, mmap_mb: int = 256):
-        self.db_path = db_path       # the DB lives on disk in WAL mode (durable by itself)
+        # `dsn` is a libpq connection string. The wal_pages/cache_mb/mmap_mb kwargs are accepted
+        # for call-site compatibility but ignored (Postgres tunes its own buffers/WAL server-side).
+        self.dsn = dsn or _DEFAULT_DSN
         self.max_events = max_events
         self.retention_days = retention_days
         self.max_db_mb = max_db_mb
-        self.wal_pages = wal_pages   # WAL autocheckpoint threshold (large = fewer checkpoints)
-        self.cache_mb = cache_mb     # per-connection page cache
-        self.mmap_mb = mmap_mb       # memory-mapped read window
         self.preserve_pubkeys: frozenset = frozenset()  # local users — never age/cap-pruned
         self._tls = threading.local()
         self._write_exec = ThreadPoolExecutor(max_workers=1, thread_name_prefix="relay-db-w")
         self._read_exec = ThreadPoolExecutor(max_workers=read_workers, thread_name_prefix="relay-db-r")
-        self._fts = False    # NIP-50 full-text search available?
+        self._fts = True     # Postgres always has full-text search (to_tsvector)
         self._loop: asyncio.AbstractEventLoop | None = None
 
     # --- lifecycle ----------------------------------------------------------
 
     def open(self, loop: asyncio.AbstractEventLoop) -> None:
-        """Open the on-disk DB (WAL = durable by itself) and init the schema."""
+        """Connect to Postgres and ensure the schema (idempotent)."""
         self._loop = loop
-        os.makedirs(os.path.dirname(self.db_path) or ".", exist_ok=True)
-        # Initialize schema on a fresh connection.
         conn = self._conn()
         conn.executescript(_SCHEMA)
         conn.commit()
-        # NIP-40: add the expiration column to pre-existing DBs (created before this column).
-        # CREATE TABLE IF NOT EXISTS won't alter an existing table, so do it explicitly +
-        # idempotently. The index is created AFTER, outside the try, so it runs whether the column
-        # was just added (old DB) or already present from CREATE TABLE (fresh DB).
-        try:
-            conn.execute("ALTER TABLE events ADD COLUMN expiration INTEGER")
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass  # column already exists
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_events_expiration ON events(expiration)")
-        conn.commit()
-        # NIP-50 search index (FTS5). Graceful: if FTS5 isn't compiled in, search falls back
-        # to a LIKE scan. Populate from existing notes on first creation.
-        try:
-            conn.executescript(_FTS_SCHEMA)
-            if conn.execute("SELECT COUNT(*) FROM events_fts").fetchone()[0] == 0 and \
-                    conn.execute("SELECT 1 FROM events WHERE kind=1 LIMIT 1").fetchone():
-                conn.execute("INSERT INTO events_fts(rowid, content) "
-                             "SELECT rowid, content FROM events WHERE kind=1")
-            conn.commit()
-            self._fts = True
-        except Exception as e:
-            logger.warning("[nostr-relay] FTS5 unavailable; NIP-50 search uses LIKE: %s", e)
-            self._fts = False
 
     def close(self) -> None:
         self._write_exec.shutdown(wait=True)
         self._read_exec.shutdown(wait=False)
 
-    def _conn(self) -> sqlite3.Connection:
-        """Per-thread connection (executor threads each get their own), WAL + busy wait."""
+    def _conn(self) -> _PgConn:
+        """Per-thread psycopg2 connection (each executor thread gets its own). Autocommit on:
+        reads never leave an idle-in-transaction; the single write thread serializes writes, and
+        the only place atomicity matters (bulk insert) flips autocommit off around its batch."""
         c = getattr(self._tls, "conn", None)
-        if c is None:
-            c = sqlite3.connect(self.db_path, timeout=10, check_same_thread=False)
-            c.row_factory = sqlite3.Row
-            c.execute("PRAGMA journal_mode=WAL")
-            c.execute("PRAGMA synchronous=NORMAL")
-            c.execute("PRAGMA busy_timeout=5000")
-            # Read/write cache: a big page cache keeps hot pages in RAM, mmap serves reads with
-            # zero read() syscalls (big win for a disk DB's queries + existence checks), and
-            # temp_store=MEMORY keeps sorts/joins off disk.
-            c.execute(f"PRAGMA cache_size={int(self.cache_mb) * -1024}")   # negative = KiB
-            c.execute(f"PRAGMA mmap_size={int(self.mmap_mb) * 1024 * 1024}")
-            c.execute("PRAGMA temp_store=MEMORY")
-            # Large WAL autocheckpoint → far fewer checkpoints, much faster sustained writes on
-            # a multi-GB disk DB (the WAL absorbs bursts; readers stay non-blocking).
-            c.execute(f"PRAGMA wal_autocheckpoint={int(self.wal_pages)}")
+        if c is None or c._raw.closed:
+            raw = psycopg2.connect(self.dsn, connect_timeout=10)
+            raw.autocommit = True
+            c = _PgConn(raw)
             self._tls.conn = c
         return c
 
@@ -189,7 +183,7 @@ class RelayStore:
 
     # --- writes -------------------------------------------------------------
 
-    def _insert_one(self, conn: sqlite3.Connection, ev: dict, origin: str) -> bool:
+    def _insert_one(self, conn: _PgConn, ev: dict, origin: str) -> bool:
         """Insert a single event on the given connection WITHOUT committing (so it can be
         batched). Returns whether a row was written. Raises on malformed input."""
         eid = ev["id"]
@@ -237,9 +231,9 @@ class RelayStore:
                             return False
 
             conn.execute(
-                "INSERT OR IGNORE INTO events "
+                "INSERT INTO events "
                 "(id, pubkey, created_at, kind, content, tags, sig, raw, origin, expiration) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT (id) DO NOTHING",
                 (eid, pubkey, created, kind, ev.get("content", ""),
                  json.dumps(tags, separators=(",", ":")), ev.get("sig", ""),
                  json.dumps(ev, separators=(",", ":")), origin, expiration))
@@ -247,7 +241,8 @@ class RelayStore:
             for t in tags:
                 if len(t) >= 2 and isinstance(t[0], str) and len(t[0]) == 1:
                     conn.execute(
-                        "INSERT OR IGNORE INTO event_tags (event_id, tag, value) VALUES (?,?,?)",
+                        "INSERT INTO event_tags (event_id, tag, value) VALUES (?,?,?) "
+                        "ON CONFLICT DO NOTHING",
                         (eid, t[0], str(t[1])))
             # NIP-09: a kind-5 deletion removes the author's own e-tagged events.
             if kind == 5:
@@ -277,13 +272,19 @@ class RelayStore:
         add_event, which is the bottleneck when a backfill batch returns thousands of events."""
         conn = self._conn()
         stored = 0
+        conn.autocommit = False   # one transaction for the whole batch (far fewer round-trips)
         try:
             for ev in events:
+                # Per-row SAVEPOINT: in Postgres any statement error aborts the whole transaction,
+                # so a bad event must be isolated or it would discard the entire batch.
+                conn.execute("SAVEPOINT s")
                 try:
-                    if self._insert_one(conn, ev, origin):
+                    ok = self._insert_one(conn, ev, origin)
+                    conn.execute("RELEASE SAVEPOINT s")
+                    if ok:
                         stored += 1
                 except Exception:
-                    continue
+                    conn.execute("ROLLBACK TO SAVEPOINT s")
             conn.commit()
         except Exception as e:
             logger.warning("[nostr-relay] bulk add failed: %s", e)
@@ -291,6 +292,8 @@ class RelayStore:
                 conn.rollback()
             except Exception:
                 pass
+        finally:
+            conn.autocommit = True
         return stored
 
     async def add_events_bulk(self, events: list, origin: str = "wot") -> int:
@@ -314,7 +317,7 @@ class RelayStore:
         """Return the subset of `ids` already stored — ONE query instead of per-event has_event."""
         return await self._r(self._filter_existing_sync, ids)
 
-    def _delete_sync(self, conn: sqlite3.Connection, eid: str) -> None:
+    def _delete_sync(self, conn: _PgConn, eid: str) -> None:
         conn.execute("DELETE FROM events WHERE id=?", (eid,))
         conn.execute("DELETE FROM event_tags WHERE event_id=?", (eid,))
 
@@ -453,19 +456,12 @@ class RelayStore:
         if flt.get("until") is not None:
             where.append("e.created_at <= ?")
             params.append(int(flt["until"]))
-        # NIP-50 full-text search over note content.
+        # NIP-50 full-text search over content (Postgres GIN to_tsvector index). plainto_tsquery
+        # is injection-safe and tolerant of arbitrary input (empty/garbage → matches nothing).
         search = flt.get("search")
         if search:
-            if self._fts:
-                m = _fts_match(search)
-                if not m:
-                    return None
-                where.append("e.rowid IN (SELECT rowid FROM events_fts WHERE events_fts MATCH ?)")
-                params.append(m)
-            else:
-                for term in re.findall(r"\w+", search.lower())[:12]:
-                    where.append("LOWER(e.content) LIKE ?")
-                    params.append("%" + term + "%")
+            where.append("to_tsvector('simple', e.content) @@ plainto_tsquery('simple', ?)")
+            params.append(search)
         # Tag filters: keys like "#e", "#p", "#t" → join event_tags (AND across tag keys).
         for key, vals in flt.items():
             if not (isinstance(key, str) and key.startswith("#") and len(key) == 2 and vals):
@@ -481,7 +477,7 @@ class RelayStore:
         params.append(int(time.time()))
         return where, params
 
-    def _query_one(self, conn: sqlite3.Connection, flt: dict) -> list:
+    def _query_one(self, conn: _PgConn, flt: dict) -> list:
         built = self._build_where(flt)
         if built is None:
             return []
@@ -553,11 +549,17 @@ class RelayStore:
         """Replace the depth-1 WoT set; `extra` are always-trusted (operator) keys at depth 0."""
         conn = self._conn()
         now = int(time.time())
-        conn.execute("DELETE FROM wot")
         rows = [(pk, 1, now) for pk in members] + [(pk, 0, now) for pk in (extra or [])]
-        conn.executemany(
-            "INSERT OR REPLACE INTO wot (pubkey, depth, added_at) VALUES (?,?,?)", rows)
-        conn.commit()
+        conn.autocommit = False   # atomic swap: no window where the trust set is empty
+        try:
+            conn.execute("DELETE FROM wot")
+            conn.executemany(
+                "INSERT INTO wot (pubkey, depth, added_at) VALUES (?,?,?) "
+                "ON CONFLICT (pubkey) DO UPDATE SET depth=EXCLUDED.depth, added_at=EXCLUDED.added_at",
+                rows)
+            conn.commit()
+        finally:
+            conn.autocommit = True
         return conn.execute("SELECT COUNT(*) AS c FROM wot").fetchone()["c"]
 
     async def wot_replace(self, members: list, extra: list | None = None) -> int:
@@ -566,7 +568,8 @@ class RelayStore:
     def _wot_add_sync(self, pubkeys: list) -> int:
         conn = self._conn()
         now = int(time.time())
-        conn.executemany("INSERT OR IGNORE INTO wot (pubkey, depth, added_at) VALUES (?,1,?)",
+        conn.executemany("INSERT INTO wot (pubkey, depth, added_at) VALUES (?,1,?) "
+                         "ON CONFLICT (pubkey) DO NOTHING",
                          [(p, now) for p in pubkeys if p])
         conn.commit()
         return len([p for p in pubkeys if p])
@@ -611,13 +614,10 @@ class RelayStore:
     # --- checkpoint + prune -------------------------------------------------
 
     def _checkpoint_sync(self) -> None:
-        try:
-            self._conn().execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        except Exception as e:
-            logger.warning("[nostr-relay] checkpoint failed: %s", e)
+        pass  # Postgres manages its own WAL/checkpoints — nothing to do client-side.
 
     async def checkpoint(self) -> None:
-        """Fold the WAL back into the main DB (e.g. on clean shutdown)."""
+        """No-op on Postgres (kept for call-site compatibility, e.g. clean-shutdown hooks)."""
         await self._w(self._checkpoint_sync)
 
     def set_preserve_pubkeys(self, pubkeys) -> None:
@@ -660,7 +660,7 @@ class RelayStore:
         if self.max_events:
             cur = conn.execute(
                 f"DELETE FROM events WHERE kind IN ({prunable}) AND {preserve} AND id IN "
-                "(SELECT id FROM events ORDER BY created_at DESC LIMIT -1 OFFSET ?)",
+                "(SELECT id FROM events ORDER BY created_at DESC LIMIT ALL OFFSET ?)",
                 (self.max_events,))
             removed += cur.rowcount or 0
         # Hard byte cap (RAM bound): trim oldest prunable events until under budget.
@@ -677,20 +677,16 @@ class RelayStore:
                     break  # only kept/preserved events remain — don't spin
                 removed += cur.rowcount
                 conn.commit()
-        # Drop orphaned tag rows.
-        conn.execute("DELETE FROM event_tags WHERE event_id NOT IN (SELECT id FROM events)")
+        # event_tags are purged automatically by the ON DELETE CASCADE FK when their event is
+        # deleted — no orphan sweep needed (the old NOT IN anti-join pinned a CPU core for minutes).
         conn.commit()
         return removed
 
     def _db_bytes(self) -> int:
         try:
-            total = os.path.getsize(self.db_path)
-            for ext in ("-wal", "-shm"):
-                p = self.db_path + ext
-                if os.path.exists(p):
-                    total += os.path.getsize(p)
-            return total
-        except OSError:
+            row = self._conn().execute("SELECT pg_database_size(current_database())").fetchone()
+            return int(row[0]) if row else 0
+        except Exception:
             return 0
 
     async def prune(self) -> int:

@@ -193,6 +193,9 @@ def _read_config() -> dict:
             # streams + filters in real time; the sweep is the laggy "mirror their feeds" crawl.
             "mirror_feeds": gb("nostr_relay_mirror_feeds", False),
             "db_path": db_path,
+            # Postgres is the relay's store (no SQLite). libpq DSN; tunable in Admin → Relay.
+            "pg_dsn": g("nostr_relay_pg_dsn", "host=127.0.0.1 port=5432 dbname=posterchan_relay "
+                                              "user=posterchan password=posterchan_local"),
             "retention_days": gi("nostr_relay_retention_days", 30),
             "max_events": gi("nostr_relay_max_events", 500000),
             "max_db_mb": gi("nostr_relay_max_db_mb", 1024),
@@ -203,6 +206,7 @@ def _read_config() -> dict:
             "mmap_mb": gi("nostr_relay_mmap_mb", 4096),                # SQLite mmap read window
             "sync_budget_sec": gi("nostr_relay_sync_budget_sec", 100), # per-tick sync work budget
             "wot_refresh_sec": gi("nostr_relay_wot_refresh_sec", 86400),  # daily
+            "prune_interval_sec": gi("nostr_relay_prune_interval_sec", 86400),  # nightly (was hourly)
             "wot_depth": gi("nostr_relay_wot_depth", 1),                  # 1=follows, 2=+FoF
             "wot_min_followers": gi("nostr_relay_wot_min_followers", 2),  # FoF inclusion threshold
             "wot_max": gi("nostr_relay_wot_max", 50000),                  # cap on total members
@@ -338,10 +342,9 @@ async def _main(cfg: dict) -> None:
     # handshake with a full traceback, which would flood the journal. Quiet it.
     logging.getLogger("websockets.server").setLevel(logging.CRITICAL)
     store = RelayStore(
-        cfg["db_path"],
+        cfg["pg_dsn"],
         max_events=cfg["max_events"], retention_days=cfg["retention_days"],
-        max_db_mb=cfg["max_db_mb"], wal_pages=cfg["wal_pages"],
-        cache_mb=cfg["cache_mb"], mmap_mb=cfg["mmap_mb"])
+        max_db_mb=cfg["max_db_mb"])
     loop = asyncio.get_running_loop()
     store.open(loop)
     gate = WotGate()
@@ -454,7 +457,7 @@ async def _main(cfg: dict) -> None:
             await _build_wot(gate, store, cfg)
 
     tasks = [
-        asyncio.create_task(_periodic(_relay.stop_event, 3600, store.prune, "prune")),
+        asyncio.create_task(_periodic(_relay.stop_event, cfg["prune_interval_sec"], store.prune, "prune")),
         # WoT rebuild — checked hourly, actually rebuilt only when a day has elapsed (staleness),
         # so it runs once a day regardless of restarts. NOT a feed mirror; just gate membership.
         asyncio.create_task(_periodic(_relay.stop_event, 3600, _maybe_rebuild_wot, "wot-refresh")),

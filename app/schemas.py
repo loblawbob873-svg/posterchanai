@@ -571,6 +571,8 @@ class UserSettingsUpdate(BaseModel):
     users_backend: Optional[str] = None              # "sqlite" (default) | "relay" (relay-authoritative accounts)
     bots_backend: Optional[str] = None               # "sqlite" (default) | "relay" (relay-authoritative bot config)
     records_backend: Optional[str] = None            # "sqlite" (default) | "relay" (reminders/saved searches)
+    nostr_relay_pg_dsn: Optional[str] = None         # PostgreSQL DSN for the relay's event store
+    nostr_relay_prune_interval_sec: Optional[str] = None  # auto-prune cadence (default nightly)
     # Built-in Blossom media server (BUD-01/02). Served by the app at /blossom (front with TLS).
     blossom_enabled: Optional[bool] = None
     blossom_public_url: Optional[str] = None       # advertised base URL (blank = derive from request)
