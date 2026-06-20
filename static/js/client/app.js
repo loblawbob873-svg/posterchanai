@@ -2859,7 +2859,7 @@
     if(!host){
       host=document.createElement('div'); host.id='admin-host'; host.style.display='none';
       host.innerHTML='<div class="spinner"></div>';
-      const ifr=document.createElement('iframe'); ifr.className='admin-frame'; ifr.src='/admin'; ifr.title='Admin'; ifr.style.opacity='0';
+      const ifr=document.createElement('iframe'); ifr.className='admin-frame'; ifr.src='/admin?t='+Date.now(); ifr.title='Admin'; ifr.style.opacity='0';
       ifr.addEventListener('load', ()=>{ ifr.style.opacity='1'; const sp=host.querySelector('.spinner'); if(sp) sp.remove(); });
       host.appendChild(ifr);
       (document.querySelector('.main')||document.body).appendChild(host);
