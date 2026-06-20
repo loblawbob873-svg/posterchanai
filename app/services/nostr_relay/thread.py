@@ -197,8 +197,14 @@ def _read_config() -> dict:
             "pg_dsn": g("nostr_relay_pg_dsn", os.environ.get("NOSTR_RELAY_PG_DSN",
                         "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan")),
             "retention_days": gi("nostr_relay_retention_days", 30),
-            "max_events": gi("nostr_relay_max_events", 500000),
-            "max_db_mb": gi("nostr_relay_max_db_mb", 1024),
+            # No hard count cap on Postgres either (it's an age-agnostic RAM bound — would delete old
+            # feed notes once over the limit). 0 = unlimited; the 30-day age retention is the only
+            # feed cleanup, and registered users' + direct-published events are always preserved.
+            "max_events": gi("nostr_relay_max_events", 0),
+            # Byte-cap is a SQLite-tmpfs/RAM concept — meaningless on Postgres (disk-backed; and
+            # pg_database_size counts indexes + the 8M event_tags, so a 1GB cap would delete ALL
+            # prunable feed notes every run REGARDLESS of age). Disabled (0); max_events bounds count.
+            "max_db_mb": gi("nostr_relay_max_db_mb", 0),
             "wal_pages": gi("nostr_relay_wal_autocheckpoint", 50000),  # ~200MB WAL before checkpoint
             # Nostr is read/write intense — default to generous RAM caches (negative cache_size
             # = KiB; mmap serves reads with zero syscalls). Tunable in Admin → Relay.

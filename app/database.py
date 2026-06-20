@@ -7,9 +7,11 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Support custom database file via POSTERCHANAI_DB env var
-_db_file = os.getenv("POSTERCHANAI_DB", "posterchanai.db")
-DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///./{_db_file}")
+# Postgres is the one and only database (shared with the Nostr relay). Default is passwordless
+# localhost trust; deployments inject DATABASE_URL (with a password) for remote/Docker PG. There is
+# no SQLite fallback — an unset env must not silently create a stray local SQLite file.
+DATABASE_URL = os.getenv("DATABASE_URL",
+                         "postgresql+psycopg2://posterchan@127.0.0.1:5432/posterchan_relay")
 
 # Cache for SQLite settings (to avoid querying on every connection)
 _sqlite_cache_mb = 500
