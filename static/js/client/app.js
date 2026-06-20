@@ -2348,98 +2348,175 @@
     };
     renderUserSettings();   // per-user account settings (mail/telegram/social/finance/news) load async
   }
-  // Per-user settings ported from the old web UI — loads from /api/auth/settings, saves via PUT.
-  // These drive real features: news digest, Telegram relay, Misskey/Pleroma/Matrix posting+notifs,
-  // and the Finance (Budget Manager) integration.
+  // Per-user settings — faithful port of the old web-UI modal (6 tabs). Loads /api/auth/settings,
+  // saves text/toggles via PUT, and wires the real connect flows (Telegram link, Matrix login,
+  // Pleroma OAuth, Misskey MiAuth, Nostr key) to their existing endpoints.
+  let _usMail=[];
   async function renderUserSettings(){
     const host=$('#user-settings'); if(!host) return;
     let s={}; try{ s=await fetch('/api/auth/settings').then(r=>r.json()); }catch(_){}
     if(!host || VIEW!=='settings') return;
-    const cb=(id,on)=>`<label class="switch"><input type="checkbox" id="${id}" ${on?'checked':''}><span class="slider"></span></label>`;
-    const row=(label,inner)=>`<label class="fld">${label}${inner}</label>`;
-    host.innerHTML=`
-      <section class="set-card">
-        <div class="set-head"><div><div class="set-title">Notifications &amp; News</div>
-          <div class="muted small">Email address for alerts + your scheduled news digest.</div></div></div>
-        <div class="set-body">
-          ${row('Notification email',`<input class="input" id="us-email" value="${enc(s.notification_email||'')}" placeholder="you@example.com">`)}
-          <label class="fld" style="flex-direction:row;align-items:center;gap:8px;justify-content:space-between">Daily news digest ${cb('us-news-on',s.news_schedule_enabled)}</label>
-          ${row('Digest time',`<input class="input" id="us-news-time" type="time" value="${enc(s.news_schedule_time||'12:00')}">`)}
-          ${row('News sources <span class="muted small">(one per line: url|name)</span>',`<textarea id="us-news-src" rows="3" class="input">${enc(s.news_sources||'')}</textarea>`)}
+    _usMail = Array.isArray(s.mail_accounts)? s.mail_accounts.slice() : [];
+    const tabs=[['profile','Profile'],['mail','Mail'],['telegram','Telegram'],['social','Social'],['finance','Finance'],['keys','API Keys']];
+    host.innerHTML=`<section class="set-card us">
+      <div class="set-head"><div class="set-title">User Settings</div></div>
+      <div class="us-tabs">${tabs.map((t,i)=>`<button class="us-tab${i===0?' active':''}" data-tab="${t[0]}">${t[1]}</button>`).join('')}</div>
+      <div class="set-body">
+        <div class="us-pane active" data-pane="profile">
+          <label class="fld">Notification email<input class="input" id="us-email" value="${enc(s.notification_email||'')}" placeholder="you@example.com"></label>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Daily news digest<label class="switch"><input type="checkbox" id="us-news-on" ${s.news_schedule_enabled?'checked':''}><span class="slider"></span></label></label>
+          <label class="fld">Digest time<input class="input" id="us-news-time" type="time" value="${enc(s.news_schedule_time||'12:00')}"></label>
+          <label class="fld">News sources <span class="muted small">(one per line: url|name)</span><textarea class="input" id="us-news-src" rows="4">${enc(s.news_sources||'')}</textarea></label>
         </div>
-      </section>
-      <section class="set-card">
-        <div class="set-head"><div><div class="set-title">Telegram</div>
-          <div class="muted small">${s.telegram_chat_id?'✓ Linked to your Telegram.':'Not linked — open your bot in Telegram and tap Start.'}</div></div></div>
-        <div class="set-body">
-          ${row('Notify me about <span class="muted small">(comma-separated: news,downloads,mentions)</span>',`<input class="input" id="us-tg-notif" value="${enc(s.telegram_notifications||'')}">`)}
-          ${s.telegram_pending_key?`<div class="muted small">Pending link key: <code>${enc(s.telegram_pending_key)}</code></div>`:''}
+        <div class="us-pane" data-pane="mail">
+          <div class="muted small">IMAP/SMTP accounts for the <code>mail</code> command. First account is the default sender.</div>
+          <div id="us-mail-list"></div>
+          <button class="btn btn-ghost small" id="us-mail-add">＋ Add email account</button>
         </div>
-      </section>
-      <section class="set-card">
-        <div class="set-head"><div><div class="set-title">Misskey</div></div>${cb('us-mk-on',s.misskey_enabled)}</div>
-        <div class="set-body">
-          ${row('Instance URL',`<input class="input" id="us-mk-url" value="${enc(s.misskey_instance_url||'')}" placeholder="https://misskey.example">`)}
-          ${row('API token '+(s.misskey_has_api_token?'<span class="muted small">(set — leave blank to keep)</span>':''),`<input class="input" id="us-mk-tok" type="password" placeholder="${s.misskey_has_api_token?'••••••••':'paste token'}">`)}
+        <div class="us-pane" data-pane="telegram">
+          <div class="muted small" id="us-tg-status">${s.telegram_chat_id?('✓ Linked (chat '+enc(String(s.telegram_chat_id))+')'):'Not linked.'}</div>
+          <div class="set-actions">
+            <button class="btn btn-ghost small" id="us-tg-key">Generate link key</button>
+            ${s.telegram_chat_id?'<button class="btn btn-ghost small" id="us-tg-unlink" style="color:#ff6b8b">Unlink Telegram</button>':''}
+          </div>
+          <div id="us-tg-keybox" class="muted small"></div>
+          <label class="fld">Notify me about <span class="muted small">(comma list: news,downloads,mentions,inbox)</span><input class="input" id="us-tg-notif" value="${enc(s.telegram_notifications||'')}"></label>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Relay notifications to Telegram<label class="switch"><input type="checkbox" id="us-social-notif" ${s.social_notif_enabled?'checked':''}><span class="slider"></span></label></label>
+          <label class="fld">Nitter feeds <span class="muted small">(one RSS URL per line)</span><textarea class="input" id="us-nitter" rows="4">${enc(s.nitter_feeds||'')}</textarea></label>
         </div>
-      </section>
-      <section class="set-card">
-        <div class="set-head"><div><div class="set-title">Pleroma / Mastodon</div></div>${cb('us-plr-on',s.pleroma_enabled)}</div>
-        <div class="set-body">
-          ${row('Instance URL',`<input class="input" id="us-plr-url" value="${enc(s.pleroma_instance_url||'')}" placeholder="https://pleroma.example">`)}
-          <div class="muted small">${s.pleroma_has_access_token?'✓ Connected.':'Connect via the access-token flow in the desktop app.'}</div>
+        <div class="us-pane" data-pane="social">
+          <div class="us-conn"><div class="set-title small">Matrix</div>
+            <label class="fld">Homeserver<input class="input" id="us-mx-hs" value="${enc(s.matrix_homeserver||'')}" placeholder="https://matrix.org"></label>
+            ${s.matrix_has_access_token
+              ? `<div class="muted small">✓ Connected as ${enc(s.matrix_user_id||'')}</div><button class="btn btn-ghost small" id="us-mx-disc" style="color:#ff6b8b">Disconnect</button>`
+              : `<label class="fld">Username<input class="input" id="us-mx-user" placeholder="@you:matrix.org"></label>
+                 <label class="fld">Password<input class="input" id="us-mx-pass" type="password"></label>
+                 <button class="btn btn-ghost small" id="us-mx-conn">Connect</button>`}
+            <label class="fld">DM bot user id<input class="input" id="us-mx-bot" value="${enc(s.matrix_dm_bot_user_id||'')}" placeholder="@posterchan:server"></label>
+            <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Relay notifications to Matrix DM<label class="switch"><input type="checkbox" id="us-mx-notif" ${s.matrix_notif_enabled?'checked':''}><span class="slider"></span></label></label>
+            <div class="us-stat muted small" id="us-mx-stat"></div>
+          </div>
+          <div class="us-conn"><div class="set-title small">Pleroma / Mastodon</div>
+            <label class="fld">Instance URL<input class="input" id="us-plr-url" value="${enc(s.pleroma_instance_url||'')}" placeholder="https://pleroma.example"></label>
+            ${s.pleroma_has_access_token
+              ? `<div class="muted small">✓ Connected to ${enc(s.pleroma_instance_url||'')}</div><button class="btn btn-ghost small" id="us-plr-disc" style="color:#ff6b8b">Disconnect</button>`
+              : `<button class="btn btn-ghost small" id="us-plr-conn">Connect with OAuth</button>`}
+            <div class="us-stat muted small" id="us-plr-stat"></div>
+          </div>
+          <div class="us-conn"><div class="set-title small">Misskey</div>
+            <label class="fld">Instance URL<input class="input" id="us-mk-url" value="${enc(s.misskey_instance_url||'')}" placeholder="https://misskey.example"></label>
+            ${s.misskey_has_api_token
+              ? `<div class="muted small">✓ Connected to ${enc(s.misskey_instance_url||'')}</div><button class="btn btn-ghost small" id="us-mk-disc" style="color:#ff6b8b">Disconnect</button>`
+              : `<button class="btn btn-ghost small" id="us-mk-conn">Connect with MiAuth</button>`}
+            <div class="us-stat muted small" id="us-mk-stat"></div>
+          </div>
+          <div class="us-conn"><div class="set-title small">Nostr (posting key)</div>
+            ${s.nostr_has_key
+              ? `<div class="muted small">✓ Connected as ${enc((s.nostr_npub||'').slice(0,20))}…</div><button class="btn btn-ghost small" id="us-nostr-disc" style="color:#ff6b8b">Disconnect</button>`
+              : `<label class="fld">Secret key<input class="input" id="us-nostr-key" type="password" placeholder="nsec1… or hex"></label>`}
+            <label class="fld">Relays <span class="muted small">(one per line; blank = defaults)</span><textarea class="input" id="us-nostr-relays" rows="3">${enc(s.nostr_relays||'')}</textarea></label>
+            <label class="fld">Media host<select class="input" id="us-nostr-media"><option value="blossom"${s.nostr_media_service==='blossom'?' selected':''}>Blossom</option><option value="nip96"${s.nostr_media_service==='nip96'?' selected':''}>NIP-96</option></select></label>
+            <label class="fld">Media host URL<input class="input" id="us-nostr-endpoint" value="${enc(s.nostr_media_endpoint||'')}" placeholder="https://blossom.primal.net"></label>
+            ${s.nostr_has_key?'':'<button class="btn btn-ghost small" id="us-nostr-conn">Connect</button>'}
+            <button class="btn btn-ghost small" id="us-nostr-backfill">⭳ Sync my posts to the relay</button>
+            <div class="us-stat muted small" id="us-nostr-stat"></div>
+          </div>
         </div>
-      </section>
-      <section class="set-card">
-        <div class="set-head"><div><div class="set-title">Matrix</div></div>${cb('us-mx-on',s.matrix_enabled)}</div>
-        <div class="set-body">
-          ${row('Homeserver',`<input class="input" id="us-mx-hs" value="${enc(s.matrix_homeserver||'')}" placeholder="https://matrix.org">`)}
-          ${row('DM bot user id',`<input class="input" id="us-mx-bot" value="${enc(s.matrix_dm_bot_user_id||'')}" placeholder="@posterchan:server">`)}
-          <div class="muted small">${s.matrix_has_access_token?'✓ Connected as '+enc(s.matrix_user_id||''):'Not connected.'}</div>
+        <div class="us-pane" data-pane="finance">
+          <div class="muted small">Budget Manager API key — drives <code>budget</code>, <code>bills</code>, <code>pay</code>, <code>addbill</code>.</div>
+          <label class="fld">API key ${s.finance_has_api_key?'<span class="muted small">(set — blank to keep)</span>':''}<input class="input" id="us-fin" type="password" placeholder="${s.finance_has_api_key?'••••••••':'X-API-Key'}"></label>
         </div>
-      </section>
-      <section class="set-card">
-        <div class="set-head"><div><div class="set-title">Finance (Budget Manager)</div>
-          <div class="muted small">Your personal API key for budget/bills commands.</div></div></div>
-        <div class="set-body">
-          ${row('API key '+(s.finance_has_api_key?'<span class="muted small">(set — leave blank to keep)</span>':''),`<input class="input" id="us-fin" type="password" placeholder="${s.finance_has_api_key?'••••••••':'X-API-Key'}">`)}
+        <div class="us-pane" data-pane="keys">
+          <div class="muted small">API keys let external apps use the AI API as you.</div>
+          <div class="set-actions"><input class="input" id="us-key-name" placeholder="Key name (optional)"><button class="btn btn-ghost small" id="us-key-new">Generate new key</button></div>
+          <div id="us-key-list"></div>
         </div>
-      </section>
-      <section class="set-card">
-        <div class="set-head"><div><div class="set-title">Notification relays</div>
-          <div class="muted small">Forward your fediverse notifications.</div></div></div>
-        <div class="set-body">
-          <label class="fld" style="flex-direction:row;align-items:center;gap:8px;justify-content:space-between">Relay notifications to Telegram ${cb('us-social-notif',s.social_notif_enabled)}</label>
-          <label class="fld" style="flex-direction:row;align-items:center;gap:8px;justify-content:space-between">Relay notifications to Matrix DM ${cb('us-mx-notif',s.matrix_notif_enabled)}</label>
-        </div>
-      </section>
-      <button class="btn btn-neon full" id="us-save">Save account settings</button>
-      <div class="muted small set-foot" id="us-save-status"></div>`;
+      </div>
+      <button class="btn btn-neon full" id="us-save">Save settings</button>
+      <div class="muted small set-foot" id="us-save-status"></div>
+    </section>`;
+    // tab switching
+    $$('.us-tab',host).forEach(b=> b.onclick=()=>{
+      $$('.us-tab',host).forEach(x=>x.classList.toggle('active',x===b));
+      $$('.us-pane',host).forEach(p=>p.classList.toggle('active', p.dataset.pane===b.dataset.tab));
+      if(b.dataset.tab==='keys') usLoadKeys();
+    });
+    usRenderMail();
+    $('#us-mail-add').onclick=()=>{ _usMail.push({email:'',imap_server:'',imap_port:993,smtp_server:'',smtp_port:587,password:''}); usRenderMail(); };
+    // Telegram link key
+    { const k=$('#us-tg-key'); if(k) k.onclick=async()=>{ const box=$('#us-tg-keybox'); box.textContent='generating…';
+        try{ const d=await fetch('/api/telegram/generate-key',{method:'POST'}).then(r=>r.json());
+          box.innerHTML = d.key?`Send to the bot in Telegram: <code>/start ${enc(d.key)}</code>`:('failed: '+enc(d.detail||'')); }catch(_){ box.textContent='failed'; } }; }
+    { const u=$('#us-tg-unlink'); if(u) u.onclick=async()=>{ if(!confirm('Unlink Telegram?'))return;
+        await fetch('/api/telegram/unlink',{method:'POST'}); toast('unlinked'); renderUserSettings(); }; }
+    // Matrix
+    { const c=$('#us-mx-conn'); if(c) c.onclick=async()=>{ const st=$('#us-mx-stat'); st.textContent='connecting…';
+        const r=await fetch('/api/matrix/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({homeserver:$('#us-mx-hs').value.trim(),username:$('#us-mx-user').value.trim(),password:$('#us-mx-pass').value})});
+        const d=await r.json().catch(()=>({})); if(r.ok){ toast('Matrix connected'); renderUserSettings(); } else st.textContent=d.detail||'connect failed'; }; }
+    { const d=$('#us-mx-disc'); if(d) d.onclick=async()=>{ if(!confirm('Disconnect Matrix?'))return; await fetch('/api/matrix/disconnect',{method:'POST'}); renderUserSettings(); }; }
+    // Pleroma OAuth (opens instance; callback posts 'pleroma_connected')
+    { const c=$('#us-plr-conn'); if(c) c.onclick=async()=>{ const st=$('#us-plr-stat'); const url=$('#us-plr-url').value.trim(); if(!url){st.textContent='enter the instance URL';return;} st.textContent='registering app…';
+        const r=await fetch('/api/pleroma/oauth/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance_url:url})}); const d=await r.json().catch(()=>({}));
+        if(!r.ok){ st.textContent=d.detail||'failed'; return; } window.open(d.auth_url,'_blank'); st.textContent='waiting for authorization…';
+        const h=e=>{ if(e.data==='pleroma_connected'){ window.removeEventListener('message',h); renderUserSettings(); } }; window.addEventListener('message',h); }; }
+    { const d=$('#us-plr-disc'); if(d) d.onclick=async()=>{ if(!confirm('Disconnect Pleroma?'))return; await fetch('/api/pleroma/disconnect',{method:'POST'}); renderUserSettings(); }; }
+    // Misskey MiAuth
+    { const c=$('#us-mk-conn'); if(c) c.onclick=async()=>{ const st=$('#us-mk-stat'); const url=$('#us-mk-url').value.trim(); if(!url){st.textContent='enter the instance URL';return;} st.textContent='starting MiAuth…';
+        const r=await fetch('/api/misskey/miauth/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance_url:url})}); const d=await r.json().catch(()=>({}));
+        if(!r.ok){ st.textContent=d.detail||'failed'; return; } window.open(d.auth_url,'_blank'); st.textContent='waiting for authorization…';
+        const h=e=>{ if(e.data==='misskey_connected'){ window.removeEventListener('message',h); renderUserSettings(); } }; window.addEventListener('message',h); }; }
+    { const d=$('#us-mk-disc'); if(d) d.onclick=async()=>{ if(!confirm('Disconnect Misskey?'))return; await fetch('/api/misskey/disconnect',{method:'DELETE'}); renderUserSettings(); }; }
+    // Nostr posting key
+    { const c=$('#us-nostr-conn'); if(c) c.onclick=async()=>{ const st=$('#us-nostr-stat'); const key=($('#us-nostr-key')||{}).value||''; if(!key.trim()){st.textContent='paste your nsec/hex';return;} st.textContent='connecting…';
+        const r=await fetch('/api/nostr/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({secret_key:key.trim(),relays:$('#us-nostr-relays').value.trim(),media_service:$('#us-nostr-media').value,media_endpoint:$('#us-nostr-endpoint').value.trim()})});
+        const d=await r.json().catch(()=>({})); if(r.ok){ toast('Nostr connected'); renderUserSettings(); } else st.textContent=d.detail||'failed'; }; }
+    { const d=$('#us-nostr-disc'); if(d) d.onclick=async()=>{ if(!confirm('Disconnect Nostr posting key?'))return; await fetch('/api/nostr/disconnect',{method:'POST'}); renderUserSettings(); }; }
+    { const b=$('#us-nostr-backfill'); if(b) b.onclick=async()=>{ const st=$('#us-nostr-stat'); st.textContent='pulling your history…'; b.disabled=true;
+        try{ const d=await fetch('/api/nostr/backfill-relay',{method:'POST'}).then(r=>r.json()); st.textContent=d.message||d.detail||'syncing…'; }catch(_){ st.textContent='failed'; } finally{ b.disabled=false; } }; }
+    // API keys
+    $('#us-key-new').onclick=async()=>{ const name=$('#us-key-name').value.trim();
+      const d=await fetch('/api/auth/api-keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}).then(r=>r.json()).catch(()=>({}));
+      if(d && d.key){ alert('Your new key (shown once):\n\n'+d.key); $('#us-key-name').value=''; usLoadKeys(); } else toast('create failed'); };
+    // Save (text + toggles; connect flows persist themselves)
     $('#us-save').onclick=async()=>{
-      const body={
-        notification_email:$('#us-email').value.trim(),
-        news_schedule_enabled:$('#us-news-on').checked,
-        news_schedule_time:$('#us-news-time').value||'12:00',
-        news_sources:$('#us-news-src').value,
-        telegram_notifications:$('#us-tg-notif').value.trim(),
-        misskey_enabled:$('#us-mk-on').checked,
-        misskey_instance_url:$('#us-mk-url').value.trim(),
-        pleroma_enabled:$('#us-plr-on').checked,
-        pleroma_instance_url:$('#us-plr-url').value.trim(),
-        matrix_enabled:$('#us-mx-on').checked,
-        matrix_homeserver:$('#us-mx-hs').value.trim(),
-        matrix_dm_bot_user_id:$('#us-mx-bot').value.trim(),
-        social_notif_enabled:$('#us-social-notif').checked,
-        matrix_notif_enabled:$('#us-mx-notif').checked,
-      };
-      const mk=$('#us-mk-tok').value.trim(); if(mk) body.misskey_api_token=mk;   // write-only: only set if typed
+      const body={ notification_email:$('#us-email').value.trim(), news_schedule_enabled:$('#us-news-on').checked,
+        news_schedule_time:$('#us-news-time').value||'12:00', news_sources:$('#us-news-src').value,
+        telegram_notifications:$('#us-tg-notif').value.trim(), social_notif_enabled:$('#us-social-notif').checked,
+        matrix_notif_enabled:$('#us-mx-notif').checked, matrix_homeserver:$('#us-mx-hs').value.trim(),
+        matrix_dm_bot_user_id:$('#us-mx-bot').value.trim(), pleroma_instance_url:$('#us-plr-url').value.trim(),
+        misskey_instance_url:$('#us-mk-url').value.trim(), nitter_feeds:$('#us-nitter').value,
+        nostr_relays:$('#us-nostr-relays').value.trim(), nostr_media_service:$('#us-nostr-media').value,
+        nostr_media_endpoint:$('#us-nostr-endpoint').value.trim(), mail_accounts:usCollectMail() };
       const fin=$('#us-fin').value.trim(); if(fin) body.finance_api_key=fin;
       const st=$('#us-save-status'); if(st) st.textContent='saving…';
       try{ const r=await fetch('/api/auth/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-        if(st) st.textContent = r.ok ? '✓ Saved' : ('save failed ('+r.status+')');
-        if(r.ok) toast('account settings saved');
+        if(st) st.textContent=r.ok?'✓ Saved':('save failed ('+r.status+')'); if(r.ok) toast('settings saved');
       }catch(_){ if(st) st.textContent='save failed'; }
     };
+  }
+  function usRenderMail(){
+    const wrap=$('#us-mail-list'); if(!wrap) return;
+    wrap.innerHTML=_usMail.map((a,i)=>`<div class="us-mail" data-i="${i}">
+      <input class="input" data-f="email" placeholder="email" value="${enc(a.email||'')}">
+      <input class="input" data-f="imap_server" placeholder="IMAP server" value="${enc(a.imap_server||'')}">
+      <input class="input" data-f="imap_port" placeholder="993" value="${enc(String(a.imap_port||993))}">
+      <input class="input" data-f="smtp_server" placeholder="SMTP server" value="${enc(a.smtp_server||'')}">
+      <input class="input" data-f="smtp_port" placeholder="587" value="${enc(String(a.smtp_port||587))}">
+      <input class="input" data-f="password" type="password" placeholder="${a.has_password?'•••• (kept)':'password'}">
+      <button class="mini us-mail-del" data-i="${i}" title="remove">✕</button></div>`).join('');
+    $$('.us-mail-del',wrap).forEach(b=> b.onclick=()=>{ _usMail.splice(+b.dataset.i,1); usRenderMail(); });
+  }
+  function usCollectMail(){
+    const wrap=$('#us-mail-list'); if(!wrap) return _usMail;
+    return $$('.us-mail',wrap).map(row=>{ const o={}; $$('input',row).forEach(inp=>{ const f=inp.dataset.f; let v=inp.value; if(f==='imap_port'||f==='smtp_port') v=parseInt(v,10)||(f==='imap_port'?993:587); if(f==='password'&&!v) return; o[f]=v; }); return o; }).filter(o=>o.email);
+  }
+  async function usLoadKeys(){
+    const wrap=$('#us-key-list'); if(!wrap) return;
+    let keys=[]; try{ keys=await fetch('/api/auth/api-keys').then(r=>r.json()); }catch(_){}
+    wrap.innerHTML=(keys||[]).map(k=>`<div class="us-key"><div><b>${enc(k.name||'Default')}</b> <span class="muted small">${k.is_active?'active':'disabled'}</span></div>
+      <div><button class="mini" data-tog="${k.id}">${k.is_active?'Disable':'Enable'}</button><button class="mini" data-del="${k.id}" style="color:#ff6b8b">Delete</button></div></div>`).join('')||'<div class="muted small">No keys yet.</div>';
+    $$('[data-tog]',wrap).forEach(b=> b.onclick=async()=>{ await fetch('/api/auth/api-keys/'+b.dataset.tog+'/toggle',{method:'PUT'}); usLoadKeys(); });
+    $$('[data-del]',wrap).forEach(b=> b.onclick=async()=>{ if(!confirm('Delete this API key?'))return; await fetch('/api/auth/api-keys/'+b.dataset.del,{method:'DELETE'}); usLoadKeys(); });
   }
   function niceImport(){ const p=Store.profile(ME.pubkey)||{}; return p.nip05?String(p.nip05).replace(/^_@/,''):''; }
   function drawRelayRows(){
