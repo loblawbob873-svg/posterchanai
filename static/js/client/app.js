@@ -1902,17 +1902,11 @@
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
     if(!Store.haveProfile(pk)){ const e=await Relay.query([{authors:[pk],kinds:[0],limit:1}]); for(const x of e)Store.saveProfile(x); }
     const p=Store.profile(pk)||{}; const mine=pk===ME.pubkey;
+    // Only the author's recent notes block the first paint. following/followers/pinned are loaded
+    // in the BACKGROUND below — the followers query alone can pull up to 1000 kind-3 events, which
+    // was the multi-second stall on every profile open.
     const notes=await Relay.query([{authors:[pk],kinds:[1],limit:80}]); notes.forEach(n=>Store.saveEvent(n));
-    // following (their latest kind-3) + followers (kind-3s that p-tag them)
-    const k3=await Relay.query([{authors:[pk],kinds:[3],limit:1}]);
-    const following=k3.length ? (k3.sort((a,b)=>b.created_at-a.created_at)[0].tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1])) : [];
-    const followerEvs=await Relay.query([{kinds:[3],'#p':[pk],limit:1000}]);
-    const followers=[...new Set(followerEvs.map(e=>e.pubkey))];
-    // pinned notes (NIP-51 kind-10001)
-    const pinList=await Relay.query([{authors:[pk],kinds:[10001],limit:1}]);
-    const pinIds=pinList.length ? pinList.sort((a,b)=>b.created_at-a.created_at)[0].tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1]) : [];
-    let pinned=[];
-    if(pinIds.length){ const got=await Relay.query([{ids:pinIds}]); got.forEach(e=>Store.saveEvent(e)); pinned=pinIds.map(id=>Store.get(id)).filter(Boolean); }
+    if(VIEW!=='profile') return;   // navigated away during the notes fetch
     const npub=NT().nip19.npubEncode(pk);
     feed.innerHTML=`<div class="prof"><div class="banner">${p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''}</div>
       <div class="phead"><img class="pav" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
@@ -1924,11 +1918,11 @@
         <div class="npubrow"><code>${enc(npub.slice(0,24))}…</code><button class="mini icon-btn" id="copy-npub" title="Copy npub"><svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor"><path d="M0 0h6v6H0zM2 2v2h2V2zM10 0h6v6h-6zM12 2v2h2V2zM0 10h6v6H0zM2 12v2h2v-2zM9 9h2v2H9zM13 9h3v2h-3zM9 13h2v3H9zM12 12h4v4h-2v-2h-2z"/></svg></button></div>
         ${p.lud16?`<button class="ln-addr" id="prof-ln" title="send a zap">⚡ ${enc(p.lud16)}</button>`:''}
         <div class="about">${linkify(p.about||'')}</div>
-        <div class="follow-stats"><button class="statbtn" id="show-following"><b>${following.length}</b> Following</button><button class="statbtn" id="show-followers"><b>${followers.length}${followerEvs.length>=1000?'+':''}</b> Followers</button></div>
+        <div class="follow-stats"><button class="statbtn" id="show-following"><b>·</b> Following</button><button class="statbtn" id="show-followers"><b>·</b> Followers</button></div>
       </div></div>
       <div class="prof-tabs"><button class="prof-tab active" data-tab="notes">Notes</button><button class="prof-tab" data-tab="replies">Replies</button><button class="prof-tab" data-tab="media">Media</button></div>
       <div id="prof-list"></div>`;
-    const pinnedHtml = pinned.length?`<div class="search-section-title">📌 Pinned</div>`+pinned.map(e=>noteHtml(e)).join(''):'';
+    let pinnedHtml = '';   // filled by the deferred pinned query below; listFor() reads it live
     const listFor=(tab)=>{
       const lim=_prof.limit;
       if(tab==='replies'){ const r=Store.feed(e=>e.pubkey===pk && isReply(e)).slice(0,lim);
@@ -1944,7 +1938,7 @@
     const fillList=(tab)=>{ const el=$('#prof-list'); if(el) el.innerHTML=listFor(tab); };
     // pagination cursor: oldest author kind-1 we hold (drives loadOlderProfile via `until`)
     const authorNotes=Store.feed(e=>e.pubkey===pk);
-    _prof = { pk, tab:'notes', loading:false, done:false, limit:40, fill:fillList,
+    _prof = { pk, tab:'notes', loading:false, done:false, limit:40, fill:fillList, following:[], followers:[],
               oldest: authorNotes.length ? authorNotes[authorNotes.length-1].created_at : 0 };
     fillList('notes');
     hydrate(feed);
@@ -1952,13 +1946,37 @@
     $$('.prof-tab',feed).forEach(t=> t.onclick=()=>{ $$('.prof-tab',feed).forEach(x=>x.classList.toggle('active',x===t)); _prof.tab=t.dataset.tab; fillList(t.dataset.tab); hydrate(feed); });
     $('#copy-npub').onclick=()=>{ navigator.clipboard.writeText(npub); toast('npub copied'); };
     { const ln=$('#prof-ln'); if(ln) ln.onclick=()=>doZap(null, pk); }
-    $('#show-following').onclick=()=>peopleModal('Following', following);
-    $('#show-followers').onclick=()=>peopleModal('Followers', followers);
+    $('#show-following').onclick=()=>peopleModal('Following', _prof.following||[]);
+    $('#show-followers').onclick=()=>peopleModal('Followers', _prof.followers||[]);
     if(mine){ $('#edit-prof').onclick=()=>editProfile(p); $('#open-settings').onclick=()=>switchView('settings'); }
     else {
       const z=$('#zap-prof'); if(z)z.onclick=()=>doZap(null,pk);
       const mn=$('#prof-menu'); if(mn)mn.onclick=()=>openProfileMenu(pk, mn);
     }
+    // Background: following / followers / pinned — fetched in PARALLEL after the first paint and
+    // patched in, so the profile opens instantly instead of waiting on (esp.) the 1000-event
+    // followers query. Re-checks _prof.pk so a fast navigation away doesn't patch the wrong profile.
+    (async()=>{
+      const [k3, followerEvs, pinList] = await Promise.all([
+        Relay.query([{authors:[pk],kinds:[3],limit:1}]).catch(()=>[]),
+        Relay.query([{kinds:[3],'#p':[pk],limit:1000}]).catch(()=>[]),
+        Relay.query([{authors:[pk],kinds:[10001],limit:1}]).catch(()=>[]),
+      ]);
+      if(VIEW!=='profile' || _prof.pk!==pk) return;
+      _prof.following = k3.length ? (k3.sort((a,b)=>b.created_at-a.created_at)[0].tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1])) : [];
+      _prof.followers = [...new Set(followerEvs.map(e=>e.pubkey))];
+      const ff=$('#show-following b'); if(ff) ff.textContent=_prof.following.length;
+      const fr=$('#show-followers b'); if(fr) fr.textContent=_prof.followers.length+(followerEvs.length>=1000?'+':'');
+      const pinIds=pinList.length ? pinList.sort((a,b)=>b.created_at-a.created_at)[0].tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1]) : [];
+      if(pinIds.length){
+        const got=await Relay.query([{ids:pinIds}]).catch(()=>[]); got.forEach(e=>Store.saveEvent(e));
+        const pinned=pinIds.map(id=>Store.get(id)).filter(Boolean);
+        if(pinned.length && VIEW==='profile' && _prof.pk===pk){
+          pinnedHtml='<div class="search-section-title">📌 Pinned</div>'+pinned.map(e=>noteHtml(e)).join('');
+          if(_prof.tab==='notes'){ fillList('notes'); hydrate(feed); }
+        }
+      }
+    })();
   }
   // the profile "☰ more" menu — Follow / Message / Mute / Block, kept off the header for a clean look
   async function openProfileMenu(pk, anchorBtn){
