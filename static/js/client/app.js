@@ -951,6 +951,12 @@
     for(const e of evs){ const d=(e.tags.find(t=>t[0]==='d')||[])[1]||''; const k=e.pubkey+':'+d; const cur=m.get(k); if(!cur||cur.created_at<e.created_at) m.set(k,e); }
     return [...m.values()];
   }
+  // Substring match for addressable Discover kinds (articles/streams/communities) — the relay's NIP-50
+  // FTS only covers kind-1, so search those by their title/name/summary/about/content client-side.
+  function _matchAddr(e, ql){
+    const g=k=>(e.tags.find(t=>t[0]===k)||[])[1]||'';
+    return (g('title')+' '+g('name')+' '+g('d')+' '+g('summary')+' '+g('description')+' '+(e.content||'')).toLowerCase().includes(ql);
+  }
   async function renderArticles(){
     const feed=$('#feed');
     feed.innerHTML=`<div class="art-top"><button class="btn btn-neon small" id="art-new">✎ Write article</button></div><div id="art-drafts"></div><div id="art-list"><div class="spinner"></div></div>`;
@@ -3702,17 +3708,33 @@
     }
     // 3. posts via NIP-50 full-text (relay indexes note content); profiles by name/nip05 over the
     //    locally-cached profile set (the relay's FTS doesn't cover kind-0, so we match what we know).
-    const postEvs = await Relay.query([{ kinds:[1], search:q, limit:40 }]).catch(()=>[]);
-    postEvs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
+    // Posts via NIP-50 FTS, and the Discover kinds (articles/streams/communities) fetched + filtered
+    // client-side (FTS doesn't index them) — run in parallel.
     const ql=q.toLowerCase();
+    const [postEvs, addrEvs] = await Promise.all([
+      Relay.query([{ kinds:[1], search:q, limit:40 }]).catch(()=>[]),
+      Relay.query([{ kinds:[30023,30311,34550], limit:200 }]).catch(()=>[]),
+    ]);
+    postEvs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
+    addrEvs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
+    if(VIEW!=='search') return;
+    const arts =_dedupAddr(addrEvs.filter(e=>e.kind===30023 && _matchAddr(e,ql))).sort((a,b)=>artTime(b)-artTime(a)).slice(0,12);
+    const strms=_dedupAddr(addrEvs.filter(e=>e.kind===30311 && _matchAddr(e,ql))).sort((a,b)=>b.created_at-a.created_at).slice(0,12);
+    const comms=_dedupAddr(addrEvs.filter(e=>e.kind===34550 && _matchAddr(e,ql))).sort((a,b)=>b.created_at-a.created_at).slice(0,12);
     const profs=Store.profileList().filter(p=>(((p.meta.name||'')+(p.meta.display_name||'')+(p.meta.nip05||'')).toLowerCase().includes(ql))).slice(0,12);
     let html='';
     if(profs.length){ html+='<div class="search-section-title">Profiles</div>'; for(const p of profs){ const m=p.meta; html+=`<div class="psearch" data-prof="${p.pubkey}"><img src="${enc(m.picture||LOGO)}" onerror="this.src='${LOGO}'"><div><b>${enc(m.name||m.display_name||'anon')}</b><div class="muted small">${enc(niceNip05(m.nip05)||(m.about||'').slice(0,60))}</div></div></div>`; } }
+    if(arts.length){  html+='<div class="search-section-title">📝 Articles</div>'+arts.map(articleCard).join(''); }
+    if(strms.length){ html+='<div class="search-section-title">▷ Streams</div><div class="stream-grid">'+strms.map(streamCard).join('')+'</div>'; }
+    if(comms.length){ html+='<div class="search-section-title">☷ Communities</div><div class="stream-grid">'+comms.map(communityCard).join('')+'</div>'; }
     const posts=postEvs.sort((a,b)=>b.created_at-a.created_at);
     html+='<div class="search-section-title">Posts</div>';
     html+= posts.length ? `<div id="search-posts">${posts.map(e=>noteHtml(e)).join('')}</div>` : '<div class="empty">No matching posts.</div>';
     feed.innerHTML=html; hydrate(feed);
     $$('[data-prof]',feed).forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
+    // Discover result cards → open the right view (community vs stream share .stream-card → split by kind).
+    $$('.article-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const a=Store.get(c.dataset.id); if(a) openArticle(a); });
+    $$('.stream-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const x=Store.get(c.dataset.id); if(x) (x.kind===34550?openCommunity:openStream)(x); });
     // pagination cursor for scroll-back through more search hits
     _search = { q, loading:false, done:posts.length<40, oldest: posts.length ? posts[posts.length-1].created_at : 0 };
   }
