@@ -946,18 +946,24 @@ async def _mark_blocked_relays(store, gate, domains) -> list:
     gate denylist is in-memory (load_from_store restores members, not bridged), so this must run on
     every start and on a live blocklist reload to keep live filtering correct."""
     try:
-        pks = await store.bridged_pubkeys(domains)
+        weak = await store.bridged_pubkeys(domains)            # relay-list / proxy hints
+        ident = await store.bridge_identity_pubkeys(domains)   # kind-0 nip05 domain (DomainPolicy)
     except Exception as e:
         logger.warning("[nostr-relay] bridge scan failed: %s", e)
         return []
-    # Never treat a WoT member as a bridge to block — anyone in the trust set (follows + operators)
-    # is trusted and may legitimately cross-post from the fediverse. Filter against the full WoT so
-    # a trusted account is never bridged/purged just because a synced post hints at a blocked bridge.
+    # Weak hints (a synced post's proxy tag, a relay-list entry) can show up on a real account that
+    # merely cross-posts from the fediverse, so for those we still spare the whole WoT (follows +
+    # operators) — they must never be bridged/purged on a hint alone.
     wot = gate.members()   # _members | _operator
-    pks = [p for p in (pks or []) if p not in wot]
-    if pks:
-        gate.add_bridged(list(pks))
-    return list(pks)
+    weak_pks = [p for p in (weak or []) if p not in wot]
+    gate.add_bridged(weak_pks)
+    # DomainPolicy (nostrify): an account whose OWN kind-0 nip05 is on the bridge domain is a mirror
+    # account — block it even when followed (member-exemption is what made the blocklist a no-op),
+    # but still spare operators / registered local users so the purge can never touch a real account.
+    ops = gate.operators()
+    ident_pks = [p for p in (ident or []) if p not in ops]
+    gate.add_bridged_identity(ident_pks)
+    return list(set(weak_pks) | set(ident_pks))
 
 
 async def _apply_blocked_relays(store, gate, domains) -> int:

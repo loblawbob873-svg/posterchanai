@@ -444,6 +444,26 @@ class RelayStore:
     async def bridged_pubkeys(self, domains) -> set:
         return await self._w(self._bridged_pubkeys_sync, set(domains))
 
+    def _bridge_identity_pubkeys_sync(self, domains) -> set:
+        """nostrify DomainPolicy: authors whose kind-0 profile nip05 domain (or subdomain) is
+        blocklisted. This is the definitive bridge-mirror identity, so the caller blocks these even
+        when followed (it still spares operators). Separate from _bridged_pubkeys_sync, whose
+        relay-list / proxy hints stay member-exempt to avoid false-positiving a real crossposter."""
+        domains = {d for d in domains if d}
+        if not domains:
+            return set()
+        from .bridges import author_on_blocked_bridge
+        conn = self._conn()
+        out: set = set()
+        for r in conn.execute("SELECT pubkey, content FROM events WHERE kind=0"):
+            ev = {"pubkey": r["pubkey"], "kind": 0, "content": r["content"] or "", "tags": []}
+            if r["pubkey"] and author_on_blocked_bridge(ev, domains):
+                out.add(r["pubkey"])
+        return out
+
+    async def bridge_identity_pubkeys(self, domains) -> set:
+        return await self._w(self._bridge_identity_pubkeys_sync, set(domains))
+
     def _has_sync(self, eid: str) -> bool:
         return self._conn().execute(
             "SELECT 1 FROM events WHERE id=? LIMIT 1", (eid,)).fetchone() is not None

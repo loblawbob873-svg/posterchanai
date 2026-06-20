@@ -34,6 +34,25 @@ def _match(host: str, domains) -> bool:
     return bool(host) and any(host == d or host.endswith("." + d) for d in domains)
 
 
+def author_on_blocked_bridge(ev: dict, domains) -> bool:
+    """nostrify-style DomainPolicy signal: the author's OWN profile (kind 0) declares a `nip05`
+    whose domain — or a subdomain of it — is blocklisted. This is the DEFINITIVE "this account
+    lives on the bridge" test: a mirror account literally identifies as `handle@mostr.pub`, whereas
+    a real user's nip05 is on their own domain (never the bridge). It is therefore safe to act on
+    even for a *followed* account, unlike the weaker relay-list / proxy hints in
+    reveals_blocked_bridge() (a real fedi-crossposter can carry those, so those stay member-exempt)."""
+    if not domains:
+        return False
+    k = ev.get("kind")
+    if (int(k) if k is not None else 1) != 0:
+        return False
+    try:
+        nip05 = (json.loads(ev.get("content") or "{}").get("nip05") or "").strip().lower()
+    except Exception:
+        return False
+    return "@" in nip05 and _match(nip05.rsplit("@", 1)[-1], domains)
+
+
 def reveals_blocked_bridge(ev: dict, domains) -> bool:
     """True if `ev` shows its author is hosted on a blocked bridge domain (so the whole account
     should be denied). Looks at kind-0 nip05, kind-3/10002 relay hints, and any `proxy` tag host."""

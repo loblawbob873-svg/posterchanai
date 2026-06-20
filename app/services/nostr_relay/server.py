@@ -17,7 +17,7 @@ from websockets.http11 import Response
 
 from app.services.nostr.event import verify_event
 from .langfilter import blocked_language, blocked_word
-from .bridges import reveals_blocked_bridge
+from .bridges import reveals_blocked_bridge, author_on_blocked_bridge
 
 
 def _broadcastable(ev) -> bool:
@@ -335,7 +335,10 @@ class RelayServer:
         # it from this event's profile/relay-list also bars everything else it posts (via is_member).
         _br = self.cfg.get("blocked_relays")
         if _br and reveals_blocked_bridge(ev, _br):
-            self.gate.mark_bridged(ev.get("pubkey", ""))
+            if author_on_blocked_bridge(ev, _br):
+                self.gate.mark_bridged_identity(ev.get("pubkey", ""))   # kind-0 nip05 → block even members
+            else:
+                self.gate.mark_bridged(ev.get("pubkey", ""))
             self._send(conn, ["OK", eid, False, "blocked: bridged relay not accepted"])
             return
         # WoT publishing gate — skippable. When wot_enabled is off (e.g. a processing node whose

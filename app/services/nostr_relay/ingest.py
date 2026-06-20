@@ -18,7 +18,7 @@ import logging
 from app.services.nostr import relay as _relay
 from app.services.nostr.event import verify_event
 from .langfilter import blocked_language, blocked_word
-from .bridges import reveals_blocked_bridge
+from .bridges import reveals_blocked_bridge, author_on_blocked_bridge
 
 logger = logging.getLogger(__name__)
 
@@ -111,8 +111,13 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
             if not _is_evid(eid) or eid in existing:
                 continue
             # Learn + drop bridge accounts (mostr.pub etc.) so the gate rejects everything they post.
+            # A kind-0 nip05 on the bridge domain marks the account even when it's a WoT member
+            # (DomainPolicy); weaker hints stay member-exempt (handled inside mark_bridged).
             if blocked_relays and reveals_blocked_bridge(ev, blocked_relays):
-                gate.mark_bridged(ev.get("pubkey", ""))
+                if author_on_blocked_bridge(ev, blocked_relays):
+                    gate.mark_bridged_identity(ev.get("pubkey", ""))
+                else:
+                    gate.mark_bridged(ev.get("pubkey", ""))
                 continue
             if not gate.is_member(ev.get("pubkey", "")):
                 continue
@@ -303,7 +308,10 @@ async def fetch_lookup_metadata(store, upstream, batch: int, limit: int, pace: f
         for ev in latest.values():
             if blocked_relays and reveals_blocked_bridge(ev, blocked_relays):
                 if gate is not None:
-                    gate.mark_bridged(ev.get("pubkey", ""))
+                    if author_on_blocked_bridge(ev, blocked_relays):
+                        gate.mark_bridged_identity(ev.get("pubkey", ""))   # kind-0 nip05 → block even members
+                    else:
+                        gate.mark_bridged(ev.get("pubkey", ""))
                 continue   # never store a bridge account's profile/relay-list
             if verify_event(ev) and await store.add_event(ev, origin="wot"):
                 stored += 1

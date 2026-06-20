@@ -53,6 +53,21 @@ class WotGate:
         if pubkey and pubkey not in self._members and pubkey not in self._operator:
             self._bridged.add(pubkey)
 
+    def mark_bridged_identity(self, pubkey: str) -> None:
+        """DomainPolicy mark: the account's OWN kind-0 nip05 is on a blocked bridge domain. Unlike
+        mark_bridged() this blocks even a WoT *member* — a mirror account (mostr.pub, momostr.pink,
+        brid.gy) is almost always followed by someone, so member-exemption made the blocklist a
+        no-op. Still spares operators / registered local users (the preserve set), so it can never
+        delete a real first-party account's posts."""
+        if pubkey and pubkey not in self._operator:
+            self._bridged.add(pubkey)
+
+    def add_bridged_identity(self, pubkeys) -> None:
+        self._bridged |= {p for p in (pubkeys or []) if p and p not in self._operator}
+
+    def operators(self) -> frozenset:
+        return self._operator
+
     def is_blocked(self, pubkey: str) -> bool:
         return bool(pubkey) and (pubkey in self._blocked or pubkey in self._bridged)
 
