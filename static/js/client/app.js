@@ -530,7 +530,7 @@
       setTimeout(()=>ensureDMs(), 3000); setTimeout(loadRightbar, 1500); };   // DMs + rightbar load after the timeline
     connectRelays();
     renderMe();
-    switchView('home');
+    switchView('global');   // land on Nostrverse (global feed) by default
     setInterval(refreshRightbar, 90000);   // routinely refresh trending + prepend new hot posts
     // Re-fetch profiles for on-screen authors still showing as npub — as the relay backfills
     // profiles, already-displayed posts resolve to names/avatars without needing a re-render.
@@ -2680,17 +2680,17 @@
   // the profile "☰ more" menu — Follow / Message / Mute / Block, kept off the header for a clean look
   async function openProfileMenu(pk, anchorBtn){
     const items=[
-      ['follow', FOLLOWS.has(pk)?'✓ Following — unfollow':'＋ Follow'],
-      ['message','✉ Message'],
+      ['follow', FOLLOWS.has(pk)?'➖ Unfollow':'➕ Follow'],
+      ['message','✉️ Message'],
       ['mute', MUTED.has(pk)?'🔊 Unmute':'🔇 Mute'],
     ];
     if(IS_ADMIN){
       // admin extras: one consolidated permissions panel (AI, Blossom, image/music/video/torrent)
       // + relay block. State is fetched inside openPermissions so the menu opens instantly.
-      items.push(['caps','🔑 Additional permissions']);
-      items.push(['relay-sync','🔄 Sync notes (relay)']);
-      items.push(['purge-blossom','🗑️ Purge Blossom files','danger']);
-      items.push(['block','🚫 Block (relay)','danger']);
+      items.push(['caps','🔑 Permissions']);
+      items.push(['relay-sync','🔄 Sync notes']);
+      items.push(['purge-blossom','🗑️ Purge Blossom','danger']);
+      items.push(['block','🚫 Block','danger']);
     }
     openMenuPopover(anchorBtn, items, async a=>{
       if(a==='follow'){ await toggleFollow(pk); renderProfileView(pk); return; }

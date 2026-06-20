@@ -57,6 +57,9 @@ a.btn.full{display:block}
 .mini{cursor:pointer;background:transparent;border:1px solid var(--line);color:var(--muted);
   border-radius:8px;padding:4px 9px;font-size:12px;transition:.15s}
 .mini:hover{color:var(--cyan);border-color:var(--cyan)}
+/* topbar refresh: the 12px muted ↻ was nearly invisible — make it a clear, tappable icon button */
+#btn-refresh{flex-shrink:0;font-size:20px;line-height:1;padding:8px 12px;color:var(--text)}
+#btn-refresh:hover{color:var(--cyan);border-color:var(--cyan);box-shadow:0 0 10px rgba(0,255,255,.3)}
 .muted{color:var(--muted)} .small{font-size:12.5px} .full{width:100%}
 
 /* ===== auth ===== */
