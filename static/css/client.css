@@ -130,12 +130,17 @@ a.btn.full{display:block}
   .rightbar{display:flex;flex-direction:column;gap:16px;padding:18px 16px;border-left:1px solid var(--line);overflow-y:auto;min-height:0}
 }
 .rb-section h3{margin:0 0 8px;font-size:18px;letter-spacing:1px;color:var(--text)}
-.rb-item{padding:9px 10px;border:1px solid var(--line);border-radius:11px;margin-bottom:8px;cursor:pointer;transition:.13s;background:rgba(8,5,18,.4)}
-.rb-item:hover{border-color:var(--neon);background:rgba(0,255,255,.08)}
+.rb-item{position:relative;padding:10px 11px 10px 13px;border:1px solid var(--line);border-radius:11px;margin-bottom:9px;cursor:pointer;
+  transition:.15s;background:linear-gradient(135deg,rgba(0,255,255,.05),rgba(255,0,255,.05)),rgba(8,5,18,.62);overflow:hidden}
+.rb-item::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;background:linear-gradient(var(--neon),var(--neon2));opacity:.55;transition:.15s}
+.rb-item:hover{border-color:var(--neon);background:linear-gradient(135deg,rgba(0,255,255,.12),rgba(255,0,255,.10)),rgba(8,5,18,.7);box-shadow:0 0 14px rgba(0,255,255,.18)}
+.rb-item:hover::before{opacity:1;box-shadow:0 0 8px var(--neon)}
 .rb-head{display:flex;align-items:center;gap:7px}
 .rb-av{width:24px;height:24px;border-radius:50%;border:1px solid var(--line);object-fit:cover;flex-shrink:0;background:#1a1230}
-.rb-item b{font-size:16px}.rb-item .muted{font-size:13px}
-.rb-item .rb-txt{color:var(--muted);font-size:15px;line-height:1.45;margin-top:3px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.rb-item b{font-size:15px;color:#fff;text-shadow:0 0 6px rgba(0,255,255,.35)}
+.rb-fire{margin-left:auto;font-size:12.5px;font-weight:700;color:var(--amber);white-space:nowrap;text-shadow:0 0 7px rgba(255,207,43,.5)}
+.rb-item .rb-txt{color:#7dfcff;font-size:14.5px;line-height:1.5;margin-top:5px;text-shadow:0 0 6px rgba(0,255,255,.55),0 0 12px rgba(0,255,255,.28);
+  display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
 .rb-github{margin-top:auto;display:flex;align-items:center;justify-content:center;gap:9px;color:var(--text);
   border:1px solid var(--line);border-radius:12px;padding:11px;font-weight:600;transition:.15s}
 .rb-github:hover{border-color:var(--cyan);color:var(--cyan);box-shadow:var(--glow-cy)}

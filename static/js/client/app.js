@@ -508,6 +508,11 @@
     bindSearch();
     bindFeedActions();
     $('#feed').addEventListener('scroll', onFeedScroll, { passive:true });   // infinite scroll-back
+    const rb=document.querySelector('.rightbar');
+    if(rb){ rb.addEventListener('scroll', onRightbarScroll, { passive:true });   // Hot infinite-scroll
+      const hot=document.getElementById('rb-hot');
+      if(hot) hot.addEventListener('click', e=>{ const it=e.target.closest('.rb-item[data-open]'); if(it) renderThread(it.dataset.open); });
+      startAutoScroll(); }
     bumpDraft();   // show the saved-drafts count on the nav badge
     Drafts.pull();   // sync drafts from the encrypted Nostr event (cross-device)
     // YouTube facade → load the real player iframe on click (kept out of the timeline until then
@@ -526,7 +531,7 @@
     connectRelays();
     renderMe();
     switchView('home');
-    setInterval(loadRightbar, 300000);   // refresh hot/trending every 5 min
+    setInterval(refreshRightbar, 90000);   // routinely refresh trending + prepend new hot posts
     // Re-fetch profiles for on-screen authors still showing as npub — as the relay backfills
     // profiles, already-displayed posts resolve to names/avatars without needing a re-render.
     setInterval(()=>{ if(document.hidden) return; let n=0; $$('.note[data-pk]').forEach(el=>{ if(n<60 && !Store.haveProfile(el.dataset.pk)){ needProfile(el.dataset.pk); n++; } }); }, 12000);
@@ -3962,11 +3967,18 @@
     document.body.appendChild(bg); }
 
   // ---------- right column: Hot / Trending (desktop) ----------
+  // First paint: build all three sections. Hot is an infinite-scroll feed (see _hot below).
   async function loadRightbar(){
     if(!document.querySelector('.rightbar')) return;
-    rankInto('rb-hot', 4*3600, 9);   // Hot = most-engaged posts (last 4h)
+    loadHot(true);                   // Hot = most-engaged posts, infinite-scroll
     loadTrendingTags();              // Trending = trending hashtags (last 24h)
     loadDiscover();                  // curated hashtag shortcuts for newcomers
+  }
+  // Routine update (timer): refresh the chip clouds and prepend any freshly-hot posts to the top
+  // of the Hot feed WITHOUT rebuilding it (so an in-progress scroll isn't yanked back up).
+  function refreshRightbar(){
+    if(document.hidden || !document.querySelector('.rightbar')) return;
+    loadTrendingTags(); loadDiscover(); refreshHotTop();
   }
   // Curated hashtag shortcuts — friendly entry points into popular communities for new users.
   const DISCOVER_TAGS = [['foodstr','🍔'], ['asknostr','💬'], ['AI','🤖'], ['Bitcoin','₿'],
@@ -4030,22 +4042,102 @@
     if(!evs.length || minTs>=until) _hashtag.done=true;
     _hashtag.loading=false;
   }
-  async function rankInto(elId, windowSec, n){
-    const el=document.getElementById(elId); if(!el) return;
+  // ---- Hot: infinite-scroll feed of the most-engaged posts ----------------------------------
+  // Engagement = count of reactions/reposts (kinds 6,7) pointing at a note. We rank within a time
+  // window and append the next page on scroll; when a window is exhausted we widen it (4h→8h→…)
+  // until the cap, so scrolling keeps surfacing older-but-hot posts instead of dead-ending.
+  const HOT_WIN0=4*3600, HOT_WIN_MAX=14*24*3600, HOT_PAGE=12, HOT_MAX=48;
+  let _hot={ loading:false, done:false, win:HOT_WIN0, shown:new Set() };
+  // Rank notes by engagement within `windowSec`; returns [[noteId,count],…] sorted desc.
+  async function rankHot(windowSec){
     const since=Math.floor(Date.now()/1000)-windowSec;
-    let evs=[]; try{ evs=await Relay.query([{ kinds:[6,7], since, limit:800 }]); }catch(_){}
+    let evs=[]; try{ evs=await Relay.query([{ kinds:[6,7], since, limit:1500 }]); }catch(_){}
     const tally={};
     for(const e of evs){ const id=(e.tags.filter(t=>t[0]==='e').pop()||[])[1]; if(id) tally[id]=(tally[id]||0)+1; }
-    const top=Object.entries(tally).sort((a,b)=>b[1]-a[1]).slice(0,n).map(x=>x[0]);
-    if(!top.length){ el.innerHTML='<div class="muted small">Nothing yet.</div>'; return; }
-    try{ const notes=await Relay.query([{ ids:top }]); notes.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); }); }catch(_){}
-    const rows=top.map(id=>{ const ev=Store.get(id); if(!ev||ev.kind!==1) return ''; const pr=profOf(ev.pubkey);
-      const txt=(ev.content||'').replace(/https?:\/\/\S+/g,'').trim().slice(0,115);
-      return `<div class="rb-item" data-open="${id}" data-pk="${ev.pubkey}"><div class="rb-head"><img class="rb-av" src="${enc(pr.picture||LOGO)}" onerror="this.src='${LOGO}'"><b>${enc(pr.name||pr.display_name||'anon')}</b> <span class="muted">· ${tally[id]} 🔥</span></div><div class="rb-txt">${enc(txt)||'<i>media</i>'}</div></div>`;
-    }).filter(Boolean).join('');
-    el.innerHTML=rows||'<div class="muted small">Nothing yet.</div>';
-    el.querySelectorAll('.rb-item[data-open]').forEach(it=> it.onclick=()=>renderThread(it.dataset.open));
+    return Object.entries(tally).sort((a,b)=>b[1]-a[1]);
+  }
+  async function fetchNotes(ids){
+    const miss=ids.filter(id=>!Store.get(id)); if(!miss.length) return;
+    try{ const notes=await Relay.query([{ ids:miss }]); notes.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); }); }catch(_){}
+  }
+  function hotRowHtml(id, count){
+    const ev=Store.get(id); if(!ev||ev.kind!==1) return ''; const pr=profOf(ev.pubkey);
+    const txt=(ev.content||'').replace(/https?:\/\/\S+/g,'').trim().slice(0,140);
+    return `<div class="rb-item" data-open="${id}" data-pk="${ev.pubkey}"><div class="rb-head"><img class="rb-av" src="${enc(pr.picture||LOGO)}" onerror="this.src='${LOGO}'"><b>${enc(pr.name||pr.display_name||'anon')}</b> <span class="rb-fire">${count} 🔥</span></div><div class="rb-txt">${enc(txt)||'<i>media</i>'}</div></div>`;
+  }
+  // Materialize up to HOT_PAGE not-yet-shown ranked items into the Hot column. `where` = append
+  // (scroll-down) or prepend (routine refresh). Returns how many rows were actually added.
+  async function addHot(el, ranked, where){
+    const pick=[];
+    for(const [id,c] of ranked){ if(_hot.shown.has(id)) continue; pick.push([id,c]); if(pick.length>=HOT_PAGE) break; }
+    if(!pick.length) return 0;
+    pick.forEach(([id])=>_hot.shown.add(id));   // mark before fetch so concurrent calls don't double-add
+    await fetchNotes(pick.map(x=>x[0]));
+    const frag=document.createDocumentFragment();
+    for(const [id,c] of pick){ const html=hotRowHtml(id,c); if(!html) continue;
+      const d=document.createElement('div'); d.innerHTML=html; const node=d.firstElementChild; if(node) frag.appendChild(node); }
+    const n=frag.childElementCount; if(!n) return 0;
+    Array.from(el.children).forEach(c=>{ if(!c.classList||!c.classList.contains('rb-item')) c.remove(); });  // drop loader/placeholder
+    if(where==='prepend' && el.firstChild) el.insertBefore(frag, el.firstChild); else el.appendChild(frag);
     decorateProfiles();
+    return n;
+  }
+  async function loadHot(reset){
+    const el=document.getElementById('rb-hot'); if(!el) return;
+    if(reset){ _hot={ loading:true, done:false, win:HOT_WIN0, shown:new Set() }; el.innerHTML='<div class="muted small">loading…</div>'; }
+    const added=await addHot(el, await rankHot(_hot.win), 'append');
+    if(reset && !added) el.innerHTML='<div class="muted small">Nothing yet.</div>';
+    _hot.loading=false;
+  }
+  // Scroll-down handler: widen the window until we manage to append something or hit the cap.
+  async function loadMoreHot(){
+    if(_hot.loading||_hot.done) return; const el=document.getElementById('rb-hot'); if(!el) return;
+    if(el.querySelectorAll('.rb-item').length>=HOT_MAX){ _hot.done=true; return; }   // cap so the column can loop
+    _hot.loading=true;
+    let added=0, guard=0;
+    while(added===0 && guard++<8){
+      added=await addHot(el, await rankHot(_hot.win), 'append');
+      if(added===0){ if(_hot.win>=HOT_WIN_MAX){ _hot.done=true; break; } _hot.win=Math.min(_hot.win*2, HOT_WIN_MAX); }
+    }
+    _hot.loading=false;
+  }
+  // Routine refresh: prepend genuinely-new hot posts, but only when the user is near the top so we
+  // never jump their scroll position out from under them.
+  async function refreshHotTop(){
+    const el=document.getElementById('rb-hot'); if(!el||_hot.loading) return;
+    const rb=document.querySelector('.rightbar'); if(rb && rb.scrollTop>140) return;
+    _hot.loading=true; try{ await addHot(el, await rankHot(HOT_WIN0), 'prepend'); } finally{ _hot.loading=false; }
+  }
+  function onRightbarScroll(){
+    const rb=document.querySelector('.rightbar'); if(!rb) return;
+    if(rb.scrollTop+rb.clientHeight >= rb.scrollHeight-320) loadMoreHot();
+  }
+  // Gentle auto-scroll "ticker": creep the rightbar down on its own so the column cycles through
+  // Trending → Discover → Hot over and over without a hand on the wheel. Pauses while the pointer is
+  // over the column (reading/clicking) or the tab is hidden. When the bottom is reached it loops
+  // back to the top and refreshes the lap. Honours prefers-reduced-motion.
+  const _auto={ on:true, acc:0, last:0, hold:0 };
+  function startAutoScroll(){
+    const rb=document.querySelector('.rightbar'); if(!rb) return;
+    if(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    rb.addEventListener('mouseenter', ()=>{ _auto.on=false; });
+    rb.addEventListener('mouseleave', ()=>{ _auto.on=true; });
+    const SPEED=20;   // px/sec — slow, readable creep
+    const step=(ts)=>{
+      requestAnimationFrame(step);
+      const dt=_auto.last?Math.min(ts-_auto.last,100):0; _auto.last=ts;
+      if(!_auto.on || document.hidden) return;
+      if(_auto.hold>0){ _auto.hold-=dt; return; }   // brief pause at the top of each lap
+      const max=rb.scrollHeight-rb.clientHeight; if(max<=0) return;
+      if(rb.scrollTop>=max-1){          // reached the end of the column → start the lap over
+        if(!_hot.done){ loadMoreHot(); return; }   // still has more Hot to surface first
+        rb.scrollTop=0; _auto.acc=0; _auto.hold=1500; refreshRightbar();   // loop + refresh the lap
+        return;
+      }
+      _auto.acc += SPEED*dt/1000;
+      if(_auto.acc>=1){ const d=Math.floor(_auto.acc); _auto.acc-=d; rb.scrollTop+=d; }
+    };
+    requestAnimationFrame(step);
   }
 
   document.addEventListener('DOMContentLoaded', boot);
