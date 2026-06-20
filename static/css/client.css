@@ -263,7 +263,9 @@ a.btn.full{display:block}
 .note-preview a.mention{color:var(--cyan)}
 .row{display:flex;gap:8px;align-items:center}
 .spacer{flex:1}
-.cmp-tools{flex-wrap:wrap;gap:8px;margin-bottom:8px}
+.cmp-tools{flex-wrap:wrap;gap:8px;margin-bottom:8px;justify-content:space-between}
+.cmp-left,.cmp-right{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.cmp-right{margin-left:auto}
 /* YouTube inline embed (click the thumbnail facade to load the player) */
 .yt-embed{position:relative;display:block;max-width:480px;width:100%;margin-top:8px;cursor:pointer;border-radius:12px;overflow:hidden;border:1px solid var(--line)}
 .yt-thumb{display:block;width:100%;aspect-ratio:16/9;object-fit:cover}
@@ -423,9 +425,8 @@ a.btn.full{display:block}
   /* mobile: top-align the modal so the on-screen keyboard doesn't shove it off-center */
   .modal-bg{place-items:start center;padding:6vh 12px}
   .auth-card{padding:22px}
-  /* compose: drop the growing spacer so every tool (incl. 💾 Draft) flows + wraps visibly
-     instead of being pushed off the narrow modal and clipped by overflow-x:hidden */
-  .cmp-tools .spacer{display:none}
+  /* compose: on the narrow modal let both tool groups flow + wrap visibly instead of being
+     pushed off and clipped; the action group (Draft/Post) still hugs the right via margin-left:auto */
   .cmp-tools{justify-content:flex-start}
 }
 
