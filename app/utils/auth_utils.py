@@ -32,92 +32,25 @@ def query_api_key_with_retry(db: Session, token: str, max_retries: int = 1) -> t
         >>> if api_key and user_id:
         ...     user = db.query(User).filter(User.id == user_id).first()
     """
-    try:
-        # Query API key using raw connection to avoid SQLite parameter binding issues
-        # SQLite can have issues with SQLAlchemy parameter binding, so use raw connection
-        # Get the actual DBAPI connection from SQLAlchemy
-        raw_conn = db.connection()
-        # For SQLAlchemy 1.4+, connection() returns the connection directly
-        # For older versions, might need raw_conn.connection
-        if hasattr(raw_conn, 'connection'):
-            dbapi_conn = raw_conn.connection
-        else:
-            dbapi_conn = raw_conn
-        
-        cursor = dbapi_conn.cursor()
-        
-        # Use parameterized query with ? placeholder (SQLite native format)
-        cursor.execute("""
-            SELECT id, user_id, key, name, created_at, last_used_at, is_active
-            FROM api_keys
-            WHERE key = ? AND is_active = 1
-            LIMIT 1
-        """, (token,))
-        
-        result = cursor.fetchone()
-        cursor.close()
-        
-        if result:
-            # Create APIKey object from result row
-            api_key = APIKey(
-                id=result[0],
-                user_id=result[1],
-                key=result[2],
-                name=result[3],
-                created_at=result[4],
-                last_used_at=result[5],
-                is_active=result[6]
-            )
-            user_id = result[1]  # Eagerly fetch user_id
-            return api_key, user_id
-        return None, None
-    except Exception as e:
-        # Handle SQLite session errors including parameter binding issues
-        logger.warning(f"Error querying API key: {e}")
-        if max_retries > 0:
+    # ORM query — DB-agnostic (the old raw `WHERE key = ? AND is_active = 1` was SQLite-only and
+    # errored on PostgreSQL: `?` isn't a PG placeholder and `is_active = 1` isn't a boolean compare).
+    # Retries once on a transient session error (rollback first).
+    for attempt in range(max_retries + 1):
+        try:
+            ak = (db.query(APIKey)
+                    .filter(APIKey.key == token, APIKey.is_active == True)  # noqa: E712
+                    .first())
+            return (ak, ak.user_id) if ak else (None, None)
+        except Exception as e:
+            logger.warning(f"Error querying API key (attempt {attempt + 1}): {e}")
             try:
-                # Check if session is active before rollback
                 if db.is_active:
-                    try:
-                        db.rollback()
-                    except Exception as rollback_error:
-                        logger.debug(f"Could not rollback during API key retry (database may be closed): {rollback_error}")
-                
-                # Retry once with raw connection
-                raw_conn = db.connection()
-                if hasattr(raw_conn, 'connection'):
-                    dbapi_conn = raw_conn.connection
-                else:
-                    dbapi_conn = raw_conn
-                
-                cursor = dbapi_conn.cursor()
-                
-                cursor.execute("""
-                    SELECT id, user_id, key, name, created_at, last_used_at, is_active
-                    FROM api_keys
-                    WHERE key = ? AND is_active = 1
-                    LIMIT 1
-                """, (token,))
-                
-                result = cursor.fetchone()
-                cursor.close()
-                if result and len(result) >= 7:  # Ensure we have all expected fields
-                    api_key = APIKey(
-                        id=result[0],
-                        user_id=result[1],
-                        key=result[2],
-                        name=result[3],
-                        created_at=result[4],
-                        last_used_at=result[5],
-                        is_active=result[6]
-                    )
-                    user_id = result[1]
-                    return api_key, user_id
+                    db.rollback()
+            except Exception as rollback_error:
+                logger.debug(f"Could not rollback during API key retry: {rollback_error}")
+            if attempt >= max_retries:
                 return None, None
-            except Exception as retry_error:
-                logger.error(f"Error retrying API key query: {retry_error}")
-                return None, None
-        return None, None
+    return None, None
 
 
 def get_user_from_api_key(db: Session, user_id: int) -> Optional[User]:
