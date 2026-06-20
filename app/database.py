@@ -126,14 +126,20 @@ if "sqlite" in DATABASE_URL:
         logger.debug(f"[SQLite] Configured cache: {_sqlite_cache_mb}MB, mmap: {_sqlite_mmap_mb}MB")
         cursor.close()
 else:
-    # PostgreSQL/MySQL: use QueuePool with connection recycling
+    # PostgreSQL: size the pool like the SQLite branch — the app's background schedulers/pollers
+    # (social/nitter/fedi/matrix/logs/relay) each hold a session, and long GPU tasks hold one for
+    # minutes; 5+10 was far too small and exhausted under normal load (every slot stuck "idle in
+    # transaction" → requests block 30s → the instance hangs). pool_timeout fails fast instead of
+    # blocking 30s; idle_in_transaction_session_timeout lets PG reclaim a leaked/abandoned txn.
     engine = create_engine(
         DATABASE_URL,
         poolclass=QueuePool,
-        pool_size=5,           # Base pool size
-        max_overflow=10,       # Allow up to 15 total connections
-        pool_pre_ping=True,    # Verify connection health
-        pool_recycle=3600,     # Recycle connections after 1 hour
+        pool_size=20,
+        max_overflow=80,
+        pool_pre_ping=True,
+        pool_recycle=3600,
+        pool_timeout=10,
+        connect_args={"options": "-c idle_in_transaction_session_timeout=60000"},
     )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

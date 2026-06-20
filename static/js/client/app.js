@@ -2137,7 +2137,15 @@
     const proto = location.protocol==='https:'?'wss':'ws';
     const tok=_cookie('access_token');
     _ai.ws=new WebSocket(`${proto}://${location.host}/api/ws/chat/${id}`+(tok?`?token=${encodeURIComponent(tok)}`:''));
+    _ai.ws.onopen=()=>{ const q=_ai.pending||[]; _ai.pending=[]; for(const p of q){ try{ _ai.ws.send(JSON.stringify(p)); }catch(_){} } };
     _ai.ws.onmessage=e=>{ let d; try{ d=JSON.parse(e.data); }catch(_){ return; } aiHandle(d); };
+  }
+  // Send (or queue) a payload on the chat WS — never fail just because it's mid-connect; queue it
+  // and the onopen handler flushes. Reconnects if the socket is closed.
+  function aiWsSend(payload){
+    if(_ai.ws && _ai.ws.readyState===1){ try{ _ai.ws.send(JSON.stringify(payload)); return; }catch(_){} }
+    (_ai.pending=_ai.pending||[]).push(payload);
+    if(!_ai.ws || _ai.ws.readyState>1) aiConnect(_ai.convId);   // CLOSING/CLOSED → reconnect; CONNECTING → just wait
   }
   function aiAddMessage(role, html){
     const box=$('#ai-msgs'); if(!box) return null;
@@ -2224,7 +2232,6 @@
   function aiSend(){
     const ta=$('#ai-input'); if(!ta) return; const text=ta.value.trim();
     if(!text && !_ai.attach.length) return;
-    if(!_ai.ws || _ai.ws.readyState!==1){ toast('connecting… try again in a moment'); aiConnect(_ai.convId); return; }
     const att=_ai.attach.slice(); _ai.attach=[]; aiRenderAttach();
     const labels=att.map(a=>`📎 ${enc(a.name)}`).join(' ');
     aiAddMessage('user', (text?enc(text):'') + (labels?`<div class="ai-userfiles">${labels}</div>`:''));
@@ -2233,7 +2240,7 @@
     const pdfs=att.filter(a=>a.kind==='pdf').map(a=>({base64:a.b64, filename:a.name}));       if(pdfs.length) payload.pdfs=pdfs;
     const docs=att.filter(a=>a.kind==='doc').map(a=>({base64:a.b64, filename:a.name, type:a.ext})); if(docs.length) payload.documents=docs;
     const txts=att.filter(a=>a.kind==='text').map(a=>({content:a.text, filename:a.name}));     if(txts.length) payload.files=txts;
-    try{ _ai.ws.send(JSON.stringify(payload)); }catch(_){ toast('send failed'); }
+    aiWsSend(payload);   // sends now if open, else queues + (re)connects and flushes on open
     ta.value=''; ta.style.height='auto';
   }
 
