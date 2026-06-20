@@ -681,7 +681,7 @@
       const a=n.querySelector('.av'); if(p.picture && a) a.src=p.picture;
       const nm=n.querySelector('.name'); if(nm) nm.textContent=p.name||p.display_name||nm.textContent;
       const h=n.querySelector('.handle'); const nip=niceNip05(p.nip05); if(h && nip) h.textContent=nip;
-      decorateVerified(n.querySelector('.vchk'), n.dataset.pk, p.nip05);
+      // blue check is profile-only (saves a NIP-05 resolution per timeline author)
     }});
     $$('.rb-item[data-pk]').forEach(n=>{ const p=Store.profile(n.dataset.pk); if(p){
       const a=n.querySelector('.rb-av'); if(p.picture && a) a.src=p.picture;
@@ -692,7 +692,7 @@
       const q=nm.closest('.quoted'); const a=q&&q.querySelector('.qav'); if(p.picture && a) a.src=p.picture;
       nm.textContent=p.name||p.display_name||nm.textContent;
       const h=q&&q.querySelector('.handle'); const nip=niceNip05(p.nip05); if(h && nip) h.textContent=nip;
-      decorateVerified(q&&q.querySelector('.vchk'), pk, p.nip05);
+      // blue check is profile-only (saves a NIP-05 resolution per timeline author)
     }});
   }
 
