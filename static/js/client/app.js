@@ -2734,6 +2734,8 @@
       const fxh=e.target.closest('.fx-char'); if(fxh){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ if(_ai.fxImage && !_ai.attach.length) aiAddFiles([_ai.fxImage]); _fxApplyChar(ta, fxh.dataset.char); ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // sticker (char overlay) → single, toggle
       const rfx=e.target.closest('.ai-reply-fx'); if(rfx){ e.preventDefault(); sendEffectReply(rfx.dataset.mid, rfx); return; }   // post the generated effect back as a reply
       const cfx=e.target.closest('.ai-copy-fx'); if(cfx){ e.preventDefault(); copyEffectUrl(cfx.dataset.mid, cfx); return; }   // upload + copy the public Blossom URL
+      const cpf=e.target.closest('.ai-copyfile'); if(cpf){ e.preventDefault(); copyFileUrl(cpf.dataset.url, cpf); return; }   // inline /api/files/ media → re-upload + copy public URL
+      const rpf=e.target.closest('.ai-replyfile'); if(rpf){ e.preventDefault(); replyFileUrl(rpf.dataset.url, rpf); return; }
       const mag=e.target.closest('.ai-magnet'); if(mag){ const ta=$('#ai-input'); if(ta){ ta.value='torrents add '+mag.dataset.magnet; aiSend(); } return; }
       const im=e.target.closest('img'); if(im){ openLightbox(im.dataset.full||im.src); }
     });
@@ -2869,8 +2871,11 @@
   // (musicgeni/videogeni/compress/clip = !video/!audio; torrents = magnet) display right, not as text.
   function aiFormat(src){
     src=String(src||''); const slots=[]; const stash=h=>{ slots.push(h); return ` S${slots.length-1} `; };
-    src=src.replace(/!video\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><video controls src="${enc(u)}"></video></div>`));
-    src=src.replace(/!audio\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><audio controls src="${enc(u)}"></audio></div>`));
+    src=src.replace(/!video\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><video controls src="${enc(u)}"></video></div>`+_aiFileActions(u)));
+    src=src.replace(/!audio\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><audio controls src="${enc(u)}"></audio></div>`+_aiFileActions(u)));
+    // inline images from a command output (effects/stamps, compress/convert) → show with the same
+    // copy-link / reply buttons; stash BEFORE mdToHtml so it doesn't render a plain <img>.
+    src=src.replace(/!\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><img src="${enc(u)}" data-full="${enc(u)}"></div>`+_aiFileActions(u)));
     // Torrent browse buttons: [Download](cmd:torrents download tv 1) → a command button; and
     // [Add](magnet:<url-encoded magnet>) → an add-torrent button. (cmd: hrefs contain spaces that
     // would break markdown link parsing, so stash them BEFORE mdToHtml runs.)
@@ -2883,6 +2888,34 @@
   // Render the rich command payloads the backend streams as a `response`.
   // When the effects studio is active (_ai.replyTo set), offer a button to post the generated media
   // back as a reply to the source post. Stashes the base64 so the reply can upload it to Blossom.
+  // Inline command-output media (effects/compress/convert) lives at an authed /api/files/ artifact
+  // URL (encrypted at rest) — NOT shareable. These fetch those bytes and RE-UPLOAD to PUBLIC Blossom
+  // so the link works in a Nostr reply. Only for local (/) URLs; external media is already public.
+  function _aiFileActions(u){
+    if(!/^\//.test(u)) return '';
+    const copy=`<button class="btn btn-ghost small ai-copyfile" data-url="${enc(u)}">📋 Copy link</button>`;
+    const reply=_ai.replyTo?`<button class="btn btn-neon small ai-replyfile" data-url="${enc(u)}">↩ Send the Reply</button>`:'';
+    return `<div class="fx-reply-row" style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">${reply}${copy}</div>`;
+  }
+  async function _fileToPublicUrl(u){
+    _ai.pubUrl=_ai.pubUrl||{};
+    if(_ai.pubUrl[u]) return _ai.pubUrl[u];
+    const blob=await fetch(u, { credentials:'include' }).then(r=>{ if(!r.ok) throw new Error('fetch '+r.status); return r.blob(); });
+    const ext=((u.split(/[?#]/)[0].split('.').pop())||'bin').toLowerCase();
+    const pub=await uploadBlob(new File([blob], 'media.'+ext, { type:blob.type||'application/octet-stream' }));
+    _ai.pubUrl[u]=pub; return pub;
+  }
+  async function copyFileUrl(u, btn){
+    if(btn){ btn.disabled=true; btn.textContent='uploading…'; }
+    try{ const pub=await _fileToPublicUrl(u); try{ await navigator.clipboard.writeText(pub); toast('link copied'); }catch(_){ toast(pub); } if(btn){ btn.textContent='✓ copied'; btn.disabled=false; } }
+    catch(e){ toast('failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; btn.textContent='📋 Copy link'; } }
+  }
+  async function replyFileUrl(u, btn){
+    const to=_ai.replyTo; if(!to){ toast('no post to reply to'); return; }
+    if(btn){ btn.disabled=true; btn.textContent='posting…'; }
+    try{ const pub=await _fileToPublicUrl(u); await publish(1, pub, eTags(to.id, to.pk)); toast('✓ reply posted'); if(btn){ btn.textContent='✓ replied'; } }
+    catch(e){ toast('reply failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; btn.textContent='↩ Send the Reply'; } }
+  }
   function _fxReplyBtn(b64, mime, ext){
     if(!b64) return '';
     const mid='fx'+Date.now().toString(36)+Math.floor(Math.random()*1e4).toString(36);
