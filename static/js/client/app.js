@@ -24,7 +24,7 @@
     }
   };
 
-  let CFG = {}, ME = null, FOLLOWS = new Set(), MUTED = new Set(), PINNED = new Set(), BOOKMARKS = new Set(), VIEW = 'home', IS_ADMIN = false;
+  let CFG = {}, ME = null, FOLLOWS = new Set(), MUTED = new Set(), MUTED_WORDS = new Set(), PINNED = new Set(), BOOKMARKS = new Set(), VIEW = 'home', IS_ADMIN = false;
   let signer = null;
   const subs = {};                 // view -> subId
   const seenNotif = { last: 0 };
@@ -260,9 +260,31 @@
 
   // Camera QR scanner (uses the native BarcodeDetector; falls back to pasting the link). On a
   // successful scan of a nostrconnect:// link, Nip46Signer logs that device in with our key.
+  function _loadScript(src){ return new Promise((res,rej)=>{
+    if([...document.scripts].some(s=>s.src.indexOf(src)>=0)) return res();
+    const s=document.createElement('script'); s.src=src; s.onload=()=>res(); s.onerror=()=>rej(new Error('load failed')); document.head.appendChild(s); }); }
+  // Build a QR detector: native BarcodeDetector (Chrome) if present, else lazy-load jsQR (Firefox /
+  // iOS Safari, which have no BarcodeDetector). Returns an async fn(video)->decoded string|null, or
+  // null if neither is available.
+  async function _qrDetector(){
+    if('BarcodeDetector' in window){
+      try{ const bd=new BarcodeDetector({ formats:['qr_code'] });
+        return async(v)=>{ const c=await bd.detect(v); return (c && c[0] && c[0].rawValue) || null; }; }catch(_){}
+    }
+    try{ await _loadScript('/static/vendor/qr/jsqr.js?v='+(window.__VER||'')); }catch(_){}
+    if(window.jsQR){
+      const cv=document.createElement('canvas'); const cx=cv.getContext('2d',{ willReadFrequently:true });
+      return (v)=>{ const w=v.videoWidth, h=v.videoHeight; if(!w||!h) return null;
+        cv.width=w; cv.height=h; cx.drawImage(v,0,0,w,h);
+        const r=window.jsQR(cx.getImageData(0,0,w,h).data, w, h); return (r && r.data) || null; };
+    }
+    return null;
+  }
   async function openQrScanner(){
-    if(ME.mode!=='local'){ toast('Log in with your key (nsec) on this device first'); return; }
-    if(!('BarcodeDetector' in window) || !navigator.mediaDevices){ return qrManualPrompt(); }
+    if(ME.mode!=='local'){ toast('Log in with your key (nsec) on this device first — extension/remote-signer logins can’t sign for another device'); return; }
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ return qrManualPrompt('Camera needs an HTTPS connection. Paste the link instead:'); }
+    const detect=await _qrDetector();
+    if(!detect){ return qrManualPrompt('QR scanning isn’t supported in this browser. Paste the link instead:'); }
     modal(`<h3>📷 Scan QR to log in another device</h3>
       <video id="qr-video" class="qr-video" playsinline muted></video>
       <div class="muted small" id="qr-hint">Point at the QR shown on the other device…</div>
@@ -273,21 +295,19 @@
       root.querySelector('#qr-paste').onclick=()=>{ closeModal(); qrManualPrompt(); };
       let stream=null, stopped=false;
       const cleanup=()=>{ stopped=true; try{ stream && stream.getTracks().forEach(t=>t.stop()); }catch(_){} };
-      let det; try{ det=new BarcodeDetector({ formats:['qr_code'] }); }catch(_){ closeModal(); return qrManualPrompt(); }
       try{ stream=await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment' } }); v.srcObject=stream; await v.play(); }
-      catch(e){ hint.textContent='Camera unavailable ('+(e.message||e)+'). Use “paste link instead”.'; return; }
+      catch(e){ hint.textContent='Camera unavailable ('+((e&&e.message)||e)+'). Use “paste link instead”.'; return; }
       const tick=async()=>{
         if(stopped || !document.body.contains(v)){ cleanup(); return; }   // modal closed → stop camera
-        try{ const codes=await det.detect(v); const val=codes && codes[0] && codes[0].rawValue;
-          if(val && /^nostrconnect:/i.test(val)){ cleanup(); closeModal(); return onQrScanned(val); } }catch(_){}
-        setTimeout(tick, 350);
+        try{ const val=await detect(v); if(val && /^nostrconnect:/i.test(val)){ cleanup(); closeModal(); return onQrScanned(val); } }catch(_){}
+        setTimeout(tick, 300);
       };
       tick();
     });
   }
-  function qrManualPrompt(){
+  function qrManualPrompt(msg){
     modal(`<h3>Log in another device</h3>
-      <p class="muted small">On the other device, open Sign in → “Open in Amber / scan QR”, then copy its connection link (<code>nostrconnect://…</code>) and paste it here.</p>
+      <p class="muted small">${enc(msg||'On the other device, open Sign in → “Open in Amber / scan QR”, then copy its connection link and paste it here.')}</p>
       <textarea class="input" id="qr-paste-uri" rows="3" placeholder="nostrconnect://…"></textarea>
       <button class="btn btn-neon full" id="qr-paste-go">Log in that device</button>`, root=>{
       root.querySelector('#qr-paste-go').onclick=()=>{ const u=root.querySelector('#qr-paste-uri').value.trim(); if(!u){ return; } closeModal(); onQrScanned(u); };
@@ -541,7 +561,27 @@
   async function fetchMutes(){
     const evs = await Relay.query([{ authors:[ME.pubkey], kinds:[10000], limit:1 }]);
     if (evs.length){ const e=evs.sort((a,b)=>b.created_at-a.created_at)[0];
-      MUTED = new Set(e.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1])); }
+      MUTED = new Set(e.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]));
+      // NIP-51 muted words/phrases (lowercase) — hide matching posts from the timeline.
+      MUTED_WORDS = new Set(e.tags.filter(t=>t[0]==='word'&&t[1]).map(t=>t[1].toLowerCase())); }
+  }
+  // Replace the `word` tags on the kind-10000 mute list, preserving p/t/e mutes. NIP-51, so the
+  // list follows the user to any client.
+  async function saveMutedWords(words){
+    const clean=[...new Set(words.map(w=>String(w||'').trim().toLowerCase()).filter(Boolean))];
+    const evs = await Relay.query([{ authors:[ME.pubkey], kinds:[10000], limit:1 }]);
+    const cur = evs.length ? evs.sort((a,b)=>b.created_at-a.created_at)[0] : null;
+    const tags = (cur ? cur.tags.filter(t=>t[0]!=='word') : []).concat(clean.map(w=>['word',w]));
+    await publish(10000, cur?cur.content:'', tags);
+    MUTED_WORDS = new Set(clean);
+  }
+  // True if a note's text contains any muted word/phrase (substring, case-insensitive). Applied to
+  // the timeline feeds so muted-word posts never render.
+  function mutedByWord(ev){
+    if(!MUTED_WORDS.size || !ev || ev.kind!==1 || !ev.content) return false;
+    const c=ev.content.toLowerCase();
+    for(const w of MUTED_WORDS){ if(c.includes(w)) return true; }
+    return false;
   }
   // replaceable-list edit helper: fetch newest (kind), add/remove a p-tag, republish preserving content+tags
   async function _editPList(kind, pk, add){
@@ -717,7 +757,7 @@
     const sp=feed.querySelector('.spinner'); if(sp)sp.remove(); const em=feed.querySelector('.empty'); if(em)em.remove();
     evs.sort((a,b)=>b.created_at-a.created_at);
     const frag=document.createDocumentFragment();
-    for(const ev of evs){ if(ev.kind===1&&isReply(ev))continue; if(MUTED.has(ev.pubkey))continue; if(_liveFn&&!_liveFn(ev))continue;
+    for(const ev of evs){ if(ev.kind===1&&isReply(ev))continue; if(MUTED.has(ev.pubkey)||mutedByWord(ev))continue; if(_liveFn&&!_liveFn(ev))continue;
       const dispId = ev.kind===6 ? ((ev.tags.find(t=>t[0]==='e')||[])[1]||ev.id) : ev.id;
       if(feed.querySelector('.note[data-id="'+dispId+'"]')) continue;   // don't double-insert
       const div=document.createElement('div'); div.innerHTML=noteHtml(ev); const node=div.firstElementChild; if(node) frag.appendChild(node); }
@@ -754,7 +794,7 @@
     const feed=$('#feed'); if(!feed) return;
     const top=preserveScroll?feed.scrollTop:0;
     const fn = VIEW==='home' ? (e=>FOLLOWS.has(e.pubkey)) : null;
-    const notes = Store.feed(e=>(!fn||fn(e))&&!MUTED.has(e.pubkey)).filter(e=>!isReply(e)).slice(0,200);
+    const notes = Store.feed(e=>(!fn||fn(e))&&!MUTED.has(e.pubkey)&&!mutedByWord(e)).filter(e=>!isReply(e)).slice(0,200);
     feed.innerHTML = notes.length ? notes.map(noteHtml).join('') : `<div class="empty">No posts yet. ${VIEW==='home'?'Follow people or check Global.':''}</div>`;
     // seed the scroll-back cursor from the initial draw only — once the user has paged older, a late
     // EOSE redraw must NOT move the cursor forward (it would re-query an already-loaded range)
@@ -793,7 +833,7 @@
       Store.saveEvent(ev); needProfile(ev.pubkey);
       if(ev.created_at<minTs) minTs=ev.created_at;
       if(ev.kind===1 && isReply(ev)) continue;
-      if(MUTED.has(ev.pubkey)) continue;
+      if(MUTED.has(ev.pubkey) || mutedByWord(ev)) continue;
       if(view==='home' && !FOLLOWS.has(ev.pubkey)) continue;
       // a repost (kind 6) renders with the ORIGINAL's data-id, so dedupe against that, not the
       // repost's own id — otherwise a repost of an already-shown note appends a duplicate card.
@@ -822,7 +862,7 @@
   }
   function prependNote(ev, fn){
     if (ev.kind===1 && isReply(ev)) return;
-    if (MUTED.has(ev.pubkey)) return;
+    if (MUTED.has(ev.pubkey) || mutedByWord(ev)) return;
     if (fn && !fn(ev)) return;
     const feed=$('#feed'); const sp=feed.querySelector('.spinner'); if(sp)sp.remove(); const em=feed.querySelector('.empty'); if(em)em.remove();
     const div=document.createElement('div'); div.innerHTML=noteHtml(ev); const node=div.firstElementChild;
@@ -2639,7 +2679,7 @@
             : 'Available when you sign in on this device with your key (nsec). Extension / remote-signer sessions can’t sign for another device.'}</div>
         </div></div>
         <div class="set-body">
-          <button class="btn btn-neon small" id="set-scan-qr" ${ME.mode==='local'?'':'disabled'}>📷 Scan QR code</button>
+          <button class="btn btn-neon small" id="set-scan-qr">📷 Scan QR code</button>
         </div>
       </section>
       <div id="user-settings"></div>
@@ -2675,6 +2715,18 @@
         </div>
       </section>
 
+      <section class="set-card">
+        <div class="set-head"><div>
+          <div class="set-title">Muted words</div>
+          <div class="muted small">Hide posts containing any of these words or phrases (case-insensitive, one per line). Saved to your Nostr mute list (NIP-51), so it follows you to other clients.</div>
+        </div></div>
+        <div class="set-body">
+          <textarea class="input" id="set-muted-words" rows="3" placeholder="one word or phrase per line">${enc([...MUTED_WORDS].join('\n'))}</textarea>
+          <div class="set-actions"><button class="btn btn-ghost small" id="set-words-save">Save muted words</button></div>
+          <div class="muted small" id="set-words-status"></div>
+        </div>
+      </section>
+
       <button class="btn btn-neon" id="set-save">Save &amp; reload</button>
       <div class="muted small set-foot">Changing relays or media server reconnects the app, so it reloads on save.</div>
     </div>`;
@@ -2683,6 +2735,13 @@
     const syncRelays=()=>{ _setRelays = $$('#set-relay-list .relay-row input').map(i=>i.value.trim()); };
 
     { const sq=$('#set-scan-qr'); if(sq) sq.onclick=()=>openQrScanner(); }
+    { const wb=$('#set-words-save'); if(wb) wb.onclick=async()=>{
+        const words=($('#set-muted-words').value||'').split('\n').map(w=>w.trim()).filter(Boolean);
+        wb.disabled=true; const st=$('#set-words-status'); if(st) st.textContent='saving…';
+        try{ await saveMutedWords(words); if(st) st.textContent='Saved — '+MUTED_WORDS.size+' muted word(s). New posts are filtered immediately.'; }
+        catch(e){ if(st) st.textContent='Save failed: '+((e&&e.message)||e); }
+        finally{ wb.disabled=false; }
+      }; }
     { const ab=$('#set-admin'); if(ab) ab.onclick=()=>switchView('admin'); }
     { const da=$('#set-del-account'); if(da) da.onclick=async()=>{
         if(!confirm('Permanently delete your account and all your AI chats + files on this server? This cannot be undone.')) return;
