@@ -544,7 +544,7 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .mention-hint{color:var(--cyan);font-size:13.5px;margin:2px 2px 8px;letter-spacing:.2px}
 
 /* ===== settings view ===== */
-.settings{padding:22px 32px 70px;max-width:1080px;margin:0;animation:fade .25s;font-size:16.5px}
+.settings{padding:22px 32px 70px;max-width:none;margin:0;animation:fade .25s;font-size:16.5px}
 .set-card{background:rgba(8,5,18,.4);border:1px solid var(--line);border-radius:var(--r);padding:20px 20px 18px;margin-bottom:18px}
 .set-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
 .set-head .muted.small{margin-top:5px;line-height:1.5;max-width:50ch;font-size:15.5px}
