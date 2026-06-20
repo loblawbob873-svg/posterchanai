@@ -514,6 +514,7 @@ class UserSettingsUpdate(BaseModel):
     nostr_relay_max_events: Optional[int] = None
     nostr_relay_max_db_mb: Optional[int] = None
     nostr_relay_wot_enabled: Optional[bool] = True           # off → open publishing + NO trust-graph/firehose/sync/NIP-05 background work (processing node)
+    nostr_relay_send_only: Optional[bool] = False            # broadcast to upstream (outbox) but don't pull/store their events — keeps the local DB from mirroring upstream
     nostr_relay_wot_refresh_sec: Optional[int] = None
     nostr_relay_wot_depth: Optional[int] = None              # 1=follows, 2=+friends-of-friends
     nostr_relay_wot_min_followers: Optional[int] = None      # FoF inclusion threshold

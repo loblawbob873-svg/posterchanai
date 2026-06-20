@@ -224,6 +224,9 @@ def init_db():
             # publishing becomes open (no trust gate) and ALL cross-node background work stops —
             # trust-graph build/refresh, metadata backfill, sync sweep, firehose, and NIP-05 serving.
             "nostr_relay_wot_enabled": "true",
+            # Send-only: broadcast our events to upstream (outbox) but never pull/store theirs —
+            # keeps a secondary node's local DB from mirroring upstream. Default off.
+            "nostr_relay_send_only": "false",
             "nostr_relay_port": "3052",
             "nostr_relay_prune_interval_sec": "86400",   # auto-prune NIGHTLY (not hourly)
             # The relay (and thus the app's datastore) runs on PostgreSQL — no SQLite. libpq DSN.

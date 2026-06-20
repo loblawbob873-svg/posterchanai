@@ -217,6 +217,7 @@ def _read_config() -> dict:
             "wot_refresh_sec": gi("nostr_relay_wot_refresh_sec", 86400),  # daily
             "prune_interval_sec": gi("nostr_relay_prune_interval_sec", 86400),  # nightly (was hourly)
             "wot_enabled": gb("nostr_relay_wot_enabled", True),           # off → open publishing + NO trust-graph background work
+            "send_only": gb("nostr_relay_send_only", False),              # broadcast to upstream (outbox) but NEVER pull/store their events (no firehose/sync/metadata mirror)
             "wot_depth": gi("nostr_relay_wot_depth", 1),                  # 1=follows, 2=+FoF
             "wot_min_followers": gi("nostr_relay_wot_min_followers", 2),  # FoF inclusion threshold
             "wot_max": gi("nostr_relay_wot_max", 50000),                  # cap on total members
@@ -491,24 +492,32 @@ async def _main(cfg: dict) -> None:
     if cfg["wot_enabled"]:
         # WoT rebuild — checked hourly, actually rebuilt only when a day has elapsed (staleness),
         # so it runs once a day regardless of restarts. NOT a feed mirror; just gate membership.
+        # Runs even in send-only mode (the publishing gate still needs the trust set).
         tasks.append(asyncio.create_task(_periodic(_relay.stop_event, 3600, _maybe_rebuild_wot, "wot-refresh")))
-        # Profile/metadata backfill — fetches kind-0/3/10002 for WoT members missing them.
-        async def _meta_backfill():
-            from . import ingest as _ingest
-            await _ingest.fetch_lookup_metadata(store, cfg["upstream"], cfg["author_batch"],
-                                                 cfg.get("profile_limit", 1500), cfg["request_pace_sec"], cfg["direct"],
-                                                 gate=gate, blocked_relays=cfg.get("blocked_relays"))
-        tasks.append(asyncio.create_task(_periodic(_relay.stop_event, 45, _meta_backfill, "metadata-backfill")))
-        # Heavy WoT BACKFILL SWEEP — OFF by default (the windowed full-graph crawl).
-        if cfg.get("mirror_feeds", False):
-            tasks.append(asyncio.create_task(_sync_loop(store, gate, server, cfg, _relay.stop_event)))
-        # Live FIREHOSE — ON by default: real-time subscription keeping WoT-author events fresh.
-        if cfg.get("firehose_enabled", True):
-            from .firehose import run_firehose
-            tasks.append(asyncio.create_task(
-                run_firehose(cfg["upstream"], cfg["ingest_kinds"], _firehose_event,
-                             _relay.stop_event, cfg["direct"],
-                             max_relays=cfg.get("firehose_max_relays", 0))))
+        if cfg["send_only"]:
+            # SEND-ONLY: the relay BROADCASTS its own events to upstream (via the outbox, started
+            # above + unaffected) but pulls/stores NOTHING from upstream — so the local DB doesn't
+            # fill with a mirror of upstream content. Skip the receive-direction tasks below.
+            logger.info("[nostr-relay] send-only — broadcasting to upstream, NOT mirroring it "
+                        "(no firehose / sync / metadata backfill)")
+        else:
+            # Profile/metadata backfill — fetches kind-0/3/10002 for WoT members missing them.
+            async def _meta_backfill():
+                from . import ingest as _ingest
+                await _ingest.fetch_lookup_metadata(store, cfg["upstream"], cfg["author_batch"],
+                                                     cfg.get("profile_limit", 1500), cfg["request_pace_sec"], cfg["direct"],
+                                                     gate=gate, blocked_relays=cfg.get("blocked_relays"))
+            tasks.append(asyncio.create_task(_periodic(_relay.stop_event, 45, _meta_backfill, "metadata-backfill")))
+            # Heavy WoT BACKFILL SWEEP — OFF by default (the windowed full-graph crawl).
+            if cfg.get("mirror_feeds", False):
+                tasks.append(asyncio.create_task(_sync_loop(store, gate, server, cfg, _relay.stop_event)))
+            # Live FIREHOSE — ON by default: real-time subscription keeping WoT-author events fresh.
+            if cfg.get("firehose_enabled", True):
+                from .firehose import run_firehose
+                tasks.append(asyncio.create_task(
+                    run_firehose(cfg["upstream"], cfg["ingest_kinds"], _firehose_event,
+                                 _relay.stop_event, cfg["direct"],
+                                 max_relays=cfg.get("firehose_max_relays", 0))))
 
     # Cross-process admin IPC: this relay runs in its own subprocess, so the app can't read its
     # gate/store directly. Publish status to a file the app polls, and execute admin commands the

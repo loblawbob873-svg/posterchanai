@@ -45,6 +45,12 @@
             <small>On: publishing is gated to the trust set, and the relay runs the trust-graph build, metadata backfill, firehose sync, and NIP-05 serving. <strong>Off</strong> (e.g. a processing node whose relay is internal): publishing is open and <strong>all of that background/cross-node work stops</strong> — the relay is a pure local store. <strong>Restart after changing.</strong></small>
         </div>
         <div class="form-group">
+            <label for="nostr_relay_send_only">
+                <input type="checkbox" id="nostr_relay_send_only" name="nostr_relay_send_only"> Send-only (broadcast to upstream, don't mirror it)
+            </label>
+            <small>The relay still <strong>broadcasts</strong> your own events to the upstream relays below (via the outbox), but does <strong>not</strong> pull/store their events — so this node's local DB won't fill with a copy of upstream content. Independent of the upstream list (which just says <em>where</em> to send); this controls the <em>direction</em>. Useful on a secondary node that pushes to a primary relay. <strong>Restart after changing.</strong></small>
+        </div>
+        <div class="form-group">
             <label for="nostr_relay_wot_seeds">Seed npubs</label>
             <textarea id="nostr_relay_wot_seeds" name="nostr_relay_wot_seeds" rows="6" placeholder="npub1…&#10;npub1…"></textarea>
             <small>One per line (npub or hex). The trust set = these seeds <strong>+ everyone they follow</strong> (depth 1) + your own bots/users. Rebuilt automatically <strong>daily</strong>.</small>
