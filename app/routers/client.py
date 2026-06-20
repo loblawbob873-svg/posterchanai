@@ -820,7 +820,7 @@ async def ai_file_delete(data: AiFileReq, db: Session = Depends(get_db)):
 class DraftsReq(BaseModel):
     pubkey: str
     auth: str
-    drafts: Optional[list] = None   # present → save the list; absent → load
+    drafts: list | None = None   # present → save the list; absent → load
 
 
 @router.post("/drafts")
