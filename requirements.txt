@@ -42,6 +42,9 @@ coincurve>=19.0
 # websocket-client (sync): drives headless Chrome over the DevTools protocol for the
 # screenshot command (full-page, JS-aware). See the screenshot note near the bottom.
 websocket-client>=1.7.0
+# QR codes for the Nostr web client's mobile sign-in (renders the nostrconnect:// NIP-46 URI as a
+# scannable SVG). Pure-Python, no native deps. See app/routers/client.py:/client/qr.
+segno>=1.6.0
 # PyMuPDF (fitz): PDF text extraction, PDF merge, and PDF<->image conversion (convert command)
 PyMuPDF>=1.24.0
 python-docx>=1.1.0

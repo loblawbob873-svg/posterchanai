@@ -271,11 +271,17 @@
       const { uri, done }=await Nip46.beginNostrConnect('wss://relay.nsec.app', 'PosterChan');
       $('#amber-nc-uri').textContent=uri;
       const open=$('#amber-nc-open'); if(open) open.href=uri;
+      // QR of the nostrconnect:// URI → scan it with a phone signer (Primal-style mobile login).
+      const qr=$('#amber-nc-qr');
+      if(qr){ try{
+        const r=await fetch('/client/qr',{method:'POST',headers:{'Content-Type':'text/plain'},body:uri});
+        if(r.ok){ qr.src=URL.createObjectURL(await r.blob()); qr.classList.remove('hidden'); }
+      }catch(_){} }
       $('#amber-nc-status').textContent='waiting for the signer to approve…';
       $('#amber-nc-box').classList.remove('hidden');
       const { userPk, session }=await done; finishAmberLogin(userPk, session);
     }catch(e){ amberErr(e.message||'could not connect'); Nip46.reset(); $('#amber-nc-box').classList.add('hidden'); }
-    finally{ btn.disabled=false; btn.textContent='📡 Open in Amber (nostrconnect)'; }
+    finally{ btn.disabled=false; btn.textContent='📱 Sign in with QR code'; }
   }
   async function loginNsec(){
     authErr('');

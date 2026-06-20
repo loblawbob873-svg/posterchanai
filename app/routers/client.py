@@ -114,6 +114,28 @@ async def client_config(request: Request, db: Session = Depends(get_db)):
     })
 
 
+@router.post("/qr")
+async def client_qr(request: Request):
+    """Render arbitrary text as a QR-code SVG. Used for Primal-style mobile sign-in: the web shows
+    a QR of the ephemeral `nostrconnect://` URI, and a phone signer (Amber / nsec.app / Primal)
+    scans it to establish the NIP-46 remote-signer session. POST (not GET) so the connect secret in
+    the URI never lands in an access log. Same-origin, no auth — it just encodes whatever is posted."""
+    data = (await request.body()).decode("utf-8", "ignore").strip()
+    if not data or len(data) > 4096:
+        return Response(status_code=400)
+    try:
+        import io
+        import segno
+        buf = io.BytesIO()
+        # dark-on-white for reliable scanning; quiet zone (border) per spec. SVG = crisp at any size.
+        segno.make(data, error="m").save(buf, kind="svg", scale=6, border=2, dark="#000", light="#fff")
+        return Response(content=buf.getvalue(), media_type="image/svg+xml",
+                        headers={"Cache-Control": "no-store"})
+    except Exception as e:
+        logger.warning(f"[client] QR render failed: {e}")
+        return Response(status_code=500)
+
+
 @router.get("/gif")
 async def gif_search(q: str = "", db: Session = Depends(get_db)):
     """GIF picker — proxies Giphy or Tenor (key server-side, never exposed). Giphy wins if both set."""
