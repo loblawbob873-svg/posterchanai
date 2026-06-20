@@ -7,6 +7,10 @@
   const enc = s => (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const LOGO = '/static/posterchan-relay.png';
   const isDesktop = () => !window.matchMedia('(max-width:820px)').matches;   // pop-out player is desktop-only
+  // PWA install: capture the install prompt (fires before the app mounts) so a button can trigger it.
+  let _deferredInstall = null;
+  window.addEventListener('beforeinstallprompt', e=>{ e.preventDefault(); _deferredInstall=e; const b=$('#btn-install'); if(b) b.classList.remove('hidden'); });
+  window.addEventListener('appinstalled', ()=>{ _deferredInstall=null; const b=$('#btn-install'); if(b) b.classList.add('hidden'); });
   // Extensionless Blossom blobs (/<sha256>) carry NO type in the URL, so we render them as <img>;
   // if that fails the blob is likely a video (bots post bare video URLs) — try <video>, and only
   // if THAT fails fall back to a plain link. (Fixes videos showing as a link instead of playing.)
@@ -339,6 +343,10 @@
     try{ if(window.Notification && Notification.permission==='default') Notification.requestPermission(); }catch(_){}
     $('#auth-gate').classList.add('hidden'); $('#app').classList.remove('hidden');
     $('#btn-logout').onclick = logout;
+    { const b=$('#btn-install'); if(b){
+        if(_deferredInstall) b.classList.remove('hidden');   // prompt already captured before mount
+        b.onclick=async()=>{ if(!_deferredInstall) return; _deferredInstall.prompt();
+          try{ await _deferredInstall.userChoice; }catch(_){} _deferredInstall=null; b.classList.add('hidden'); }; } }
     $('#me-card').onclick = ()=>renderProfileView(ME.pubkey);
     $$('.nav-item[data-view]').forEach(b=> b.onclick = ()=>switchView(b.dataset.view));
     $('#btn-compose').onclick = ()=>compose(); $('#btn-compose-m').onclick = ()=>compose();
