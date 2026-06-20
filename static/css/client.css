@@ -633,6 +633,7 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 @media(max-width:820px){ .us-mail{grid-template-columns:1fr 1fr;}}
 .us-key{display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);border-radius:9px;padding:9px 12px;margin-bottom:8px;gap:8px}
 .us-key .mini{margin-left:6px}
+.us-ok{color:#4ade80;font-weight:600}
 @keyframes reminderPulse{0%,100%{box-shadow:0 0 40px 6px rgba(0,255,255,.55)}50%{box-shadow:0 0 70px 16px rgba(255,0,128,.7)}}
 .reminder-card{max-width:520px;width:100%;text-align:center;background:var(--bg2);border:2px solid var(--neon);border-radius:16px;padding:34px 26px;animation:reminderPulse 1.4s ease-in-out infinite}
 .feed.feed-admin{padding:0;overflow:hidden}

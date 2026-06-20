@@ -2373,16 +2373,39 @@
     $('#set-relay-add').onclick=()=>{ syncRelays(); _setRelays.push(''); drawRelayRows(); };
     $('#set-relay-ext').onclick=async()=>{ syncRelays(); await importExtensionRelays(); };
     $('#set-relay-nip05').onclick=async()=>{ syncRelays(); await importNip05Relays($('#set-nip05').value.trim()); };
-    $('#set-save').onclick=()=>{
+    $('#set-save').onclick=async ()=>{
       syncRelays();
       const urls=[...new Set(_setRelays.map(u=>normalizeRelay(u)).filter(Boolean))];
+      const media=$('#set-media').value.trim();
       ClientSettings.set('relaysEnabled', $('#set-relays-on').checked);
       ClientSettings.set('relays', urls);
       ClientSettings.set('blossomEnabled', $('#set-blossom-on').checked);
-      ClientSettings.set('mediaServer', $('#set-media').value.trim());
+      ClientSettings.set('mediaServer', media);
+      // Store in Nostr so they sync across devices: NIP-65 relay list (10002) + BUD-03 Blossom
+      // server list (10063). Published to the current relay (the built-in one is always connected).
+      try{ if(urls.length) await publish(10002, '', urls.map(u=>['r',u])); }catch(_){}
+      try{ if(media) await publish(10063, '', [['server', media]]); }catch(_){}
       toast('settings saved — reloading'); setTimeout(()=>location.reload(), 600);
     };
+    loadNostrPrefs();       // populate relays/media from Nostr (10002/10063) if not set locally
     renderUserSettings();   // per-user account settings (mail/telegram/social/finance/news) load async
+  }
+  // Retrieve relay list (NIP-65 10002) + Blossom servers (BUD-03 10063) from Nostr. Only fills the
+  // UI when this device hasn't set them locally — so a fresh device inherits your synced choices.
+  async function loadNostrPrefs(){
+    try{
+      const evs=await Relay.query([{ authors:[ME.pubkey], kinds:[10002,10063], limit:4 }]);
+      const r10002=evs.filter(e=>e.kind===10002).sort((a,b)=>b.created_at-a.created_at)[0];
+      const r10063=evs.filter(e=>e.kind===10063).sort((a,b)=>b.created_at-a.created_at)[0];
+      if(r10002 && !userRelays().length){
+        const urls=r10002.tags.filter(t=>t[0]==='r'&&t[1]).map(t=>normalizeRelay(t[1])).filter(Boolean);
+        if(urls.length){ _setRelays=urls; drawRelayRows(); }
+      }
+      if(r10063 && !ClientSettings.get('mediaServer','')){
+        const srv=(r10063.tags.find(t=>t[0]==='server')||[])[1]; const mi=$('#set-media');
+        if(srv && mi) mi.value=srv;
+      }
+    }catch(_){}
   }
   // Per-user settings — faithful port of the old web-UI modal (6 tabs). Loads /api/auth/settings,
   // saves text/toggles via PUT, and wires the real connect flows (Telegram link, Matrix login,
@@ -2455,7 +2478,9 @@
         </div>
         <div class="us-pane" data-pane="finance">
           <div class="muted small">Budget Manager API key — drives <code>budget</code>, <code>bills</code>, <code>pay</code>, <code>addbill</code>.</div>
-          <label class="fld">API key ${s.finance_has_api_key?'<span class="muted small">(set — blank to keep)</span>':''}<input class="input" id="us-fin" type="password" placeholder="${s.finance_has_api_key?'••••••••':'X-API-Key'}"></label>
+          <div class="${s.finance_has_api_key?'us-ok':'muted'}">${s.finance_has_api_key?'✓ Connected — an API key is set.':'⚠ Not connected — paste your Budget Manager API key below.'}</div>
+          <label class="fld">API key${s.finance_has_api_key?' <span class="muted small">(leave blank to keep the current one)</span>':''}<input class="input" id="us-fin" type="password" placeholder="${s.finance_has_api_key?'•••••••• (set)':'X-API-Key'}"></label>
+          ${s.finance_has_api_key?'<button class="btn btn-ghost small" id="us-fin-clear" style="color:#ff6b8b">Remove key</button>':''}
         </div>
         <div class="us-pane" data-pane="keys">
           <div class="muted small">API keys let external apps use the AI API as you.</div>
@@ -2498,6 +2523,10 @@
         if(!r.ok){ st.textContent=d.detail||'failed'; return; } window.open(d.auth_url,'_blank'); st.textContent='waiting for authorization…';
         const h=e=>{ if(e.data==='misskey_connected'){ window.removeEventListener('message',h); renderUserSettings(); } }; window.addEventListener('message',h); }; }
     { const d=$('#us-mk-disc'); if(d) d.onclick=async()=>{ if(!confirm('Disconnect Misskey?'))return; await fetch('/api/misskey/disconnect',{method:'DELETE'}); renderUserSettings(); }; }
+    // Finance: remove the stored key
+    { const fc=$('#us-fin-clear'); if(fc) fc.onclick=async()=>{ if(!confirm('Remove your Budget Manager API key?'))return;
+        await fetch('/api/auth/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({finance_api_key:''})});
+        toast('finance key removed'); renderUserSettings(); }; }
     // API keys
     $('#us-key-new').onclick=async()=>{ const name=$('#us-key-name').value.trim();
       const d=await fetch('/api/auth/api-keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}).then(r=>r.json()).catch(()=>({}));
