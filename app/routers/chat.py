@@ -1340,13 +1340,27 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                     logger.warning(f"Failed to save generated image to storage (non-fatal): {save_err}")
                                     generated_image_path = None
 
+                        # Flashcards: persist the deck inline so it re-renders after a reload (the live
+                        # WS still sends `result` with the cards array). The client decodes the
+                        # [[FC]]…[[/FC]] base64-JSON marker in aiFormat and rebuilds the interactive quiz.
+                        _save_content = result.get("content", "")
+                        if result.get("type") == "flashcards" and result.get("cards"):
+                            try:
+                                import base64 as _b64fc, json as _jsonfc
+                                _fc_blob = _b64fc.b64encode(_jsonfc.dumps(
+                                    {"title": result.get("title"), "cards": result.get("cards")},
+                                    ensure_ascii=False).encode("utf-8")).decode("ascii")
+                                _save_content = (result.get("content", "") or "") + f"\n\n[[FC]]{_fc_blob}[[/FC]]"
+                            except Exception as _fc_err:
+                                logger.warning(f"[CHAT] flashcards persist marker failed (non-fatal): {_fc_err}")
+
                         # Save assistant response with image path
                         assistant_msg = None
                         try:
                             assistant_msg = Message(
                                 conversation_id=conversation_id,
                                 role="assistant",
-                                content=result.get("content", ""),
+                                content=_save_content,
                                 image_path=generated_image_path
                             )
                             db.add(assistant_msg)

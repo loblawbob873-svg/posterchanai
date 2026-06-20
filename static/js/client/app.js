@@ -2899,6 +2899,16 @@
   // (musicgeni/videogeni/compress/clip = !video/!audio; torrents = magnet) display right, not as text.
   function aiFormat(src){
     src=String(src||''); const slots=[]; const stash=h=>{ slots.push(h); return ` S${slots.length-1} `; };
+    // Persisted flashcard deck: [[FC]]<base64 JSON>[[/FC]] (saved server-side) → re-hydrate the
+    // interactive quiz on reload, identical to the live render. Decode is unicode-safe (atob+escape).
+    src=src.replace(/\[\[FC\]\]([A-Za-z0-9+/=]+)\[\[\/FC\]\]/g,(m,b64)=>{
+      try{ const data=JSON.parse(decodeURIComponent(escape(atob(b64)))); if(data && Array.isArray(data.cards) && data.cards.length){
+        _ai.decks=_ai.decks||{}; const id='fc'+Date.now().toString(36)+Math.floor(Math.random()*1e4).toString(36);
+        _ai.decks[id]={ cards:data.cards, idx:0, answered:new Array(data.cards.length).fill(null), score:0, title:data.title };
+        return stash(`<div class="flashcard-deck" id="${id}">${_fcRender(id)}</div>`);
+      } }catch(_){}
+      return '';
+    });
     src=src.replace(/!video\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><video controls src="${enc(u)}"></video></div>`+_aiFileActions(u)));
     src=src.replace(/!audio\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><audio controls src="${enc(u)}"></audio></div>`+_aiFileActions(u)));
     // inline images from a command output (effects/stamps, compress/convert) → show with the same
