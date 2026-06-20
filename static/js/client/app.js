@@ -2740,7 +2740,7 @@
     $('#ai-send').onclick=aiSend;
     const ta=$('#ai-input');
     ta.addEventListener('keydown',e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); aiSend(); } });
-    ta.addEventListener('input',()=>{ ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,200)+'px'; });
+    ta.addEventListener('input',()=>{ ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,200)+'px'; aiUpdateLinkActions(); });
     // Ctrl/⌘-V an image from the clipboard → attach it (so you can paste a screenshot then `post`, etc.)
     ta.addEventListener('paste', async e=>{
       const items=(e.clipboardData && e.clipboardData.items)||[]; const files=[];
@@ -3019,9 +3019,25 @@
     ta.value=cmd; ta.focus(); ta.dispatchEvent(new Event('input'));
     if(mode==='run') aiSend();   // one-shot — runs on the attached file now; 'fill' waits for the arg
   }
+  // Old web-UI link actions: when the AI input holds a video URL (YouTube/TikTok/X/IG/Vimeo/Twitch/…)
+  // and no file is attached, offer a Download (→ ytdl). Updates live as you type/paste.
+  function aiUpdateLinkActions(){
+    const bar=$('#ai-attachbar'); if(!bar || _ai.attach.length) return;
+    const m=((($('#ai-input')||{}).value)||'').match(/https?:\/\/[^\s]+/i);
+    const url=m?m[0]:'';
+    // The `ytdl` command supports YouTube + X/Twitter (+ Nitter). Offer Video / MP3 for those.
+    const dl=url && /youtube\.com\/(?:watch\?\S*v=|shorts\/|live\/|embed\/)|youtu\.be\/|(?:twitter|x)\.com\/\S+\/status|nitter/i.test(url);
+    if(dl){
+      bar.dataset.link='1';
+      bar.innerHTML='<div class="fx-row" style="display:flex;flex-wrap:wrap;gap:6px"><button class="fx-mot" id="ai-dl-vid">⬇️ Video</button><button class="fx-mot" id="ai-dl-mp3">🎵 MP3</button></div>';
+      const run=cmd=>{ const t=$('#ai-input'); if(t){ t.value=cmd; aiSend(); } if(bar){ bar.innerHTML=''; delete bar.dataset.link; } };
+      { const b=$('#ai-dl-vid'); if(b) b.onclick=()=>run('ytdl video '+url); }
+      { const b=$('#ai-dl-mp3'); if(b) b.onclick=()=>run('ytdl mp3 '+url); }
+    } else if(bar.dataset.link){ bar.innerHTML=''; delete bar.dataset.link; }
+  }
   function aiRenderAttach(){
     const bar=$('#ai-attachbar'); if(!bar) return;
-    if(!_ai.attach.length){ bar.innerHTML=''; return; }
+    if(!_ai.attach.length){ aiUpdateLinkActions(); return; }
     const chips=_ai.attach.map((a,i)=>`<span class="ai-chip">${enc(a.name)} <button data-i="${i}" class="ai-chip-x">✕</button></span>`).join('');
     const acts=_aiAttachActions();
     const actions='<div class="fx-row" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">'+
