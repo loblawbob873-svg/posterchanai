@@ -326,7 +326,7 @@
   // ---------- boot ----------
   async function boot(){
     CFG = await fetch('/client/config').then(r=>r.json()).catch(()=>({}));
-    updateUserCount(); setInterval(updateUserCount, 45000);   // network size + who's online now (live)
+    updateUserCount(); setInterval(updateUserCount, 60000);   // poll ONLY the online count, once a minute (WoT size comes from CFG)
     await Store.init();
     if ('serviceWorker' in navigator){
       // auto-reload once when a NEW SW takes control (a deploy update), so it lands on installed
@@ -556,13 +556,15 @@
     const el = $('#conn-status'); if(!el) return; el.className = 'conn ' + cls; el.querySelector('span').textContent = txt;
   }
   // Sidebar community stats under ONLINE: network size (WoT) + who's using the site right now.
+  // Network size (WoT) comes from CFG once (it barely changes — daily rebuild); only "online now" is
+  // polled. So updateUserCount fetches just the live online count, not the WoT size.
   async function updateUserCount(){
     const uc=$('#user-count'); if(!uc) return;
-    let s={users:CFG.users||0, online:0};
-    try{ s=await fetch('/client/stats').then(r=>r.json()); }catch(_){}
+    let online=0;
+    try{ online=Number((await fetch('/client/stats').then(r=>r.json())).online)||0; }catch(_){}
     const parts=[];
-    if(s.users>0) parts.push('👥 '+Number(s.users).toLocaleString()+' users');
-    if(s.online>0) parts.push('🟢 '+Number(s.online).toLocaleString()+' online');
+    if(CFG.users>0) parts.push('👥 '+Number(CFG.users).toLocaleString()+' users');
+    if(online>0) parts.push('🟢 '+online.toLocaleString()+' online');
     if(parts.length){ uc.innerHTML=parts.join(' <span class="uc-dot">·</span> '); uc.classList.remove('hidden'); }
     else uc.classList.add('hidden');
   }
