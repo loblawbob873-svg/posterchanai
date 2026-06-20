@@ -272,11 +272,13 @@
       $('#amber-nc-uri').textContent=uri;
       const open=$('#amber-nc-open'); if(open) open.href=uri;
       // QR of the nostrconnect:// URI → scan it with a phone signer (Primal-style mobile login).
+      // Fire-and-forget: the QR is a convenience, it must NEVER block/break the actual login flow.
       const qr=$('#amber-nc-qr');
-      if(qr){ try{
-        const r=await fetch('/client/qr',{method:'POST',headers:{'Content-Type':'text/plain'},body:uri});
-        if(r.ok){ qr.src=URL.createObjectURL(await r.blob()); qr.classList.remove('hidden'); }
-      }catch(_){} }
+      if(qr){ qr.classList.add('hidden');
+        fetch('/client/qr',{method:'POST',headers:{'Content-Type':'text/plain'},body:uri})
+          .then(r=> r.ok ? r.blob() : null)
+          .then(b=>{ if(b){ qr.src=URL.createObjectURL(b); qr.classList.remove('hidden'); } })
+          .catch(()=>{}); }
       $('#amber-nc-status').textContent='waiting for the signer to approve…';
       $('#amber-nc-box').classList.remove('hidden');
       const { userPk, session }=await done; finishAmberLogin(userPk, session);
