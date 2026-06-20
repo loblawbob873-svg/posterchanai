@@ -142,6 +142,12 @@ async def hydrate_conversations(db) -> int:
 # ---- automatic mirror: every Message row insert → an encrypted relay event (when flag on) ----
 # Covers all the scattered save sites in the chat path without editing each. Best-effort: only fires
 # inside the async chat WS (a running loop); bot/threadpool saves aren't part of the web AI store.
+# Strong refs to in-flight mirror tasks. asyncio only keeps a WEAK ref to a bare create_task(),
+# so without this the task can be garbage-collected before its relay write lands — the bug where a
+# chat reply (e.g. a flashcards deck) randomly fails to persist and is gone on reload.
+_PENDING_MIRRORS: set = set()
+
+
 async def _mirror_insert(conv_id: int, role: str, content: str, ts: float, image_path: str | None):
     from app.database import SessionLocal
     from app.models import Conversation, User
@@ -156,7 +162,7 @@ async def _mirror_insert(conv_id: int, role: str, content: str, ts: float, image
         if user:
             await add_message(db, user, conv_id, role, content, ts=ts, image_path=image_path)
     except Exception as e:
-        logger.debug("[chat-store] mirror failed: %s", e)
+        logger.warning("[chat-store] mirror failed for conv %s (%s): %s", conv_id, role, e)
     finally:
         db.close()
 
@@ -177,7 +183,10 @@ def install_message_mirror():
         conv_id, role, content = target.conversation_id, target.role, target.content or ""
         image_path = getattr(target, "image_path", None)
         if conv_id and role:
-            loop.create_task(_mirror_insert(conv_id, role, content, _t.time(), image_path))
+            # Hold a strong ref until done — see _PENDING_MIRRORS above (weak-ref GC footgun).
+            t = loop.create_task(_mirror_insert(conv_id, role, content, _t.time(), image_path))
+            _PENDING_MIRRORS.add(t)
+            t.add_done_callback(_PENDING_MIRRORS.discard)
 
 
 try:
