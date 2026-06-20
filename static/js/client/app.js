@@ -1412,10 +1412,13 @@
       return await new Promise((res,rej)=>{
         let done=false; const ws=new WebSocket(cfg.relay); const sub='nwc'+Math.random().toString(36).slice(2,8);
         const fin=(fn,a)=>{ if(done) return; done=true; try{ ws.close(); }catch(_){} fn(a); };
-        ws.onopen=()=>{ ws.send(JSON.stringify(['REQ',sub,{ kinds:[23195], '#e':[ev.id], since:Math.floor(Date.now()/1000)-5 }]));
+        // Filter by author + our #p (robust: 23195 is ephemeral and not every relay indexes #e on a
+        // live sub); then confirm the e-tag matches OUR request id in code.
+        ws.onopen=()=>{ ws.send(JSON.stringify(['REQ',sub,{ kinds:[23195], authors:[cfg.walletPk], '#p':[myPk], since:Math.floor(Date.now()/1000)-5 }]));
           ws.send(JSON.stringify(['EVENT', ev])); };
         ws.onmessage=async(e)=>{ let m; try{ m=JSON.parse(e.data); }catch(_){ return; }
           if(m[0]!=='EVENT' || m[1]!==sub) return; const r=m[2]; if(!r || r.kind!==23195 || r.pubkey!==cfg.walletPk) return;
+          if(!(r.tags||[]).some(t=>t[0]==='e' && t[1]===ev.id)) return;   // the response to THIS request
           try{ const j=JSON.parse(await N.nip04.decrypt(sk, cfg.walletPk, r.content));
             if(j && j.error) return fin(rej, new Error((j.error.message)||(j.error.code)||'wallet declined'));
             fin(res, (j&&j.result)||{}); }catch(err){ fin(rej, err); } };
