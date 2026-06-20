@@ -2761,6 +2761,10 @@
       const cpf=e.target.closest('.ai-copyfile'); if(cpf){ e.preventDefault(); copyFileUrl(cpf.dataset.url, cpf); return; }   // inline /api/files/ media → re-upload + copy public URL
       const rpf=e.target.closest('.ai-replyfile'); if(rpf){ e.preventDefault(); replyFileUrl(rpf.dataset.url, rpf); return; }
       const mag=e.target.closest('.ai-magnet'); if(mag){ const ta=$('#ai-input'); if(ta){ ta.value='torrents add '+mag.dataset.magnet; aiSend(); } return; }
+      const fco=e.target.closest('.fc-opt'); if(fco){ e.preventDefault(); const st=_ai.decks&&_ai.decks[fco.dataset.fc]; if(st && st.answered[st.idx]==null){ const i=+fco.dataset.opt; st.answered[st.idx]=i; if(i===(st.cards[st.idx]||{}).correct) st.score++; _fcRedraw(fco.dataset.fc); } return; }   // answer a card → ✓/✗ + explanation
+      const fcn=e.target.closest('.fc-next'); if(fcn){ e.preventDefault(); const st=_ai.decks&&_ai.decks[fcn.dataset.fc]; if(st && st.idx<st.cards.length-1){ st.idx++; _fcRedraw(fcn.dataset.fc); } return; }
+      const fcp=e.target.closest('.fc-prev'); if(fcp){ e.preventDefault(); const st=_ai.decks&&_ai.decks[fcp.dataset.fc]; if(st && st.idx>0){ st.idx--; _fcRedraw(fcp.dataset.fc); } return; }
+      const fcr=e.target.closest('.fc-restart'); if(fcr){ e.preventDefault(); const st=_ai.decks&&_ai.decks[fcr.dataset.fc]; if(st){ st.idx=0; st.score=0; st.answered=new Array(st.cards.length).fill(null); _fcRedraw(fcr.dataset.fc); } return; }
       const im=e.target.closest('img'); if(im){ openLightbox(im.dataset.full||im.src); }
     });
     await aiLoadConversations();
@@ -2958,8 +2962,36 @@
       if(btn){ btn.textContent='✓ copied'; btn.disabled=false; }
     }catch(e){ toast('upload failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; btn.textContent='📋 Copy link'; } }
   }
+  // --- Interactive multiple-choice flashcards (study quiz) ---------------------------------------
+  // Self-contained port of the old web UI deck: state lives in _ai.decks[id]; taps re-render via the
+  // #ai-msgs click delegation. No KaTeX here (math cards show raw $…$ — rare from a web page).
+  function _fcRender(id){
+    const st=_ai.decks&&_ai.decks[id]; if(!st) return '';
+    const total=st.cards.length, card=st.cards[st.idx]||{}, picked=st.answered[st.idx];
+    const letters=['A','B','C','D','E','F'];
+    const opts=(card.options||[]).map((o,i)=>{
+      let cls='fc-opt';
+      if(picked!=null){ if(i===card.correct) cls+=' fc-correct'; else if(i===picked) cls+=' fc-wrong'; }
+      return `<button type="button" class="${cls}" data-fc="${id}" data-opt="${i}"${picked!=null?' disabled':''}>${enc((letters[i]||'•')+'. '+o)}</button>`;
+    }).join('');
+    const explain=(picked!=null && card.explanation)?`<div class="fc-explain"><strong>Why:</strong> ${enc(card.explanation)}</div>`:'';
+    const done=st.answered.filter(a=>a!=null).length;
+    return `<div class="fc-head"><span class="fc-title">🎴 ${enc(st.title||'Flashcards')}</span><span class="fc-progress">${st.idx+1}/${total}</span></div>`
+      +`<div class="fc-card"><div class="fc-q">${enc(card.question||'')}</div><div class="fc-options">${opts}</div>${explain}</div>`
+      +`<div class="fc-controls"><button type="button" class="fc-prev" data-fc="${id}"${st.idx===0?' disabled':''}>◀ Prev</button>`
+      +`<span class="fc-score">Score ${st.score}/${done}</span>`
+      +`<button type="button" class="fc-restart" data-fc="${id}">↻ Restart</button>`
+      +`<button type="button" class="fc-next" data-fc="${id}"${st.idx>=total-1?' disabled':''}>Next ▶</button></div>`;
+  }
+  function _fcRedraw(id){ const el=document.getElementById(id); if(el) el.innerHTML=_fcRender(id); aiScroll(); }
   function aiRenderResponse(d){
     const head = d.content ? aiFormat(d.content) : '';
+    if(d.type==='flashcards' && Array.isArray(d.cards) && d.cards.length){
+      _ai.decks=_ai.decks||{};
+      const id='fc'+Date.now().toString(36)+Math.floor(Math.random()*1e4).toString(36);
+      _ai.decks[id]={ cards:d.cards, idx:0, answered:new Array(d.cards.length).fill(null), score:0, title:d.title };
+      return `<div class="flashcard-deck" id="${id}">${_fcRender(id)}</div>`;
+    }
     if(d.type==='generated_image' && d.image) return head+`<div class="ai-media"><img src="data:image/png;base64,${d.image}" alt="generated"></div>`+_fxReplyBtn(d.image,'image/png','png');
     if(d.type==='generated_video' && d.video) return head+`<div class="ai-media"><video controls src="data:video/mp4;base64,${d.video}"></video></div>`+_fxReplyBtn(d.video,'video/mp4','mp4');
     if(d.type==='generated_audio' && d.audio){ const fmt=(d.format||'mp3').toLowerCase(); const mime=({mp3:'audio/mpeg',wav:'audio/wav',flac:'audio/flac',opus:'audio/ogg',aac:'audio/aac'})[fmt]||'audio/mpeg';
@@ -3038,7 +3070,7 @@
     if(isTorrent) acts=[['🧲 Add Torrent','torrents add '+url,0]];
     else if(isYT) acts=[['📋 Summary','yt '+url,0],['🎵 MP3','ytdl '+url,0],['🎬 Movie','ytdl video '+url,0],['✂️ Clip','ytdl video '+url+' clip 0:00 0:30',1],['📣 Post','post '+url,0]];
     else if(isX) acts=[['🎵 MP3','ytdl '+url,0],['🎬 Video','ytdl video '+url,0],['✂️ Clip','ytdl video '+url+' clip 0:00 0:30',1],['📣 Post','post '+url,0]];
-    else acts=[['📋 Summary','Summarize this page: '+url,0],['📸 Screenshot','screenshot '+url,0],['🎴 Flashcards','flashcards '+url,0],['📣 Post','post '+url,0]];
+    else acts=[['📋 Summary','Summarize this page: '+url,0],['📸 Screenshot','screenshot '+url,0],['🌐 Translate','Translate this page to English: '+url,1],['🎴 Flashcards','flashcards '+url,0],['📣 Post','post '+url,0]];   // Translate prefills (edit the target language, then Enter)
     bar.dataset.link='1';
     bar.innerHTML='<div class="fx-row" style="display:flex;flex-wrap:wrap;gap:6px">'+acts.map((a,i)=>`<button class="fx-mot fx-linkact" data-i="${i}">${enc(a[0])}</button>`).join('')+'</div>';
     $$('.fx-linkact',bar).forEach(b=>{ const a=acts[+b.dataset.i]; b.onclick=()=>{ const t=$('#ai-input'); if(!t) return;
