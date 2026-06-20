@@ -2519,7 +2519,7 @@
       <input class="input" data-f="imap_port" placeholder="993" value="${enc(String(a.imap_port||993))}">
       <input class="input" data-f="smtp_server" placeholder="SMTP server" value="${enc(a.smtp_server||'')}">
       <input class="input" data-f="smtp_port" placeholder="587" value="${enc(String(a.smtp_port||587))}">
-      <input class="input" data-f="password" type="password" placeholder="${a.has_password?'•••• (kept)':'password'}">
+      <input class="input" data-f="password" type="password" placeholder="${a.password?'•••• (kept — blank keeps it)':'password'}">
       <button class="mini us-mail-del" data-i="${i}" title="remove">✕</button></div>`).join('');
     $$('.us-mail-del',wrap).forEach(b=> b.onclick=()=>{ _usMail.splice(+b.dataset.i,1); usRenderMail(); });
   }
