@@ -191,13 +191,18 @@ async def client_summarize(request: Request, db: Session = Depends(get_db)):
         from app.services.inference_factory import get_inference_service
         svc = get_inference_service(db)
         res = await svc.chat_completion(
-            [{"role": "system", "content": "You summarize a Nostr post or conversation thread for a "
-              "reader who hasn't seen it. Give a clear, DETAILED summary: what it is about, the key "
-              "points and any specifics, who said what (the lines are 'name: text'), any questions "
-              "raised or conclusions reached, and the overall tone. Use short paragraphs or bullet "
-              "points. If it's a single post, summarize just that post. Translate any non-English "
-              "parts into English as you summarize. Output ONLY the summary — no preamble like "
-              "'Here is a summary'."},
+            [{"role": "system", "content": "You are a summarizer. The user gives a Nostr post or "
+              "conversation thread as 'name: text' lines. Write a NEW, detailed summary IN YOUR OWN "
+              "WORDS — never repeat the messages verbatim. Cover what it is about, the key points and "
+              "specifics, who said what, any questions raised or conclusions reached, and the overall "
+              "tone. Use short paragraphs or bullet points. If it's a single post, summarize just "
+              "that post. Translate any non-English parts into English. Output ONLY the summary — no "
+              "preamble like 'Here is a summary'."},
+             {"role": "user", "content": "alice: heading to the beach today, the weather looks "
+              "perfect\n\nbob: lucky! it's pouring rain here\n\nalice: come visit then 😄"},
+             {"role": "assistant", "content": "Alice is excited about the perfect weather and is "
+              "heading to the beach. Bob replies that it's pouring rain where he is. Alice playfully "
+              "invites him to come visit. The exchange is short, light, and friendly."},
              {"role": "user", "content": text}],
             max_tokens=900, temperature=0.3)
         out = (res.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
