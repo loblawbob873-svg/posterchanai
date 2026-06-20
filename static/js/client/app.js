@@ -491,6 +491,7 @@
   // ---------- view routing ----------
   function switchView(v){
     VIEW = v;
+    if(v==='notifications') _notifShown = 25;   // fresh entry → collapse pagination back to one page
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     $('#view-title').textContent = { home:'Home', global:'Global', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', streams:'Streams', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', admin:'Admin' }[v]||v;
     renderView(true);
@@ -1575,24 +1576,38 @@
   }
   function notifList(){ return Store.all().filter(e=>[1,6,7,9735].includes(e.kind) && e.pubkey!==ME.pubkey && !MUTED.has(e.pubkey) && e.tags.some(t=>t[0]==='p'&&t[1]===ME.pubkey)).sort((a,b)=>b.created_at-a.created_at).slice(0,100); }
   function bumpNotif(){ const n=notifList().filter(e=>e.created_at>seenNotif.last).length; $$('#notif-badge,#notif-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden');}); }
+  let _notifShown = 25;   // paginate: render a page at a time, "Load more" reveals the next
   function renderNotifications(){
-    const list=notifList(); const feed=$('#feed');
-    feed.innerHTML = list.length ? list.map(notifHtml).join('') : '<div class="empty">No notifications.</div>';
+    const all=notifList(); const feed=$('#feed');
+    const list=all.slice(0, _notifShown);
+    feed.innerHTML = all.length
+      ? list.map(notifHtml).join('') + (all.length>_notifShown
+          ? `<button class="btn btn-ghost full" id="notif-more">Load ${Math.min(25, all.length-_notifShown)} more (${all.length-_notifShown})</button>` : '')
+      : '<div class="empty">No notifications.</div>';
     list.forEach(e=>needProfile(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey));
     seenNotif.last = Math.floor(Date.now()/1000); localStorage.setItem('pc_notif_seen', seenNotif.last);
     $$('#notif-badge,#notif-badge-m').forEach(b=>b.classList.add('hidden'));
-    feed.querySelectorAll('[data-open]').forEach(n=> n.onclick=()=>openThread(n.dataset.open));
+    // row opens the post; avatar opens the sender's profile (stop the row handler firing too)
+    feed.querySelectorAll('.notif').forEach(n=> n.onclick=()=>openThread(n.dataset.open));
+    feed.querySelectorAll('.notif-av').forEach(a=> a.onclick=(ev)=>{ ev.stopPropagation(); renderProfileView(a.dataset.pk); });
+    const more=$('#notif-more'); if(more) more.onclick=()=>{ _notifShown+=25; renderNotifications(); };
   }
   function notifHtml(e){
     const fromPk = e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey;
-    const p=profOf(fromPk); const av=p.picture||LOGO; const tgt=(e.tags.filter(t=>t[0]==='e').pop()||[])[1]||'';
+    const p=profOf(fromPk); const av=p.picture||LOGO;
+    // What to open on click: for a reply/mention (kind-1) open the notification event ITSELF, so the
+    // thread view centers their reply WITH your post above it (full context) — not just your post.
+    // For a reaction/repost/zap, open the post they acted on (the last referenced e-tag).
+    const ref=(e.tags.filter(t=>t[0]==='e').pop()||[])[1]||'';
+    const tgt = e.kind===1 ? e.id : (ref||e.id);
     let cls,ic,txt;
     if(e.kind===9735){cls='zap';ic='⚡';txt=`zapped you <b>${fmtSats(zapAmount(e))} sats</b>`;}
     else if(e.kind===7){cls='like';ic='♥';txt=`reacted ${enc(e.content==='+'?'❤️':e.content)} to your post`;}
     else if(e.kind===6){cls='rt';ic='↻';txt='reposted your note';}
     else if(isReply(e)){cls='reply';ic='💬';txt='replied: '+enc((e.content||'').slice(0,80));}
     else {cls='mention';ic='@';txt='mentioned you: '+enc((e.content||'').slice(0,80));}
-    return `<div class="notif ${cls}" data-open="${tgt}"><span class="ic">${ic}</span><img src="${enc(av)}" onerror="this.src='${LOGO}'"><div><b>${enc(p.name||p.display_name||'anon')}</b> ${txt}<div class="muted small">${timeAgo(e.created_at)}</div></div></div>`;
+    // avatar carries data-pk → opens the sender's profile; the rest of the row opens the post.
+    return `<div class="notif ${cls}" data-open="${tgt}"><span class="ic">${ic}</span><img class="notif-av" data-pk="${fromPk}" src="${enc(av)}" onerror="this.src='${LOGO}'"><div><b>${enc(p.name||p.display_name||'anon')}</b> ${txt}<div class="muted small">${timeAgo(e.created_at)}</div></div></div>`;
   }
 
   // ---------- DMs: NIP-17 gift-wrapped (modern, local-key) + NIP-04 (legacy, read-compat) ----------
