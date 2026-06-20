@@ -2,12 +2,21 @@
  * Purely cosmetic: colors, glass panels, neon accents, rounded inputs. No layout/JS changes.
  * Loaded AFTER admin-tabs.css so it overrides. Palette comes from style.css :root. */
 
+/* Self-host the fonts HERE too — admin-theme.css is always served fresh (cache_bust), whereas
+ * style.css can be pinned to a stale Cloudflare-cached version. Without this the admin declared
+ * font-family:Inter but the @font-face (only in style.css) never loaded → it fell back to a system
+ * font ("dirty"). Declaring it here guarantees Inter actually loads. */
+@font-face{font-family:'Inter';font-style:normal;font-weight:100 900;font-display:swap;src:url('/static/fonts/inter.woff2') format('woff2')}
+@font-face{font-family:'Orbitron';font-style:normal;font-weight:400 900;font-display:swap;src:url('/static/fonts/orbitron.woff2') format('woff2')}
 :root{
   /* vars admin-tabs.css references but style.css didn't define — map to the palette */
   --accent-color: var(--accent);
   --border: var(--border-color);
   --text-muted: var(--text-secondary);
 }
+/* Brighten the admin palette here too (style.css may be cache-stale): the old #e0e0e0/#8888aa
+ * read as muddy/"dirty". Scoped to the admin so it can't affect anything else. */
+body.admin-page{ --text-primary:#edeefa; --text-secondary:#a6a8cc; --bg-primary:#0a0a0f; --border-color:#2a2a3a; --accent:#00ffff; }
 
 body.admin-page{
   /* explicit Inter + comfortable sizing for the whole admin (high specificity so it always wins) */
