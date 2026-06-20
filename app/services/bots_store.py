@@ -25,9 +25,9 @@ BOT_FIELDS = ("name", "enabled", "bot_type", "platform", "host", "modes", "confi
 
 
 def enabled(db) -> bool:
-    """True when bot config should be sourced from the relay (setting bots_backend == 'relay')."""
-    row = db.query(Setting).filter(Setting.key == "bots_backend").first()
-    return bool(row and (row.value or "").strip().lower() == "relay")
+    """The relay is the ONLY datastore — always on (legacy sqlite mode removed). The bots table is
+    a hydrated read-cache."""
+    return True
 
 
 def _record(b: Bot) -> dict:

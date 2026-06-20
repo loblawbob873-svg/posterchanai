@@ -27,10 +27,8 @@ def _port(db) -> int:
 
 
 def enabled(db) -> bool:
-    """True when chats should read/write the relay store (setting chat_backend == 'relay')."""
-    from app.models import Setting
-    row = db.query(Setting).filter(Setting.key == "chat_backend").first()
-    return bool(row and (row.value or "").strip().lower() == "relay")
+    """The relay is the ONLY datastore — always on (legacy sqlite mode removed)."""
+    return True
 
 
 async def add_message(db, user, conv_id: int, role: str, content: str, ts: float | None = None,

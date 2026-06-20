@@ -25,8 +25,8 @@ NS_APIKEY = "pcai:apikey:"
 
 
 def enabled(db) -> bool:
-    row = db.query(Setting).filter(Setting.key == "records_backend").first()
-    return bool(row and (row.value or "").strip().lower() == "relay")
+    """The relay is the ONLY datastore — always on (legacy sqlite mode removed)."""
+    return True
 
 
 def _iso(dt):

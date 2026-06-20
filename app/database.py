@@ -229,20 +229,9 @@ def init_db():
             # The relay (and thus the app's datastore) runs on PostgreSQL — no SQLite. libpq DSN.
             "nostr_relay_pg_dsn": os.environ.get("NOSTR_RELAY_PG_DSN",
                 "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan"),
-            # The relay (encrypted Nostr events) is THE datastore. These *_backend flags are "relay"
-            # everywhere — the Postgres tables are only a hydrated read-cache, never the source of
-            # truth. AI chat history → encrypted kind-30078 docs.
-            "chat_backend": "relay",
-            # Global settings: relay is authoritative (settings table hydrated from it at startup, admin
-            # saves write through).
-            "settings_backend": "relay",
-            # Account-authority records (identity + admin + feature caps): relay authoritative; users
-            # table hydrated from it; account mutations write through.
-            "users_backend": "relay",
-            # Bot config: relay authoritative (bots table hydrated at startup; bot edits write through).
-            "bots_backend": "relay",
-            # Misc per-user records (reminders, saved searches): relay-sourced.
-            "records_backend": "relay",
+            # NB: the old chat_/settings_/users_/bots_/records_backend flags are gone — the relay
+            # (encrypted Nostr events) is now the ONE datastore unconditionally; the Postgres tables
+            # are just a hydrated read-cache. No sqlite/table-authoritative mode anymore.
             # WoT seeds bootstrap the relay's trust set (seeds + everyone they follow) so a fresh
             # relay has a working web-of-trust out of the box. These are well-known PUBLIC Nostr
             # accounts — deliberately NOT this deployment's admin npub (first-run claim-admin adds

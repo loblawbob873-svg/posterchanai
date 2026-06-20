@@ -57,10 +57,9 @@ _SYNCED = ACCOUNT_FIELDS + CONFIG_FIELDS
 
 
 def enabled(db) -> bool:
-    """True when accounts should be sourced from the relay (setting users_backend == 'relay')."""
-    from app.models import Setting
-    row = db.query(Setting).filter(Setting.key == "users_backend").first()
-    return bool(row and (row.value or "").strip().lower() == "relay")
+    """The relay is the ONLY datastore — always on (legacy sqlite mode removed). The users table is
+    a hydrated read-cache."""
+    return True
 
 
 def _record(u: User) -> dict:

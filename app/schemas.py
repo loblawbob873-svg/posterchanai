@@ -557,11 +557,7 @@ class UserSettingsUpdate(BaseModel):
     )
     nostr_relay_nip05_relays: Optional[str] = "wss://relay.poster.place"  # advertised for every name
     nostr_relay_nip05_domain: Optional[str] = None   # domain for auto-assigned signup names (blank = request host)
-    chat_backend: Optional[str] = None               # "sqlite" (default) | "relay" (encrypted chat events)
-    settings_backend: Optional[str] = None           # "sqlite" (default) | "relay" (relay-authoritative settings)
-    users_backend: Optional[str] = None              # "sqlite" (default) | "relay" (relay-authoritative accounts)
-    bots_backend: Optional[str] = None               # "sqlite" (default) | "relay" (relay-authoritative bot config)
-    records_backend: Optional[str] = None            # "sqlite" (default) | "relay" (reminders/saved searches)
+    # (removed) chat_/settings_/users_/bots_/records_backend — the relay is the one datastore now.
     nostr_relay_pg_dsn: Optional[str] = None         # PostgreSQL DSN for the relay's event store
     nostr_relay_prune_interval_sec: Optional[str] = None  # auto-prune cadence (default nightly)
     # Built-in Blossom media server (BUD-01/02). Served by the app at /blossom (front with TLS).

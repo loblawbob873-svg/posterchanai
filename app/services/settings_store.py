@@ -44,9 +44,9 @@ def _is_local_only(key: str) -> bool:
 
 
 def enabled(db) -> bool:
-    """True when settings should be sourced from the relay (setting settings_backend == 'relay')."""
-    row = db.query(Setting).filter(Setting.key == "settings_backend").first()
-    return bool(row and (row.value or "").strip().lower() == "relay")
+    """The relay is the ONLY datastore — always on (the legacy sqlite/table-authoritative mode is
+    gone). The Postgres `settings` table is just a hydrated read-cache."""
+    return True
 
 
 def _operator_seckey(db):
