@@ -41,6 +41,10 @@ LANGUAGES = {
 }
 
 _BLOCK_THRESHOLD = 0.20  # ≥20% of letters in a blocked script → reject
+# …OR an absolute run of blocked-script chars — catches bilingual spam (a full CJK sentence + an
+# English translation) where the CJK is diluted below the ratio. 6 chars = a real phrase, not a
+# stray foreign name/word.
+_BLOCK_ABS_MIN = 6
 
 # (lo, hi) inclusive Unicode ranges per script bucket.
 _RANGES = {
@@ -122,7 +126,8 @@ def detect_languages(text: str) -> set:
     if hangul and kana:  # mixed: count hangul as Korean too
         langs["ko"] = max(langs["ko"], hangul)
 
-    found = {code for code, c in langs.items() if c and (c / letters) >= _BLOCK_THRESHOLD}
+    found = {code for code, c in langs.items()
+             if c and ((c / letters) >= _BLOCK_THRESHOLD or c >= _BLOCK_ABS_MIN)}
     if viet >= _VIET_MIN:
         found.add("vi")
     return found
