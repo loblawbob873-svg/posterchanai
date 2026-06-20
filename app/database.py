@@ -225,22 +225,20 @@ def init_db():
             # The relay (and thus the app's datastore) runs on PostgreSQL — no SQLite. libpq DSN.
             "nostr_relay_pg_dsn": os.environ.get("NOSTR_RELAY_PG_DSN",
                 "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan"),
-            # Phase 2: where AI chat history lives. "sqlite" (default, app.db) until the relay-backed
-            # encrypted message store is fully wired; "relay" routes chats to encrypted Nostr events.
-            "chat_backend": "sqlite",
-            # Phase 1: where global settings are sourced. "sqlite" (default) reads the Setting table;
-            # "relay" makes the relay authoritative — the Setting table is hydrated from it at startup
-            # and admin saves write through to it.
-            "settings_backend": "sqlite",
-            # Phase 2: where account-authority records (identity + admin + feature caps) live.
-            # "sqlite" (default) reads the users table; "relay" makes the relay authoritative
-            # (users table hydrated from it at startup; account mutations write through to it).
-            "users_backend": "sqlite",
-            # Phase 3: where bot config lives. "sqlite" (default) reads the bots table; "relay"
-            # makes the relay authoritative (bots table hydrated at startup; bot edits write through).
-            "bots_backend": "sqlite",
-            # Misc per-user records (reminders, saved searches) sourced from the relay when "relay".
-            "records_backend": "sqlite",
+            # The relay (encrypted Nostr events) is THE datastore. These *_backend flags are "relay"
+            # everywhere — the Postgres tables are only a hydrated read-cache, never the source of
+            # truth. AI chat history → encrypted kind-30078 docs.
+            "chat_backend": "relay",
+            # Global settings: relay is authoritative (settings table hydrated from it at startup, admin
+            # saves write through).
+            "settings_backend": "relay",
+            # Account-authority records (identity + admin + feature caps): relay authoritative; users
+            # table hydrated from it; account mutations write through.
+            "users_backend": "relay",
+            # Bot config: relay authoritative (bots table hydrated at startup; bot edits write through).
+            "bots_backend": "relay",
+            # Misc per-user records (reminders, saved searches): relay-sourced.
+            "records_backend": "relay",
             # WoT seeds bootstrap the relay's trust set (seeds + everyone they follow) so a fresh
             # relay has a working web-of-trust out of the box. These are well-known PUBLIC Nostr
             # accounts — deliberately NOT this deployment's admin npub (first-run claim-admin adds
