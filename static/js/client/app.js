@@ -569,7 +569,7 @@
     const parts=[];
     if(CFG.users>0) parts.push(WOT_ICON+' '+Number(CFG.users).toLocaleString()+' users');
     if(online>0) parts.push(LIVE_ICON+' '+online.toLocaleString()+' online');
-    if(parts.length){ uc.innerHTML=parts.join(' <span class="uc-dot">·</span> '); uc.classList.remove('hidden'); }
+    if(parts.length){ uc.innerHTML=parts.join('<br>'); uc.classList.remove('hidden'); }
     else uc.classList.add('hidden');
   }
   function renderMe(){

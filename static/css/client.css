@@ -123,10 +123,10 @@ a.btn.full{display:block}
   text-shadow:0 0 8px rgba(255,40,80,.55);box-shadow:0 0 12px rgba(255,40,80,.22);transition:.15s}
 #btn-logout:hover{color:#fff;border-color:#ff3b5c;background:rgba(255,40,80,.14);box-shadow:0 0 20px rgba(255,40,80,.45)}
 .conn{display:flex;align-items:center;justify-content:center;gap:9px;font-size:14px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--muted);padding:6px 8px 10px}
-.usercount{text-align:center;font-size:14px;font-weight:600;letter-spacing:.5px;color:var(--neon);text-shadow:0 0 6px rgba(0,255,255,.4);padding:0 8px 11px;margin-top:-4px}
+.usercount{text-align:center;font-size:15.5px;font-weight:700;line-height:1.7;letter-spacing:.4px;color:#bdfcff;text-shadow:0 0 8px rgba(0,255,255,.6);padding:2px 8px 12px;margin-top:-2px}
 .usercount .uc-dot{color:var(--muted);text-shadow:none;margin:0 2px}
-.usercount .wot-ico{width:16px;height:16px;vertical-align:-3px;margin-right:2px;filter:drop-shadow(0 0 5px rgba(0,255,255,.7))}
-.usercount .live-ico{width:13px;height:13px;color:var(--neon2);vertical-align:-1px;margin-right:2px;filter:drop-shadow(0 0 5px rgba(255,0,255,.85));animation:conn-pulse 1.6s ease-in-out infinite}
+.usercount .wot-ico{width:19px;height:19px;vertical-align:-4px;margin-right:3px;filter:drop-shadow(0 0 6px rgba(0,255,255,.75))}
+.usercount .live-ico{width:15px;height:15px;color:var(--neon2);vertical-align:-2px;margin-right:3px;filter:drop-shadow(0 0 6px rgba(255,0,255,.9));animation:conn-pulse 1.6s ease-in-out infinite}
 .conn .dot{width:14px;height:14px;border-radius:50%;background:var(--amber);box-shadow:0 0 10px var(--amber);animation:conn-pulse 1.6s ease-in-out infinite}
 .conn.ok{color:var(--green)}
 .conn.ok .dot{background:var(--green);box-shadow:0 0 12px var(--green),0 0 22px var(--green)}
