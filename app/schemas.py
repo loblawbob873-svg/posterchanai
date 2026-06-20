@@ -196,8 +196,6 @@ class SettingsResponse(BaseModel):
     ollama_mirostat_eta: str = "0.1"
     ollama_mirostat_tau: str = "5.0"
     ollama_tfs_z: str = "1.0"
-    # Registration settings
-    allow_registration: str = "false"
     # Load balancing - ONE unified list of posterchanai node URLs that drives chat, image, music
     # and video LB (Site → Load Balancing → Server URLs).
     chat_server_urls: str = ""  # Comma-separated list of posterchanai server URLs for load balancing

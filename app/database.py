@@ -643,8 +643,6 @@ When asked to write or modify code or files:
             "ollama_mirostat_eta": "0.1",
             "ollama_mirostat_tau": "5.0",
             "ollama_tfs_z": "1.0",
-            # Registration settings
-            "allow_registration": "false",
             # Load balancing - ONE unified list of posterchanai node URLs that drives chat, image,
             # music and video LB (empty = use local backend only).
             "chat_server_urls": "",  # Comma-separated URLs (empty = use local backend)
