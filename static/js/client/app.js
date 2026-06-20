@@ -1167,9 +1167,10 @@
     </div>`;
     $('#comm-back').onclick=()=>switchView('communities');
     feed.querySelectorAll('[data-prof]').forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
-    // Posts reference the community via an `a` tag (34550:pubkey:d). Show them newest-first; note
-    // actions work via #feed's delegated click handler.
-    let posts=[]; try{ posts=await Relay.query([{ kinds:[1], '#a':[addr], limit:80 }]); }catch(_){}
+    // Posts reference the community via an `a` tag (34550:pubkey:d). Modern NIP-72 clients post as
+    // NIP-22 comments (kind 1111); older ones use kind 1 — query both. Note actions work via the
+    // #feed delegated click handler.
+    let posts=[]; try{ posts=await Relay.query([{ kinds:[1,1111], '#a':[addr], limit:80 }]); }catch(_){}
     posts.forEach(x=>{ Store.saveEvent(x); needProfile(x.pubkey); });
     if(VIEW!=='community') return;
     const box=$('#comm-posts'); if(!box) return;
