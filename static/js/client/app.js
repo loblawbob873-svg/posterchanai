@@ -2586,7 +2586,13 @@
     // Telegram link key
     { const k=$('#us-tg-key'); if(k) k.onclick=async()=>{ const box=$('#us-tg-keybox'); box.textContent='generating…';
         try{ const d=await fetch('/api/telegram/generate-key',{method:'POST'}).then(r=>r.json());
-          box.innerHTML = d.key?`Send to the bot in Telegram: <code>/start ${enc(d.key)}</code>`:('failed: '+enc(d.detail||'')); }catch(_){ box.textContent='failed'; } }; }
+          if(!d.key){ box.textContent='failed: '+enc(d.detail||''); return; }
+          // One-tap deep link (opens the bot with the key pre-filled → just tap Start). Fall back to
+          // the manual command if the bot username is unknown.
+          box.innerHTML = (d.deep_link
+            ? `<a class="btn btn-cyan small" href="${enc(d.deep_link)}" target="_blank" rel="noopener">📲 Link Telegram${d.bot_username?(' (@'+enc(d.bot_username)+')'):''}</a><div class="muted small" style="margin-top:6px">or send <code>/start ${enc(d.key)}</code> to the bot manually</div>`
+            : `Send this to the bot in Telegram: <code>/start ${enc(d.key)}</code>`);
+        }catch(_){ box.textContent='failed'; } }; }
     { const u=$('#us-tg-unlink'); if(u) u.onclick=async()=>{ if(!confirm('Unlink Telegram?'))return;
         await fetch('/api/telegram/unlink',{method:'POST'}); toast('unlinked'); renderUserSettings(); }; }
     // Matrix

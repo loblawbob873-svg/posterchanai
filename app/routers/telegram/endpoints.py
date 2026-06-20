@@ -1,6 +1,25 @@
 """Auto-split from the original telegram.py monolith. No behavior change."""
 from ._common import Depends, HTTPException, Session, Setting, TelegramBotConfig, TelegramChatSetup, User, _configure_telegram, datetime, get_admin_user, get_current_user, get_db, logger, router, telegram_service, timedelta
 
+_bot_username_cache = None
+async def _get_bot_username(db):
+    """The bot's @username (for building t.me deep links), cached after the first getMe."""
+    global _bot_username_cache
+    if _bot_username_cache:
+        return _bot_username_cache
+    if not getattr(telegram_service, "bot_token", None):
+        row = db.query(Setting).filter(Setting.key == "telegram_bot_token").first()
+        if row and row.value:
+            telegram_service.set_token(row.value)
+    try:
+        r = await telegram_service.get_me()
+        if r.get("ok"):
+            _bot_username_cache = (r.get("result") or {}).get("username")
+    except Exception:
+        pass
+    return _bot_username_cache
+
+
 @router.get("/me")
 async def get_bot_info(db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
     """Get information about the configured bot."""
@@ -153,11 +172,16 @@ async def generate_telegram_key(
     current_user.telegram_key_expires_at = datetime.utcnow() + timedelta(hours=24)
     db.commit()
     db.refresh(current_user)
+    bot_username = await _get_bot_username(db)
     return {
         "ok": True,
         "key": key,
         "expires_at": current_user.telegram_key_expires_at.isoformat(),
         "previous_key_revoked": previous_key_revoked,
+        "bot_username": bot_username,
+        # Telegram deep link: tapping it opens the bot with the key pre-filled, so the user just
+        # taps Start to link (no copy/paste of /start <key>). Null if the bot username is unknown.
+        "deep_link": (f"https://t.me/{bot_username}?start={key}" if bot_username else None),
     }
 
 
