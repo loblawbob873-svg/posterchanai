@@ -1062,9 +1062,10 @@
       // Files grid: thumbnails load ?thumb=1, so open the parent link's FULL url in the lightbox
       // (images) — videos/docs fall through to their <a> (new tab / download).
       const fa=e.target.closest('.file-card a'); if(fa){ const fm=fa.dataset.mime||'';
-        if(/^video\//.test(fm)){ e.preventDefault(); openLightbox(fa.getAttribute('href'), true); }
+        if(/^video\//.test(fm)){ e.preventDefault(); openLightbox(fa.getAttribute('href'), 'video'); }
+        else if(/^audio\//.test(fm)){ e.preventDefault(); openLightbox(fa.getAttribute('href'), 'audio'); }
         else if(/^image\//.test(fm) || fa.querySelector('img')){ e.preventDefault(); openLightbox(fa.getAttribute('href')); }
-        return; }   // audio/docs: fall through to the link (download / new tab)
+        return; }   // docs: fall through to the link (download / new tab)
       const im=e.target.closest('.txt img, .note-preview img, .media-row img, .media-grid img'); if(im){ e.preventDefault(); openLightbox(im.currentSrc||im.src); return; }
       const av=e.target.closest('.av'); if(av){ const n=e.target.closest('.note'); if(n){ renderProfileView(n.dataset.pk); return; } }
       const prof=e.target.closest('[data-prof]'); if(prof){ renderProfileView(prof.dataset.prof); return; }
@@ -2904,10 +2905,11 @@
   function modal(html, onMount){ const bg=document.createElement('div'); bg.className='modal-bg'; bg.innerHTML=`<div class="modal glass neon-border">${html}</div>`; bg.onclick=e=>{ if(e.target===bg) closeModal(); }; $('#modal-root').appendChild(bg); document.body.classList.add('modal-open'); if(onMount)onMount(bg.querySelector('.modal')); }
   function closeModal(){ $('#modal-root').innerHTML=''; document.body.classList.remove('modal-open'); }
   function toast(m){ const t=document.createElement('div'); t.className='toast'; t.textContent=m; $('#toast-root').appendChild(t); setTimeout(()=>t.remove(),3200); }
-  function openLightbox(src, video){ try{ const x=new URL(src, location.href); x.searchParams.delete('thumb'); src=x.href; }catch(_){}  // always full-res, never the ?thumb=1 grid image
+  function openLightbox(src, kind){ try{ const x=new URL(src, location.href); x.searchParams.delete('thumb'); src=x.href; }catch(_){}  // always full-res, never the ?thumb=1 grid image
     const bg=document.createElement('div'); bg.className='lightbox';
     let el;
-    if(video){ el=document.createElement('video'); el.src=src; el.controls=true; el.autoplay=true; el.playsInline=true; el.setAttribute('playsinline',''); }
+    if(kind==='video'){ el=document.createElement('video'); el.src=src; el.controls=true; el.autoplay=true; el.playsInline=true; el.setAttribute('playsinline',''); }
+    else if(kind==='audio'){ el=document.createElement('audio'); el.src=src; el.controls=true; el.autoplay=true; }
     else { el=document.createElement('img'); el.src=src; }
     bg.appendChild(el);
     bg.onclick=(e)=>{ if(e.target===bg) bg.remove(); };   // click backdrop (not the media/controls) to close
