@@ -1732,9 +1732,8 @@
     if(!m || !to){ toast('nothing to reply with'); return; }
     if(btn){ btn.disabled=true; btn.textContent='posting…'; }
     try{
-      const bin=Uint8Array.from(atob(m.b64), c=>c.charCodeAt(0));
-      const url=await uploadBlob(new File([bin], 'effect.'+m.ext, { type:m.mime }));
-      await publish(1, url, eTags(to.id, to.pk));
+      if(!m.url){ const bin=Uint8Array.from(atob(m.b64), c=>c.charCodeAt(0)); m.url=await uploadBlob(new File([bin], 'effect.'+m.ext, { type:m.mime })); }
+      await publish(1, m.url, eTags(to.id, to.pk));
       toast('✓ reply posted'); if(btn){ btn.textContent='✓ replied'; btn.classList.add('on'); }
     }catch(e){ toast('reply failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; btn.textContent='↩ Send the Reply'; } }
   }
@@ -2734,6 +2733,7 @@
       const fxm=e.target.closest('.fx-mot'); if(fxm){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ if(_ai.fxImage && !_ai.attach.length) aiAddFiles([_ai.fxImage]); _fxApplyMod(ta, fxm.dataset.add); ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // motion → single geometry / glow·alive·trippy compose
       const fxh=e.target.closest('.fx-char'); if(fxh){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ if(_ai.fxImage && !_ai.attach.length) aiAddFiles([_ai.fxImage]); _fxApplyChar(ta, fxh.dataset.char); ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // sticker (char overlay) → single, toggle
       const rfx=e.target.closest('.ai-reply-fx'); if(rfx){ e.preventDefault(); sendEffectReply(rfx.dataset.mid, rfx); return; }   // post the generated effect back as a reply
+      const cfx=e.target.closest('.ai-copy-fx'); if(cfx){ e.preventDefault(); copyEffectUrl(cfx.dataset.mid, cfx); return; }   // upload + copy the public Blossom URL
       const mag=e.target.closest('.ai-magnet'); if(mag){ const ta=$('#ai-input'); if(ta){ ta.value='torrents add '+mag.dataset.magnet; aiSend(); } return; }
       const im=e.target.closest('img'); if(im){ openLightbox(im.dataset.full||im.src); }
     });
@@ -2884,10 +2884,22 @@
   // When the effects studio is active (_ai.replyTo set), offer a button to post the generated media
   // back as a reply to the source post. Stashes the base64 so the reply can upload it to Blossom.
   function _fxReplyBtn(b64, mime, ext){
-    if(!_ai.replyTo || !b64) return '';
+    if(!b64) return '';
     const mid='fx'+Date.now().toString(36)+Math.floor(Math.random()*1e4).toString(36);
     _ai.fxMedia[mid]={ b64, mime, ext };
-    return `<div class="fx-reply-row" style="margin-top:6px"><button class="btn btn-neon small ai-reply-fx" data-mid="${mid}">↩ Send the Reply</button></div>`;
+    const copy=`<button class="btn btn-ghost small ai-copy-fx" data-mid="${mid}">📋 Copy link</button>`;
+    const reply=_ai.replyTo?`<button class="btn btn-neon small ai-reply-fx" data-mid="${mid}">↩ Send the Reply</button>`:'';
+    return `<div class="fx-reply-row" style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">${reply}${copy}</div>`;
+  }
+  // Upload generated media to Blossom and copy its URL — paste the link into any reply yourself.
+  async function copyEffectUrl(mid, btn){
+    const m=_ai.fxMedia[mid]; if(!m){ toast('nothing to copy'); return; }
+    if(btn){ btn.disabled=true; btn.textContent='uploading…'; }
+    try{
+      if(!m.url){ const bin=Uint8Array.from(atob(m.b64), c=>c.charCodeAt(0)); m.url=await uploadBlob(new File([bin], 'effect.'+m.ext, { type:m.mime })); }
+      try{ await navigator.clipboard.writeText(m.url); toast('link copied'); }catch(_){ toast(m.url); }
+      if(btn){ btn.textContent='✓ copied'; btn.disabled=false; }
+    }catch(e){ toast('upload failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; btn.textContent='📋 Copy link'; } }
   }
   function aiRenderResponse(d){
     const head = d.content ? aiFormat(d.content) : '';
@@ -2933,22 +2945,33 @@
     }
     aiRenderAttach();
   }
+  // What you can DO with an attached file (old web UI / Telegram media-action keyboard). Each is
+  // [label, mode, command]: mode 'fx' opens the Effects picker; 'run' sends the command immediately
+  // (one-shot, e.g. compress/ocr); 'fill' prefills so you complete an argument (clip/convert/meme).
+  // Commands match the upload allowlist in chat.py (note: it's `ocr`, not "readtext").
+  function _aiAttachActions(){
+    const k=new Set(_ai.attach.map(a=>a.kind));
+    if(k.has('image')) return [['🎬 Effects','fx','__fxguide'],['🪄 Remove BG','run','removebackground'],['🔤 Read text','run','ocr'],['🗜 Compress','run','compress'],['🔄 Convert','fill','convert '],['😂 Meme','fill','meme ']];
+    if(k.has('pdf')||k.has('doc')) return [['🎴 Flashcards','run','flashcards'],['🔤 Read text','run','ocr']];
+    if(k.has('video')) return [['🗜 Compress','run','compress'],['✂️ Clip','fill','clip '],['🔄 Convert','fill','convert ']];
+    return [['🗜 Compress','run','compress'],['🔄 Convert','fill','convert ']];
+  }
+  function _aiMediaAction(mode, cmd){
+    if(mode==='fx'){ showEffectGuide(); return; }
+    const ta=$('#ai-input'); if(!ta) return;
+    ta.value=cmd; ta.focus(); ta.dispatchEvent(new Event('input'));
+    if(mode==='run') aiSend();   // one-shot — runs on the attached file now; 'fill' waits for the arg
+  }
   function aiRenderAttach(){
     const bar=$('#ai-attachbar'); if(!bar) return;
     if(!_ai.attach.length){ bar.innerHTML=''; return; }
     const chips=_ai.attach.map((a,i)=>`<span class="ai-chip">${enc(a.name)} <button data-i="${i}" class="ai-chip-x">✕</button></span>`).join('');
-    // media-action guide buttons (restored from the old web UI / Telegram): once a file is attached,
-    // show what you can do with it. They prefill the command (the file is sent with it); 🎬 Effects
-    // opens the effect picker. Tailored to the attached file kind.
-    const kinds=new Set(_ai.attach.map(a=>a.kind));
-    let acts=[];
-    if(kinds.has('image')) acts=[['🎬 Effects','__fxguide'],['🌟 Glow','glow'],['😂 Meme','meme '],['🗜 Compress','compress'],['🔄 Convert','convert png'],['🔤 Read text','readtext'],['🪄 Remove BG','removebackground']];
-    else if(kinds.has('pdf')||kinds.has('doc')) acts=[['🎴 Flashcards','flashcards'],['🔤 Read text','readtext']];
-    else acts=[['🗜 Compress','compress'],['✂️ Clip','clip '],['🔄 Convert','convert mp4']];
+    const acts=_aiAttachActions();
     const actions='<div class="fx-row" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">'+
-      acts.map(([l,c])=>`<button class="fx-cmd" data-cmd="${enc(c)}">${enc(l)}</button>`).join('')+'</div>';
+      acts.map((a,i)=>`<button class="fx-mot fx-act" data-i="${i}">${enc(a[0])}</button>`).join('')+'</div>';
     bar.innerHTML='<div class="ai-chips" style="display:flex;flex-wrap:wrap;gap:6px">'+chips+'</div>'+actions;
     $$('.ai-chip-x',bar).forEach(b=> b.onclick=()=>{ _ai.attach.splice(+b.dataset.i,1); aiRenderAttach(); });
+    $$('.fx-act',bar).forEach(b=>{ const a=acts[+b.dataset.i]; b.onclick=()=>_aiMediaAction(a[1], a[2]); });   // wire directly (attach bar is outside the #ai-msgs delegation)
   }
   function aiSend(){
     const ta=$('#ai-input'); if(!ta) return; const text=ta.value.trim();
