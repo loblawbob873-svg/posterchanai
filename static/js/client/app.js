@@ -1842,11 +1842,17 @@
   }
   // Pull the first image URL off a post (imeta tag first, then a URL in the content).
   function postImageUrl(ev){
+    // An image is either a normal extension URL OR an extensionless Blossom hash URL
+    // (media.poster.place/<sha256>) — the same set linkify() renders as <img>. postImageUrl used to
+    // miss the hash URLs, so effects on app-uploaded images said "no image" / couldn't see it.
+    const isImg = u => /\.(jpe?g|png|gif|webp|bmp|avif)([?#]|$)/i.test(u) || /\/[0-9a-f]{64}([?#]|$)/i.test(u);
     for(const t of (ev.tags||[])){
-      if(t[0]==='imeta'){ const m=/url\s+(\S+)/.exec(t.slice(1).join(' ')); if(m && /\.(jpe?g|png|gif|webp|bmp)([?#]|$)/i.test(m[1])) return m[1]; }
+      if(t[0]==='imeta'){ const m=/url\s+(\S+)/.exec(t.slice(1).join(' ')); if(m && isImg(m[1])) return m[1]; }
     }
-    const m=(ev.content||'').match(/https?:\/\/\S+\.(?:jpe?g|png|gif|webp|bmp)(?:[?#]\S*)?/i);
-    return m ? m[0] : null;
+    for(const raw of ((ev.content||'').match(/https?:\/\/\S+/gi)||[])){
+      const u=raw.replace(/[)\].,!?]+$/,''); if(isImg(u)) return u;
+    }
+    return null;
   }
   // 🎬 Effect: copy the post's image into a fresh AI chat (the effects studio) and remember the post,
   // so the generated effect can be posted back as a reply. Guides the user with tappable effects.
