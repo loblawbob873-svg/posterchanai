@@ -510,8 +510,7 @@
     $('#feed').addEventListener('scroll', onFeedScroll, { passive:true });   // infinite scroll-back
     const rb=document.querySelector('.rightbar');
     if(rb){ rb.addEventListener('scroll', onRightbarScroll, { passive:true });   // Hot infinite-scroll
-      const hot=document.getElementById('rb-hot');
-      if(hot) hot.addEventListener('click', e=>{ const it=e.target.closest('.rb-item[data-open]'); if(it) renderThread(it.dataset.open); });
+      rb.addEventListener('click', e=>{ const it=e.target.closest('.rb-item[data-open]'); if(it) renderThread(it.dataset.open); });   // hot + follows rows open their thread
       startAutoScroll(); }
     bumpDraft();   // show the saved-drafts count on the nav badge
     Drafts.pull();   // sync drafts from the encrypted Nostr event (cross-device)
@@ -2867,6 +2866,16 @@
   function _preloadAdmin(){ _ensureAdminHost(); }   // load /admin hidden so the first open is instant
   function _adminFrame(feed){
     const host=_ensureAdminHost();
+    // Reload the iframe ONLY when entering admin (host was hidden), so it always reflects the latest
+    // deployed CSS/JS — the persistent iframe was otherwise frozen at page-load time (stale after a
+    // deploy). Guarded on the show-transition so we don't reload on every renderView (the old flicker).
+    const wasHidden = !host.style.display || host.style.display==='none';
+    const ifr=host.querySelector('iframe');
+    if(wasHidden && ifr){
+      ifr.style.opacity='0';
+      if(!host.querySelector('.spinner')){ const s=document.createElement('div'); s.className='spinner'; host.appendChild(s); }
+      ifr.src='/admin?t='+Math.floor(Date.now()/1000);
+    }
     feed.style.display='none';   // hide the feed; the persistent iframe fills the main area
     host.style.display='block';
   }
@@ -3987,12 +3996,13 @@
     loadHot(true);                   // Hot = most-engaged posts, infinite-scroll
     loadTrendingTags();              // Trending = trending hashtags (last 24h)
     loadDiscover();                  // curated hashtag shortcuts for newcomers
+    loadFollows();                   // From follows = what people you follow liked/boosted
   }
   // Routine update (timer): refresh the chip clouds and prepend any freshly-hot posts to the top
   // of the Hot feed WITHOUT rebuilding it (so an in-progress scroll isn't yanked back up).
   function refreshRightbar(){
     if(document.hidden || !document.querySelector('.rightbar')) return;
-    loadTrendingTags(); loadDiscover(); refreshHotTop();
+    loadTrendingTags(); loadDiscover(); loadFollows(); refreshHotTop();
   }
   // Curated hashtag shortcuts — friendly entry points into popular communities for new users.
   const DISCOVER_TAGS = [['foodstr','🍔'], ['asknostr','💬'], ['AI','🤖'], ['Bitcoin','₿'],
@@ -4078,6 +4088,25 @@
     const ev=Store.get(id); if(!ev||ev.kind!==1) return ''; const pr=profOf(ev.pubkey);
     const txt=(ev.content||'').replace(/https?:\/\/\S+/g,'').trim().slice(0,140);
     return `<div class="rb-item" data-open="${id}" data-pk="${ev.pubkey}"><div class="rb-head"><img class="rb-av" src="${enc(pr.picture||LOGO)}" onerror="this.src='${LOGO}'"><b>${enc(pr.name||pr.display_name||'anon')}</b> <span class="rb-fire">${count} 🔥</span></div><div class="rb-txt">${enc(txt)||'<i>media</i>'}</div></div>`;
+  }
+  // "From follows": posts the people YOU follow have liked (kind 7) or boosted (kind 6), ranked by
+  // how many of your follows engaged. Surfaces what your own network is reacting to in the rightbar.
+  async function loadFollows(){
+    const el=document.getElementById('rb-follows'); if(!el) return;
+    const authors=[...FOLLOWS]; if(!authors.length){ el.innerHTML='<div class="muted small">Follow people to see what they’re into.</div>'; return; }
+    const since=Math.floor(Date.now()/1000)-24*3600;
+    let evs=[]; try{ evs=await Relay.query([{ kinds:[6,7], authors, since, limit:1000 }]); }catch(_){}
+    const tally={}, icon={};
+    for(const e of evs){ if(e.pubkey===ME.pubkey) continue; const id=(e.tags.filter(t=>t[0]==='e').pop()||[])[1]; if(!id) continue;
+      tally[id]=(tally[id]||0)+1; if(e.kind===6) icon[id]='🔁'; else if(!icon[id]) icon[id]='❤️'; }
+    const top=Object.entries(tally).sort((a,b)=>b[1]-a[1]).slice(0,12).map(x=>x[0]);
+    if(!top.length){ el.innerHTML='<div class="muted small">Nothing from your follows yet.</div>'; return; }
+    await fetchNotes(top);
+    const rows=top.map(id=>{ const ev=Store.get(id); if(!ev||ev.kind!==1) return ''; const pr=profOf(ev.pubkey);
+      const txt=(ev.content||'').replace(/https?:\/\/\S+/g,'').trim().slice(0,140);
+      return `<div class="rb-item" data-open="${id}" data-pk="${ev.pubkey}"><div class="rb-head"><img class="rb-av" src="${enc(pr.picture||LOGO)}" onerror="this.src='${LOGO}'"><b>${enc(pr.name||pr.display_name||'anon')}</b> <span class="rb-fire">${icon[id]||'❤️'} ${tally[id]}</span></div><div class="rb-txt">${enc(txt)||'<i>media</i>'}</div></div>`;
+    }).filter(Boolean).join('');
+    el.innerHTML=rows||'<div class="muted small">Nothing yet.</div>'; decorateProfiles();
   }
   // Materialize up to HOT_PAGE not-yet-shown ranked items into the Hot column. `where` = append
   // (scroll-down) or prepend (routine refresh). Returns how many rows were actually added.
