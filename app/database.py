@@ -1,7 +1,7 @@
 from sqlalchemy import create_engine, event, text, inspect
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.pool import QueuePool, StaticPool
+from sqlalchemy.pool import QueuePool
 import os
 import logging
 
@@ -13,134 +13,21 @@ logger = logging.getLogger(__name__)
 DATABASE_URL = os.getenv("DATABASE_URL",
                          "postgresql+psycopg2://posterchan@127.0.0.1:5432/posterchan_relay")
 
-# Cache for SQLite settings (to avoid querying on every connection)
-_sqlite_cache_mb = 500
-_sqlite_mmap_mb = 500
-_sqlite_settings_loaded = False
-_sqlite_loading_in_progress = False  # Prevent recursive calls
 
-
-def _load_sqlite_settings():
-    """Load SQLite cache settings from database (called once at startup)."""
-    global _sqlite_cache_mb, _sqlite_mmap_mb, _sqlite_settings_loaded
-    if _sqlite_settings_loaded:
-        return
-    
-    try:
-        from app.models import Setting
-        # Use a separate connection to avoid deadlocks during init_db
-        db = SessionLocal()
-        try:
-            # Check if settings table exists first
-            from sqlalchemy import inspect
-            inspector = inspect(engine)
-            if not inspector.has_table('settings'):
-                # Settings table doesn't exist yet, use defaults
-                logger.debug("[SQLite] Settings table not found, using default cache settings")
-                return
-            
-            try:
-                cache_setting = db.query(Setting).filter(Setting.key == "sqlite_cache_mb").first()
-                if cache_setting and cache_setting.value:
-                    _sqlite_cache_mb = int(cache_setting.value)
-            except (IndexError, AttributeError) as e:
-                logger.debug(f"Error querying sqlite_cache_mb setting: {e}, using default")
-            
-            try:
-                mmap_setting = db.query(Setting).filter(Setting.key == "sqlite_mmap_size_mb").first()
-                if mmap_setting and mmap_setting.value:
-                    _sqlite_mmap_mb = int(mmap_setting.value)
-            except (IndexError, AttributeError) as e:
-                logger.debug(f"Error querying sqlite_mmap_size_mb setting: {e}, using default")
-            
-            _sqlite_settings_loaded = True
-            logger.info(f"[SQLite] Cache settings loaded: cache={_sqlite_cache_mb}MB, mmap={_sqlite_mmap_mb}MB")
-        finally:
-            db.close()
-    except Exception as e:
-        logger.debug(f"[SQLite] Using default cache settings: {e}")
-
-
-def reload_sqlite_settings():
-    """Reload SQLite cache settings (call after updating settings)."""
-    global _sqlite_settings_loaded
-    _sqlite_settings_loaded = False
-    _load_sqlite_settings()
-
-# Connection pool configuration
-if "sqlite" in DATABASE_URL:
-    # SQLite with WAL + a real connection pool. The old setup used StaticPool (a SINGLE shared
-    # connection), so EVERY query - the background pollers (social/nitter) AND each request -
-    # serialized through one connection: a poller mid-query stalled LLM request DB access.
-    # QueuePool gives each request its own connection, and WAL lets readers run concurrently with
-    # the (single) writer, so writes no longer block reads. busy_timeout waits out the brief
-    # write-lock instead of erroring with "database is locked".
-    # In-memory SQLite MUST keep one shared connection (StaticPool) - a pool would give each
-    # connection its own empty DB. File-based SQLite uses QueuePool for real concurrency.
-    if ":memory:" in DATABASE_URL:
-        _pool_kwargs = {"poolclass": StaticPool}
-    else:
-        # Pool sized for this workload: long GPU background tasks (music/image/video) each hold a
-        # connection for MINUTES while queued on the GPU lock, alongside the webhook + several
-        # schedulers. 15 was far too small and exhausted under bursts (QueuePool timeout → the
-        # Telegram webhook couldn't even get a connection to ACK → Telegram replayed history).
-        # SQLite+WAL handles many connections cheaply, so size generously.
-        _pool_kwargs = {"poolclass": QueuePool, "pool_size": 20, "max_overflow": 80, "pool_recycle": 3600}
-    engine = create_engine(
-        DATABASE_URL,
-        connect_args={
-            "check_same_thread": False,
-            "timeout": 30.0  # sqlite busy timeout: wait for a locked DB instead of erroring
-        },
-        pool_pre_ping=True,    # verify connection health
-        **_pool_kwargs,
-    )
-
-    # Enable foreign key constraints and configure cache for SQLite
-    @event.listens_for(engine, "connect")
-    def set_sqlite_pragma(dbapi_conn, connection_record):
-        cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA foreign_keys = ON")
-        # WAL: readers don't block the writer (fixes poller-vs-request DB serialization).
-        # synchronous=NORMAL is the safe+fast pairing for WAL. busy_timeout waits out a lock.
-        cursor.execute("PRAGMA journal_mode = WAL")
-        cursor.execute("PRAGMA synchronous = NORMAL")
-        cursor.execute("PRAGMA busy_timeout = 30000")
-
-        # Don't load settings during connection event to avoid circular dependencies
-        # Settings will be loaded during init_db() after tables are created
-        # Just use the cached values (defaults if not loaded yet)
-        
-        # Configure SQLite cache size using cached values
-        # Using negative value: -N means N KB (works regardless of page size)
-        cache_kb = _sqlite_cache_mb * 1024
-        cursor.execute(f"PRAGMA cache_size = -{cache_kb}")
-        
-        # Configure memory-mapped I/O
-        if _sqlite_mmap_mb > 0:
-            mmap_bytes = _sqlite_mmap_mb * 1024 * 1024
-            cursor.execute(f"PRAGMA mmap_size = {mmap_bytes}")
-        else:
-            cursor.execute("PRAGMA mmap_size = 0")  # Disable mmap
-        
-        logger.debug(f"[SQLite] Configured cache: {_sqlite_cache_mb}MB, mmap: {_sqlite_mmap_mb}MB")
-        cursor.close()
-else:
-    # PostgreSQL: size the pool like the SQLite branch — the app's background schedulers/pollers
-    # (social/nitter/fedi/matrix/logs/relay) each hold a session, and long GPU tasks hold one for
-    # minutes; 5+10 was far too small and exhausted under normal load (every slot stuck "idle in
-    # transaction" → requests block 30s → the instance hangs). pool_timeout fails fast instead of
-    # blocking 30s; idle_in_transaction_session_timeout lets PG reclaim a leaked/abandoned txn.
-    engine = create_engine(
-        DATABASE_URL,
-        poolclass=QueuePool,
-        pool_size=20,
-        max_overflow=80,
-        pool_pre_ping=True,
-        pool_recycle=3600,
-        pool_timeout=10,
-        connect_args={"options": "-c idle_in_transaction_session_timeout=60000"},
-    )
+# Connection pool: the app's background schedulers/pollers (social/nitter/fedi/matrix/logs/relay)
+# each hold a session, and long GPU tasks hold one for minutes; 5+10 was far too small and
+# exhausted under normal load (slots stuck "idle in transaction" -> requests block -> instance
+# hangs). pool_timeout fails fast; idle_in_transaction_session_timeout lets PG reclaim a leaked txn.
+engine = create_engine(
+    DATABASE_URL,
+    poolclass=QueuePool,
+    pool_size=20,
+    max_overflow=80,
+    pool_pre_ping=True,
+    pool_recycle=3600,
+    pool_timeout=10,
+    connect_args={"options": "-c idle_in_transaction_session_timeout=60000"},
+)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -154,28 +41,8 @@ Base = declarative_base()
 # (posterchanai.service has PrivateTmp=no, so it survives ordinary restarts/deploys). The model
 # (MatrixAvatarCache) is shared; only the engine/session differ.
 FEDI_CACHE_DB_PATH = os.getenv("FEDI_CACHE_DB", "/tmp/posterchanai_fedi_cache.db")
-if "sqlite" in DATABASE_URL:
-    # SQLite main DB → keep the high-churn media cache in its OWN tmpfs SQLite (so it doesn't
-    # contend on the main DB's single write-lock). On Postgres this reason evaporates (row-level
-    # locking), so the cache just lives in the main PG DB — no separate SQLite file anywhere.
-    cache_engine = create_engine(
-        f"sqlite:///{FEDI_CACHE_DB_PATH}",
-        connect_args={"check_same_thread": False, "timeout": 30.0},
-        poolclass=QueuePool, pool_size=5, max_overflow=10, pool_recycle=3600, pool_pre_ping=True,
-    )
-
-    @event.listens_for(cache_engine, "connect")
-    def _set_cache_pragma(dbapi_conn, _rec):
-        cur = dbapi_conn.cursor()
-        cur.execute("PRAGMA journal_mode = WAL")
-        cur.execute("PRAGMA synchronous = NORMAL")
-        cur.execute("PRAGMA busy_timeout = 30000")
-        cur.close()
-
-    CacheSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=cache_engine)
-else:
-    cache_engine = engine
-    CacheSessionLocal = SessionLocal
+cache_engine = engine
+CacheSessionLocal = SessionLocal
 
 
 def init_fedi_cache_db():
@@ -280,210 +147,10 @@ def safe_query_settings(db: Session) -> dict:
             return {}
 
 
-def _run_migrations():
-    """Add new columns to existing tables if they don't exist (legacy SQLite upgrade path).
-
-    No-op on Postgres: create_all() builds the complete current schema, and these ALTERs use
-    SQLite-flavored DDL (e.g. BOOLEAN DEFAULT 1) that isn't valid PG — so guard them out entirely."""
-    if "sqlite" not in DATABASE_URL:
-        return
-
-    inspector = inspect(engine)
-
-    # Get existing columns in users table
-    existing_columns = {col['name'] for col in inspector.get_columns('users')} if inspector.has_table('users') else set()
-
-    # Define new columns to add to users table
-    new_user_columns = [
-        ("storage_quota", "INTEGER DEFAULT 0"),  # Storage quota in bytes (0 = unlimited)
-        # Per-user feature access (default on = unchanged behavior for existing users)
-        ("can_image", "BOOLEAN DEFAULT 1"),
-        ("can_music", "BOOLEAN DEFAULT 1"),
-        ("can_video", "BOOLEAN DEFAULT 1"),
-        ("can_torrent", "BOOLEAN DEFAULT 1"),
-        ("can_blossom", "BOOLEAN DEFAULT 0"),  # opt-in: allow Blossom uploads (see blossom_service)
-        # AI access. ALTER DEFAULT 1 so EXISTING users keep their access; the ORM model default is
-        # False, so brand-new (Nostr) signups are gated until an admin approves. Admins always bypass.
-        ("can_ai", "BOOLEAN DEFAULT 1"),
-        # Scheduled news / custom news sources
-        ("news_schedule_enabled", "BOOLEAN DEFAULT 0"),
-        ("news_schedule_time", "VARCHAR(5) DEFAULT '12:00'"),
-        ("news_sources", "TEXT DEFAULT ''"),
-        # Telegram columns
-        ("telegram_enabled", "BOOLEAN DEFAULT 0"),
-        ("telegram_chat_id", "VARCHAR(50)"),
-        ("telegram_notifications", "TEXT DEFAULT ''"),
-        ("telegram_key", "VARCHAR(64)"),
-        ("telegram_key_expires_at", "DATETIME"),
-        # Misskey columns
-        ("misskey_enabled", "BOOLEAN DEFAULT 0"),
-        ("misskey_instance_url", "VARCHAR(500)"),
-        ("misskey_api_token", "VARCHAR(500)"),
-        # Pleroma columns
-        ("pleroma_enabled", "BOOLEAN DEFAULT 0"),
-        ("pleroma_instance_url", "VARCHAR(500)"),
-        ("pleroma_access_token", "VARCHAR(500)"),
-        # Nostr columns (keypair identity + relays + external media host)
-        ("nostr_enabled", "BOOLEAN DEFAULT 0"),
-        ("nostr_nsec", "VARCHAR(200)"),
-        ("nostr_npub", "VARCHAR(100)"),
-        ("nostr_relays", "TEXT"),
-        ("nostr_media_service", "VARCHAR(20)"),
-        ("nostr_media_endpoint", "VARCHAR(500)"),
-        ("nostr_notif_since", "TEXT"),
-        # Matrix columns
-        ("matrix_enabled", "BOOLEAN DEFAULT 0"),
-        ("matrix_homeserver", "VARCHAR(500)"),
-        ("matrix_user_id", "VARCHAR(500)"),
-        ("matrix_access_token", "VARCHAR(2000)"),
-        ("matrix_dm_bot_user_id", "VARCHAR(500)"),
-        # Finance (Budget Manager) integration
-        ("finance_api_key", "VARCHAR(200)"),
-        # Social notification relay → Telegram
-        ("social_notif_enabled", "BOOLEAN DEFAULT 0"),
-        ("misskey_notif_since", "TEXT"),
-        ("pleroma_notif_since", "TEXT"),
-        ("matrix_notif_since", "TEXT"),
-        # Fediverse notifications → Matrix DM (independent per-user toggle)
-        ("matrix_notif_enabled", "BOOLEAN DEFAULT 0"),
-    ]
-
-    # Add missing columns to users table
-    with engine.connect() as conn:
-        for col_name, col_type in new_user_columns:
-            if col_name not in existing_columns:
-                try:
-                    conn.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}"))
-                    conn.commit()
-                except Exception:
-                    # Column might already exist or other error - ignore
-                    pass
-
-    
-
-    # Ensure unique index on telegram_chat_id (partial: only for non-NULL values)
-    # This prevents two users from linking the same Telegram chat.
-    with engine.connect() as conn:
-        try:
-            conn.execute(text(
-                "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_telegram_chat_id "
-                "ON users(telegram_chat_id) WHERE telegram_chat_id IS NOT NULL"
-            ))
-            conn.commit()
-        except Exception as e:
-            logger.error(f"[MIGRATE] Failed to create unique index on telegram_chat_id: {e}")
-
-    # Add body column to timeline_posts (share→boost/quote content matching) if missing
-    if inspector.has_table('timeline_posts'):
-        tl_cols = {col['name'] for col in inspector.get_columns('timeline_posts')}
-        if 'body' not in tl_cols:
-            with engine.connect() as conn:
-                try:
-                    conn.execute(text("ALTER TABLE timeline_posts ADD COLUMN body TEXT"))
-                    conn.commit()
-                    logger.info("[MIGRATE] Added timeline_posts.body")
-                except Exception as e:
-                    logger.warning(f"[MIGRATE] Failed to add timeline_posts.body: {e}")
-
-    # Add width/height to matrix_avatar_cache (cached display dims for reused inline media) if missing
-    if inspector.has_table('matrix_avatar_cache'):
-        ac_cols = {col['name'] for col in inspector.get_columns('matrix_avatar_cache')}
-        for col_name in ('width', 'height'):
-            if col_name not in ac_cols:
-                with engine.connect() as conn:
-                    try:
-                        conn.execute(text(f"ALTER TABLE matrix_avatar_cache ADD COLUMN {col_name} INTEGER"))
-                        conn.commit()
-                        logger.info(f"[MIGRATE] Added matrix_avatar_cache.{col_name}")
-                    except Exception as e:
-                        logger.warning(f"[MIGRATE] Failed to add matrix_avatar_cache.{col_name}: {e}")
-
-    # Create proxy_image_cache table if missing (used for image search thumb IDs across workers)
-    if not inspector.has_table('proxy_image_cache'):
-        with engine.connect() as conn:
-            try:
-                conn.execute(text("""
-                    CREATE TABLE proxy_image_cache (
-                        id VARCHAR(32) PRIMARY KEY,
-                        url TEXT NOT NULL,
-                        expires_at INTEGER NOT NULL
-                    )
-                """))
-                conn.commit()
-                logger.info("[MIGRATE] Created proxy_image_cache table")
-            except Exception as e:
-                logger.warning(f"[MIGRATE] Failed to create proxy_image_cache: {e}")
-
-    # Reminders (`remind` command) — explicit, idempotent creation on existing DBs so the feature
-    # works after an upgrade without a manual step (create_all also makes it; this is the documented
-    # migration path, like proxy_image_cache above).
-    with engine.connect() as conn:
-        try:
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS reminders (
-                    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    text TEXT NOT NULL,
-                    due_at DATETIME NOT NULL,
-                    status VARCHAR(20) DEFAULT 'pending',
-                    created_at DATETIME,
-                    delivered_at DATETIME,
-                    FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE
-                )
-            """))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_reminders_user_id ON reminders (user_id)"))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_reminders_status ON reminders (status)"))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_reminders_due_at ON reminders (due_at)"))
-            conn.commit()
-        except Exception as e:
-            logger.warning(f"[MIGRATE] Failed to ensure reminders table: {e}")
-
-    # Pinned/saved searches (`pin`/`pins` command).
-    with engine.connect() as conn:
-        try:
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS saved_searches (
-                    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    query TEXT NOT NULL,
-                    created_at DATETIME,
-                    FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE
-                )
-            """))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_saved_searches_user_id ON saved_searches (user_id)"))
-            conn.commit()
-        except Exception as e:
-            logger.warning(f"[MIGRATE] Failed to ensure saved_searches table: {e}")
-
-    # Built-in Blossom media server (BUD-01/02). Content-addressed blob store keyed by sha256.
-    with engine.connect() as conn:
-        try:
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS blossom_blobs (
-                    sha256 VARCHAR(64) NOT NULL PRIMARY KEY,
-                    pubkey VARCHAR(64) NOT NULL,
-                    size INTEGER NOT NULL,
-                    mime VARCHAR(120),
-                    created_at INTEGER NOT NULL,
-                    expires_at INTEGER,
-                    storage VARCHAR(10) NOT NULL DEFAULT 'local',
-                    path VARCHAR(512) NOT NULL
-                )
-            """))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_blossom_pubkey ON blossom_blobs (pubkey)"))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_blossom_expires ON blossom_blobs (expires_at)"))
-            conn.commit()
-        except Exception as e:
-            logger.warning(f"[MIGRATE] Failed to ensure blossom_blobs table: {e}")
-
-
 def init_db():
     from app.models import User, Conversation, Message, Setting, ProxyImageCache, SocialReplyMap, Bot, Reminder, SavedSearch, BlossomBlob  # noqa: F401 - registers tables for create_all
     logger.info("[INIT] Initializing database...")
     Base.metadata.create_all(bind=engine)
-
-    # Run migrations for new columns on existing databases
-    _run_migrations()
 
     # Set up the ephemeral /tmp media-cache DB and one-time-migrate existing cache rows.
     try:
@@ -491,13 +158,6 @@ def init_db():
     except Exception as e:
         logger.warning(f"[fedi-cache] init failed (bridge will run without the media cache): {e}")
     
-    # Load SQLite cache settings after database is initialized
-    # Skip during initial setup to avoid circular dependencies
-    if "sqlite" in DATABASE_URL:
-        try:
-            _load_sqlite_settings()
-        except Exception as e:
-            logger.debug(f"[SQLite] Could not load cache settings during init: {e}")
 
     # Create default settings if not exist
     db = SessionLocal()
@@ -711,9 +371,6 @@ When asked to write or modify code or files:
             "file_cache_enabled": "true",     # Enable file listing cache
             "file_cache_ttl": "300",          # File cache TTL in seconds (5 minutes)
             "file_cache_max_size": "1000",    # Maximum cached directory listings
-            # SQLite performance settings
-            "sqlite_cache_mb": "500",          # SQLite page cache size in MB (default: 500MB)
-            "sqlite_mmap_size_mb": "500",     # SQLite memory-mapped I/O size in MB (0 = disabled, default: 500MB)
             "bt_download_dir": "/var/lib/posterchanai/torrents",
             "bt_proxy_host": "",              # HTTP proxy host (required for torrenting)
             "bt_proxy_port": "8118",          # HTTP proxy port (e.g. Privoxy for Tor)

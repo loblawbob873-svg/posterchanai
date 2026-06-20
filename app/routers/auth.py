@@ -14,7 +14,7 @@ from app.database import get_db
 logger = logging.getLogger(__name__)
 from app.models import User, Setting, APIKey, VerificationToken
 from app.schemas import (
-    UserLogin, UserResponse, Token, UserRegister, APIKeyCreate, APIKeyResponse, APIKeyListItem,
+    UserLogin, UserResponse, Token, APIKeyCreate, APIKeyResponse, APIKeyListItem,
     UserSettingsUpdate, UserSettingsResponse
 )
 from app.auth import verify_password, create_access_token, get_current_user, get_password_hash

@@ -443,17 +443,7 @@ def update_settings(
             logger.info("[Admin] File cache settings updated, cache reloaded")
         except Exception as e:
             logger.warning(f"[Admin] Failed to reload file cache: {e}")
-    
-    # Reload SQLite cache settings if changed (after successful commit)
-    sqlite_cache_keys = {"sqlite_cache_mb", "sqlite_mmap_size_mb"}
-    if any(key in data.settings for key in sqlite_cache_keys):
-        try:
-            from app.database import reload_sqlite_settings
-            reload_sqlite_settings()
-            logger.info("[Admin] SQLite cache settings updated (will apply on next connection)")
-        except Exception as e:
-            logger.warning(f"[Admin] Failed to reload SQLite cache settings: {e}")
-    
+
     return {"message": "Settings updated"}
 
 

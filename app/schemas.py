@@ -15,12 +15,6 @@ class UserLogin(BaseModel):
     password: str
 
 
-class UserRegister(BaseModel):
-    username: str
-    email: Optional[str] = None
-    password: str
-
-
 class UserResponse(BaseModel):
     id: int
     username: str
@@ -284,8 +278,6 @@ class SettingsResponse(BaseModel):
     file_cache_enabled: str = "true"  # Enable file listing cache
     file_cache_ttl: str = "300"  # File cache TTL in seconds (default: 5 minutes)
     file_cache_max_size: str = "1000"  # Maximum number of cached directory listings
-    sqlite_cache_mb: str = "500"  # SQLite page cache size in MB (default: 500MB)
-    sqlite_mmap_size_mb: str = "500"  # SQLite memory-mapped I/O size in MB (0 = disabled, default: 500MB)
     bt_proxy_host: str = ""
     bt_proxy_port: str = "8118"
     bt_listen_port: str = "6881"

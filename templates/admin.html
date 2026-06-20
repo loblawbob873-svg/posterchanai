@@ -2,6 +2,13 @@
 
 {% block title %}Admin - Poster-chan AI{% endblock %}
 
+{% block head %}
+<!-- Load admin styles in <head> so the panel paints styled on first render (no flash of the
+     base/old CSS before admin-tabs + admin-theme apply). -->
+<link rel="stylesheet" href="/static/css/admin-tabs.css?v={{ cache_bust }}">
+<link rel="stylesheet" href="/static/css/admin-theme.css?v={{ cache_bust }}">
+{% endblock %}
+
 {% block body_class %}admin-page{% endblock %}
 
 {% block content %}
@@ -41,9 +48,6 @@
              permissions are managed from the Nostr client profile menu ("Additional permissions"). -->
     </div>
 </div>
-
-<link rel="stylesheet" href="/static/css/admin-tabs.css?v={{ cache_bust }}">
-<link rel="stylesheet" href="/static/css/admin-theme.css?v={{ cache_bust }}">
 
 <script>
 // Set isAdmin flag for JavaScript
