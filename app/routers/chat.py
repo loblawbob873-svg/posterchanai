@@ -205,9 +205,13 @@ async def delete_conversation(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    # Delete associated files
-    storage = StorageService(db)
-    storage.delete_conversation_files(current_user.username, conversation_id)
+    # Delete associated files (non-fatal: never let storage cleanup 500 the delete, or the chat
+    # "never leaves" the list — attachment files may live on a remote node and error on cleanup).
+    try:
+        storage = StorageService(db)
+        storage.delete_conversation_files(current_user.username, conversation_id)
+    except Exception as e:
+        logger.warning("[CHAT] file cleanup failed for conv %s (continuing): %s", conversation_id, e)
 
     # Phase 2: also purge the conversation's encrypted message events from the relay store.
     try:
@@ -990,23 +994,46 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                         except Exception as e:
                             logger.warning(f"[CHAT] Failed to save file content to disk (chat will continue): {e}")
 
+                    # The attachment upload above can take seconds — long enough for the user to
+                    # delete this conversation meanwhile. Inserting the message now would violate the
+                    # messages→conversations FK, crash the socket, and leave the shared DB session in an
+                    # aborted state — which then 500s the delete/list calls (the bug where deleting a
+                    # chat WITH an attachment "never leaves" the list). Re-check, then guard the insert.
+                    if not db.query(Conversation.id).filter(Conversation.id == conversation_id).first():
+                        try:
+                            db.rollback()
+                        except Exception:
+                            pass
+                        logger.info(f"[CHAT] conversation {conversation_id} deleted mid-request; dropping message")
+                        await manager.send_json(user.id, {"type": "stream_end"}, conn_id)
+                        continue
+
                     # Save user message with image path if uploaded
-                    user_msg = Message(
-                        conversation_id=conversation_id,
-                        role="user",
-                        content=content,
-                        image_path=user_image_path
-                    )
-                    db.add(user_msg)
-                    db.commit()
+                    try:
+                        user_msg = Message(
+                            conversation_id=conversation_id,
+                            role="user",
+                            content=content,
+                            image_path=user_image_path
+                        )
+                        db.add(user_msg)
+                        db.commit()
 
-                    # Update conversation title if it's the first message
-                    first_msg = len(conversation.messages) <= 1
-                    if first_msg:
-                        conversation.title = content[:50] + ("..." if len(content) > 50 else "")
+                        # Update conversation title if it's the first message
+                        first_msg = len(conversation.messages) <= 1
+                        if first_msg:
+                            conversation.title = content[:50] + ("..." if len(content) > 50 else "")
 
-                    conversation.updated_at = datetime.utcnow()
-                    db.commit()
+                        conversation.updated_at = datetime.utcnow()
+                        db.commit()
+                    except Exception as _umsg_err:
+                        try:
+                            db.rollback()
+                        except Exception:
+                            pass
+                        logger.warning(f"[CHAT] user message save aborted (conversation gone?): {_umsg_err}")
+                        await manager.send_json(user.id, {"type": "stream_end"}, conn_id)
+                        continue
                     # mirror the conversation index (title/timestamp) to the relay on first message
                     if first_msg and chat_store.enabled(db):
                         try:
