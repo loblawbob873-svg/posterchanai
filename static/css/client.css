@@ -232,6 +232,11 @@ a.btn.full{display:block}
 .note .txt audio{width:100%;max-width:420px;margin-top:8px;display:block}
 .note .txt a.mention{color:var(--cyan);font-weight:600}
 .note .repost-tag{font-size:15px;color:var(--green);margin-bottom:4px}
+/* repost/boost glyph (SVG, themed via currentColor) — replaces the off-theme orange 🔁 emoji */
+.rt-ico{vertical-align:-3px;flex:none}
+.repost-tag .rt-ico{filter:drop-shadow(0 0 5px rgba(57,255,139,.45))}
+.act.rt .rt-ico{transition:filter .12s}
+.act.rt:hover .rt-ico,.act.rt.on .rt-ico{filter:drop-shadow(0 0 6px rgba(57,255,139,.6))}
 .quoted{border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-top:8px;background:rgba(8,5,18,.4)}
 .link-card{display:block;border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-top:8px;background:rgba(8,5,18,.45);cursor:pointer;max-width:520px;transition:.15s}
 .link-card:hover{border-color:var(--cyan)}
@@ -266,6 +271,7 @@ a.btn.full{display:block}
 /* the "☰ more" hamburger sits at the bottom-right; the 5 primary actions spread evenly across */
 .act.actm{font-size:18px}
 .act.actz{color:var(--amber)} .act.actz:hover{color:var(--amber);border-color:var(--amber);box-shadow:0 0 14px rgba(255,207,43,.35)}
+.act.rt{color:var(--green)} .act.rt:hover{color:var(--green);border-color:var(--green);background:rgba(57,255,139,.14);box-shadow:0 0 14px rgba(57,255,139,.3)}
 .act{display:flex;align-items:center;gap:7px;background:rgba(0,255,255,.07);border:1px solid var(--line);color:var(--muted);cursor:pointer;
   font-size:17px;padding:8px 14px;border-radius:12px;transition:.13s;line-height:1}
 .act:hover{color:var(--cyan);background:rgba(33,230,255,.14);border-color:var(--cyan);box-shadow:0 0 14px rgba(33,230,255,.3);transform:translateY(-1px)}

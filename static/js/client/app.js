@@ -6,6 +6,9 @@
   const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
   const enc = s => (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const LOGO = '/static/posterchan-relay.png';
+  // Repost/boost glyph as an SVG (inherits currentColor → themes green/cyan with a glow), instead of
+  // the 🔁 emoji which renders a fixed orange that clashes with the cyberpunk palette.
+  const RT_ICON = '<svg class="rt-ico" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M23.77 15.67a.75.75 0 00-1.06 0l-2.22 2.22V7.65a3.75 3.75 0 00-3.75-3.75h-5.85a.75.75 0 000 1.5h5.85c1.24 0 2.25 1.01 2.25 2.25v10.24l-2.22-2.22a.75.75 0 10-1.06 1.06l3.5 3.5c.147.147.34.22.53.22s.384-.073.53-.22l3.5-3.5a.75.75 0 000-1.06zm-10.66 3.28H7.26c-1.24 0-2.25-1.01-2.25-2.25V6.46l2.22 2.22a.75.75 0 101.06-1.06l-3.5-3.5a.75.75 0 00-1.06 0l-3.5 3.5a.75.75 0 101.06 1.06l2.22-2.22V16.7a3.75 3.75 0 003.75 3.75h5.85a.75.75 0 000-1.5z"/></svg>';
   const isDesktop = () => !window.matchMedia('(max-width:820px)').matches;   // pop-out player is desktop-only
   // PWA install: capture the install prompt (fires before the app mounts) so a button can trigger it.
   let _deferredInstall = null;
@@ -1361,9 +1364,9 @@
       const origId=(ev.tags.find(t=>t[0]==='e')||[])[1];
       const orig = inner || Store.get(origId);
       const rp = profOf(ev.pubkey); needProfile(ev.pubkey);
-      if(orig){ needProfile(orig.pubkey); return noteCard(orig, `<div class="repost-tag">🔁 ${enc(rp.name||'someone')} reposted</div>`); }
+      if(orig){ needProfile(orig.pubkey); return noteCard(orig, `<div class="repost-tag">${RT_ICON} ${enc(rp.name||'someone')} reposted</div>`); }
       needEvent(origId);   // fetch the original; flushEvents patches this placeholder in place
-      return `<article class="note" data-orig="${origId}" data-reposter="${enc(rp.name||'someone')}"><div class="body"><div class="repost-tag">🔁 ${enc(rp.name||'someone')} reposted</div><div class="muted small">loading post…</div></div></article>`;
+      return `<article class="note" data-orig="${origId}" data-reposter="${enc(rp.name||'someone')}"><div class="body"><div class="repost-tag">${RT_ICON} ${enc(rp.name||'someone')} reposted</div><div class="muted small">loading post…</div></div></article>`;
     }
     return noteCard(ev);
   }
@@ -1400,7 +1403,7 @@
         ${quoteHtml(ev)}
         <div class="acts">
           <button class="act" data-a="reply" title="reply">💬 <span class="n">${counts.replies||''}</span></button>
-          <button class="act rt ${counts.iRt?'on':''}" data-a="repost" title="repost">🔁 <span class="n">${counts.reposts||''}</span></button>
+          <button class="act rt ${counts.iRt?'on':''}" data-a="repost" title="repost">${RT_ICON} <span class="n">${counts.reposts||''}</span></button>
           <button class="act actq" data-a="quote" title="quote post">❝</button>
           <button class="act ${liked?'on':''}" data-a="react" title="react">${liked||'😀'} <span class="n">${counts.reactions||''}</span></button>
           <button class="act actz ${counts.zaps?'on':''}" data-a="zap" title="zap (lightning)">⚡ <span class="n">${counts.zaps?fmtSats(counts.zaps):''}</span></button>
@@ -1466,7 +1469,7 @@
   // re-render (that flashed the whole screen on the busy global feed).
   function patchLoaded(e){
     $$(`.note[data-orig="${e.id}"]`).forEach(el=>{
-      const div=document.createElement('div'); div.innerHTML=noteCard(e, `<div class="repost-tag">🔁 ${enc(el.dataset.reposter||'someone')} reposted</div>`);
+      const div=document.createElement('div'); div.innerHTML=noteCard(e, `<div class="repost-tag">${RT_ICON} ${enc(el.dataset.reposter||'someone')} reposted</div>`);
       if(div.firstElementChild) el.replaceWith(div.firstElementChild);
     });
     $$(`[data-qload="${e.id}"]`).forEach(el=>{

@@ -10,12 +10,21 @@
 }
 
 body.admin-page{
+  /* explicit Inter + comfortable sizing for the whole admin (high specificity so it always wins) */
+  font-family:'Inter','Segoe UI',system-ui,-apple-system,sans-serif;
+  font-size: 15.5px; line-height: 1.55; letter-spacing: .1px;
   background:
     radial-gradient(1200px 600px at 80% -10%, rgba(255,0,255,.06), transparent 60%),
     radial-gradient(1000px 500px at -10% 10%, rgba(0,255,255,.06), transparent 60%),
     var(--bg-primary);
   color: var(--text-primary);
 }
+.admin-page, .admin-page input, .admin-page select, .admin-page textarea, .admin-page button,
+.admin-page label, .admin-page .tab-btn, .admin-page p, .admin-page td, .admin-page th{
+  font-family:'Inter','Segoe UI',system-ui,-apple-system,sans-serif;
+}
+.admin-page .tab-btn{ font-size: 15px; }
+.admin-page label{ font-size: 14.5px; }
 
 .admin-container{ max-width: none; width: 100%; margin: 0; padding: 22px 28px 60px; box-sizing: border-box; }
 .admin-header h1{
