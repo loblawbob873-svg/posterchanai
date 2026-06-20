@@ -526,14 +526,20 @@
   }
   // pagination state for the home/global timelines (infinite scroll-back via `until`)
   let _tl = { oldest:0, loading:false, done:false, pages:0 };
+  let _liveSince = 0;   // sub start time — only events at/after this are "live" (prependable as new)
   function renderTimeline(view, reset){
     const fn = view==='home' ? (ev=>FOLLOWS.has(ev.pubkey)) : null;
-    if(reset){ _tl = { oldest:0, loading:false, done:false, pages:0 }; _resetLive(); }
+    if(reset){ _tl = { oldest:0, loading:false, done:false, pages:0, eosed:false }; _resetLive(); _liveSince = Math.floor(Date.now()/1000); }
     _drawTimeline(false);
     if (subs[view]) Relay.close(subs[view]);
     subs[view] = Relay.subscribe(timelineFilter(), {
-      onEvent: ev => { if (Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.pubkey); if (VIEW===view && (ev.kind===1||ev.kind===6)) _bufferLive(ev, fn); } },
-      onEose: ()=>{ if(VIEW===view) _drawTimeline(false); }
+      onEvent: ev => { if (Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.pubkey);
+        // Only prepend as "live" if it's genuinely new — NOT a backfilled/synced event with an old
+        // created_at (those would otherwise jump to the top as if new). A small grace covers skew.
+        if (VIEW===view && (ev.kind===1||ev.kind===6) && _tl.eosed && ev.created_at >= _liveSince-120) _bufferLive(ev, fn); } },
+      // Draw ONLY on the first EOSE. The relay re-EOSEs on reconnect/re-sync; redrawing then would
+      // wipe + rebuild the feed under the user (the "disappears with the timeline update" bug).
+      onEose: ()=>{ if(VIEW===view && !_tl.eosed){ _tl.eosed=true; _drawTimeline(false); } }
     });
   }
   // Batched live updates: a busy global feed must NOT prepend + re-render per event (that pegged
