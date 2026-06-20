@@ -122,7 +122,7 @@ a.btn.full{display:block}
 .rightbar{display:none}
 @media(min-width:1180px){
   .app{grid-template-columns:300px 1fr 360px}
-  .rightbar{display:flex;flex-direction:column;gap:16px;padding:18px 16px;border-left:1px solid var(--line);overflow-y:auto}
+  .rightbar{display:flex;flex-direction:column;gap:16px;padding:18px 16px;border-left:1px solid var(--line);overflow-y:auto;min-height:0}
 }
 .rb-section h3{margin:0 0 8px;font-size:18px;letter-spacing:1px;color:var(--text)}
 .rb-item{padding:9px 10px;border:1px solid var(--line);border-radius:11px;margin-bottom:8px;cursor:pointer;transition:.13s;background:rgba(8,5,18,.4)}
