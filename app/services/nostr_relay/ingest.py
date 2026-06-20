@@ -18,7 +18,7 @@ import logging
 from app.services.nostr import relay as _relay
 from app.services.nostr.event import verify_event
 from .langfilter import blocked_language, blocked_word
-from .bridges import reveals_blocked_bridge, author_on_blocked_bridge, has_proxy_tag
+from .bridges import reveals_blocked_bridge, author_on_blocked_bridge, is_bridged_post
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +122,7 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
                 continue
             # Opt-in: drop any bridged (NIP-48 proxy) post, whatever bridge relayed it. Operators
             # are exempt (their own cross-posts are first-party).
-            if block_bridged and has_proxy_tag(ev) and not gate.is_operator(ev.get("pubkey", "")):
+            if block_bridged and is_bridged_post(ev) and not gate.is_operator(ev.get("pubkey", "")):
                 continue
             if not gate.is_member(ev.get("pubkey", "")):
                 continue
@@ -267,7 +267,7 @@ async def backfill_ancestors(store, server, upstream, events, max_ancestors: int
             # author's event — otherwise blocklisted spam leaks in as a thread ancestor.
             if gate is not None and gate.is_blocked(ev.get("pubkey", "")):
                 continue
-            if block_bridged and has_proxy_tag(ev) and not (gate is not None and gate.is_operator(ev.get("pubkey", ""))):
+            if block_bridged and is_bridged_post(ev) and not (gate is not None and gate.is_operator(ev.get("pubkey", ""))):
                 continue
             if _content_blocked(ev, blocked, blocked_words):
                 continue

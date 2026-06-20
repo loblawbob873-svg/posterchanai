@@ -39,11 +39,25 @@ def has_proxy_tag(ev: dict) -> bool:
     Any `proxy` tag means bridged-from-elsewhere — the only reliable signal for fediverse / Bluesky
     bridge content (mostr.pub, momostr.pink, ditto.pub, brid.gy, …), because the bridge domain
     itself never appears in the event (the nip05 is on a normal domain, the proxy URL points at the
-    ORIGINAL instance). Used by the opt-in "block bridged posts" relay setting."""
+    ORIGINAL instance)."""
     for t in ev.get("tags") or []:
         if len(t) >= 2 and t[0] == "proxy" and t[1]:
             return True
     return False
+
+
+# PUBLIC timeline kinds the "block bridged posts" filter is allowed to touch: notes + reposts only.
+# Crucially NOT kind 4 / 1059 (DMs) — a fediverse user DMing through a bridge sends a proxy-tagged
+# kind-4, and blocking/purging those silently eats incoming DMs. Also spares reactions/profiles/etc.
+_BRIDGEABLE_KINDS = frozenset({1, 6})
+
+
+def is_bridged_post(ev: dict) -> bool:
+    """True for a bridged PUBLIC POST (note/repost with a NIP-48 proxy tag) — what the opt-in
+    'block bridged posts' relay setting targets. Scoped to timeline kinds so DMs (kind 4 / NIP-17
+    1059), reactions, profiles and relay lists are never blocked or purged by the bridge filter."""
+    k = ev.get("kind")
+    return (int(k) if k is not None else 1) in _BRIDGEABLE_KINDS and has_proxy_tag(ev)
 
 
 def author_on_blocked_bridge(ev: dict, domains) -> bool:

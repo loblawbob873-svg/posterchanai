@@ -27,7 +27,7 @@ from .store import RelayStore
 from .wot import WotGate
 from .server import RelayServer
 from .bridges import (relay_domain as _bridge_domain, reveals_blocked_bridge,
-                      author_on_blocked_bridge, has_proxy_tag)
+                      author_on_blocked_bridge, is_bridged_post)
 
 logger = logging.getLogger(__name__)
 
@@ -424,7 +424,7 @@ async def _main(cfg: dict) -> None:
             return
         # Opt-in: drop any bridged (NIP-48 proxy) post from the live firehose, whatever bridge relayed
         # it. Operators / registered local users are exempt (first-party cross-posts).
-        if cfg.get("block_bridged") and has_proxy_tag(ev) and not gate.is_operator(ev.get("pubkey", "")):
+        if cfg.get("block_bridged") and is_bridged_post(ev) and not gate.is_operator(ev.get("pubkey", "")):
             return
         _kind = int(ev.get("kind", 1))
         if _kind in (9735, 1059):
@@ -433,6 +433,13 @@ async def _main(cfg: dict) -> None:
             # instead (same as the WS write path). Without this the firehose drops every zap, so
             # posts never show a zap total.
             if not any(len(t) >= 2 and t[0] == "p" and gate.is_member(t[1]) for t in (ev.get("tags") or [])):
+                return
+        elif _kind == 4:
+            # NIP-04 DM: accept if the sender is in the WoT OR it's addressed to one of our operators
+            # (the DM-inbox subscription pulls these). Without the operator case, a DM from someone the
+            # user doesn't follow — incl. a fediverse user via a bridge — would be dropped.
+            if not (gate.is_member(ev.get("pubkey", "")) or
+                    any(len(t) >= 2 and t[0] == "p" and gate.is_operator(t[1]) for t in (ev.get("tags") or []))):
                 return
         elif not gate.is_member(ev.get("pubkey", "")):
             return
@@ -549,6 +556,17 @@ async def _main(cfg: dict) -> None:
                     run_firehose(cfg["upstream"], cfg["ingest_kinds"], _firehose_event,
                                  _relay.stop_event, cfg["direct"],
                                  max_relays=cfg.get("firehose_max_relays", 0))))
+                # Targeted DM inbox: kind-4 (NIP-04) + 1059 (NIP-17 gift wrap) addressed to our
+                # operators. These kinds aren't in ingest_kinds, so the global firehose never pulled
+                # incoming DMs — only the user's own outgoing (published here) showed. Filtered by
+                # #p=operators so it streams just our users' DMs, not the whole network's.
+                _ops = list(cfg.get("operator") or [])
+                if _ops:
+                    tasks.append(asyncio.create_task(
+                        run_firehose(cfg["upstream"], [4, 1059], _firehose_event,
+                                     _relay.stop_event, cfg["direct"],
+                                     max_relays=cfg.get("firehose_max_relays", 0),
+                                     extra={"#p": _ops})))
 
     # Cross-process admin IPC: this relay runs in its own subprocess, so the app can't read its
     # gate/store directly. Publish status to a file the app polls, and execute admin commands the

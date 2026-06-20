@@ -17,7 +17,7 @@ from websockets.http11 import Response
 
 from app.services.nostr.event import verify_event
 from .langfilter import blocked_language, blocked_word
-from .bridges import reveals_blocked_bridge, author_on_blocked_bridge, has_proxy_tag
+from .bridges import reveals_blocked_bridge, author_on_blocked_bridge, is_bridged_post
 
 
 def _broadcastable(ev) -> bool:
@@ -344,7 +344,7 @@ class RelayServer:
         # Opt-in "block bridged posts": drop any NIP-48 proxy (fediverse/Bluesky-bridged) event,
         # whatever bridge relayed it. Operators / registered local users are exempt (their own
         # cross-posts are first-party data, never dropped).
-        if self.cfg.get("block_bridged") and has_proxy_tag(ev) and not self.gate.is_operator(ev.get("pubkey", "")):
+        if self.cfg.get("block_bridged") and is_bridged_post(ev) and not self.gate.is_operator(ev.get("pubkey", "")):
             self._send(conn, ["OK", eid, False, "blocked: bridged (proxy) content not accepted"])
             return
         # WoT publishing gate — skippable. When wot_enabled is off (e.g. a processing node whose

@@ -465,23 +465,23 @@ class RelayStore:
         return await self._w(self._bridge_identity_pubkeys_sync, set(domains))
 
     def _delete_by_proxy_sync(self) -> int:
-        """Purge bridged events: any stored event carrying a NIP-48 `proxy` tag (ActivityPub / atproto
-        mirror content from mostr.pub, momostr.pink, ditto.pub, brid.gy, …). Preserve-aware — a local
-        user's own events (direct-published / operators) are never deleted (same guard as prune), so
-        this can't repeat the data-loss bug. The LIKE pre-filter is the index-cheap pass; has_proxy_tag
-        confirms the exact tag (no params on this query → literal % is preserved by the conn shim)."""
-        from .bridges import has_proxy_tag
+        """Purge bridged PUBLIC POSTS: notes/reposts (kind 1,6) carrying a NIP-48 `proxy` tag
+        (ActivityPub / atproto mirror content from mostr.pub, momostr.pink, ditto.pub, brid.gy, …).
+        Scoped to timeline kinds via is_bridged_post so it NEVER touches DMs (kind 4 / NIP-17 1059) —
+        a fediverse user DMing through a bridge sends proxy-tagged kind-4s, and deleting those ate
+        incoming DMs. Preserve-aware too: a local user's own/direct events are never deleted."""
+        from .bridges import is_bridged_post
         conn = self._conn()
         preserve = self._preserve_clause()
         rows = conn.execute(
-            f"SELECT id, tags FROM events WHERE {preserve} AND tags LIKE '%\"proxy\"%'").fetchall()
+            f"SELECT id, kind, tags FROM events WHERE kind IN (1,6) AND {preserve} AND tags LIKE '%\"proxy\"%'").fetchall()
         ids = []
         for r in rows:
             try:
                 tags = json.loads(r["tags"] or "[]")
             except Exception:
                 tags = []
-            if has_proxy_tag({"tags": tags}):
+            if is_bridged_post({"kind": r["kind"], "tags": tags}):
                 ids.append(r["id"])
         removed = 0
         for i in range(0, len(ids), 900):

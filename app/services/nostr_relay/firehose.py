@@ -24,8 +24,10 @@ from app.services.nostr.relay import _connect, _CONNECT_TIMEOUT
 logger = logging.getLogger(__name__)
 
 
-async def _run_one(relay_url: str, kinds: list, on_event, stop: asyncio.Event, direct: bool) -> None:
-    """Maintain one persistent firehose subscription to `relay_url`, reconnecting forever."""
+async def _run_one(relay_url: str, kinds: list, on_event, stop: asyncio.Event, direct: bool,
+                   extra: dict = None) -> None:
+    """Maintain one persistent firehose subscription to `relay_url`, reconnecting forever. `extra`
+    adds filter fields (e.g. {'#p': [operator pubkeys]} for the targeted DM inbox)."""
     backoff = 2
     while not stop.is_set():
         try:
@@ -35,6 +37,8 @@ async def _run_one(relay_url: str, kinds: list, on_event, stop: asyncio.Event, d
                 sub = uuid.uuid4().hex[:16]
                 # Small look-back on (re)connect so a brief drop doesn't lose events.
                 flt = {"kinds": kinds, "since": int(time.time()) - 120}
+                if extra:
+                    flt.update(extra)
                 await ws.send(json.dumps(["REQ", sub, flt]))
                 logger.info("[nostr-relay] firehose connected: %s", relay_url)
                 backoff = 2
@@ -66,7 +70,7 @@ async def _run_one(relay_url: str, kinds: list, on_event, stop: asyncio.Event, d
 
 
 async def run_firehose(upstream, kinds: list, on_event, stop: asyncio.Event, direct: bool,
-                       max_relays: int = 0) -> None:
+                       max_relays: int = 0, extra: dict = None) -> None:
     """Run a persistent firehose subscription against the upstream relays until `stop`.
 
     `max_relays` caps how many relays to subscribe to (0 = ALL). The firehose is now the sole
@@ -77,9 +81,9 @@ async def run_firehose(upstream, kinds: list, on_event, stop: asyncio.Event, dir
     deduped, so the extra cost is just parsing each stream. Lower max_relays to trade
     completeness for idle CPU if a node is constrained."""
     relays = list(upstream)[:max_relays] if max_relays and max_relays > 0 else list(upstream)
-    tasks = [asyncio.create_task(_run_one(u, kinds, on_event, stop, direct)) for u in relays]
-    logger.info("[nostr-relay] firehose started on %d/%d upstream relays",
-                len(tasks), len(upstream))
+    tasks = [asyncio.create_task(_run_one(u, kinds, on_event, stop, direct, extra)) for u in relays]
+    logger.info("[nostr-relay] firehose started on %d/%d upstream relays%s",
+                len(tasks), len(upstream), " (DM inbox)" if extra else "")
     try:
         await stop.wait()
     finally:

@@ -4,7 +4,7 @@
 :root{
   --bg:#0a0a0f; --bg2:#12121a; --panel:rgba(18,18,28,.72); --panel2:rgba(26,26,42,.85);
   --neon:#00ffff; --neon2:#ff00ff; --cyan:#00ffff; --green:#00ff88; --amber:#ffcf2b;
-  --text:#e0e0e0; --muted:#8888aa; --line:rgba(0,255,255,.22);
+  --text:#edeefa; --muted:#9fa1c6; --line:rgba(0,255,255,.22);
   --glow:0 0 12px rgba(0,255,255,.5); --glow-cy:0 0 12px rgba(0,255,255,.45);
   --r:14px;
 }
@@ -12,6 +12,7 @@
 html,body{margin:0;height:100%}
 body{
   font-family:'Rajdhani','Segoe UI',system-ui,-apple-system,sans-serif;
+  font-weight:500;letter-spacing:.2px;   /* Rajdhani 400 is thin/hard to read — 500 + brighter --text/--muted everywhere */
   background:
     radial-gradient(ellipse 900px 600px at 50% -8%,rgba(0,255,255,.06) 0%,transparent 55%),
     radial-gradient(ellipse 800px 600px at 100% 100%,rgba(255,0,255,.045) 0%,transparent 55%),
