@@ -332,7 +332,9 @@
   function startApp(){
     IS_ADMIN = Array.isArray(CFG.admin_npubs) && CFG.admin_npubs.includes(ME.npub);
     { const na=$('#nav-admin'); if(na) na.classList.toggle('hidden', !IS_ADMIN); }   // in-app Admin (admins only)
-    if(IS_ADMIN) setTimeout(()=>{ try{ ensureAiSession(); }catch(_){} }, 2500);   // warm the admin session so Admin opens instantly
+    // Warm the admin session, then PRELOAD the hidden admin iframe so opening Admin is instant
+    // (no timeline→spinner→blank-iframe flicker on the first open after a reload).
+    if(IS_ADMIN) setTimeout(()=>{ ensureAiSession().then(a=>{ if(a && a.is_admin) _preloadAdmin(); }).catch(()=>{}); }, 1500);
     else if(CFG.admin_unclaimed) setTimeout(maybeClaimAdmin, 1200);   // fresh install: offer first-run admin setup
     try{ if(window.Notification && Notification.permission==='default') Notification.requestPermission(); }catch(_){}
     $('#auth-gate').classList.add('hidden'); $('#app').classList.remove('hidden');
@@ -2090,17 +2092,25 @@
   }
   // In-app Admin: the standalone admin panel embedded in the client (same-origin, the Nostr-login
   // cookie authorizes it). Admins only.
-  // Persistent admin iframe: create once, then just show/hide it (it lives as a sibling of #feed in
-  // .main). Revisiting Admin no longer recreates+reloads /admin — which is what flickered, reloaded,
-  // and sometimes failed to finish loading (and left admin-theme.css un-applied → wide buttons).
-  function _adminFrame(feed){
+  // Persistent admin iframe: created ONCE (hidden) and kept alive — opening Admin just reveals it.
+  // The iframe is shown only after it has loaded (opacity 0→1 on onload, spinner until then), so you
+  // never see a blank/half-rendered frame. Preloaded at startup (see _preloadAdmin) so the first
+  // open from home/global is instant instead of timeline→spinner→blank-iframe→content (the flicker).
+  function _ensureAdminHost(){
     let host=document.getElementById('admin-host');
     if(!host){
-      host=document.createElement('div'); host.id='admin-host';
-      const ifr=document.createElement('iframe'); ifr.className='admin-frame'; ifr.src='/admin'; ifr.title='Admin';
+      host=document.createElement('div'); host.id='admin-host'; host.style.display='none';
+      host.innerHTML='<div class="spinner"></div>';
+      const ifr=document.createElement('iframe'); ifr.className='admin-frame'; ifr.src='/admin'; ifr.title='Admin'; ifr.style.opacity='0';
+      ifr.addEventListener('load', ()=>{ ifr.style.opacity='1'; const sp=host.querySelector('.spinner'); if(sp) sp.remove(); });
       host.appendChild(ifr);
-      (feed.parentNode||document.body).appendChild(host);
+      (document.querySelector('.main')||document.body).appendChild(host);
     }
+    return host;
+  }
+  function _preloadAdmin(){ _ensureAdminHost(); }   // load /admin hidden so the first open is instant
+  function _adminFrame(feed){
+    const host=_ensureAdminHost();
     feed.style.display='none';   // hide the feed; the persistent iframe fills the main area
     host.style.display='block';
   }
