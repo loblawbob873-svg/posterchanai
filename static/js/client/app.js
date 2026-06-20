@@ -1651,15 +1651,32 @@
   const REACTION_EMOJIS=['❤️','🔥','😂','🤣','😮','😯','😢','😭','👍','👎','🤙','💀','⚡','🚀','🤔','🥰','😍','😘','😎','🤩','🥳','😏','😊','🙂','😉','😌','😋','😛','😜','🤪','😅','😆','😁','😄','😀','🙃','😇','🤗','🤭','🤫','🫡','🧐','🤓','🥸','😐','😑','😶','🙄','😬','🤨','😴','🤤','😪','😷','🤒','🤕','🤢','🤮','🥵','🥶','🥴','😵','🤯','😳','🥺','😤','😠','😡','🤬','😱','😨','😰','😥','😓','🥱','🤠','😈','👿','👹','👺','🤡','💩','👻','👽','👾','🤖','🎃','👀','👏','🙌','🙏','🤝','💪','👊','✌️','🤞','🤟','🤘','👌','🫶','💯','💔','🧡','💛','💚','💙','💜','🖤','🤍','⭐','✨','💥','🎉'];
   // Shared emoji popover anchored under a button. onPick(emoji, close) decides what to do (react,
   // or insert into a textarea — for the latter it can keep the picker open for multiple inserts).
+  // Place a fixed popover ATTACHED to its anchor button: below if it fits, else above, else the side
+  // with more room (height-capped + scrollable). align='left'|'right' lines up that edge with the
+  // button. Caps height to the viewport so a tall menu scrolls in place instead of being flung to the
+  // top of the screen (the old "pops up far from the button" bug) — works on desktop and mobile.
+  function _placePop(pop, anchorBtn){
+    const align = pop.classList.contains('menu-pop') ? 'right' : 'left';
+    const M=8, vw=window.innerWidth, vh=window.innerHeight;
+    const r=(anchorBtn||document.body).getBoundingClientRect();
+    pop.style.maxHeight=(vh-2*M)+'px'; pop.style.overflowY='auto';
+    const pw=pop.offsetWidth, ph=pop.offsetHeight;
+    let left = align==='right' ? r.right-pw : r.left;
+    left = Math.max(M, Math.min(left, vw-M-pw));
+    const below=vh-r.bottom-M, above=r.top-M;
+    let top;
+    if(ph<=below) top=r.bottom+6;                              // fits below
+    else if(ph<=above) top=r.top-6-ph;                         // flip above (bottom hugs the button)
+    else if(below>=above) { top=r.bottom+6; pop.style.maxHeight=below+'px'; }   // more room below: cap+scroll
+    else { top=M; pop.style.maxHeight=above+'px'; }            // more room above: cap+scroll, hug button top
+    pop.style.left=left+'px'; pop.style.top=top+'px';
+  }
   function openEmojiPopover(anchorBtn, onPick){
     document.querySelectorAll('.emoji-pop').forEach(p=>p.remove());   // never stack pickers
     const pop=document.createElement('div'); pop.className='emoji-pop';
     pop.innerHTML=REACTION_EMOJIS.map(x=>`<button data-e="${x}">${x}</button>`).join('');
     document.body.appendChild(pop);
-    const r=(anchorBtn||document.body).getBoundingClientRect();
-    let left=Math.max(8, Math.min(r.left, window.innerWidth-8-pop.offsetWidth));
-    let top=r.bottom+6; if(top+pop.offsetHeight>window.innerHeight-8) top=Math.max(8, r.top-pop.offsetHeight-6);
-    pop.style.left=left+'px'; pop.style.top=top+'px';
+    _placePop(pop, anchorBtn);
     const close=()=>{ pop.remove(); document.removeEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.removeEventListener('scroll',close); };
     const onDoc=e=>{ if(!pop.contains(e.target) && !(anchorBtn && anchorBtn.contains(e.target))) close(); };
     setTimeout(()=>{ document.addEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.addEventListener('scroll',close,{once:true}); },0);
@@ -1678,10 +1695,7 @@
     const pop=document.createElement('div'); pop.className='menu-pop';
     pop.innerHTML=items.map(([a,label,cls])=>`<button data-m="${a}"${cls?` class="${cls}"`:''}>${enc(label)}</button>`).join('');
     document.body.appendChild(pop);
-    const r=anchorBtn.getBoundingClientRect();
-    const left=Math.max(8, Math.min(r.right-pop.offsetWidth, window.innerWidth-8-pop.offsetWidth));
-    let top=r.bottom+6; if(top+pop.offsetHeight>window.innerHeight-8) top=Math.max(8, r.top-pop.offsetHeight-6);
-    pop.style.left=left+'px'; pop.style.top=top+'px';
+    _placePop(pop, anchorBtn);
     const close=()=>{ pop.remove(); document.removeEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.removeEventListener('scroll',close); };
     const onDoc=e=>{ if(!pop.contains(e.target) && !anchorBtn.contains(e.target)) close(); };
     setTimeout(()=>{ document.addEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.addEventListener('scroll',close,{once:true}); },0);
