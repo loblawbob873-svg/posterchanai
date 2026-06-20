@@ -1599,6 +1599,7 @@
     const mine = pk===ME.pubkey;
     const items=[['bookmark', BOOKMARKS.has(id)?'🔖 Remove bookmark':'🔖 Bookmark'], ['copyid','🆔 Copy event ID']];
     if(!window.PC_NOSTR_ONLY) items.push(['translate','🌐 Translate']);   // uses the node's AI backend
+    if(!window.PC_NOSTR_ONLY) items.push(['summary','📝 Summary']);       // AI summary of the post/thread
     if(mine) items.push(['pin', PINNED.has(id)?'📌 Unpin from profile':'📌 Pin to profile']);
     if(mine) items.push(['delete','🗑️ Delete','danger']);
     if(IS_ADMIN && !mine) items.push(['block','🚫 Block author','danger']);
@@ -1606,6 +1607,7 @@
       if(a==='bookmark'){ toggleBookmark(id, null).then(()=>{ if(anchorBtn) anchorBtn.classList.toggle('on', BOOKMARKS.has(id)); }); return; }
       if(a==='copyid'){ try{ navigator.clipboard.writeText(NT().nip19.noteEncode(id)); toast('note id copied'); }catch(_){ navigator.clipboard.writeText(id); toast('event id copied'); } return; }
       if(a==='translate') return translatePost(id);
+      if(a==='summary') return summarizePost(id);
       if(a==='pin') return togglePin(id);
       if(a==='delete') return doDelete(id, art);
       if(a==='block') return doBlock(pk);
@@ -1628,6 +1630,36 @@
       nodes.forEach(n=>{ n.style.opacity='';
         n.innerHTML=linkify(j.text)+'<div class="muted small tr-tag">🌐 translated · refresh to restore</div>'; });
     }catch(_){ toast('translate failed'); nodes.forEach(n=>n.style.opacity=''); }
+  }
+  // Summarize the post (and its surrounding thread) via the node's AI backend, shown in a modal.
+  async function summarizePost(id){
+    let ev=Store.get(id); if(!ev){ ev=await fetchEvent(id); if(ev) Store.saveEvent(ev); }
+    if(!ev){ toast('post not loaded'); return; }
+    modal('<h3>📝 Summary</h3><div id="sum-body" style="max-height:60vh;overflow:auto;line-height:1.55;white-space:pre-wrap;font-size:15px;overflow-wrap:anywhere"><div class="spinner"></div></div>'+
+          '<div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn btn-ghost small" id="sum-close">Close</button></div>',
+      root=>{ const c=root.querySelector('#sum-close'); if(c) c.onclick=closeModal; });
+    const named=e=>{ const p=profOf(e.pubkey); const nm=p.name||p.display_name||NT().nip19.npubEncode(e.pubkey).slice(0,12); return nm+': '+((mediaParts(e.content).text||e.content||'').trim()); };
+    try{
+      const seen=new Set([ev.id]);
+      // walk up the reply chain for context (capped), oldest first
+      const chain=[ev]; let cur=ev, hops=0;
+      while(cur && hops<6){
+        const es=(cur.tags||[]).filter(t=>t[0]==='e');
+        const pid=((es.find(t=>t[3]==='reply')||es.find(t=>t[3]==='root')||es[es.length-1])||[])[1];
+        if(!pid || seen.has(pid)) break;
+        let p=Store.get(pid); if(!p){ p=await fetchEvent(pid); if(p) Store.saveEvent(p); }
+        if(!p) break; chain.unshift(p); seen.add(pid); cur=p; hops++;
+      }
+      let replies=[];
+      try{ replies=(await Relay.query([{ kinds:[1], '#e':[id], limit:100 }])).filter(r=>r.id!==id && !seen.has(r.id)); }catch(_){}
+      replies.sort((a,b)=>a.created_at-b.created_at);
+      [...chain, ...replies].forEach(e=>needProfile(e.pubkey));
+      const text=[...chain.map(named), ...replies.map(named)].join('\n\n').slice(0,8000);
+      const r=await fetch('/client/summarize',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ text }) });
+      const j=await r.json().catch(()=>({}));
+      const body=$('#sum-body');
+      if(body) body.innerHTML=(r.ok && j.text) ? linkify(j.text) : ('<div class="muted">'+enc(j.error||'summary unavailable')+'</div>');
+    }catch(_){ const body=$('#sum-body'); if(body) body.innerHTML='<div class="muted">summary failed</div>'; }
   }
   async function doRepost(id,pk,btn){
     if(countsFor(id).iRt){ toast('already reposted'); return; }

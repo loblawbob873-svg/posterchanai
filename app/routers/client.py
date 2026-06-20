@@ -174,6 +174,41 @@ async def client_translate(request: Request, db: Session = Depends(get_db)):
         return JSONResponse({"error": "translation unavailable"}, status_code=503)
 
 
+@router.post("/summarize")
+async def client_summarize(request: Request, db: Session = Depends(get_db)):
+    """Summarize a post/thread via the node's own LLM — powers the timeline 'Summary' action. The
+    client sends the post (and its surrounding thread) as plain 'name: text' lines. Same-origin
+    helper; 503 where there's no LLM (e.g. a Nostr-only node), shown as 'summary unavailable'."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    text = (body.get("text") or "").strip()
+    if not text:
+        return JSONResponse({"error": "no text"}, status_code=400)
+    text = text[:8000]   # cap the thread blob
+    try:
+        from app.services.inference_factory import get_inference_service
+        svc = get_inference_service(db)
+        res = await svc.chat_completion(
+            [{"role": "system", "content": "You summarize a Nostr post or conversation thread for a "
+              "reader who hasn't seen it. Give a clear, DETAILED summary: what it is about, the key "
+              "points and any specifics, who said what (the lines are 'name: text'), any questions "
+              "raised or conclusions reached, and the overall tone. Use short paragraphs or bullet "
+              "points. If it's a single post, summarize just that post. Translate any non-English "
+              "parts into English as you summarize. Output ONLY the summary — no preamble like "
+              "'Here is a summary'."},
+             {"role": "user", "content": text}],
+            max_tokens=900, temperature=0.3)
+        out = (res.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+        if not out:
+            return JSONResponse({"error": "summary unavailable"}, status_code=503)
+        return JSONResponse({"text": out})
+    except Exception as e:
+        logger.warning(f"[client] summarize failed: {e}")
+        return JSONResponse({"error": "summary unavailable"}, status_code=503)
+
+
 @router.get("/gif")
 async def gif_search(q: str = "", db: Session = Depends(get_db)):
     """GIF picker — proxies Giphy or Tenor (key server-side, never exposed). Giphy wins if both set."""
