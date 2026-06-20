@@ -885,10 +885,13 @@ class _CommsMixin:
         has_plr = bool(getattr(user, "pleroma_enabled", False)
                        and getattr(user, "pleroma_instance_url", None)
                        and getattr(user, "pleroma_access_token", None))
-        if not (has_mk or has_plr):
+        # Nostr: a linked sending key (nostr_nsec) lets us publish a kind-1 to the built-in relay,
+        # which federates it out. (Web-client users sign in-browser via the composer instead.)
+        has_nostr = bool(getattr(user, "nostr_nsec", None))
+        if not (has_mk or has_plr or has_nostr):
             return {"type": "text", "content": (
                 "No social platforms connected. Connect Misskey or Pleroma in **Settings → "
-                "Social** first, then `post <text>`.")}
+                "Social**, or link a Nostr key in **Settings → Nostr**, then `post <text>`.")}
 
         text = (arg or "").strip()
 
@@ -928,5 +931,29 @@ class _CommsMixin:
             except Exception as e:
                 logger.error(f"[post] Pleroma failed: {e}", exc_info=True)
                 results.append(f"❌ Pleroma: {e}")
+        if has_nostr:
+            try:
+                from app.services.nostr import nostr_service, event as nostr_event, media as nostr_media
+                from app.routers.client import _publish_to_relay
+                from app.models import Setting
+                sk = nostr_service.decode_seckey(user.nostr_nsec)
+                body = text
+                if img_bytes:   # upload to the user's media host (Blossom/NIP-96) + append the URL
+                    try:
+                        cfg = {"service": getattr(user, "nostr_media_service", None) or "blossom",
+                               "endpoint": getattr(user, "nostr_media_endpoint", None) or ""}
+                        url = (await nostr_media.upload(cfg, sk, img_bytes, img_mime) or {}).get("url")
+                        if url:
+                            body = (body + "\n" + url).strip()
+                    except Exception as e:
+                        logger.warning(f"[post] Nostr image upload failed: {e}")
+                ev = nostr_event.build_event(sk, 1, body, tags=[])
+                prow = self.db.query(Setting).filter(Setting.key == "nostr_relay_port").first()
+                port = int(prow.value) if prow and prow.value else 3052
+                ok, msg = await _publish_to_relay(port, ev)
+                results.append("✅ Nostr" if ok else f"❌ Nostr: {msg}")
+            except Exception as e:
+                logger.error(f"[post] Nostr failed: {e}", exc_info=True)
+                results.append(f"❌ Nostr: {e}")
 
         return {"type": "text", "content": "📣 **Post**\n" + "\n".join(results)}
