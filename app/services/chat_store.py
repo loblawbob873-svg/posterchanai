@@ -168,25 +168,45 @@ async def _mirror_insert(conv_id: int, role: str, content: str, ts: float, image
 
 
 def install_message_mirror():
-    """Register the after_insert listener once (called at import)."""
-    import asyncio
+    """Register the message mirror once (called at import).
+
+    Mirror on **after_commit**, not after_insert: after_insert fires during flush (before COMMIT),
+    so if a flush succeeds but the COMMIT then fails and the caller retries the save (see chat.py's
+    assistant-save retry), the same message would mirror to the relay TWICE with distinct d-tags
+    (no dedup) → a duplicate reply on reload. Staging the inserted rows per-session and flushing them
+    to the relay only on commit (and dropping them on rollback) guarantees one relay doc per
+    committed message."""
+    import asyncio, time as _t
     from sqlalchemy import event
+    from sqlalchemy.orm import Session, object_session
     from app.models import Message
 
     @event.listens_for(Message, "after_insert")
     def _after_insert(mapper, connection, target):   # noqa: ARG001
+        sess = object_session(target)
+        if sess is None or not target.conversation_id or not target.role:
+            return
+        sess.info.setdefault("_chat_mirror", []).append(
+            (target.conversation_id, target.role, target.content or "", getattr(target, "image_path", None)))
+
+    @event.listens_for(Session, "after_commit")
+    def _after_commit(sess):
+        rows = sess.info.pop("_chat_mirror", None)
+        if not rows:
+            return
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            return   # not in the async chat path — skip
-        import time as _t
-        conv_id, role, content = target.conversation_id, target.role, target.content or ""
-        image_path = getattr(target, "image_path", None)
-        if conv_id and role:
+            return   # not in the async chat path — skip (no live relay write outside the WS handler)
+        for conv_id, role, content, image_path in rows:
             # Hold a strong ref until done — see _PENDING_MIRRORS above (weak-ref GC footgun).
             t = loop.create_task(_mirror_insert(conv_id, role, content, _t.time(), image_path))
             _PENDING_MIRRORS.add(t)
             t.add_done_callback(_PENDING_MIRRORS.discard)
+
+    @event.listens_for(Session, "after_rollback")
+    def _after_rollback(sess):
+        sess.info.pop("_chat_mirror", None)   # rolled-back inserts must NOT mirror
 
 
 try:

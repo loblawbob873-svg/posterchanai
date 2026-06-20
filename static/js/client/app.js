@@ -2891,7 +2891,7 @@
     toast('chat deleted');
   }
   async function aiOpenConversation(id){
-    if(!id) return; _ai.convId=id; _ai.streamEl=null; _ai.streamBuf="";
+    if(!id) return; _ai.convId=id; _ai.streamEl=null; _ai.streamBuf=""; _ai.decks={};   // decks re-hydrate from [[FC]] markers on render — drop the old set so it can't leak across opens
     const sel=$('#ai-conv'); if(sel && sel.value!=String(id)) sel.value=String(id);
     const box=$('#ai-msgs'); if(box) box.innerHTML='<div class="spinner"></div>';
     let conv=null; try{ conv=await fetch('/api/conversations/'+id).then(r=>r.json()); }catch(_){}
