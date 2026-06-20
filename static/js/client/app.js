@@ -702,13 +702,15 @@
     VIEW = v;
     if(v==='notifications') _notifShown = 25;   // fresh entry → collapse pagination back to one page
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
-    $('#view-title').textContent = { home:'Home', global:'Global', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', streams:'Streams', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Global', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', streams:'Streams', communities:'Communities', chat:'Chat', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', admin:'Admin' }[v]||v;
     renderView(true);
   }
   function renderView(reset){
     cleanupInlineStream();   // leaving a view tears down the inline stream player (unless popped out)
     const feed = $('#feed');
     if(VIEW!=='ai' && _ai && _ai.ws){ try{ _ai.ws.onclose=null; _ai.ws.close(); }catch(_){} _ai.ws=null; }
+    if(VIEW!=='channel' && _chatSub){ try{ Relay.close(_chatSub); }catch(_){} _chatSub=null; }   // leaving a chat room → drop its live sub
+    feed.classList.toggle('feed-chat', VIEW==='channel');   // never true here (channel is opened directly) → clears on leave
     if(VIEW!=='home' && VIEW!=='global') _hidePill();
     feed.classList.toggle('feed-dm', VIEW==='messages');   // full-height messages layout (no :has needed)
     feed.classList.toggle('feed-ai', VIEW==='ai');         // full-height chat layout (msgs scroll inside)
@@ -727,6 +729,7 @@
     if (VIEW==='articles') return renderArticles();
     if (VIEW==='streams') return renderStreams();
     if (VIEW==='communities') return renderCommunities();
+    if (VIEW==='chat') return renderChatrooms();
     if (VIEW==='blossom') return renderBlossom();
     if (VIEW==='settings') return renderSettings();
     if (VIEW==='ai') return renderAI();
@@ -1197,6 +1200,86 @@
     posts=posts.filter(x=>!isMutedView(x)).sort((a,b)=>b.created_at-a.created_at);
     box.innerHTML = posts.length ? posts.map(x=>noteCard(x)).join('') : '<div class="empty">No posts in this community yet.</div>';
     decorateProfiles();
+  }
+  // ---------- public chat (NIP-28: kind 40 channel · 41 metadata · 42 message) ----------
+  // Pure Nostr, NO DB: a channel IS a kind-40 event (its id = the channel id); messages are kind-42
+  // with a root `e`-tag to that id. Instance-local — only WoT members' channels/messages reach our
+  // relay. Live messages kept in _chatMsgs (Store.feed() is kind-1/6 only, so we hold our own set).
+  let _chatSub=null, _chatId=null, _chatMsgs=new Map();
+  function _chanMeta(e){ let m={}; try{ m=JSON.parse(e.content||'{}')||{}; }catch(_){} return { name:(m.name||'').trim()||'(unnamed)', about:m.about||'', picture:m.picture||'' }; }
+  async function renderChatrooms(){
+    const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
+    let evs=[]; try{ evs=await Relay.query([{ kinds:[40], limit:100 }]); }catch(_){}
+    evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
+    if(VIEW!=='chat') return;
+    const chans=evs.sort((a,b)=>b.created_at-a.created_at);
+    feed.innerHTML=`<div class="chat-list">
+      <div class="row" style="margin-bottom:12px"><button class="btn btn-neon small" id="ch-new">＋ New channel</button></div>
+      ${chans.length?`<div class="stream-grid">${chans.map(channelCard).join('')}</div>`
+        :'<div class="empty">No chat channels yet. Create one — or they appear here as people in your network start public channels.</div>'}</div>`;
+    decorateProfiles();
+    { const b=$('#ch-new'); if(b) b.onclick=createChannel; }
+    $$('.channel-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const x=Store.get(c.dataset.id); if(x) openChannel(x); });
+  }
+  function channelCard(e){
+    const p=profOf(e.pubkey); needProfile(e.pubkey); const m=_chanMeta(e);
+    return `<article class="stream-card channel-card" data-id="${e.id}" data-pk="${e.pubkey}">
+      <div class="stream-thumb">${m.picture?`<img src="${enc(m.picture)}" loading="lazy" onerror="this.parentElement.classList.add('noimg')">`:'<span class="stream-play">✺</span>'}</div>
+      <div class="stream-meta"><div class="stream-title">${enc(m.name)}</div>
+        ${m.about?`<div class="muted small">${enc(m.about.slice(0,120))}</div>`:''}
+        <div class="art-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span></div>
+      </div></article>`;
+  }
+  async function createChannel(){
+    const name=(prompt('Channel name?')||'').trim(); if(!name) return;
+    const about=(prompt('Description (optional)?')||'').trim();
+    try{ const { ev }=await publish(40, JSON.stringify({ name, about }), []); toast('channel created'); if(ev){ Store.saveEvent(ev); openChannel(ev); } }
+    catch(e){ toast('create failed: '+((e&&e.message)||e)); }
+  }
+  async function openChannel(e){
+    VIEW='channel'; _chatId=e.id; _chatMsgs=new Map();
+    if(_chatSub){ try{ Relay.close(_chatSub); }catch(_){} _chatSub=null; }
+    $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active'));
+    const m=_chanMeta(e); $('#view-title').textContent=m.name;
+    const feed=$('#feed'); feed.classList.add('feed-chat');
+    feed.innerHTML=`<div class="chatroom">
+      <div class="chatroom-head"><button class="btn btn-ghost small" id="ch-back">←</button><span class="chatroom-title">✺ ${enc(m.name)}</span></div>
+      ${m.about?`<div class="chatroom-about">${linkify(m.about)}</div>`:''}
+      <div id="ch-msgs" class="chatroom-msgs"><div class="spinner"></div></div>
+      <div class="chatroom-compose"><textarea id="ch-input" rows="1" placeholder="Message…"></textarea><button class="btn btn-neon" id="ch-send">Send</button></div>
+    </div>`;
+    $('#ch-back').onclick=()=>switchView('chat');
+    const send=()=>postToChannel(e);
+    { const b=$('#ch-send'); if(b) b.onclick=send; }
+    { const ta=$('#ch-input'); if(ta){ ta.onkeydown=ev=>{ if(ev.key==='Enter' && !ev.shiftKey){ ev.preventDefault(); send(); } };
+      ta.oninput=()=>{ ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,120)+'px'; }; } }
+    let msgs=[]; try{ msgs=await Relay.query([{ kinds:[42], '#e':[e.id], limit:300 }]); }catch(_){}
+    if(VIEW!=='channel' || _chatId!==e.id) return;
+    msgs.forEach(x=>{ _chatMsgs.set(x.id,x); needProfile(x.pubkey); });
+    _drawChannel(true);
+    _chatSub=Relay.subscribe([{ kinds:[42], '#e':[e.id] }], { onEvent: ev=>{ if(ev.kind===42 && !_chatMsgs.has(ev.id)){ _chatMsgs.set(ev.id,ev); needProfile(ev.pubkey); if(VIEW==='channel' && _chatId===e.id) _drawChannel(); } } });
+  }
+  function _drawChannel(force){
+    const box=$('#ch-msgs'); if(!box || !_chatId) return;
+    const atBottom = force || (box.scrollHeight-box.scrollTop-box.clientHeight < 90);
+    const msgs=[..._chatMsgs.values()].filter(x=>!isMutedView(x)).sort((a,b)=>a.created_at-b.created_at);
+    box.innerHTML = msgs.length ? msgs.map(chatMsg).join('') : '<div class="empty">No messages yet — say hi 👋</div>';
+    decorateProfiles();
+    if(atBottom) box.scrollTop=box.scrollHeight;
+  }
+  function chatMsg(e){
+    const p=profOf(e.pubkey); needProfile(e.pubkey); const mine=ME && e.pubkey===ME.pubkey;
+    return `<div class="chat-msg${mine?' mine':''}" data-pk="${e.pubkey}">
+      <img class="chat-av" data-prof="${e.pubkey}" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
+      <div class="chat-body"><div class="chat-by"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(e.created_at)}</span></div>
+      <div class="chat-txt">${linkify(e.content||'')}</div></div></div>`;
+  }
+  async function postToChannel(chan){
+    const ta=$('#ch-input'); if(!ta) return; const text=ta.value.trim(); if(!text) return;
+    ta.value=''; ta.style.height='auto'; ta.disabled=true;
+    try{ const { ev }=await publish(42, text, [['e', chan.id, '', 'root']]); if(ev && !_chatMsgs.has(ev.id)){ _chatMsgs.set(ev.id,ev); if(VIEW==='channel' && _chatId===chan.id) _drawChannel(true); } }
+    catch(e){ toast('send failed: '+((e&&e.message)||e)); }
+    finally{ ta.disabled=false; ta.focus(); }
   }
   // ---------- floating mini-player: keep a stream playing while you browse other views ----------
   // Moving the live <video> node (with its attached hls.js) OUT of #feed and into a fixed,
