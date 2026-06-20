@@ -155,8 +155,11 @@ async def client_translate(request: Request, db: Session = Depends(get_db)):
         svc = get_inference_service(db)
         res = await svc.chat_completion(
             [{"role": "system", "content": f"You are a translation engine. Translate the user's "
-              f"message into the language with BCP-47 code '{to}'. Preserve @mentions, #hashtags, "
-              f"URLs and emoji unchanged. Output ONLY the translation — no notes, no quotes."},
+              f"message into {to}. Detect the source language yourself and translate EVERY word or "
+              f"phrase that is not already {to} — including short snippets and low-resource languages "
+              f"(e.g. Tagalog/Filipino, Cebuano, Indonesian). Only if the ENTIRE message is already "
+              f"in {to}, return it unchanged. Keep @mentions, #hashtags, URLs and emoji exactly as-is. "
+              f"Output ONLY the translated text — no preamble, notes, or quotes."},
              {"role": "user", "content": text}],
             max_tokens=1200, temperature=0.2)
         out = (res.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
