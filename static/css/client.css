@@ -685,6 +685,6 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
    steps, compensating the full-height containers (height:100vh/zoom) so they still fill the screen
    with no blank strip. Bounded to >820px so the mobile layout (≤820px) is left completely alone;
    true 4K (>1920px CSS px) gets no zoom. */
-@media (min-width:821px) and (max-width:1920px){ body{ zoom:.85 } }
-@media (min-width:821px) and (max-width:1600px){ body{ zoom:.78 } }
-@media (min-width:821px) and (max-width:1366px){ body{ zoom:.70 } }
+@media (min-width:821px) and (max-width:1920px){ body{ zoom:.85 } .app{ height:calc(100vh / .85) } .main{ height:100% } }
+@media (min-width:821px) and (max-width:1600px){ body{ zoom:.78 } .app{ height:calc(100vh / .78) } .main{ height:100% } }
+@media (min-width:821px) and (max-width:1366px){ body{ zoom:.70 } .app{ height:calc(100vh / .70) } .main{ height:100% } }
