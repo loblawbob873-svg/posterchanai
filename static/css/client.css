@@ -125,6 +125,7 @@ a.btn.full{display:block}
 .conn{display:flex;align-items:center;justify-content:center;gap:9px;font-size:14px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--muted);padding:6px 8px 10px}
 .usercount{text-align:center;font-size:12.5px;font-weight:600;letter-spacing:.5px;color:var(--neon);text-shadow:0 0 6px rgba(0,255,255,.4);padding:0 8px 10px;margin-top:-4px}
 .usercount .uc-dot{color:var(--muted);text-shadow:none;margin:0 2px}
+.usercount .wot-ico{vertical-align:-2px;margin-right:1px;filter:drop-shadow(0 0 5px rgba(0,255,255,.7))}
 .conn .dot{width:14px;height:14px;border-radius:50%;background:var(--amber);box-shadow:0 0 10px var(--amber);animation:conn-pulse 1.6s ease-in-out infinite}
 .conn.ok{color:var(--green)}
 .conn.ok .dot{background:var(--green);box-shadow:0 0 12px var(--green),0 0 22px var(--green)}

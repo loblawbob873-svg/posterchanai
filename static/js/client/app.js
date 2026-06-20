@@ -9,6 +9,8 @@
   // Repost/boost glyph as an SVG (inherits currentColor → themes green/cyan with a glow), instead of
   // the 🔁 emoji which renders a fixed orange that clashes with the cyberpunk palette.
   const RT_ICON = '<svg class="rt-ico" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M23.77 15.67a.75.75 0 00-1.06 0l-2.22 2.22V7.65a3.75 3.75 0 00-3.75-3.75h-5.85a.75.75 0 000 1.5h5.85c1.24 0 2.25 1.01 2.25 2.25v10.24l-2.22-2.22a.75.75 0 10-1.06 1.06l3.5 3.5c.147.147.34.22.53.22s.384-.073.53-.22l3.5-3.5a.75.75 0 000-1.06zm-10.66 3.28H7.26c-1.24 0-2.25-1.01-2.25-2.25V6.46l2.22 2.22a.75.75 0 101.06-1.06l-3.5-3.5a.75.75 0 00-1.06 0l-3.5 3.5a.75.75 0 101.06 1.06l2.22-2.22V16.7a3.75 3.75 0 003.75 3.75h5.85a.75.75 0 000-1.5z"/></svg>';
+  // Web-of-trust shield — SVG so it takes the neon cyan colour + glow (emoji can't be recoloured).
+  const WOT_ICON = '<svg class="wot-ico" viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M12 2l7 3v6c0 4.7-3.1 8.3-7 11-3.9-2.7-7-6.3-7-11V5l7-3z"/></svg>';
   const isDesktop = () => !window.matchMedia('(max-width:820px)').matches;   // pop-out player is desktop-only
   // PWA install: capture the install prompt (fires before the app mounts) so a button can trigger it.
   let _deferredInstall = null;
@@ -563,7 +565,7 @@
     let online=0;
     try{ online=Number((await fetch('/client/stats').then(r=>r.json())).online)||0; }catch(_){}
     const parts=[];
-    if(CFG.users>0) parts.push('👥 '+Number(CFG.users).toLocaleString()+' users');
+    if(CFG.users>0) parts.push(WOT_ICON+' '+Number(CFG.users).toLocaleString()+' users');
     if(online>0) parts.push('🟢 '+online.toLocaleString()+' online');
     if(parts.length){ uc.innerHTML=parts.join(' <span class="uc-dot">·</span> '); uc.classList.remove('hidden'); }
     else uc.classList.add('hidden');
