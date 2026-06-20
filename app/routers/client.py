@@ -798,6 +798,33 @@ async def blossom_access(data: BlossomAccessReq, db: Session = Depends(get_db)):
     return JSONResponse({"ok": True, "whitelisted": data.grant, "count": len(cur)})
 
 
+# ----- Blossom purge (admin deletes ALL of a user's blobs from the client profile menu) -----
+class BlossomPurgeReq(BaseModel):
+    target: str          # npub/hex whose blobs to purge
+    auth: str            # base64 signed admin event (p-tags target), same proof as /block
+
+
+@router.post("/blossom-purge")
+async def blossom_purge(data: BlossomPurgeReq, db: Session = Depends(get_db)):
+    """Admin-only: delete EVERY Blossom blob owned by a pubkey — underlying bytes (local/proxy) and
+    the index rows. Irreversible; gated by the same signed-admin proof as /block."""
+    target = nostr_service.to_pubkey_hex(data.target)
+    if not target:
+        return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
+    if not _verify_admin_auth(db, data.auth, target):
+        return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
+    from app.services import blossom_service
+    blobs = blossom_service.list_for_pubkey(db, target)
+    deleted = 0
+    for blob in blobs:
+        await blossom_service.delete_blob_bytes(db, blob)
+        db.delete(blob)
+        deleted += 1
+    db.commit()
+    logger.info("[client] admin purged %d blossom blob(s) for %s", deleted, target)
+    return JSONResponse({"ok": True, "deleted": deleted})
+
+
 # ----- AI access (admin approves a user's AI request from the client profile menu) -----
 class AiAccessReq(BaseModel):
     target: str          # npub/hex to grant/revoke

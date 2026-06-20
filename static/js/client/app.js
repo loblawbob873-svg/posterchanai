@@ -2617,6 +2617,7 @@
       // admin extras: one consolidated permissions panel (AI, Blossom, image/music/video/torrent)
       // + relay block. State is fetched inside openPermissions so the menu opens instantly.
       items.push(['caps','🔑 Additional permissions']);
+      items.push(['purge-blossom','🗑️ Purge Blossom files','danger']);
       items.push(['block','🚫 Block (relay)','danger']);
     }
     openMenuPopover(anchorBtn, items, async a=>{
@@ -2624,8 +2625,21 @@
       if(a==='message'){ if(!dmPeers.has(pk))dmPeers.set(pk,[]); dmActive=pk; switchView('messages'); return; }
       if(a==='mute'){ await toggleMute(pk); renderProfileView(pk); return; }
       if(a==='caps') return openPermissions(pk);
+      if(a==='purge-blossom') return doPurgeBlossom(pk);
       if(a==='block') return doBlock(pk);
     });
+  }
+  // admin: delete ALL of this account's blobs from the built-in Blossom server (bytes + index rows).
+  // Irreversible; signed like doBlock so the server checks admin.
+  async function doPurgeBlossom(pk){
+    if(!IS_ADMIN) return;
+    if(!confirm('Purge ALL of this user\'s files from the Blossom server? This permanently deletes the stored bytes and cannot be undone.')) return;
+    try {
+      const auth = await sign(27235, 'blossom-purge', [['action','purge'],['p',pk]]);
+      const r = await fetch('/client/blossom-purge', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ target: pk, auth: btoa(JSON.stringify(auth)) }) }).then(r=>r.json());
+      toast(r.ok ? ('purged '+(r.deleted||0)+' file(s) 🗑️') : ('purge failed: ' + (r.error||'')));
+    } catch(e){ toast('purge failed'); }
   }
   // admin: per-user feature permissions (image/music/video/torrent) from the profile menu — replaces
   // the Admin → Users capability toggles.
