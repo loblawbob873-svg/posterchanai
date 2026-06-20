@@ -2186,6 +2186,7 @@
       if(files.length){ e.preventDefault(); await aiAddFiles(files); toast(files.length+' image'+(files.length>1?'s':'')+' attached'); }
     });
     $('#ai-msgs').addEventListener('click',e=>{
+      const eg=e.target.closest('.ai-eg'); if(eg){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ ta.value=eg.dataset.cmd; ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // welcome example → prefill, let the user type
       const cmd=e.target.closest('.ai-cmd'); if(cmd){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ ta.value=cmd.dataset.cmd; aiSend(); } return; }
       const mag=e.target.closest('.ai-magnet'); if(mag){ const ta=$('#ai-input'); if(ta){ ta.value='torrents add '+mag.dataset.magnet; aiSend(); } return; }
       const im=e.target.closest('img'); if(im){ openLightbox(im.dataset.full||im.src); }
@@ -2225,7 +2226,9 @@
     let conv=null; try{ conv=await fetch('/api/conversations/'+id).then(r=>r.json()); }catch(_){}
     if(VIEW!=='ai' || _ai.convId!==id) return;
     if(box){ box.innerHTML='';
-      for(const m of (conv && conv.messages || [])){
+      const msgs = (conv && conv.messages) || [];
+      if(!msgs.length) box.innerHTML = _aiWelcomeHtml();   // fresh chat → friendly splash with starter commands
+      for(const m of msgs){
         let html = m.role==='user'?enc(m.content):aiFormat(m.content||'');
         if(m.image_path) html += `<div class="ai-media"><img src="${enc(m.image_path)}" loading="lazy"></div>`;
         aiAddMessage(m.role, html);
@@ -2233,6 +2236,24 @@
       aiScroll();
     }
     aiConnect(id);
+  }
+  function _aiWelcomeHtml(){
+    return `<div class="ai-welcome">
+      <img class="aw-logo" src="${LOGO}" alt="PosterChan" onerror="this.style.display='none'">
+      <h3>Welcome to PosterChan AI</h3>
+      <p class="muted">Just chat with me, or run a command. A few to try (tap to fill it in):</p>
+      <div class="aw-cmds">
+        <button class="ai-eg" data-cmd="geni ">🎨 <b>geni</b> &lt;prompt&gt;<span>generate an image</span></button>
+        <button class="ai-eg" data-cmd="musicgeni ">🎵 <b>musicgeni</b> &lt;prompt&gt;<span>generate a song</span></button>
+        <button class="ai-eg" data-cmd="ytdl mp3 ">🎧 <b>ytdl mp3</b> &lt;url&gt;<span>download audio as MP3</span></button>
+        <button class="ai-eg" data-cmd="ytdl video ">🎬 <b>ytdl video</b> &lt;url&gt;<span>download a video</span></button>
+        <button class="ai-eg" data-cmd="screenshot ">📸 <b>screenshot</b> &lt;url&gt;<span>capture a web page</span></button>
+        <button class="ai-eg" data-cmd="translate ">🌐 <b>translate</b> &lt;text&gt;<span>translate text</span></button>
+        <button class="ai-eg" data-cmd="search ">🔍 <b>search</b> &lt;query&gt;<span>web search</span></button>
+        <button class="ai-eg" data-cmd="images ">🖼️ <b>images</b> &lt;query&gt;<span>image search</span></button>
+      </div>
+      <p class="muted small">Type <span class="ai-cmd" data-cmd="help">help</span> for the full list of commands.</p>
+    </div>`;
   }
   function aiConnect(id){
     try{ if(_ai.ws){ _ai.ws.onclose=null; _ai.ws.close(); } }catch(_){}
@@ -2251,6 +2272,7 @@
   }
   function aiAddMessage(role, html){
     const box=$('#ai-msgs'); if(!box) return null;
+    const w=box.querySelector('.ai-welcome'); if(w) w.remove();   // first real message → drop the splash
     const el=document.createElement('div'); el.className='ai-msg '+(role==='user'?'user':'assistant');
     el.innerHTML=`<div class="ai-bubble">${html}</div>`; box.appendChild(el); aiScroll(); return el;
   }
