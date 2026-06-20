@@ -338,7 +338,7 @@ a.btn.full{display:block}
 .dm-peer b{font-size:18px}.dm-peer .muted.small{font-size:15.5px}
 .dm-thread{display:flex;flex-direction:column;height:100%}
 .dm-msgs{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px;display:flex;flex-direction:column;gap:8px}
-.bubble{max-width:74%;padding:11px 15px;border-radius:14px;font-size:18.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.bubble{width:-moz-fit-content;width:fit-content;max-width:74%;padding:11px 15px;border-radius:14px;font-size:18.5px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;word-break:normal}
 .bubble.me{align-self:flex-end;background:linear-gradient(135deg,var(--neon),var(--neon2));color:#fff;border-bottom-right-radius:4px}
 .bubble.them{align-self:flex-start;background:var(--panel2);border:1px solid var(--line);border-bottom-left-radius:4px}
 .dm-compose{display:flex;flex-direction:column;gap:8px;padding:12px;border-top:1px solid var(--line)}
