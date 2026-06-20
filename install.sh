@@ -64,6 +64,52 @@ if [ "$1" = "--video" ]; then
 fi
 
 # =============================================================================
+# Install mode: Full (AI + Nostr) vs Nostr-only (relay + Nostr web client, NO AI)
+# =============================================================================
+select_install_mode() {
+    echo ""
+    echo -e "${BOLD}What do you want to install?${NC}"
+    echo "  1) Full        - AI assistant + image/music/video + the Nostr relay & client (needs a GPU for the good stuff)"
+    echo "  2) Nostr-only  - just the self-hosted Nostr relay + web client + Blossom (NO AI). Light, no GPU needed."
+    echo ""
+    local choice
+    read -r -p "Choose [1]: " choice
+    if [ "$choice" = "2" ]; then
+        NOSTR_ONLY=1
+        print_success "Nostr-only mode: no AI stack will be installed."
+    else
+        NOSTR_ONLY=0
+    fi
+}
+
+# Lean install path for Nostr-only: relay + client + Blossom + the non-AI features. Skips LLM/
+# image/music/video entirely; installs requirements-nostr.txt; turns the relay + nostr-only UI on.
+install_nostr_only() {
+    BACKEND="cpu"            # generic run script (sources data/secrets.env), no GPU stack
+    NOSTR_ONLY=1
+
+    setup_directories
+    setup_postgres           # the one and only database (app + built-in Nostr relay)
+    setup_python_env         # honours NOSTR_ONLY -> installs requirements-nostr.txt
+
+    # Turnkey runtime flags (the run script sources data/secrets.env): enable the relay and the
+    # nostr-only UI. DATABASE_URL defaults to the local-trust Postgres set up above.
+    mkdir -p data
+    touch data/secrets.env
+    grep -q '^export POSTERCHANAI_NOSTR_RELAY=' data/secrets.env || echo 'export POSTERCHANAI_NOSTR_RELAY=1' >> data/secrets.env
+    grep -q '^export POSTERCHANAI_NOSTR_ONLY='  data/secrets.env || echo 'export POSTERCHANAI_NOSTR_ONLY=1'  >> data/secrets.env
+    print_success "Wrote data/secrets.env (relay on, AI hidden)"
+
+    setup_systemd            # generic service + run-cpu.sh (sources data/secrets.env)
+
+    echo ""
+    print_success "Nostr-only install complete."
+    echo -e "  • Web client + relay: ${BOLD}http://localhost:${POSTERCHANAI_PORT:-3051}/client${NC}  (relay ws on :3052)"
+    echo -e "  • Front it with TLS (nginx) for production — see ${BOLD}docs/NGINX.md${NC} and nginx/posterchanai.conf.example"
+    echo -e "  • Add AI later by re-running ./install.sh and choosing Full."
+}
+
+# =============================================================================
 # Main Installation Flow
 # =============================================================================
 
@@ -75,6 +121,13 @@ main() {
 
     # Step 2: Detect GPU
     detect_gpu
+
+    # Step 2b: Full (AI) vs Nostr-only. Nostr-only short-circuits the whole AI pipeline.
+    select_install_mode
+    if [ "${NOSTR_ONLY:-0}" = "1" ]; then
+        install_nostr_only
+        return
+    fi
 
     # Step 3: Select what to install
     select_components

@@ -75,7 +75,13 @@ setup_python_env() {
     fi
 
     print_step "Installing Python dependencies..."
-    pip install -r requirements.txt -q
+    if [ "${NOSTR_ONLY:-0}" = "1" ] && [ -f requirements-nostr.txt ]; then
+        # Nostr-only: lean web + relay + Blossom + non-AI deps (no torch/llama/diffusers).
+        print_step "Nostr-only mode → installing requirements-nostr.txt (no AI stack)"
+        pip install -r requirements-nostr.txt -q
+    else
+        pip install -r requirements.txt -q
+    fi
 
     # Merged bot framework (botframework/) has its own deps (psycopg2, edge-tts, pytz, …)
     # used by the bots spawned via Admin → Bots. Install them into the same chat venv since

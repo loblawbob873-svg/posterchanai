@@ -1,8 +1,15 @@
 # Running PosterChanAI in Docker
 
-One Ubuntu-based `Dockerfile` builds for **CPU, NVIDIA (CUDA), AMD (ROCm), or
-Intel Arc (XPU)** — pick the accelerator with the `GPU` build-arg. BuildKit only
-pulls the base image for the backend you choose.
+One Ubuntu-based `Dockerfile` builds for **CPU, NVIDIA (CUDA), AMD (ROCm), Intel
+Arc (XPU), or Nostr-only** — pick with the `GPU` build-arg. BuildKit only pulls the
+base image for the backend you choose.
+
+> **Just want a Nostr relay + client, no AI?** Use `GPU=nostr` — a small (~2 GB vs ~70 GB)
+> image with no torch/llama/diffusers. See [Nostr-only](#nostr-only-no-ai) below.
+
+**Postgres is the one and only database** (it backs both the app and the built-in Nostr relay).
+The compose file includes a `postgres` service and wires it up automatically; if you run a bare
+`docker run`, point `DATABASE_URL` / `NOSTR_RELAY_PG_DSN` at your own Postgres.
 
 The image is **turnkey**: on first run it comes up on the `native` LLM + image
 backends, auto-downloads the recommended chat model, and (on AMD) auto-detects the
@@ -17,6 +24,7 @@ host** — Docker just exposes the device.
 | `cuda`  | NVIDIA driver + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) | `--gpus all` |
 | `rocm`  | host `amdgpu` kernel driver ([AMD docs](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/how-to/docker.html)) | `--device /dev/kfd --device /dev/dri` |
 | `intel` | host `i915` (Alchemist) or `xe` (Battlemage+) driver + render nodes | `--device /dev/dri` |
+| `nostr` | nothing (no AI) | — |
 
 The container runs as root, so it reaches the GPU render node without group flags.
 
@@ -53,10 +61,38 @@ docker run -d --device /dev/dri -p 3051:3051 \
   -v pc-data:/var/lib/posterchanai -v pc-rag:/app/data posterchanai:intel
 ```
 
-Or use the bundled compose file: `docker compose --profile cuda up -d --build`
-(`cpu` | `cuda` | `rocm` | `intel`).
+Or use the bundled compose file (recommended — it brings up Postgres too):
+`docker compose --profile cuda up -d --build` (`cpu` | `cuda` | `rocm` | `intel` | `nostr`).
 
-Open `http://<host>:3051` and log in with **`admin` / `admin`** (change it).
+## Nostr-only (no AI)
+
+A self-hosted **Nostr relay + the web client + Blossom**, with **no AI stack** (no
+torch/llama/diffusers) — a small, fast image for people who don't care about AI. The relay and
+the AI-hidden UI are turned on for you.
+
+```bash
+docker compose --profile nostr up -d --build
+# open http://<host>:3051/client  •  relay at ws://<host>:3052/relay
+```
+
+Or build/run by hand:
+
+```bash
+docker build -t posterchanai:nostr --build-arg GPU=nostr --build-arg INSTALL_BROWSER=false .
+```
+
+The app boots fine without the AI libraries (every ML import is lazy); the AI tab is hidden via
+`POSTERCHANAI_NOSTR_ONLY=1`. You can switch a node to a full GPU profile later without losing data
+(same volumes).
+
+## Production (HTTPS / TLS)
+
+The container serves plain HTTP/WS — front it with **nginx** to get HTTPS, your own domain, and a
+proper `wss://…/relay`. A ready-to-edit template + guide:
+[`nginx/posterchanai.conf.example`](../nginx/posterchanai.conf.example) and [NGINX.md](NGINX.md).
+
+Open `http://<host>:3051/client` and log in with your **Nostr key** (NIP-07 browser extension or
+NIP-46 remote signer like Amber). The first admin is configured in Admin → Users.
 
 ## First-run expectations
 

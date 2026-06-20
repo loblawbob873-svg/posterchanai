@@ -123,21 +123,25 @@ One Ubuntu image builds for **CPU, NVIDIA (CUDA), AMD (ROCm), or Intel Arc (XPU)
 pick the accelerator with a build-arg. It comes up **turnkey**: native local LLM +
 image backends, auto-downloads the recommended chat model on first run, and (on AMD)
 auto-detects the GPU override and persists the MIOpen kernel cache for fast image gen.
+The compose file brings up **PostgreSQL** (the one datastore) for you.
 
 ```bash
-# build for your accelerator:  cpu | cuda | rocm | intel
-docker build -t posterchanai:rocm --build-arg GPU=rocm .
-
-# run (AMD shown — see docs/DOCKER.md for the cuda/intel/cpu run flags)
-docker run -d --device /dev/kfd --device /dev/dri --security-opt seccomp=unconfined \
-  -p 3051:3051 -v pc-data:/var/lib/posterchanai -v pc-rag:/app/data posterchanai:rocm
+# compose (recommended — also starts Postgres):  cpu | cuda | rocm | intel | nostr
+docker compose --profile rocm up -d --build
 ```
 
-Open **http://localhost:3051** and log in with **`admin` / `admin`**. The GPU kernel
-driver comes from the host (CUDA toolkit / `amdgpu` / `i915`); the userspace + a
+Open **http://localhost:3051/client** and log in with your **Nostr key** (NIP-07/NIP-46). The GPU
+kernel driver comes from the host (CUDA toolkit / `amdgpu` / `i915`); the userspace + a
 GPU-compiled `llama-cpp` are baked into the image. Full matrix — GPU run flags, model
 auto-download, opt-ins (Tor/proxy/torrenting), and the opencode/OpenAI-client config —
 in **[docs/DOCKER.md](docs/DOCKER.md)**.
+
+> **🟣 Just want a Nostr relay + client, no AI?** `docker compose --profile nostr up -d --build`
+> builds a small (~2 GB) image with **no AI stack** — self-hosted relay + Nostr web client +
+> Blossom. See [docs/DOCKER.md](docs/DOCKER.md#nostr-only-no-ai).
+
+**Production:** front it with nginx for HTTPS + your own domain (and a real `wss://…/relay`) —
+template + guide in **[docs/NGINX.md](docs/NGINX.md)**.
 
 ### Option B: Installer (Linux, recommended for bare metal)
 
@@ -154,7 +158,10 @@ The **installer** sets up the virtual environment, dependencies, optional GPU ba
    chmod +x install.sh
    ./install.sh
    ```
-   Follow the prompts: it checks dependencies, detects your GPU, lets you choose LLM backend (Ollama, llama-cpp, etc.) and image backend (ComfyUI or native), creates the venv, installs Python deps, and optionally sets up a systemd service.
+   Follow the prompts: it first asks **Full** vs **Nostr-only** (relay + Nostr web client +
+   Blossom, *no AI* — light, no GPU). For Full it then detects your GPU, lets you choose LLM
+   backend (Ollama, llama-cpp, etc.) and image backend (ComfyUI or native), creates the venv,
+   installs Python deps, and optionally sets up a systemd service.
 
 3. **Start the server** (if not using systemd):
    ```bash

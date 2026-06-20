@@ -1,0 +1,120 @@
+# =============================================================================
+# PosterChan AI — production nginx reverse proxy (TLS terminator)
+# =============================================================================
+# Fronts ONE PosterChan AI node (app on :3051, built-in Nostr relay on :3052) with
+# HTTPS. Works for BOTH a full (AI) deployment and a Nostr-only deployment — the
+# relay + web client + Blossom live at the same paths either way.
+#
+#   1. Copy:   sudo cp nginx/posterchanai.conf.example /etc/nginx/sites-available/posterchanai.conf
+#   2. Edit:   replace EVERY  example.com  with your domain, and fix the cert paths.
+#   3. Cert:   sudo certbot --nginx -d example.com         (or point ssl_certificate at your own)
+#   4. Enable: sudo ln -s /etc/nginx/sites-available/posterchanai.conf /etc/nginx/sites-enabled/
+#   5. Test:   sudo nginx -t && sudo systemctl reload nginx
+#
+# Then open https://example.com/client  and connect a Nostr client to  wss://example.com/relay
+# (the app's own web client uses that automatically).
+#
+# WAF note: the chat/relay WebSockets use token auth, NOT cookies — do not block /ws/, /api/,
+# /v1 or /relay by User-Agent, or chat + the relay will 403.
+# =============================================================================
+
+# Map the Upgrade header so WebSocket connections (chat, the relay) proxy correctly.
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+upstream posterchanai_app   { server 127.0.0.1:3051; }
+upstream posterchanai_relay { server 127.0.0.1:3052; }
+
+# --- HTTP -> HTTPS redirect --------------------------------------------------
+server {
+    listen 80;
+    listen [::]:80;
+    server_name example.com;
+
+    # Let certbot answer ACME challenges over plain HTTP.
+    location /.well-known/acme-challenge/ { root /var/www/certbot; }
+    location / { return 301 https://$host$request_uri; }
+}
+
+# --- HTTPS -------------------------------------------------------------------
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name example.com;
+
+    # ---- TLS (point these at your certificate) ----
+    ssl_certificate     /etc/letsencrypt/live/example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384';
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    # add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;  # enable once you're sure HTTPS is solid
+
+    # Uploads / Blossom blobs / generated media can be large. 0 = no limit; set a cap if you prefer.
+    client_max_body_size 0;
+
+    # Headers every proxied location needs. X-Forwarded-Proto=$scheme is REQUIRED: the app uses it
+    # to know it's behind HTTPS (sets the upgrade-insecure-requests CSP + secure cookies).
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host  $http_host;
+    proxy_buffering off;
+
+    # ---- Built-in Nostr relay (wss://example.com/relay) --------------------
+    # The relay listens on ws://127.0.0.1:3052/relay. This makes it reachable as a normal
+    # secure relay URL. (To give the relay its own hostname instead, copy this into a second
+    # server block for relay.example.com with `proxy_pass http://posterchanai_relay/relay;`.)
+    location = /relay {
+        proxy_pass http://posterchanai_relay/relay;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+    # NIP-11 relay info + the relay's welcome page (GET https://example.com/relay-info).
+    location = /relay-info {
+        proxy_pass http://posterchanai_relay/;
+    }
+
+    # ---- Chat WebSocket (/ws/chat/<id>) ------------------------------------
+    location ^~ /ws/ {
+        proxy_pass http://posterchanai_app;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    # ---- API (+ websockets used by some endpoints) -------------------------
+    location ^~ /api/ {
+        proxy_pass http://posterchanai_app;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 3600s;   # long LLM / media generations
+        proxy_send_timeout 3600s;
+    }
+
+    # ---- OpenAI-compatible API (/v1/...) — keep the Authorization header ----
+    location ^~ /v1 {
+        proxy_pass http://posterchanai_app;
+        proxy_set_header Authorization $http_authorization;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    # ---- Everything else: web client, /client, /blossom, /static, admin ----
+    location / {
+        proxy_pass http://posterchanai_app;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
