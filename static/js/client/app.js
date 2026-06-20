@@ -1390,6 +1390,40 @@
     const j=await corsJson(url); if(!j) return null;
     return { callback:j.callback, allowsNostr:!!j.allowsNostr, min:j.minSendable, max:j.maxSendable };
   }
+  // ---------- NIP-47 Nostr Wallet Connect — one-tap zaps ----------
+  // Paste a nostr+walletconnect:// string in Settings (from Alby / Primal / Coinos / …). Zap
+  // invoices are then paid through it automatically (kind-23194 pay_invoice → 23195 response,
+  // NIP-04 encrypted with the wallet CONNECTION key — never your nostr key). No invoice popups.
+  const Nwc = {
+    parse(uri){
+      const m=String(uri||'').trim().match(/^nostr\+walletconnect:\/\/([0-9a-f]{64})\??(.*)$/i);
+      if(!m) return null;
+      const qs=new URLSearchParams(m[2]||''); const relay=qs.getAll('relay')[0]; const secret=(qs.get('secret')||'').toLowerCase();
+      if(!relay || !/^[0-9a-f]{64}$/.test(secret)) return null;
+      return { walletPk:m[1].toLowerCase(), relay, secret };
+    },
+    configured(){ return !!this.parse(ClientSettings.get('nwc','')); },
+    _hex(h){ const a=new Uint8Array(h.length/2); for(let i=0;i<a.length;i++) a[i]=parseInt(h.substr(i*2,2),16); return a; },
+    async payInvoice(bolt11){
+      const cfg=this.parse(ClientSettings.get('nwc','')); if(!cfg) throw new Error('no wallet connected');
+      const N=NT(); const sk=this._hex(cfg.secret); const myPk=N.getPublicKey(sk);
+      const content=await N.nip04.encrypt(sk, cfg.walletPk, JSON.stringify({ method:'pay_invoice', params:{ invoice:bolt11 } }));
+      const ev=N.finalizeEvent({ kind:23194, content, tags:[['p',cfg.walletPk]], created_at:Math.floor(Date.now()/1000) }, sk);
+      return await new Promise((res,rej)=>{
+        let done=false; const ws=new WebSocket(cfg.relay); const sub='nwc'+Math.random().toString(36).slice(2,8);
+        const fin=(fn,a)=>{ if(done) return; done=true; try{ ws.close(); }catch(_){} fn(a); };
+        ws.onopen=()=>{ ws.send(JSON.stringify(['REQ',sub,{ kinds:[23195], '#e':[ev.id], since:Math.floor(Date.now()/1000)-5 }]));
+          ws.send(JSON.stringify(['EVENT', ev])); };
+        ws.onmessage=async(e)=>{ let m; try{ m=JSON.parse(e.data); }catch(_){ return; }
+          if(m[0]!=='EVENT' || m[1]!==sub) return; const r=m[2]; if(!r || r.kind!==23195 || r.pubkey!==cfg.walletPk) return;
+          try{ const j=JSON.parse(await N.nip04.decrypt(sk, cfg.walletPk, r.content));
+            if(j && j.error) return fin(rej, new Error((j.error.message)||(j.error.code)||'wallet declined'));
+            fin(res, (j&&j.result)||{}); }catch(err){ fin(rej, err); } };
+        ws.onerror=()=>fin(rej, new Error('cannot reach the wallet relay'));
+        setTimeout(()=>fin(rej, new Error('wallet timed out — is it online?')), 45000);
+      });
+    },
+  };
   async function doZap(noteId, pk){
     const p=profOf(pk); const addr=p.lud16||p.lud06;
     if(!addr){ toast('no lightning address on this profile'); return; }
@@ -1406,6 +1440,9 @@
       }
       const inv=await corsJson(url);
       const pr=inv && inv.pr; if(!pr){ toast('no invoice'+(inv&&inv.reason?': '+inv.reason:'')); return; }
+      // 1) one-tap via a connected NWC wallet (NIP-47) → 2) WebLN → 3) show the invoice to copy.
+      if(Nwc.configured()){ try{ toast('paying via your wallet…'); await Nwc.payInvoice(pr); toast('⚡ zapped '+amt+' sats'); return; }
+        catch(e){ toast('wallet: '+((e&&e.message)||e)); } }
       if(window.webln){ try{ await window.webln.enable(); await window.webln.sendPayment(pr); toast('⚡ zapped '+amt+' sats'); return; }catch(e){} }
       invoiceModal(pr, amt);
     }catch(e){ toast('zap failed: '+e.message); }
@@ -2717,6 +2754,18 @@
 
       <section class="set-card">
         <div class="set-head"><div>
+          <div class="set-title">Lightning wallet (one-tap zaps)</div>
+          <div class="muted small">Paste a Nostr Wallet Connect string (NIP-47) from Alby, Primal, Coinos… Zaps then pay instantly — no invoice popups. Stored only in this browser.</div>
+        </div></div>
+        <div class="set-body">
+          <input class="input" id="set-nwc" type="password" placeholder="nostr+walletconnect://…" value="${enc(ClientSettings.get('nwc',''))}">
+          <div class="set-actions"><button class="btn btn-ghost small" id="set-nwc-save">Save wallet</button>
+            <button class="btn btn-ghost small" id="set-nwc-clear">Disconnect</button></div>
+          <div class="muted small" id="set-nwc-status">${Nwc.configured()?'✓ Wallet connected — zaps pay instantly':''}</div>
+        </div>
+      </section>
+      <section class="set-card">
+        <div class="set-head"><div>
           <div class="set-title">Muted words</div>
           <div class="muted small">Hide posts containing any of these words or phrases (case-insensitive, one per line). Saved to your Nostr mute list (NIP-51), so it follows you to other clients.</div>
         </div></div>
@@ -2735,6 +2784,10 @@
     const syncRelays=()=>{ _setRelays = $$('#set-relay-list .relay-row input').map(i=>i.value.trim()); };
 
     { const sq=$('#set-scan-qr'); if(sq) sq.onclick=()=>openQrScanner(); }
+    { const nb=$('#set-nwc-save'); if(nb) nb.onclick=()=>{ const st=$('#set-nwc-status'); const u=($('#set-nwc').value||'').trim();
+        if(u && !Nwc.parse(u)){ if(st) st.textContent='Not a valid nostr+walletconnect:// string'; return; }
+        ClientSettings.set('nwc', u); if(st) st.textContent=u?'✓ Wallet connected — zaps pay instantly':'cleared'; toast(u?'wallet saved':'wallet cleared'); }; }
+    { const nc=$('#set-nwc-clear'); if(nc) nc.onclick=()=>{ ClientSettings.set('nwc',''); const i=$('#set-nwc'); if(i) i.value=''; const st=$('#set-nwc-status'); if(st) st.textContent='Disconnected'; toast('wallet disconnected'); }; }
     { const wb=$('#set-words-save'); if(wb) wb.onclick=async()=>{
         const words=($('#set-muted-words').value||'').split('\n').map(w=>w.trim()).filter(Boolean);
         wb.disabled=true; const st=$('#set-words-status'); if(st) st.textContent='saving…';
