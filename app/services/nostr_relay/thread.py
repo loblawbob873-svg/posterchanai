@@ -299,6 +299,17 @@ def _collect_operator_pubkeys(db) -> list:
                     out.add(nostr_service.derive_pubkey(nostr_service.decode_seckey(nsec)))
                 except Exception:
                     pass
+            # A registered user's POSTING identity (login npub). Including it preserves their own
+            # notes from the age-prune — a registered account's history is their data, not
+            # reconstructable feed content — and lets them publish through the relay.
+            npub = getattr(u, "nostr_npub", None)
+            if npub:
+                try:
+                    h = nostr_service.to_pubkey_hex(npub)
+                    if h:
+                        out.add(h)
+                except Exception:
+                    pass
         for b in db.query(Bot).all():
             try:
                 cfg = json.loads(b.config or "{}")
