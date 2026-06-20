@@ -1,6 +1,8 @@
 /* ===== PosterChan Nostr — cyberpunk theme (matches the main PosterChanAI webui: cyan-primary,
    magenta accent, neutral-dark bg, Orbitron/Rajdhani) ===== */
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;700&family=Rajdhani:wght@400;500;600;700&display=swap');
+/* Self-hosted fonts (no Google Fonts dependency) — variable woff2, one file per family. */
+@font-face{font-family:'Inter';font-style:normal;font-weight:100 900;font-display:swap;src:url('/static/fonts/inter.woff2') format('woff2')}
+@font-face{font-family:'Orbitron';font-style:normal;font-weight:400 900;font-display:swap;src:url('/static/fonts/orbitron.woff2') format('woff2')}
 :root{
   --bg:#0a0a0f; --bg2:#12121a; --panel:rgba(18,18,28,.72); --panel2:rgba(26,26,42,.85);
   --neon:#00ffff; --neon2:#ff00ff; --cyan:#00ffff; --green:#00ff88; --amber:#ffcf2b;
@@ -11,8 +13,10 @@
 *{box-sizing:border-box}
 html,body{margin:0;height:100%}
 body{
-  font-family:'Rajdhani','Segoe UI',system-ui,-apple-system,sans-serif;
-  font-weight:500;letter-spacing:.2px;   /* Rajdhani 400 is thin/hard to read — 500 + brighter --text/--muted everywhere */
+  /* Inter for all UI/body/input text — clean + highly readable. Rajdhani (condensed display) read
+     as cramped/"plain" for body & form text; Orbitron stays for the brand/headings below. */
+  font-family:'Inter','Segoe UI',system-ui,-apple-system,sans-serif;
+  font-weight:400;
   background:
     radial-gradient(ellipse 900px 600px at 50% -8%,rgba(0,255,255,.06) 0%,transparent 55%),
     radial-gradient(ellipse 800px 600px at 100% 100%,rgba(255,0,255,.045) 0%,transparent 55%),
@@ -20,7 +24,7 @@ body{
   color:var(--text);overflow:hidden;-webkit-tap-highlight-color:transparent;
 }
 /* cyberpunk display font for brand + headings, like the main webui */
-.logo,.brand,.av-title,.markdown h2,h1.glitch{font-family:'Orbitron','Rajdhani',sans-serif;letter-spacing:1px}
+.logo,.brand,.av-title,.markdown h2,h1.glitch{font-family:'Orbitron',sans-serif;letter-spacing:1px}
 .hidden{display:none !important}
 a{color:var(--cyan);text-decoration:none}
 code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
@@ -596,7 +600,7 @@ a.btn.full{display:block}
 .tag-chip{display:inline-flex;align-items:center;gap:7px;cursor:pointer;
   background:linear-gradient(135deg,rgba(0,255,255,.12),rgba(255,0,255,.07));
   border:1px solid rgba(0,255,255,.4);color:var(--cyan);
-  padding:8px 15px;font-family:'Rajdhani','Orbitron',sans-serif;font-size:14.5px;font-weight:700;
+  padding:8px 15px;font-family:'Orbitron',sans-serif;font-size:14.5px;font-weight:700;
   letter-spacing:.7px;text-transform:uppercase;transition:.16s;position:relative;
   /* angular clipped corners = cyberpunk tag */
   clip-path:polygon(9px 0,100% 0,100% calc(100% - 9px),calc(100% - 9px) 100%,0 100%,0 9px);
@@ -632,7 +636,7 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .set-card{background:rgba(8,5,18,.4);border:1px solid var(--line);border-radius:var(--r);padding:20px 20px 18px;margin-bottom:18px}
 .set-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
 .set-head .muted.small{margin-top:5px;line-height:1.5;max-width:50ch;font-size:15.5px}
-.set-title{font-family:'Orbitron','Rajdhani',sans-serif;font-size:22px;letter-spacing:.5px;color:var(--neon);text-shadow:0 0 8px rgba(0,255,255,.55),0 0 16px rgba(0,255,255,.3)}
+.set-title{font-family:'Orbitron',sans-serif;font-size:22px;letter-spacing:.5px;color:var(--neon);text-shadow:0 0 8px rgba(0,255,255,.55),0 0 16px rgba(0,255,255,.3)}
 .set-body{margin-top:16px;transition:opacity .15s}
 .set-body.disabled{opacity:.4;pointer-events:none;filter:grayscale(.4)}
 .set-body .muted.small{font-size:15px;line-height:1.5}
@@ -662,7 +666,7 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .nav-item.nav-ai.active{color:#04020c;background:linear-gradient(135deg,var(--neon),var(--neon2));box-shadow:var(--glow)}
 .ai-view{padding:26px 24px 80px;max-width:760px;margin:0 auto;animation:fade .25s}
 .ai-gate{text-align:center;display:flex;flex-direction:column;align-items:center;gap:12px;padding-top:48px}
-.ai-gate h2{font-family:'Orbitron','Rajdhani',sans-serif;font-size:26px;color:#fff;margin:0}
+.ai-gate h2{font-family:'Orbitron',sans-serif;font-size:26px;color:#fff;margin:0}
 .ai-gate .muted{max-width:46ch;line-height:1.5}
 .ai-gate .btn{margin-top:6px}
 
@@ -698,7 +702,7 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 /* new-chat welcome splash */
 .ai-welcome{margin:auto;max-width:560px;width:100%;text-align:center;padding:22px 16px;display:flex;flex-direction:column;align-items:center;gap:10px;animation:fade .25s}
 .ai-welcome .aw-logo{width:74px;height:74px;border-radius:50%;object-fit:cover;border:1px solid var(--neon);box-shadow:var(--glow)}
-.ai-welcome h3{margin:0;font-family:'Orbitron','Rajdhani',sans-serif;font-size:22px;letter-spacing:.5px;background:linear-gradient(135deg,var(--neon),var(--neon2));-webkit-background-clip:text;background-clip:text;color:transparent}
+.ai-welcome h3{margin:0;font-family:'Orbitron',sans-serif;font-size:22px;letter-spacing:.5px;background:linear-gradient(135deg,var(--neon),var(--neon2));-webkit-background-clip:text;background-clip:text;color:transparent}
 .ai-welcome p{margin:0;line-height:1.5}
 .aw-cmds{display:flex;flex-direction:column;gap:8px;width:100%;margin:6px 0}
 .ai-eg{display:flex;align-items:center;gap:10px;flex-wrap:wrap;text-align:left;background:rgba(8,5,18,.5);border:1px solid var(--line);border-radius:12px;padding:11px 14px;color:var(--text);cursor:pointer;font-size:15.5px;transition:border-color .15s,background .15s}

@@ -1,5 +1,6 @@
-/* Cyberpunk Fonts */
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&family=Rajdhani:wght@400;500;600;700&display=swap');
+/* Cyberpunk Fonts — self-hosted (no Google Fonts dependency); Inter for body, Orbitron for display */
+@font-face{font-family:'Inter';font-style:normal;font-weight:100 900;font-display:swap;src:url('/static/fonts/inter.woff2') format('woff2')}
+@font-face{font-family:'Orbitron';font-style:normal;font-weight:400 900;font-display:swap;src:url('/static/fonts/orbitron.woff2') format('woff2')}
 
 /* CSS Variables - Cyberpunk Theme */
 :root {
@@ -30,7 +31,7 @@
 }
 
 body {
-    font-family: 'Rajdhani', 'Orbitron', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     background: var(--bg-primary);
     color: var(--text-primary);
     min-height: 100vh;
