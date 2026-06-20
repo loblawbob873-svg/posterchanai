@@ -3021,19 +3021,30 @@
   }
   // Old web-UI link actions: when the AI input holds a video URL (YouTube/TikTok/X/IG/Vimeo/Twitch/…)
   // and no file is attached, offer a Download (→ ytdl). Updates live as you type/paste.
+  // Link-action bar — faithful port of the old web UI's updateLinkActionBar (Telegram parity): when
+  // the input is a SINGLE bare URL/magnet, offer the right actions for that link type. Most run
+  // immediately; ✂️ Clip prefills so you can edit the timecodes before sending.
   function aiUpdateLinkActions(){
     const bar=$('#ai-attachbar'); if(!bar || _ai.attach.length) return;
-    const m=((($('#ai-input')||{}).value)||'').match(/https?:\/\/[^\s]+/i);
-    const url=m?m[0]:'';
-    // The `ytdl` command supports YouTube + X/Twitter (+ Nitter). Offer Video / MP3 for those.
-    const dl=url && /youtube\.com\/(?:watch\?\S*v=|shorts\/|live\/|embed\/)|youtu\.be\/|(?:twitter|x)\.com\/\S+\/status|nitter/i.test(url);
-    if(dl){
-      bar.dataset.link='1';
-      bar.innerHTML='<div class="fx-row" style="display:flex;flex-wrap:wrap;gap:6px"><button class="fx-mot" id="ai-dl-vid">⬇️ Video</button><button class="fx-mot" id="ai-dl-mp3">🎵 MP3</button></div>';
-      const run=cmd=>{ const t=$('#ai-input'); if(t){ t.value=cmd; aiSend(); } if(bar){ bar.innerHTML=''; delete bar.dataset.link; } };
-      { const b=$('#ai-dl-vid'); if(b) b.onclick=()=>run('ytdl video '+url); }
-      { const b=$('#ai-dl-mp3'); if(b) b.onclick=()=>run('ytdl mp3 '+url); }
-    } else if(bar.dataset.link){ bar.innerHTML=''; delete bar.dataset.link; }
+    const text=((($('#ai-input')||{}).value)||'').trim();
+    const isMagnet=/^magnet:\?/i.test(text);
+    const um=text.match(/^https?:\/\/\S+$/i);
+    if(!isMagnet && !um){ if(bar.dataset.link){ bar.innerHTML=''; delete bar.dataset.link; } return; }
+    const url=isMagnet?text:um[0];
+    const isTorrent=isMagnet || /\.torrent(\?|$)/i.test(url);
+    const isYT=/(?:youtube\.com\/|youtu\.be\/)/i.test(url);
+    const isX=/\/\/[^/]*(?:x\.com|twitter\.com|nitter)/i.test(url);
+    let acts;   // [label, command, prefillOnly]
+    if(isTorrent) acts=[['🧲 Add Torrent','torrents add '+url,0]];
+    else if(isYT) acts=[['📋 Summary','yt '+url,0],['🎵 MP3','ytdl '+url,0],['🎬 Movie','ytdl video '+url,0],['✂️ Clip','ytdl video '+url+' clip 0:00 0:30',1],['📣 Post','post '+url,0]];
+    else if(isX) acts=[['🎵 MP3','ytdl '+url,0],['🎬 Video','ytdl video '+url,0],['✂️ Clip','ytdl video '+url+' clip 0:00 0:30',1],['📣 Post','post '+url,0]];
+    else acts=[['📋 Summary','Summarize this page: '+url,0],['📸 Screenshot','screenshot '+url,0],['🎴 Flashcards','flashcards '+url,0],['📣 Post','post '+url,0]];
+    bar.dataset.link='1';
+    bar.innerHTML='<div class="fx-row" style="display:flex;flex-wrap:wrap;gap:6px">'+acts.map((a,i)=>`<button class="fx-mot fx-linkact" data-i="${i}">${enc(a[0])}</button>`).join('')+'</div>';
+    $$('.fx-linkact',bar).forEach(b=>{ const a=acts[+b.dataset.i]; b.onclick=()=>{ const t=$('#ai-input'); if(!t) return;
+      t.value=a[1]; t.focus(); t.dispatchEvent(new Event('input'));
+      if(!a[2]){ aiSend(); if(bar){ bar.innerHTML=''; delete bar.dataset.link; } }   // prefillOnly (✂️ Clip) → let the user edit timecodes, then Enter
+    }; });
   }
   function aiRenderAttach(){
     const bar=$('#ai-attachbar'); if(!bar) return;
