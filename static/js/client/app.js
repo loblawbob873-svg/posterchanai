@@ -1552,7 +1552,7 @@
   let _notifReady=false;
   function watchNotifications(){
     seenNotif.last = +(localStorage.getItem('pc_notif_seen')||0);
-    Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7,9735], limit:60 }], {
+    Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7,9735], limit:150 }], {
       onEvent: ev => { if(ev.pubkey===ME.pubkey) return; if(Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey);
         if(ev.created_at>seenNotif.last){ bumpNotif(); if(_notifReady) notifPing(ev); }
         if(VIEW==='notifications') renderNotifications(); } },
@@ -1574,7 +1574,7 @@
     t.onclick=()=>{ switchView('notifications'); t.remove(); };
     $('#toast-root').appendChild(t); setTimeout(()=>t.remove(),5000);
   }
-  function notifList(){ return Store.all().filter(e=>[1,6,7,9735].includes(e.kind) && e.pubkey!==ME.pubkey && !MUTED.has(e.pubkey) && e.tags.some(t=>t[0]==='p'&&t[1]===ME.pubkey)).sort((a,b)=>b.created_at-a.created_at).slice(0,100); }
+  function notifList(){ return Store.all().filter(e=>[1,6,7,9735].includes(e.kind) && e.pubkey!==ME.pubkey && !MUTED.has(e.pubkey) && e.tags.some(t=>t[0]==='p'&&t[1]===ME.pubkey)).sort((a,b)=>b.created_at-a.created_at).slice(0,2000); }
   function bumpNotif(){ const n=notifList().filter(e=>e.created_at>seenNotif.last).length; $$('#notif-badge,#notif-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden');}); }
   let _notifShown = 25;   // paginate: render a page at a time, "Load more" reveals the next
   function renderNotifications(){
@@ -1590,7 +1590,20 @@
     // row opens the post; avatar opens the sender's profile (stop the row handler firing too)
     feed.querySelectorAll('.notif').forEach(n=> n.onclick=()=>openThread(n.dataset.open));
     feed.querySelectorAll('.notif-av').forEach(a=> a.onclick=(ev)=>{ ev.stopPropagation(); renderProfileView(a.dataset.pk); });
-    const more=$('#notif-more'); if(more) more.onclick=()=>{ _notifShown+=25; renderNotifications(); };
+    const more=$('#notif-more'); if(more) more.onclick=async ()=>{
+      _notifShown+=25;
+      // Reaching the end of what's loaded → fetch OLDER notifications from the relay (paginate back
+      // in time with `until`), so notifications aren't capped at the initial window.
+      if(_notifShown >= all.length-5 && all.length){
+        more.textContent='Loading older…'; more.disabled=true;
+        const oldest=all[all.length-1].created_at;
+        try{
+          const older=await Relay.query([{ '#p':[ME.pubkey], kinds:[1,6,7,9735], until: oldest-1, limit:100 }]);
+          older.forEach(e=>{ if(e.pubkey!==ME.pubkey) Store.saveEvent(e); });
+        }catch(_){}
+      }
+      renderNotifications();
+    };
   }
   function notifHtml(e){
     const fromPk = e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey;
@@ -2347,18 +2360,44 @@
       const n=mergeRelays(urls); toast(n?`added ${n} relay${n>1?'s':''}`:'no new relays');
     }catch(_){ toast('NIP-05 lookup failed'); }
   }
+  // Thread context fallback: our relay is WoT-gated, so a post we replied to whose author isn't in
+  // the trust set isn't stored here. Fetch such a missing event from public relays (UNTRUSTED → the
+  // signer worker verifies the signature before we display it), so threads aren't truncated.
+  const PUBLIC_FALLBACK_RELAYS = ['wss://relay.damus.io','wss://nos.lol','wss://relay.primal.net','wss://relay.nostr.band'];
+  function fetchFromPublicRelays(filters, timeout=4500){
+    return new Promise(resolve=>{
+      const got=new Map(); let pending=PUBLIC_FALLBACK_RELAYS.length, done=false;
+      const finish=()=>{ if(done)return; done=true; clearTimeout(to); resolve([...got.values()]); };
+      const to=setTimeout(finish, timeout);
+      PUBLIC_FALLBACK_RELAYS.forEach(url=>{
+        let ws, counted=false; const done1=()=>{ if(counted)return; counted=true; if(--pending<=0)finish(); };
+        try{ ws=new WebSocket(url); }catch(_){ done1(); return; }
+        const sid='pf'+Math.random().toString(36).slice(2,8);
+        ws.onopen=()=>{ try{ ws.send(JSON.stringify(['REQ',sid,...filters])); }catch(_){ try{ws.close();}catch(__){} } };
+        ws.onmessage=e=>{ try{ const m=JSON.parse(e.data); if(m[0]==='EVENT'&&m[2]&&m[2].id) got.set(m[2].id,m[2]); else if(m[0]==='EOSE'){ try{ws.close();}catch(_){}} }catch(_){} };
+        ws.onerror=()=>{ try{ws.close();}catch(_){} };
+        ws.onclose=done1;
+      });
+    });
+  }
+  async function fetchEvent(id){
+    let r=await Relay.query([{ ids:[id] }]); if(r[0]) return r[0];
+    const pub=await fetchFromPublicRelays([{ ids:[id] }]);
+    for(const ev of pub){ try{ const v=await Relay.worker.call('verify',{event:ev}); if(v&&v.valid) return ev; }catch(_){} }
+    return null;
+  }
   function openThread(id){ renderThread(id); }
   async function renderThread(id){
     VIEW='thread'; _hidePill(); $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='Thread';
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
     let ev=Store.get(id);
-    if(!ev){ const r=await Relay.query([{ ids:[id] }]); if(r[0]){ Store.saveEvent(r[0]); ev=r[0]; } }
+    if(!ev){ ev=await fetchEvent(id); if(ev) Store.saveEvent(ev); }
     if(!ev){ feed.innerHTML='<div class="empty">Post not found on the relay.</div>'; return; }
     // fetch the parent (for reply context) and the replies
     let parent=null;
     const es=ev.tags.filter(t=>t[0]==='e');
     const parentId=((es.find(t=>t[3]==='reply')||es.find(t=>t[3]==='root')||es[es.length-1])||[])[1];
-    if(parentId && parentId!==id){ parent=Store.get(parentId); if(!parent){ const r=await Relay.query([{ids:[parentId]}]); if(r[0]){ Store.saveEvent(r[0]); parent=r[0]; } } }
+    if(parentId && parentId!==id){ parent=Store.get(parentId); if(!parent){ parent=await fetchEvent(parentId); if(parent) Store.saveEvent(parent); } }
     const replies=(await Relay.query([{ kinds:[1], '#e':[id], limit:100 }])).filter(r=>r.id!==id);
     replies.forEach(r=>{ Store.saveEvent(r); needProfile(r.pubkey); });
     needProfile(ev.pubkey); if(parent) needProfile(parent.pubkey);
