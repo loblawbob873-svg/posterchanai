@@ -2170,7 +2170,29 @@
     } else if(d.type==='error'){
       aiAddMessage('assistant', `<span class="ai-err">⚠ ${enc(d.message||'error')}</span>`);
       _ai.streamEl=null; _ai.streamBuf='';
+    } else if(d.type==='reminder'){
+      reminderAlert((d.content!=null?d.content:(d.data&&d.data.content))||'Reminder');   // fired reminder → popup + sound
     }
+  }
+  // A reminder fired (pushed over the chat WS) — full-screen pulsing card + a beep, like the old UI.
+  function reminderAlert(text){
+    try{
+      const ac=new (window.AudioContext||window.webkitAudioContext)();
+      [0,0.18,0.36].forEach(t=>{ const o=ac.createOscillator(),g=ac.createGain(); o.connect(g); g.connect(ac.destination);
+        o.type='sine'; o.frequency.value=880; g.gain.setValueAtTime(0.001,ac.currentTime+t); g.gain.exponentialRampToValueAtTime(0.25,ac.currentTime+t+0.02);
+        g.gain.exponentialRampToValueAtTime(0.001,ac.currentTime+t+0.15); o.start(ac.currentTime+t); o.stop(ac.currentTime+t+0.16); });
+    }catch(_){}
+    try{ if(window.Notification && Notification.permission==='granted') new Notification('⏰ Reminder', {body:String(text).replace(/<[^>]+>/g,''), tag:'pc-reminder'}); }catch(_){}
+    const ex=document.getElementById('reminderOverlay'); if(ex) ex.remove();
+    const ov=document.createElement('div'); ov.id='reminderOverlay';
+    ov.style.cssText='position:fixed;inset:0;z-index:600;display:grid;place-items:center;padding:24px;background:rgba(4,2,12,.8);backdrop-filter:blur(4px)';
+    ov.innerHTML=`<div class="reminder-card"><div style="font-size:42px">⏰</div><h2 style="margin:10px 0">Reminder</h2>
+      <div style="font-size:18px;margin-bottom:20px">${aiFormat(String(text||''))}</div>
+      <button class="btn btn-neon" id="reminderDismiss">Dismiss</button></div>`;
+    const close=()=>ov.remove();
+    ov.addEventListener('click',e=>{ if(e.target===ov) close(); });
+    document.body.appendChild(ov);
+    const b=ov.querySelector('#reminderDismiss'); if(b) b.onclick=close;
   }
   // Markdown + the backend's custom inline markup the old web UI rendered: !video[](url), !audio[](url),
   // ![](url) images, links, and magnet/.torrent → an "add torrent" action. So command outputs
