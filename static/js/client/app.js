@@ -1651,33 +1651,47 @@
   const REACTION_EMOJIS=['❤️','🔥','😂','🤣','😮','😯','😢','😭','👍','👎','🤙','💀','⚡','🚀','🤔','🥰','😍','😘','😎','🤩','🥳','😏','😊','🙂','😉','😌','😋','😛','😜','🤪','😅','😆','😁','😄','😀','🙃','😇','🤗','🤭','🤫','🫡','🧐','🤓','🥸','😐','😑','😶','🙄','😬','🤨','😴','🤤','😪','😷','🤒','🤕','🤢','🤮','🥵','🥶','🥴','😵','🤯','😳','🥺','😤','😠','😡','🤬','😱','😨','😰','😥','😓','🥱','🤠','😈','👿','👹','👺','🤡','💩','👻','👽','👾','🤖','🎃','👀','👏','🙌','🙏','🤝','💪','👊','✌️','🤞','🤟','🤘','👌','🫶','💯','💔','🧡','💛','💚','💙','💜','🖤','🤍','⭐','✨','💥','🎉'];
   // Shared emoji popover anchored under a button. onPick(emoji, close) decides what to do (react,
   // or insert into a textarea — for the latter it can keep the picker open for multiple inserts).
-  // Place a fixed popover ATTACHED to its anchor button: below if it fits, else above, else the side
-  // with more room (height-capped + scrollable). align='left'|'right' lines up that edge with the
-  // button. Caps height to the viewport so a tall menu scrolls in place instead of being flung to the
-  // top of the screen (the old "pops up far from the button" bug) — works on desktop and mobile.
+  // Place a popover. On phones it becomes a full-width bottom action-sheet with a dim backdrop
+  // (always attached + readable — a wide menu can't sensibly hang off a tiny right-edge button on a
+  // narrow screen). On desktop it's an anchored dropdown: below the button if it fits, else flipped
+  // above; left-aligned, or right-aligned when the button sits near the right edge.
   function _placePop(pop, anchorBtn){
-    const align = pop.classList.contains('menu-pop') ? 'right' : 'left';
+    // ONE consistent rule for every menu (timeline ☰, profile ☰, compose Attach/React/Translate,
+    // emoji): without the desktop right column (<1180px) a right-edge button's menu would spill
+    // ~1-2" to the left, so ALL menus become a centered bottom action-sheet there. At >=1180px the
+    // layout has room, so they're anchored dropdowns under their button.
+    if(window.matchMedia('(max-width:1179px)').matches){
+      document.querySelectorAll('.pop-backdrop').forEach(b=>b.remove());
+      const bd=document.createElement('div'); bd.className='pop-backdrop';
+      document.documentElement.appendChild(bd);
+      pop.classList.add('sheet');   // CSS pins it to the bottom as a centered card
+      return;
+    }
     const M=8, vw=window.innerWidth, vh=window.innerHeight;
     const r=(anchorBtn||document.body).getBoundingClientRect();
-    pop.style.maxHeight=(vh-2*M)+'px'; pop.style.overflowY='auto';
-    const pw=pop.offsetWidth, ph=pop.offsetHeight;
-    let left = align==='right' ? r.right-pw : r.left;
+    const pw=pop.offsetWidth, ph=pop.offsetHeight;   // ph already respects the popover's CSS max-height
+    // Horizontal: drop straight under the button (left edges aligned, like a normal dropdown). If
+    // that would run off the right edge (a button near the right side), right-align it to the button
+    // instead so it stays attached. Always clamp on-screen.
+    let left = r.left;
+    if(left + pw > vw - M) left = r.right - pw;
     left = Math.max(M, Math.min(left, vw-M-pw));
-    const below=vh-r.bottom-M, above=r.top-M;
-    let top;
-    if(ph<=below) top=r.bottom+6;                              // fits below
-    else if(ph<=above) top=r.top-6-ph;                         // flip above (bottom hugs the button)
-    else if(below>=above) { top=r.bottom+6; pop.style.maxHeight=below+'px'; }   // more room below: cap+scroll
-    else { top=M; pop.style.maxHeight=above+'px'; }            // more room above: cap+scroll, hug button top
+    // Vertical: just below the button; if it would overflow the bottom, flip above (bottom hugs the
+    // button) when there's room, otherwise pin within the viewport. Keeps it attached to the button.
+    let top = r.bottom + 6;
+    if(top + ph > vh - M){
+      const above = r.top - 6 - ph;
+      top = (above >= M) ? above : Math.max(M, vh - M - ph);
+    }
     pop.style.left=left+'px'; pop.style.top=top+'px';
   }
   function openEmojiPopover(anchorBtn, onPick){
-    document.querySelectorAll('.emoji-pop').forEach(p=>p.remove());   // never stack pickers
+    document.querySelectorAll('.emoji-pop,.pop-backdrop').forEach(p=>p.remove());   // never stack pickers
     const pop=document.createElement('div'); pop.className='emoji-pop';
     pop.innerHTML=REACTION_EMOJIS.map(x=>`<button data-e="${x}">${x}</button>`).join('');
-    document.body.appendChild(pop);
-    _placePop(pop, anchorBtn);
-    const close=()=>{ pop.remove(); document.removeEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.removeEventListener('scroll',close); };
+    document.documentElement.appendChild(pop);   // <html>, not <body>: body has zoom:.85 on desktop,
+    _placePop(pop, anchorBtn);                    // which throws off fixed-position math for a body child
+    const close=()=>{ pop.remove(); document.querySelectorAll('.pop-backdrop').forEach(b=>b.remove()); document.removeEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.removeEventListener('scroll',close); };
     const onDoc=e=>{ if(!pop.contains(e.target) && !(anchorBtn && anchorBtn.contains(e.target))) close(); };
     setTimeout(()=>{ document.addEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.addEventListener('scroll',close,{once:true}); },0);
     // mousedown + preventDefault keeps the textarea focused so insert-at-cursor works
@@ -1691,12 +1705,12 @@
   // Generic "☰ more" popover anchored under a button. items = [action, label, optional css class];
   // onPick(action) fires after the menu closes. Shared by the post menu and the profile menu.
   function openMenuPopover(anchorBtn, items, onPick){
-    document.querySelectorAll('.menu-pop,.emoji-pop').forEach(p=>p.remove());   // never stack popovers
+    document.querySelectorAll('.menu-pop,.emoji-pop,.pop-backdrop').forEach(p=>p.remove());   // never stack popovers
     const pop=document.createElement('div'); pop.className='menu-pop';
     pop.innerHTML=items.map(([a,label,cls])=>`<button data-m="${a}"${cls?` class="${cls}"`:''}>${enc(label)}</button>`).join('');
-    document.body.appendChild(pop);
-    _placePop(pop, anchorBtn);
-    const close=()=>{ pop.remove(); document.removeEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.removeEventListener('scroll',close); };
+    document.documentElement.appendChild(pop);   // <html>, not <body>: body has zoom:.85 on desktop,
+    _placePop(pop, anchorBtn);                    // which throws off fixed-position math for a body child
+    const close=()=>{ pop.remove(); document.querySelectorAll('.pop-backdrop').forEach(b=>b.remove()); document.removeEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.removeEventListener('scroll',close); };
     const onDoc=e=>{ if(!pop.contains(e.target) && !anchorBtn.contains(e.target)) close(); };
     setTimeout(()=>{ document.addEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.addEventListener('scroll',close,{once:true}); },0);
     $$('[data-m]',pop).forEach(b=> b.onclick=()=>{ close(); onPick(b.dataset.m); });

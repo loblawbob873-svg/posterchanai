@@ -541,7 +541,7 @@ a.btn.full{display:block}
 .emoji-pop button:hover{background:rgba(0,255,255,.18);transform:scale(1.18)}
 
 /* per-post "☰ more" menu popover (bookmark / copy id / delete / block) */
-.menu-pop{position:fixed;z-index:360;display:flex;flex-direction:column;min-width:178px;max-width:92vw;padding:6px;
+.menu-pop{position:fixed;z-index:360;display:flex;flex-direction:column;min-width:178px;max-width:92vw;padding:6px;max-height:min(70vh,440px);overflow-y:auto;
   background:var(--panel2);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid var(--neon);border-radius:14px;
   box-shadow:0 0 0 1px rgba(0,255,255,.3),0 0 26px rgba(255,0,255,.35);animation:pop .14s ease-out}
 .menu-pop button{display:block;width:100%;text-align:left;background:transparent;border:none;color:var(--text);
@@ -549,6 +549,20 @@ a.btn.full{display:block}
 .menu-pop button:hover{background:rgba(0,255,255,.16);color:var(--cyan)}
 .menu-pop button.danger{color:#ff6b8b}
 .menu-pop button.danger:hover{background:rgba(255,77,109,.16);color:#ff6b8b}
+
+/* Popover menus become a full-width bottom action-sheet on phones (always attached + readable,
+   never floating off to the side of a tiny right-edge button) with a dim backdrop; the anchored
+   dropdown is kept on desktop. */
+.pop-backdrop{position:fixed;inset:0;z-index:355;background:rgba(4,2,12,.5);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}
+@keyframes sheetup{from{opacity:0;transform:translateY(22px)}to{opacity:1;transform:none}}
+@media(max-width:1179px){
+  .menu-pop.sheet,.emoji-pop.sheet{left:0;right:0;bottom:8px;top:auto;min-width:0;
+    width:min(480px,calc(100vw - 16px));margin-inline:auto;max-height:72vh;border-radius:18px;
+    animation:sheetup .2s ease-out}
+  .menu-pop.sheet button{font-size:17px;padding:15px 16px}
+  .emoji-pop.sheet{justify-content:center}
+  .emoji-pop.sheet button{font-size:26px;padding:8px 10px}
+}
 
 /* ===== trending hashtag chips + inline #hashtags — cyberpunk, spaced out ===== */
 .tag-cloud{display:flex;flex-wrap:wrap;gap:10px 11px;padding:4px 0 2px}
