@@ -31,11 +31,22 @@ async function loadRelayIdentity() {
         else if (el) el.textContent = (r && r.error) || '(no operator key)';
     } catch (_) { if (el) el.textContent = '(failed to load)'; }
 }
-function copyRelayKey(which) {
-    if (!_relayKeys || !_relayKeys[which]) return;
-    navigator.clipboard.writeText(_relayKeys[which]);
-    const b = (typeof event !== 'undefined') && event.target;
-    if (b) { const t = b.textContent; b.textContent = '✓ copied'; setTimeout(() => { b.textContent = t; }, 1500); }
+async function copyRelayKey(which) {
+    const btn = (typeof event !== 'undefined') && event.target;
+    if (!_relayKeys) await loadRelayIdentity();   // load on demand if the tab fetch hasn't run
+    const v = _relayKeys && _relayKeys[which];
+    if (!v) { alert('No ' + which + ' available (no operator key).'); return; }
+    let ok = false;
+    try { await navigator.clipboard.writeText(v); ok = true; } catch (_) { /* insecure context / no API */ }
+    if (!ok) {
+        const t = document.createElement('textarea');
+        t.value = v; t.style.position = 'fixed'; t.style.opacity = '0';
+        document.body.appendChild(t); t.focus(); t.select();
+        try { ok = document.execCommand('copy'); } catch (_) { }
+        t.remove();
+    }
+    if (btn) { const o = btn.textContent; btn.textContent = ok ? '✓ copied' : '⚠ copy failed'; setTimeout(() => { btn.textContent = o; }, 1500); }
+    if (!ok) window.prompt('Copy the ' + which + ' manually:', v);   // last resort (http / locked-down clipboard)
 }
 
 // Default news sources
