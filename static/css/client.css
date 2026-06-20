@@ -618,7 +618,7 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .set-card{background:rgba(8,5,18,.4);border:1px solid var(--line);border-radius:var(--r);padding:20px 20px 18px;margin-bottom:18px}
 .set-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
 .set-head .muted.small{margin-top:5px;line-height:1.5;max-width:50ch;font-size:15.5px}
-.set-title{font-family:'Orbitron','Rajdhani',sans-serif;font-size:22px;letter-spacing:.5px;color:#fff}
+.set-title{font-family:'Orbitron','Rajdhani',sans-serif;font-size:22px;letter-spacing:.5px;color:var(--neon);text-shadow:0 0 8px rgba(0,255,255,.55),0 0 16px rgba(0,255,255,.3)}
 .set-body{margin-top:16px;transition:opacity .15s}
 .set-body.disabled{opacity:.4;pointer-events:none;filter:grayscale(.4)}
 .set-body .muted.small{font-size:15px;line-height:1.5}
