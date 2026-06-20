@@ -185,6 +185,121 @@
     nip04dec(peer, ct){ return this._send('nip04_decrypt',[peer, ct]); },
   };
 
+  // ---------- NIP-46 SIGNER side: "scan a QR to log in another device" (Primal-style) ----------
+  // When you're logged in here with a LOCAL key (the worker holds your nsec), THIS device can act
+  // as the remote signer for another machine: scan its nostrconnect:// QR, ack the connection, then
+  // answer its get_public_key / sign_event / nipNN_(en|de)crypt requests — signing with your key,
+  // which never leaves this device. The mirror image of the Nip46 *client* above.
+  const Nip46Signer = {
+    ws:null, relay:null, clientPk:null, secret:null, _subId:null, active:false,
+    async start(uri, onStatus){
+      this.stop();   // drop any previous pairing before linking a new device
+      const m=String(uri||'').trim().match(/^nostrconnect:\/\/([0-9a-f]{64})\??(.*)$/i);
+      if(!m) throw new Error('that QR is not a nostrconnect login link');
+      this.clientPk=m[1].toLowerCase();
+      const qs=new URLSearchParams(m[2]||'');
+      this.relay=qs.getAll('relay')[0]; this.secret=qs.get('secret')||'';
+      const appName=qs.get('name')||'the app';
+      if(!this.relay) throw new Error('that QR is missing its relay');
+      await this._open(this.relay);
+      this.active=true;
+      // Unsolicited connect ACK — tells the client our pubkey (this event's author) + echoes the
+      // secret, which is exactly what its nostrconnect handshake waits for.
+      await this._send({ id:'c'+Math.random().toString(36).slice(2,8), result:this.secret });
+      onStatus && onStatus(appName);
+      return appName;
+    },
+    _open(relay){
+      return new Promise((res,rej)=>{
+        let done=false; const ws=new WebSocket(relay); this.ws=ws;
+        ws.onopen=()=>{ this._subId='ns'+Math.random().toString(36).slice(2,8);
+          ws.send(JSON.stringify(['REQ', this._subId, { kinds:[24133], '#p':[ME.pubkey], since: Math.floor(Date.now()/1000)-5 }]));
+          if(!done){ done=true; res(); } };
+        ws.onmessage=(e)=>this._recv(e.data);
+        ws.onerror=()=>{ if(!done){ done=true; rej(new Error('cannot reach the relay in the QR')); } };
+        ws.onclose=()=>{ if(this.active && this.ws===ws){ this.ws=null; setTimeout(()=>{ if(this.active && !this.ws) this._open(relay).catch(()=>{}); }, 2000); } };
+        setTimeout(()=>{ if(!done){ done=true; rej(new Error('relay timed out')); } }, 9000);
+      });
+    },
+    async _decode(ct){ for(const op of ['nip04dec','nip44dec']){ try{ return JSON.parse((await Relay.worker.call(op,{ peer:this.clientPk, ct })).pt); }catch(_){} } return null; },
+    async _send(payload){
+      const ct=(await Relay.worker.call('nip04enc',{ peer:this.clientPk, text:JSON.stringify(payload) })).ct;
+      const tpl={ kind:24133, content:ct, tags:[['p',this.clientPk]], created_at:Math.floor(Date.now()/1000), pubkey:ME.pubkey };
+      const signed=await Relay.worker.call('sign',{ event:tpl });
+      try{ this.ws && this.ws.send(JSON.stringify(['EVENT', signed])); }catch(_){}
+    },
+    async _recv(raw){
+      let m; try{ m=JSON.parse(raw); }catch(_){ return; }
+      if(m[0]!=='EVENT' || m[1]!==this._subId) return;
+      const ev=m[2]; if(!ev || ev.kind!==24133 || ev.pubkey!==this.clientPk) return;
+      const req=await this._decode(ev.content); if(!req || !req.id || !req.method) return;
+      let result=null, error=null;
+      try{ result=await this._handle(req.method, req.params||[]); }
+      catch(e){ error=String((e&&e.message)||e); }
+      await this._send(error ? { id:req.id, result:'', error } : { id:req.id, result });
+    },
+    async _handle(method, params){
+      switch(method){
+        case 'connect':        return 'ack';
+        case 'ping':           return 'pong';
+        case 'get_public_key': return ME.pubkey;
+        case 'sign_event': {
+          let tpl=params[0]; if(typeof tpl==='string') tpl=JSON.parse(tpl);
+          tpl.pubkey=ME.pubkey; if(!tpl.created_at) tpl.created_at=Math.floor(Date.now()/1000);
+          return JSON.stringify(await Relay.worker.call('sign',{ event:tpl }));
+        }
+        case 'nip04_encrypt':  return (await Relay.worker.call('nip04enc',{ peer:params[0], text:params[1] })).ct;
+        case 'nip04_decrypt':  return (await Relay.worker.call('nip04dec',{ peer:params[0], ct:params[1] })).pt;
+        case 'nip44_encrypt':  return (await Relay.worker.call('nip44enc',{ peer:params[0], text:params[1] })).ct;
+        case 'nip44_decrypt':  return (await Relay.worker.call('nip44dec',{ peer:params[0], ct:params[1] })).pt;
+        default: throw new Error('unsupported method: '+method);
+      }
+    },
+    stop(){ this.active=false; try{ if(this.ws){ this.ws.onclose=null; this.ws.close(); } }catch(_){} this.ws=null; },
+  };
+
+  // Camera QR scanner (uses the native BarcodeDetector; falls back to pasting the link). On a
+  // successful scan of a nostrconnect:// link, Nip46Signer logs that device in with our key.
+  async function openQrScanner(){
+    if(ME.mode!=='local'){ toast('Log in with your key (nsec) on this device first'); return; }
+    if(!('BarcodeDetector' in window) || !navigator.mediaDevices){ return qrManualPrompt(); }
+    modal(`<h3>📷 Scan QR to log in another device</h3>
+      <video id="qr-video" class="qr-video" playsinline muted></video>
+      <div class="muted small" id="qr-hint">Point at the QR shown on the other device…</div>
+      <div class="set-actions"><button class="btn btn-ghost small" id="qr-paste">paste link instead</button>
+        <button class="btn btn-ghost small" id="qr-cancel">cancel</button></div>`, async root=>{
+      const v=root.querySelector('#qr-video'), hint=root.querySelector('#qr-hint');
+      root.querySelector('#qr-cancel').onclick=()=>closeModal();
+      root.querySelector('#qr-paste').onclick=()=>{ closeModal(); qrManualPrompt(); };
+      let stream=null, stopped=false;
+      const cleanup=()=>{ stopped=true; try{ stream && stream.getTracks().forEach(t=>t.stop()); }catch(_){} };
+      let det; try{ det=new BarcodeDetector({ formats:['qr_code'] }); }catch(_){ closeModal(); return qrManualPrompt(); }
+      try{ stream=await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment' } }); v.srcObject=stream; await v.play(); }
+      catch(e){ hint.textContent='Camera unavailable ('+(e.message||e)+'). Use “paste link instead”.'; return; }
+      const tick=async()=>{
+        if(stopped || !document.body.contains(v)){ cleanup(); return; }   // modal closed → stop camera
+        try{ const codes=await det.detect(v); const val=codes && codes[0] && codes[0].rawValue;
+          if(val && /^nostrconnect:/i.test(val)){ cleanup(); closeModal(); return onQrScanned(val); } }catch(_){}
+        setTimeout(tick, 350);
+      };
+      tick();
+    });
+  }
+  function qrManualPrompt(){
+    modal(`<h3>Log in another device</h3>
+      <p class="muted small">On the other device, open Sign in → “Open in Amber / scan QR”, then copy its connection link (<code>nostrconnect://…</code>) and paste it here.</p>
+      <textarea class="input" id="qr-paste-uri" rows="3" placeholder="nostrconnect://…"></textarea>
+      <button class="btn btn-neon full" id="qr-paste-go">Log in that device</button>`, root=>{
+      root.querySelector('#qr-paste-go').onclick=()=>{ const u=root.querySelector('#qr-paste-uri').value.trim(); if(!u){ return; } closeModal(); onQrScanned(u); };
+    });
+  }
+  async function onQrScanned(uri){
+    try{
+      const name=await Nip46Signer.start(uri);
+      toast('✅ “'+name+'” is now logged in — your key stayed on this device');
+    }catch(e){ toast('QR sign-in failed: '+((e&&e.message)||e)); Nip46Signer.stop(); }
+  }
+
   // ---------- boot ----------
   async function boot(){
     CFG = await fetch('/client/config').then(r=>r.json()).catch(()=>({}));
@@ -2516,6 +2631,17 @@
           <div class="muted small" id="set-sync-status">Pulls your posts from other relays into this one.</div>
         </div>
       </section>
+      <section class="set-card">
+        <div class="set-head"><div>
+          <div class="set-title">Log in another device</div>
+          <div class="muted small">${ME.mode==='local'
+            ? 'On a computer, open this site → Sign in → “Open in Amber / scan QR”. Scan that QR here to log the computer in with your key — it never leaves this phone.'
+            : 'Available when you sign in on this device with your key (nsec). Extension / remote-signer sessions can’t sign for another device.'}</div>
+        </div></div>
+        <div class="set-body">
+          <button class="btn btn-neon small" id="set-scan-qr" ${ME.mode==='local'?'':'disabled'}>📷 Scan QR code</button>
+        </div>
+      </section>
       <div id="user-settings"></div>
       <section class="set-card">
         <div class="set-head">
@@ -2556,6 +2682,7 @@
     drawRelayRows();
     const syncRelays=()=>{ _setRelays = $$('#set-relay-list .relay-row input').map(i=>i.value.trim()); };
 
+    { const sq=$('#set-scan-qr'); if(sq) sq.onclick=()=>openQrScanner(); }
     { const ab=$('#set-admin'); if(ab) ab.onclick=()=>switchView('admin'); }
     { const da=$('#set-del-account'); if(da) da.onclick=async()=>{
         if(!confirm('Permanently delete your account and all your AI chats + files on this server? This cannot be undone.')) return;
