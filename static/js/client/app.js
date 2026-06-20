@@ -347,6 +347,7 @@
     bindFeedActions();
     $('#feed').addEventListener('scroll', onFeedScroll, { passive:true });   // infinite scroll-back
     bumpDraft();   // show the saved-drafts count on the nav badge
+    Drafts.pull();   // sync drafts from the encrypted Nostr event (cross-device)
     // YouTube facade → load the real player iframe on click (kept out of the timeline until then
     // for performance), and don't let the click bubble up to open the note thread.
     document.addEventListener('click', e=>{
@@ -1245,16 +1246,33 @@
   const Drafts = {
     key(){ return 'pc_drafts_' + ((typeof ME!=='undefined' && ME && ME.pubkey) || 'anon'); },
     all(){ try{ return JSON.parse(localStorage.getItem(this.key())||'[]'); }catch(_){ return []; } },
-    _save(a){ try{ localStorage.setItem(this.key(), JSON.stringify(a.slice(0,300))); }catch(_){} bumpDraft(); },
+    _save(a){ try{ localStorage.setItem(this.key(), JSON.stringify(a.slice(0,300))); }catch(_){} bumpDraft(); this._sync(a); },
     get(id){ return this.all().find(x=>x.id===id); },
     save(d){ const a=this.all(); d.id=d.id||('d'+Date.now().toString(36)+Math.random().toString(36).slice(2,6)); d.ts=Math.floor(Date.now()/1000);
       const i=a.findIndex(x=>x.id===d.id); if(i>=0)a[i]=d; else a.unshift(d); this._save(a); return d.id; },
     remove(id){ this._save(this.all().filter(x=>x.id!==id)); },
+    // Sync to/from a single encrypted Nostr event (kind-30078 pcai:drafts under the storage key),
+    // so drafts written on one device appear on another. Push is debounced.
+    _sync(a){ if(typeof ME==='undefined'||!ME) return; clearTimeout(this._t); this._t=setTimeout(async()=>{
+      try{ const auth=await sign(27235,'drafts',[['p',ME.pubkey]]);
+        await fetch('/client/drafts',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth)),drafts:a})}); }catch(_){} }, 900); },
+    async pull(){ if(typeof ME==='undefined'||!ME) return;
+      try{ const auth=await sign(27235,'drafts',[['p',ME.pubkey]]);
+        const r=await fetch('/client/drafts',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
+        if(r && r.ok && Array.isArray(r.drafts)){
+          // union by id, newest ts wins — never drops a draft made offline on either device
+          const map={}; [...r.drafts, ...this.all()].forEach(d=>{ if(d&&d.id&&(!map[d.id]||(d.ts||0)>=(map[d.id].ts||0))) map[d.id]=d; });
+          const merged=Object.values(map).sort((a,b)=>(b.ts||0)-(a.ts||0));
+          try{ localStorage.setItem(this.key(), JSON.stringify(merged.slice(0,300))); }catch(_){}
+          bumpDraft(); if(VIEW==='drafts') renderDrafts();
+        } }catch(_){} },
   };
   function bumpDraft(){ const n=Drafts.all().length; $$('#draft-badge,#more-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden'); }); }
   // mobile overflow sheet — holds the secondary views so the bottom bar stays uncluttered
   function moreMenu(){
-    const items=[['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['articles','📰','Articles'],['streams','📺','Streams'],['blossom','🌸','Files'],['profile','👤','Profile'],['settings','⚙','Settings']];
+    const items=[['ai','🤖','PosterChan AI'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['articles','📰','Articles'],['streams','📺','Streams'],['blossom','🌸','Files'],['profile','👤','Profile'],['settings','⚙','Settings']];
     modal(`<h3>More</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}</span></button>`).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); if(b.dataset.v==='profile') renderProfileView(ME.pubkey); else switchView(b.dataset.v); });
     });
@@ -2439,7 +2457,7 @@
           <button class="btn btn-ghost small" id="us-mail-add">＋ Add email account</button>
         </div>
         <div class="us-pane" data-pane="telegram">
-          <div class="muted small" id="us-tg-status">${s.telegram_chat_id?('✓ Linked (chat '+enc(String(s.telegram_chat_id))+')'):'Not linked.'}</div>
+          <div class="${s.telegram_chat_id?'us-ok':'muted small'}" id="us-tg-status">${s.telegram_chat_id?('✓ Linked (chat '+enc(String(s.telegram_chat_id))+')'):'⚠ Not linked — generate a key below and send it to your bot.'}</div>
           <div class="set-actions">
             <button class="btn btn-ghost small" id="us-tg-key">Generate link key</button>
             ${s.telegram_chat_id?'<button class="btn btn-ghost small" id="us-tg-unlink" style="color:#ff6b8b">Unlink Telegram</button>':''}

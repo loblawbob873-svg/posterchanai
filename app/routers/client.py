@@ -816,6 +816,36 @@ async def ai_file_delete(data: AiFileReq, db: Session = Depends(get_db)):
     return JSONResponse({"ok": True})
 
 
+# ----- drafts: synced across devices as ONE encrypted doc under the user's storage key -----
+class DraftsReq(BaseModel):
+    pubkey: str
+    auth: str
+    drafts: Optional[list] = None   # present → save the list; absent → load
+
+
+@router.post("/drafts")
+async def drafts_sync(data: DraftsReq, db: Session = Depends(get_db)):
+    """Save (when `drafts` provided) or load the user's drafts — stored as one encrypted doc under
+    their server-held storage key, so drafts written on one device show up on another."""
+    from app.services import nostr_store as store
+    pk = nostr_service.to_pubkey_hex(data.pubkey)
+    if not pk:
+        return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
+    if not _verify_self_auth(data.auth, pk):
+        return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
+    user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    if not user:
+        return JSONResponse({"ok": True, "drafts": []})
+    sk = store.user_storage_seckey(db, user)
+    port = int(_setting(db, "nostr_relay_port", "3052"))
+    if data.drafts is not None:
+        await store.put_doc(port, sk, "pcai:drafts", {"drafts": data.drafts[:300]})
+        return JSONResponse({"ok": True})
+    doc = await store.get_doc(port, "pcai:drafts", seckey=sk)
+    drafts = doc.get("drafts", []) if isinstance(doc, dict) else []
+    return JSONResponse({"ok": True, "drafts": drafts if isinstance(drafts, list) else []})
+
+
 # ----- delete my account (the AI app account + all its data) -----
 class DeleteAccountReq(BaseModel):
     pubkey: str
