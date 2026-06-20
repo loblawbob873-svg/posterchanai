@@ -332,6 +332,21 @@ def nostr_relay_status(admin: User = Depends(get_admin_user)):
     return relay_status()
 
 
+@router.get("/nostr-relay/identity")
+def nostr_relay_identity(db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
+    """This node's relay operator identity — the key it signs its datastore docs with. Add the
+    npub to ANOTHER node's Web-of-Trust seeds so that node accepts this one's events when it's an
+    upstream. The nsec lets an admin reuse the same operator key across nodes. Mints a key if none
+    exists yet."""
+    from app.services import settings_store
+    from app.services.nostr import nostr_service, bech32
+    sk = settings_store._operator_seckey(db)
+    if not sk:
+        return {"ok": False, "error": "no operator key"}
+    pub = nostr_service.derive_pubkey(sk)
+    return {"ok": True, "npub": nostr_service.npub_of(pub), "nsec": bech32.encode("nsec", sk)}
+
+
 @router.post("/nostr-relay/backfill-me")
 def nostr_relay_backfill_me(admin: User = Depends(get_admin_user)):
     """Backfill the admin's own Nostr post history into the relay (Admin → Relay button)."""

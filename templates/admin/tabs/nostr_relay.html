@@ -10,6 +10,15 @@
             <small>Serves NIP-01 in its own thread at <code>/relay</code> on the port below. Only accepts/syncs notes from a <strong>web of trust</strong>. Front it with TLS (e.g. <code>wss://relay.yourdomain/</code>). <strong>Restart the service after enabling.</strong></small>
         </div>
         <div class="form-group">
+            <label>Relay identity (operator key)</label>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                <code id="relay-npub" class="muted small">loading…</code>
+                <button type="button" class="btn-secondary btn-small" onclick="copyRelayKey('npub')">⧉ Copy npub</button>
+                <button type="button" class="btn-secondary btn-small" onclick="copyRelayKey('nsec')">⧉ Copy nsec</button>
+            </div>
+            <small>This node's relay signs its datastore docs with this key. Add the <strong>npub</strong> to another node's <em>Web of Trust → Seed npubs</em> so that node accepts this one's events when used upstream. The <strong>nsec</strong> is secret — only for reusing the same operator identity across nodes.</small>
+        </div>
+        <div class="form-group">
             <label for="nostr_relay_port">Listen port</label>
             <input type="number" id="nostr_relay_port" name="nostr_relay_port" placeholder="3052">
             <small>Internal port the relay binds (default 3052). Your reverse proxy upgrades <code>wss://relay.yourdomain/</code> → <code>127.0.0.1:&lt;port&gt;/relay</code>.</small>

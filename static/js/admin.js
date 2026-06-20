@@ -16,8 +16,27 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
         // lives outside #settingsForm and manages users via its own controls, so hide it there.
         const saveBtn = document.querySelector('#settingsForm .save-btn');
         if (saveBtn) saveBtn.style.display = (btn.dataset.tab === 'users') ? 'none' : '';
+
+        if (btn.dataset.tab === 'relay') loadRelayIdentity();
     });
 });
+
+// Relay operator identity — fetched lazily when the Relay tab opens; copy buttons read the cache.
+let _relayKeys = null;
+async function loadRelayIdentity() {
+    const el = document.getElementById('relay-npub');
+    try {
+        const r = await fetch('/api/admin/nostr-relay/identity').then(r => r.json());
+        if (r && r.ok) { _relayKeys = { npub: r.npub, nsec: r.nsec }; if (el) el.textContent = r.npub; }
+        else if (el) el.textContent = (r && r.error) || '(no operator key)';
+    } catch (_) { if (el) el.textContent = '(failed to load)'; }
+}
+function copyRelayKey(which) {
+    if (!_relayKeys || !_relayKeys[which]) return;
+    navigator.clipboard.writeText(_relayKeys[which]);
+    const b = (typeof event !== 'undefined') && event.target;
+    if (b) { const t = b.textContent; b.textContent = '✓ copied'; setTimeout(() => { b.textContent = t; }, 1500); }
+}
 
 // Default news sources
 const DEFAULT_NEWS_SOURCES = `drudgereport.com|Drudge Report
