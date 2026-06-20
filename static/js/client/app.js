@@ -1593,6 +1593,26 @@
     $$('[data-m]',pop).forEach(b=> b.onclick=()=>{ close(); onPick(b.dataset.m); });
     return close;
   }
+  // Translate the DRAFT in a compose box into a chosen language (reply / quote / new post all use
+  // compose(), so this covers all three). Pops a language picker, then replaces the draft text.
+  async function composeTranslate(ta, btn){
+    const text=(ta.value||'').trim();
+    if(!text){ toast('write something first'); return; }
+    const langs=['English','Spanish','Tagalog','Cebuano','French','German','Japanese','Chinese','Portuguese','Russian','Arabic','Hindi'];
+    const items=langs.map(n=>[n,'🌐 '+n]).concat([['__other','✏️ Other…']]);
+    openMenuPopover(btn, items, async name=>{
+      let to=name;
+      if(name==='__other'){ to=(prompt('Translate to which language?')||'').trim(); if(!to) return; }
+      const old=ta.value; ta.value='translating…'; ta.disabled=true;
+      try{
+        const r=await fetch('/client/translate',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ text, to }) });
+        const j=await r.json().catch(()=>({}));
+        ta.disabled=false;
+        if(r.ok && j.text){ ta.value=j.text; ta.focus(); ta.dispatchEvent(new Event('input')); toast('translated → '+to); }
+        else { ta.value=old; toast(j.error||'translation unavailable'); }
+      }catch(e){ ta.disabled=false; ta.value=old; toast('translate failed'); }
+    });
+  }
   // the per-post "☰ more" menu — holds the secondary actions (bookmark / copy id / pin / delete /
   // block) so the action row stays a clean 5 across.
   function openPostMenu(id, pk, art, anchorBtn){
@@ -1852,7 +1872,7 @@
       <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
       <div class="muted small mention-hint hidden" id="cmp-mentions"></div>
       <div id="cmp-preview" class="note-preview hidden"></div>
-      <div class="row cmp-tools"><button class="btn btn-ghost small" id="cmp-img">📎 Attach</button><button class="btn btn-ghost small" id="cmp-blossom">🌸 Files</button><button class="btn btn-ghost small" id="cmp-emoji">😀 Emoji</button>${CFG.gif_enabled?`<button class="btn btn-ghost small" id="cmp-gif">🎬 GIF</button>`:''}<input type="file" id="cmp-file" multiple hidden>
+      <div class="row cmp-tools"><button class="btn btn-ghost small" id="cmp-img">📎 Attach</button><button class="btn btn-ghost small" id="cmp-blossom">🌸 Files</button><button class="btn btn-ghost small" id="cmp-emoji">😀 Emoji</button>${CFG.gif_enabled?`<button class="btn btn-ghost small" id="cmp-gif">🎬 GIF</button>`:''}<button class="btn btn-ghost small" id="cmp-translate">🌐 Translate</button><input type="file" id="cmp-file" multiple hidden>
       <span class="spacer"></span><button class="btn btn-ghost small" id="cmp-draft">💾 Draft</button><button class="btn btn-neon small" id="cmp-send">Post ▶</button></div>
       <div class="muted small" id="cmp-status"></div>`, root=>{
       const ta=$('#cmp',root); attachMentionAutocomplete(ta); if(text) ta.value=text;
@@ -1877,6 +1897,7 @@
       $('#cmp-blossom',root).onclick=()=>blossomPicker(ta);
       $('#cmp-emoji',root).onclick=(e)=>{ e.stopPropagation(); openEmojiPopover($('#cmp-emoji',root), (emoji)=>{ _insertAt(ta, emoji); }); };
       { const gb=$('#cmp-gif',root); if(gb) gb.onclick=()=>gifPicker(ta); }
+      { const tb=$('#cmp-translate',root); if(tb) tb.onclick=()=>composeTranslate(ta, tb); }
       $('#cmp-file',root).onchange=async e=>{ const files=[...e.target.files]; if(!files.length)return;
         for(let i=0;i<files.length;i++){ $('#cmp-status',root).textContent=`uploading ${i+1}/${files.length}…`;
           try{ const url=await uploadBlob(files[i]); ta.value+=(ta.value?'\n':'')+url; }
