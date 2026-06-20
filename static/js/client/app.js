@@ -814,6 +814,13 @@
     decorateProfiles();
   }
   function _insertAt(ta, text){ const s=ta.selectionStart||0, en=ta.selectionEnd||0; ta.value=ta.value.slice(0,s)+text+ta.value.slice(en); const c=s+text.length; ta.selectionStart=ta.selectionEnd=c; ta.focus(); }
+  // Local article drafts (per-account) — so a long-form post survives a refresh/navigation and can
+  // be saved explicitly. Kept in localStorage (not published until you hit Publish); cleared on publish.
+  let _aeDraftT=null;
+  function _articleDraftKey(){ return 'pc_article_draft_' + ((typeof ME!=='undefined' && ME && ME.pubkey) || 'anon'); }
+  function _saveArticleDraft(o){ try{ localStorage.setItem(_articleDraftKey(), JSON.stringify(o)); }catch(_){} }
+  function _loadArticleDraft(){ try{ return JSON.parse(localStorage.getItem(_articleDraftKey()) || 'null'); }catch(_){ return null; } }
+  function _clearArticleDraft(){ try{ localStorage.removeItem(_articleDraftKey()); }catch(_){} }
   function renderArticleEditor(existing){
     VIEW='article'; $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent=existing?'Edit article':'Write article';
     const feed=$('#feed'); const g=(k)=>existing?((existing.tags.find(t=>t[0]===k)||[])[1]||''):'';
@@ -821,16 +828,29 @@
       <button class="btn btn-ghost small" id="ae-back">← Cancel</button>
       <label class="fld">Title<input class="input" id="ae-title" placeholder="Article title" value="${enc(g('title'))}"></label>
       <label class="fld">Summary<input class="input" id="ae-sum" placeholder="One-line summary (optional)" value="${enc(g('summary'))}"></label>
-      <label class="fld">Header image<div class="row"><input class="input" id="ae-img" placeholder="https://… (optional)" value="${enc(g('image'))}"><button class="btn btn-ghost small" id="ae-img-up">🖼 Upload</button></div></label>
+      <label class="fld">Header image<input class="input" id="ae-img" placeholder="https://… (optional)" value="${enc(g('image'))}"></label>
+      <div class="row" style="margin:-6px 0 2px"><button type="button" class="btn btn-ghost small" id="ae-img-up">🖼 Upload header image</button></div>
       <input type="file" id="ae-img-file" accept="image/*" hidden>
       <div class="cmp-tabs"><button class="cmp-tab active" data-t="write">Write</button><button class="cmp-tab" data-t="preview">👁 Preview</button></div>
       <div class="row cmp-tools"><button class="btn btn-ghost small" id="ae-insert">📎 Insert image</button><input type="file" id="ae-body-file" accept="image/*" multiple hidden><span class="spacer"></span><span class="muted small">Markdown</span></div>
       <textarea id="ae-body" class="article-body" placeholder="Write your article in markdown…">${enc(existing?existing.content:'')}</textarea>
       <div id="ae-preview" class="markdown article-preview hidden"></div>
-      <div class="row"><span class="muted small" id="ae-status"></span><span class="spacer"></span><button class="btn btn-neon" id="ae-pub">Publish ▶</button></div>
+      <div class="row"><span class="muted small" id="ae-status"></span><span class="spacer"></span><button type="button" class="btn btn-ghost small" id="ae-draft">💾 Save draft</button><button class="btn btn-neon" id="ae-pub">Publish ▶</button></div>
     </div>`;
     $('#ae-back').onclick=()=>switchView('articles');
     const body=$('#ae-body');
+    // Restore a locally-saved draft into a NEW article editor (not when editing a published one).
+    if(!existing){ const dr=_loadArticleDraft();
+      if(dr && (dr.title||dr.body||dr.image||dr.summary)){
+        $('#ae-title').value=dr.title||''; $('#ae-sum').value=dr.summary||''; $('#ae-img').value=dr.image||''; body.value=dr.body||'';
+        if($('#ae-status')) $('#ae-status').textContent='restored draft';
+      } }
+    const _grabArticle=()=>({title:$('#ae-title').value, summary:$('#ae-sum').value, image:$('#ae-img').value, body:body.value});
+    { const d=$('#ae-draft'); if(d) d.onclick=()=>{ const a=_grabArticle();
+        if(!(a.title||a.body||a.image||a.summary)){ toast('nothing to save yet'); return; }
+        _saveArticleDraft(a); toast('draft saved'); if($('#ae-status')) $('#ae-status').textContent='draft saved'; }; }
+    // Light auto-save so a refresh/navigation doesn't lose work (cleared on publish).
+    body.addEventListener('input', ()=>{ clearTimeout(_aeDraftT); _aeDraftT=setTimeout(()=>_saveArticleDraft(_grabArticle()), 1200); });
     $$('.cmp-tab',feed).forEach(b=> b.onclick=()=>{ $$('.cmp-tab',feed).forEach(x=>x.classList.toggle('active',x===b)); const pv=b.dataset.t==='preview'; body.classList.toggle('hidden',pv); const prev=$('#ae-preview'); prev.classList.toggle('hidden',!pv); if(pv) prev.innerHTML=mdToHtml(body.value)||'<div class="muted small">Nothing to preview.</div>'; });
     $('#ae-img-up').onclick=()=>$('#ae-img-file').click();
     $('#ae-img-file').onchange=async ev=>{ const f=ev.target.files[0]; if(!f)return; $('#ae-status').textContent='uploading image…'; try{ $('#ae-img').value=await uploadBlob(f); $('#ae-status').textContent='image uploaded'; }catch(err){ $('#ae-status').textContent='upload failed: '+err.message; } };
@@ -847,7 +867,7 @@
     if(image) tags.push(['image',image]);
     mentionTags(body).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
     $('#ae-status') && ($('#ae-status').textContent='publishing…');
-    try{ const r=await publish(30023, body, tags); if(r && r.ok===false){ toast('relay: '+(r.msg||'rejected')); if($('#ae-status'))$('#ae-status').textContent=''; } else { toast('article published'); switchView('articles'); } }
+    try{ const r=await publish(30023, body, tags); if(r && r.ok===false){ toast('relay: '+(r.msg||'rejected')); if($('#ae-status'))$('#ae-status').textContent=''; } else { _clearArticleDraft(); toast('article published'); switchView('articles'); } }
     catch(e){ toast('publish failed: '+e.message); }
   }
 
