@@ -435,6 +435,7 @@ a.btn.full{display:block}
   .topbar h2{font-size:16px;flex-shrink:0}
   .searchbox{margin:0 4px}
   .note{padding:13px 14px;gap:10px}
+  .reply-ctx{padding:12px 14px 0}   /* align reply context with the note body on mobile */
   .note .av{width:40px;height:40px}
   .acts{max-width:none}
   .prof .phead{padding:0 14px}.prof .pbody{padding:12px 14px}
