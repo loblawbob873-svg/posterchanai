@@ -1718,11 +1718,13 @@
     const enh=(cat.enhance||[]).map(chip).join('');
     const eff=(cat.effects||[]).map(chip).join('');
     const mots=(cat.motions||['zoom','shake','pulse','trippy']).map(mot).join('');
-    return '<div class="fx-guide"><b>🎬 Effects studio</b> — your image is attached. <b>1)</b> pick an effect → <b>2)</b> add motion → <b>3)</b> optional caption, then ▶ Send. When the result appears, tap <b>↩ Send the Reply</b>.'+
+    const stk=(cat.chars||[]).map(n=>`<button class="fx-char" data-char="${enc(n)}">🧷 ${enc(n)}</button>`).join('');
+    return '<div class="fx-guide"><b>🎬 Effects studio</b> — your image is attached. <b>1)</b> pick an effect → <b>2)</b> motion → <b>3)</b> optional sticker / caption, then ▶ Send. When the result appears, tap <b>↩ Send the Reply</b>.'+
       (enh?'<div class="muted small" style="margin:10px 0 4px">✨ Enhance</div><div class="fx-grid">'+enh+'</div>':'')+
       '<div class="muted small" style="margin:10px 0 4px">🎭 Effects — tap one ('+((cat.effects||[]).length)+')</div><div class="fx-grid">'+eff+'</div>'+
-      '<div class="muted small" style="margin:10px 0 4px">🌀 Add motion (appends)</div><div class="fx-row" style="display:flex;flex-wrap:wrap;gap:6px">'+mots+'</div>'+
-      '<div class="muted small" style="margin:10px 0 4px">💬 Caption</div><div class="fx-row" style="display:flex;gap:6px"><button class="fx-mot" data-add="meme ">＋ meme text</button></div></div>';
+      '<div class="muted small" style="margin:10px 0 4px">🌀 Motion — pick one (trippy/glow/alive stack)</div><div class="fx-row" style="display:flex;flex-wrap:wrap;gap:6px">'+mots+'</div>'+
+      (stk?'<div class="muted small" style="margin:10px 0 4px">🧷 Sticker (optional)</div><div class="fx-row" style="display:flex;flex-wrap:wrap;gap:6px">'+stk+'</div>':'')+
+      '<div class="muted small" style="margin:10px 0 4px">💬 Caption (optional)</div><div class="fx-row" style="display:flex;gap:6px"><button class="fx-mot" data-add="meme ">＋ meme text</button></div></div>';
   }
   // Post the generated effect media (data:base64 in _ai.fxMedia) back as a reply to the source post.
   async function sendEffectReply(mid, btn){
@@ -1736,6 +1738,27 @@
       toast('✓ reply posted'); if(btn){ btn.textContent='✓ replied'; btn.classList.add('on'); }
     }catch(e){ toast('reply failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; btn.textContent='↩ Send the Reply'; } }
   }
+  // Combined-effects rules (match the bot/Telegram): an effect takes ONE geometry motion
+  // (zoom/shake/medshake/beginshake/pulse — they don't stack); glow/alive/trippy COMPOSE (toggle).
+  // The studio input is the state; these parse + rewrite it so taps build a valid command.
+  const _FX_GEO=['zoom','shake','medshake','beginshake','pulse'];
+  // parse the studio command into effect + mods + char(sticker) + meme(caption). Order on rebuild:
+  // `effect [motion] [glow] [alive] [trippy] [char <name>] [meme <text>]` (char MUST precede meme).
+  function _fxParse(v){
+    const t=(v||'').trim().split(/\s+/).filter(Boolean);
+    const mi=t.indexOf('meme'); const pre=mi>=0?t.slice(0,mi):t; const meme=mi>=0?t.slice(mi):[];
+    let char=''; let head=pre.slice(); const ci=pre.indexOf('char');
+    if(ci>=0 && pre[ci+1]){ char=pre[ci+1]; head=pre.slice(0,ci).concat(pre.slice(ci+2)); }
+    return { effect:head[0]||'', mods:head.slice(1), char, meme };
+  }
+  function _fxJoin(p){ return [p.effect,...p.mods,...(p.char?['char',p.char]:[]),...p.meme].filter(Boolean).join(' '); }
+  function _fxSetEffect(ta, eff){ const p=_fxParse(ta.value); p.effect=eff; ta.value=_fxJoin(p); }
+  function _fxApplyMod(ta, mod){ const p=_fxParse(ta.value);
+    if(mod==='meme '){ if(!p.meme.length) p.meme=['meme']; ta.value=_fxJoin(p)+' '; return; }
+    if(_FX_GEO.includes(mod)){ p.mods=p.mods.filter(m=>!_FX_GEO.includes(m) && m!==mod); p.mods.push(mod); }   // ONE geometry motion
+    else { p.mods.includes(mod) ? (p.mods=p.mods.filter(m=>m!==mod)) : p.mods.push(mod); }                      // glow/alive/trippy compose (toggle)
+    ta.value=_fxJoin(p); }
+  function _fxApplyChar(ta, name){ const p=_fxParse(ta.value); p.char=(p.char===name)?'':name; ta.value=_fxJoin(p); }   // sticker overlay — single, toggle
   async function doRepost(id,pk,btn){
     if(countsFor(id).iRt){ toast('already reposted'); return; }
     const o=Store.get(id);
@@ -2707,8 +2730,9 @@
       const cmd=e.target.closest('.ai-cmd'); if(cmd){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ ta.value=cmd.dataset.cmd; aiSend(); } return; }
       const fxc=e.target.closest('.fx-cmd'); if(fxc){ e.preventDefault();
         if(fxc.dataset.cmd==='__fxguide'){ showEffectGuide(); return; }   // 🎬 Effects → open the studio picker
-        const ta=$('#ai-input'); if(ta){ if(_ai.fxImage && !_ai.attach.length) aiAddFiles([_ai.fxImage]); ta.value=fxc.dataset.cmd; ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // effect chip → re-attach image + prefill
-      const fxm=e.target.closest('.fx-mot'); if(fxm){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ if(_ai.fxImage && !_ai.attach.length) aiAddFiles([_ai.fxImage]); const v=ta.value.trim(); ta.value=(v?v+' ':'')+fxm.dataset.add; ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // motion/caption → APPEND to the current effect
+        const ta=$('#ai-input'); if(ta){ if(_ai.fxImage && !_ai.attach.length) aiAddFiles([_ai.fxImage]); _fxSetEffect(ta, fxc.dataset.cmd); ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // effect chip → set base effect (keeps motion/caption)
+      const fxm=e.target.closest('.fx-mot'); if(fxm){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ if(_ai.fxImage && !_ai.attach.length) aiAddFiles([_ai.fxImage]); _fxApplyMod(ta, fxm.dataset.add); ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // motion → single geometry / glow·alive·trippy compose
+      const fxh=e.target.closest('.fx-char'); if(fxh){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ if(_ai.fxImage && !_ai.attach.length) aiAddFiles([_ai.fxImage]); _fxApplyChar(ta, fxh.dataset.char); ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // sticker (char overlay) → single, toggle
       const rfx=e.target.closest('.ai-reply-fx'); if(rfx){ e.preventDefault(); sendEffectReply(rfx.dataset.mid, rfx); return; }   // post the generated effect back as a reply
       const mag=e.target.closest('.ai-magnet'); if(mag){ const ta=$('#ai-input'); if(ta){ ta.value='torrents add '+mag.dataset.magnet; aiSend(); } return; }
       const im=e.target.closest('img'); if(im){ openLightbox(im.dataset.full||im.src); }

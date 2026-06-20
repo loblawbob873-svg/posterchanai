@@ -656,8 +656,9 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 /* 🎬 Effects studio chips — bigger tap targets (mobile-friendly), prefill (don't auto-send) */
 .fx-cmd{display:inline-flex;align-items:center;background:var(--panel2);color:var(--text);border:1px solid var(--neon);border-radius:11px;padding:10px 14px;font-weight:600;cursor:pointer;font-size:15px;min-height:44px}
 .fx-cmd:active{background:rgba(0,255,255,.14)}
-.fx-mot{display:inline-flex;align-items:center;background:transparent;color:var(--cyan);border:1px dashed var(--cyan);border-radius:11px;padding:9px 13px;font-weight:600;cursor:pointer;font-size:14.5px;min-height:42px}
-.fx-mot:active{background:rgba(0,255,255,.1)}
+.fx-mot,.fx-char{display:inline-flex;align-items:center;background:transparent;color:var(--cyan);border:1px dashed var(--cyan);border-radius:11px;padding:9px 13px;font-weight:600;cursor:pointer;font-size:14.5px;min-height:42px}
+.fx-mot:active,.fx-char:active{background:rgba(0,255,255,.1)}
+.fx-char{color:var(--neon);border-color:var(--neon)}
 .fx-grid{display:flex;flex-wrap:wrap;gap:6px;max-height:34vh;overflow:auto;padding:3px;border:1px solid var(--line);border-radius:12px;background:rgba(8,5,18,.4)}
 .fx-guide{line-height:1.5}
 .fx-guide code{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-size:13px}
