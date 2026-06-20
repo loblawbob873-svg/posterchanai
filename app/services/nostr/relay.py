@@ -7,6 +7,7 @@ a dead relay can't stall a poll (mirrors the fedi bridge's defensive timeouts).
 """
 
 import json
+import time
 import uuid
 import asyncio
 import contextlib
@@ -31,6 +32,36 @@ def _proxy_kw() -> dict:
 _CONNECT_TIMEOUT = 8
 _DEFAULT_QUERY_TIMEOUT = 12
 _PUBLISH_TIMEOUT = 10
+
+# Per-relay circuit breaker: after this many consecutive connect failures (Tor proxy AND direct both
+# failed), stop querying/publishing that relay for _RELAY_PAUSE_SEC so a dead/blocked upstream doesn't
+# slow every sync. A single successful connect clears the streak.
+_RELAY_FAIL_THRESHOLD = 3
+_RELAY_PAUSE_SEC = 600   # 10 minutes
+_relay_fail: dict = {}            # relay -> consecutive connect-failure count
+_relay_paused_until: dict = {}    # relay -> unix ts; skip the relay until then
+
+
+def _relay_paused(relay: str) -> bool:
+    return time.time() < _relay_paused_until.get(relay, 0)
+
+
+def _note_relay_ok(relay: str) -> None:
+    """A successful connect clears the relay's failure streak / pause."""
+    _relay_fail.pop(relay, None)
+    _relay_paused_until.pop(relay, None)
+
+
+def _note_relay_fail(relay: str) -> None:
+    """Both transports failed to connect — count it; pause the relay once the streak hits the
+    threshold (logged once, on the transition into the pause)."""
+    n = _relay_fail.get(relay, 0) + 1
+    _relay_fail[relay] = n
+    if n >= _RELAY_FAIL_THRESHOLD:
+        _relay_paused_until[relay] = time.time() + _RELAY_PAUSE_SEC
+        _relay_fail.pop(relay, None)
+        logger.warning("[nostr] pausing sync with %s for %dm — %d consecutive connect failures (Tor+direct)",
+                       relay, _RELAY_PAUSE_SEC // 60, n)
 
 
 def normalize_relays(relays) -> list[str]:
@@ -75,13 +106,18 @@ async def _connect(relay: str, direct: bool, **kw):
     max_size for the firehose) pass through."""
     base = _conn_kw(relay, direct)
     try:
-        ws = await websockets.connect(relay, open_timeout=_CONNECT_TIMEOUT, **base, **kw)
-    except Exception as e:
-        if base.get("proxy"):
-            logger.warning("[nostr] proxy connect to %s failed (%s) — retrying direct", relay, e)
-            ws = await websockets.connect(relay, open_timeout=_CONNECT_TIMEOUT, proxy=None, **kw)
-        else:
-            raise
+        try:
+            ws = await websockets.connect(relay, open_timeout=_CONNECT_TIMEOUT, **base, **kw)
+        except Exception as e:
+            if base.get("proxy"):
+                logger.warning("[nostr] proxy connect to %s failed (%s) — retrying direct", relay, e)
+                ws = await websockets.connect(relay, open_timeout=_CONNECT_TIMEOUT, proxy=None, **kw)
+            else:
+                raise
+    except Exception:
+        _note_relay_fail(relay)   # both Tor + direct (or direct-only) failed to connect
+        raise
+    _note_relay_ok(relay)         # connected → clear the failure streak / pause
     try:
         yield ws
     finally:
@@ -92,6 +128,8 @@ async def _connect(relay: str, direct: bool, **kw):
 
 
 async def _publish_one(relay: str, event: dict, direct: bool = False) -> bool:
+    if not _is_local(relay) and _relay_paused(relay):
+        return False   # circuit breaker: relay paused after repeated connect failures
     try:
         async with _connect(relay, direct) as ws:
             await ws.send(json.dumps(["EVENT", event]))
@@ -128,6 +166,8 @@ async def publish(relays, event: dict, direct: bool = False) -> int:
 
 
 async def _query_one(relay: str, filters: list, out: dict, timeout: float, direct: bool = False) -> None:
+    if not _is_local(relay) and _relay_paused(relay):
+        return   # circuit breaker: relay paused after repeated connect failures — skip silently
     sub_id = uuid.uuid4().hex[:16]
     try:
         async with _connect(relay, direct) as ws:
