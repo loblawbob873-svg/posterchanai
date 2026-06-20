@@ -417,11 +417,16 @@ a.btn.full{display:block}
 .mobilenav{display:none}
 /* ===== responsive ===== */
 @media(max-width:820px){
-  /* Desktop scales everything down (zoom .70–.85); mobile had NO zoom, so the whole app rendered
-     ~20% too big. Apply a global zoom so it's denser/"higher resolution" like the rest of the app. */
-  body{zoom:.8}
-  .app{grid-template-columns:1fr;height:calc(100vh / .8)}
+  .app{grid-template-columns:1fr}
   .sidebar{display:none}
+  /* Density on mobile (no global zoom — Firefox's zoom leaves a black border). Scale down the main
+     content via font-size so the app reads denser without breaking the viewport. */
+  .note .txt{font-size:15px;line-height:1.5} .note .name{font-size:14.5px}
+  .note .handle,.note .time{font-size:13px} .act{font-size:13.5px} .act.actq{font-size:19px}
+  .bubble{font-size:14.5px;padding:9px 12px}
+  .dm-peer b{font-size:15px} .dm-peer .muted.small{font-size:13px}
+  .prof .pbody h2{font-size:20px} .rb-item .rb-txt{font-size:13.5px}
+  .topbar h2{font-size:15px} .nav-item{font-size:15px}
   #btn-compose{display:none}   /* topbar compose hidden on mobile — the bottom nav has ✏️ */
   .feed{padding-bottom:80px}
   /* Messages on mobile: ONE pane at a time, full-height flex so the thread actually scrolls and
