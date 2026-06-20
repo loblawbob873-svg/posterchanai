@@ -316,14 +316,27 @@ def refresh_nostr_relay_wot(admin: User = Depends(get_admin_user)):
 
 @router.post("/nostr-relay/backfill")
 def nostr_relay_backfill(npub: str = Query(...), admin: User = Depends(get_admin_user)):
-    """Backfill any user's Nostr history into the relay by npub/hex (Admin → Relay)."""
+    """Backfill one or MORE users' Nostr history into the relay by npub/hex (Admin → Relay).
+    `npub` accepts a single value or a comma/space/newline-separated list (batch a big sync)."""
+    import re as _re
     from app.services.nostr import nostr_service
     from app.services.nostr_relay.thread import trigger_backfill
-    pk = nostr_service.to_pubkey_hex((npub or "").strip())
-    if not pk:
-        return {"ok": False, "error": "invalid npub or hex pubkey"}
-    r = trigger_backfill(pk)
-    return {**r, "pubkey": pk}
+    started, bad = [], []
+    for tok in _re.split(r"[\s,]+", (npub or "").strip()):
+        if not tok:
+            continue
+        pk = nostr_service.to_pubkey_hex(tok)
+        if pk:
+            trigger_backfill(pk)
+            started.append(pk)
+        else:
+            bad.append(tok)
+    logger.info("[admin] relay sync requested by %s: %d user(s) queued%s",
+                getattr(admin, "username", "?"), len(started),
+                (" (%d invalid)" % len(bad)) if bad else "")
+    if not started:
+        return {"ok": False, "error": "no valid npub or hex pubkey", "bad": bad}
+    return {"ok": True, "count": len(started), "pubkeys": [p[:12] for p in started], "bad": bad}
 
 
 @router.post("/nostr-relay/purge-blocks")

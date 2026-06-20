@@ -65,11 +65,11 @@
         <div class="form-group">
             <label for="relayBackfillNpub">Sync a user's data</label>
             <div style="display:flex;gap:8px">
-                <input type="text" id="relayBackfillNpub" placeholder="npub1… or hex pubkey" style="flex:1">
+                <input type="text" id="relayBackfillNpub" placeholder="npub1… (one, or several comma/space separated)" style="flex:1">
                 <button type="button" id="relayBackfillBtn" class="btn-primary">⤓ Sync</button>
             </div>
             <span id="relayBackfillStatus" style="color:#9aa"></span>
-            <small>Pulls that user's full history (profile, notes, contacts, reactions, relay list) from upstream into this relay — makes a specific user resolvable/visible even if not yet reached by the backfill.</small>
+            <small>Pulls each user's full history (profile, notes, contacts, reactions, relay list) from upstream into this relay — makes them resolvable/visible even if not yet reached by the backfill. Accepts <strong>one or several</strong> npubs/hex, comma- or space-separated, to batch a big sync.</small>
         </div>
     </fieldset>
     <script>
@@ -99,7 +99,7 @@
                 bbtn.disabled=true; bstat.textContent='syncing…';
                 var f=(window.csrfFetch||fetch);
                 f('/api/admin/nostr-relay/backfill?npub='+encodeURIComponent(v),{method:'POST'}).then(function(r){return r.json();})
-                .then(function(j){ bstat.textContent=(j&&j.ok)?('✓ syncing '+String(j.pubkey||'').slice(0,12)+'… (a few sec)'):('✗ '+((j&&j.error)||'failed')); })
+                .then(function(j){ bstat.textContent=(j&&j.ok)?('✓ syncing '+(j.count||1)+' user(s)… (a few sec each; see relay log)'+((j.bad&&j.bad.length)?(' · '+j.bad.length+' invalid'):'')):('✗ '+((j&&j.error)||'failed')); })
                 .catch(function(e){ bstat.textContent='✗ '+e; }).finally(function(){ bbtn.disabled=false; });
             }); }
             var pbtn=document.getElementById('relayPurgeBlocksBtn'), pstat=document.getElementById('relayPurgeBlocksStatus');
