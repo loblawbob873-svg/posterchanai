@@ -196,10 +196,10 @@ def _read_config() -> dict:
             # Postgres is the relay's store (no SQLite). libpq DSN; tunable in Admin → Relay.
             "pg_dsn": g("nostr_relay_pg_dsn", os.environ.get("NOSTR_RELAY_PG_DSN",
                         "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan")),
-            # Age-prune DISABLED by default (0) on Postgres — keep all WoT content; storage is cheap
-            # and deleting followed accounts' history is the data-loss users hit. Only NIP-40
-            # expiration (events the author marked to expire) is ever swept. Set >0 to re-enable.
-            "retention_days": gi("nostr_relay_retention_days", 0),
+            # Age retention for high-volume FEED content only (notes/reposts/reactions/comments):
+            # pruned after N days. Registered users' notes + direct-published events are ALWAYS
+            # preserved (never pruned), so a user's own history is safe. 0 = keep everything.
+            "retention_days": gi("nostr_relay_retention_days", 30),
             # No hard count cap on Postgres either (it's an age-agnostic RAM bound — would delete old
             # feed notes once over the limit). 0 = unlimited; the 30-day age retention is the only
             # feed cleanup, and registered users' + direct-published events are always preserved.
