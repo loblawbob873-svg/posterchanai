@@ -421,9 +421,21 @@ a.btn.full{display:block}
   .sidebar{display:none}
   #btn-compose{display:none}   /* topbar compose hidden on mobile — the bottom nav has ✏️ */
   .feed{padding-bottom:80px}
+  /* The app's px sizes are tuned for the desktop zoom:.85 (everything is shrunk 15% there). Mobile
+     has no zoom, so the same sizes render ~18% too big → cramped, overflowing, hard to scroll.
+     Scale the main content down so it fits like a proper mobile layout. */
+  .note .txt{font-size:15.5px;line-height:1.5}
+  .note .name{font-size:15px} .note .handle,.note .time{font-size:13.5px}
+  .bubble{font-size:15px;padding:9px 13px}
+  .dm-peer b{font-size:15.5px} .dm-peer .muted.small{font-size:13.5px}
+  .act{font-size:14px} .act.actq{font-size:20px}
+  .prof .pbody h2{font-size:21px} .rb-item .rb-txt{font-size:14px}
   /* Messages on mobile: ONE pane at a time, full-height flex so the thread actually scrolls and
      the conversation list (with its "＋ New message") can't bleed over the thread's back button */
-  .dm-wrap{display:flex;flex-direction:column;height:100%;min-height:0}
+  /* Messages view: let ONLY .dm-msgs scroll, not the outer .feed too (double-scroll = 'can't
+     scroll the thread'). :has() is supported in Firefox; ignored gracefully where it isn't. */
+  .feed:has(.dm-wrap){overflow:hidden;padding-bottom:0;display:flex;flex-direction:column}
+  .dm-wrap{display:flex;flex-direction:column;height:100%;min-height:0;flex:1}
   .dm-list{flex:1;min-height:0;width:100%;border-right:none}
   .dm-thread{flex:1;min-height:0;width:100%;display:none}
   .dm-list.has-active{display:none}              /* a chat is open → hide the list */
