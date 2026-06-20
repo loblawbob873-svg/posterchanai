@@ -9,6 +9,7 @@ a dead relay can't stall a poll (mirrors the fedi bridge's defensive timeouts).
 import json
 import uuid
 import asyncio
+import contextlib
 import logging
 from urllib.parse import urlparse
 
@@ -65,9 +66,34 @@ def _conn_kw(relay: str, direct: bool) -> dict:
     return {} if direct else _proxy_kw()
 
 
+@contextlib.asynccontextmanager
+async def _connect(relay: str, direct: bool, **kw):
+    """Open a relay websocket with PROXY-FIRST, FALL-BACK-TO-DIRECT resilience: try the configured
+    built-in proxy (→ Tor) first, and if that connect fails, retry the SAME relay directly. So a
+    flaky/down Tor proxy degrades to a direct connection instead of dropping federation entirely.
+    Loopback relays never proxy; `direct=True` callers skip the proxy attempt. Extra kwargs (e.g.
+    max_size for the firehose) pass through."""
+    base = _conn_kw(relay, direct)
+    try:
+        ws = await websockets.connect(relay, open_timeout=_CONNECT_TIMEOUT, **base, **kw)
+    except Exception as e:
+        if base.get("proxy"):
+            logger.warning("[nostr] proxy connect to %s failed (%s) — retrying direct", relay, e)
+            ws = await websockets.connect(relay, open_timeout=_CONNECT_TIMEOUT, proxy=None, **kw)
+        else:
+            raise
+    try:
+        yield ws
+    finally:
+        try:
+            await ws.close()
+        except Exception:
+            pass
+
+
 async def _publish_one(relay: str, event: dict, direct: bool = False) -> bool:
     try:
-        async with websockets.connect(relay, open_timeout=_CONNECT_TIMEOUT, **_conn_kw(relay, direct)) as ws:
+        async with _connect(relay, direct) as ws:
             await ws.send(json.dumps(["EVENT", event]))
             try:
                 raw = await asyncio.wait_for(ws.recv(), timeout=5)
@@ -104,7 +130,7 @@ async def publish(relays, event: dict, direct: bool = False) -> int:
 async def _query_one(relay: str, filters: list, out: dict, timeout: float, direct: bool = False) -> None:
     sub_id = uuid.uuid4().hex[:16]
     try:
-        async with websockets.connect(relay, open_timeout=_CONNECT_TIMEOUT, **_conn_kw(relay, direct)) as ws:
+        async with _connect(relay, direct) as ws:
             await ws.send(json.dumps(["REQ", sub_id] + filters))
             deadline = asyncio.get_event_loop().time() + timeout
             while True:

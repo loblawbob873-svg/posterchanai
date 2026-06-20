@@ -19,7 +19,7 @@ import logging
 
 import websockets
 
-from app.services.nostr.relay import _conn_kw, _CONNECT_TIMEOUT
+from app.services.nostr.relay import _connect, _CONNECT_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +31,7 @@ async def _run_one(relay_url: str, kinds: list, on_event, stop: asyncio.Event, d
         try:
             # Generous frame cap: long-form articles (kind 30023) can be large; too small a
             # cap would raise on a big event and drop the whole upstream connection.
-            async with websockets.connect(relay_url, open_timeout=_CONNECT_TIMEOUT,
-                                          max_size=4 * 1024 * 1024, **_conn_kw(relay_url, direct)) as ws:
+            async with _connect(relay_url, direct, max_size=4 * 1024 * 1024) as ws:
                 sub = uuid.uuid4().hex[:16]
                 # Small look-back on (re)connect so a brief drop doesn't lose events.
                 flt = {"kinds": kinds, "since": int(time.time()) - 120}
