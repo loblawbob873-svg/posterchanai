@@ -612,7 +612,9 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .tag-chip.disc{background:linear-gradient(135deg,rgba(0,255,255,.10),rgba(255,0,255,.08));border-color:var(--line)}
 .tag-chip.disc:hover{border-color:var(--neon2);color:#fff}
 .tag-chip.disc .disc-ic{margin-right:2px}
-.ai-magnet{display:inline-block;margin:4px 0;background:linear-gradient(135deg,var(--neon),var(--neon2));color:#fff;border:none;border-radius:9px;padding:7px 13px;font-weight:600;cursor:pointer;font-size:14px}
+.ai-magnet{display:inline-block;margin:4px 6px 4px 0;background:linear-gradient(135deg,var(--neon),var(--neon2));color:#fff;border:none;border-radius:9px;padding:7px 13px;font-weight:600;cursor:pointer;font-size:14px}
+.ai-cmd{display:inline-block;margin:4px 6px 4px 0;background:var(--panel2);color:var(--text);border:1px solid var(--neon);border-radius:9px;padding:7px 13px;font-weight:600;cursor:pointer;font-size:14px}
+.ai-cmd:hover{background:var(--neon);color:#04020c}
 .feed.feed-admin{padding:0;overflow:hidden}
 .admin-frame{width:100%;height:100%;border:none;display:block;background:var(--bg)}
 
