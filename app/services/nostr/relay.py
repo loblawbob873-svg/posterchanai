@@ -38,8 +38,11 @@ _PUBLISH_TIMEOUT = 10
 # slow every sync. A single successful connect clears the streak.
 _RELAY_FAIL_THRESHOLD = 3
 _RELAY_PAUSE_SEC = 600   # 10 minutes
-_relay_fail: dict = {}            # relay -> consecutive connect-failure count
+_FAIL_DEBOUNCE = 30      # count at most ONE failure per relay per this many seconds (ignore bursts:
+                         # a backfill pages many queries, so a brief blip shouldn't pause a relay)
+_relay_fail: dict = {}            # relay -> failure count (spaced >= _FAIL_DEBOUNCE apart)
 _relay_paused_until: dict = {}    # relay -> unix ts; skip the relay until then
+_relay_last_fail: dict = {}       # relay -> unix ts of the last counted failure (debounce)
 
 
 def _relay_paused(relay: str) -> bool:
@@ -50,18 +53,24 @@ def _note_relay_ok(relay: str) -> None:
     """A successful connect clears the relay's failure streak / pause."""
     _relay_fail.pop(relay, None)
     _relay_paused_until.pop(relay, None)
+    _relay_last_fail.pop(relay, None)
 
 
 def _note_relay_fail(relay: str) -> None:
-    """Both transports failed to connect — count it; pause the relay once the streak hits the
-    threshold (logged once, on the transition into the pause)."""
+    """A connect attempt (Tor+direct) failed. Count at most one per _FAIL_DEBOUNCE so a burst of
+    failing queries (e.g. a backfill's pages, or a transient blip) doesn't instantly trip the
+    breaker — only PERSISTENT failure over time pauses the relay. Logged once, on the transition."""
+    now = time.time()
+    if now - _relay_last_fail.get(relay, 0) < _FAIL_DEBOUNCE:
+        return   # within the debounce window — this burst already counted
+    _relay_last_fail[relay] = now
     n = _relay_fail.get(relay, 0) + 1
     _relay_fail[relay] = n
     if n >= _RELAY_FAIL_THRESHOLD:
         _relay_paused_until[relay] = time.time() + _RELAY_PAUSE_SEC
         _relay_fail.pop(relay, None)
-        logger.warning("[nostr] pausing sync with %s for %dm — %d consecutive connect failures (Tor+direct)",
-                       relay, _RELAY_PAUSE_SEC // 60, n)
+        logger.warning("[nostr] pausing sync with %s for %dm — %d failures over ~%ds (Tor+direct)",
+                       relay, _RELAY_PAUSE_SEC // 60, n, _RELAY_FAIL_THRESHOLD * _FAIL_DEBOUNCE)
 
 
 def normalize_relays(relays) -> list[str]:
@@ -115,9 +124,11 @@ async def _connect(relay: str, direct: bool, **kw):
             else:
                 raise
     except Exception:
-        _note_relay_fail(relay)   # both Tor + direct (or direct-only) failed to connect
+        if not _is_local(relay):
+            _note_relay_fail(relay)   # both Tor + direct failed (never circuit-break the local relay)
         raise
-    _note_relay_ok(relay)         # connected → clear the failure streak / pause
+    if not _is_local(relay):
+        _note_relay_ok(relay)         # connected → clear the failure streak / pause
     try:
         yield ws
     finally:
