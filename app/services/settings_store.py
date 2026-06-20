@@ -63,6 +63,22 @@ def _operator_seckey(db):
             nsec = op.nostr_nsec
             keystore.set_operator_nsec(nsec)   # migrate into the keyfile
     if not nsec:
+        # No operator key anywhere → mint one and persist it to the keyfile, so a fresh node is a
+        # self-sufficient relay datastore (can sign its own settings/users/bots docs). This is what
+        # makes "relay backend by default" work out of the box on a brand-new install.
+        import secrets
+        from app.services.nostr import bech32, bip340
+        for _ in range(8):
+            cand = secrets.token_bytes(32)
+            try:
+                bip340.pubkey_from_seckey(cand)
+            except Exception:
+                continue
+            nsec = bech32.encode("nsec", cand)
+            keystore.set_operator_nsec(nsec)
+            logger.info("[settings-store] minted a fresh operator key (nostr datastore signer)")
+            break
+    if not nsec:
         return None
     try:
         return nostr_service.decode_seckey(nsec)
