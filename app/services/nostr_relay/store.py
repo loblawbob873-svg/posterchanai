@@ -244,13 +244,25 @@ class RelayStore:
                         "INSERT INTO event_tags (event_id, tag, value) VALUES (?,?,?) "
                         "ON CONFLICT DO NOTHING",
                         (eid, t[0], str(t[1])))
-            # NIP-09: a kind-5 deletion removes the author's own e-tagged events.
+            # NIP-09: a kind-5 deletion removes the author's own events. `e` = by event id;
+            # `a` = addressable (kind:pubkey:dtag) — used for article drafts (30024), articles
+            # (30023), communities (34550), etc. Only the author's own, not-newer events go.
             if kind == 5:
                 for t in tags:
                     if len(t) >= 2 and t[0] == "e":
                         conn.execute(
                             "DELETE FROM events WHERE id=? AND pubkey=?", (t[1], pubkey))
                         conn.execute("DELETE FROM event_tags WHERE event_id=?", (t[1],))
+                    elif len(t) >= 2 and t[0] == "a":
+                        parts = str(t[1]).split(":", 2)
+                        if len(parts) == 3 and parts[1] == pubkey and parts[0].isdigit():
+                            rows = conn.execute(
+                                "SELECT event_id FROM event_tags WHERE tag='d' AND value=? AND event_id IN "
+                                "(SELECT id FROM events WHERE kind=? AND pubkey=? AND created_at<=?)",
+                                (parts[2], int(parts[0]), pubkey, created)).fetchall()
+                            for r in rows:
+                                conn.execute("DELETE FROM events WHERE id=?", (r["event_id"],))
+                                conn.execute("DELETE FROM event_tags WHERE event_id=?", (r["event_id"],))
             return True
 
     def _add_event_sync(self, ev: dict, origin: str) -> bool:
