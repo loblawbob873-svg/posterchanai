@@ -4110,10 +4110,18 @@
       .replace(/(?:nostr:)?(?:npub1|nprofile1|nevent1|note1|naddr1)[0-9a-z]{20,}/gi,'')
       .replace(/\s+/g,' ').trim().slice(0,140);
   }
+  // Rightbar row body: snippet text + image thumbnail. Shows the actual attachment instead of a
+  // bare "media" placeholder when a post is media-only.
+  function rbBody(ev){
+    const txt=rbSnippet(ev.content), img=postImageUrl(ev);
+    let h = txt ? `<div class="rb-txt">${enc(txt)}</div>` : '';
+    if(img) h += `<img class="rb-media" src="${enc(img)}" loading="lazy" onerror="this.remove()">`;
+    return h || '<div class="rb-txt"><i>media</i></div>';
+  }
   function hotRowHtml(id, count){
     const ev=Store.get(id); if(!ev||ev.kind!==1) return ''; const pr=profOf(ev.pubkey);
     const txt=rbSnippet(ev.content);
-    return `<div class="rb-item" data-open="${id}" data-pk="${ev.pubkey}"><div class="rb-head"><img class="rb-av" src="${enc(pr.picture||LOGO)}" onerror="this.src='${LOGO}'"><b>${enc(pr.name||pr.display_name||'anon')}</b> <span class="rb-fire">${count} 🔥</span></div><div class="rb-txt">${enc(txt)||'<i>media</i>'}</div></div>`;
+    return `<div class="rb-item" data-open="${id}" data-pk="${ev.pubkey}"><div class="rb-head"><img class="rb-av" src="${enc(pr.picture||LOGO)}" onerror="this.src='${LOGO}'"><b>${enc(pr.name||pr.display_name||'anon')}</b> <span class="rb-fire">${count} 🔥</span></div>${rbBody(ev)}</div>`;
   }
   // "From follows": posts the people YOU follow have liked (kind 7) or boosted (kind 6), ranked by
   // how many of your follows engaged. Surfaces what your own network is reacting to in the rightbar.
@@ -4130,7 +4138,7 @@
     await fetchNotes(top);
     const rows=top.map(id=>{ const ev=Store.get(id); if(!ev||ev.kind!==1) return ''; const pr=profOf(ev.pubkey);
       const txt=rbSnippet(ev.content);
-      return `<div class="rb-item" data-open="${id}" data-pk="${ev.pubkey}"><div class="rb-head"><img class="rb-av" src="${enc(pr.picture||LOGO)}" onerror="this.src='${LOGO}'"><b>${enc(pr.name||pr.display_name||'anon')}</b> <span class="rb-fire">${icon[id]||'❤️'} ${tally[id]}</span></div><div class="rb-txt">${enc(txt)||'<i>media</i>'}</div></div>`;
+      return `<div class="rb-item" data-open="${id}" data-pk="${ev.pubkey}"><div class="rb-head"><img class="rb-av" src="${enc(pr.picture||LOGO)}" onerror="this.src='${LOGO}'"><b>${enc(pr.name||pr.display_name||'anon')}</b> <span class="rb-fire">${icon[id]||'❤️'} ${tally[id]}</span></div>${rbBody(ev)}</div>`;
     }).filter(Boolean).join('');
     el.innerHTML=rows||'<div class="muted small">Nothing yet.</div>'; decorateProfiles();
   }
