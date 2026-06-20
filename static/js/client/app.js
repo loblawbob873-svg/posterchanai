@@ -4087,9 +4087,16 @@
     const miss=ids.filter(id=>!Store.get(id)); if(!miss.length) return;
     try{ const notes=await Relay.query([{ ids:miss }]); notes.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); }); }catch(_){}
   }
+  // Clean rightbar snippet: drop URLs and raw nostr: refs (nostr:nevent1…/npub1… looked ugly).
+  function rbSnippet(content){
+    return (content||'')
+      .replace(/https?:\/\/\S+/g,'')
+      .replace(/(?:nostr:)?(?:npub1|nprofile1|nevent1|note1|naddr1)[0-9a-z]{20,}/gi,'')
+      .replace(/\s+/g,' ').trim().slice(0,140);
+  }
   function hotRowHtml(id, count){
     const ev=Store.get(id); if(!ev||ev.kind!==1) return ''; const pr=profOf(ev.pubkey);
-    const txt=(ev.content||'').replace(/https?:\/\/\S+/g,'').trim().slice(0,140);
+    const txt=rbSnippet(ev.content);
     return `<div class="rb-item" data-open="${id}" data-pk="${ev.pubkey}"><div class="rb-head"><img class="rb-av" src="${enc(pr.picture||LOGO)}" onerror="this.src='${LOGO}'"><b>${enc(pr.name||pr.display_name||'anon')}</b> <span class="rb-fire">${count} 🔥</span></div><div class="rb-txt">${enc(txt)||'<i>media</i>'}</div></div>`;
   }
   // "From follows": posts the people YOU follow have liked (kind 7) or boosted (kind 6), ranked by
@@ -4106,7 +4113,7 @@
     if(!top.length){ el.innerHTML='<div class="muted small">Nothing from your follows yet.</div>'; return; }
     await fetchNotes(top);
     const rows=top.map(id=>{ const ev=Store.get(id); if(!ev||ev.kind!==1) return ''; const pr=profOf(ev.pubkey);
-      const txt=(ev.content||'').replace(/https?:\/\/\S+/g,'').trim().slice(0,140);
+      const txt=rbSnippet(ev.content);
       return `<div class="rb-item" data-open="${id}" data-pk="${ev.pubkey}"><div class="rb-head"><img class="rb-av" src="${enc(pr.picture||LOGO)}" onerror="this.src='${LOGO}'"><b>${enc(pr.name||pr.display_name||'anon')}</b> <span class="rb-fire">${icon[id]||'❤️'} ${tally[id]}</span></div><div class="rb-txt">${enc(txt)||'<i>media</i>'}</div></div>`;
     }).filter(Boolean).join('');
     el.innerHTML=rows||'<div class="muted small">Nothing yet.</div>'; decorateProfiles();
