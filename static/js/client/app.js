@@ -2617,6 +2617,7 @@
       // admin extras: one consolidated permissions panel (AI, Blossom, image/music/video/torrent)
       // + relay block. State is fetched inside openPermissions so the menu opens instantly.
       items.push(['caps','🔑 Additional permissions']);
+      items.push(['relay-sync','🔄 Sync notes (relay)']);
       items.push(['purge-blossom','🗑️ Purge Blossom files','danger']);
       items.push(['block','🚫 Block (relay)','danger']);
     }
@@ -2625,9 +2626,21 @@
       if(a==='message'){ if(!dmPeers.has(pk))dmPeers.set(pk,[]); dmActive=pk; switchView('messages'); return; }
       if(a==='mute'){ await toggleMute(pk); renderProfileView(pk); return; }
       if(a==='caps') return openPermissions(pk);
+      if(a==='relay-sync') return doRelaySync(pk);
       if(a==='purge-blossom') return doPurgeBlossom(pk);
       if(a==='block') return doBlock(pk);
     });
+  }
+  // admin: backfill this account's Nostr post history into the built-in relay (the "Sync a user's
+  // data" action from Admin → Relay). Signed like doBlock so the server checks admin.
+  async function doRelaySync(pk){
+    if(!IS_ADMIN) return;
+    try {
+      const auth = await sign(27235, 'relay-sync', [['action','sync'],['p',pk]]);
+      const r = await fetch('/client/relay-sync', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ target: pk, auth: btoa(JSON.stringify(auth)) }) }).then(r=>r.json());
+      toast(r.ok ? 'sync queued — notes backfilling 🔄' : ('sync failed: ' + (r.error||'')));
+    } catch(e){ toast('sync failed'); }
   }
   // admin: delete ALL of this account's blobs from the built-in Blossom server (bytes + index rows).
   // Irreversible; signed like doBlock so the server checks admin.

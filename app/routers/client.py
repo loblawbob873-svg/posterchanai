@@ -825,6 +825,31 @@ async def blossom_purge(data: BlossomPurgeReq, db: Session = Depends(get_db)):
     return JSONResponse({"ok": True, "deleted": deleted})
 
 
+# ----- Relay sync (admin backfills a user's Nostr history from the client profile menu) -----
+class RelaySyncReq(BaseModel):
+    target: str          # npub/hex whose history to backfill into the relay
+    auth: str            # base64 signed admin event (p-tags target), same proof as /block
+
+
+@router.post("/relay-sync")
+async def relay_sync(data: RelaySyncReq, db: Session = Depends(get_db)):
+    """Admin-only: backfill a user's Nostr post history into the built-in relay (the same
+    "Sync a user's data" action as Admin → Relay). Gated by the signed-admin proof as /block."""
+    target = nostr_service.to_pubkey_hex(data.target)
+    if not target:
+        return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
+    if not _verify_admin_auth(db, data.auth, target):
+        return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
+    try:
+        from app.services.nostr_relay.thread import trigger_backfill
+        trigger_backfill(target)
+    except Exception as e:
+        logger.warning("[client] relay backfill failed for %s: %s", target, e)
+        return JSONResponse({"ok": False, "error": "sync failed"}, status_code=500)
+    logger.info("[client] admin queued relay backfill for %s", target)
+    return JSONResponse({"ok": True})
+
+
 # ----- AI access (admin approves a user's AI request from the client profile menu) -----
 class AiAccessReq(BaseModel):
     target: str          # npub/hex to grant/revoke
