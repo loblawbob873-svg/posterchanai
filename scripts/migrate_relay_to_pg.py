@@ -7,8 +7,9 @@ import sqlite3, sys, time
 import psycopg2
 from psycopg2.extras import execute_values
 
+import os
 SQLITE = sys.argv[1] if len(sys.argv) > 1 else "data/nostr_relay.db"
-DSN = "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan password=posterchan_local"
+DSN = os.environ.get("NOSTR_RELAY_PG_DSN", "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan")
 
 def clean(v):
     return v.replace("\x00", "") if isinstance(v, str) else v

@@ -194,8 +194,8 @@ def _read_config() -> dict:
             "mirror_feeds": gb("nostr_relay_mirror_feeds", False),
             "db_path": db_path,
             # Postgres is the relay's store (no SQLite). libpq DSN; tunable in Admin → Relay.
-            "pg_dsn": g("nostr_relay_pg_dsn", "host=127.0.0.1 port=5432 dbname=posterchan_relay "
-                                              "user=posterchan password=posterchan_local"),
+            "pg_dsn": g("nostr_relay_pg_dsn", os.environ.get("NOSTR_RELAY_PG_DSN",
+                        "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan")),
             "retention_days": gi("nostr_relay_retention_days", 30),
             "max_events": gi("nostr_relay_max_events", 500000),
             "max_db_mb": gi("nostr_relay_max_db_mb", 1024),

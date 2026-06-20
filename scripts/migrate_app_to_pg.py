@@ -6,10 +6,13 @@ then resets the SERIAL sequences to MAX(id). Idempotent-ish: run against a FRESH
 import sys
 from sqlalchemy import create_engine, text
 
-SRC = "sqlite:///./posterchanai.db"
+import os
+SRC = os.environ.get("MIGRATE_SRC", "sqlite:///./posterchanai.db")
 # Same Postgres DB as the relay — ONE database holds both the relay's event tables and the app's
-# operational/cache tables (no SQLite, no separate app database).
-DST = "postgresql+psycopg2://posterchan:posterchan_local@127.0.0.1:5432/posterchan_relay"
+# operational/cache tables (no SQLite, no separate app database). Passwordless localhost trust by
+# default; override DATABASE_URL for password-auth deployments.
+DST = os.environ.get("DATABASE_URL",
+                     "postgresql+psycopg2://posterchan@127.0.0.1:5432/posterchan_relay")
 
 import app.models  # noqa: F401 — register all tables on Base.metadata
 from app.database import Base

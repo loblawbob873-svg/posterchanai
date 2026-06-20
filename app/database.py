@@ -523,7 +523,7 @@ def init_db():
             "nostr_relay_prune_interval_sec": "86400",   # auto-prune NIGHTLY (not hourly)
             # The relay (and thus the app's datastore) runs on PostgreSQL — no SQLite. libpq DSN.
             "nostr_relay_pg_dsn": os.environ.get("NOSTR_RELAY_PG_DSN",
-                "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan password=posterchan_local"),
+                "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan"),
             # Phase 2: where AI chat history lives. "sqlite" (default, app.db) until the relay-backed
             # encrypted message store is fully wired; "relay" routes chats to encrypted Nostr events.
             "chat_backend": "sqlite",

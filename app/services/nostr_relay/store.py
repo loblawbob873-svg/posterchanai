@@ -26,8 +26,10 @@ import psycopg2.extras
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DSN = ("host=127.0.0.1 port=5432 dbname=posterchan_relay "
-                "user=posterchan password=posterchan_local")
+# Passwordless localhost (PG `trust` auth) by default; deployments needing password auth (Docker/
+# remote PG) inject credentials via the NOSTR_RELAY_PG_DSN env var / the nostr_relay_pg_dsn setting.
+_DEFAULT_DSN = os.environ.get("NOSTR_RELAY_PG_DSN",
+                              "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan")
 
 # Replaceable event kind ranges (NIP-01): keep only the newest per (pubkey, kind) — and for
 # the parameterized range, per (pubkey, kind, d-tag).
