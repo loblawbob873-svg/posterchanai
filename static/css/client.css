@@ -37,7 +37,7 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
   background-size:46px 46px;mask-image:radial-gradient(circle at 50% 30%,#000 0%,transparent 75%)}
 
 .glass{background:var(--panel);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid var(--line)}
-.neon-border{box-shadow:0 0 0 1px rgba(0,255,255,.35),0 0 30px rgba(255,0,255,.25) inset}
+.neon-border{box-shadow:0 0 0 1px rgba(0,255,255,.35),0 0 30px rgba(0,255,255,.2) inset}
 
 /* ===== buttons / inputs ===== */
 .btn{cursor:pointer;border:1px solid var(--line);background:var(--panel2);color:var(--text);
