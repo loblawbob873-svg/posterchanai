@@ -30,6 +30,7 @@ source "$INSTALL_DIR/llama_cpp.sh"
 source "$INSTALL_DIR/image.sh"
 source "$INSTALL_DIR/systemd.sh"
 source "$INSTALL_DIR/setup.sh"
+source "$INSTALL_DIR/postgres.sh"
 source "$INSTALL_DIR/telegram_botapi.sh"
 source "$INSTALL_DIR/update.sh"
 source "$INSTALL_DIR/music.sh"
@@ -87,8 +88,10 @@ main() {
         return
     fi
 
-    # Option 6 (update): safely refresh deps + Telegram server, then stop.
+    # Option 6 (update): safely refresh deps + Telegram server, then stop. Ensure Postgres exists
+    # too (existing SQLite installs upgrading to the Postgres-only datastore).
     if [ "${UPDATE_ONLY:-0}" = "1" ]; then
+        setup_postgres
         run_updates
         return
     fi
@@ -101,6 +104,9 @@ main() {
 
     # Step 6: Setup directories
     setup_directories
+
+    # Step 6b: PostgreSQL — the one and only database (app + built-in Nostr relay).
+    setup_postgres
 
     # Step 7: Setup Python environment
     setup_python_env

@@ -33,6 +33,13 @@ x-common: &common
     # the persisted HF cache on first use. Needs a GPU profile (cuda/rocm/intel).
     - POSTERCHANAI_VIDEO=${POSTERCHANAI_VIDEO:-0}
     - POSTERCHANAI_VIDEO_MODEL=${POSTERCHANAI_VIDEO_MODEL:-}
+    # Postgres is the ONLY database — it backs both the app and the built-in Nostr relay (one DB).
+    # Points at the `postgres` service below. Override POSTGRES_PASSWORD in a .env for production.
+    - DATABASE_URL=postgresql+psycopg2://posterchan:${POSTGRES_PASSWORD:-posterchan_local}@postgres:5432/posterchan_relay
+    - NOSTR_RELAY_PG_DSN=host=postgres port=5432 dbname=posterchan_relay user=posterchan password=${POSTGRES_PASSWORD:-posterchan_local}
+  depends_on:
+    postgres:
+      condition: service_healthy
   volumes:
     - pc-data:/var/lib/posterchanai
     - pc-rag:/app/data
@@ -43,6 +50,23 @@ x-common: &common
     - ./models:/var/lib/posterchanai/models
 
 services:
+  # The one and only database — backs the app AND the built-in Nostr relay. No profile, so it
+  # starts under every GPU profile; the app services wait for its healthcheck (depends_on above).
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=posterchan
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-posterchan_local}
+      - POSTGRES_DB=posterchan_relay
+    volumes:
+      - pc-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U posterchan -d posterchan_relay"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   cpu:
     <<: *common
     profiles: ["cpu"]
@@ -179,3 +203,4 @@ volumes:
   pc-data:
   pc-rag:  # legacy name; mounts /app/data (uploads, generated media)
   pc-acestep:
+  pc-pg:   # PostgreSQL data (app + Nostr relay)
