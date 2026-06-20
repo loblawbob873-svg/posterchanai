@@ -156,9 +156,11 @@ async def client_translate(request: Request, db: Session = Depends(get_db)):
         msgs = [{"role": "system", "content": f"You are a translation engine. Translate the user's "
               f"message into {to}. The message is often colloquial, run-on, code-switched and "
               f"unpunctuated. Translate the ENTIRE message into natural {to} — EVERY word or phrase "
-              f"that is not already {to}. Do NOT leave any source-language words in the output, and "
-              f"do not just re-punctuate the original. Keep @mentions, #hashtags, URLs and emoji "
-              f"exactly as-is. Output ONLY the translated text — no preamble, notes, or quotes."}]
+              f"that is not already {to}. This applies to SHORT, casual, and slang messages too "
+              f"(e.g. 'lol that's funny') — they MUST be rendered in {to}, never echoed in the "
+              f"source language. Do NOT leave any source-language words in the output, and do not "
+              f"just re-punctuate the original. Keep @mentions, #hashtags, URLs and emoji exactly "
+              f"as-is. Output ONLY the translated text — no preamble, notes, or quotes."}]
         # The echo-fixing examples translate INTO ENGLISH (they fix the 'English-dominant mixed text
         # gets echoed' case). They bias the model toward ENGLISH output, so ONLY include them when the
         # target IS English — otherwise translating to (say) Japanese would wrongly echo the English.
