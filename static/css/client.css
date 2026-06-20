@@ -653,6 +653,13 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .tag-chip.disc .disc-ic{margin-right:2px}
 .ai-magnet{display:inline-block;margin:4px 6px 4px 0;background:linear-gradient(135deg,var(--neon),var(--neon2));color:#fff;border:none;border-radius:9px;padding:7px 13px;font-weight:600;cursor:pointer;font-size:14px}
 .ai-cmd{display:inline-block;margin:4px 6px 4px 0;background:var(--panel2);color:var(--text);border:1px solid var(--neon);border-radius:9px;padding:7px 13px;font-weight:600;cursor:pointer;font-size:14px}
+/* 🎬 Effects studio chips — bigger tap targets (mobile-friendly), prefill (don't auto-send) */
+.fx-cmd{display:inline-flex;align-items:center;background:var(--panel2);color:var(--text);border:1px solid var(--neon);border-radius:11px;padding:10px 14px;font-weight:600;cursor:pointer;font-size:15px;min-height:44px}
+.fx-cmd:active{background:rgba(0,255,255,.14)}
+.fx-guide{line-height:1.5}
+.fx-guide code{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-size:13px}
+.fx-reply-row .ai-reply-fx{min-height:42px;font-weight:700}
+@media(max-width:820px){ .fx-cmd{font-size:15.5px;padding:12px 15px} }
 .ai-cmd:hover{background:var(--neon);color:#04020c}
 .ai-cmd-danger{border-color:var(--accent-tertiary,#ff3366)}
 .ai-cmd-danger:hover{background:var(--accent-tertiary,#ff3366);color:#fff}

@@ -1600,6 +1600,7 @@
     const items=[['bookmark', BOOKMARKS.has(id)?'🔖 Remove bookmark':'🔖 Bookmark'], ['copyid','🆔 Copy event ID']];
     if(!window.PC_NOSTR_ONLY) items.push(['translate','🌐 Translate']);   // uses the node's AI backend
     if(!window.PC_NOSTR_ONLY) items.push(['summary','📝 Summary']);       // AI summary of the post/thread
+    if(!window.PC_NOSTR_ONLY) items.push(['effect','🎬 Effect']);         // apply an effect to the post's image
     if(mine) items.push(['pin', PINNED.has(id)?'📌 Unpin from profile':'📌 Pin to profile']);
     if(mine) items.push(['delete','🗑️ Delete','danger']);
     if(IS_ADMIN && !mine) items.push(['block','🚫 Block author','danger']);
@@ -1608,6 +1609,7 @@
       if(a==='copyid'){ try{ navigator.clipboard.writeText(NT().nip19.noteEncode(id)); toast('note id copied'); }catch(_){ navigator.clipboard.writeText(id); toast('event id copied'); } return; }
       if(a==='translate') return translatePost(id);
       if(a==='summary') return summarizePost(id);
+      if(a==='effect') return effectPost(id, pk);
       if(a==='pin') return togglePin(id);
       if(a==='delete') return doDelete(id, art);
       if(a==='block') return doBlock(pk);
@@ -1660,6 +1662,68 @@
       const body=$('#sum-body');
       if(body) body.innerHTML=(r.ok && j.text) ? linkify(j.text) : ('<div class="muted">'+enc(j.error||'summary unavailable')+'</div>');
     }catch(_){ const body=$('#sum-body'); if(body) body.innerHTML='<div class="muted">summary failed</div>'; }
+  }
+  // Pull the first image URL off a post (imeta tag first, then a URL in the content).
+  function postImageUrl(ev){
+    for(const t of (ev.tags||[])){
+      if(t[0]==='imeta'){ const m=/url\s+(\S+)/.exec(t.slice(1).join(' ')); if(m && /\.(jpe?g|png|gif|webp|bmp)([?#]|$)/i.test(m[1])) return m[1]; }
+    }
+    const m=(ev.content||'').match(/https?:\/\/\S+\.(?:jpe?g|png|gif|webp|bmp)(?:[?#]\S*)?/i);
+    return m ? m[0] : null;
+  }
+  // 🎬 Effect: copy the post's image into a fresh AI chat (the effects studio) and remember the post,
+  // so the generated effect can be posted back as a reply. Guides the user with tappable effects.
+  async function effectPost(id, pk){
+    let ev=Store.get(id); if(!ev){ ev=await fetchEvent(id); if(ev) Store.saveEvent(ev); }
+    if(!ev){ toast('post not loaded'); return; }
+    const url=postImageUrl(ev);
+    if(!url){ toast('this post has no image to apply an effect to'); return; }
+    // gate on AI permission — show a nice modal if the account isn't allowed
+    let a={}; try{ a=await ensureAiSession(); }catch(_){}
+    if(!a || !a.can_ai){
+      modal('<h3>🎬 Effects</h3><div class="muted" style="line-height:1.5">Effects use the node’s AI features, which aren’t enabled for your account yet. Request access and an admin can approve it.</div>'+
+            '<div class="row" style="justify-content:flex-end;gap:8px;margin-top:16px"><button class="btn btn-ghost small" id="fx-close">Close</button><button class="btn btn-neon small" id="fx-req">Request AI access</button></div>',
+        root=>{ const c=root.querySelector('#fx-close'); if(c) c.onclick=closeModal; const q=root.querySelector('#fx-req'); if(q) q.onclick=()=>{ closeModal(); switchView('ai'); }; });
+      return;
+    }
+    toast('opening the Effects studio…');
+    _ai.replyTo={ id, pk }; _ai.fxImage=null; _ai.fxMedia={};
+    switchView('ai');
+    const start=async()=>{
+      try{
+        await aiNewConversation();
+        let blob=null;
+        try{ blob=await fetch('/api/proxy-image?url='+encodeURIComponent(url)).then(r=>r.ok?r.blob():null); }catch(_){}
+        if(!blob){ try{ blob=await fetch(url).then(r=>r.blob()); }catch(_){} }
+        if(!blob){ toast('could not load the post image'); return; }
+        const ext=((url.split(/[?#]/)[0].split('.').pop())||'jpg').toLowerCase();
+        _ai.fxImage=new File([blob], 'effect-source.'+ext, { type:blob.type||'image/jpeg' });
+        await aiAddFiles([_ai.fxImage]);
+        aiAddMessage('assistant', effectGuideHtml());
+      }catch(_){ toast('could not open the Effects studio'); }
+    };
+    let tries=0; (function wait(){ if($('#ai-input')) start(); else if(tries++<50) setTimeout(wait,80); })();
+  }
+  // Guidance shown when the effects studio opens — tappable effect commands (run on the attached
+  // image). Telegram-style: pick a look, optionally add motion + a `meme TEXT` caption, then reply.
+  function effectGuideHtml(){
+    const fx=[['glow','🌟 Glow'],['alive','✨ Alive (3D)'],['dildo','🍆 Dildo'],['fire','🔥 Fire'],['blood','🩸 Blood'],['bullethole','🔫 Bullethole'],['cum','💦 Cum'],['poo','💩 Poo'],['whoabuddy','🤠 Whoabuddy']];
+    const chip=(cmd,label)=>`<button class="fx-cmd" data-cmd="${enc(cmd)}">${enc(label)}</button>`;
+    return '<div class="fx-guide"><b>🎬 Effects studio</b> — your image is attached. Tap an effect to run it on the image; when the result appears, tap <b>↩ Send the Reply</b>.'+
+      '<div class="muted small" style="margin:8px 0 4px">Effect</div><div class="fx-row" style="display:flex;flex-wrap:wrap;gap:6px">'+fx.map(([c,l])=>chip(c,l)).join('')+'</div>'+
+      '<div class="muted small" style="margin:10px 0 0">Tip: add <b>motion</b> + a <b>caption</b> by editing the box before sending — e.g. <code>dildo zoom trippy meme TOP TEXT</code>. Motions: zoom · shake · pulse · trippy.</div></div>';
+  }
+  // Post the generated effect media (data:base64 in _ai.fxMedia) back as a reply to the source post.
+  async function sendEffectReply(mid, btn){
+    const m=_ai.fxMedia[mid], to=_ai.replyTo;
+    if(!m || !to){ toast('nothing to reply with'); return; }
+    if(btn){ btn.disabled=true; btn.textContent='posting…'; }
+    try{
+      const bin=Uint8Array.from(atob(m.b64), c=>c.charCodeAt(0));
+      const url=await uploadBlob(new File([bin], 'effect.'+m.ext, { type:m.mime }));
+      await publish(1, url, eTags(to.id, to.pk));
+      toast('✓ reply posted'); if(btn){ btn.textContent='✓ replied'; btn.classList.add('on'); }
+    }catch(e){ toast('reply failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; btn.textContent='↩ Send the Reply'; } }
   }
   async function doRepost(id,pk,btn){
     if(countsFor(id).iRt){ toast('already reposted'); return; }
@@ -2596,7 +2660,7 @@
   }
 
   // ----- the chat itself (ported from the old web UI; talks to /api/ws/chat over the session) -----
-  let _ai = { ws:null, convId:null, streamEl:null, streamBuf:"", attach:[] };
+  let _ai = { ws:null, convId:null, streamEl:null, streamBuf:"", attach:[], replyTo:null, fxImage:null, fxMedia:{} };
   function _cookie(name){ const m=document.cookie.match(new RegExp('(?:^|; )'+name+'=([^;]*)')); return m?decodeURIComponent(m[1]):''; }
 
   async function aiMount(feed){
@@ -2630,6 +2694,8 @@
     $('#ai-msgs').addEventListener('click',e=>{
       const eg=e.target.closest('.ai-eg'); if(eg){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ ta.value=eg.dataset.cmd; ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // welcome example → prefill, let the user type
       const cmd=e.target.closest('.ai-cmd'); if(cmd){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ ta.value=cmd.dataset.cmd; aiSend(); } return; }
+      const fxc=e.target.closest('.fx-cmd'); if(fxc){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ if(_ai.fxImage && !_ai.attach.length) aiAddFiles([_ai.fxImage]); ta.value=fxc.dataset.cmd; ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // effect chip → re-attach image + prefill (user can add motion/meme, then send)
+      const rfx=e.target.closest('.ai-reply-fx'); if(rfx){ e.preventDefault(); sendEffectReply(rfx.dataset.mid, rfx); return; }   // post the generated effect back as a reply
       const mag=e.target.closest('.ai-magnet'); if(mag){ const ta=$('#ai-input'); if(ta){ ta.value='torrents add '+mag.dataset.magnet; aiSend(); } return; }
       const im=e.target.closest('img'); if(im){ openLightbox(im.dataset.full||im.src); }
     });
@@ -2777,13 +2843,21 @@
     return html.replace(/ S(\d+) /g,(m,i)=>slots[+i]||'');
   }
   // Render the rich command payloads the backend streams as a `response`.
+  // When the effects studio is active (_ai.replyTo set), offer a button to post the generated media
+  // back as a reply to the source post. Stashes the base64 so the reply can upload it to Blossom.
+  function _fxReplyBtn(b64, mime, ext){
+    if(!_ai.replyTo || !b64) return '';
+    const mid='fx'+Date.now().toString(36)+Math.floor(Math.random()*1e4).toString(36);
+    _ai.fxMedia[mid]={ b64, mime, ext };
+    return `<div class="fx-reply-row" style="margin-top:6px"><button class="btn btn-neon small ai-reply-fx" data-mid="${mid}">↩ Send the Reply</button></div>`;
+  }
   function aiRenderResponse(d){
     const head = d.content ? aiFormat(d.content) : '';
-    if(d.type==='generated_image' && d.image) return head+`<div class="ai-media"><img src="data:image/png;base64,${d.image}" alt="generated"></div>`;
-    if(d.type==='generated_video' && d.video) return head+`<div class="ai-media"><video controls src="data:video/mp4;base64,${d.video}"></video></div>`;
+    if(d.type==='generated_image' && d.image) return head+`<div class="ai-media"><img src="data:image/png;base64,${d.image}" alt="generated"></div>`+_fxReplyBtn(d.image,'image/png','png');
+    if(d.type==='generated_video' && d.video) return head+`<div class="ai-media"><video controls src="data:video/mp4;base64,${d.video}"></video></div>`+_fxReplyBtn(d.video,'video/mp4','mp4');
     if(d.type==='generated_audio' && d.audio){ const fmt=(d.format||'mp3').toLowerCase(); const mime=({mp3:'audio/mpeg',wav:'audio/wav',flac:'audio/flac',opus:'audio/ogg',aac:'audio/aac'})[fmt]||'audio/mpeg';
       return head+`<div class="ai-media"><audio controls src="data:${mime};base64,${d.audio}"></audio></div>`; }
-    if((d.type==='meme') && d.image) return head+`<div class="ai-media"><img src="data:image/png;base64,${d.image}" alt="meme"></div>`;
+    if((d.type==='meme') && d.image) return head+`<div class="ai-media"><img src="data:image/png;base64,${d.image}" alt="meme"></div>`+_fxReplyBtn(d.image,'image/png','png');
     if(d.type==='mail_attachment' && d.data){ const mime=d.mime_type||'application/octet-stream';
       if(mime.startsWith('image/')) return head+`<div class="ai-media"><img src="data:${mime};base64,${d.data}"></div>`;
       return head+`<a class="ai-file" href="data:${mime};base64,${d.data}" download="${enc(d.filename||'attachment')}">📎 ${enc(d.filename||'attachment')}</a>`; }
