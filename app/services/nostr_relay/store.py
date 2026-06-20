@@ -137,14 +137,12 @@ _PRUNABLE_KINDS = (1, 6, 7, 1111)
 class RelayStore:
     def __init__(self, dsn: str = None, *,
                  read_workers: int = 4, max_events: int = 0,
-                 retention_days: int = 30, max_db_mb: int = 0, wal_pages: int = 50000,
-                 cache_mb: int = 64, mmap_mb: int = 256):
-        # `dsn` is a libpq connection string. The wal_pages/cache_mb/mmap_mb kwargs are accepted
-        # for call-site compatibility but ignored (Postgres tunes its own buffers/WAL server-side).
+                 retention_days: int = 30):
+        # `dsn` is a libpq connection string. Postgres tunes its own buffers/WAL server-side, so
+        # there are no SQLite-style page-cache/mmap/WAL knobs here — auto-clean is age + count only.
         self.dsn = dsn or _DEFAULT_DSN
         self.max_events = max_events
         self.retention_days = retention_days
-        self.max_db_mb = max_db_mb
         self.preserve_pubkeys: frozenset = frozenset()  # local users — never age/cap-pruned
         self._tls = threading.local()
         self._write_exec = ThreadPoolExecutor(max_workers=1, thread_name_prefix="relay-db-w")
@@ -665,31 +663,10 @@ class RelayStore:
                 "(SELECT id FROM events ORDER BY created_at DESC LIMIT ALL OFFSET ?)",
                 (self.max_events,))
             removed += cur.rowcount or 0
-        # Hard byte cap (RAM bound): trim oldest prunable events until under budget.
-        if self.max_db_mb:
-            budget = self.max_db_mb * 1024 * 1024
-            for _ in range(50):
-                if self._db_bytes() <= budget:
-                    break
-                cur = conn.execute(
-                    f"DELETE FROM events WHERE id IN (SELECT id FROM events "
-                    f"WHERE kind IN ({prunable}) AND {preserve} "
-                    "ORDER BY created_at ASC LIMIT 2000)")
-                if not cur.rowcount:
-                    break  # only kept/preserved events remain — don't spin
-                removed += cur.rowcount
-                conn.commit()
         # event_tags are purged automatically by the ON DELETE CASCADE FK when their event is
         # deleted — no orphan sweep needed (the old NOT IN anti-join pinned a CPU core for minutes).
         conn.commit()
         return removed
-
-    def _db_bytes(self) -> int:
-        try:
-            row = self._conn().execute("SELECT pg_database_size(current_database())").fetchone()
-            return int(row[0]) if row else 0
-        except Exception:
-            return 0
 
     async def prune(self) -> int:
         return await self._w(self._prune_sync)

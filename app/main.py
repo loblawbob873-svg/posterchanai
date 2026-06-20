@@ -241,7 +241,6 @@ async def startup():
                 _rdefaults = {
                     "nostr_relay_enabled": "true",
                     "nostr_relay_bind": "0.0.0.0",
-                    "nostr_relay_db_path": "/var/lib/posterchanai/nostr_relay.db",
                 }
                 for _k, _v in _rdefaults.items():
                     if not _db.query(Setting).filter(Setting.key == _k).first():

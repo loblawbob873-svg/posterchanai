@@ -56,28 +56,10 @@ class _Relay:
 
 
 # Cross-process IPC paths (the relay runs in its own subprocess; the app reads its status and
-# drops admin commands via files). All derived from the relay DB path so they share its volume.
-_DB_PATH_CACHE = ""
-
-
+# drops admin commands via files). The store itself is Postgres, so there's no on-disk DB file —
+# these sidecars just need a STABLE base path both processes agree on (under the repo's data/ dir).
 def _relay_db_path() -> str:
-    global _DB_PATH_CACHE
-    if _DB_PATH_CACHE:
-        return _DB_PATH_CACHE
-    p = ""
-    try:
-        from app.database import SessionLocal
-        from app.models import Setting
-        db = SessionLocal()
-        try:
-            row = db.query(Setting).filter(Setting.key == "nostr_relay_db_path").first()
-            p = (row.value if row else "") or ""
-        finally:
-            db.close()
-    except Exception:
-        p = ""
-    _DB_PATH_CACHE = p or os.path.join(_REPO_ROOT, "data", "nostr_relay.db")
-    return _DB_PATH_CACHE
+    return os.path.join(_REPO_ROOT, "data", "nostr_relay")
 
 
 def _relay_paths(db_path: str) -> dict:
@@ -169,10 +151,6 @@ def _read_config() -> dict:
         upstream = nostr_service.relay.normalize_relays(
             g("nostr_relay_upstream_relays", "")) or list(nostr_service.DEFAULT_RELAYS)
 
-        # The DB lives on disk in WAL mode — durable by itself, scales to many GB, OS page
-        # cache + a big mmap window keep hot pages in RAM.
-        db_path = g("nostr_relay_db_path", os.path.join(_REPO_ROOT, "data", "nostr_relay.db"))
-
         cfg = {
             "enabled": gb("nostr_relay_enabled", False),
             "bind": g("nostr_relay_bind", "127.0.0.1"),
@@ -192,7 +170,6 @@ def _read_config() -> dict:
             # Heavy backfill SWEEP (per-member crawl of the whole trust graph). OFF: the firehose
             # streams + filters in real time; the sweep is the laggy "mirror their feeds" crawl.
             "mirror_feeds": gb("nostr_relay_mirror_feeds", False),
-            "db_path": db_path,
             # Postgres is the relay's store (no SQLite). libpq DSN; tunable in Admin → Relay.
             "pg_dsn": g("nostr_relay_pg_dsn", os.environ.get("NOSTR_RELAY_PG_DSN",
                         "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan")),
@@ -204,15 +181,6 @@ def _read_config() -> dict:
             # feed notes once over the limit). 0 = unlimited; the 30-day age retention is the only
             # feed cleanup, and registered users' + direct-published events are always preserved.
             "max_events": gi("nostr_relay_max_events", 0),
-            # Byte-cap is a SQLite-tmpfs/RAM concept — meaningless on Postgres (disk-backed; and
-            # pg_database_size counts indexes + the 8M event_tags, so a 1GB cap would delete ALL
-            # prunable feed notes every run REGARDLESS of age). Disabled (0); max_events bounds count.
-            "max_db_mb": gi("nostr_relay_max_db_mb", 0),
-            "wal_pages": gi("nostr_relay_wal_autocheckpoint", 50000),  # ~200MB WAL before checkpoint
-            # Nostr is read/write intense — default to generous RAM caches (negative cache_size
-            # = KiB; mmap serves reads with zero syscalls). Tunable in Admin → Relay.
-            "cache_mb": gi("nostr_relay_cache_mb", 512),               # SQLite page cache
-            "mmap_mb": gi("nostr_relay_mmap_mb", 4096),                # SQLite mmap read window
             "sync_budget_sec": gi("nostr_relay_sync_budget_sec", 100), # per-tick sync work budget
             "wot_refresh_sec": gi("nostr_relay_wot_refresh_sec", 86400),  # daily
             "prune_interval_sec": gi("nostr_relay_prune_interval_sec", 86400),  # nightly (was hourly)
@@ -366,8 +334,7 @@ async def _main(cfg: dict) -> None:
     logging.getLogger("websockets.server").setLevel(logging.CRITICAL)
     store = RelayStore(
         cfg["pg_dsn"],
-        max_events=cfg["max_events"], retention_days=cfg["retention_days"],
-        max_db_mb=cfg["max_db_mb"])
+        max_events=cfg["max_events"], retention_days=cfg["retention_days"])
     loop = asyncio.get_running_loop()
     store.open(loop)
     gate = WotGate()
@@ -522,7 +489,7 @@ async def _main(cfg: dict) -> None:
     # Cross-process admin IPC: this relay runs in its own subprocess, so the app can't read its
     # gate/store directly. Publish status to a file the app polls, and execute admin commands the
     # app drops into a control dir (Refresh-WoT / Backfill buttons). No-ops if launched in-thread.
-    _paths = _relay_paths(cfg["db_path"])
+    _paths = _relay_paths(_relay_db_path())
     os.makedirs(_paths["control"], exist_ok=True)
 
     async def _status_writer():
@@ -659,7 +626,7 @@ async def _sync_loop(store, gate, server, cfg, stop: asyncio.Event) -> None:
 
 
 def _wot_stamp_path(cfg) -> str:
-    return (cfg.get("db_path") or "nostr_relay.db") + ".wot_built"
+    return _relay_db_path() + ".wot_built"
 
 
 def _read_wot_stamp(cfg) -> float:
@@ -762,8 +729,6 @@ def _spawn_relay(cfg: dict) -> None:
     parsing no longer steals CPU from the app. It's in the app's cgroup, so `systemctl restart`
     takes it down with the app and the next start respawns it (code changes apply on deploy);
     stdout/stderr are inherited so its logs land in the journal."""
-    global _DB_PATH_CACHE
-    _DB_PATH_CACHE = cfg["db_path"]
     entry = os.path.join(_REPO_ROOT, "relay_main.py")
     _relay.proc = subprocess.Popen([sys.executable, entry], cwd=_REPO_ROOT)
     logger.info("[nostr-relay] spawned relay subprocess pid %d", _relay.proc.pid)

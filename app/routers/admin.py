@@ -1250,73 +1250,9 @@ async def test_proxy_chain(
     return results
 
 
-@router.post("/nostr-migrate")
-async def nostr_migrate(db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
-    """Copy app data into the relay's event store (Nostr-as-datastore migration). For now: ALL
-    settings → encrypted kind-30078 docs (idempotent), with a completeness report. Also confirms
-    the operator's npub is linked (account merge). Read path swap is a separate, deliberate step."""
-    from app.services.nostr import nostr_service
-    from app.services import nostr_migrate as _mig
-    op = db.query(User).filter(User.is_admin == True, User.nostr_nsec.isnot(None)).first()  # noqa: E712
-    if not op:
-        return {"ok": False, "error": "no admin has a linked Nostr secret — set one in Settings → Nostr first"}
-    try:
-        op_sk = nostr_service.decode_seckey(op.nostr_nsec)
-    except Exception:
-        return {"ok": False, "error": "operator Nostr secret is invalid"}
-    prow = db.query(Setting).filter(Setting.key == "nostr_relay_port").first()
-    port = int(prow.value) if prow and prow.value else 3052
-    try:
-        report = await _mig.migrate_settings(db, port, op_sk)
-    except Exception as e:
-        logger.error("[admin] nostr settings migration failed: %s", e, exc_info=True)
-        return {"ok": False, "error": f"migration failed: {e}"}
-    users_report = None
-    try:
-        from app.services import users_store
-        users_report = await users_store.migrate(db)
-    except Exception as e:
-        logger.error("[admin] nostr users migration failed: %s", e, exc_info=True)
-        users_report = {"error": str(e)}
-    bots_report = None
-    try:
-        from app.services import bots_store
-        bots_report = await bots_store.migrate(db)
-    except Exception as e:
-        logger.error("[admin] nostr bots migration failed: %s", e, exc_info=True)
-        bots_report = {"error": str(e)}
-    records_report = None
-    try:
-        from app.services import record_store
-        records_report = await record_store.migrate(db)
-    except Exception as e:
-        logger.error("[admin] nostr records migration failed: %s", e, exc_info=True)
-        records_report = {"error": str(e)}
-    return {"ok": True, "settings": report, "users": users_report, "bots": bots_report,
-            "records": records_report, "operator_npub": op.nostr_npub}
-
-
-@router.post("/nostr-purge")
-async def nostr_purge(db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
-    """Delete the AI app-data notes (operator-signed kind-30078 `pcai:` docs) from the relay store —
-    for clearing test data / re-running the migration. Does NOT touch users' own content."""
-    from app.services.nostr import nostr_service
-    from app.services import nostr_migrate as _mig
-    op = db.query(User).filter(User.is_admin == True, User.nostr_nsec.isnot(None)).first()  # noqa: E712
-    if not op:
-        return {"ok": False, "error": "no admin has a linked Nostr secret"}
-    try:
-        op_sk = nostr_service.decode_seckey(op.nostr_nsec)
-    except Exception:
-        return {"ok": False, "error": "operator Nostr secret is invalid"}
-    prow = db.query(Setting).filter(Setting.key == "nostr_relay_port").first()
-    port = int(prow.value) if prow and prow.value else 3052
-    try:
-        removed = await _mig.purge_app_docs(port, op_sk)
-    except Exception as e:
-        logger.error("[admin] nostr purge failed: %s", e, exc_info=True)
-        return {"ok": False, "error": f"purge failed: {e}"}
-    return {"ok": True, "removed": removed}
+# Datastore migration endpoints (/nostr-migrate, /nostr-purge) removed — the relay IS the
+# datastore now (no SQLite app.db to migrate from); the one-time seed is done. The read helper
+# nostr_migrate.settings_all() lives on (used by settings_store hydrate).
 
 
 # WebDAV sync config endpoints removed

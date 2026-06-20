@@ -24,11 +24,10 @@ from app.services import nostr_migrate as _mig
 
 logger = logging.getLogger(__name__)
 
-# Datastore-plumbing keys are always sourced from local SQLite, never hydrated/written-through —
-# so a stale relay copy can't change where/whether we connect or flip the backend off mid-flight.
+# Datastore-plumbing keys are always sourced from the local Setting cache, never hydrated/
+# written-through — so a stale relay copy can't change where/whether we connect to the relay.
 _PLUMBING_KEYS = frozenset({
-    "settings_backend", "users_backend", "bots_backend", "records_backend", "chat_backend",
-    "nostr_relay_port", "nostr_relay_enabled", "nostr_relay_db_path", "nostr_relay_bind",
+    "nostr_relay_port", "nostr_relay_enabled", "nostr_relay_bind", "nostr_relay_pg_dsn",
 })
 
 # Per-node RUNTIME-STATE settings (sync cursors / seen-sets) are advanced directly in SQLite by the

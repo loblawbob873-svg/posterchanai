@@ -203,31 +203,20 @@
     </fieldset>
 
     <fieldset>
-        <legend>Storage &amp; memory (on-disk WAL DB)</legend>
+        <legend>Auto-clean (feed retention)</legend>
+        <p class="muted" style="margin:0 0 12px">The relay store is <strong>PostgreSQL</strong> — it tunes its own
+        buffers/WAL, so there are no SQLite cache/mmap/DB-path knobs. Auto-clean only ever trims
+        high-volume <strong>feed</strong> content (notes/reactions/reposts/comments); <strong>profiles, contacts,
+        articles, DMs, and your local users' own events are kept forever.</strong></p>
         <div class="form-group">
-            <label for="nostr_relay_db_path">Database path</label>
-            <input type="text" id="nostr_relay_db_path" name="nostr_relay_db_path" placeholder="data/nostr_relay.db">
-            <small>The relay's SQLite DB lives here on disk (WAL mode — durable by itself, scales to many GB). <strong>Restart after changing.</strong></small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_cache_mb">Page cache (MB RAM)</label>
-            <input type="number" id="nostr_relay_cache_mb" name="nostr_relay_cache_mb" placeholder="512">
-            <small>SQLite page cache held in RAM — bigger = more hot pages cached (Nostr is read-heavy).</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_mmap_mb">mmap window (MB RAM)</label>
-            <input type="number" id="nostr_relay_mmap_mb" name="nostr_relay_mmap_mb" placeholder="4096">
-            <small>Memory-mapped read window — serves reads with zero syscalls. Set near your DB size for max read speed.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_retention_days">Auto-clean notes older than (days)</label>
+            <label for="nostr_relay_retention_days">Auto-clean feed notes older than (days)</label>
             <input type="number" id="nostr_relay_retention_days" name="nostr_relay_retention_days" placeholder="30">
-            <small>Deletes old <strong>notes/reactions/reposts</strong> past this age. <strong>Profiles, contacts, articles and DMs are kept forever.</strong> Set <code>0</code> to disable.</small>
+            <small>Deletes old <strong>notes/reactions/reposts/comments</strong> past this age. Set <code>0</code> to disable age-based cleanup.</small>
         </div>
         <div class="form-group">
-            <label for="nostr_relay_max_db_mb">Max DB size (MB)</label>
-            <input type="number" id="nostr_relay_max_db_mb" name="nostr_relay_max_db_mb" placeholder="1024">
-            <small>Hard cap — oldest notes are trimmed to stay under this (profiles/contacts kept).</small>
+            <label for="nostr_relay_max_events">Max feed events (hard count cap)</label>
+            <input type="number" id="nostr_relay_max_events" name="nostr_relay_max_events" placeholder="0">
+            <small>Trims the <strong>oldest</strong> feed events once the total exceeds this count (preserved events don't count). <code>0</code> = unlimited (the age cleaner above is then the only cleanup).</small>
         </div>
     </fieldset>
 
