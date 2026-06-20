@@ -1598,7 +1598,7 @@
   async function composeTranslate(ta, btn){
     const text=(ta.value||'').trim();
     if(!text){ toast('write something first'); return; }
-    const langs=['English','Spanish','Tagalog','Cebuano','French','German','Japanese','Chinese','Portuguese','Russian','Arabic','Hindi'];
+    const langs=['English','Spanish','French','German','Italian','Portuguese','Tagalog','Cebuano','Swahili','Japanese','Korean','Chinese','Hindi','Arabic','Russian','Indonesian'];
     const items=langs.map(n=>[n,'🌐 '+n]).concat([['__other','✏️ Other…']]);
     openMenuPopover(btn, items, async name=>{
       let to=name;
@@ -1608,8 +1608,10 @@
         const r=await fetch('/client/translate',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ text, to }) });
         const j=await r.json().catch(()=>({}));
         ta.disabled=false;
-        if(r.ok && j.text){ ta.value=j.text; ta.focus(); ta.dispatchEvent(new Event('input')); toast('translated → '+to); }
-        else { ta.value=old; toast(j.error||'translation unavailable'); }
+        if(r.ok && j.text){
+          if(j.text.trim()===text.trim()){ ta.value=old; toast('no change — already '+to+'? (or just sounds/emoji)'); }
+          else { ta.value=j.text; ta.focus(); ta.dispatchEvent(new Event('input')); toast('translated → '+to); }
+        } else { ta.value=old; toast(j.error||'translation unavailable'); }
       }catch(e){ ta.disabled=false; ta.value=old; toast('translate failed'); }
     });
   }
@@ -1649,6 +1651,7 @@
         body:JSON.stringify({ text:src, to:(navigator.language||'en') }) });
       const j=await r.json().catch(()=>({}));
       if(!r.ok || !j.text){ toast(j.error||'translation unavailable'); nodes.forEach(n=>n.style.opacity=''); return; }
+      if(j.text.trim()===src.trim()){ nodes.forEach(n=>n.style.opacity=''); toast('nothing to translate — already in your language (or just sounds/emoji)'); return; }
       nodes.forEach(n=>{ n.style.opacity='';
         n.innerHTML=linkify(j.text)+'<div class="muted small tr-tag">🌐 translated · refresh to restore</div>'; });
     }catch(_){ toast('translate failed'); nodes.forEach(n=>n.style.opacity=''); }

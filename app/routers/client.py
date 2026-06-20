@@ -172,7 +172,8 @@ async def client_translate(request: Request, db: Session = Depends(get_db)):
                 {"role": "assistant", "content": "Good evening guys, we only just got electricity back — it had been out since 6 this morning and only returned just now. How is everyone, have you eaten yet?"},
             ]
         msgs.append({"role": "user", "content": text})
-        res = await svc.chat_completion(msgs, max_tokens=1200, temperature=0.2)
+        # Translation should be faithful, not creative — near-greedy decoding cuts hallucination.
+        res = await svc.chat_completion(msgs, max_tokens=1200, temperature=0.0)
         out = (res.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
         if not out:
             return JSONResponse({"error": "translation unavailable"}, status_code=503)
