@@ -96,7 +96,10 @@ a.btn.full{display:block}
 .nav-item.sub{padding-left:30px;font-size:15.5px}
 .nav-item{display:flex;align-items:center;gap:13px;background:transparent;border:none;color:var(--muted);
   padding:13px 15px;border-radius:11px;cursor:pointer;font-size:17px;font-weight:600;text-align:left;transition:.15s;position:relative}
-.nav-item .ic{font-size:23px;width:24px;text-align:center}
+.nav-item .ic{font-size:20px;width:26px;text-align:center;line-height:1;display:inline-flex;align-items:center;justify-content:center;
+  filter:drop-shadow(0 0 5px rgba(0,255,255,.45))}
+.nav-item.sub .ic{font-size:17px}
+.nav-item:hover .ic,.nav-item.active .ic{filter:drop-shadow(0 0 7px rgba(0,255,255,.75))}
 .nav-item:hover{color:var(--text);background:rgba(0,255,255,.12)}
 .nav-item.active{color:#fff;background:linear-gradient(135deg,rgba(0,255,255,.22),rgba(255,0,255,.14));box-shadow:inset 0 0 0 1px var(--line)}
 .nav-item.active::before{content:"";position:absolute;left:0;top:18%;height:64%;width:3px;border-radius:3px;background:var(--neon);box-shadow:var(--glow)}
