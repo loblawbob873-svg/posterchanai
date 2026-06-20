@@ -586,7 +586,10 @@
     const clean=[...new Set(words.map(w=>String(w||'').trim().toLowerCase()).filter(Boolean))];
     const evs = await Relay.query([{ authors:[ME.pubkey], kinds:[10000], limit:1 }]);
     const cur = evs.length ? evs.sort((a,b)=>b.created_at-a.created_at)[0] : null;
-    const tags = (cur ? cur.tags.filter(t=>t[0]!=='word') : []).concat(clean.map(w=>['word',w]));
+    // Keep all non-word tags. If the relay didn't return our list (race / not-yet-synced), DON'T
+    // start from empty — rebuild person-mutes from in-memory MUTED so we never wipe them.
+    const base = cur ? cur.tags.filter(t=>t[0]!=='word') : [...MUTED].map(p=>['p',p]);
+    const tags = base.concat(clean.map(w=>['word',w]));
     await publish(10000, cur?cur.content:'', tags);
     MUTED_WORDS = new Set(clean);
   }
@@ -618,6 +621,13 @@
     const evs = await Relay.query([{ authors:[ME.pubkey], kinds:[kind], limit:1 }]);
     const cur = evs.length ? evs.sort((a,b)=>b.created_at-a.created_at)[0] : null;
     let tags = cur ? cur.tags.map(t=>[...t]) : [];
+    // Safety: if the relay didn't return our existing list (race / not-yet-synced), rebuild from
+    // in-memory state instead of publishing a near-empty replaceable event that WIPES follows/mutes
+    // (this is how muted words + DM mutes got lost). Never overwrite the whole list from nothing.
+    if(!cur){
+      if(kind===3) tags = [...FOLLOWS].map(p=>['p',p]);
+      else if(kind===10000) tags = [...MUTED].map(p=>['p',p]).concat([...MUTED_WORDS].map(w=>['word',w]));
+    }
     const has = tags.some(t=>t[0]==='p'&&t[1]===pk);
     if (add && !has) tags.push(['p',pk]);
     else if (!add && has) tags = tags.filter(t=>!(t[0]==='p'&&t[1]===pk));
