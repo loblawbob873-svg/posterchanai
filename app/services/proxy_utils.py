@@ -5,7 +5,45 @@ import time
 import logging
 from typing import Optional
 
+import httpx
+
 logger = logging.getLogger(__name__)
+
+# Connection-level failures ONLY — these fire before the request body is delivered through the proxy,
+# so retrying the same request DIRECT is safe even for non-idempotent POSTs (nothing was sent). We do
+# NOT fall back on ReadTimeout / response-phase errors, which could mean the request already landed
+# (e.g. a Pleroma status post) and would double-fire.
+_FALLBACK_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.ProxyError, httpx.PoolTimeout)
+
+
+class _AsyncProxyFallback(httpx.AsyncBaseTransport):
+    """httpx transport: send through the built-in proxy FIRST, then fall back to a DIRECT connection
+    if the proxy can't be reached. The app-wide 'proxy-first, fall back to direct' for external
+    outbound HTTP — drop into httpx.AsyncClient(transport=...) in place of proxy=."""
+    def __init__(self, proxy_url: str):
+        self._proxy = httpx.AsyncHTTPTransport(proxy=proxy_url, retries=0)
+        self._direct = httpx.AsyncHTTPTransport(retries=0)
+
+    async def handle_async_request(self, request):
+        try:
+            return await self._proxy.handle_async_request(request)
+        except _FALLBACK_ERRORS as e:
+            logger.debug("[proxy] %s %s via proxy failed (%s) — retrying direct", request.method, request.url, e)
+            return await self._direct.handle_async_request(request)
+
+    async def aclose(self):
+        try:
+            await self._proxy.aclose()
+        finally:
+            await self._direct.aclose()
+
+
+def afallback_transport() -> httpx.AsyncBaseTransport:
+    """Async httpx transport doing proxy-first-then-direct, or a plain direct transport when no proxy
+    is configured. Use: `httpx.AsyncClient(transport=afallback_transport(), timeout=..., ...)` instead
+    of `proxy=get_outbound_proxy()`, and outbound traffic prefers the proxy but survives it being down."""
+    px = get_outbound_proxy()
+    return _AsyncProxyFallback(px) if px else httpx.AsyncHTTPTransport(retries=0)
 
 # Short-TTL cache: get_proxy_config is called on every social/bot HTTP client and relay
 # connect (~8 per Nostr op, ~14 per Misskey op). The proxy setting changes very rarely, so

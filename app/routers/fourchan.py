@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User
 from app.auth import get_current_user
-from app.services.proxy_utils import get_proxy_config
+from app.services.proxy_utils import afallback_transport
 from app.services.inference_factory import get_inference_service, prepare_vram_for_llm
 
 logger = logging.getLogger(__name__)
@@ -92,11 +92,7 @@ async def get_catalog(
 
     url = f"https://a.4cdn.org/{board}/catalog.json"
     headers = {"User-Agent": CHROME_UA, "Accept": "application/json"}
-    proxy_config = get_proxy_config()
-    client_kw = {"timeout": 15.0}
-    if proxy_config:
-        client_kw["proxy"] = proxy_config
-        logger.debug("4chan catalog via proxy: %s", proxy_config)
+    client_kw = {"timeout": 15.0, "transport": afallback_transport()}   # proxy-first, direct fallback
 
     try:
         async with httpx.AsyncClient(**client_kw) as client:
@@ -125,10 +121,7 @@ async def _fetch_thread_posts(board: str, thread_id: int) -> dict:
     """Fetch thread JSON and return { title, posts } or raise / return error dict."""
     url = f"https://a.4cdn.org/{board}/thread/{thread_id}.json"
     headers = {"User-Agent": CHROME_UA, "Accept": "application/json"}
-    proxy_config = get_proxy_config()
-    client_kw = {"timeout": 15.0}
-    if proxy_config:
-        client_kw["proxy"] = proxy_config
+    client_kw = {"timeout": 15.0, "transport": afallback_transport()}   # proxy-first, direct fallback
     try:
         async with httpx.AsyncClient(**client_kw) as client:
             resp = await client.get(url, headers=headers)
@@ -256,11 +249,7 @@ async def proxy_image(
         "Referer": "https://boards.4chan.org/",
         "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
     }
-    proxy_config = get_proxy_config()
-    client_kw = {"timeout": 10.0, "follow_redirects": True}
-    if proxy_config:
-        client_kw["proxy"] = proxy_config
-        logger.debug("4chan image proxy via proxy: %s", proxy_config)
+    client_kw = {"timeout": 10.0, "follow_redirects": True, "transport": afallback_transport()}   # proxy-first, direct fallback
 
     try:
         async with httpx.AsyncClient(**client_kw) as client:

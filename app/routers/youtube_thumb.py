@@ -6,7 +6,7 @@ import httpx
 from fastapi import APIRouter, Query
 from fastapi.responses import Response
 
-from app.services.proxy_utils import get_proxy_config
+from app.services.proxy_utils import afallback_transport
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +30,7 @@ async def youtube_thumbnail(
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "image/webp,image/*,*/*;q=0.8",
     }
-    proxy_config = get_proxy_config()
-    client_kw = {"timeout": 10.0, "follow_redirects": True}
-    if proxy_config:
-        client_kw["proxy"] = proxy_config
+    client_kw = {"timeout": 10.0, "follow_redirects": True, "transport": afallback_transport()}   # proxy-first, direct fallback
 
     try:
         async with httpx.AsyncClient(**client_kw) as client:

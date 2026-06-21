@@ -3,7 +3,7 @@
 import logging
 import httpx
 
-from app.services.proxy_utils import get_outbound_proxy
+from app.services.proxy_utils import afallback_transport
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ async def register_app(instance_url: str, redirect_uri: str, app_name: str = "Po
         "scopes": "read write",
         "website": instance_url,
     }
-    async with httpx.AsyncClient(proxy=get_outbound_proxy(), timeout=15) as client:
+    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
         resp = await client.post(url, data=payload)
         resp.raise_for_status()
         return resp.json()
@@ -42,7 +42,7 @@ async def exchange_code(
         "client_secret": client_secret,
         "redirect_uri": redirect_uri,
     }
-    async with httpx.AsyncClient(proxy=get_outbound_proxy(), timeout=15) as client:
+    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
         resp = await client.post(url, data=payload)
         resp.raise_for_status()
         data = resp.json()
@@ -68,7 +68,7 @@ async def password_grant(
     """
     base = instance_url.rstrip("/")
     oob = "urn:ietf:wg:oauth:2.0:oob"
-    async with httpx.AsyncClient(proxy=get_outbound_proxy(), timeout=20) as client:
+    async with httpx.AsyncClient(transport=afallback_transport(), timeout=20) as client:
         app_resp = await client.post(base + "/api/v1/apps", data={
             "client_name": app_name,
             "redirect_uris": oob,
@@ -137,7 +137,7 @@ async def upload_media(instance_url: str, access_token: str, image_bytes: bytes,
     mime = detected_mime if detected_mime.startswith("video/") else (mime or detected_mime)
     # Try v1 first (works on Pleroma and all Mastodon), v2 is Mastodon 3.1.4+
     for endpoint in (f"{base}/api/v1/media", f"{base}/api/v2/media"):
-        async with httpx.AsyncClient(proxy=get_outbound_proxy(), timeout=60) as client:
+        async with httpx.AsyncClient(transport=afallback_transport(), timeout=60) as client:
             resp = await client.post(
                 endpoint,
                 headers=headers,
@@ -196,7 +196,7 @@ async def post_status(
         payload["in_reply_to_id"] = in_reply_to_id
     if content_type:
         payload["content_type"] = content_type
-    async with httpx.AsyncClient(proxy=get_outbound_proxy(), timeout=15) as client:
+    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
         resp = await client.post(url, json=payload, headers=headers)
         resp.raise_for_status()
         return resp.json()
@@ -206,7 +206,7 @@ async def fetch_status(instance_url: str, access_token: str, status_id: str) -> 
     """Fetch a single status by id (raw Mastodon/Pleroma object), or None if not found."""
     url = instance_url.rstrip("/") + f"/api/v1/statuses/{status_id}"
     headers = {"Authorization": f"Bearer {access_token}"}
-    async with httpx.AsyncClient(proxy=get_outbound_proxy(), timeout=15) as client:
+    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
         resp = await client.get(url, headers=headers)
         if resp.status_code != 200:
             return None
@@ -222,7 +222,7 @@ async def fetch_notifications(instance_url: str, access_token: str, since_id: st
     params: dict = {"limit": limit}
     if since_id:
         params["since_id"] = since_id
-    async with httpx.AsyncClient(proxy=get_outbound_proxy(), timeout=15) as client:
+    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
         resp = await client.get(url, headers=headers, params=params)
         resp.raise_for_status()
         data = resp.json()
@@ -250,7 +250,7 @@ async def fetch_timeline(instance_url: str, access_token: str, timeline_type: st
         params["min_id"] = min_id
     elif since_id:
         params["since_id"] = since_id
-    async with httpx.AsyncClient(proxy=get_outbound_proxy(), timeout=15) as client:
+    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
         resp = await client.get(url, headers=headers, params=params)
         resp.raise_for_status()
         data = resp.json()
@@ -261,7 +261,7 @@ async def fetch_context(instance_url: str, access_token: str, status_id: str) ->
     """Fetch a status's thread context ({"ancestors": [...], "descendants": [...]})."""
     url = instance_url.rstrip("/") + f"/api/v1/statuses/{status_id}/context"
     headers = {"Authorization": f"Bearer {access_token}"}
-    async with httpx.AsyncClient(proxy=get_outbound_proxy(), timeout=15) as client:
+    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
         resp = await client.get(url, headers=headers)
         resp.raise_for_status()
         data = resp.json()
@@ -272,7 +272,7 @@ async def favourite_status(instance_url: str, access_token: str, status_id: str)
     """Favourite (like) a status."""
     url = instance_url.rstrip("/") + f"/api/v1/statuses/{status_id}/favourite"
     headers = {"Authorization": f"Bearer {access_token}"}
-    async with httpx.AsyncClient(proxy=get_outbound_proxy(), timeout=15) as client:
+    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
         resp = await client.post(url, headers=headers)
         resp.raise_for_status()
         return resp.json()
@@ -282,7 +282,7 @@ async def reblog_status(instance_url: str, access_token: str, status_id: str) ->
     """Reblog (boost) a status."""
     url = instance_url.rstrip("/") + f"/api/v1/statuses/{status_id}/reblog"
     headers = {"Authorization": f"Bearer {access_token}"}
-    async with httpx.AsyncClient(proxy=get_outbound_proxy(), timeout=15) as client:
+    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
         resp = await client.post(url, headers=headers)
         resp.raise_for_status()
         return resp.json()
@@ -295,7 +295,7 @@ async def emoji_react(instance_url: str, access_token: str, status_id: str, emoj
     from urllib.parse import quote
     url = instance_url.rstrip("/") + f"/api/v1/pleroma/statuses/{status_id}/reactions/{quote(emoji, safe='')}"
     headers = {"Authorization": f"Bearer {access_token}"}
-    async with httpx.AsyncClient(proxy=get_outbound_proxy(), timeout=15) as client:
+    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
         resp = await client.put(url, headers=headers)
         resp.raise_for_status()
         return resp.json()
@@ -307,7 +307,7 @@ async def resolve_status(instance_url: str, access_token: str, uri: str) -> dict
     url = instance_url.rstrip("/") + "/api/v2/search"
     headers = {"Authorization": f"Bearer {access_token}"}
     params = {"q": uri, "resolve": "true", "type": "statuses", "limit": 1}
-    async with httpx.AsyncClient(proxy=get_outbound_proxy(), timeout=20) as client:
+    async with httpx.AsyncClient(transport=afallback_transport(), timeout=20) as client:
         resp = await client.get(url, headers=headers, params=params)
         if resp.status_code != 200:
             return None
@@ -320,7 +320,7 @@ async def verify_credentials(instance_url: str, access_token: str) -> dict:
     """Verify that the access token is valid by calling the credentials endpoint."""
     url = instance_url.rstrip("/") + "/api/v1/accounts/verify_credentials"
     headers = {"Authorization": f"Bearer {access_token}"}
-    async with httpx.AsyncClient(proxy=get_outbound_proxy(), timeout=10) as client:
+    async with httpx.AsyncClient(transport=afallback_transport(), timeout=10) as client:
         resp = await client.get(url, headers=headers)
         resp.raise_for_status()
         return resp.json()
