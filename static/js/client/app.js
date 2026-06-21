@@ -3011,7 +3011,7 @@
       host=document.createElement('div'); host.id='admin-host'; host.style.display='none';
       host.innerHTML='<div class="spinner"></div>';
       const ifr=document.createElement('iframe'); ifr.className='admin-frame'; ifr.src='/admin?t='+Date.now(); ifr.title='Admin'; ifr.style.opacity='0';
-      ifr.addEventListener('load', ()=>{ ifr.style.opacity='1'; const sp=host.querySelector('.spinner'); if(sp) sp.remove(); });
+      ifr.addEventListener('load', ()=>{ ifr.dataset.loaded='1'; ifr.style.opacity='1'; const sp=host.querySelector('.spinner'); if(sp) sp.remove(); });
       host.appendChild(ifr);
       (document.querySelector('.main')||document.body).appendChild(host);
     }
@@ -3019,19 +3019,15 @@
   }
   function _preloadAdmin(){ _ensureAdminHost(); }   // load /admin hidden so the first open is instant
   function _adminFrame(feed){
+    // The iframe is created + loaded ONCE (post-auth, see _ensureAdminHost / _preloadAdmin) and kept
+    // alive — re-entering admin just REVEALS it, never reloads it. (Reloading on every enter made the
+    // panel slow + flickery and re-ran all its fetches.) After a deploy, a full page refresh picks up
+    // new admin CSS/JS.
     const host=_ensureAdminHost();
-    // Reload the iframe ONLY when entering admin (host was hidden), so it always reflects the latest
-    // deployed CSS/JS — the persistent iframe was otherwise frozen at page-load time (stale after a
-    // deploy). Guarded on the show-transition so we don't reload on every renderView (the old flicker).
-    const wasHidden = !host.style.display || host.style.display==='none';
-    const ifr=host.querySelector('iframe');
-    if(wasHidden && ifr){
-      ifr.style.opacity='0';
-      if(!host.querySelector('.spinner')){ const s=document.createElement('div'); s.className='spinner'; host.appendChild(s); }
-      ifr.src='/admin?t='+Math.floor(Date.now()/1000);
-    }
     feed.style.display='none';   // hide the feed; the persistent iframe fills the main area
     host.style.display='block';
+    const ifr=host.querySelector('iframe');
+    if(ifr && ifr.dataset.loaded==='1') ifr.style.opacity='1';   // already loaded → show instantly
   }
   function renderAdmin(){
     const feed=$('#feed');
