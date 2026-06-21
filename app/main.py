@@ -345,8 +345,31 @@ async def startup():
                 # when settings_backend == relay). Deferred so the relay's WS is up first; no-op
                 # otherwise. Runs in the background so startup isn't blocked.
                 import asyncio as _aio
+                async def _relay_ready(timeout=45.0):
+                    """Wait until the relay's WS listener actually accepts a TCP connection, so the
+                    hydrate/seed below don't race it (a fixed sleep loses when the relay does a WoT
+                    build before listening → 'Connection refused' on the first writes)."""
+                    import socket
+                    _d = SessionLocal()
+                    try:
+                        prow = _d.query(Setting).filter(Setting.key == "nostr_relay_port").first()
+                        port = int(prow.value) if prow and prow.value else 3052
+                    except Exception:
+                        port = 3052
+                    finally:
+                        _d.close()
+                    deadline = _aio.get_event_loop().time() + timeout
+                    while _aio.get_event_loop().time() < deadline:
+                        try:
+                            _r, _w = await _aio.wait_for(_aio.open_connection("127.0.0.1", port), 2.0)
+                            _w.close()
+                            return True
+                        except Exception:
+                            await _aio.sleep(1.0)
+                    return False
                 async def _hydrate_settings():
-                    await _aio.sleep(6)
+                    await _aio.sleep(2)
+                    await _relay_ready()
                     _db = SessionLocal()
                     try:
                         from app.services import settings_store
