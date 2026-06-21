@@ -5,10 +5,11 @@
 # A single build-arg `GPU` selects the compute backend and its base image:
 #
 #   docker build -t posterchanai:cpu   --build-arg GPU=cpu   .
-#   docker build -t posterchanai:cuda  --build-arg GPU=cuda  .   # NVIDIA
-#   docker build -t posterchanai:rocm  --build-arg GPU=rocm  .   # AMD
-#   docker build -t posterchanai:intel --build-arg GPU=intel .   # Intel Arc / XPU
+#   docker build -t posterchanai:cuda  --build-arg GPU=cuda  --build-arg BASE_IMAGE=nvidia/cuda:12.5.1-devel-ubuntu24.04 .   # NVIDIA
+#   docker build -t posterchanai:rocm  --build-arg GPU=rocm  .   # AMD (ROCm userspace installed onto ubuntu:24.04)
+#   docker build -t posterchanai:intel --build-arg GPU=intel --build-arg BASE_IMAGE=intel/oneapi-basekit:2025.2.2-0-devel-ubuntu24.04 .   # Intel Arc / XPU
 #   docker build -t posterchanai:nostr --build-arg GPU=nostr --build-arg INSTALL_BROWSER=false .
+# (BASE_IMAGE defaults to ubuntu:24.04, so cpu/nostr/rocm need only GPU; cuda/intel must pass it.)
 #                                                # Nostr-only: relay + Nostr web client + Blossom,
 #                                                # NO AI (no torch/llama/diffusers) → small image.
 #
@@ -18,57 +19,50 @@
 #   rocm : docker run --device /dev/kfd --device /dev/dri --group-add video -p 3051:3051 posterchanai:rocm
 #   intel: docker run --device /dev/dri -p 3051:3051 posterchanai:intel
 #
-# BuildKit only builds the base stage that `GPU` selects, so the other three
-# heavy images are never pulled.
+# ONE base FROM, parametrized by `BASE_IMAGE`, so a cpu/nostr build never references the
+# cuda/intel/rocm images — they are NOT pulled even on the legacy (non-BuildKit) builder, which
+# builds every FROM stage it can SEE (the old per-GPU `base-*` stages + `FROM base-${GPU}` only
+# avoided the extra pulls under BuildKit). The compose file passes the right base per profile.
 # =============================================================================
 
-# --- base image per accelerator (override the tag with --build-arg if needed) ---
-# CUDA and oneAPI ship official toolkit images we build against directly. For AMD
-# we install ROCm ourselves from AMD's repos onto plain Ubuntu (AMD's "Docker
-# manual install" guide) so the user does not need ROCm preinstalled — only the
-# host amdgpu kernel driver is required, so we install ROCm USER-SPACE with no
-# DKMS. (To instead build on AMD's prebuilt toolkit image — their "Docker with
-# toolkit" guide — pass --build-arg ROCM_BASE=rocm/dev-ubuntu-24.04:6.2.4-complete;
-# the repo install below is then a harmless no-op re-add.)
-# GPU is global (declared before the first FROM) so `FROM base-${GPU}` resolves;
-# the app stage re-declares `ARG GPU` (no default) to reuse this value.
+# --- base image per accelerator (the compose file sets BASE_IMAGE per profile) ---
+# CUDA and oneAPI ship official toolkit images we build against directly; for AMD we stay on plain
+# Ubuntu and install ROCm USER-SPACE ourselves below (no DKMS — only the host amdgpu kernel driver
+# is needed). Standalone `docker build` must pass BASE_IMAGE to match GPU (see the header examples):
+#   cpu / nostr : ubuntu:24.04
+#   cuda        : nvidia/cuda:12.5.1-devel-ubuntu24.04
+#   intel       : intel/oneapi-basekit:2025.2.2-0-devel-ubuntu24.04  (oneAPI 2025.2+ — the 2025.0
+#                 SYCL compiler has a codegen bug that makes the Arc emit EMPTY thinking/code gens)
+#   rocm        : ubuntu:24.04   (or AMD's prebuilt rocm/dev-ubuntu-24.04:*-complete — the repo
+#                 install below is then a harmless no-op re-add)
 ARG GPU=cpu
-ARG CPU_BASE=ubuntu:24.04
-ARG CUDA_BASE=nvidia/cuda:12.5.1-devel-ubuntu24.04
-ARG ROCM_BASE=ubuntu:24.04
-# Use oneAPI 2025.2+ : the 2025.0 SYCL compiler has a codegen bug that makes the Arc emit EMPTY
-# generations for thinking-mode/code prompts (verified 2026-06; 2025.2 fixes it and ships
-# work_group_static.hpp so no source patches are needed). Override INTEL_BASE if this tag moves.
-ARG INTEL_BASE=intel/oneapi-basekit:2025.2.2-0-devel-ubuntu24.04
-
-FROM ${CPU_BASE}   AS base-cpu
-FROM ${CPU_BASE}   AS base-nostr
-FROM ${CUDA_BASE}  AS base-cuda
-FROM ${INTEL_BASE} AS base-intel
-
-# AMD: install the ROCm toolkit (userspace, no kernel driver) per
-# https://rocm.docs.amd.com/projects/install-on-linux/en/latest/how-to/docker.html
-FROM ${ROCM_BASE} AS base-rocm
+ARG BASE_IMAGE=ubuntu:24.04
 # ROCm >= 6.3 is required: the current llama.cpp HIP backend uses OCP FP8 types
 # (__hip_fp8_e4m3) that don't exist in ROCm 6.2 (the HIP build fails to compile).
 ARG ROCM_VERSION=6.3.4
-ENV PATH=/opt/rocm/bin:$PATH
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        wget gnupg ca-certificates && \
-    mkdir -p --mode=0755 /etc/apt/keyrings && \
-    wget -qO- https://repo.radeon.com/rocm/rocm.gpg.key | gpg --dearmor > /etc/apt/keyrings/rocm.gpg && \
-    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/amdgpu/${ROCM_VERSION}/ubuntu noble main" \
-        > /etc/apt/sources.list.d/amdgpu.list && \
-    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/${ROCM_VERSION} noble main" \
-        > /etc/apt/sources.list.d/rocm.list && \
-    printf 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600\n' > /etc/apt/preferences.d/rocm-pin-600 && \
-    apt-get update && apt-get install -y --no-install-recommends rocm && \
-    rm -rf /var/lib/apt/lists/*
 
-# Pick the base the build asked for. Everything below is identical across GPUs;
-# only the torch / llama-cpp-python install (the `accel` step) differs.
-FROM base-${GPU} AS app
+FROM ${BASE_IMAGE} AS app
 ARG GPU
+ARG ROCM_VERSION
+
+# AMD only: install the ROCm USERSPACE toolkit onto the Ubuntu base (the kernel driver comes from
+# the host). Guarded on GPU=rocm so no other build runs it — and since it's a plain RUN (not a
+# separate base stage), it's never even parsed for a cpu/nostr/cuda/intel build.
+# https://rocm.docs.amd.com/projects/install-on-linux/en/latest/how-to/docker.html
+RUN if [ "$GPU" = "rocm" ]; then set -eux; \
+        apt-get update && apt-get install -y --no-install-recommends wget gnupg ca-certificates && \
+        mkdir -p --mode=0755 /etc/apt/keyrings && \
+        wget -qO- https://repo.radeon.com/rocm/rocm.gpg.key | gpg --dearmor > /etc/apt/keyrings/rocm.gpg && \
+        echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/amdgpu/${ROCM_VERSION}/ubuntu noble main" \
+            > /etc/apt/sources.list.d/amdgpu.list && \
+        echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/${ROCM_VERSION} noble main" \
+            > /etc/apt/sources.list.d/rocm.list && \
+        printf 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600\n' > /etc/apt/preferences.d/rocm-pin-600 && \
+        apt-get update && apt-get install -y --no-install-recommends rocm && \
+        rm -rf /var/lib/apt/lists/* ; \
+    fi
+# Harmless for non-AMD (a non-existent dir on PATH); the later venv ENV keeps this via $PATH.
+ENV PATH=/opt/rocm/bin:$PATH
 
 LABEL org.opencontainers.image.title="PosterChanAI" \
       org.opencontainers.image.source="https://github.com/loblawbob873-svg/posterchanai"

@@ -114,7 +114,9 @@ services:
     image: posterchanai:${TAG:-local}-cuda
     build:
       context: .
-      args: { GPU: cuda }
+      # BASE_IMAGE selects the CUDA toolkit base; passing it here (not via a base-* stage) means
+      # only this profile ever references it, so cpu/nostr builds don't pull it.
+      args: { GPU: cuda, BASE_IMAGE: "${CUDA_BASE:-nvidia/cuda:12.5.1-devel-ubuntu24.04}" }
     # Requires the NVIDIA Container Toolkit on the host.
     deploy:
       resources:
@@ -130,7 +132,9 @@ services:
     image: posterchanai:${TAG:-local}-rocm
     build:
       context: .
-      args: { GPU: rocm }
+      # ROCm builds on plain ubuntu:24.04 (the default BASE_IMAGE) and installs ROCm userspace in
+      # the image. Override with a prebuilt rocm/dev-ubuntu-24.04:*-complete base if you prefer.
+      args: { GPU: rocm, BASE_IMAGE: "${ROCM_BASE:-ubuntu:24.04}" }
     # ROCm userspace is in the image; the kernel driver comes from the host. The
     # container runs as root, so it reaches the render node without group juggling;
     # the entrypoint auto-sets HSA_OVERRIDE_GFX_VERSION for consumer RDNA cards.
@@ -146,7 +150,9 @@ services:
     image: posterchanai:${TAG:-local}-intel
     build:
       context: .
-      args: { GPU: intel }
+      # oneAPI 2025.2+ base (2025.0's SYCL compiler makes the Arc emit EMPTY thinking/code gens).
+      # Only this profile references it, so cpu/nostr builds never pull the heavy oneAPI image.
+      args: { GPU: intel, BASE_IMAGE: "${INTEL_BASE:-intel/oneapi-basekit:2025.2.2-0-devel-ubuntu24.04}" }
     # Intel Arc: expose the render nodes; host needs the i915 driver.
     devices:
       - /dev/dri

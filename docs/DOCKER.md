@@ -32,10 +32,15 @@ The container runs as root, so it reaches the GPU render node without group flag
 
 ```bash
 docker build -t posterchanai:cpu   --build-arg GPU=cpu   .
-docker build -t posterchanai:cuda  --build-arg GPU=cuda  .
+docker build -t posterchanai:cuda  --build-arg GPU=cuda  --build-arg BASE_IMAGE=nvidia/cuda:12.5.1-devel-ubuntu24.04 .
 docker build -t posterchanai:rocm  --build-arg GPU=rocm  .
-docker build -t posterchanai:intel --build-arg GPU=intel .
+docker build -t posterchanai:intel --build-arg GPU=intel --build-arg BASE_IMAGE=intel/oneapi-basekit:2025.2.2-0-devel-ubuntu24.04 .
 ```
+
+The Dockerfile uses **one** parametrized base (`BASE_IMAGE`, default `ubuntu:24.04`) rather than
+per-GPU stages, so a `cpu`/`nostr` build never references — and never pulls — the cuda/intel/rocm
+images, even on the legacy (non-BuildKit) builder. `cpu`/`nostr`/`rocm` only need `GPU`; `cuda` and
+`intel` must also pass the matching `BASE_IMAGE` (the compose file does this for you per profile).
 
 ROCm builds the HIP `llama-cpp-python`, which **requires ROCm ≥ 6.3** (the image
 installs 6.3.4); the SYCL/Intel build is RAM-hungry (`icpx`) so build it on a box
