@@ -978,3 +978,5 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .cpc.cw{color:#3ce6ff;text-shadow:0 0 6px rgba(60,230,255,.9)}
 .cpc.cb{color:#ff3cd2;text-shadow:0 0 6px rgba(255,60,210,.9)}
 @media(max-width:820px){ .chess-board-wrap{max-width:100%} .cpc{font-size:8.5vw} }
+
+.chessboard.locked{opacity:.55;pointer-events:none}
