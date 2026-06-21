@@ -754,7 +754,7 @@
     VIEW = v;
     if(v==='notifications') _notifShown = 25;   // fresh entry → collapse pagination back to one page
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
-    $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', streams:'Streams', communities:'Communities', chat:'Chat', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', streams:'Streams', communities:'Communities', chat:'Chat', '4chan':'4chan', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', admin:'Admin' }[v]||v;
     renderView(true);
   }
   function renderView(reset){
@@ -782,6 +782,7 @@
     if (VIEW==='streams') return renderStreams();
     if (VIEW==='communities') return renderCommunities();
     if (VIEW==='chat') return renderChatrooms();
+    if (VIEW==='4chan') return render4chan();
     if (VIEW==='blossom') return renderBlossom();
     if (VIEW==='settings') return renderSettings();
     if (VIEW==='ai') return renderAI();
@@ -2319,6 +2320,70 @@
       bg.querySelectorAll('[data-url]').forEach(el=> el.onclick=()=>{ const ext=_MIME_EXT[el.dataset.type]||''; ta.value+=(ta.value?'\n':'')+el.dataset.url+(ext?('.'+ext):''); bg.remove(); toast('attached'); });
     })();
   }
+
+  // ---- 4chan browser (Discover) — live catalog/thread via the /api/4chan/* backend (proxies
+  // a.4cdn.org through the built-in proxy). Content is ephemeral + re-fetchable, so it is NOT stored
+  // as relay events (that would bloat the WoT relay with non-Nostr junk); the view fetches fresh.
+  // Board picker + mobile-friendly grid; thumbnails open in the shared lightbox. ----
+  const _4CHAN_BOARDS = [['g','/g/ Tech'],['a','/a/ Anime'],['pol','/pol/ Politics'],['h','/h/ NSFW']];
+  let _4chanBoard = '4chan' in (window._pcState||{}) ? window._pcState['4chan'] : 'g';
+
+  async function render4chan(){
+    const feed=$('#feed');
+    feed.innerHTML = `<div class="fc-bar">${_4CHAN_BOARDS.map(([b,l])=>
+      `<button class="fc-tab${b===_4chanBoard?' on':''}${b==='h'?' nsfw':''}" data-board="${b}">${enc(l)}</button>`).join('')}</div>
+      <div class="fc-grid" id="fc-grid"><div class="spinner"></div></div>`;
+    $$('.fc-tab',feed).forEach(t=> t.onclick=()=>{ _4chanBoard=t.dataset.board; (window._pcState=window._pcState||{})['4chan']=_4chanBoard; render4chan(); });
+    let data=null;
+    try{ const r=await fetch('/api/4chan/catalog?board='+encodeURIComponent(_4chanBoard)); if(!r.ok) throw 0; data=await r.json(); }
+    catch(_){ const g=$('#fc-grid'); if(g) g.innerHTML='<div class="empty">Couldn\'t load /'+enc(_4chanBoard)+'/ — the board may be blocked or 4chan is unreachable.</div>'; return; }
+    if(VIEW!=='4chan') return;
+    const grid=$('#fc-grid'); if(!grid) return;
+    const threads=(data&&data.threads)||[];
+    grid.innerHTML = threads.length ? threads.map(t=>
+      `<div class="fc-card" data-id="${enc(String(t.thread_id))}">
+        ${t.thumb_url?`<img class="fc-thumb" src="${enc('/api/4chan/proxy?url='+encodeURIComponent(t.thumb_url))}" loading="lazy" onerror="this.style.visibility='hidden'">`:'<div class="fc-thumb"></div>'}
+        <div class="fc-card-body"><div class="fc-title">${enc(t.title||'(no subject)')}</div>
+          <div class="fc-meta">💬 ${t.replies||0} · 🖼 ${t.images||0}</div></div>
+      </div>`).join('') : '<div class="empty">No threads.</div>';
+    $$('.fc-card',grid).forEach(c=> c.onclick=()=> open4chanThread(_4chanBoard, c.dataset.id));
+  }
+
+  async function open4chanThread(board, id){
+    const feed=$('#feed');
+    feed.innerHTML = `<div class="fc-thread-top">
+        <button class="btn btn-ghost small" id="fc-back">← /${enc(board)}/</button>
+        <a class="btn btn-ghost small" href="https://boards.4chan.org/${enc(board)}/thread/${enc(id)}" target="_blank" rel="noopener">Open on 4chan ↗</a>
+        <button class="btn btn-cyan small" id="fc-sum">✨ Summarize</button>
+      </div>
+      <div class="fc-summary hidden" id="fc-summary"></div>
+      <div class="fc-posts" id="fc-posts"><div class="spinner"></div></div>`;
+    $('#fc-back').onclick=()=> render4chan();
+    $('#fc-sum').onclick=()=> summarize4chan(board, id);
+    let data=null;
+    try{ const r=await fetch(`/api/4chan/thread?board=${encodeURIComponent(board)}&thread_id=${encodeURIComponent(id)}`); if(!r.ok) throw 0; data=await r.json(); }
+    catch(_){ const p=$('#fc-posts'); if(p) p.innerHTML='<div class="empty">Couldn\'t load the thread.</div>'; return; }
+    if(VIEW!=='4chan') return;
+    const posts=(data&&data.posts)||[]; const box=$('#fc-posts'); if(!box) return;
+    box.innerHTML = posts.length ? posts.map(p=>{
+      const full='/api/4chan/proxy?url='+encodeURIComponent(p.image_url||p.thumb_url||'');
+      const img = p.thumb_url ? `<img class="fc-post-img" src="${enc('/api/4chan/proxy?url='+encodeURIComponent(p.thumb_url))}" data-full="${enc(full)}" loading="lazy" onerror="this.style.display='none'">` : '';
+      const body = p.com ? `<div class="fc-post-body">${enc(p.com)}</div>` : '';
+      return `<div class="fc-post"><div class="fc-post-hd"><span class="fc-no">#${enc(String(p.no))}</span> <span class="fc-name">${enc(p.name||'Anonymous')}</span></div>${img}${body}</div>`;
+    }).join('') : '<div class="empty">No posts.</div>';
+    $$('.fc-post-img',box).forEach(im=> im.onclick=()=> openLightbox(im.dataset.full||im.src));
+  }
+
+  async function summarize4chan(board, id){
+    const box=$('#fc-summary'); if(!box) return;
+    box.classList.remove('hidden'); box.innerHTML='<div class="spinner"></div>';
+    try{
+      const r=await fetch(`/api/4chan/summarize?board=${encodeURIComponent(board)}&thread_id=${encodeURIComponent(id)}`, {credentials:'include'});
+      const j=await r.json().catch(()=>({}));
+      box.innerHTML = (r.ok && j.summary) ? `<h4>✨ Summary</h4>${linkify(j.summary)}` : `<div class="muted">${enc(j.error||'Summary unavailable (needs AI access).')}</div>`;
+    }catch(_){ box.innerHTML='<div class="muted">Summary failed.</div>'; }
+  }
+
   async function renderBlossom(){
     const feed=$('#feed'); const server=mediaServer();
     feed.innerHTML=`<div class="uploader"><input type="file" id="bl-file" multiple> <button class="btn btn-cyan small" id="bl-up">Upload</button> <span class="muted small">→ ${enc(server||'(no server)')}</span></div><div class="files-grid" id="bl-grid"><div class="spinner"></div></div>`;
@@ -2880,9 +2945,15 @@
       if(miss.length){ try{ const evs=await Relay.query([{authors:miss,kinds:[0],limit:miss.length}]); evs.forEach(e=>Store.saveProfile(e)); }catch(_){} }
       const list=$('#people-list',root); if(!list) return;
       list.innerHTML = pks.length ? pks.slice(0,400).map(p=>{ const m=Store.profile(p)||{};
-        return `<div class="psearch" data-prof="${p}"><img src="${enc(m.picture||LOGO)}" onerror="this.src='${LOGO}'"><div><b>${enc(m.name||m.display_name||NT().nip19.npubEncode(p).slice(0,14))}</b><div class="muted small">${enc(niceNip05(m.nip05)||'')}</div></div></div>`;
+        // Show a "Follow back" button for anyone you don't already follow (not yourself) — so in the
+        // Followers list you can see who you haven't reciprocated and follow them in one tap.
+        const canFollow = p!==ME.pubkey && !FOLLOWS.has(p);
+        return `<div class="psearch" data-prof="${p}"><img src="${enc(m.picture||LOGO)}" onerror="this.src='${LOGO}'"><div class="pinfo"><b>${enc(m.name||m.display_name||NT().nip19.npubEncode(p).slice(0,14))}</b><div class="muted small">${enc(niceNip05(m.nip05)||'')}</div></div>${canFollow?`<button class="btn btn-cyan small pfollow" data-fb="${p}">Follow back</button>`:''}</div>`;
       }).join('') : '<div class="empty">Nobody here.</div>';
-      $$('[data-prof]',list).forEach(el=> el.onclick=()=>{ closeModal(); renderProfileView(el.dataset.prof); });
+      $$('[data-prof]',list).forEach(el=> el.onclick=(ev)=>{ if(ev.target.closest('.pfollow')) return; closeModal(); renderProfileView(el.dataset.prof); });
+      $$('.pfollow',list).forEach(b=> b.onclick=async(ev)=>{ ev.stopPropagation(); b.disabled=true; b.textContent='…';
+        try{ await toggleFollow(b.dataset.fb); b.textContent='Following ✓'; b.classList.remove('btn-cyan'); b.classList.add('btn-ghost'); }
+        catch(_){ b.disabled=false; b.textContent='Follow back'; } });
     });
   }
   // ---------- AI view (the old PosterChan AI web UI, merged in as a client view) ----------

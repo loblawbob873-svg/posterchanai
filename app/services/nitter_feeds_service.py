@@ -132,6 +132,45 @@ def _resolve_pic(url: str) -> str:
     return "https://pbs.twimg.com/" + tail
 
 
+def _looks_like_feed(content: bytes) -> bool:
+    """True only if the body is plausibly an RSS/Atom feed. Guards against forwarding GARBAGE: a
+    Cloudflare challenge / 403 / error HTML page often comes back as HTTP 200, and the recover=True
+    XML parser would happily turn it into junk 'items'. If it doesn't smell like a feed, we skip it
+    (and try the next transport) rather than posting noise."""
+    if not content:
+        return False
+    try:
+        head = content[:2048].decode("utf-8", "ignore").lstrip().lower()
+    except Exception:
+        return False
+    return head.startswith("<?xml") or "<rss" in head or "<feed" in head or "<channel" in head
+
+
+async def _fetch_feed(rss: str, clients):
+    """Fetch + parse one RSS feed, trying each transport in order (proxy first, then direct). Returns
+    (items, avatar_url, channel_name, working_client) for the FIRST transport that returns a valid,
+    parseable feed WITH items — else (None, '', '', None). Only validly-parsed feeds are ever
+    returned, so a connection hiccup / CF page can't be forwarded as a tweet."""
+    for label, client, timeout in clients:
+        try:
+            resp = await client.get(rss, headers=_UA, timeout=timeout)
+        except Exception as e:
+            logger.debug("[nitter] %s fetch %s failed: %s", label, rss[:50], e)
+            continue
+        if resp.status_code != 200:
+            logger.debug("[nitter] %s fetch %s -> HTTP %s", label, rss[:50], resp.status_code)
+            continue
+        if not _looks_like_feed(resp.content):
+            logger.debug("[nitter] %s fetch %s -> not a feed (garbage body), trying next", label, rss[:50])
+            continue
+        items, avatar_url, channel_name = _parse_feed(resp.content)
+        if items:
+            return items, avatar_url, channel_name, client
+        # 200 + real feed but no items = gate page / empty — try the next transport before giving up.
+        logger.debug("[nitter] %s fetch %s -> 0 items (gate/empty), trying next", label, rss[:50])
+    return None, "", "", None
+
+
 def _parse_feed(content: bytes):
     """Parse RSS bytes → (items, avatar_url, channel_name). items newest-first."""
     # Some instances (nitter.net) return a 200 valid-RSS body whose only item is a gate
@@ -227,7 +266,7 @@ async def _render_card(client: httpx.AsyncClient, item: dict, handle: str,
 
 # --- per-user poll ----------------------------------------------------------
 
-async def _poll_user(db: Session, tg: TelegramService, user: User, client: httpx.AsyncClient) -> None:
+async def _poll_user(db: Session, tg: TelegramService, user: User, clients) -> None:
     raw = _get_user_setting(db, user.id, "nitter_feeds")
     feeds = [ln.strip() for ln in raw.splitlines() if ln.strip()] if raw else []
     if not feeds:
@@ -242,14 +281,8 @@ async def _poll_user(db: Session, tg: TelegramService, user: User, client: httpx
 
     changed = False
     for rss in feeds:
-        try:
-            resp = await client.get(rss, headers=_UA, timeout=30)
-            if resp.status_code != 200:
-                continue
-            items, avatar_url, channel_name = _parse_feed(resp.content)
-        except Exception as e:
-            logger.warning(f"[nitter] feed fetch/parse failed ({rss[:60]}) for user {user.id}: {e}")
-            continue
+        # Proxy-first with direct fallback; only a validly-parsed feed with items comes back.
+        items, avatar_url, channel_name, client = await _fetch_feed(rss, clients)
         if not items:
             continue
         handle = _handle_from_rss(rss)
@@ -294,24 +327,30 @@ async def poll_once(db: Session) -> None:
     users = db.query(User).filter(User.telegram_chat_id.isnot(None)).all()
     if not users:
         return
-    # Nitter is public RSS, and Cloudflare throttles/challenges Tor exits — routing through the
-    # built-in proxy caused intermittent 30s read-timeouts and 403s. So fetch DIRECT by default.
-    # Set `nitter_use_proxy=true` to route via the proxy again (e.g. if the host IP gets blocked).
-    # NOTE: httpx honours HTTP(S)_PROXY env when trust_env=True (the default), so trust_env=False
-    # is required to actually bypass the inherited Tor proxy, not just proxy=None.
-    use_proxy = _get_setting(db, "nitter_use_proxy", "false").lower() == "true"
-    proxy_config = get_proxy_config() if use_proxy else None
-    if use_proxy and not proxy_config:
-        logger.warning("[nitter] nitter_use_proxy=true but no proxy configured; skipping poll")
-        return
-    logger.debug("[nitter] requests %s", f"via proxy {proxy_config}" if proxy_config else "direct")
-    async with httpx.AsyncClient(follow_redirects=True, proxy=proxy_config, trust_env=False) as client:
+    # Proxy-FIRST, then DIRECT fallback: try the built-in HTTP proxy first so nitter traffic rides it
+    # when it works, then fall straight to a direct connection on any failure/garbage. The proxy try
+    # uses a SHORT timeout so a Tor-exit throttle/CF-challenge fails fast and we fall back quickly
+    # (Cloudflare often blocks Tor exits — _fetch_feed validates the body so a 200 challenge page is
+    # never forwarded). trust_env=False so httpx ignores inherited HTTP(S)_PROXY env and only uses the
+    # transport we set explicitly.
+    proxy_config = get_proxy_config()
+    direct_client = httpx.AsyncClient(follow_redirects=True, proxy=None, trust_env=False)
+    proxy_client = (httpx.AsyncClient(follow_redirects=True, proxy=proxy_config, trust_env=False)
+                    if proxy_config else None)
+    # Each entry: (label, client, per-attempt timeout). Proxy first (fail-fast 12s), then direct (30s).
+    clients = ([("proxy", proxy_client, 12)] if proxy_client else []) + [("direct", direct_client, 30)]
+    logger.debug("[nitter] transports: %s", ", ".join(c[0] for c in clients))
+    try:
         for user in users:
             try:
-                await _poll_user(db, tg, user, client)
+                await _poll_user(db, tg, user, clients)
             except Exception as e:
                 logger.warning(f"[nitter] poll failed for user {user.id}: {e}")
                 db.rollback()
+    finally:
+        await direct_client.aclose()
+        if proxy_client is not None:
+            await proxy_client.aclose()
 
 
 # --- scheduler --------------------------------------------------------------
