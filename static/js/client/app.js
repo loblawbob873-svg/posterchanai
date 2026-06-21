@@ -593,7 +593,9 @@
   function renderMe(){
     const p = Store.profile(ME.pubkey) || {};
     const av = p.picture || LOGO;
-    $('#me-card').innerHTML = `<img src="${enc(av)}" onerror="this.src='${LOGO}'"><div><div class="mn">${enc(p.name||p.display_name||'anon')}</div><div class="mk">${enc(ME.npub.slice(0,12))}…</div></div>`;
+    // Show the NIP-05 handle under the name when set (cleaner); only fall back to the npub otherwise.
+    const sub = niceNip05(p.nip05) || (ME.npub.slice(0,12) + '…');
+    $('#me-card').innerHTML = `<img src="${enc(av)}" onerror="this.src='${LOGO}'"><div><div class="mn">${enc(p.name||p.display_name||'anon')}</div><div class="mk">${enc(sub)}</div></div>`;
   }
 
   // ---------- follows + profiles ----------
