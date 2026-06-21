@@ -93,7 +93,7 @@ a.btn.full{display:block}
 @keyframes gl{0%{clip-path:inset(0 0 86% 0)}25%{clip-path:inset(60% 0 20% 0)}50%{clip-path:inset(20% 0 60% 0)}75%{clip-path:inset(86% 0 0 0)}100%{clip-path:inset(40% 0 40% 0)}}
 
 /* ===== app shell ===== */
-.app{display:grid;grid-template-columns:320px 1fr;height:100vh}
+.app{display:grid;grid-template-columns:360px 1fr;height:100vh}
 .sidebar{display:flex;flex-direction:column;gap:8px;padding:18px 14px;border-right:1px solid var(--line);min-height:0;overflow-y:auto;
   background:rgba(10,10,16,.55)}   /* neutral dark so the body's cyan/magenta gradient doesn't tint the left column differently from center/right */
 .brand{font-size:26px;font-weight:800;text-align:center;color:var(--neon);margin-bottom:8px}
@@ -145,7 +145,7 @@ a.btn.full{display:block}
 /* desktop-only right column: Hot / Trending + GitHub link (hidden below 1100px) */
 .rightbar{display:none}
 @media(min-width:1180px){
-  .app{grid-template-columns:340px 1fr 420px}
+  .app{grid-template-columns:390px 1fr 420px}
   .rightbar{display:flex;flex-direction:column;gap:16px;padding:18px 16px;border-left:1px solid var(--line);overflow-y:auto;min-height:0}
 }
 .rb-section h3{margin:0 0 8px;font-size:18px;letter-spacing:1px;color:var(--text)}
