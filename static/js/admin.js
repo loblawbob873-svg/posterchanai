@@ -49,6 +49,32 @@ async function copyRelayKey(which) {
     if (!ok) window.prompt('Copy the ' + which + ' manually:', v);   // last resort (http / locked-down clipboard)
 }
 
+// On-demand model download (kind = chat | image | music). Models aren't auto-downloaded; this
+// fires the background download and polls status so the admin SEES completion (✓) or errors (✗).
+async function downloadModel(kind, btnId, statusId){
+    const btn = document.getElementById(btnId), st = document.getElementById(statusId);
+    if (btn) btn.disabled = true;
+    if (st){ st.textContent = 'Starting…'; st.style.color = '#9fa1c6'; }
+    try { await fetch('/api/admin/models/' + kind + '/download', { method: 'POST' }); }
+    catch (e){ if (st){ st.textContent = '✗ ' + e; st.style.color = '#ff6b6b'; } if (btn) btn.disabled = false; return; }
+    const poll = async () => {
+        let s;
+        try { s = await fetch('/api/admin/models/' + kind + '/status').then(r => r.json()); }
+        catch (_) { s = { state: 'error', message: 'status check failed' }; }
+        if (s.state === 'running'){
+            if (st){ st.textContent = '⏳ ' + (s.pct != null ? s.pct + '% — ' : '') + (s.message || 'downloading…'); st.style.color = '#00ffff'; }
+            setTimeout(poll, 2000);
+        } else if (s.state === 'done'){
+            if (st){ st.textContent = '✓ ' + (s.message || 'done'); st.style.color = '#3ddc84'; }
+            if (btn) btn.disabled = false;
+        } else if (s.state === 'error'){
+            if (st){ st.textContent = '✗ ' + (s.message || 'error'); st.style.color = '#ff6b6b'; }
+            if (btn) btn.disabled = false;
+        } else { if (st) st.textContent = ''; if (btn) btn.disabled = false; }
+    };
+    setTimeout(poll, 800);
+}
+
 // Default news sources
 const DEFAULT_NEWS_SOURCES = `drudgereport.com|Drudge Report
 npr.org/sections/news|NPR

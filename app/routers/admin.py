@@ -307,6 +307,23 @@ def get_settings(
     return SettingsResponse(**settings)
 
 
+@router.post("/models/{kind}/download")
+def models_download(kind: str, admin: User = Depends(get_admin_user)):
+    """Start an on-demand model download (kind = chat | image | music) in the background. Models are
+    NOT auto-downloaded; this is the button behind each settings tab. Poll /models/{kind}/status."""
+    from app.services import model_download_service as mds
+    from app.database import SessionLocal
+    mds.start(kind, SessionLocal)
+    return mds.status(kind)
+
+
+@router.get("/models/{kind}/status")
+def models_status(kind: str, admin: User = Depends(get_admin_user)):
+    """Status of a model download: {state: idle|running|done|error, message, pct}."""
+    from app.services import model_download_service as mds
+    return mds.status(kind)
+
+
 @router.post("/nostr-relay/refresh-wot")
 def refresh_nostr_relay_wot(admin: User = Depends(get_admin_user)):
     """Rebuild the Nostr relay's Web of Trust now (Admin → Relay button)."""

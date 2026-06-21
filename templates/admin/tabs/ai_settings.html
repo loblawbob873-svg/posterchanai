@@ -9,6 +9,11 @@
             <small>Full path to the GGUF model file. <strong>This is the file that is actually loaded</strong> for Native/IPEX. Set this to your .gguf (e.g. DeepSeek or Qwen). Then set <strong>Default Model</strong> (under Model name &amp; connection) to the name you want in logs and API (e.g. <code>deepseek</code>) and Save—otherwise logs may still show an old model name.</small>
         </div>
         <div class="form-group">
+            <button type="button" class="btn-secondary" id="dl-chat-btn" onclick="downloadModel('chat','dl-chat-btn','dl-chat-st')">⬇ Download chat model</button>
+            <span id="dl-chat-st" style="margin-left:10px;font-size:13px"></span>
+            <small>Models are NOT downloaded automatically (saves bandwidth). Click to fetch the GGUF above (or the recommended default if blank) to the models dir now — ~5–6&nbsp;GB, one-time. Shows progress + ✓/✗ here.</small>
+        </div>
+        <div class="form-group">
             <label for="llm_tools_model">Agentic / Tools Model (GGUF name)</label>
             <input type="text" id="llm_tools_model" name="llm_tools_model" placeholder="Qwen3.5-9B-Claude-Code-Q4_K_M.gguf">
             <small>GGUF <strong>basename</strong> (in the same dir as Model Path) or absolute path, used for <strong>tool-calling / agentic jobs</strong>: opencode/aider via <code>/v1</code>, the <code>node agent</code> command (web UI &amp; Telegram), and the system-health report. Plain chat keeps using Model Path. Blank or a missing file → falls back to Model Path. Recommended: <code>Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf</code> on 12&nbsp;GB+ GPUs, or the lightweight <code>Qwen3.5-9B-Claude-Code-Q4_K_M.gguf</code>.</small>

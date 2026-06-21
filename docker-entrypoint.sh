@@ -103,11 +103,10 @@ if [ "${SOURCE_ONEAPI:-0}" = "1" ] && [ -f /opt/intel/oneapi/setvars.sh ]; then
     source /opt/intel/oneapi/setvars.sh >/dev/null 2>&1 || true
 fi
 
-# Turnkey model: download the recommended GGUF on first run so `native` chat works
-# out of the box. Done in the BACKGROUND (it's ~5.6 GB) so the web UI is available
-# immediately; chat starts working once the file lands (progress in the log). Skip
-# with DOWNLOAD_MODEL=0, or if the user already placed/Configured a model.
-if [ "${DOWNLOAD_MODEL:-1}" = "1" ] && [ -n "${POSTERCHANAI_MODEL_URL:-}" ] && \
+# Chat model: NOT auto-downloaded (saves bandwidth). The admin pulls it on demand from
+# Admin → AI Settings → "Download chat model" (shows progress + ✓/✗). Opt back into the
+# turnkey background pull with DOWNLOAD_MODEL=1 (needs POSTERCHANAI_MODEL_URL + _LLM_MODEL_PATH).
+if [ "${DOWNLOAD_MODEL:-0}" = "1" ] && [ -n "${POSTERCHANAI_MODEL_URL:-}" ] && \
    [ -n "${POSTERCHANAI_LLM_MODEL_PATH:-}" ] && [ ! -f "$POSTERCHANAI_LLM_MODEL_PATH" ]; then
     (
         tmp="${POSTERCHANAI_LLM_MODEL_PATH}.part"
@@ -124,7 +123,7 @@ fi
 # Depth model for the `alive` 3D-parallax effect (~94 MB, gitignored so not baked into
 # the image). Fetched on first run into the data volume, in the BACKGROUND so startup
 # isn't blocked; the effect lights up once it lands. Skip with DOWNLOAD_DEPTH_MODEL=0.
-if [ "${DOWNLOAD_DEPTH_MODEL:-1}" = "1" ] && [ -n "${DEPTH_MODEL_URL:-}" ] && \
+if [ "${DOWNLOAD_DEPTH_MODEL:-0}" = "1" ] && [ -n "${DEPTH_MODEL_URL:-}" ] && \
    [ -n "${DEPTH_MODEL_PATH:-}" ] && [ ! -f "$DEPTH_MODEL_PATH" ]; then
     (
         tmp="${DEPTH_MODEL_PATH}.part"
@@ -142,7 +141,7 @@ fi
 # data volume (rembg's U2NET_HOME) in the BACKGROUND. rembg would otherwise fetch it lazily on
 # the first removebackground; pre-fetching means the first call doesn't stall. Skip with
 # DOWNLOAD_U2NET_MODEL=0.
-if [ "${DOWNLOAD_U2NET_MODEL:-1}" = "1" ] && [ -n "${U2NET_MODEL_URL:-}" ] && \
+if [ "${DOWNLOAD_U2NET_MODEL:-0}" = "1" ] && [ -n "${U2NET_MODEL_URL:-}" ] && \
    [ -n "${U2NET_HOME:-}" ] && [ ! -f "$U2NET_HOME/u2net.onnx" ]; then
     (
         mkdir -p "$U2NET_HOME"

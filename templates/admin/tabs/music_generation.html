@@ -40,6 +40,11 @@
                 fast 8-step generation, <code>acestep-v15-base</code> for quality). Fits a 12&nbsp;GB
                 GPU. Leave empty to use the server's default.</small>
         </div>
+        <div class="form-group">
+            <button type="button" class="btn-secondary" id="dl-music-btn" onclick="downloadModel('music','dl-music-btn','dl-music-st')">⬇ Download music model</button>
+            <span id="dl-music-st" style="margin-left:10px;font-size:13px"></span>
+            <small>Models are NOT downloaded automatically. Click to fetch + warm up the ACE-Step model now (one-time, large). Needs the ACE-Step server running.</small>
+        </div>
         <div class="form-row">
             <div class="form-group">
                 <label for="music_default_duration">Default Duration (seconds)</label>
