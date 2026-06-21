@@ -53,6 +53,7 @@ _CACHE: dict = {}
 _lock = threading.RLock()
 _loaded = False
 _HYDRATED_KEYS: set = set()   # keys for which the relay holds an authoritative value (vs a default)
+_LOCAL_KEYS: set = set()      # keys loaded from the local JSON (vs a default)
 
 _LOCAL_PATH = os.environ.get(
     "POSTERCHANAI_LOCAL_SETTINGS",
@@ -294,8 +295,10 @@ def _port() -> int:
 def load_local() -> None:
     """Load the local-only keys (plumbing + cursors) from the JSON file into the cache. Call EARLY
     (before the relay starts) so nostr_relay_port/bind/enabled are available to reach the relay."""
+    loaded = _load_local_file()
     with _lock:
-        _CACHE.update(_load_local_file())
+        _CACHE.update(loaded)
+        _LOCAL_KEYS.update(loaded.keys())   # remember which keys came from the JSON (vs a default)
 
 
 def apply_defaults(defaults: dict) -> None:
@@ -371,10 +374,13 @@ def migrate_legacy_table(db) -> int:
         return 0
     migrated = 0
     for key, value in rows:
-        if _is_local_only(key) or key in _HYDRATED_KEYS:
+        # Skip keys an authoritative source already provided: the relay (shareable) or the local JSON
+        # (plumbing/cursors). Everything else — including custom local-only values like a non-default
+        # nostr_relay_bind — is migrated (put routes it: shareable→relay, local-only→JSON).
+        if key in _HYDRATED_KEYS or key in _LOCAL_KEYS:
             continue
         put(key, value if value is not None else "")   # legacy value beats the code default
-        _HYDRATED_KEYS.add(key)
+        (_HYDRATED_KEYS if not _is_local_only(key) else _LOCAL_KEYS).add(key)
         migrated += 1
     if migrated:
         logger.info("[settings-store] migrated %d legacy settings-table key(s) into the relay", migrated)
