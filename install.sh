@@ -112,6 +112,26 @@ install_nostr_only() {
     echo -e "  • Add AI later by re-running ./install.sh and choosing Full."
 }
 
+# Best-effort: make sure the system clock is correct. The Nostr relay's queries are time-windowed
+# (backfill `since = now - 48h`, created_at sanity), so a wrong clock silently breaks it — the WoT
+# still builds but the timeline stays EMPTY (the post window is in the future). Enable NTP via
+# whatever the host has; never fail the install over it.
+ensure_system_clock() {
+    if command -v timedatectl >/dev/null 2>&1; then
+        if timedatectl set-ntp true >/dev/null 2>&1 || sudo timedatectl set-ntp true >/dev/null 2>&1; then
+            print_success "System clock: NTP sync enabled"
+            return
+        fi
+    fi
+    for svc in systemd-timesyncd chronyd ntpd ntp; do
+        if sudo systemctl enable --now "$svc" >/dev/null 2>&1; then
+            print_success "System clock: enabled $svc for NTP sync"
+            return
+        fi
+    done
+    print_warning "Could not auto-enable NTP — make sure the system clock is correct (a wrong clock makes the Nostr relay show NO posts)"
+}
+
 # =============================================================================
 # Main Installation Flow
 # =============================================================================
@@ -121,6 +141,9 @@ main() {
 
     # Step 1: Check system dependencies
     check_dependencies
+
+    # Step 1b: ensure the system clock is correct (a wrong clock makes the relay show no posts)
+    ensure_system_clock
 
     # Step 2: Detect GPU
     detect_gpu

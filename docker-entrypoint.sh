@@ -10,6 +10,47 @@ set -e
 DATA_HOME="${POSTERCHANAI_DATA:-/var/lib/posterchanai}"
 mkdir -p "$DATA_HOME"/{models,torrents,tor,hf,miopen,assets} /app/data
 
+# Clock sanity BEFORE the app/relay start. The Nostr relay's queries are time-windowed (backfill
+# `since = now - 48h`, created_at sanity), so a wrong system clock silently breaks federation: the
+# WoT still builds (kind-3 has no time filter) but the timeline stays EMPTY (the post window is in
+# the future). Best-effort: ask NTP for the real time, and if the clock is off by > 60s try to set
+# it. Setting needs CAP_SYS_TIME (run with --cap-add SYS_TIME, or the clock is the HOST's job); if
+# we can't, warn loudly. Skip with POSTERCHANAI_NTP_SYNC=0 (e.g. host already manages time).
+if [ "${POSTERCHANAI_NTP_SYNC:-1}" = "1" ]; then
+    python3 - <<'PYEOF' || true
+import socket, struct, time, subprocess
+def ntp_time():
+    for host in ("pool.ntp.org", "time.google.com", "time.cloudflare.com"):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(5)
+            s.sendto(b"\x1b" + 47 * b"\0", (host, 123))
+            data, _ = s.recvfrom(48); s.close()
+            return struct.unpack("!12I", data)[10] - 2208988800  # NTP epoch -> Unix
+        except Exception:
+            continue
+    return None
+real = ntp_time()
+if real is None:
+    print("[entrypoint] clock: could not reach NTP (DNS/network?) — skipping check", flush=True)
+else:
+    skew = real - time.time()
+    if abs(skew) <= 60:
+        print(f"[entrypoint] clock OK (NTP skew {skew:+.0f}s)", flush=True)
+    else:
+        print(f"[entrypoint] clock is off by {skew:+.0f}s "
+              f"(system={time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}, "
+              f"real={time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime(real))})", flush=True)
+        if subprocess.run(["date", "-s", "@%d" % int(real)],
+                          capture_output=True).returncode == 0:
+            print(f"[entrypoint] clock corrected via NTP to "
+                  f"{time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime(real))}", flush=True)
+        else:
+            print("[entrypoint] WARNING: could NOT set the clock (need --cap-add SYS_TIME, or fix "
+                  "the HOST clock / enable NTP). The Nostr relay will show NO posts until the clock "
+                  "is correct.", flush=True)
+PYEOF
+fi
+
 # AMD only: consumer RDNA cards aren't in ROCm's official support list, so torch /
 # HIP need HSA_OVERRIDE_GFX_VERSION pointed at the nearest supported arch. Auto-set
 # it from the detected GPU (unless the user already provided one) so the AMD image
