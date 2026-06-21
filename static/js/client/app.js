@@ -31,7 +31,8 @@
     }
   };
 
-  let CFG = {}, ME = null, FOLLOWS = new Set(), MUTED = new Set(), MUTED_WORDS = new Set(), PINNED = new Set(), BOOKMARKS = new Set(), VIEW = 'home', IS_ADMIN = false;
+  let CFG = {}, ME = null, FOLLOWS = new Set(), FOLLOWERS = new Set(), MUTED = new Set(), MUTED_WORDS = new Set(), PINNED = new Set(), BOOKMARKS = new Set(), VIEW = 'home', IS_ADMIN = false;
+  let _myFollowersLoaded = false;
   let signer = null;
   const subs = {};                 // view -> subId
   const seenNotif = { last: 0 };
@@ -672,6 +673,16 @@
   async function toggleFollow(pk){
     const have=FOLLOWS.has(pk); await _editPList(3, pk, !have);
     have?FOLLOWS.delete(pk):FOLLOWS.add(pk); toast(have?'unfollowed':'followed');
+  }
+  // Who follows ME — the authors of kind-3 contact lists that p-tag my pubkey. Loaded once, lazily
+  // (on the first people list), then cached. Used to badge "Follows you" / mark mutuals.
+  async function ensureMyFollowers(){
+    if(_myFollowersLoaded || !ME) return;
+    _myFollowersLoaded = true;   // set first so concurrent callers don't double-query
+    try{
+      const evs = await Relay.query([{ kinds:[3], '#p':[ME.pubkey], limit:1000 }]);
+      evs.forEach(e=> FOLLOWERS.add(e.pubkey));
+    }catch(_){ _myFollowersLoaded = false; }   // allow a retry if the query failed
   }
   async function toggleMute(pk){
     const have=MUTED.has(pk); await _editPList(10000, pk, !have);
@@ -2026,7 +2037,7 @@
   function moreMenu(){
     const dn=Drafts.all().length;   // per-item counts so the ☰ badge is explained once opened
     const counts={drafts:dn};
-    const items=[['ai','🤖','PosterChan AI'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['articles','📰','Articles'],['streams','📺','Streams'],['communities','☷','Communities'],['chat','✺','Chat'],['blossom','🌸','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['logout','⎋','Logout']]
+    const items=[['ai','🤖','PosterChan AI'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['articles','📰','Articles'],['streams','📺','Streams'],['communities','☷','Communities'],['chat','✺','Chat'],['4chan','🍀','4chan'],['blossom','🌸','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['logout','⎋','Logout']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='ai'));   // hide AI in Nostr-only deployments
     modal(`<h3>More</h3><div class="more-grid">${items.map(([v,ic,lbl])=>{const c=counts[v]||0;return `<button class="more-item${v==='logout'?' more-logout':''}" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}${c?` <i class="badge">${c>99?'99+':c}</i>`:''}</span></button>`;}).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); if(b.dataset.v==='logout') logout(); else if(b.dataset.v==='profile') renderProfileView(ME.pubkey); else switchView(b.dataset.v); });
@@ -2366,20 +2377,20 @@
     if(VIEW!=='4chan') return;
     const posts=(data&&data.posts)||[]; const box=$('#fc-posts'); if(!box) return;
     box.innerHTML = posts.length ? posts.map(p=>{
-      const full='/api/4chan/proxy?url='+encodeURIComponent(p.image_url||p.thumb_url||'');
+      // The thread endpoint ALREADY returns thumb_url/image_url as /api/4chan/proxy paths — use them
+      // as-is (re-wrapping them double-proxied → broken → no image). Show the small THUMBNAIL to save
+      // bandwidth; tap opens the full-size image (or video) in the lightbox.
       let media='';
       if(p.thumb_url){
-        // Show the FULL-size attachment inline (not just the thumb); webm/mp4 render as <video>.
-        if(/\.(webm|mp4|m4v|mov|ogg)$/i.test(p.image_url||'')){
-          media=`<video class="fc-post-vid" src="${enc(full)}" controls playsinline preload="metadata"></video>`;
-        } else {
-          media=`<img class="fc-post-img" src="${enc(full)}" data-full="${enc(full)}" loading="lazy" onerror="this.style.display='none'">`;
-        }
+        const isVid=/\.(webm|mp4|m4v|mov|ogg)$/i.test(p.image_url_direct||p.image_url||'');
+        media=`<a class="fc-post-thumb${isVid?' vid':''}" data-full="${enc(p.image_url||p.thumb_url)}" data-kind="${isVid?'video':'image'}">`
+            + `<img src="${enc(p.thumb_url)}" loading="lazy" onerror="this.parentNode.style.display='none'">`
+            + `${isVid?'<span class="fc-play">▶</span>':''}</a>`;
       }
       const body = p.com ? `<div class="fc-post-body">${enc(p.com)}</div>` : '';
       return `<div class="fc-post"><div class="fc-post-hd"><span class="fc-no">#${enc(String(p.no))}</span> <span class="fc-name">${enc(p.name||'Anonymous')}</span></div>${media}${body}</div>`;
     }).join('') : '<div class="empty">No posts.</div>';
-    $$('.fc-post-img',box).forEach(im=> im.onclick=()=> openLightbox(im.dataset.full||im.src));
+    $$('.fc-post-thumb',box).forEach(a=> a.onclick=()=> openLightbox(a.dataset.full, a.dataset.kind==='video'?'video':undefined));
   }
 
   async function summarize4chan(board, id){
@@ -2951,12 +2962,15 @@
     modal(`<h3>${enc(title)} (${pks.length})</h3><div id="people-list" class="people-list"><div class="spinner"></div></div>`, async root=>{
       const miss=pks.filter(p=>!Store.haveProfile(p)).slice(0,300);
       if(miss.length){ try{ const evs=await Relay.query([{authors:miss,kinds:[0],limit:miss.length}]); evs.forEach(e=>Store.saveProfile(e)); }catch(_){} }
+      await ensureMyFollowers();   // so we can flag mutuals ("Follows you") in any people list
       const list=$('#people-list',root); if(!list) return;
       list.innerHTML = pks.length ? pks.slice(0,400).map(p=>{ const m=Store.profile(p)||{};
-        // Show a "Follow back" button for anyone you don't already follow (not yourself) — so in the
-        // Followers list you can see who you haven't reciprocated and follow them in one tap.
+        // "Follows you" badge = this person follows ME back (mutual). "Follow back" button = anyone I
+        // don't follow yet — so the Following list shows who's reciprocal and the Followers list shows
+        // who I haven't followed back.
+        const followsMe = p!==ME.pubkey && FOLLOWERS.has(p);
         const canFollow = p!==ME.pubkey && !FOLLOWS.has(p);
-        return `<div class="psearch" data-prof="${p}"><img src="${enc(m.picture||LOGO)}" onerror="this.src='${LOGO}'"><div class="pinfo"><b>${enc(m.name||m.display_name||NT().nip19.npubEncode(p).slice(0,14))}</b><div class="muted small">${enc(niceNip05(m.nip05)||'')}</div></div>${canFollow?`<button class="btn btn-cyan small pfollow" data-fb="${p}">Follow back</button>`:''}</div>`;
+        return `<div class="psearch" data-prof="${p}"><img src="${enc(m.picture||LOGO)}" onerror="this.src='${LOGO}'"><div class="pinfo"><b>${enc(m.name||m.display_name||NT().nip19.npubEncode(p).slice(0,14))}${followsMe?'<span class="follows-you">Follows you</span>':''}</b><div class="muted small">${enc(niceNip05(m.nip05)||'')}</div></div>${canFollow?`<button class="btn btn-cyan small pfollow" data-fb="${p}">Follow back</button>`:''}</div>`;
       }).join('') : '<div class="empty">Nobody here.</div>';
       $$('[data-prof]',list).forEach(el=> el.onclick=(ev)=>{ if(ev.target.closest('.pfollow')) return; closeModal(); renderProfileView(el.dataset.prof); });
       $$('.pfollow',list).forEach(b=> b.onclick=async(ev)=>{ ev.stopPropagation(); b.disabled=true; b.textContent='…';
