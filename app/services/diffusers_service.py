@@ -267,10 +267,12 @@ class DiffusersService:
         logger.info(f"Loaded image_idle_timeout setting: {self._idle_timeout}")
 
         # Attention slicing mode: "off" (fastest, relies on SDPA/xformers), "auto" (balanced),
-        # or "max" (most VRAM-saving, slowest). Default "off" — "max" was ~8x slower on the Arc
-        # (4.5s -> 0.56s/step at 1024²) for VRAM a 16GB card doesn't need. Dial up only if a
-        # tight-VRAM node OOMs. Applied at load time (see _ensure_model_loaded).
-        self._attention_slicing = (settings.get("image_attention_slicing", "off") or "off").lower()
+        # or "max" (most VRAM-saving, slowest). Default "off" on CUDA (xformers) / XPU, but "auto" on
+        # ROCm: AMD has NO xformers, and SDPA still materializes the full self-attention matrix, which
+        # at 1024² is ~16 GiB and OOMs a 12 GB card (RX 6750 XT). "auto" slices it without the ~8x
+        # "max" penalty. Admin can still override via the image_attention_slicing setting.
+        _slice_default = "auto" if is_rocm() else "off"
+        self._attention_slicing = (settings.get("image_attention_slicing", _slice_default) or _slice_default).lower()
 
         # Model settings
         self.model_path = settings.get("image_model_path", "")
