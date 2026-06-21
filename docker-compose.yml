@@ -160,11 +160,22 @@ services:
     devices:
       - /dev/dri
     # Set SOURCE_ONEAPI=1 instead if you want GPU LLM (SYCL) rather than image gen.
+    # NOTE: a service-level `environment:` REPLACES the x-common one (YAML merge doesn't deep-merge
+    # lists), so every var this profile needs must be re-listed here — including DATABASE_URL /
+    # NOSTR_RELAY_PG_DSN (or the app falls back to the wrong DB) and the turnkey POSTERCHANAI_*
+    # flags — so intel behaves identically to cpu/cuda/rocm.
     environment:
       - POSTERCHANAI_PORT=3051
       - SOURCE_ONEAPI=0
       - POSTERCHANAI_MUSIC=${POSTERCHANAI_MUSIC:-0}
       - POSTERCHANAI_ACESTEP_URL=${POSTERCHANAI_ACESTEP_URL:-http://acestep:8001}
+      - POSTERCHANAI_VIDEO=${POSTERCHANAI_VIDEO:-0}
+      - POSTERCHANAI_VIDEO_MODEL=${POSTERCHANAI_VIDEO_MODEL:-}
+      - POSTERCHANAI_NOSTR_RELAY=${POSTERCHANAI_NOSTR_RELAY:-0}
+      - POSTERCHANAI_NOSTR_ONLY=${POSTERCHANAI_NOSTR_ONLY:-0}
+      - POSTERCHANAI_BLOSSOM=${POSTERCHANAI_BLOSSOM:-0}
+      - DATABASE_URL=postgresql+psycopg2://posterchan:${POSTGRES_PASSWORD:-posterchan_local}@postgres:5432/posterchan_relay
+      - NOSTR_RELAY_PG_DSN=host=postgres port=5432 dbname=posterchan_relay user=posterchan password=${POSTGRES_PASSWORD:-posterchan_local}
 
   # Optional ACE-Step music server (the `musicgeni` command). Runs as its OWN service because
   # ACE-Step needs Python 3.11–3.12 and a conflicting dependency stack; the app talks to it over
