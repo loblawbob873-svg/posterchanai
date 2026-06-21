@@ -575,10 +575,16 @@
   }
   async function updateUserCount(){
     const uc=$('#user-count'); if(!uc) return;
-    let online=0;
-    try{ online=Number((await fetch('/client/stats?v='+encodeURIComponent(_viewerId())).then(r=>r.json())).online)||0; }catch(_){}
+    let online=0, users=Number(CFG.users)||0;
+    try{
+      const s=await fetch('/client/stats?v='+encodeURIComponent(_viewerId())).then(r=>r.json());
+      online=Number(s.online)||0;
+      // Use the LIVE WoT size from /stats, not the one-time CFG.users — otherwise a count that was
+      // 0 at page load (relay still building its WoT) never appears until a manual refresh.
+      if(Number(s.users)>0){ users=Number(s.users); CFG.users=users; }
+    }catch(_){}
     const parts=[];
-    if(CFG.users>0) parts.push(WOT_ICON+' '+Number(CFG.users).toLocaleString()+' users');
+    if(users>0) parts.push(WOT_ICON+' '+users.toLocaleString()+' users');
     if(online>0) parts.push(LIVE_ICON+' '+online.toLocaleString()+' online');
     if(parts.length){ uc.innerHTML=parts.join('<br>'); uc.classList.remove('hidden'); }
     else uc.classList.add('hidden');
