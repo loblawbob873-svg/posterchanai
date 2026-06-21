@@ -392,24 +392,31 @@ When asked to write or modify code or files:
             # Built-in torrent client (libtorrent). FIRST-RUN default can be seeded
             # from env (the Docker image enables the torrent/proxy/Tor stack so it
             # works out of the box; the app starts Tor + the HTTP proxy itself).
-            "bt_enabled": os.environ.get("POSTERCHANAI_BT_ENABLED", "false"),
+            # Built-in torrent + HTTP-proxy + Tor stack: ENABLED by default on first run so every
+            # install type (Docker any profile, bare-metal, manual) gets a working outbound HTTP
+            # proxy + torrent client out of the box. The chain is Tor (SOCKS5 :9052) -> HTTP proxy
+            # (:8118) -> torrent client, and it's pre-wired below. Override per key with the
+            # POSTERCHANAI_*_ENABLED envs (set to "false" to opt out). Only seeded when the key is
+            # absent, so existing nodes keep whatever the admin already chose.
+            "bt_enabled": os.environ.get("POSTERCHANAI_BT_ENABLED", "true"),
             "bt_server_url": "",              # Remote torrent server URL (empty = local)
             "storage_server_url": "",         # Remote storage server URL (empty = local)
             "file_cache_enabled": "true",     # Enable file listing cache
             "file_cache_ttl": "300",          # File cache TTL in seconds (5 minutes)
             "file_cache_max_size": "1000",    # Maximum cached directory listings
             "bt_download_dir": "/var/lib/posterchanai/torrents",
-            "bt_proxy_host": "",              # HTTP proxy host (required for torrenting)
+            "bt_proxy_host": os.environ.get("POSTERCHANAI_BT_PROXY_HOST", "127.0.0.1"),  # route torrents through the local HTTP proxy
             "bt_proxy_port": "8118",          # HTTP proxy port (e.g. Privoxy for Tor)
             "bt_listen_port": "6881",         # BitTorrent listen port
             # Built-in HTTP proxy (HTTP → SOCKS5/Tor gateway)
-            "proxy_enabled": os.environ.get("POSTERCHANAI_PROXY_ENABLED", "false"),         # Enable built-in HTTP proxy
+            "proxy_enabled": os.environ.get("POSTERCHANAI_PROXY_ENABLED", "true"),         # Enable built-in HTTP proxy
             "proxy_listen_host": "127.0.0.1", # HTTP proxy listen address
             "proxy_listen_port": "8118",      # HTTP proxy listen port
             "proxy_socks_host": os.environ.get("POSTERCHANAI_PROXY_SOCKS_HOST", "127.0.0.1"),  # SOCKS5 target host (default: local built-in Tor)
             "proxy_socks_port": "9052",       # SOCKS5 target port
-            # Built-in Tor client
-            "tor_enabled": os.environ.get("POSTERCHANAI_TOR_ENABLED", "false"),           # Enable built-in Tor client
+            # Built-in Tor client — the SOCKS5 backend the HTTP proxy forwards to (required for the
+            # proxy/torrent stack to actually reach the network); on by default to match.
+            "tor_enabled": os.environ.get("POSTERCHANAI_TOR_ENABLED", "true"),           # Enable built-in Tor client
             "tor_listen_host": "127.0.0.1",   # Tor SOCKS5 listen address (0.0.0.0 for all)
             "tor_socks_port": "9052",         # Tor SOCKS5 listen port
             "tor_control_port": "9053",       # Tor control port

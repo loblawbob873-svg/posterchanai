@@ -232,10 +232,11 @@ ENV POSTERCHANAI_PORT=3051 \
     POSTERCHANAI_LLM_TOOLS_MODEL= \
     POSTERCHANAI_IMAGE_MODEL_PATH=Lykon/dreamshaper-8 \
     POSTERCHANAI_IMAGE_MODEL_TYPE=sd15
-# Tor / built-in proxy / torrenting ship ready (the `tor` binary + libtorrent are
-# installed) but stay OFF by default — enable them in the admin UI, or seed them on
-# at first run with -e POSTERCHANAI_TOR_ENABLED=true -e POSTERCHANAI_PROXY_ENABLED=true
-# -e POSTERCHANAI_BT_ENABLED=true (the app then starts Tor + the HTTP proxy itself).
+# Tor / built-in HTTP proxy / torrenting ship ready (the `tor` binary + libtorrent are
+# installed) AND are ON by default on first run — the app starts Tor (SOCKS5), the outbound
+# HTTP proxy (:8118 → Tor), and the libtorrent client (routed through that proxy) itself.
+# Opt out per piece at first run with -e POSTERCHANAI_TOR_ENABLED=false
+# -e POSTERCHANAI_PROXY_ENABLED=false -e POSTERCHANAI_BT_ENABLED=false, or toggle in Admin.
 
 EXPOSE 3051
 # Built-in Nostr WoT relay (NIP-01). Stays OFF unless POSTERCHANAI_NOSTR_RELAY=1, which

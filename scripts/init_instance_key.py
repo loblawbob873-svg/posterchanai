@@ -27,11 +27,20 @@ def main() -> int:
         print(f"[init-instance-key] import failed: {e}", file=sys.stderr)
         return 1
 
-    # Install can run before the app's first startup, so make sure the tables exist.
+    # Run the app's FULL DB init first, not just create_all. create_all only makes empty tables —
+    # if we then write nostr_relay_wot_seeds with only the instance npub, the later init_db() at app
+    # startup sees the key already exists and SKIPS the 10-npub default seed list, leaving a fresh
+    # install with just 2 seeds (instance + claimed admin). init_db() seeds all defaults (including
+    # the WoT seeds) first and is idempotent, so we then append the instance npub on TOP of the 10.
     try:
-        Base.metadata.create_all(bind=engine)
+        from app.database import init_db
+        init_db()
     except Exception as e:
-        print(f"[init-instance-key] WARNING: could not ensure tables ({e}); the key still mints", file=sys.stderr)
+        print(f"[init-instance-key] WARNING: init_db failed ({e}); falling back to create_all", file=sys.stderr)
+        try:
+            Base.metadata.create_all(bind=engine)
+        except Exception as e2:
+            print(f"[init-instance-key] WARNING: could not ensure tables ({e2}); the key still mints", file=sys.stderr)
 
     db = SessionLocal()
     try:

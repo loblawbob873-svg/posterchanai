@@ -122,6 +122,7 @@ class RelayServer:
         self._conns = 0
         self._neg: dict = {}   # conn -> {sub_id: negentropy item set} (NIP-77 sessions)
         self._outq: dict = {}  # conn -> bounded outbound queue (decouples slow clients)
+        self._conn_ips: dict = {}  # conn -> client IP (for the deduped "online people" estimate)
 
     def _send(self, conn, obj) -> None:
         """Enqueue a message to a client WITHOUT blocking. If the client is too slow and its
@@ -211,6 +212,17 @@ class RelayServer:
         try:
             hdrs = request.headers
             if hdrs.get("Upgrade", "").lower() == "websocket":
+                # Capture the real client IP for the deduped "online" count. We sit behind nginx, so
+                # remote_address is the proxy — prefer the forwarded client IP (first XFF hop).
+                try:
+                    xff = hdrs.get("X-Forwarded-For", "") or hdrs.get("X-Real-IP", "")
+                    ip = xff.split(",")[0].strip() if xff else ""
+                    if not ip:
+                        ra = getattr(connection, "remote_address", None)
+                        ip = ra[0] if ra else ""
+                    setattr(connection, "_pcai_ip", ip)
+                except Exception:
+                    pass
                 return None  # let the WebSocket handshake proceed
             accept = hdrs.get("Accept", "")
             host = hdrs.get("Host", "") or f"{self.cfg.get('bind','')}:{self.cfg.get('port','')}"
@@ -257,6 +269,7 @@ class RelayServer:
             await conn.close(code=1013, reason="overloaded")
             return
         self._conns += 1
+        self._conn_ips[conn] = getattr(conn, "_pcai_ip", "") or ""
         # Bigger than the query hard_cap (5000) so a full-page REQ response + its EOSE always
         # fit without the synchronous send loop overflowing the queue and dropping the EOSE.
         q = asyncio.Queue(maxsize=self.cfg.get("outq_size", 8192))
@@ -271,9 +284,24 @@ class RelayServer:
         finally:
             writer.cancel()
             self._outq.pop(conn, None)
+            self._conn_ips.pop(conn, None)
             self.subs.remove_conn(conn)
             self._neg.pop(conn, None)
             self._conns -= 1
+
+    def online_count(self) -> int:
+        """A closer estimate of *people* online than the raw socket count: distinct client IPs
+        among live connections, so one person's multiple tabs / PWA + signer / reconnects collapse
+        to one. Each connection with an unknown IP (extraction failed) counts as its own, and the
+        whole thing falls back to the raw connection count if no IPs were captured at all."""
+        known, unknown = set(), 0
+        for ip in self._conn_ips.values():
+            if ip:
+                known.add(ip)
+            else:
+                unknown += 1
+        n = len(known) + unknown
+        return n if n else self._conns
 
     async def _dispatch(self, conn, raw) -> None:
         if isinstance(raw, (bytes, bytearray)):

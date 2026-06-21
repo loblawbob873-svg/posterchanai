@@ -53,6 +53,19 @@ def _relay_url(request: Request, db: Session) -> str:
     return f"{ws}://{host}/relay"
 
 
+def _blossom_url(request: Request, db: Session) -> str:
+    """Public base URL the client uploads blobs to. Mirrors the relay URL logic and the Blossom
+    router's own `_base_url`: use the admin-set `blossom_public_url` if present, otherwise DERIVE it
+    from the (proxied) request so a fresh node works out of the box — the admin sets a real domain
+    for production. Without this the client would get an empty URL and uploads would silently fail."""
+    explicit = _setting(db, "blossom_public_url").rstrip("/")
+    if explicit:
+        return explicit
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    return f"{proto}://{host}/blossom"
+
+
 def _operator(db: Session) -> User | None:
     """The node's signing operator: prefer an admin with a linked Nostr secret, else any user
     with one. Used to auto-follow new signups into the web of trust."""
@@ -102,7 +115,7 @@ async def client_config(request: Request, db: Session = Depends(get_db)):
     admin_npubs = [u.nostr_npub for u in db.query(User).filter(User.is_admin == True, User.nostr_npub.isnot(None)).all()]  # noqa: E712
     return JSONResponse({
         "relay_url": _relay_url(request, db),
-        "blossom_url": _setting(db, "blossom_public_url").rstrip("/"),
+        "blossom_url": _blossom_url(request, db),
         "blossom_enabled": _setting(db, "blossom_enabled", "false").lower() == "true",
         "operator_npub": op_npub,
         "admin_npubs": admin_npubs,
@@ -133,7 +146,9 @@ async def client_stats():
     try:
         from app.services.nostr_relay.thread import relay_status
         st = relay_status()
-        return JSONResponse({"users": int(st.get("members", 0) or 0), "online": int(st.get("conns", 0) or 0)})
+        # `online` is deduped by client IP (people now), falling back to raw conns if unavailable.
+        online = st.get("online", st.get("conns", 0))
+        return JSONResponse({"users": int(st.get("members", 0) or 0), "online": int(online or 0)})
     except Exception:
         return JSONResponse({"users": 0, "online": 0})
 

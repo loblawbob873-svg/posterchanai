@@ -137,11 +137,15 @@ seeded from env on first run (override at `docker run -e ...`):
 | `POSTERCHANAI_IMAGE_MODEL_PATH` | `Lykon/dreamshaper-8` | image model (HF repo) |
 | `DOWNLOAD_MODEL` | `1` | auto-download the LLM |
 | `POSTERCHANAI_LOW_VRAM` | (unset) | `1` = diffusers model-offload (run SDXL on a small GPU) |
-| `POSTERCHANAI_TOR_ENABLED` / `_PROXY_ENABLED` / `_BT_ENABLED` | `false` | Tor + HTTP proxy + torrenting (the binaries ship in the image; opt in here or in the admin UI) |
+| `POSTERCHANAI_TOR_ENABLED` / `_PROXY_ENABLED` / `_BT_ENABLED` | `true` | Tor + outbound HTTP proxy + torrenting (binaries ship in the image; set `false` to opt out) |
 
-**Tor/proxy/torrenting are OFF by default.** Enabling the proxy routes outbound
-fetches (4chan, news, …) through Tor — only turn it on once Tor finishes
-bootstrapping, or those features will fail while Tor is stuck.
+**Tor / HTTP proxy / torrenting are ON by default** (every install type) and pre-wired:
+the app starts Tor (SOCKS5 :9052), the outbound HTTP proxy (:8118 → Tor), and the libtorrent
+client (routed through that proxy). Only the features that explicitly use the proxy (torrents,
+nitter, bots) route through Tor — model download, the relay, and Blossom go direct — so a slow
+Tor bootstrap won't block startup. Opt out per piece with
+`-e POSTERCHANAI_TOR_ENABLED=false` / `_PROXY_ENABLED=false` / `_BT_ENABLED=false`, or toggle in
+Admin. (Only seeded on first run; existing nodes keep their current settings.)
 
 ## Bring your own image models
 

@@ -104,7 +104,10 @@ services:
       - POSTERCHANAI_PORT=3051
       - POSTERCHANAI_NOSTR_RELAY=1
       - POSTERCHANAI_NOSTR_ONLY=1
-      - POSTERCHANAI_BLOSSOM=${POSTERCHANAI_BLOSSOM:-0}
+      # Blossom is part of the nostr-only pitch (relay + client + Blossom) — ON by default here.
+      # Public base URL auto-derives from the request (works out of the box on the LAN IP); set
+      # blossom_public_url in Admin → Blossom to a real https domain in production.
+      - POSTERCHANAI_BLOSSOM=${POSTERCHANAI_BLOSSOM:-1}
       - DATABASE_URL=postgresql+psycopg2://posterchan:${POSTGRES_PASSWORD:-posterchan_local}@postgres:5432/posterchan_relay
       - NOSTR_RELAY_PG_DSN=host=postgres port=5432 dbname=posterchan_relay user=posterchan password=${POSTGRES_PASSWORD:-posterchan_local}
 
