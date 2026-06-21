@@ -179,6 +179,11 @@ COPY requirements-nostr.txt /tmp/requirements-nostr.txt
 COPY botframework/requirements.txt /tmp/requirements-bot.txt
 # Nostr-only (GPU=nostr) installs the lean Nostr/web requirements and SKIPS the diffusers/
 # transformers image-gen stack entirely; all other builds get the full app + image-gen deps.
+# IMPORTANT: the Nostr stack (relay client + signing + datastore: coincurve, websockets,
+# websocket-client, segno, cryptography) is CRITICAL in EVERY image, not just the nostr-only one.
+# requirements.txt is therefore a SUPERSET of requirements-nostr.txt (full app + AI + Nostr); the
+# lean file just drops the AI extras. Keep those Nostr deps in BOTH files — never move one into
+# requirements-nostr.txt only, or the cpu/cuda/rocm/intel images would lose Nostr support.
 # NOTE: the nostr branch must FAIL LOUDLY — no `2>/dev/null` and no `|| <full requirements>`
 # fallback. A swallowed error there used to silently install the full AI stack (torch/onnx/cuda),
 # which is exactly what a lean "no-AI" image is meant to avoid. If a lean dep won't install, stop.
