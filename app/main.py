@@ -268,9 +268,10 @@ async def startup():
         if os.environ.get("POSTERCHANAI_BLOSSOM", "0") == "1":
             try:
                 from app.services import settings_store as _ss
-                # First-run defaults only (seed if absent); Admin UI is the source of truth after.
-                if not _ss.exists("blossom_enabled"):
-                    _ss.put("blossom_enabled", "true")
+                # FORCE-set on every boot: the env flag is a declarative deployment directive, so it
+                # must win even though apply_defaults() already wrote blossom_enabled="false" into the
+                # store (which makes exists() true) — otherwise the nostr image stays "Blossom disabled".
+                _ss.put("blossom_enabled", "true")
                 if not _ss.exists("blossom_storage_path"):
                     _ss.put("blossom_storage_path", "/app/data/blossom")
                 logging.info("Blossom server seeded from POSTERCHANAI_BLOSSOM env")
@@ -394,6 +395,11 @@ async def startup():
                         # events) so the relay is the authoritative store of the out-of-box config.
                         settings_store.hydrate_from_db(_db)
                         await settings_store.seed_relay_defaults(_db, DEFAULT_SETTINGS)
+                        # Re-assert declarative env directives AFTER hydrate+seed so they win even when
+                        # the relay still holds the default "false" (hydrate/seed would clobber the
+                        # early force-put at startup). The write-through persists "true" to the relay.
+                        if os.environ.get("POSTERCHANAI_BLOSSOM", "0") == "1":
+                            settings_store.put("blossom_enabled", "true")
                     except Exception as e:
                         logging.warning(f"Settings hydrate/seed from relay failed: {e}")
                     try:
