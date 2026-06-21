@@ -113,10 +113,9 @@ a.btn.full{display:block}
 .nav-item.active{color:#fff;background:linear-gradient(135deg,rgba(0,255,255,.22),rgba(255,0,255,.14));box-shadow:inset 0 0 0 1px var(--line);text-shadow:0 0 8px rgba(0,255,255,.6)}
 .nav-item.active::before{content:"";position:absolute;left:0;top:18%;height:64%;width:3px;border-radius:3px;background:var(--neon);box-shadow:var(--glow)}
 .compose-btn{flex-shrink:0;white-space:nowrap;margin:0;padding:9px 16px;font-size:15px}
-.me{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:6px;margin:auto auto 0;
-  width:150px;height:150px;border-radius:50%;padding:0 18px;background:rgba(8,5,18,.5);border:1px solid var(--line);cursor:pointer;overflow:hidden;transition:.15s}
-.me:hover{border-color:var(--neon);box-shadow:0 0 16px rgba(0,255,255,.25)}
-.me img{width:64px;height:64px;border-radius:50%;object-fit:cover;border:1px solid var(--neon)}
+.me{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:7px;margin:auto auto 0;padding:8px 6px;cursor:pointer}
+.me:hover img{box-shadow:0 0 16px rgba(0,255,255,.4)}
+.me img{width:72px;height:72px;border-radius:50%;object-fit:cover;border:1px solid var(--neon);transition:.15s}
 .me .mn{font-weight:700;font-size:15px;line-height:1.15;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .me .mk{font-size:12px;color:var(--muted)}
 #btn-logout{font-size:15px;padding:11px 14px;color:#ff6b8b;border-color:rgba(255,60,90,.5);
