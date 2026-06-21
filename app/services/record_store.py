@@ -12,7 +12,7 @@ import asyncio
 import logging
 from datetime import datetime
 
-from app.models import Setting, Reminder, SavedSearch, APIKey, User
+from app.models import Reminder, SavedSearch, APIKey, User
 from app.services import nostr_store as store
 from app.services.nostr_store import user_storage_seckey
 from app.services import settings_store as _ss
@@ -45,7 +45,7 @@ async def _put(db, user, ns, row_id, data, *, force) -> bool:
         return False
     try:
         sk = user_storage_seckey(db, user)
-        return await store.put_doc(_ss._port(db), sk, f"{ns}{row_id}", data)
+        return await store.put_doc(_ss._port(), sk, f"{ns}{row_id}", data)
     except Exception as e:
         logger.warning("[record-store] put %s%s failed: %s", ns, row_id, e)
         return False
@@ -56,7 +56,7 @@ async def _delete(db, user, ns, row_id, *, force) -> bool:
         return False
     try:
         sk = user_storage_seckey(db, user)
-        return await store.delete_doc(_ss._port(db), sk, f"{ns}{row_id}")
+        return await store.delete_doc(_ss._port(), sk, f"{ns}{row_id}")
     except Exception as e:
         logger.warning("[record-store] delete %s%s failed: %s", ns, row_id, e)
         return False
@@ -131,9 +131,9 @@ async def hydrate(db) -> int:
     for user in db.query(User).filter(User.nostr_npub.isnot(None)).all():
         try:
             sk = user_storage_seckey(db, user)
-            rem = await store.list_docs(_ss._port(db), NS_REMINDER, seckey=sk)
-            srch = await store.list_docs(_ss._port(db), NS_SEARCH, seckey=sk)
-            keys = await store.list_docs(_ss._port(db), NS_APIKEY, seckey=sk)
+            rem = await store.list_docs(_ss._port(), NS_REMINDER, seckey=sk)
+            srch = await store.list_docs(_ss._port(), NS_SEARCH, seckey=sk)
+            keys = await store.list_docs(_ss._port(), NS_APIKEY, seckey=sk)
         except Exception:
             continue
         for d_tag, rec in (keys or {}).items():

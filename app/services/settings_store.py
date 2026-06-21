@@ -52,6 +52,7 @@ def _is_local_only(key: str) -> bool:
 _CACHE: dict = {}
 _lock = threading.RLock()
 _loaded = False
+_HYDRATED_KEYS: set = set()   # keys for which the relay holds an authoritative value (vs a default)
 
 _LOCAL_PATH = os.environ.get(
     "POSTERCHANAI_LOCAL_SETTINGS",
@@ -310,6 +311,74 @@ def apply_defaults(defaults: dict) -> None:
                     wrote_local = True
     if wrote_local:
         _save_local_file()
+
+
+def hydrate_from_db(db) -> int:
+    """relay events → cache, SYNCHRONOUSLY, by reading the relay's `events` table directly (it's in
+    the same Postgres) + NIP-44-decrypting each `pcai:setting:` doc. No WebSocket — so this works
+    before the relay's WS is up AND inside the relay subprocess itself (which reads its own config).
+    Authoritative for shareable keys; local-only keys are left to the JSON file. Caches the operator
+    key for the background relay-writer. Returns the number of keys updated."""
+    global _OP_SK
+    op_sk = _operator_seckey(db)
+    if not op_sk:
+        return 0
+    _OP_SK = op_sk
+    try:
+        from app.services.nostr import nostr_service, nip44
+        import binascii, json as _json
+        from sqlalchemy import text as _text
+        pk = nostr_service.derive_pubkey(op_sk)
+        op_hex = pk if isinstance(pk, str) else binascii.hexlify(pk).decode()
+        rows = db.execute(_text(
+            "SELECT DISTINCT ON (t.value) t.value AS d, e.content "
+            "FROM events e JOIN event_tags t ON t.event_id = e.id "
+            "WHERE e.kind = 30078 AND e.pubkey = :pk AND t.tag = 'd' AND t.value LIKE 'pcai:setting:%' "
+            "ORDER BY t.value, e.created_at DESC"
+        ), {"pk": op_hex}).fetchall()
+    except Exception as e:
+        logger.warning("[settings-store] hydrate_from_db failed: %s", e)
+        return 0
+    changed = 0
+    for d, content in rows:
+        key = d[len(store.NS_SETTING):]
+        if _is_local_only(key):
+            continue
+        try:
+            data = _json.loads(nip44.decrypt_self(op_sk, content))
+            val = data.get("value") if isinstance(data, dict) else data
+            _HYDRATED_KEYS.add(key)   # the relay holds an authoritative value for this key
+            if _set_local(key, "" if val is None else str(val)):
+                changed += 1
+        except Exception:
+            continue
+    logger.info("[settings-store] hydrated %d setting(s) from relay events (sync)", changed)
+    return changed
+
+
+def migrate_legacy_table(db) -> int:
+    """ONE-TIME data-safety: if a pre-no-db node still has the old SQL `settings` table, copy any key
+    the relay does NOT already hold into the relay (via put → relay event), so the node's CUSTOM
+    values survive the table going away. Keys the relay already has (hydrated above) and local-only
+    keys are skipped. Idempotent; harmless when the table is gone. Returns rows migrated."""
+    from sqlalchemy import text as _text, inspect as _inspect
+    try:
+        if not _inspect(db.bind).has_table("settings"):
+            return 0
+        rows = db.execute(_text("SELECT key, value FROM settings")).fetchall()
+    except Exception as e:
+        logger.warning("[settings-store] legacy table read failed: %s", e)
+        return 0
+    migrated = 0
+    for key, value in rows:
+        if _is_local_only(key) or key in _HYDRATED_KEYS:
+            continue
+        put(key, value if value is not None else "")   # legacy value beats the code default
+        _HYDRATED_KEYS.add(key)
+        migrated += 1
+    if migrated:
+        logger.info("[settings-store] migrated %d legacy settings-table key(s) into the relay", migrated)
+    return migrated
 
 
 async def hydrate(db) -> int:

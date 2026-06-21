@@ -6,39 +6,13 @@ safe to run repeatedly (e.g. on every boot until the flag flips the read path ov
 
 import logging
 
-from app.models import Setting
 from . import nostr_store as store
 
 logger = logging.getLogger(__name__)
 
-
-# ---- settings: the whole `settings` table → encrypted operator-signed docs ----
-async def migrate_settings(db, port: int, operator_seckey: bytes) -> dict:
-    """Copy EVERY row of the `settings` table into the relay (one encrypted kind-30078 doc per key,
-    value preserved verbatim as {"value": ...}). Returns a completeness report so nothing is lost."""
-    rows = db.query(Setting).all()
-    written = 0
-    for s in rows:
-        ok = await store.put_doc(port, operator_seckey, store.NS_SETTING + s.key,
-                                 {"value": s.value if s.value is not None else ""})
-        if ok:
-            written += 1
-        else:
-            logger.warning("[migrate] setting '%s' failed to write to the relay", s.key)
-    report = await verify_settings(db, port, operator_seckey)
-    logger.info("[migrate] settings → relay: wrote %d/%d, %d missing %s",
-                written, len(rows), len(report["missing"]),
-                ("(" + ", ".join(report["missing"][:10]) + ")") if report["missing"] else "")
-    report["written"] = written
-    return report
-
-
-async def verify_settings(db, port: int, operator_seckey: bytes) -> dict:
-    """Compare the `settings` table against what's now in the relay so we can prove no key was lost."""
-    db_keys = {s.key for s in db.query(Setting).all()}
-    relay = await settings_all(port, operator_seckey)
-    missing = sorted(db_keys - set(relay.keys()))
-    return {"db": len(db_keys), "relay": len(relay), "missing": missing}
+# (The old `settings` table → relay migration helpers were removed: the relay event store is now
+#  the only datastore, so there's no SQL `Setting` table to migrate from. The read accessors below
+#  are still used by settings_store.)
 
 
 # ---- read accessors (used once the flag points the settings read path at the relay) ----

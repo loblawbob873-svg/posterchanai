@@ -50,18 +50,19 @@ def init_fedi_cache_db():
     existing rows from the main DB so the cutover doesn't cold-start. The one-time guard is a
     Setting in the (durable) main DB, so after a host reboot wipes /tmp the cache simply rewarms
     from live traffic rather than re-seeding from an increasingly stale main-DB snapshot."""
-    from app.models import MatrixAvatarCache, Setting
+    from app.models import MatrixAvatarCache
     if cache_engine is engine:
         return   # Postgres: the cache lives in the main DB (created by create_all) — no separate cache, no migration
     MatrixAvatarCache.__table__.create(bind=cache_engine, checkfirst=True)
     cs = CacheSessionLocal()
     ms = SessionLocal()
+    import os as _os
+    _guard = str(FEDI_CACHE_DB_PATH) + ".migrated"   # durable one-time guard (no SQL Setting table)
     try:
-        guard = ms.query(Setting).filter(Setting.key == "fedi_cache_migrated").first()
-        if guard and guard.value == "true":
+        if _os.path.exists(_guard):
             return
         copied = 0
-        # Copy existing rows main -> cache. The guard is set ONLY if this succeeds, so a failed
+        # Copy existing rows main -> cache. The guard is written ONLY if this succeeds, so a failed
         # copy is retried on the next start instead of being recorded as done (cold cache).
         if inspect(engine).has_table("matrix_avatar_cache") and cs.query(MatrixAvatarCache).first() is None:
             for r in ms.query(MatrixAvatarCache).all():
@@ -69,11 +70,10 @@ def init_fedi_cache_db():
                                            width=r.width, height=r.height, fetched_at=r.fetched_at))
                 copied += 1
             cs.commit()
-        if guard:
-            guard.value = "true"
-        else:
-            ms.add(Setting(key="fedi_cache_migrated", value="true"))
-        ms.commit()
+        try:
+            open(_guard, "w").close()
+        except Exception:
+            pass
         logger.info(f"[fedi-cache] cache DB at {FEDI_CACHE_DB_PATH}; migrated {copied} rows from main DB")
     except Exception as e:
         logger.warning(f"[fedi-cache] one-time migration failed (will retry next start): {e}")
@@ -108,44 +108,10 @@ def get_db():
 
 
 def safe_query_settings(db: Session) -> dict:
-    """
-    Safely query settings from database with error handling for schema mismatches.
-    Falls back to raw SQL query if ORM query fails.
-    """
-    from app.models import Setting
-    try:
-        # Try ORM query first
-        settings = {s.key: s.value for s in db.query(Setting).all()}
-        return settings
-    except (IndexError, Exception) as e:
-        # Handle SQLAlchemy schema mismatch errors
-        logger.warning(f"ORM query failed, trying raw SQL: {e}")
-        try:
-            # Fallback to raw SQL query
-            result = db.execute(text("SELECT key, value FROM settings"))
-            settings = {}
-            for row in result.fetchall():
-                if len(row) >= 2:
-                    settings[row[0]] = row[1]
-                else:
-                    logger.warning(f"Invalid settings row: {row}")
-            logger.info(f"Successfully loaded {len(settings)} settings using raw query")
-            return settings
-        except Exception as raw_error:
-            logger.error(f"Raw SQL query also failed: {raw_error}")
-            # Try to diagnose the issue
-            try:
-                inspector = inspect(db.bind)
-                if inspector.has_table('settings'):
-                    columns = [col['name'] for col in inspector.get_columns('settings')]
-                    logger.error(f"Settings table columns: {columns}")
-                    logger.error(f"Expected: ['key', 'value']")
-                else:
-                    logger.error("Settings table does not exist")
-            except Exception:
-                pass
-            return {}
-
+    """All settings as a {key: value} dict. Sourced from the in-process settings cache (the Nostr
+    relay is the authoritative datastore — there is no SQL `Setting` table)."""
+    from app.services import settings_store
+    return settings_store.all_settings()
 
 def _run_migrations():
     """Auto-add any model columns that are missing from an EXISTING table — run on every startup
@@ -179,8 +145,13 @@ def _run_migrations():
                 logger.warning(f"[MIGRATE] could not add {table.name}.{col.name}: {e}")
 
 
+# The canonical default settings, populated by init_db() — settings_store seeds these into the
+# relay datastore on first boot (there is no SQL Setting table).
+DEFAULT_SETTINGS: dict = {}
+
+
 def init_db():
-    from app.models import User, Conversation, Message, Setting, ProxyImageCache, SocialReplyMap, Bot, Reminder, SavedSearch, BlossomBlob  # noqa: F401 - registers tables for create_all
+    from app.models import User, Conversation, Message, ProxyImageCache, SocialReplyMap, Bot, Reminder, SavedSearch, BlossomBlob  # noqa: F401 - registers tables for create_all
     logger.info("[INIT] Initializing database...")
     Base.metadata.create_all(bind=engine)
     _run_migrations()   # add any columns missing from pre-existing tables (automatic schema upgrade)
@@ -436,47 +407,20 @@ When asked to write or modify code or files:
             "tor_data_dir": "/var/lib/posterchanai/tor",  # Tor data directory
         }
 
-        # Migrate RENAMED settings (preserve the user's value under the new key).
-        _renamed_settings = {
-            "ollama_ping_enabled": "llm_health_check_enabled",
-            "ollama_ping_interval": "llm_health_check_interval",
-            "ollama_restart_after_failures": "llm_reload_after_failures",
-            "comfyui_timeout": "image_timeout",  # now the generic image request timeout
-        }
-        for _old, _new in _renamed_settings.items():
-            _o = db.query(Setting).filter(Setting.key == _old).first()
-            if _o is not None:
-                if db.query(Setting).filter(Setting.key == _new).first() is None:
-                    db.add(Setting(key=_new, value=_o.value))
-                db.delete(_o)
-
-        # Drop settings for REMOVED backends (Ollama / IPEX-LLM / ComfyUI) so they don't linger.
-        _removed_settings = [
-            "llm_backend", "image_backend",
-            "ollama_url", "ollama_api_format", "ollama_max_concurrent",
-            "ollama_keep_alive", "ollama_restart_command",
-            "comfyui_url", "comfyui_default_model", "comfyui_anime_model",
-        ]
-        for _k in _removed_settings:
-            _obj = db.query(Setting).filter(Setting.key == _k).first()
-            if _obj is not None:
-                db.delete(_obj)
-
-        # Flush the renames/deletes so the default-seed loop below sees the new keys as existing
-        # (otherwise it would re-add them and hit a UNIQUE constraint on commit).
-        db.flush()
-
-        added_settings = []
-        for key, value in default_settings.items():
-            existing = db.query(Setting).filter(Setting.key == key).first()
-            if not existing:
-                db.add(Setting(key=key, value=value))
-                added_settings.append(key)
-
-        if added_settings:
-            logger.info(f"[MIGRATE] Added {len(added_settings)} new settings: {', '.join(added_settings)}")
-        else:
-            logger.info("[MIGRATE] Database up to date, no new settings needed")
+        # Settings live in the Nostr relay datastore (NO SQL Setting table). Populate the in-process
+        # settings cache: local-only keys (plumbing + cursors) from the JSON file, then the defaults
+        # above for any key not already present. The relay-authoritative values are layered on by
+        # settings_store.hydrate_from_db() once the operator key exists (see app/main.py startup).
+        # Expose the defaults so startup can also SEED them into the relay (seed_relay_defaults).
+        global DEFAULT_SETTINGS
+        DEFAULT_SETTINGS = dict(default_settings)
+        try:
+            from app.services import settings_store
+            settings_store.load_local()
+            settings_store.apply_defaults(default_settings)
+            logger.info("[INIT] settings cache: %d defaults applied (relay is authoritative)", len(default_settings))
+        except Exception as _e:
+            logger.warning("[INIT] settings cache init failed: %s", _e)
 
         # Create default admin user if no users exist
         from app.auth import get_password_hash

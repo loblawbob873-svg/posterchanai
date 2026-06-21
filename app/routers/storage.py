@@ -248,20 +248,18 @@ async def save_mail_attachment(
     Save a mail attachment file. Called by client nodes when proxying mail attachment saves.
     Only accessible on storage server node.
     """
-    # Check if this is a server-to-server request
-    from app.models import Setting
     # Check if this is a server-to-server request (load-balanced from another posterchanai node)
     load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
     is_server_request = current_user is None or load_balanced_header == "true"
-    
+
     if not is_server_request:
         # Verify username matches for user requests
         if current_user.username != username:
             raise HTTPException(status_code=403, detail="Access denied")
-    
+
     # Read file content
     content = await file.read()
-    
+
     # Get original filename from form or file
     original_name = file.filename or "attachment"
     
@@ -290,17 +288,15 @@ async def save_generated_image(
     Only accessible on storage server node.
     Accepts form data (for compatibility with requests library).
     """
-    # Check if this is a server-to-server request
-    from app.models import Setting
     # Check if this is a server-to-server request (load-balanced from another posterchanai node)
     load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
     is_server_request = current_user is None or load_balanced_header == "true"
-    
+
     if not is_server_request:
         # Verify username matches for user requests
         if current_user.username != username:
             raise HTTPException(status_code=403, detail="Access denied")
-    
+
     # Run blocking file I/O in thread pool to prevent blocking other requests
     # Use bypass_proxy=True since we're on the storage server node
     def _save_generated_image_sync():
@@ -331,8 +327,6 @@ async def upload_file(
     # Check if this is a server-to-server request
     is_server_request = current_user is None
     if not is_server_request:
-        # Check if this is a load-balanced request
-        from app.models import Setting
         # Check if this is a load-balanced request from another posterchanai node
         load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower()
         if load_balanced_header == "true":
@@ -1673,8 +1667,7 @@ async def move_files(
     Only accessible on storage server node.
     """
     # Check if this is a server-to-server request
-    from app.models import Setting
-    
+
     # Parse JSON body (server-to-server requests use JSON)
     try:
         body = await request.json()
@@ -1856,8 +1849,7 @@ async def delete_files_bulk(
     Only accessible on storage server node.
     """
     # Check if this is a server-to-server request
-    from app.models import Setting
-    
+
     # Parse JSON body (server-to-server requests use JSON)
     try:
         body = await request.json()

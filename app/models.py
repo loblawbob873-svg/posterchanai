@@ -117,11 +117,9 @@ class Message(Base):
     conversation = relationship("Conversation", back_populates="messages")
 
 
-class Setting(Base):
-    __tablename__ = "settings"
-
-    key = Column(String(100), primary_key=True)
-    value = Column(Text)
+# NOTE: the `Setting` model / `settings` table is GONE. Global settings now live in the Nostr relay
+# datastore as operator-signed pcai:setting: events (read via app.services.settings_store). See
+# docs/NOSTR_DATASTORE.md.
 
 
 class ProxyImageCache(Base):

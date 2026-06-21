@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timedelta
 _MEDIA_GROUP_CACHE: dict = {}
 from app.database import get_db, SessionLocal
-from app.models import User, Setting, Conversation, Message
+from app.models import User, Conversation, Message
 from app.auth import get_current_user, get_admin_user
 from app.services.telegram_service import telegram_service, configure_from_settings as _configure_telegram
 from app.services.chat_service import ChatService

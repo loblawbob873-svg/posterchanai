@@ -18,7 +18,7 @@ logging.basicConfig(
 
 from app.database import init_db, get_db
 from app.auth import get_current_user_optional, get_current_user, create_access_token
-from app.models import User, VerificationToken, Setting
+from app.models import User, VerificationToken
 from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, media_api, news, mail, torrent, storage, files, music_api, video_api
 from app.routers import fourchan, youtube_thumb, bots
 from app.routers.telegram import router as telegram_router
@@ -193,22 +193,36 @@ async def startup():
         init_db()
         from app.database import SessionLocal
 
+        # Settings live in the Nostr relay datastore (no SQL Setting table). init_db() already loaded
+        # the local-only keys + defaults into the in-process cache; now mint the operator key (signs
+        # the setting docs) and hydrate the cache from the relay's event store (sync SQL) so the
+        # env-seed blocks below + every reader see authoritative values, and settings_store.put()
+        # writes are signed.
+        try:
+            from app.services import settings_store as _ss0
+            _kdb0 = SessionLocal()
+            try:
+                _ss0.ensure_operator_key(_kdb0)
+                _ss0.hydrate_from_db(_kdb0)
+                # Data-safety: migrate any custom values still in a legacy SQL `settings` table into
+                # the relay (for keys the relay doesn't already hold), so upgrades don't lose config.
+                _ss0.migrate_legacy_table(_kdb0)
+            finally:
+                _kdb0.close()
+        except Exception as _e0:
+            logging.warning(f"Early settings hydrate failed: {_e0}")
+
         # Turnkey Docker music: when POSTERCHANAI_MUSIC=1 (the compose `music` profile sets this),
         # auto-enable music and point it at the acestep container — only seeding keys the admin
         # hasn't already set, so UI changes win. Lets `docker compose --profile music` generate a
         # song with no manual config.
         if os.environ.get("POSTERCHANAI_MUSIC", "0") == "1":
             try:
-                _db = SessionLocal()
-                _defaults = {
-                    "music_enabled": "true",
-                    "music_api_base": os.environ.get("POSTERCHANAI_ACESTEP_URL", "http://acestep:8001"),
-                }
-                for _k, _v in _defaults.items():
-                    if not _db.query(Setting).filter(Setting.key == _k).first():
-                        _db.add(Setting(key=_k, value=_v))
-                _db.commit()
-                _db.close()
+                from app.services import settings_store as _ss
+                if not _ss.exists("music_enabled"):
+                    _ss.put("music_enabled", "true")
+                if not _ss.exists("music_api_base"):
+                    _ss.put("music_api_base", os.environ.get("POSTERCHANAI_ACESTEP_URL", "http://acestep:8001"))
                 logging.info("Music (ACE-Step) auto-configured from POSTERCHANAI_MUSIC env")
             except Exception as e:
                 logging.error(f"Error seeding music settings: {e}")
@@ -218,16 +232,14 @@ async def startup():
         # HF_HOME on first use (persisted on the data volume). Only seeds keys the admin hasn't set.
         if os.environ.get("POSTERCHANAI_VIDEO", "0") == "1":
             try:
-                _db = SessionLocal()
-                _vdefaults = {"video_enabled": "true", "video_local_enabled": "true"}
+                from app.services import settings_store as _ss
+                if not _ss.exists("video_enabled"):
+                    _ss.put("video_enabled", "true")
+                if not _ss.exists("video_local_enabled"):
+                    _ss.put("video_local_enabled", "true")
                 _vm = os.environ.get("POSTERCHANAI_VIDEO_MODEL")
-                if _vm:
-                    _vdefaults["video_model"] = _vm
-                for _k, _v in _vdefaults.items():
-                    if not _db.query(Setting).filter(Setting.key == _k).first():
-                        _db.add(Setting(key=_k, value=_v))
-                _db.commit()
-                _db.close()
+                if _vm and not _ss.exists("video_model"):
+                    _ss.put("video_model", _vm)
                 logging.info("Video generation auto-configured from POSTERCHANAI_VIDEO env")
             except Exception as e:
                 logging.error(f"Error seeding video settings: {e}")
@@ -237,15 +249,12 @@ async def startup():
         # point its snapshot at the data volume. Only seeds keys the admin hasn't set.
         if os.environ.get("POSTERCHANAI_NOSTR_RELAY", "0") == "1":
             try:
-                _db = SessionLocal()
-                # First-run defaults only (seed if absent) so the Admin UI stays authoritative after.
-                # The one-time container upgrade below handles reused volumes whose key is "false".
-                _rdefaults = {"nostr_relay_enabled": "true", "nostr_relay_bind": "0.0.0.0"}
-                for _k, _v in _rdefaults.items():
-                    if not _db.query(Setting).filter(Setting.key == _k).first():
-                        _db.add(Setting(key=_k, value=_v))
-                _db.commit()
-                _db.close()
+                from app.services import settings_store as _ss
+                # Plumbing keys (local-only) → persist to the local JSON. First-run only (if absent).
+                if not _ss.exists("nostr_relay_enabled"):
+                    _ss.put("nostr_relay_enabled", "true")
+                if not _ss.exists("nostr_relay_bind"):
+                    _ss.put("nostr_relay_bind", "0.0.0.0")
                 logging.info("Nostr relay seeded from POSTERCHANAI_NOSTR_RELAY env")
             except Exception as e:
                 logging.error(f"Error seeding Nostr relay settings: {e}")
@@ -258,14 +267,12 @@ async def startup():
         # backend stays "proxy" (falls back to local on the data volume if no storage server set).
         if os.environ.get("POSTERCHANAI_BLOSSOM", "0") == "1":
             try:
-                _db = SessionLocal()
+                from app.services import settings_store as _ss
                 # First-run defaults only (seed if absent); Admin UI is the source of truth after.
-                _bdefaults = {"blossom_enabled": "true", "blossom_storage_path": "/app/data/blossom"}
-                for _k, _v in _bdefaults.items():
-                    if not _db.query(Setting).filter(Setting.key == _k).first():
-                        _db.add(Setting(key=_k, value=_v))
-                _db.commit()
-                _db.close()
+                if not _ss.exists("blossom_enabled"):
+                    _ss.put("blossom_enabled", "true")
+                if not _ss.exists("blossom_storage_path"):
+                    _ss.put("blossom_storage_path", "/app/data/blossom")
                 logging.info("Blossom server seeded from POSTERCHANAI_BLOSSOM env")
             except Exception as e:
                 logging.error(f"Error seeding Blossom settings: {e}")
@@ -354,14 +361,8 @@ async def startup():
                     hydrate/seed below don't race it (a fixed sleep loses when the relay does a WoT
                     build before listening → 'Connection refused' on the first writes)."""
                     import socket
-                    _d = SessionLocal()
-                    try:
-                        prow = _d.query(Setting).filter(Setting.key == "nostr_relay_port").first()
-                        port = int(prow.value) if prow and prow.value else 3052
-                    except Exception:
-                        port = 3052
-                    finally:
-                        _d.close()
+                    from app.services import settings_store as _ss
+                    port = _ss.get_int("nostr_relay_port", 3052)
                     deadline = _aio.get_event_loop().time() + timeout
                     while _aio.get_event_loop().time() < deadline:
                         try:
@@ -377,11 +378,12 @@ async def startup():
                     _db = SessionLocal()
                     try:
                         from app.services import settings_store
-                        await settings_store.hydrate(_db)
-                        # First boot: push any default settings the relay doesn't yet hold UP to the
-                        # relay (Nostr events), so the relay is the authoritative store of the
-                        # out-of-box config — not just the local read-cache. No-op once seeded.
-                        await settings_store.seed_relay_defaults(_db)
+                        from app.database import DEFAULT_SETTINGS
+                        # Re-hydrate now the relay is up (catch anything written since early startup),
+                        # then push any default settings the relay doesn't yet hold UP to it (Nostr
+                        # events) so the relay is the authoritative store of the out-of-box config.
+                        settings_store.hydrate_from_db(_db)
+                        await settings_store.seed_relay_defaults(_db, DEFAULT_SETTINGS)
                     except Exception as e:
                         logging.warning(f"Settings hydrate/seed from relay failed: {e}")
                     try:
@@ -422,25 +424,20 @@ async def startup():
             logging.info(f"Schedulers disabled on port {app_port} (only run on port 3051)")
 
         # Auto-start built-in Tor if enabled
-        db_tor = SessionLocal()
         try:
-            tor_enabled = db_tor.query(Setting).filter(Setting.key == "tor_enabled").first()
-            if tor_enabled and tor_enabled.value.lower() == "true":
-                def get_tor_setting(key, default=""):
-                    s = db_tor.query(Setting).filter(Setting.key == key).first()
-                    return s.value if s and s.value else default
-
+            from app.services import settings_store as _ss
+            if _ss.get_bool("tor_enabled"):
                 from app.services.tor_service import start_tor_service
-                listen_host = get_tor_setting("tor_listen_host", "127.0.0.1")
-                socks_port = get_tor_setting("tor_socks_port", "9052")
-                control_port = int(get_tor_setting("tor_control_port", "9053"))
+                listen_host = _ss.get("tor_listen_host", "127.0.0.1")
+                socks_port = _ss.get("tor_socks_port", "9052")
+                control_port = _ss.get_int("tor_control_port", 9053)
                 tor_service = start_tor_service(
                     listen_host=listen_host,
                     socks_port=int(socks_port),
                     control_port=control_port,
-                    dns_port=int(get_tor_setting("tor_dns_port", str(control_port + 2))),
-                    exit_nodes=get_tor_setting("tor_exit_nodes", "{us}"),
-                    data_dir=get_tor_setting("tor_data_dir", "/var/lib/posterchanai/tor"),
+                    dns_port=_ss.get_int("tor_dns_port", control_port + 2),
+                    exit_nodes=_ss.get("tor_exit_nodes", "{us}"),
+                    data_dir=_ss.get("tor_data_dir", "/var/lib/posterchanai/tor"),
                 )
                 if tor_service:
                     logging.info(f"Built-in Tor started (SOCKS5 on {listen_host}:{socks_port})")
@@ -448,72 +445,53 @@ async def startup():
                     logging.error("Failed to start built-in Tor")
         except Exception as e:
             logging.error(f"Failed to start built-in Tor: {e}", exc_info=True)
-        finally:
-            db_tor.close()
 
         # Auto-start built-in HTTP proxy if enabled
-        db_proxy = SessionLocal()
         try:
-            proxy_enabled = db_proxy.query(Setting).filter(Setting.key == "proxy_enabled").first()
-            if proxy_enabled and proxy_enabled.value.lower() == "true":
-                def get_proxy_setting(key, default=""):
-                    s = db_proxy.query(Setting).filter(Setting.key == key).first()
-                    return s.value if s and s.value else default
-
-                socks_host = get_proxy_setting("proxy_socks_host")
+            from app.services import settings_store as _ss
+            if _ss.get_bool("proxy_enabled"):
+                socks_host = _ss.get("proxy_socks_host", "")
                 if socks_host:
-                    # Run the proxy as its OWN process so its asyncio loop gets a dedicated
-                    # core and doesn't contend with the app's event loop (all bot/social media
-                    # uploads route through it — in-process this pegged a shared core).
+                    # Run the proxy as its OWN process so its asyncio loop gets a dedicated core and
+                    # doesn't contend with the app's event loop (all bot/social uploads route through it).
                     from app.services.http_proxy_service import start_http_proxy_process
+                    _pport = _ss.get_int("proxy_listen_port", 8118)
                     start_http_proxy_process(
-                        listen_host=get_proxy_setting("proxy_listen_host", "127.0.0.1"),
-                        listen_port=int(get_proxy_setting("proxy_listen_port", "8118")),
+                        listen_host=_ss.get("proxy_listen_host", "127.0.0.1"),
+                        listen_port=_pport,
                         socks_host=socks_host,
-                        socks_port=int(get_proxy_setting("proxy_socks_port", "9052")),
+                        socks_port=_ss.get_int("proxy_socks_port", 9052),
                     )
-                    logging.info(f"Built-in HTTP proxy (subprocess) started on port {get_proxy_setting('proxy_listen_port', '8118')}")
+                    logging.info(f"Built-in HTTP proxy (subprocess) started on port {_pport}")
                 else:
                     logging.warning("HTTP proxy enabled but no SOCKS5 target host configured")
         except Exception as e:
             logging.error(f"Failed to start built-in HTTP proxy: {e}", exc_info=True)
-        finally:
-            db_proxy.close()
 
         # Auto-start built-in torrent client if enabled (skip if using remote server)
-        db3 = SessionLocal()
         try:
-            bt_enabled = db3.query(Setting).filter(Setting.key == "bt_enabled").first()
-            bt_server_url = db3.query(Setting).filter(Setting.key == "bt_server_url").first()
-
-            # Skip local torrent client if forwarding to remote server
-            if bt_server_url and bt_server_url.value:
-                logging.info(f"Torrent requests will be forwarded to: {bt_server_url.value}")
-            elif bt_enabled and bt_enabled.value.lower() == "true":
-                bt_proxy_host = db3.query(Setting).filter(Setting.key == "bt_proxy_host").first()
-                if bt_proxy_host and bt_proxy_host.value:
-                    def get_bt_setting(key):
-                        s = db3.query(Setting).filter(Setting.key == key).first()
-                        return s.value if s else None
-
-                    download_dir = get_bt_setting("bt_download_dir") or "/var/lib/posterchanai/torrents"
-                    proxy_port = int(get_bt_setting("bt_proxy_port") or "8118")
-                    listen_port = int(get_bt_setting("bt_listen_port") or "6881")
-
+            from app.services import settings_store as _ss
+            bt_server_url = _ss.get("bt_server_url", "")
+            if bt_server_url:
+                logging.info(f"Torrent requests will be forwarded to: {bt_server_url}")
+            elif _ss.get_bool("bt_enabled"):
+                bt_proxy_host = _ss.get("bt_proxy_host", "")
+                if bt_proxy_host:
+                    download_dir = _ss.get("bt_download_dir", "") or "/var/lib/posterchanai/torrents"
+                    proxy_port = _ss.get_int("bt_proxy_port", 8118)
+                    listen_port = _ss.get_int("bt_listen_port", 6881)
                     from app.services.libtorrent_service import LibtorrentService
                     service = LibtorrentService.get_instance(
                         download_dir=download_dir,
-                        proxy_host=bt_proxy_host.value,
+                        proxy_host=bt_proxy_host,
                         proxy_port=proxy_port,
                         listen_port=listen_port
                     )
-                    logging.info(f"Built-in torrent client started")
+                    logging.info("Built-in torrent client started")
                 else:
                     logging.warning("Built-in torrent client enabled but no proxy host configured")
         except Exception as e:
             logging.error(f"Failed to start built-in torrent client: {e}", exc_info=True)
-        finally:
-            db3.close()
 
         logging.info("Application startup complete")
     except Exception as e:

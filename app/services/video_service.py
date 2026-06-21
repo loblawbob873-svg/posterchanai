@@ -23,8 +23,6 @@ from typing import List, Optional
 import numpy as np
 from sqlalchemy.orm import Session
 
-from app.models import Setting
-
 logger = logging.getLogger("video_service")
 logger.setLevel(logging.INFO)
 logger.propagate = False

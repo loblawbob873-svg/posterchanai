@@ -13,7 +13,6 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import AsyncGenerator, Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 
-from app.models import Setting
 # Gated context-reset helper: resets only on the SYCL/Arc build that needs the crash workaround,
 # a no-op on CUDA (nas) so the prompt-prefix cache is kept (much faster prefill). tool_calling has
 # no app-level imports, so this module-level import can't create a cycle.

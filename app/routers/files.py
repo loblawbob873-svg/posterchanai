@@ -57,24 +57,6 @@ def _is_same_server(storage_url: str) -> bool:
         return False
 
 
-class _SettingValue:
-    """Lightweight read-only stand-in exposing `.value`, so existing `row.value` callers are
-    unchanged now that settings come from settings_store instead of the ORM Setting row."""
-    __slots__ = ("value",)
-
-    def __init__(self, value):
-        self.value = value
-
-
-def safe_query_setting(db: Session, key: str) -> Optional["_SettingValue"]:
-    """Safely read a setting, returning a `.value`-bearing stand-in (or None if unset)."""
-    try:
-        v = settings_store.get(key)
-        return _SettingValue(v) if v is not None else None
-    except Exception as e:
-        logger.error(f"Unexpected error querying setting '{key}': {e}", exc_info=True)
-        return None
-
 router = APIRouter(prefix="/api/files", tags=["files"])
 
 
@@ -142,22 +124,22 @@ def get_file_cache(db: Session, force_reload: bool = False) -> FileListingCache:
     global _file_cache
     
     # Load cache settings
-    cache_enabled = safe_query_setting(db, "file_cache_enabled")
-    if cache_enabled and cache_enabled.value and cache_enabled.value.lower() == "false":
+    cache_enabled = settings_store.get("file_cache_enabled")
+    if cache_enabled and cache_enabled.lower() == "false":
         return NoOpCache()
-    
+
     # Load TTL and max_size settings
-    ttl_setting = safe_query_setting(db, "file_cache_ttl")
-    max_size_setting = safe_query_setting(db, "file_cache_max_size")
-    
+    ttl_setting = settings_store.get("file_cache_ttl")
+    max_size_setting = settings_store.get("file_cache_max_size")
+
     # Validate and parse settings with defaults
     try:
-        ttl = max(60, min(3600, int(ttl_setting.value))) if ttl_setting and ttl_setting.value else 300
+        ttl = max(60, min(3600, int(ttl_setting))) if ttl_setting else 300
     except (ValueError, TypeError):
         ttl = 300
-    
+
     try:
-        max_size = max(100, min(10000, int(max_size_setting.value))) if max_size_setting and max_size_setting.value else 1000
+        max_size = max(100, min(10000, int(max_size_setting))) if max_size_setting else 1000
     except (ValueError, TypeError):
         max_size = 1000
     
@@ -221,9 +203,9 @@ async def search_files(
         raise HTTPException(status_code=401, detail="Not authenticated")
 
     # Check if storage server is configured - proxy search if so
-    storage_server_url = safe_query_setting(db, "storage_server_url")
-    if storage_server_url and storage_server_url.value:
-        url = storage_server_url.value.strip()
+    storage_server_url = settings_store.get("storage_server_url")
+    if storage_server_url:
+        url = storage_server_url.strip()
         if url.startswith(('http://', 'https://')):
             # If same server, skip HTTP proxy and use local storage directly
             if _is_same_server(url):
@@ -351,10 +333,10 @@ async def get_all_images(
 ):
     """Get all images and videos from user's storage recursively, sorted by newest first. Supports proxying to storage server."""
     # Check if storage server is configured - proxy request if so
-    storage_server_url = safe_query_setting(db, "storage_server_url")
+    storage_server_url = settings_store.get("storage_server_url")
     
-    if storage_server_url and storage_server_url.value:
-        url = storage_server_url.value.strip()
+    if storage_server_url:
+        url = storage_server_url.strip()
         if url.startswith(('http://', 'https://')):
             # If same server, skip HTTP proxy and use local storage directly
             if _is_same_server(url):
@@ -1227,9 +1209,9 @@ async def list_files(
 ):
     """List files and directories in user's storage or external storage. Uses memory cache if enabled."""
     # Check if storage server is configured - proxy request if so (for user storage only, not external)
-    storage_server_url = safe_query_setting(db, "storage_server_url")
-    if storage_server_url and storage_server_url.value:
-        url = storage_server_url.value.strip()
+    storage_server_url = settings_store.get("storage_server_url")
+    if storage_server_url:
+        url = storage_server_url.strip()
         if url.startswith(('http://', 'https://')):
             # If same server, skip HTTP proxy and use local filesystem directly
             if _is_same_server(url):
@@ -1634,9 +1616,9 @@ async def view_file(
     
     # Check if storage server is configured - proxy request if so (for user storage only, not external)
     if not is_external:
-        storage_server_url = safe_query_setting(db, "storage_server_url")
-        if storage_server_url and storage_server_url.value:
-            url = storage_server_url.value.strip()
+        storage_server_url = settings_store.get("storage_server_url")
+        if storage_server_url:
+            url = storage_server_url.strip()
             if url.startswith(('http://', 'https://')):
                 logger.info(f"[FILES] Proxying view_file to storage server: {url}, username: {target_username}, path: {actual_file_path}")
                 try:
@@ -1829,9 +1811,9 @@ async def get_thumbnail(
 
     # Check if storage server is configured - proxy request if so (for user storage only, not external)
     if not is_external:
-        storage_server_url = safe_query_setting(db, "storage_server_url")
-        if storage_server_url and storage_server_url.value:
-            url = storage_server_url.value.strip()
+        storage_server_url = settings_store.get("storage_server_url")
+        if storage_server_url:
+            url = storage_server_url.strip()
             if url.startswith(('http://', 'https://')):
                 logger.info(f"[FILES] Proxying get_thumbnail to storage server: {url}")
                 return await _proxy_get_thumbnail(url, current_user.username, file_path, size, db)
@@ -2175,8 +2157,8 @@ async def create_share(
 
         # Check file exists - support both local and remote storage
         file_exists = False
-        storage_server_url = safe_query_setting(db, "storage_server_url")
-        if storage_server_url and storage_server_url.value and storage_server_url.value.strip():
+        storage_server_url = settings_store.get("storage_server_url")
+        if storage_server_url and storage_server_url.strip():
             # For remote storage, trust that the file exists if path validation passed
             # (remote listing is expensive, share creation will fail on access if file doesn't exist)
             file_exists = True
@@ -2252,9 +2234,9 @@ async def get_shared_file(
         raise HTTPException(status_code=404, detail="User not found")
     
     # When using remote storage, proxy to storage server (file is not on local disk)
-    storage_server_url = safe_query_setting(db, "storage_server_url")
-    if storage_server_url and storage_server_url.value:
-        url = storage_server_url.value.strip()
+    storage_server_url = settings_store.get("storage_server_url")
+    if storage_server_url:
+        url = storage_server_url.strip()
         if url.startswith(('http://', 'https://')):
             try:
                 response = await _proxy_view_file(url, user.username, share.file_path, db)
@@ -2379,9 +2361,9 @@ async def delete_files_bulk(
     logger.debug(f"[FILES] Files to delete: {request.file_paths}")
     
     # Check if storage server is configured - proxy request if so (NO FALLBACK)
-    storage_server_url = safe_query_setting(db, "storage_server_url")
-    if storage_server_url and storage_server_url.value:
-        url = storage_server_url.value.strip()
+    storage_server_url = settings_store.get("storage_server_url")
+    if storage_server_url:
+        url = storage_server_url.strip()
         if url.startswith(('http://', 'https://')):
             logger.info(f"[FILES] Proxying delete_files_bulk to storage server: {url}")
             # Proxy to storage server - NO FALLBACK
@@ -2407,9 +2389,9 @@ async def delete_file(
 ):
     """Delete a file or directory. Proxies to storage server if configured (NO FALLBACK)."""
     # Check if storage server is configured - proxy request if so (NO FALLBACK)
-    storage_server_url = safe_query_setting(db, "storage_server_url")
-    if storage_server_url and storage_server_url.value:
-        url = storage_server_url.value.strip()
+    storage_server_url = settings_store.get("storage_server_url")
+    if storage_server_url:
+        url = storage_server_url.strip()
         if url.startswith(('http://', 'https://')):
             logger.info(f"[FILES] Proxying delete to storage server: {url}")
             # Proxy to storage server - NO FALLBACK
@@ -2435,9 +2417,9 @@ async def move_files(
 ):
     """Move files or folders to a different location. Proxies to storage server if configured (NO FALLBACK)."""
     # Check if storage server is configured - proxy request if so (NO FALLBACK)
-    storage_server_url = safe_query_setting(db, "storage_server_url")
-    if storage_server_url and storage_server_url.value:
-        url = storage_server_url.value.strip()
+    storage_server_url = settings_store.get("storage_server_url")
+    if storage_server_url:
+        url = storage_server_url.strip()
         if url.startswith(('http://', 'https://')):
             logger.info(f"[FILES] Proxying move_files to storage server: {url}")
             # Proxy to storage server - NO FALLBACK
@@ -2464,9 +2446,9 @@ async def upload_file(
     content_type = file.content_type or "application/octet-stream"
     
     # Check if storage server is configured - proxy request if so
-    storage_server_url = safe_query_setting(db, "storage_server_url")
-    if storage_server_url and storage_server_url.value:
-        url = storage_server_url.value.strip()
+    storage_server_url = settings_store.get("storage_server_url")
+    if storage_server_url:
+        url = storage_server_url.strip()
         if url.startswith(('http://', 'https://')):
             logger.info(f"[FILES] Proxying upload to storage server: {url}")
             # Proxy to storage server (pass content directly to avoid re-reading)
@@ -2481,7 +2463,6 @@ async def upload_file(
 
 async def _proxy_upload_file(storage_server_url: str, username: str, filename: str, content: bytes, content_type: str, path: str, db: Session):
     """Proxy file upload to storage server - uses synchronous requests to avoid event loop issues"""
-    from app.models import Setting
     
     try:
         # Server-to-server requests don't need authentication
@@ -2517,7 +2498,6 @@ async def _proxy_upload_file(storage_server_url: str, username: str, filename: s
 
 async def _proxy_list_files(storage_server_url: str, username: str, path: str, db: Session):
     """Proxy file listing to storage server. Returns JSON dict on 200, None on 404 (caller can fall back to local)."""
-    from app.models import Setting
     import requests
     
     try:
@@ -2543,7 +2523,6 @@ async def _proxy_list_files(storage_server_url: str, username: str, path: str, d
 
 async def _proxy_delete_file(storage_server_url: str, username: str, file_path: str, db: Session):
     """Proxy file deletion to storage server - uses synchronous requests to avoid event loop issues"""
-    from app.models import Setting
     import requests
     
     try:
@@ -2575,7 +2554,6 @@ async def _proxy_delete_file(storage_server_url: str, username: str, file_path: 
 
 async def _proxy_mkdir(storage_server_url: str, username: str, path: str, db: Session):
     """Proxy directory creation to storage server - uses synchronous requests to avoid event loop issues"""
-    from app.models import Setting
     import requests
     
     try:
@@ -2611,7 +2589,6 @@ async def _proxy_view_file(storage_server_url: str, username: str, file_path: st
     Returns (Response, None) on success, (None, status_code) on non-200 so caller can fall back to local.
     Raises only on connection/timeout errors.
     """
-    from app.models import Setting
     import requests
     from fastapi.responses import Response
 
@@ -2653,7 +2630,6 @@ async def _proxy_view_file(storage_server_url: str, username: str, file_path: st
 
 async def _proxy_get_thumbnail(storage_server_url: str, username: str, file_path: str, size: int, db: Session):
     """Proxy thumbnail generation to storage server - uses synchronous requests to avoid event loop issues"""
-    from app.models import Setting
     import requests
     
     try:
@@ -2715,7 +2691,6 @@ async def _proxy_get_thumbnail(storage_server_url: str, username: str, file_path
 
 async def _proxy_move_files(storage_server_url: str, username: str, file_paths: List[str], destination: str, db: Session):
     """Proxy file move operation to storage server - uses synchronous requests to avoid event loop issues"""
-    from app.models import Setting
     import requests
     
     try:
@@ -2748,7 +2723,6 @@ async def _proxy_move_files(storage_server_url: str, username: str, file_paths: 
 
 async def _proxy_delete_files_bulk(storage_server_url: str, username: str, file_paths: List[str], db: Session):
     """Proxy bulk file deletion to storage server - uses synchronous requests to avoid event loop issues"""
-    from app.models import Setting
     import requests
     
     try:
@@ -2786,9 +2760,9 @@ async def create_directory(
 ):
     """Create a new directory. Proxies to storage server if configured (NO FALLBACK)."""
     # Check if storage server is configured - proxy request if so (NO FALLBACK)
-    storage_server_url = safe_query_setting(db, "storage_server_url")
-    if storage_server_url and storage_server_url.value:
-        url = storage_server_url.value.strip()
+    storage_server_url = settings_store.get("storage_server_url")
+    if storage_server_url:
+        url = storage_server_url.strip()
         if url.startswith(('http://', 'https://')):
             logger.info(f"[FILES] Proxying mkdir to storage server: {url}")
             # Proxy to storage server - NO FALLBACK

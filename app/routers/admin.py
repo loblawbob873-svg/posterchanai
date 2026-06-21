@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from datetime import datetime
 import logging
 from app.database import get_db
-from app.models import User, Setting, ExternalStorage
+from app.models import User, ExternalStorage
 from app.schemas import UserCreate, UserResponse, SettingsUpdate, SettingsResponse
 from app.auth import get_admin_user, get_password_hash
 from app.services.email_service import get_email_service
@@ -397,31 +397,16 @@ def update_settings(
     changed_keys = set()
 
     try:
+        from app.services import settings_store
         for key, value in data.settings.items():
-            setting = db.query(Setting).filter(Setting.key == key).first()
-            if setting:
-                # Only update if value is not empty string - prevents accidental clearing
-                # This protects against admin UI sending partial updates with empty values
-                if value != "" and (setting.value or "") != value:
-                    setting.value = value
-                    changed_keys.add(key)
-                # If value is empty and setting exists, preserve existing value
-                # (prevents accidental erasure when admin UI sends all settings)
-            else:
-                # Only create new setting if value is not empty
-                if value != "":
-                    db.add(Setting(key=key, value=value))
-                    changed_keys.add(key)
-
+            # The admin UI sends ALL fields on every save; only persist a key whose value actually
+            # CHANGED and is non-empty ("" = leave as-is — protects against partial UI updates).
+            if value != "" and settings_store.get(key, "") != value:
+                settings_store.put(key, value)   # updates the cache + writes through to the relay
+                changed_keys.add(key)
             if key in cache_keys:
                 cache_settings_changed = True
-        
-        # Flush changes to database before commit
-        db.flush()
-        
-        # Commit the transaction - ensure this succeeds
-        db.commit()
-        logger.info(f"[Admin] Successfully saved {len(data.settings)} settings")
+        logger.info(f"[Admin] Saved {len(changed_keys)} changed setting(s)")
 
         # If the relay blocklist/filters were edited in the UI, push them to the running relay
         # immediately (otherwise the change wouldn't apply until restart / daily refresh).
@@ -461,17 +446,7 @@ def update_settings(
                 _threading.Thread(target=_restart_relay, daemon=True).start()
             except Exception as e:
                 logger.warning(f"[Admin] could not schedule relay restart: {e}")
-
-        # Write-through to the relay so it stays the authoritative store (settings_backend == relay).
-        # No-op otherwise. Sync handler runs in a threadpool → drive the coroutine with asyncio.run.
-        try:
-            from app.services import settings_store
-            if changed_keys and settings_store.enabled(db):
-                import asyncio as _aio
-                mirror = {k: data.settings[k] for k in changed_keys}
-                _aio.run(settings_store.write_through(db, mirror))
-        except Exception as e:
-            logger.warning(f"[Admin] settings write-through to relay failed: {e}")
+        # (settings_store.put above already mirrors each changed key to the relay datastore.)
 
     except IntegrityError as e:
         # Handle constraint violations (e.g., unique constraint, foreign key)
@@ -706,12 +681,12 @@ async def rescan_storage(
     from app.services.storage_service import get_storage_service
     from app.routers.files import get_file_cache
     from app.services.thumbnail_service import generate_thumbnails_for_user
-    from app.models import Setting
-    
+    from app.services import settings_store
+
     # Check if storage server is configured - proxy the scan request if so
-    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
-    if storage_server_url and storage_server_url.value:
-        url = storage_server_url.value.strip()
+    storage_server_url = settings_store.get("storage_server_url", "")
+    if storage_server_url:
+        url = storage_server_url.strip()
         if url.startswith(('http://', 'https://')):
             logger.info(f"[ADMIN] Proxying storage rescan to storage server: {url}")
             try:
@@ -1219,11 +1194,10 @@ async def test_proxy_chain(
     import asyncio
     import socket
     import httpx
-    from app.models import Setting
+    from app.services import settings_store
 
     def get_setting(key, default=""):
-        s = db.query(Setting).filter(Setting.key == key).first()
-        return s.value if s and s.value else default
+        return settings_store.get(key, None) or default
 
     results = {}
 

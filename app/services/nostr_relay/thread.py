@@ -128,14 +128,17 @@ def _parse_nip05(names_raw: str, relays_raw: str):
 
 def _read_config() -> dict:
     from app.database import SessionLocal
-    from app.models import Setting
+    from app.services import settings_store
     db = SessionLocal()
     try:
-        rows = {s.key: s.value for s in db.query(Setting).filter(
-            Setting.key.like("nostr_relay_%")).all()}
+        # The relay reads its OWN config from the Nostr datastore — no SQL Setting table. Plumbing
+        # keys (port/bind/pg_dsn) come from the local JSON; the rest are decrypted straight from the
+        # relay's event store (same Postgres). Populate this process's settings cache, then read it.
+        settings_store.load_local()
+        settings_store.hydrate_from_db(db)
 
         def g(key, default=""):
-            v = rows.get(key)
+            v = settings_store.get(key, None)
             return v if v not in (None, "") else default
 
         def gi(key, default):
