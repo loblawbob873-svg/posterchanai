@@ -2570,7 +2570,7 @@
   }
   function renderNotifications(){
     const feed=$('#feed');
-    const all=notifList().filter(_notifMatch);
+    const all=notifGrouped(notifList().filter(_notifMatch));
     const list=all.slice(0, _notifShown);
     const tabs=`<div class="notif-tabs">${_NOTIF_TABS.map(([k,l])=>`<button class="ntab${k===_notifFilter?' on':''}" data-nf="${k}">${enc(l)}</button>`).join('')}</div>`;
     feed.innerHTML = tabs + (all.length
@@ -2578,7 +2578,7 @@
           ? `<button class="btn btn-ghost full" id="notif-more">Load ${Math.min(25, all.length-_notifShown)} more (${all.length-_notifShown})</button>` : '')
       : '<div class="empty">No notifications here.</div>');
     $$('.ntab',feed).forEach(b=> b.onclick=()=>{ _notifFilter=b.dataset.nf; _notifShown=25; renderNotifications(); });
-    list.forEach(e=>needProfile(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey));
+    list.forEach(e=>{ if(e.type==='group') e.events.forEach(x=>needProfile(x.pubkey)); else needProfile(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey); });
     seenNotif.last = Math.floor(Date.now()/1000); localStorage.setItem('pc_notif_seen', seenNotif.last);
     $$('#notif-badge,#notif-badge-m').forEach(b=>b.classList.add('hidden'));
     // row opens the post; avatar opens the sender's profile (stop the row handler firing too)
@@ -2599,7 +2599,28 @@
       renderNotifications();
     };
   }
+  // Collapse reactions/reposts on the SAME post into one row ("X and N others reacted"); everything
+  // else stays an individual notification.
+  function notifGrouped(list){
+    const groups=new Map(); const out=[];
+    for(const e of list){
+      if(e.kind===7||e.kind===6){
+        const tgt=(e.tags.filter(t=>t[0]==='e').pop()||[])[1]||e.id;
+        const key=e.kind+':'+tgt;
+        let g=groups.get(key);
+        if(!g){ g={type:'group', kind:e.kind, tgt, events:[], created_at:e.created_at}; groups.set(key,g); out.push(g); }
+        g.events.push(e); if(e.created_at>g.created_at) g.created_at=e.created_at;
+      } else out.push(e);
+    }
+    return out.sort((a,b)=>b.created_at-a.created_at);
+  }
   function notifHtml(e){
+    if(e.type==='group'){
+      const first=e.events[0], fp=first.pubkey, p=profOf(fp), av=p.picture||LOGO, others=e.events.length-1;
+      const verb = e.kind===6?'reposted your note':`reacted ${enc((first.content==='+'||first.content==='')?'❤️':first.content)} to your post`;
+      const who = (p.name||p.display_name||'someone')+(others>0?` <span class="muted">and ${others} other${others>1?'s':''}</span>`:'');
+      return `<div class="notif ${e.kind===6?'rt':'like'}" data-open="${enc(e.tgt)}"><span class="ic">${e.kind===6?'↻':'♥'}</span><img class="notif-av" data-pk="${fp}" src="${enc(av)}" onerror="this.src='${LOGO}'"><div><b>${who}</b> ${verb}<div class="muted small">${timeAgo(e.created_at)}</div></div></div>`;
+    }
     const fromPk = e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey;
     const p=profOf(fromPk); const av=p.picture||LOGO;
     // What to open on click: for a reply/mention (kind-1) open the notification event ITSELF, so the
