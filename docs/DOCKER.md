@@ -7,9 +7,11 @@ base image for the backend you choose.
 > **Just want a Nostr relay + client, no AI?** Use `GPU=nostr` — a small (~2 GB vs ~70 GB)
 > image with no torch/llama/diffusers. See [Nostr-only](#nostr-only-no-ai) below.
 
-**Postgres is the one and only database** (it backs both the app and the built-in Nostr relay).
-The compose file includes a `postgres` service and wires it up automatically; if you run a bare
-`docker run`, point `DATABASE_URL` / `NOSTR_RELAY_PG_DSN` at your own Postgres.
+**Postgres is the one and only database** — it backs both the app and the built-in Nostr relay, so
+it is **required in every setup**. The **recommended (and simplest) way to run is the bundled
+`docker compose` file**: it starts a `postgres` service and wires it up automatically. A bare
+`docker run` has **no database** and will exit on startup with `connection refused` — only use it
+if you point `DATABASE_URL` / `NOSTR_RELAY_PG_DSN` at your own external Postgres.
 
 The image is **turnkey**: on first run it comes up on the `native` LLM + image
 backends, auto-downloads the recommended chat model, and (on AMD) auto-detects the
@@ -47,27 +49,29 @@ installs 6.3.4); the SYCL/Intel build is RAM-hungry (`icpx`) so build it on a bo
 with enough memory. Narrow the AMD build to just your card for speed:
 `--build-arg AMDGPU_TARGETS=gfx1100`.
 
-## Run
+## Run — use `docker compose` (recommended)
+
+This is the **only recommended way**: compose starts Postgres (required) + the app, wired together.
+You don't need the separate `docker build` step — compose builds the right image per profile.
 
 ```bash
-# CPU
-docker run -d -p 3051:3051 -v pc-data:/var/lib/posterchanai -v pc-rag:/app/data posterchanai:cpu
-
-# NVIDIA
-docker run -d --gpus all -p 3051:3051 \
-  -v pc-data:/var/lib/posterchanai -v pc-rag:/app/data posterchanai:cuda
-
-# AMD (ROCm userspace is in the image; driver is on the host)
-docker run -d --device /dev/kfd --device /dev/dri --security-opt seccomp=unconfined \
-  -p 3051:3051 -v pc-data:/var/lib/posterchanai -v pc-rag:/app/data posterchanai:rocm
-
-# Intel Arc (unified: chat via llama.cpp SYCL + image via torch-XPU, one container)
-docker run -d --device /dev/dri -p 3051:3051 \
-  -v pc-data:/var/lib/posterchanai -v pc-rag:/app/data posterchanai:intel
+docker compose --profile cuda up -d --build    # profile: cpu | cuda | rocm | intel | nostr
 ```
 
-Or use the bundled compose file (recommended — it brings up Postgres too):
-`docker compose --profile cuda up -d --build` (`cpu` | `cuda` | `rocm` | `intel` | `nostr`).
+### Advanced: bare `docker run` (bring your own Postgres)
+
+Only if you run Postgres yourself — you **must** pass `DATABASE_URL` + `NOSTR_RELAY_PG_DSN` pointing
+at it, or the app exits immediately with `connection refused`. Otherwise use compose above.
+
+```bash
+# add  -e DATABASE_URL=postgresql+psycopg2://user:pw@host:5432/posterchan_relay
+#      -e NOSTR_RELAY_PG_DSN="host=host port=5432 dbname=posterchan_relay user=user password=pw"
+docker run -d -p 3051:3051 -v pc-data:/var/lib/posterchanai -v pc-rag:/app/data posterchanai:cpu          # CPU
+docker run -d --gpus all -p 3051:3051 -v pc-data:/var/lib/posterchanai -v pc-rag:/app/data posterchanai:cuda   # NVIDIA
+docker run -d --device /dev/kfd --device /dev/dri --security-opt seccomp=unconfined \
+  -p 3051:3051 -v pc-data:/var/lib/posterchanai -v pc-rag:/app/data posterchanai:rocm                    # AMD
+docker run -d --device /dev/dri -p 3051:3051 -v pc-data:/var/lib/posterchanai -v pc-rag:/app/data posterchanai:intel   # Intel Arc
+```
 
 Each profile builds its **own image tag** — `posterchanai:<TAG>-<backend>` (e.g.
 `posterchanai:local-nostr`, `posterchanai:local-cuda`; `TAG` defaults to `local`). The profiles

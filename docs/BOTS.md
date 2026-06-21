@@ -72,7 +72,7 @@ The modal shows only the fields the chosen platform/type needs:
 - **Credentials** — Misskey/Pleroma: Server URL, Bot username, Access token (Pleroma report bot
   also needs an **admin token**). Matrix: server, user ID, access token, room ID, admins.
 - **Features** (text bots) → `main.py` modes: Reply to mentions, Nitter feeds, Welcome, Block,
-  Report, Hashtag, Unfollow. (No raw `--flags` to type.)
+  Report, Hashtag, Unfollow, **Data Vending Machine (NIP-90)**. (No raw `--flags` to type.)
 - **Personality prompt.**
 - **Voice / narration** — TTS voice/rate/pitch, auto-narrate.
 - **Pleroma database name** — for block/welcome/report bots.
@@ -82,6 +82,17 @@ The modal shows only the fields the chosen platform/type needs:
 
 On/Off per bot toggles `enabled`; the manager reconciles within a few seconds. (Nothing runs
 unless the master kill-switch is also on.)
+
+### Data Vending Machine (NIP-90)
+
+A **Nostr bot** with the **Data Vending Machine** feature checked runs `botframework/dvmListener.py`
+(`--dvm` mode): it watches the bot's relays for NIP-90 **job requests** (kind 5xxx) and fulfils them
+with this node's AI, publishing a **result** (kind 6xxx = request + 1000) plus **feedback** (kind
+7000), signed by the bot's key. v1 handles **text** jobs — `5050` text-generation and `5000`/`5001`
+summarization — via the same `generate_reply` the chat bot uses. Capped at `DVM_MAX_PER_POLL` jobs
+per poll (default 3) so it can't monopolise the GPU. It needs the bot's Nostr key + relays + the
+node's AI endpoint (all injected by the manager). Image jobs are a future addition. It stays dormant
+until you create a Nostr bot, tick the feature, and enable it.
 
 ## Migrating a node (cutover from the legacy `posterchan.service`)
 

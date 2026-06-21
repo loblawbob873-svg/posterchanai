@@ -117,7 +117,13 @@
 
 ## Quick start (backend and web UI)
 
-### Option A: Docker (turnkey — one image, any GPU)
+> **Recommended: Docker Compose (Option A).** PostgreSQL is the one datastore for **both** the app
+> and the built-in Nostr relay, so it's **required in every setup** — and the compose file brings it
+> up and wires it automatically. The bare-metal installer (B) and manual setup (C) work too, but you
+> must provision PostgreSQL yourself (the installer can do it). A plain `docker run` with no Postgres
+> will not start.
+
+### Option A: Docker Compose (turnkey — one image, any GPU) ✅ recommended
 
 One Ubuntu image builds for **CPU, NVIDIA (CUDA), AMD (ROCm), or Intel Arc (XPU)** —
 pick the accelerator with a build-arg. It comes up **turnkey**: native local LLM +
@@ -145,7 +151,7 @@ template + guide in **[docs/NGINX.md](docs/NGINX.md)**.
 
 ### Option B: Installer (Linux, recommended for bare metal)
 
-The **installer** sets up the virtual environment, dependencies, optional GPU backends (LLM and image), and can configure a systemd service.
+The **installer** sets up the virtual environment, dependencies, optional GPU backends (LLM and image), **provisions PostgreSQL** (required — the one datastore), and can configure a systemd service. (If you'd rather not manage Postgres yourself, use **Option A / Docker Compose** instead.)
 
 1. **Clone and enter the project:**
    ```bash
