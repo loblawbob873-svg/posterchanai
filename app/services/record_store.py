@@ -5,7 +5,7 @@ chats: each row becomes an encrypted doc signed with the OWNER's storage key (pr
 chats), keyed by `<ns><row_id>`. The SQLite tables stay the fast cache (the reminder scheduler keeps
 its frequent `due_at <=` query local); a fresh node reconstructs the rows from the relay.
 
-Gated by `records_backend` (`relay` on; default `sqlite`). Sync callers use the `*_blocking` wrappers.
+The relay is the only datastore (always on). Sync callers use the `*_blocking` wrappers.
 """
 
 import asyncio
@@ -125,8 +125,6 @@ def delete_apikey_blocking(db, user, key_id) -> None:
 # ---- hydrate (relay → cache) ----
 async def hydrate(db) -> int:
     """Recreate missing Reminder + SavedSearch rows for every user from their relay docs. Additive."""
-    if not enabled(db):
-        return 0
     made = 0
     for user in db.query(User).filter(User.nostr_npub.isnot(None)).all():
         try:
@@ -180,23 +178,3 @@ async def hydrate(db) -> int:
         db.commit()
     logger.info("[record-store] hydrated %d record(s) from relay", made)
     return made
-
-
-async def migrate(db) -> dict:
-    """Force-push all reminders + saved searches into the relay (idempotent)."""
-    rem = sav = 0
-    users = {u.id: u for u in db.query(User).filter(User.nostr_npub.isnot(None)).all()}
-    for r in db.query(Reminder).all():
-        u = users.get(r.user_id)
-        if u and await mirror_reminder(db, u, r, force=True):
-            rem += 1
-    for s in db.query(SavedSearch).all():
-        u = users.get(s.user_id)
-        if u and await _put(db, u, NS_SEARCH, s.id, _search_rec(s), force=True):
-            sav += 1
-    keys = 0
-    for k in db.query(APIKey).all():
-        u = users.get(k.user_id)
-        if u and await _put(db, u, NS_APIKEY, k.id, _apikey_rec(k), force=True):
-            keys += 1
-    return {"reminders": rem, "saved_searches": sav, "api_keys": keys}

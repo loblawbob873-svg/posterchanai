@@ -245,12 +245,11 @@ async def run_logs_for_admin(return_text: bool = False, notify=None,
         logger.info("Added health report to Logs chat for admin")
         # The Logs conversation is created directly here (not via the API that normally mirrors its
         # index doc), so mirror it so the relay is consistent for a fresh-node rebuild. The report
-        # MESSAGE is mirrored by the Message after_insert hook; the client shows it from PG via the
-        # API regardless. No-op unless chat_backend == relay.
+        # MESSAGE is mirrored by the Message after_commit hook (this runs in the scheduler's async
+        # loop, so the hook fires); the client shows it from PG via the API regardless.
         try:
             from app.services import chat_store
-            if chat_store.enabled(db):
-                await chat_store.mirror_conversation(db, admin, logs_chat)
+            await chat_store.mirror_conversation(db, admin, logs_chat)
         except Exception as e:
             logger.warning(f"Logs conversation relay mirror failed: {e}")
 

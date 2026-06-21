@@ -3,11 +3,10 @@
 Each message is a kind-30078 doc `d=pcai:msg:<conv>:<seq>`, **NIP-44-encrypted to the user's
 server-held storage key** and signed by it — so it's never on a timeline, only the user (server,
 on their behalf) can read it, and it's individually deletable via NIP-09 (`delete_doc`). The
-conversation index (ids/titles) stays in SQLite for now; the *messages* live here.
+conversation index (ids/titles) is also mirrored (see mirror_conversation); the *messages* live here.
 
-Wiring into the live chat path is incremental + flag-gated (`chat_backend` setting = `relay`): this
-module is the store; routers/services call add/get/delete. SQLite message rows remain until every
-save point is routed here, then they're retired.
+The relay is the only datastore (always on): routers/services call add/get/delete, and every
+committed Message row is auto-mirrored by the install_message_mirror() ORM hook below.
 """
 
 import os
@@ -87,7 +86,7 @@ async def delete_conversation(db, user, conv_id: int) -> int:
 # on a fresh node, not just the messages. Keyed by the SQLite conv id (the d-tag suffix). ----
 async def mirror_conversation(db, user, conv) -> bool:
     """Write/replace a conversation's index doc (title + timestamps), encrypted to the user's key."""
-    if not enabled(db) or conv is None:
+    if conv is None:
         return False
     try:
         sk = user_storage_seckey(db, user)
@@ -104,8 +103,6 @@ async def hydrate_conversations(db) -> int:
     """relay → conversations cache. Recreate missing Conversation rows for every user from their
     NS_CONV docs (so a fresh node restores the chat list). Additive only — never edits existing rows.
     Returns the number of conversations recreated."""
-    if not enabled(db):
-        return 0
     from datetime import datetime
     from app.models import Conversation, User
     made = 0
@@ -152,8 +149,6 @@ async def _mirror_insert(conv_id: int, role: str, content: str, ts: float, image
     from app.models import Conversation, User
     db = SessionLocal()
     try:
-        if not enabled(db):
-            return
         conv = db.query(Conversation).filter(Conversation.id == conv_id).first()
         if not conv:
             return

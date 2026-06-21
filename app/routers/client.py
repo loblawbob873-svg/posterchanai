@@ -1236,8 +1236,14 @@ async def delete_account(data: DeleteAccountReq, db: Session = Depends(get_db)):
         db.query(Message).filter(Message.conversation_id == c.id).delete()
         db.delete(c)
     db.query(UserSetting).filter(UserSetting.user_id == user.id).delete()
+    npub = user.nostr_npub   # capture before delete — needed to remove the relay account docs
     db.delete(user)
     db.commit()
+    try:
+        from app.services import users_store
+        await users_store.delete_user(db, npub)   # remove account docs so a rebuild won't resurrect it
+    except Exception as e:
+        logger.warning("[client] account-delete relay doc removal failed: %s", e)
     logger.info("[client] account deleted: %s", pk[:16])
     return JSONResponse({"ok": True})
 

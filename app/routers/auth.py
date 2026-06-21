@@ -159,7 +159,7 @@ async def nostr_login(data: NostrLogin, response: Response, db: Session = Depend
             except Exception:
                 pass
 
-    # Mirror the account-authority record to the relay (no-op unless users_backend == relay).
+    # Mirror the account-authority record to the relay (the authoritative datastore).
     try:
         from app.services import users_store
         await users_store.sync_user(db, user)
@@ -722,16 +722,15 @@ def update_user_settings(
         # Commit the transaction - ensure this succeeds
         db.commit()
         logger.info(f"[Auth] Successfully saved user settings for user {current_user.username}")
-        # Mirror per-user config to the relay (no-op unless users_backend == relay). Sync handler →
-        # drive the coroutine with asyncio.run.
+        # Mirror per-user config to the relay (the authoritative datastore). Sync handler → drive the
+        # coroutine with asyncio.run.
         try:
             from app.services import users_store
-            if users_store.enabled(db):
-                import asyncio as _aio
-                async def _mirror():
-                    await users_store.sync_user(db, current_user)        # account cols → event
-                    await users_store.sync_user_kv(db, current_user)     # mail/nitter/caldav kv → event
-                _aio.run(_mirror())
+            import asyncio as _aio
+            async def _mirror():
+                await users_store.sync_user(db, current_user)        # account cols → event
+                await users_store.sync_user_kv(db, current_user)     # mail/nitter/caldav kv → event
+            _aio.run(_mirror())
         except Exception as e:
             logger.warning(f"[Auth] account sync to relay after settings save failed: {e}")
     except IntegrityError as e:
@@ -820,7 +819,12 @@ async def upload_avatar(
             # Update user record with avatar filename
             current_user.avatar = filename
             db.commit()
-            
+            try:
+                from app.services import users_store
+                await users_store.sync_user(db, current_user)   # avatar → relay (fresh-node rebuild)
+            except Exception as e:
+                logger.warning("[auth] avatar sync to relay failed: %s", e)
+
             # Add cache busting to avatar URL
             avatar_url = f"/api/auth/avatar/{current_user.username}?t={int(time.time())}"
             return {
@@ -855,6 +859,11 @@ def delete_avatar(
 
         current_user.avatar = None
         db.commit()
+        try:
+            from app.services import users_store
+            users_store.sync_user_blocking(db, current_user)   # avatar removal → relay
+        except Exception as e:
+            logger.warning("[auth] avatar-delete sync to relay failed: %s", e)
 
     return {"message": "Avatar deleted"}
 

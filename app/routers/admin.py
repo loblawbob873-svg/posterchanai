@@ -540,10 +540,12 @@ def delete_user(
             detail="User not found"
         )
 
+    npub = user.nostr_npub   # capture before delete — needed to remove the relay account docs
+
     try:
         # Manually delete related records in the correct order to avoid foreign key violations
         # This is necessary because existing databases might not have CASCADE constraints
-        
+
         from app.models import (
             Conversation, Message, UserSetting, APIKey, VerificationToken
         )
@@ -571,7 +573,12 @@ def delete_user(
         # 11. Finally, delete the user
         db.delete(user)
         db.commit()
-        
+
+        # Remove the account's relay docs too, or a fresh-node rebuild would resurrect it.
+        if npub:
+            from app.services import users_store
+            users_store.delete_user_blocking(db, npub)
+
         logger.info(f"User {user_id} ({user.username}) deleted by admin {admin.id}")
         return {"message": "User deleted"}
         
@@ -629,7 +636,9 @@ def update_user_storage_quota(
     quota_bytes = int(quota_mb * 1024 * 1024) if quota_mb > 0 else 0
     user.storage_quota = quota_bytes
     db.commit()
-    
+    from app.services import users_store
+    users_store.sync_user_blocking(db, user)   # storage_quota → relay
+
     return {"message": "Storage quota updated", "quota_mb": quota_mb, "quota_bytes": quota_bytes}
 
 
@@ -658,6 +667,8 @@ def update_user_capabilities(
     user.can_ai = can_ai
     db.commit()
     db.refresh(user)
+    from app.services import users_store
+    users_store.sync_user_blocking(db, user)   # caps → relay (authoritative)
     logger.info(f"[ADMIN] Updated capabilities for user {user_id} ({user.username}): "
                 f"image={can_image} music={can_music} video={can_video} torrent={can_torrent} "
                 f"blossom={can_blossom} ai={can_ai}")

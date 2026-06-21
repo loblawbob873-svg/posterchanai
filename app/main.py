@@ -352,9 +352,9 @@ async def startup():
                 logging.error(f"Error starting Nostr relay: {e}", exc_info=True)
 
             try:
-                # Settings read-path: hydrate the local Setting cache from the relay (authoritative
-                # when settings_backend == relay). Deferred so the relay's WS is up first; no-op
-                # otherwise. Runs in the background so startup isn't blocked.
+                # Settings read-path: hydrate the local Setting cache from the relay (the
+                # authoritative datastore). Deferred so the relay's WS is up first. Runs in the
+                # background so startup isn't blocked.
                 import asyncio as _aio
                 async def _relay_ready(timeout=45.0):
                     """Wait until the relay's WS listener actually accepts a TCP connection, so the

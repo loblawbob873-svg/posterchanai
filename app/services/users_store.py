@@ -17,10 +17,11 @@ config + secrets are NOT synced here:
   * social tokens / notif cursors / news+telegram prefs belong to the separate "user settings →
     user-signed events" task, not the operator-authority record.
 
-Flag-gated by `users_backend` (`relay` on; default `sqlite` = off). A fresh node can rebuild accounts
-from the relay, but the operator's `nsec` must still be supplied out-of-band (it's the root key).
+The relay is the only datastore; a fresh node rebuilds accounts from it, but the operator's `nsec`
+must still be supplied out-of-band (it's the root key).
 """
 
+import asyncio
 import logging
 import secrets
 
@@ -87,6 +88,41 @@ async def sync_user(db, user: User, *, force: bool = False) -> bool:
         return False
 
 
+def sync_user_blocking(db, user: User) -> None:
+    """asyncio.run wrapper so the SYNCHRONOUS admin/auth routes can write an account through to the
+    relay (no-op for accounts without an npub — the relay store is npub-keyed)."""
+    try:
+        asyncio.run(sync_user(db, user))
+    except Exception as e:
+        logger.warning("[users-store] sync_user_blocking failed: %s", e)
+
+
+async def delete_user(db, npub: str) -> bool:
+    """Remove a deleted account's relay docs (account-authority + per-user config) so a fresh-node
+    rebuild doesn't RESURRECT it from the lingering docs. No-op without an npub / operator key."""
+    if not npub:
+        return False
+    op_sk = _ss._operator_seckey(db)
+    if not op_sk:
+        return False
+    ok = False
+    for ns in (store.NS_USER, store.NS_USERCFG):
+        try:
+            if await store.delete_doc(_ss._port(db), op_sk, ns + npub):
+                ok = True
+        except Exception as e:
+            logger.warning("[users-store] delete_user %s%s failed: %s", ns, npub[:16], e)
+    return ok
+
+
+def delete_user_blocking(db, npub: str) -> None:
+    """asyncio.run wrapper for the synchronous admin delete-user route."""
+    try:
+        asyncio.run(delete_user(db, npub))
+    except Exception as e:
+        logger.warning("[users-store] delete_user_blocking failed: %s", e)
+
+
 def _apply(db, rec: dict) -> bool:
     """UPSERT a User row from a relay account record (keyed by npub). Returns True if changed."""
     npub = rec.get("nostr_npub")
@@ -123,9 +159,7 @@ def _apply(db, rec: dict) -> bool:
 
 async def hydrate(db) -> int:
     """relay → users cache. UPSERT a User row for every operator-signed account doc. No-op when
-    disabled / no operator key. Returns the number of accounts created-or-updated."""
-    if not enabled(db):
-        return 0
+    there's no operator key. Returns the number of accounts created-or-updated."""
     op_sk = _ss._operator_seckey(db)
     if not op_sk:
         logger.info("[users-store] hydrate skipped — no operator key")
@@ -144,18 +178,6 @@ async def hydrate(db) -> int:
         db.commit()
     logger.info("[users-store] hydrated %d account(s) from relay", changed)
     return changed
-
-
-async def migrate(db) -> dict:
-    """Push every existing npub-keyed account into the relay (idempotent). Returns a small report."""
-    users = db.query(User).filter(User.nostr_npub.isnot(None)).all()
-    wrote = kv = 0
-    for u in users:
-        if await sync_user(db, u, force=True):
-            wrote += 1
-        if await sync_user_kv(db, u, force=True):
-            kv += 1
-    return {"accounts": len(users), "written": wrote, "kv_written": kv}
 
 
 # ---- UserSetting key/value (mail accounts, nitter feeds, caldav/webdav/music configs, etc.) ----
@@ -188,8 +210,6 @@ async def sync_user_kv(db, user, *, force: bool = False) -> bool:
 async def hydrate_user_kv(db) -> int:
     """relay → UserSetting cache. Restore each user's non-exempt kv from their usercfg doc (fills only
     MISSING keys — never clobbers a live local value like a freshly-linked token). Returns rows made."""
-    if not enabled(db):
-        return 0
     op_sk = _ss._operator_seckey(db)
     if not op_sk:
         return 0

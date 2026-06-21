@@ -141,12 +141,11 @@ def create_conversation(
     db.add(conversation)
     db.commit()
     db.refresh(conversation)
-    # mirror the conversation index to the relay (no-op unless chat_backend == relay)
+    # mirror the conversation index to the relay (the authoritative datastore)
     try:
         from app.services import chat_store
-        if chat_store.enabled(db):
-            import asyncio as _aio
-            _aio.run(chat_store.mirror_conversation(db, current_user, conversation))
+        import asyncio as _aio
+        _aio.run(chat_store.mirror_conversation(db, current_user, conversation))
     except Exception as e:
         logger.warning(f"[chat] conversation mirror failed: {e}")
     return conversation

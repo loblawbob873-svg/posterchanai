@@ -9,7 +9,7 @@ reading it unchanged). Bot config is operator data, so docs are operator-signed 
   * `delete_bot(db, n)`  — on delete (or rename): remove the relay doc.
 
 The bot routes are synchronous, so `*_blocking` wrappers drive the coroutines with `asyncio.run`.
-Flag-gated by `bots_backend` (`relay` on; default `sqlite` = off).
+The relay is the only datastore (always on).
 """
 
 import asyncio
@@ -87,10 +87,8 @@ def _apply(db, rec: dict) -> bool:
 
 
 async def hydrate(db) -> int:
-    """relay → bots cache. UPSERT a Bot row for every operator-signed bot doc. No-op when disabled /
-    no operator key. Returns the number created-or-updated."""
-    if not enabled(db):
-        return 0
+    """relay → bots cache. UPSERT a Bot row for every operator-signed bot doc. No-op when there's no
+    operator key. Returns the number created-or-updated."""
     op_sk = _ss._operator_seckey(db)
     if not op_sk:
         logger.info("[bots-store] hydrate skipped — no operator key")
@@ -109,16 +107,6 @@ async def hydrate(db) -> int:
         db.commit()
     logger.info("[bots-store] hydrated %d bot(s) from relay", changed)
     return changed
-
-
-async def migrate(db) -> dict:
-    """Push every bot's config into the relay (idempotent, force). Returns a small report."""
-    bots = db.query(Bot).all()
-    wrote = 0
-    for b in bots:
-        if await sync_bot(db, b, force=True):
-            wrote += 1
-    return {"bots": len(bots), "written": wrote}
 
 
 # ----- sync wrappers for the synchronous bot routes -----
