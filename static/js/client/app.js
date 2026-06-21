@@ -807,8 +807,8 @@
 
   // ---------- timeline ----------
   function timelineFilter(){
-    if (VIEW==='home') return [{ kinds:[1,6], authors:[...FOLLOWS], limit:80 }];
-    return [{ kinds:[1,6], limit:120 }];
+    if (VIEW==='home') return [{ kinds:[1,6,1068], authors:[...FOLLOWS], limit:80 }];
+    return [{ kinds:[1,6,1068], limit:120 }];
   }
   // pagination state for the home/global timelines (infinite scroll-back via `until`)
   let _tl = { oldest:0, loading:false, done:false, pages:0 };
@@ -822,7 +822,7 @@
       onEvent: ev => { if (Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.pubkey);
         // Only prepend as "live" if it's genuinely new — NOT a backfilled/synced event with an old
         // created_at (those would otherwise jump to the top as if new). A small grace covers skew.
-        if (VIEW===view && (ev.kind===1||ev.kind===6) && _tl.eosed && ev.created_at >= _liveSince-120) _bufferLive(ev, fn); } },
+        if (VIEW===view && (ev.kind===1||ev.kind===6||ev.kind===1068) && _tl.eosed && ev.created_at >= _liveSince-120) _bufferLive(ev, fn); } },
       // Draw ONLY on the first EOSE. The relay re-EOSEs on reconnect/re-sync; redrawing then would
       // wipe + rebuild the feed under the user (the "disappears with the timeline update" bug).
       onEose: ()=>{ if(VIEW===view && !_tl.eosed){ _tl.eosed=true; _drawTimeline(false); } }
@@ -863,7 +863,7 @@
     // cap the feed at 200 — but NOT once the user has paginated older posts, or we'd delete the
     // scroll-back history they just loaded as soon as a new live note arrives at the top.
     if(_tl.pages===0){ const notes=[...feed.querySelectorAll('.note')]; for(let i=200;i<notes.length;i++) notes[i].remove(); }
-    decorateProfiles(); hydrateLinkCards(feed);
+    decorateProfiles(); hydrateLinkCards(feed); hydratePolls(feed);
   }
   // "new posts" pill — only on the live timelines; clicking it jumps to top and shows them
   function _newPostsPill(){
@@ -917,8 +917,8 @@
     if(_tl.loading || _tl.done || !_tl.oldest) return;
     _tl.loading=true; const view=VIEW; const feed=$('#feed'); loadSentinel(feed);
     const until=_tl.oldest;
-    const filt = view==='home' ? [{ kinds:[1,6], authors:[...FOLLOWS], until:until-1, limit:50 }]
-                               : [{ kinds:[1,6], until:until-1, limit:60 }];
+    const filt = view==='home' ? [{ kinds:[1,6,1068], authors:[...FOLLOWS], until:until-1, limit:50 }]
+                               : [{ kinds:[1,6,1068], until:until-1, limit:60 }];
     let evs=[]; try{ evs=await Relay.query(filt); }catch(_){}
     clearSentinel(feed);
     if(VIEW!==view){ _tl.loading=false; return; }   // user navigated away mid-fetch
@@ -937,7 +937,7 @@
       const div=document.createElement('div'); div.innerHTML=noteHtml(ev); const node=div.firstElementChild; if(node) frag.appendChild(node);
     }
     invalidateCounts();
-    if(frag.childElementCount){ feed.appendChild(frag); decorateProfiles(); hydrateLinkCards(feed); hydrateCounts(); }
+    if(frag.childElementCount){ feed.appendChild(frag); decorateProfiles(); hydrateLinkCards(feed); hydrateCounts(); hydratePolls(feed); }
     _tl.pages++;
     if(minTs<_tl.oldest) _tl.oldest=minTs;
     if(!evs.length || minTs>=until) _tl.done=true;   // relay returned nothing older → end of feed
@@ -1429,7 +1429,63 @@
       needEvent(origId);   // fetch the original; flushEvents patches this placeholder in place
       return `<article class="note" data-orig="${origId}" data-reposter="${enc(rp.name||'someone')}"><div class="body"><div class="repost-tag">${RT_ICON} ${enc(rp.name||'someone')} reposted</div><div class="muted small">loading post…</div></div></article>`;
     }
+    if (ev.kind===1068) return pollCard(ev);   // NIP-88 poll
     return noteCard(ev);
+  }
+  // ---------- NIP-88 polls: kind-1068 poll, kind-1018 responses ----------
+  const _myPollVotes = {};   // pollId -> Set(optionId)
+  function pollCard(ev){
+    const p=profOf(ev.pubkey); needProfile(ev.pubkey);
+    const name=p.name||p.display_name||(NT().nip19.npubEncode(ev.pubkey).slice(0,12)+'…');
+    const handle=niceNip05(p.nip05)||('@'+NT().nip19.npubEncode(ev.pubkey).slice(4,12));
+    const opts=ev.tags.filter(t=>t[0]==='option'&&t[1]).map(t=>({id:t[1],label:t[2]||t[1]}));
+    const multi=((ev.tags.find(t=>t[0]==='polltype')||[])[1]==='multiplechoice');
+    const endsAt=parseInt((ev.tags.find(t=>t[0]==='endsAt')||[])[1]||'0',10);
+    const ended=endsAt && endsAt<Math.floor(Date.now()/1000);
+    const optHtml=opts.map(o=>`<button class="poll-opt" data-poll="${ev.id}" data-opt="${enc(o.id)}"${ended?' disabled':''}><span class="poll-bar"></span><span class="poll-label">${enc(o.label)}</span><span class="poll-pct"></span></button>`).join('');
+    return `<article class="note poll" data-id="${ev.id}" data-pk="${ev.pubkey}">
+      <img class="av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
+      <div class="body">
+        <div class="hd"><span class="name" data-prof="${ev.pubkey}">${enc(name)}</span><span class="vchk"></span>
+          <span class="handle">${enc(handle)}</span><span class="time">${timeAgo(ev.created_at)}</span></div>
+        <div class="poll-q">📊 ${linkify(ev.content||'')}</div>
+        <div class="poll-opts">${optHtml}</div>
+        <div class="poll-foot muted small">${multi?'Multiple choice':'Single choice'}${ended?' · ended':''} · <span class="poll-total">…</span></div>
+        <div class="acts"><button class="act" data-a="reply" title="reply">💬 <span class="n"></span></button>
+          <button class="act actm" data-a="menu" title="more">☰</button></div>
+      </div></article>`;
+  }
+  async function hydratePolls(scope){
+    for(const card of $$('.note.poll:not([data-poll-done])', scope||document)){
+      card.setAttribute('data-poll-done','1');
+      const pid=card.dataset.id;
+      let votes=[]; try{ votes=await Relay.query([{ kinds:[1018], '#e':[pid], limit:1000 }]); }catch(_){}
+      const latest=new Map();
+      for(const v of votes.sort((a,b)=>a.created_at-b.created_at)) latest.set(v.pubkey, v);
+      const counts={}; let total=0; const mine=_myPollVotes[pid]||new Set();
+      for(const v of latest.values()){
+        const chosen=[...new Set(v.tags.filter(t=>t[0]==='response').map(t=>t[1]))];
+        if(v.pubkey===ME.pubkey) chosen.forEach(o=>mine.add(o));
+        chosen.forEach(o=>{ counts[o]=(counts[o]||0)+1; total++; });
+      }
+      _myPollVotes[pid]=mine;
+      card.querySelectorAll('.poll-opt').forEach(b=>{
+        const c=counts[b.dataset.opt]||0, pct=total?Math.round(c*100/total):0;
+        const bar=b.querySelector('.poll-bar'); if(bar) bar.style.width=pct+'%';
+        const pc=b.querySelector('.poll-pct'); if(pc) pc.textContent=pct+'% ('+c+')';
+        b.classList.toggle('voted', mine.has(b.dataset.opt));
+      });
+      const tot=card.querySelector('.poll-total'); if(tot) tot.textContent=total+' vote'+(total===1?'':'s');
+    }
+  }
+  async function votePoll(pollId, optId){
+    if((_myPollVotes[pollId]||new Set()).has(optId)){ toast('already voted'); return; }
+    try{
+      await publish(1018, '', [['e', pollId], ['response', optId]]);
+      (_myPollVotes[pollId]=_myPollVotes[pollId]||new Set()).add(optId);
+      toast('✓ voted');
+      const card=$(`.note.poll[data-id="${pollId}"]`); if(card){ card.removeAttribute('data-poll-done'); hydratePolls(card.parentNode||document); }
+    }catch(e){ toast('vote failed'); }
   }
   // Pull media URLs OUT of the text into a flex gallery — leaving them inline let the post's
   // newlines (white-space:pre-wrap) break each onto its own row (vertical stacking).
@@ -1570,6 +1626,7 @@
       const mn=e.target.closest('.mention'); if(mn){ e.preventDefault(); const pk=safePk(mn.dataset.np); if(pk) renderProfileView(pk); return; }
       const evl=e.target.closest('.evlink'); if(evl){ e.preventDefault(); renderThread(evl.dataset.ev); return; }
       const ht=e.target.closest('.hashtag'); if(ht){ e.preventDefault(); renderHashtag(ht.dataset.tag); return; }
+      const po=e.target.closest('.poll-opt'); if(po && !po.disabled){ e.preventDefault(); votePoll(po.dataset.poll, po.dataset.opt); return; }
       const na=e.target.closest('.naddrlink'); if(na){ e.preventDefault(); openNaddr(na.dataset.pk, na.dataset.d, na.dataset.k); return; }
       // Files grid: thumbnails load ?thumb=1, so open the parent link's FULL url in the lightbox
       // (images) — videos/docs fall through to their <a> (new tab / download).
@@ -1838,9 +1895,19 @@
   }
   // the per-post "☰ more" menu — holds the secondary actions (bookmark / copy id / pin / delete /
   // block) so the action row stays a clean 5 across.
+  // 📡 Rebroadcast: re-publish the full signed event to the built-in relay, which fans it back out to
+  // the upstream public relays (the relay's paced outbox) — useful to re-propagate a post that didn't
+  // reach the wider network. Works for any post; the event must be the complete signed event.
+  async function rebroadcastPost(id){
+    let ev=Store.get(id); if(!ev){ ev=await fetchEvent(id); if(ev) Store.saveEvent(ev); }
+    if(!ev || !ev.sig){ toast('post not loaded'); return; }
+    toast('📡 rebroadcasting…');
+    try{ const r=await Relay.publish(ev); toast(r&&r.ok ? '📡 rebroadcast to relays' : ('relay: '+((r&&r.msg)||'rejected'))); }
+    catch(_){ toast('rebroadcast failed'); }
+  }
   function openPostMenu(id, pk, art, anchorBtn){
     const mine = pk===ME.pubkey;
-    const items=[['bookmark', BOOKMARKS.has(id)?'🔖 Remove bookmark':'🔖 Bookmark'], ['copyid','🆔 Copy event ID']];
+    const items=[['bookmark', BOOKMARKS.has(id)?'🔖 Remove bookmark':'🔖 Bookmark'], ['copyid','🆔 Copy event ID'], ['rebroadcast','📡 Rebroadcast to relays']];
     if(!window.PC_NOSTR_ONLY) items.push(['translate','🌐 Translate']);   // uses the node's AI backend
     if(!window.PC_NOSTR_ONLY) items.push(['summary','📝 Summary']);       // AI summary of the post/thread
     if(!window.PC_NOSTR_ONLY) items.push(['effect','🎬 Effect']);         // apply an effect to the post's image
@@ -1850,6 +1917,7 @@
     openMenuPopover(anchorBtn, items, a=>{
       if(a==='bookmark'){ toggleBookmark(id, null).then(()=>{ if(anchorBtn) anchorBtn.classList.toggle('on', BOOKMARKS.has(id)); }); return; }
       if(a==='copyid'){ try{ navigator.clipboard.writeText(NT().nip19.noteEncode(id)); toast('note id copied'); }catch(_){ navigator.clipboard.writeText(id); toast('event id copied'); } return; }
+      if(a==='rebroadcast') return rebroadcastPost(id);
       if(a==='translate') return translatePost(id);
       if(a==='summary') return summarizePost(id);
       if(a==='effect') return effectPost(id, pk);
@@ -2103,8 +2171,14 @@
       <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
       <div class="muted small mention-hint hidden" id="cmp-mentions"></div>
       <div id="cmp-preview" class="note-preview hidden"></div>
-      <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach">📎 Attach</button><button class="btn btn-ghost small" id="cmp-react">😀 React</button><button class="btn btn-ghost small" id="cmp-translate">🌐 Translate</button><button class="btn btn-ghost small" id="cmp-ai" disabled title="Paste a link to summarize it into a post">🤖 AI</button><input type="file" id="cmp-file" multiple hidden></div>
+      <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach">📎 Attach</button><button class="btn btn-ghost small" id="cmp-react">😀 React</button><button class="btn btn-ghost small" id="cmp-translate">🌐 Translate</button>${(reply||quote||community)?'':'<button class="btn btn-ghost small" id="cmp-poll">📊 Poll</button>'}<button class="btn btn-ghost small" id="cmp-ai" disabled title="Paste a link to summarize it into a post">🤖 AI</button><input type="file" id="cmp-file" multiple hidden></div>
       <div class="cmp-right"><button class="btn btn-ghost small" id="cmp-draft">💾 Draft</button><button class="btn btn-neon small" id="cmp-send">Post ▶</button></div></div>
+      <div id="cmp-pollbox" class="poll-build hidden">
+        <div class="muted small">Poll options</div>
+        <div id="cmp-poll-opts"><input class="input poll-opt-in" placeholder="Option 1"><input class="input poll-opt-in" placeholder="Option 2"></div>
+        <div class="row"><button class="btn btn-ghost small" id="cmp-poll-add">＋ Add option</button>
+          <label class="muted small" style="margin-left:auto"><input type="checkbox" id="cmp-poll-multi"> Allow multiple</label></div>
+      </div>
       <div class="muted small" id="cmp-status"></div>`, root=>{
       const ta=$('#cmp',root); attachMentionAutocomplete(ta); if(text) ta.value=text;
       const _mh=$('#cmp-mentions',root); ta.addEventListener('input', ()=>updateMentionHint(ta,_mh)); updateMentionHint(ta,_mh);
@@ -2134,6 +2208,13 @@
           if(a==='emoji') openEmojiPopover($('#cmp-react',root), (emoji)=>{ _insertAt(ta, emoji); });
           else if(a==='gif') gifPicker(ta); }); };
       { const tb=$('#cmp-translate',root); if(tb) tb.onclick=()=>composeTranslate(ta, tb); }
+      // 📊 Poll → toggle the poll-builder; ＋ Add option grows the list
+      { const pb=$('#cmp-poll',root), box=$('#cmp-pollbox',root);
+        if(pb) pb.onclick=()=>{ const on=box.classList.toggle('hidden')===false; pb.classList.toggle('active',on); };
+        const add=$('#cmp-poll-add',root);
+        if(add) add.onclick=()=>{ const wrap=$('#cmp-poll-opts',root); const n=wrap.children.length+1;
+          const i=document.createElement('input'); i.className='input poll-opt-in'; i.placeholder='Option '+n; wrap.appendChild(i); i.focus(); };
+      }
       // 🤖 AI → summarize a pasted link into a detailed post (web pages + YouTube videos). Stays
       // disabled until the draft contains a URL.
       { const aiBtn=$('#cmp-ai',root);
@@ -2165,6 +2246,17 @@
       };
       $('#cmp-send',root).onclick=async()=>{
         const text=ta.value.trim(); if(!text)return;
+        // 📊 Poll (NIP-88 kind-1068) — only for top-level posts; question = text, options from the builder.
+        { const pbox=$('#cmp-pollbox',root); if(pbox && !pbox.classList.contains('hidden')){
+            const labels=[...$$('.poll-opt-in',root)].map(i=>i.value.trim()).filter(Boolean);
+            if(labels.length<2){ $('#cmp-status',root).textContent='add at least 2 poll options'; return; }
+            const multi=$('#cmp-poll-multi',root).checked;
+            const tags=[['polltype', multi?'multiplechoice':'singlechoice']];
+            labels.forEach((l,i)=>tags.push(['option','opt'+(i+1), l]));
+            mentionTags(text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
+            closeModal(); try{ await publish(1068, text, tags); toast('poll posted'); if(VIEW==='home'||VIEW==='global') renderView(true); }
+            catch(e){ toast('poll failed: '+((e&&e.message)||e)); } return;
+          } }
         // Community post → NIP-22 comment (kind 1111) scoped to the community.
         if(community){
           let tags=communityPostTags(community);
@@ -4208,7 +4300,7 @@
   }
 
   // ---------- helpers ----------
-  function hydrate(scope){ decorateProfiles(); hydrateLinkCards(scope); hydrateCounts(); }
+  function hydrate(scope){ decorateProfiles(); hydrateLinkCards(scope); hydrateCounts(); hydratePolls(scope); }
   // Fetch reactions/reposts/replies for the posts currently on screen and show the counts +
   // liked/reposted state (the timeline sub only carries notes, so without this the counts are 0).
   let _ixT=null;

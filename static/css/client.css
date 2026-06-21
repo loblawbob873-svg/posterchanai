@@ -900,3 +900,21 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
   .fc-thread-top .btn-cyan{margin-left:0}
   .fc-tab{font-size:13px;padding:6px 11px}
 }
+
+/* ---------- NIP-88 polls ---------- */
+.note.poll .poll-q{margin:6px 0 10px;font-size:16px;line-height:1.4}
+.poll-opts{display:flex;flex-direction:column;gap:8px}
+.poll-opt{position:relative;display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+  padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--panel);
+  color:var(--text);font-family:inherit;font-size:14.5px;cursor:pointer;overflow:hidden;transition:border-color .15s}
+.poll-opt:hover{border-color:var(--cyan)}
+.poll-opt.voted{border-color:var(--magenta);box-shadow:0 0 0 1px var(--magenta) inset}
+.poll-opt:disabled{cursor:default}
+.poll-bar{position:absolute;left:0;top:0;bottom:0;width:0;background:rgba(0,255,255,.14);z-index:0;transition:width .4s ease}
+.poll-opt.voted .poll-bar{background:rgba(255,0,170,.18)}
+.poll-label{position:relative;z-index:1;flex:1;min-width:0}
+.poll-pct{position:relative;z-index:1;color:var(--muted);font-size:13px;white-space:nowrap}
+.poll-foot{margin-top:8px}
+.poll-build{margin:8px 0;padding:10px;border:1px solid var(--line);border-radius:12px;background:var(--panel);display:flex;flex-direction:column;gap:8px}
+.poll-build .poll-opt-in{margin:0}
+#cmp-poll.active,#cmp-poll-add{color:var(--cyan)}

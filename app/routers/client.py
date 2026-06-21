@@ -1197,7 +1197,11 @@ async def client_file(npub: str, conv: str, name: str, request: Request, db: Ses
 
 @router.post("/ai-file-delete")
 async def ai_file_delete(data: AiFileReq, db: Session = Depends(get_db)):
-    """Delete one AI file blob by sha (the user's own, signed)."""
+    """Delete one AI file by sha (the user's own, signed). Removes BOTH the encrypted blob bytes AND
+    the doc reference that `ai_files` lists from — otherwise the card keeps showing (now a 404), which
+    is the "I deleted it and it still shows" bug. Uploads live as their own NS_UPLOAD doc (delete it);
+    generated images are referenced inside an NS_MSG chat record (clear that record's image_path)."""
+    from app.services import nostr_store as store
     pk = nostr_service.to_pubkey_hex(data.pubkey)
     if not pk or not re.fullmatch(r'[0-9a-f]{64}', data.sha or ''):
         return JSONResponse({"ok": False, "error": "invalid request"}, status_code=400)
@@ -1205,6 +1209,18 @@ async def ai_file_delete(data: AiFileReq, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
     from app.services import artifact_store
     await artifact_store.delete_blob(db, data.sha)
+    # Drop the listing reference so the file actually disappears from the Files view.
+    user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    if user:
+        sk = store.user_storage_seckey(db, user)
+        port = int(_setting(db, "nostr_relay_port", "3052"))
+        for d, ref in (await store.list_docs(port, store.NS_UPLOAD, seckey=sk)).items():
+            if isinstance(ref, dict) and ref.get("sha256") == data.sha:
+                await store.delete_doc(port, sk, d)
+        for d, rec in (await store.list_docs(port, store.NS_MSG, seckey=sk)).items():
+            if isinstance(rec, dict) and data.sha in (rec.get("image_path") or ""):
+                rec = {k: v for k, v in rec.items() if k != "image_path"}
+                await store.put_doc(port, sk, d, rec)
     return JSONResponse({"ok": True})
 
 
