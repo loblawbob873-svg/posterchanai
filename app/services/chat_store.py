@@ -136,8 +136,9 @@ async def hydrate_conversations(db) -> int:
 
 
 # ---- automatic mirror: every Message row insert → an encrypted relay event (when flag on) ----
-# Covers all the scattered save sites in the chat path without editing each. Best-effort: only fires
-# inside the async chat WS (a running loop); bot/threadpool saves aren't part of the web AI store.
+# Covers all the scattered Message save sites without editing each — both the async chat WS (scheduled
+# on the live loop) AND off-path saves (APScheduler/Telegram threadpool, sync routes), which mirror on
+# a short-lived daemon thread (see _after_commit). Non-nostr (no-npub) users are skipped.
 # Strong refs to in-flight mirror tasks. asyncio only keeps a WEAK ref to a bare create_task(),
 # so without this the task can be garbage-collected before its relay write lands — the bug where a
 # chat reply (e.g. a flashcards deck) randomly fails to persist and is gone on reload.
@@ -153,7 +154,7 @@ async def _mirror_insert(conv_id: int, role: str, content: str, ts: float, image
         if not conv:
             return
         user = db.query(User).filter(User.id == conv.user_id).first()
-        if user:
+        if user and user.nostr_npub:   # only nostr accounts have a storage key to encrypt under
             await add_message(db, user, conv_id, role, content, ts=ts, image_path=image_path)
     except Exception as e:
         logger.warning("[chat-store] mirror failed for conv %s (%s): %s", conv_id, role, e)
@@ -191,12 +192,27 @@ def install_message_mirror():
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            return   # not in the async chat path — skip (no live relay write outside the WS handler)
-        for conv_id, role, content, image_path in rows:
-            # Hold a strong ref until done — see _PENDING_MIRRORS above (weak-ref GC footgun).
-            t = loop.create_task(_mirror_insert(conv_id, role, content, _t.time(), image_path))
-            _PENDING_MIRRORS.add(t)
-            t.add_done_callback(_PENDING_MIRRORS.discard)
+            loop = None
+        if loop is not None:
+            # In the async chat WS path: schedule on the live loop. Hold a strong ref until done —
+            # see _PENDING_MIRRORS above (weak-ref GC footgun).
+            for conv_id, role, content, image_path in rows:
+                t = loop.create_task(_mirror_insert(conv_id, role, content, _t.time(), image_path))
+                _PENDING_MIRRORS.add(t)
+                t.add_done_callback(_PENDING_MIRRORS.discard)
+            return
+        # No running loop — a save off the async path (APScheduler/Telegram threadpool, sync route).
+        # Mirror in a short-lived daemon thread so the committing thread isn't blocked on relay I/O,
+        # and ALL message save sites get covered without per-site wiring.
+        import threading
+        rows_snapshot = list(rows)
+        def _run():
+            for conv_id, role, content, image_path in rows_snapshot:
+                try:
+                    asyncio.run(_mirror_insert(conv_id, role, content, _t.time(), image_path))
+                except Exception as e:
+                    logger.warning("[chat-store] threaded mirror failed for conv %s: %s", conv_id, e)
+        threading.Thread(target=_run, name="chat-mirror", daemon=True).start()
 
     @event.listens_for(Session, "after_rollback")
     def _after_rollback(sess):
