@@ -225,6 +225,12 @@ a.btn.full{display:block}
 .note .time:hover{color:var(--cyan)}
 .note .txt{margin:6px 0;line-height:1.62;white-space:pre-wrap;word-wrap:break-word;overflow-wrap:anywhere;font-size:18.5px;
   color:#eceefb;font-weight:500;letter-spacing:.2px}
+/* Wall-of-text guard: clamp long posts (noteCard adds .clamp) and fade the bottom; the "Show more"
+ * button toggles .clamp off to reveal the rest. Keeps the feed scannable when people post essays. */
+.note .txt.clamp{max-height:15em;overflow:hidden;-webkit-mask-image:linear-gradient(180deg,#000 72%,transparent);mask-image:linear-gradient(180deg,#000 72%,transparent)}
+.note .txt-more{display:inline-block;margin:2px 0 4px;padding:3px 13px;background:rgba(0,255,255,.07);border:1px solid var(--cyan);
+  color:var(--cyan);border-radius:13px;cursor:pointer;font-family:inherit;font-size:13.5px;font-weight:600;letter-spacing:.3px}
+.note .txt-more:hover{background:rgba(0,255,255,.14);box-shadow:var(--glow-cy)}
 /* ALL post-content media flows horizontally (inline-block) and is height-capped, so multiple
  * attachments form a wrapping gallery row instead of a giant vertical stack. */
 .note .txt img,.note .txt video,.note .media img,.note .media video{width:auto;max-width:100%;max-height:300px;border-radius:12px;margin:8px 6px 0 0;border:1px solid var(--line);display:inline-block;vertical-align:top;background:#0d0a1a}

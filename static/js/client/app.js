@@ -1431,6 +1431,9 @@
   function noteCard(ev, prefix=''){
     const p = profOf(ev.pubkey); needProfile(ev.pubkey);
     const mp = mediaParts(ev.content);
+    // Wall-of-text guard: clamp very long posts with a "Show more" toggle so the feed stays scannable.
+    const bodyTxt = stripQuoteRef(mp.text, ev);
+    const longTxt = !!bodyTxt && (bodyTxt.length > 480 || (bodyTxt.match(/\n/g)||[]).length > 10);
     const name = p.name||p.display_name||(NT().nip19.npubEncode(ev.pubkey).slice(0,12)+'…');
     const av = p.picture || LOGO;
     const handle = niceNip05(p.nip05) || ('@'+NT().nip19.npubEncode(ev.pubkey).slice(4,12));
@@ -1442,7 +1445,8 @@
       <div class="body">${prefix}
         <div class="hd"><span class="name" data-prof="${ev.pubkey}">${enc(name)}</span><span class="vchk"></span>
           <span class="handle">${enc(handle)}</span><span class="time">${timeAgo(ev.created_at)}</span></div>
-        <div class="txt">${linkify(stripQuoteRef(mp.text, ev))}</div>
+        <div class="txt${longTxt?' clamp':''}">${linkify(bodyTxt)}</div>
+        ${longTxt?`<button class="txt-more" onclick="event.stopPropagation();var t=this.previousElementSibling;t.classList.toggle('clamp');this.textContent=t.classList.contains('clamp')?'Show more ↓':'Show less ↑';">Show more ↓</button>`:''}
         ${mp.gallery}
         ${linkCardHtml(mp.text)}
         ${quoteHtml(ev)}
