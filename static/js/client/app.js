@@ -510,6 +510,11 @@
         const apply=o=>{ if(sub) sub.classList.toggle('collapsed', !o); if(chev) chev.textContent=o?'▾':'▸'; };
         apply(ClientSettings.get('discOpen', false));   // collapsed on first load — Discover is too cluttery open
         dt.onclick=()=>{ const o=!ClientSettings.get('discOpen', false); ClientSettings.set('discOpen', o); apply(o); }; } }
+    // Collapsible "Games" group (Chess).
+    { const gt=$('#games-toggle'); if(gt){ const sub=$('#games-sub'), chev=$('#games-chev');
+        const apply=o=>{ if(sub) sub.classList.toggle('collapsed', !o); if(chev) chev.textContent=o?'▾':'▸'; };
+        apply(ClientSettings.get('gamesOpen', false));
+        gt.onclick=()=>{ const o=!ClientSettings.get('gamesOpen', false); ClientSettings.set('gamesOpen', o); apply(o); }; } }
     $('#btn-compose').onclick = ()=>compose(); $('#btn-compose-m').onclick = ()=>compose();
     // mobile overflow sheet — delegated so the tap is caught even if the node is re-created
     document.addEventListener('click', e=>{ if(e.target.closest && e.target.closest('#btn-more-m')){ e.preventDefault(); moreMenu(); } });
@@ -768,7 +773,7 @@
     VIEW = v;
     if(v==='notifications') _notifShown = 25;   // fresh entry → collapse pagination back to one page
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
-    $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', streams:'Streams', communities:'Communities', pics:'Pics', chat:'Chat', '4chan':'4chan', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', streams:'Streams', communities:'Communities', pics:'Pics', chat:'Chat', '4chan':'4chan', chess:'Chess ♟️', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', admin:'Admin' }[v]||v;
     renderView(true);
   }
   function renderView(reset){
@@ -798,6 +803,7 @@
     if (VIEW==='pics') return renderPics();
     if (VIEW==='chat') return renderChatrooms();
     if (VIEW==='4chan') return render4chan();
+    if (VIEW==='chess') return renderChess();
     if (VIEW==='blossom') return renderBlossom();
     if (VIEW==='settings') return renderSettings();
     if (VIEW==='ai') return renderAI();
@@ -2474,6 +2480,172 @@
     $$('.pic-card',grid).forEach(c=> c.onclick=()=> openThread(c.dataset.id));
   }
 
+  // ---------- Chess hub (#chesstr) — splash + invite + your active games ----------
+  async function renderChess(){
+    const feed=$('#feed');
+    const botNpub = CFG.chess_bot_npub;
+    const how = `
+      <ol class="chess-how">
+        <li>Invite someone below (or post <code>chess nostr:npub… </code> tagging them and the bot).</li>
+        <li>The bot replies with a board; <b>your</b> pieces are <b>numbered</b>.</li>
+        <li>Reply with <code>&lt;number&gt; &lt;square&gt;</code> — e.g. <code>1 d4</code>. <code>Nf3</code>, <code>e4</code>, <code>O-O</code> and <code>resign</code> work too.</li>
+        <li>The bot validates every move, posts the updated board, and calls checkmate. Games never expire — play over days.</li>
+      </ol>`;
+    const invite = botNpub ? `
+      <div class="chess-invite">
+        <label class="chess-lbl">⚔️ Challenge a player</label>
+        <input id="chess-inv" class="input" placeholder="search name / npub / name@domain…" autocomplete="off">
+        <div id="chess-inv-res" class="chess-inv-res"></div>
+        <div class="chess-or">— or —</div>
+        <button class="btn btn-cyan" id="chess-play-bot">🤖 Play the bot</button>
+      </div>` : `<div class="empty">No #chesstr bot is configured on this server yet — ask the admin to enable one in Admin → Bots.</div>`;
+    feed.innerHTML = `<div class="chess-hub">
+        <div class="chess-splash glass">
+          <h2>♟️ #chesstr</h2>
+          <p class="muted">Play chess with anyone on Nostr — the bot is the board &amp; referee.</p>
+          ${how}
+          ${invite}
+        </div>
+        <div class="chess-games">
+          <h3>♟️ Your games</h3>
+          <div id="chess-games-list"><div class="spinner"></div></div>
+        </div>
+      </div>`;
+    if(botNpub){ _bindChessInvite(); const pb=$('#chess-play-bot'); if(pb) pb.onclick=startBotGame; }
+    _loadMyChessGames();
+  }
+  async function startBotGame(){
+    const botPk=safePk(CFG.chess_bot_npub); if(!botPk){ toast('no chess bot configured'); return; }
+    try{
+      await publish(1, `🤖 Playing #chesstr against the bot — I'll be White. Reply to the board with moves like "1 d4".\n\n#chesstr`, [['p',botPk],['t','chesstr']]);
+      toast('starting game vs the bot ♟️');
+      setTimeout(()=>{ if(VIEW==='chess') renderChess(); }, 4500);
+    }catch(e){ toast('could not start game'); }
+  }
+  function _bindChessInvite(){
+    const inp=$('#chess-inv'), res=$('#chess-inv-res'); if(!inp) return; let t=null;
+    const render=rows=>{ res.innerHTML = rows.length ? rows.map(p=>{
+        const m=p.meta||{}; return `<div class="chess-inv-row"><img src="${enc(m.picture||LOGO)}" onerror="this.src='${LOGO}'">
+          <div class="ci-meta"><b>${enc(m.name||m.display_name||'anon')}</b><span class="muted small">${enc(niceNip05(m.nip05)||'')}</span></div>
+          <button class="btn btn-neon small" data-challenge="${p.pubkey}">Challenge</button></div>`; }).join('')
+      : '<div class="muted small" style="padding:6px 2px">No match. Paste an npub or name@domain.</div>';
+      $$('[data-challenge]',res).forEach(b=> b.onclick=()=>startChessGame(b.dataset.challenge)); };
+    inp.oninput=()=>{ clearTimeout(t); const q=inp.value.trim(); if(!q){ res.innerHTML=''; return; }
+      t=setTimeout(async()=>{
+        const pk=safePk(q); if(pk){ await _ensureProfile(pk); render([{pubkey:pk, meta:(profOf(pk)||{})}]); return; }
+        if(/^[\w.\-+]+@[\w.\-]+\.[a-z]{2,}$/i.test(q)){ const rp=await nip05Resolve(q.toLowerCase()); if(rp){ await _ensureProfile(rp); render([{pubkey:rp, meta:(profOf(rp)||{})}]); return; } }
+        const ql=q.toLowerCase();
+        render(Store.profileList().filter(p=>(((p.meta.name||'')+(p.meta.display_name||'')+(p.meta.nip05||'')).toLowerCase().includes(ql))).slice(0,8));
+      }, 250); };
+  }
+  async function startChessGame(pk){
+    const botPk=safePk(CFG.chess_bot_npub); if(!botPk){ toast('no chess bot configured'); return; }
+    if(pk===ME.pubkey){ toast("you can't challenge yourself"); return; }
+    let npub; try{ npub=NT().nip19.npubEncode(pk); }catch(_){ npub=pk; }
+    const meName = (profOf(ME.pubkey)||{}).name || (profOf(ME.pubkey)||{}).display_name || 'A player';
+    // chess_first = opponent → they're White and "accept" by making the first move.
+    const tags=[['p',botPk],['p',pk],['t','chesstr'],['chess_first',pk]];
+    try{
+      await publish(1, `♟️ ${meName} has invited you to play chess! nostr:${npub}\n`
+        + `To accept, make the first move (you're White): reply to the board the bot posts with your move — e.g. "1 d4" (move piece #1 to d4). "Nf3", "e4" and "O-O" work too, or just tap a piece on the Chess tab.\n`
+        + `The bot referees, validates every move, and calls checkmate. Games never expire — take your time.\n\n#chesstr`, tags);
+      toast('invite sent ♟️ — the bot will post the board');
+      setTimeout(()=>{ if(VIEW==='chess') renderChess(); }, 4500);
+    }catch(e){ toast('challenge failed'); }
+  }
+  async function _loadMyChessGames(){
+    const list=$('#chess-games-list'); if(!list) return;
+    const botPk=safePk(CFG.chess_bot_npub);
+    if(!botPk){ list.innerHTML='<div class="empty">No chess bot configured.</div>'; return; }
+    let evs=[]; try{ evs=await Relay.query([{ authors:[botPk], kinds:[30078], limit:500 }]); }catch(_){}
+    const byGame={};
+    for(const e of evs){
+      const d=((e.tags.find(t=>t[0]==='d')||[])[1])||'';
+      if(!d.startsWith('pcai:chesstr:') || d.startsWith('pcai:chesstr:player:')) continue;
+      let s; try{ s=JSON.parse(e.content||'{}'); }catch(_){ continue; }
+      if(!s || (s.white!==ME.pubkey && s.black!==ME.pubkey)) continue;
+      const gid=s.root||d.slice('pcai:chesstr:'.length);
+      if(!byGame[gid] || (e.created_at||0) > byGame[gid]._t){ s._t=e.created_at||0; byGame[gid]=s; }
+    }
+    const games=Object.values(byGame).sort((a,b)=>(a.status==='active'?0:1)-(b.status==='active'?0:1) || (b.started||0)-(a.started||0));
+    if(!games.length){ list.innerHTML='<div class="empty">No games yet. Challenge someone above to start one.</div>'; return; }
+    list.innerHTML = games.map((g,i)=>`<div class="chess-game-card glass" data-gi="${i}"><div class="spinner"></div></div>`).join('');
+    games.forEach((g,i)=>_fillChessCard(g, $(`.chess-game-card[data-gi="${i}"]`, list)));
+  }
+  // FEN → 8×8 grid (row 0 = rank 8 … row 7 = rank 1), each cell a piece char or ''.
+  const _UNI={K:'♚',Q:'♛',R:'♜',B:'♝',N:'♞',P:'♟',k:'♚',q:'♛',r:'♜',b:'♝',n:'♞',p:'♟'};
+  function _fenGrid(fen){
+    const rows=(fen||'').split(' ')[0].split('/'); const g=[];
+    for(const r of rows){ const row=[]; for(const ch of r){ if(/\d/.test(ch)){ for(let i=0;i<+ch;i++) row.push(''); } else row.push(ch); } while(row.length<8) row.push(''); g.push(row); }
+    while(g.length<8) g.push(['','','','','','','','']);
+    return g;
+  }
+  function _chessBoardHtml(fen){
+    const grid=_fenGrid(fen); let h='<div class="chessboard">';
+    for(let ri=0; ri<8; ri++) for(let fi=0; fi<8; fi++){
+      const pc=grid[ri][fi]; const sq=String.fromCharCode(97+fi)+(8-ri);
+      const light=(ri+fi)%2===0; const white = pc && pc===pc.toUpperCase();
+      h+=`<div class="csq ${light?'lt':'dk'}" data-sq="${sq}" data-pc="${enc(pc)}">${pc?`<span class="cpc ${white?'cw':'cb'}">${_UNI[pc]}</span>`:''}</div>`;
+    }
+    return h+'</div>';
+  }
+  function _fillChessCard(g, card){
+    if(!card) return;
+    const iAmWhite = g.white===ME.pubkey;
+    const oppPk = iAmWhite ? g.black : g.white;
+    needProfile(oppPk); const op=profOf(oppPk)||{};
+    const oppName = op.name||op.display_name||(g[iAmWhite?'black_name':'white_name'])||'opponent';
+    const turn = (g.fen||'').split(' ')[1]==='w' ? 'white' : 'black';
+    const myTurn = g.status==='active' && ((turn==='white')===iAmWhite);
+    const isInvite = g.status==='active' && (g.moves||[]).length===0;   // nobody has moved yet
+    let statusLine, badge;
+    if(g.status!=='active'){ statusLine = g.status==='abandoned' ? 'Abandoned' : 'Game over'; badge='done'; }
+    else if(myTurn && isInvite){ statusLine='♟️ Invited — move to accept'; badge='you'; }
+    else if(myTurn){ statusLine='Your move — tap a piece'; badge='you'; }
+    else if(isInvite){ statusLine=`Invite sent to ${enc(oppName)}`; badge='wait'; }
+    else { statusLine=`Waiting on ${enc(oppName)}`; badge='wait'; }
+    const moveBox = myTurn ? `<div class="chess-move-row">
+        <input class="input chess-move-in" placeholder="or type: 1 d4 / Nf3 / e4 / O-O / resign" autocomplete="off">
+        <button class="btn btn-neon small chess-move-go">Move ▶</button></div>` : '';
+    card.classList.add('glass');
+    card.innerHTML = `<div class="chess-card-hd">
+        <img class="cc-av" src="${enc(op.picture||LOGO)}" onerror="this.src='${LOGO}'">
+        <div class="cc-meta"><b>vs ${enc(oppName)}</b><span class="muted small">${enc(iAmWhite?'You: cyan (White)':'You: magenta (Black)')} · ${(g.moves||[]).length} half-moves</span></div>
+        <span class="cc-badge ${badge}">${enc(statusLine)}</span></div>
+      <div class="chess-board-wrap${iAmWhite?'':' flip'}">${_chessBoardHtml(g.fen)}</div>
+      ${moveBox}`;
+    // tap-to-move: tap your piece, then its destination → sent as UCI (the bot validates legality)
+    if(myTurn){
+      let sel=null;
+      const board=card.querySelector('.chessboard');
+      board.querySelectorAll('.csq').forEach(cell=> cell.onclick=()=>{
+        const sq=cell.dataset.sq, pc=cell.dataset.pc;
+        const mine = pc && (pc===pc.toUpperCase())===iAmWhite;
+        if(sel){
+          if(sel===sq){ sel=null; board.querySelectorAll('.csq').forEach(c=>c.classList.remove('sel')); return; }
+          if(mine){ sel=sq; board.querySelectorAll('.csq').forEach(c=>c.classList.toggle('sel',c===cell)); return; }
+          const selCell=board.querySelector(`.csq[data-sq="${sel}"]`);
+          const moving=selCell&&selCell.dataset.pc;
+          const promo=(moving==='P'&&sq[1]==='8')||(moving==='p'&&sq[1]==='1')?'q':'';
+          chessMove(g, sel+sq+promo); board.querySelectorAll('.csq').forEach(c=>c.classList.add('pending')); return;
+        }
+        if(mine){ sel=sq; cell.classList.add('sel'); }
+      });
+      const inp=card.querySelector('.chess-move-in'), go=card.querySelector('.chess-move-go');
+      const send=()=>{ const mv=inp.value.trim(); if(!mv) return; go.disabled=true; chessMove(g, mv); };
+      go.onclick=send; inp.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); send(); } });
+    }
+  }
+  async function chessMove(game, moveText){
+    const botPk=safePk(CFG.chess_bot_npub); if(!botPk){ toast('no chess bot'); return; }
+    const oppPk = game.white===ME.pubkey ? game.black : game.white;
+    const tags=[['e', game.root, '', 'root']];
+    if(game.last_board_event && game.last_board_event!==game.root) tags.push(['e', game.last_board_event, '', 'reply']);
+    tags.push(['p', botPk], ['p', oppPk], ['t','chesstr']);
+    try{ await publish(1, moveText.trim()+"\n\n#chesstr", tags); toast('move sent ♟️'); }
+    catch(e){ toast('move failed'); return; }
+    setTimeout(()=>{ if(VIEW==='chess') renderChess(); }, 4500);   // give the bot time to validate + post
+  }
   // ---------- 4chan browser (Discover) ----------
   // Board picker + mobile-friendly grid; thumbnails open in the shared lightbox. ----
   const _4CHAN_BOARDS = [['g','/g/ Tech'],['a','/a/ Anime'],['pol','/pol/ Politics'],['h','/h/ NSFW']];

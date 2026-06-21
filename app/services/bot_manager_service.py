@@ -139,6 +139,17 @@ def bot_to_dict(bot: Bot) -> dict:
     return merged
 
 
+def _set_internal_blossom(env: dict):
+    """Nostr bots always upload media to THIS node's built-in Blossom server (no external host to
+    configure — keeps setup simple and keeps the bytes on our infra). The bot's npub must be on the
+    Blossom whitelist (the 'New identity' provisioner grants this automatically)."""
+    api = (env.get("POSTERCHANAI_API_ENDPOINT") or "").rstrip("/")
+    if not api:
+        api = f"http://127.0.0.1:{os.getenv('POSTERCHANAI_PORT', '3051')}"
+    env["NOSTR_MEDIA_SERVICE"] = "blossom"
+    env["NOSTR_MEDIA_ENDPOINT"] = api + "/blossom"
+
+
 def _build_env(bot_dict: dict, base_env: dict) -> dict:
     """Port of botctl.build_env, reading from a merged bot dict instead of bots_config."""
     env = dict(base_env)
@@ -198,8 +209,7 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
         elif bot_dict.get("platform") == "nostr":
             setif("nostr_nsec", "NOSTR_NSEC")
             setif("nostr_relays", "NOSTR_RELAYS")
-            setif("nostr_media_service", "NOSTR_MEDIA_SERVICE")
-            setif("nostr_media_endpoint", "NOSTR_MEDIA_ENDPOINT")
+            _set_internal_blossom(env)
         else:
             setif("server", "MISSKEY_SERVER")
             setif("username", "MISSKEY_USERNAME", lambda v: str(v).lstrip("@"))
@@ -225,8 +235,7 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
             # from the bot's config. Blank relays → app defaults.
             setif("nostr_nsec", "NOSTR_NSEC")
             setif("nostr_relays", "NOSTR_RELAYS")
-            setif("nostr_media_service", "NOSTR_MEDIA_SERVICE")
-            setif("nostr_media_endpoint", "NOSTR_MEDIA_ENDPOINT")
+            _set_internal_blossom(env)
             # Mention-poll cadence. With our self-hosted relay (point relays at ws://127.0.0.1:3052
             # — no CF round-trip, no public rate limit) the bot can poll fast for snappy replies.
             setif("nostr_poll_seconds", "NOSTR_POLL_SECONDS")

@@ -93,10 +93,14 @@ def _save_game(gameid: str, state: dict):
 
 
 def _load_game(gameid: str):
+    return _load_doc(_dtag(gameid))
+
+
+def _load_doc(dtag: str):
     try:
         evs = _nk._run(_nk._svc.relay.query(
             _nk._RELAYS, [{"authors": [_nk._PUBKEY], "kinds": [_KIND_APP],
-                           "#d": [_dtag(gameid)], "limit": 1}])) or []
+                           "#d": [dtag], "limit": 1}])) or []
     except Exception:
         return None
     if not evs:
@@ -106,6 +110,23 @@ def _load_game(gameid: str):
         return json.loads(evs[0].get("content") or "{}")
     except Exception:
         return None
+
+
+# Per-player pointer to their current game — lets a new game supersede a player's unfinished one
+# (one active game per user; newest wins). Keyed by pubkey.
+def _player_dtag(pk: str) -> str:
+    return f"pcai:chesstr:player:{pk}"
+
+
+def _get_player_game(pk: str):
+    doc = _load_doc(_player_dtag(pk))
+    return doc.get("gameid") if isinstance(doc, dict) else None
+
+
+def _set_player_game(pk: str, gameid: str):
+    ev = _ev.build_event(_nk._SECKEY, _KIND_APP, json.dumps({"gameid": gameid}, separators=(",", ":")),
+                         tags=[["d", _player_dtag(pk)]])
+    _nk._run(_nk._svc.relay.publish(_nk._RELAYS, ev))
 
 
 # ---- nostr helpers -----------------------------------------------------------
@@ -219,6 +240,83 @@ _DRAW_LABELS = {
 }
 
 
+# ---- built-in opponent (play the bot directly) ------------------------------
+_PIECE_VAL = {chess.PAWN: 100, chess.KNIGHT: 320, chess.BISHOP: 330,
+              chess.ROOK: 500, chess.QUEEN: 900, chess.KING: 0}
+_BOT_DEPTH = max(1, int(os.getenv("CHESS_BOT_DEPTH", "2")))
+
+
+def _evaluate(board: chess.Board) -> int:
+    """Material balance from the side-to-move's perspective (+ tiny mobility), for negamax."""
+    if board.is_checkmate():
+        return -1_000_000
+    if board.is_stalemate() or board.is_insufficient_material():
+        return 0
+    score = 0
+    for pt, val in _PIECE_VAL.items():
+        score += val * (len(board.pieces(pt, chess.WHITE)) - len(board.pieces(pt, chess.BLACK)))
+    score += 3 * (sum(1 for _ in board.legal_moves) if board.turn == chess.WHITE else 0)
+    return score if board.turn == chess.WHITE else -score
+
+
+def _negamax(board: chess.Board, depth: int, alpha: int, beta: int) -> int:
+    if depth == 0 or board.is_game_over():
+        return _evaluate(board)
+    best = -10_000_000
+    for mv in board.legal_moves:
+        board.push(mv)
+        val = -_negamax(board, depth - 1, -beta, -alpha)
+        board.pop()
+        if val > best:
+            best = val
+        if best > alpha:
+            alpha = best
+        if alpha >= beta:
+            break
+    return best
+
+
+def _bot_choose_move(board: chess.Board):
+    """Pick the bot's move (negamax, material eval). Small random tie-break among near-best moves so
+    games aren't identical. Returns a chess.Move or None."""
+    best_val, scored = -10_000_000, []
+    for mv in board.legal_moves:
+        board.push(mv)
+        val = -_negamax(board, _BOT_DEPTH - 1, -10_000_000, 10_000_000)
+        board.pop()
+        scored.append((val, mv))
+        if val > best_val:
+            best_val = val
+    near = [mv for val, mv in scored if val >= best_val - 15]
+    if not near:
+        return None
+    return near[int.from_bytes(os.urandom(2), "big") % len(near)]
+
+
+def _apply_bot_moves(state) -> str | None:
+    """While it's the bot's turn (its pubkey to move) and the game's active, make the bot's move(s).
+    Mutates `state` (fen/moves/last_move/status). Returns the bot's last SAN for display."""
+    last_san = None
+    board = chess.Board(state["fen"])
+    while state.get("status") == "active":
+        side_pk = state["white"] if board.turn == chess.WHITE else state["black"]
+        if side_pk != _nk._PUBKEY:
+            break
+        mv = _bot_choose_move(board)
+        if not mv:
+            break
+        last_san = board.san(mv)
+        board.push(mv)
+        state["fen"] = board.fen()
+        state["moves"].append(last_san)
+        state["last_move"] = [mv.from_square, mv.to_square]
+        status, _ = _status_for(board)
+        if status != "active":
+            state["status"] = status
+            break
+    return last_san
+
+
 def _status_for(board: chess.Board):
     out = board.outcome(claim_draw=True)
     if out is None:
@@ -240,10 +338,28 @@ def _post_active_board(state, gameid, parent_id, san):
     sub = f"{state['white_name']} (cyan) vs {state['black_name']} (magenta)  ·  move {move_no}"
     png = chess_render.render_board(state["fen"], last_move=state.get("last_move"),
                                     number_color=board.turn, title=title, subtitle=sub)
-    last = f"Last move: {san}. " if san else ""
-    body = (f"♟️ {last}{mover_nm} ({'cyan' if mover_white else 'magenta'}) to move{chk}\n"
-            f"Reply to THIS post with your move, e.g. '1 d4' (move piece #1 to d4). "
-            f"SAN/UCI/O-O also work.")
+    if san is None:
+        # Opening post = the invitation. White moves first, so the challenged player "accepts" by moving.
+        vs_bot = _nk._PUBKEY in (state["white"], state["black"])
+        if vs_bot:
+            human_white = state["white"] != _nk._PUBKEY
+            human_nm = state["white_name"] if human_white else state["black_name"]
+            body = (f"🤖 #chesstr — {human_nm} vs the bot!\n"
+                    f"You're {'White' if human_white else 'Black'}. Make your move: reply to THIS post "
+                    f"with your piece's number + square, e.g. '1 d4' (or 'Nf3' / 'e4' / 'O-O'). "
+                    f"Your pieces are numbered on the board above, or play from the Chess tab in the app.")
+        else:
+            body = (f"♟️ #chesstr — {state['white_name']} (cyan) has been challenged by "
+                    f"{state['black_name']} (magenta)!\n"
+                    f"{mover_nm}, you're up first (White) — ACCEPT by making your move. "
+                    f"Reply to THIS post with your piece's number + square, e.g. '1 d4' "
+                    f"(or 'Nf3' / 'e4' / 'O-O'). Your pieces are numbered on the board above. "
+                    f"You can also play from the Chess tab in the app.")
+    else:
+        last = f"Last move: {san}. "
+        body = (f"♟️ {last}{mover_nm} ({'cyan' if mover_white else 'magenta'}) to move{chk}\n"
+                f"Reply to THIS post with your move, e.g. '1 d4' (move piece #1 to d4). "
+                f"SAN/UCI/O-O also work.")
     ev = _publish(gameid, parent_id, state["white"], state["black"], body, png)
     state["last_board_event"] = ev.get("id")
     _save_game(gameid, state)
@@ -264,14 +380,34 @@ def _post_gameover(state, gameid, parent_id, san, result_text):
 def _start_game(note, own_pk):
     sender = (note.get("user") or {}).get("pubkey")
     opponents = [p for p in _ptags(note) if p and p != own_pk and p != sender]
-    if not opponents:
-        _reply_text(note, "♟️ To start a #chesstr game, tag me AND the player you want to challenge, "
-                          "e.g. \"@me chess @opponent\". You'll be White.")
-        return
     gameid = note["id"]
     if _load_game(gameid):
         return  # already started for this note
-    white, black = sender, opponents[0]
+    # No human opponent tagged → play the BOT itself (human is White, the bot is Black).
+    vs_bot = not opponents
+    white, black = sender, (opponents[0] if opponents else own_pk)
+    # Invite flow (human vs human): a ["chess_first", <pubkey>] tag makes that player White.
+    first = next((t[1] for t in _tags(note) if len(t) >= 2 and t[0] == "chess_first" and t[1]), None)
+    if opponents and first in (sender, opponents[0]):
+        white = first
+        black = opponents[0] if first == sender else sender
+    # If the initiator already has an unfinished game, disregard it (one active game per user —
+    # the newest supersedes). Mark it abandoned so its thread stops accepting moves, and tell that
+    # thread once so the old opponent isn't left waiting forever.
+    prev = _get_player_game(white)
+    if prev and prev != gameid:
+        old = _load_game(prev)
+        if isinstance(old, dict) and old.get("status") == "active":
+            old["status"] = "abandoned"
+            _save_game(prev, old)
+            try:
+                _publish(prev, old.get("last_board_event") or prev, old["white"], old["black"],
+                         f"⚠️ {_name(white)} started a new game, so this one is abandoned.",
+                         chess_render.render_board(old["fen"], last_move=old.get("last_move"),
+                                                   number_color=None, title="ABANDONED",
+                                                   subtitle=f"{old['white_name']} vs {old['black_name']}"))
+            except Exception as e:
+                print(f"[chesstr] abandon notice failed: {e}", flush=True)
     board = chess.Board()
     state = {
         "v": 1, "white": white, "black": black,
@@ -280,17 +416,29 @@ def _start_game(note, own_pk):
         "status": "active", "root": gameid, "started": int(time.time()),
         "last_board_event": None,
     }
-    print(f"[chesstr] new game {gameid[:12]} {state['white_name']} vs {state['black_name']}", flush=True)
+    _set_player_game(white, gameid)
+    if black != own_pk:          # don't give the bot itself a "current game" pointer
+        _set_player_game(black, gameid)
+    print(f"[chesstr] new game {gameid[:12]} {state['white_name']} vs {state['black_name']}"
+          f"{' (vs bot)' if vs_bot else ''}", flush=True)
+    # If the bot is to move first (it's White), play its move into the opening.
+    if state["white"] == own_pk:
+        _apply_bot_moves(state)
     _post_active_board(state, gameid, gameid, san=None)
 
 
 # ---- a move in an existing game ----------------------------------------------
 def _handle_move(note, gameid, state):
     sender = (note.get("user") or {}).get("pubkey")
-    if state.get("status") != "active":
-        return
     if sender not in (state["white"], state["black"]):
         return  # a spectator chiming in — ignore
+    if state.get("status") != "active":
+        if state.get("status") == "abandoned":
+            _reply_text(note, "⚠️ This game was abandoned (a newer #chesstr game superseded it). "
+                              "Start a fresh one with \"chess @opponent\".")
+        else:
+            _reply_text(note, "🏁 This game is already over. Start a new one with \"chess @opponent\".")
+        return
     board = chess.Board(state["fen"])
     side_pk = state["white"] if board.turn == chess.WHITE else state["black"]
     if sender != side_pk:
@@ -328,6 +476,17 @@ def _handle_move(note, gameid, state):
         state["status"] = status
         print(f"[chesstr] game {gameid[:12]} over: {result}", flush=True)
         _post_gameover(state, gameid, note["id"], san, result)
+        return
+    # Playing the bot? It replies right away.
+    next_pk = state["white"] if board.turn == chess.WHITE else state["black"]
+    if next_pk == _nk._PUBKEY:
+        bot_san = _apply_bot_moves(state) or san
+        if state.get("status") != "active":
+            _, result = _status_for(chess.Board(state["fen"]))
+            print(f"[chesstr] game {gameid[:12]} over (bot): {result}", flush=True)
+            _post_gameover(state, gameid, note["id"], bot_san, result)
+        else:
+            _post_active_board(state, gameid, note["id"], bot_san)
     else:
         _post_active_board(state, gameid, note["id"], san)
 

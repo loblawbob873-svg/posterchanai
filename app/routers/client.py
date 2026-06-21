@@ -139,7 +139,28 @@ async def client_config(request: Request, db: Session = Depends(get_db)):
         "name": _setting(db, "site_name", "PosterChan"),
         # Community size — the relay's web-of-trust member count (cached in its status file; cheap).
         "users": _relay_user_count(),
+        # npub of an enabled #chesstr referee bot, if this node runs one — lets the client's Games →
+        # Chess splash tag the right bot when inviting an opponent.
+        "chess_bot_npub": _chess_bot_npub(db),
     })
+
+
+def _chess_bot_npub(db) -> str | None:
+    """The npub of an enabled chess-referee bot (modes include --chess), for the Games → Chess splash.
+    Derived from the bot's nsec in its JSON config (Bot has no npub column)."""
+    try:
+        import json as _json
+        from app.models import Bot
+        for bot in db.query(Bot).filter(Bot.enabled == True, Bot.modes.like("%--chess%")).all():  # noqa: E712
+            try:
+                nsec = (_json.loads(bot.config or "{}")).get("nostr_nsec")
+                if nsec:
+                    return nostr_service.npub_from_seckey(nsec)
+            except Exception:
+                continue
+        return None
+    except Exception:
+        return None
 
 
 def _relay_user_count() -> int:

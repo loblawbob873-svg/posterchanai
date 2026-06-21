@@ -5,11 +5,12 @@ actual process lifecycle lives in app/services/bot_manager_service.py; these end
 edit rows and nudge the manager to reconcile. Admin-gated like app/routers/admin.py.
 """
 
+import os
 import json
 import logging
 from typing import List, Optional, Dict, Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
@@ -20,6 +21,7 @@ from app.database import get_db
 from app.models import Bot, User
 from app.auth import get_admin_user
 from app.services import bot_manager_service, pleroma_service, misskey_service
+from app.services.nostr import nostr_service
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +55,18 @@ class BotUpdate(BaseModel):
     host: Optional[str] = None
     modes: Optional[str] = None
     config: Optional[Dict[str, Any]] = None
+
+
+def _refresh_wot_for_nostr(bot: Bot):
+    """A newly created/updated nostr bot is an operator key — fold it into the relay's WoT now so its
+    posts are accepted immediately (rather than waiting for the scheduled rebuild)."""
+    if (bot.platform or "") != "nostr":
+        return
+    try:
+        from app.services.nostr_relay.thread import trigger_wot_refresh
+        trigger_wot_refresh()
+    except Exception:
+        pass
 
 
 def _serialize(bot: Bot) -> dict:
@@ -111,6 +125,120 @@ async def mint_oauth_token(payload: OAuthTokenPayload, admin: User = Depends(get
     return {"access_token": token}
 
 
+class ProvisionPayload(BaseModel):
+    name: str = "ChessBot"
+    nip05: Optional[str] = ""          # "chess" → chess@<this-host>, or a full addr
+    picture: Optional[str] = ""        # avatar URL (used only if no upload given)
+    picture_data: Optional[str] = ""   # uploaded avatar as a data: URL / base64 → stored on Blossom
+    about: Optional[str] = ""
+
+
+@router.post("/provision")
+async def provision_nostr_identity(payload: ProvisionPayload, request: Request,
+                                   db: Session = Depends(get_db),
+                                   admin: User = Depends(get_admin_user)):
+    """Mint a fresh Nostr identity for a bot and wire it up so it 'just works' with no manual login:
+    generate the nsec, grant it Blossom upload access (built-in server), publish a kind-0 profile
+    (name / avatar / nip05), make the OPERATOR follow it + add it to the relay's Web of Trust (so its
+    posts are stored/served), and return the nsec+npub for the form to save. WoT note: the bot also
+    becomes an operator key once the bot row is saved, but we follow + refresh now so it works
+    immediately for testing (the scheduled WoT rebuild is too slow)."""
+    from app.services.nostr import bip340, bech32, event as _nevent
+    from app.services import settings_store, keystore
+
+    sk = os.urandom(32)
+    pub = bip340.pubkey_from_seckey(sk).hex()
+    nsec = bech32.encode("nsec", sk)
+    npub = nostr_service.npub_of(pub)
+    port = int(settings_store.get("nostr_relay_port", "3052") or "3052")
+    local = [f"ws://127.0.0.1:{port}"]
+
+    # 1) Blossom upload access for the bot's key (so its board/image uploads are accepted)
+    try:
+        wl = [x for x in (settings_store.get("blossom_whitelist", "") or "").split() if x]
+        if npub not in wl:
+            wl.append(npub)
+            settings_store.put("blossom_whitelist", "\n".join(wl))
+    except Exception as e:
+        logger.warning("[provision] blossom grant failed: %s", e)
+
+    # 2) avatar → upload to the built-in Blossom under the bot's (now whitelisted) key
+    host = request.url.hostname or ""
+    nip05 = (payload.nip05 or "").strip()
+    if nip05 and "@" not in nip05:
+        nip05 = f"{nip05}@{host}"
+    base = str(request.base_url).rstrip("/")
+    picture = (payload.picture or "").strip() or f"{base}/static/posterchan-relay.png"
+    if (payload.picture_data or "").strip():
+        try:
+            import base64 as _b64
+            from app.services.nostr import media as _media
+            raw = payload.picture_data.strip()
+            mime = "image/png"
+            if raw.startswith("data:"):
+                head, _, b64 = raw.partition(",")
+                if "image/" in head:
+                    mime = head[head.index("image/"):].split(";")[0]
+                raw = b64
+            data = _b64.b64decode(raw)
+            endpoint = f"http://127.0.0.1:{os.getenv('POSTERCHANAI_PORT', '3051')}/blossom"
+            info = await _media.upload_blossom(endpoint, sk, data, mime)
+            if info.get("url"):
+                picture = info["url"]
+        except Exception as e:
+            logger.warning("[provision] avatar upload failed (falling back to URL/logo): %s", e)
+
+    # 3) TRUST FIRST: operator follows the bot (operator is always WoT) + add the bot to the relay's
+    #    WoT now — the relay is WoT-gated, so its kind-0 profile would be REJECTED until it's trusted.
+    followed = False
+    op_nsec = keystore.get_operator_nsec()
+    if op_nsec:
+        try:
+            op_sk = nostr_service.decode_seckey(op_nsec)
+            op_pub = nostr_service.derive_pubkey(op_sk)
+            existing = await nostr_service.relay.query(local, [{"authors": [op_pub], "kinds": [3], "limit": 1}]) or []
+            existing.sort(key=lambda e: e.get("created_at", 0), reverse=True)
+            tags = [t for t in (existing[0].get("tags", []) if existing else []) if t and t[0] == "p"]
+            if not any(len(t) >= 2 and t[1] == pub for t in tags):
+                tags.append(["p", pub])
+            ev3 = _nevent.build_event(op_sk, 3, "", tags=tags)
+            await nostr_service.relay.publish(local, ev3)
+            followed = True
+        except Exception as e:
+            logger.warning("[provision] operator follow failed: %s", e)
+    try:
+        from app.services.nostr_relay.thread import trigger_wot_add, trigger_wot_refresh
+        trigger_wot_add([pub])      # immediate in-memory add (control poller, ~1s)
+        trigger_wot_refresh()       # full rebuild folds in the operator's new follow
+    except Exception as e:
+        logger.warning("[provision] wot add/refresh failed: %s", e)
+
+    # 4) publish the kind-0 profile — RETRY until the (now-trusted) relay actually stores it, since
+    #    the WoT add is applied asynchronously by the relay's control poller.
+    import asyncio
+    meta = {"name": payload.name.strip(), "display_name": payload.name.strip(),
+            "about": (payload.about or "").strip() or "♟️ #chesstr referee bot", "picture": picture, "bot": True}
+    if nip05:
+        meta["nip05"] = nip05
+    profile_ok = False
+    for _ in range(6):
+        try:
+            ev0 = _nevent.build_event(sk, 0, json.dumps(meta, separators=(",", ":")), tags=[])
+            await nostr_service.relay.publish(local, ev0)
+            got = await nostr_service.relay.query(local, [{"authors": [pub], "kinds": [0], "limit": 1}]) or []
+            if got:
+                profile_ok = True
+                break
+        except Exception as e:
+            logger.warning("[provision] profile publish attempt failed: %s", e)
+        await asyncio.sleep(1.0)
+    if not profile_ok:
+        logger.warning("[provision] profile not confirmed stored after retries (npub %s)", npub)
+
+    return {"nsec": nsec, "npub": npub, "nip05": nip05, "picture": picture,
+            "followed": followed, "profile_ok": profile_ok}
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_bot(payload: BotPayload, db: Session = Depends(get_db),
                admin: User = Depends(get_admin_user)):
@@ -133,6 +261,7 @@ def create_bot(payload: BotPayload, db: Session = Depends(get_db),
     from app.services import bots_store
     bots_store.sync_bot_blocking(db, bot)
     bot_manager_service.reconcile_now()
+    _refresh_wot_for_nostr(bot)
     return _serialize(bot)
 
 
@@ -169,6 +298,7 @@ def update_bot(bot_id: int, payload: BotUpdate, db: Session = Depends(get_db),
     bots_store.sync_bot_blocking(db, bot)
     # config/cred/mode changes need a respawn; nudge a reconcile and restart the running child.
     bot_manager_service.restart_bot(bot.name)
+    _refresh_wot_for_nostr(bot)
     return _serialize(bot)
 
 
@@ -179,12 +309,96 @@ def delete_bot(bot_id: int, db: Session = Depends(get_db),
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
     name = bot.name
+    _cleanup_nostr_identity(db, bot)   # remove its account data BEFORE the row is gone
     db.delete(bot)
     db.commit()
     from app.services import bots_store
     bots_store.delete_bot_blocking(db, name)
     bot_manager_service.reconcile_now()  # manager stops the now-absent child
     return {"status": "deleted", "name": name}
+
+
+def _cleanup_nostr_identity(db: Session, bot: Bot):
+    """Tear down a deleted nostr bot's identity: revoke Blossom access + purge its blobs, purge its
+    relay events (kind-0 profile/nip05, posts, app-data), and have the operator unfollow it."""
+    if (bot.platform or "") != "nostr":
+        return
+    try:
+        nsec = (json.loads(bot.config or "{}")).get("nostr_nsec")
+        if not nsec:
+            return
+        sk = nostr_service.decode_seckey(nsec)
+        pub = nostr_service.derive_pubkey(sk)
+        npub = nostr_service.npub_of(pub)
+    except Exception as e:
+        logger.warning("[bot-delete] could not derive identity: %s", e)
+        return
+    from app.services import settings_store, blossom_service
+    # 1) revoke Blossom upload access
+    try:
+        wl = [x for x in (settings_store.get("blossom_whitelist", "") or "").split() if x and x != npub]
+        settings_store.put("blossom_whitelist", "\n".join(wl))
+    except Exception as e:
+        logger.warning("[bot-delete] whitelist revoke failed: %s", e)
+    # 2) purge its Blossom blobs (bytes + index rows)
+    try:
+        for blob in blossom_service.list_for_pubkey(db, pub):
+            try:
+                _run_async(blossom_service.delete_blob_bytes(db, blob))
+            except Exception:
+                pass
+            db.delete(blob)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning("[bot-delete] blossom purge failed: %s", e)
+    # 3) purge its relay events (profile/nip05/posts/app-data) + operator unfollow
+    try:
+        from app.services.nostr_relay.thread import trigger_delete_author
+        trigger_delete_author([pub])
+    except Exception as e:
+        logger.warning("[bot-delete] relay author purge failed: %s", e)
+    _operator_unfollow(pub)
+
+
+def _operator_unfollow(pub: str):
+    """Remove `pub` from the operator's kind-3 contact list (publish the updated list, never wipe)."""
+    try:
+        from app.services import keystore, settings_store
+        from app.services.nostr import event as _nevent
+        op_nsec = keystore.get_operator_nsec()
+        if not op_nsec:
+            return
+        op_sk = nostr_service.decode_seckey(op_nsec)
+        op_pub = nostr_service.derive_pubkey(op_sk)
+        port = int(settings_store.get("nostr_relay_port", "3052") or "3052")
+        local = [f"ws://127.0.0.1:{port}"]
+
+        async def _go():
+            existing = await nostr_service.relay.query(local, [{"authors": [op_pub], "kinds": [3], "limit": 1}]) or []
+            existing.sort(key=lambda e: e.get("created_at", 0), reverse=True)
+            if not existing:
+                return
+            tags = [t for t in existing[0].get("tags", []) if t and t[0] == "p" and not (len(t) >= 2 and t[1] == pub)]
+            ev3 = _nevent.build_event(op_sk, 3, "", tags=tags)
+            await nostr_service.relay.publish(local, ev3)
+        _run_async(_go())
+    except Exception as e:
+        logger.warning("[bot-delete] operator unfollow failed: %s", e)
+
+
+def _run_async(coro):
+    """Run a coroutine from this sync endpoint (no running loop in the request thread)."""
+    import asyncio
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop and loop.is_running():
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            return ex.submit(lambda: asyncio.run(coro)).result()
+    return asyncio.run(coro)
 
 
 @router.post("/{bot_id}/start")

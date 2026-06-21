@@ -25,8 +25,19 @@ DEFAULT_BLOSSOM_SERVER = "https://blossom.primal.net"
 DEFAULT_NIP96_SERVER = "https://nostr.build"
 
 
-def _proxy():
-    """Built-in HTTP proxy (→ Tor) for media uploads, or None for direct."""
+def _is_local(server: str) -> bool:
+    """True for localhost / private-LAN / *.lan hosts — these must NOT go through the Tor proxy."""
+    import re as _re
+    s = (server or "").lower()
+    return bool(_re.search(r"(?:^|//)(?:localhost|127\.0\.0\.1|0\.0\.0\.0|10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|\[::1\])", s)
+                or _re.search(r"\.lan(?::|/|$)", s))
+
+
+def _proxy(server: str = ""):
+    """Built-in HTTP proxy (→ Tor) for media uploads, or None for direct. The internal/LAN Blossom
+    server is reached directly (proxying localhost through Tor would just fail)."""
+    if server and _is_local(server):
+        return None
     try:
         from app.services.proxy_utils import get_outbound_proxy
         return get_outbound_proxy()
@@ -64,7 +75,7 @@ async def upload_blossom(server: str, seckey: bytes, data: bytes, mime: str = ""
     headers = {"Authorization": _auth_header(auth)}
     if mime:
         headers["Content-Type"] = mime
-    async with httpx.AsyncClient(proxy=_proxy(), timeout=120) as client:
+    async with httpx.AsyncClient(proxy=_proxy(server), timeout=120) as client:
         resp = await client.put(f"{server}/upload", content=data, headers=headers)
     logger.info(f"[nostr] blossom upload: HTTP {resp.status_code} — {resp.text[:200]}")
     resp.raise_for_status()
@@ -102,7 +113,7 @@ async def upload_nip96(server: str, seckey: bytes, data: bytes, mime: str = "") 
     )
     headers = {"Authorization": _auth_header(auth)}
     files = {"file": ("upload", data, mime or "application/octet-stream")}
-    async with httpx.AsyncClient(proxy=_proxy(), timeout=120) as client:
+    async with httpx.AsyncClient(proxy=_proxy(server), timeout=120) as client:
         resp = await client.post(endpoint, files=files, headers=headers)
     logger.info(f"[nostr] nip96 upload: HTTP {resp.status_code} — {resp.text[:200]}")
     resp.raise_for_status()

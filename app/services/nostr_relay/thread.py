@@ -626,6 +626,10 @@ async def _main(cfg: dict) -> None:
                         gate.add_members(pks)                          # immediate (in-memory)
                         asyncio.create_task(_safe(store.wot_add(pks)))  # persist
                         logger.info("[nostr-relay] control: added %d member(s) to WoT now", len(pks))
+                    elif cmd.get("cmd") == "delete-author" and cmd.get("pubkeys"):
+                        pks = [p for p in cmd["pubkeys"] if p]
+                        asyncio.create_task(_safe(store.delete_pubkeys(pks)))  # purge their events
+                        logger.info("[nostr-relay] control: purged events for %d author(s)", len(pks))
                     elif cmd.get("cmd") == "reload-blocks":
                         # Admin/web-UI edited the blocklist (Admin → Relay, or the web client's
                         # "Block author"). Apply it to the LIVE ingest gate ONLY, so the updated
@@ -982,6 +986,15 @@ def trigger_wot_add(pubkeys: list) -> dict:
     if not pks:
         return {"ok": True, "added": 0}
     return _drop_control({"cmd": "wot-add", "pubkeys": pks})
+
+
+def trigger_delete_author(pubkeys: list) -> dict:
+    """Purge ALL stored events authored by these pubkeys (e.g. when a bot account is deleted) — its
+    profile/posts/app-data, including the kind-0 that carried its nip05/avatar."""
+    pks = [p for p in (pubkeys or []) if p]
+    if not pks:
+        return {"ok": True}
+    return _drop_control({"cmd": "delete-author", "pubkeys": pks})
 
 
 def trigger_backfill(pubkey_hex: str) -> dict:

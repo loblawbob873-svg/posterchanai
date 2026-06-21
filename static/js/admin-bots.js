@@ -5,7 +5,7 @@
 // field — no JSON needed for normal config). Shown contextually per feature/platform.
 const BOT_KNOWN_KEYS = [
     'server', 'username', 'access_token', 'pleroma_admin_token',
-    'nostr_nsec', 'nostr_relays', 'nostr_media_service', 'nostr_media_endpoint',
+    'nostr_nsec', 'nostr_relays',
     'nostr_rate_per_user', 'nostr_rate_global', 'nostr_rate_window', 'nostr_rate_exempt',
     'matrix_server', 'matrix_user_id', 'matrix_access_token', 'matrix_room_id', 'matrix_admins',
     'prompt',
@@ -184,6 +184,10 @@ function openBotModal(id) {
     const cfg = (b && b.config) ? b.config : {};
     BOT_KNOWN_KEYS.forEach(k => _setVal('bot_f_' + k, cfg[k]));
     BOT_KNOWN_CHECKS.forEach(k => _setChk('bot_f_' + k, cfg[k]));
+    // provision-only (transient) fields — never persisted, reset each open
+    _setVal('bot_f_nostr_nip05', '');
+    { const af = _g('bot_f_nostr_avatar_file'); if (af) af.value = ''; }
+    { const ps = _g('bot_provision_status'); if (ps) ps.textContent = ''; }
 
     // nitter_feeds: [{rss, room?}] <-> one per line: "rss [room]" (room optional, preserved)
     const feeds = Array.isArray(cfg.nitter_feeds)
@@ -252,6 +256,45 @@ async function botOauthConnect() {
         statusEl.textContent = '✅ Token minted and filled in. Click Save to keep it.';
     } catch (err) {
         statusEl.textContent = '❌ ' + err.message;
+    }
+}
+
+// ✨ Generate a brand-new Nostr identity for this bot: mints the nsec, grants Blossom upload access,
+// publishes a profile (name/avatar/nip05) and makes the operator follow it (WoT). Fills the nsec
+// field so the admin just picks features and clicks Save.
+function _readFileDataURL(file) {
+    return new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result);
+        fr.onerror = () => reject(new Error('could not read file'));
+        fr.readAsDataURL(file);
+    });
+}
+
+async function provisionBot() {
+    const st = _g('bot_provision_status');
+    const name = _val('bot_f_name') || 'ChessBot';
+    if (st) st.textContent = 'Generating identity…';
+    try {
+        let picture_data = '';
+        const fEl = _g('bot_f_nostr_avatar_file');
+        if (fEl && fEl.files && fEl.files[0]) {
+            if (st) st.textContent = 'Uploading avatar…';
+            picture_data = await _readFileDataURL(fEl.files[0]);
+        }
+        const r = await fetch('/api/admin/bots/provision', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, nip05: _val('bot_f_nostr_nip05'), picture_data }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || r.statusText);
+        _setVal('bot_f_nostr_nsec', d.nsec);
+        if (st) st.innerHTML = `✅ Identity created — <code>${d.npub}</code><br>`
+            + `Blossom access granted${d.followed ? ' · operator follows it (WoT)' : ''}`
+            + `${d.profile_ok ? ' · profile published' : ' · ⚠️ profile not confirmed'}`
+            + `${d.nip05 ? ' · nip05 ' + d.nip05 : ''}. Pick features below and click <b>Save bot</b>.`;
+    } catch (err) {
+        if (st) st.textContent = '❌ ' + err.message;
     }
 }
 
