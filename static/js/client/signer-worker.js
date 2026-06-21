@@ -21,6 +21,10 @@ self.onmessage = async (e) => {
         return reply(id, true, { pubkey: PK });
       }
       case 'clearKey': { SK = null; PK = null; return reply(id, true, {}); }
+      case 'exportNsec': {                     // reveal the local secret key (local-login only)
+        if (!SK) return reply(id, false, null, 'no local key');
+        return reply(id, true, { nsec: NT.nip19.nsecEncode(SK) });
+      }
       case 'genKey': {
         const sk = NT.generateSecretKey();
         const pk = NT.getPublicKey(sk);

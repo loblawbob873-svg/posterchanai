@@ -3552,6 +3552,8 @@
           <div class="muted small">${enc(ME.npub.slice(0,20))}…</div></div></div>
         <div class="set-body">
           <div class="set-actions">
+            <button class="btn btn-ghost small" id="set-copy-npub">🔑 Copy npub</button>
+            ${ME.mode==='local'?`<button class="btn btn-ghost small" id="set-show-nsec" style="color:#ffcf2b">🔓 Show private key (nsec)</button>`:''}
             <button class="btn btn-ghost small" id="set-sync-posts">⤓ Sync my posts to this relay</button>
             <button class="btn btn-ghost small" id="set-logout">🚪 Logout</button>
             <button class="btn btn-ghost small" id="set-del-account" style="color:#ff6b8b">🗑️ Delete my account</button>
@@ -3660,6 +3662,19 @@
           if(r && r.ok){ toast('account deleted'); Session.clear(); try{Relay.worker.call('clearKey',{});}catch(_){} setTimeout(()=>location.reload(),800); }
           else toast('delete failed: '+((r&&r.error)||''));
         }catch(_){ toast('delete failed'); }
+      }; }
+    { const cn=$('#set-copy-npub'); if(cn) cn.onclick=async()=>{ try{ await navigator.clipboard.writeText(ME.npub); toast('npub copied'); }catch(_){ window.prompt('Your npub:', ME.npub); } }; }
+    { const sn=$('#set-show-nsec'); if(sn) sn.onclick=async()=>{
+        let r; try{ r=await Relay.worker.call('exportNsec', {}); }catch(_){ r=null; }
+        const nsec=r&&r.nsec; if(!nsec){ toast('secret key not available on this login'); return; }
+        modal(`<h3>🔓 Your private key (nsec)</h3>
+          <p class="muted small" style="color:#ff9b6b">Anyone with this key has FULL control of your account. Never share it. Store it somewhere safe — it's the only way to recover your account.</p>
+          <div class="keyrow"><code id="nsec-val">${enc(nsec)}</code></div>
+          <div class="set-actions"><button class="btn btn-neon small" id="nsec-copy">📋 Copy nsec</button><button class="btn btn-ghost small" id="nsec-close">Close</button></div>`,
+          root=>{
+            $('#nsec-copy',root).onclick=async()=>{ try{ await navigator.clipboard.writeText(nsec); toast('nsec copied — keep it secret!'); }catch(_){ window.prompt('Your nsec (copy it):', nsec); } };
+            $('#nsec-close',root).onclick=closeModal;
+          });
       }; }
     { const lo=$('#set-logout'); if(lo) lo.onclick=()=>{ if(confirm('Log out of this device?')) logout(); }; }
     { const sp=$('#set-sync-posts'); if(sp) sp.onclick=async()=>{
