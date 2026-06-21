@@ -325,6 +325,27 @@ async def startup():
             except Exception as e:
                 logging.error(f"Error applying container turnkey upgrade: {e}")
 
+        # One-time: enable the timeline backfill sweep (mirror_feeds) on turnkey nodes so a fresh
+        # relay populates ~48h of history instead of only filling forward from the firehose. SEPARATE
+        # marker from the v1 upgrade so it applies its delta ONCE without re-running (re-forcing) the
+        # v1 settings — the Admin UI stays the source of truth (toggle it off in Admin → Relay to
+        # stop the sweep). Container-only (PC_ACCEL); bare-metal server1/nas never touched.
+        if os.environ.get("PC_ACCEL"):
+            try:
+                _db = SessionLocal()
+                if not _db.query(Setting).filter(Setting.key == "_turnkey_backfill_v1").first():
+                    _row = _db.query(Setting).filter(Setting.key == "nostr_relay_mirror_feeds").first()
+                    if _row:
+                        _row.value = "true"
+                    else:
+                        _db.add(Setting(key="nostr_relay_mirror_feeds", value="true"))
+                    _db.add(Setting(key="_turnkey_backfill_v1", value="done"))
+                    _db.commit()
+                    logging.info("Enabled timeline backfill (mirror_feeds) for turnkey node")
+                _db.close()
+            except Exception as e:
+                logging.error(f"Error enabling turnkey backfill: {e}")
+
         # Start health check if enabled (in background, don't block startup)
         try:
             from app.services.health_check import start_health_check
