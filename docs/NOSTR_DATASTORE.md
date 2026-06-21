@@ -1,86 +1,91 @@
-# Nostr-as-datastore migration (branch: `nostr-datastore`)
+# Nostr-as-datastore (COMPLETE — on `master`)
 
-Goal: make the **built-in WoT relay's event store the system of record**, replacing the app's
-`app.db` (SQLite via SQLAlchemy). The Nostr client becomes the face of the app; anyone signs
-up/logs in with a Nostr key; admins grant AI access per-user; the relay ships enabled on new
-installs. This is a **phased** migration behind a `storage_backend` flag — it can't be an atomic
-swap of 18 tables without a broken, bot-dead tree (and `sync.sh` deploys to every node).
+The **built-in Web-of-Trust relay's event store is the system of record.** There is no SQLite and
+no separate "app DB" anymore: the app's relational tables AND the relay's signed Nostr events live
+in **one PostgreSQL database** (`posterchan_relay`). The Nostr web client (`/client`) is the face of
+the app; anyone signs up / logs in with a Nostr key; admins grant AI access per-user.
 
-## Two stores, clearly separated
-- **`app.db`** (today): user/identity, conversations, messages, settings, bots, maps, blob meta…
-- **`nostr_relay.db`** (the relay's OWN sqlite event store, `app/services/nostr_relay/store.py`):
-  signed Nostr events. **This becomes the system of record.** It is a *different file* from `app.db`.
+This migration is **done** — the old phased `*_backend` flags (`settings_/users_/bots_/chat_/
+records_backend`) are **gone**; every store is relay-authoritative unconditionally.
 
-The app reaches it as a **Nostr client to its own local relay** (publish/REQ over `ws://127.0.0.1:<port>/relay`,
-same path `client.py:signup-follow` already uses) — NOT by cross-thread access to `RelayStore`.
+## One database, two kinds of state
+Everything is in PostgreSQL (`DATABASE_URL` for the app's SQLAlchemy tables, `NOSTR_RELAY_PG_DSN`
+for the relay's raw-SQL `events`/`event_tags`/`wot` tables — same DB, no name collisions):
 
-## Durability (must fix before accounts live here)
-This deployment points `nostr_relay_db_path` at **tmpfs with ~10-min disk snapshots** — fine for a
-replaceable feed cache, fatal for accounts/settings (a reboot drops recent signups). Migration step:
-move the relay store to a **durable path** (or snapshot app-data kinds synchronously on write).
+- **Relay event store** (`app/services/nostr_relay/store.py`, psycopg2) — **the system of record**
+  for user data. Signed Nostr events.
+- **SQL tables** (SQLAlchemy) — fast **read-through caches** rebuilt from the relay on startup
+  (`*_store.hydrate`), kept in sync by **write-through** on every mutation (`*_store.sync_*`). They
+  exist so the many `db.query(...)` callers + FK relationships keep working unchanged; a fresh node
+  reconstructs them from the relay.
 
-## Event-kind schema (no timeline spam)
-Nostr clients only render kind 1/6 in feeds, so app data uses **app-specific kinds** that never
-appear in timelines, is **NIP-44 encrypted**, and is **never fanned to upstream relays** (the outbox
-only re-broadcasts real client posts). The relay can also restrict these kinds to their owner.
+The app reaches the event store as a **Nostr client to its own local relay** (publish/REQ over
+`ws://127.0.0.1:<port>/relay`), plus a direct same-DB read in `*_store.hydrate` for startup.
 
-| Domain | Event | Signer | Encrypted to |
-|--------|-------|--------|--------------|
-| Global settings | kind **30078** (NIP-78 app-data), one per key `d=pcai:setting:<key>` | operator | operator (secrets!) |
-| Bots / maps / blob-meta / operational | kind **30078**, `d=pcai:<table>:<id>` | operator | operator |
-| User account record (admin/can_ai/etc.) | kind **30078**, `d=pcai:user:<npub>` | operator | operator |
-| User profile (kind-0 already) | kind **0** | user | — (public) |
-| User conversations | kind **30078**, `d=pcai:conv:<id>` | user storage key | user |
-| User messages (chat history) | kind **3xxxx** (regular, per-conv `e`-tag) | user storage key | user |
-| AI-access request | kind **30078** `d=pcai:ai-request:<npub>` + DM to admins | user | — |
+## The store modules (`app/services/*_store.py`)
+Each domain has `hydrate(db)` (relay → SQL cache at startup, deferred until the relay WS is up) and a
+write-through (`sync_*` / `mirror_*` / `*_blocking`). `enabled()` hard-returns `True` everywhere.
 
-## Key custody (decided)
-Server-side AI/bots must read chats to generate replies, so true end-to-end (server-can't-read) is
-impossible while inference is server-side. Model: **each user gets a server-held storage keypair**
-(extends `User.nostr_nsec`). Identity = their login npub (NIP-07/Amber/nsec); the storage key is
-what the server uses to encrypt-at-rest to the relay and decrypt for the AI/bots. Encryption is
-**at rest in the relay**, not e2e.
+| Domain | Module | d-tag | Signer / encrypted-to |
+|--------|--------|-------|-----------------------|
+| Global settings | `settings_store` | `pcai:setting:<key>` | operator |
+| User account record (admin/can_*/quota) | `users_store` | `pcai:user:<npub>` | operator |
+| Per-user config (mail/nitter/social/finance prefs) | `users_store` | `pcai:usercfg:<npub>` | operator |
+| Bot config | `bots_store` | `pcai:bot:<name>` | operator |
+| Conversation index (title/timestamps) | `chat_store` | `pcai:conv:<id>` | user storage key |
+| Chat messages | `chat_store` | `pcai:msg:<conv>:<seq>` | user storage key |
+| Reminders / saved searches / API keys | `record_store` | `pcai:reminder:` / `pcai:search:` / `pcai:apikey:<id>` | user storage key |
 
-## Auth
-Nostr login/signup (NIP-07 / nsec / Amber NIP-46 — signers already built in the client). New users
-sign up with their key; existing password admins keep working and are linked to their npub
-(account-merge migration moves their data to their configured npub).
+All are **kind-30078** (NIP-78 app-data), **NIP-44 encrypted**, and **never fanned to upstream
+relays** (the outbox only re-broadcasts real kind-1/6 client posts), so app data never hits a
+timeline. The relay's prune is preserve-aware and never touches `origin='direct'` kind-30078 docs.
 
-## AI access = request → approve (+ notify)
-- A non-AI user hits an **"AI" button** in the Nostr client → "Request AI access" → writes an
-  AI-access request event AND sends each admin a **Nostr DM/notification** (the admin sees it in the
-  client's notifications + optionally their existing Telegram/Matrix relay).
-- Admin approves from the user's profile ☰ menu (like the Blossom grant we just built) → sets the
-  user's `can_ai` → the AI tab unlocks for them. Revocable the same way.
+### Message mirroring is automatic + complete
+A SQLAlchemy `after_commit` hook (`chat_store.install_message_mirror`) mirrors **every committed
+Message row** to the relay — on the async chat WS via the running loop, and for off-path saves
+(APScheduler/Telegram threadpool, sync routes) on a short-lived daemon thread. Non-nostr (no-npub)
+users are skipped.
 
-## Phases
-0. **Foundation** (this branch, in progress): NIP-44 (Python) + the event-store repository layer
-   (publish/REQ app-data kinds over the local relay WS) + durable relay path.
-1. **Identity/auth + UI merge + AI gating**: Nostr login/signup for the AI app; `/client` as the
-   face with an AI button; `can_ai` + request/approve/notify; relay-on-by-default. Account-merge
-   migration (admin data → configured npub).
-2. **User content → relay**: conversations + messages as encrypted events (repository swap behind
-   the flag) + one-time migration from `app.db`.
-3. **Operational → relay**: settings, bots, maps, blob-meta as operator app-data events; retire the
-   corresponding `app.db` tables. Bots/services read through the repository.
+### Write-through coverage
+Account mutations write through on **every** path: nostr-login / first-login-admin, settings save,
+client caps/ai-access grants, **admin user create/delete/storage-quota/capabilities**, client
+**self-delete**, avatar upload/delete. Deletes also remove the `pcai:user:`/`pcai:usercfg:` docs so a
+rebuild can't resurrect a deleted account. (Admin-created password users and email-verify are no-npub
+legacy → intentionally not synced; the relay store is npub-keyed.)
 
-## UI = the Nostr client (old webui retired)
-The standalone PosterChan AI web UI is **replaced**: the AI chat becomes a **view inside the Nostr
-client** (`static/js/client/`), like Home/Settings. An **AI** nav button does `switchView('ai')`.
-The client already has the signers (NIP-07/Amber/nsec), so the AI view authenticates by signing a
-NIP event → `POST /api/auth/nostr-login` (sets the normal session cookie) → then talks to the AI
-chat backend over that session. No separate login page. The old `templates/index.html` chat UI +
-its routes are retired once the in-client AI view reaches parity.
-- Non-`can_ai` users: the AI view shows **"Request AI access"** → writes a request event + notifies
-  admins; admin approves from the profile ☰ menu → `can_ai` flips → the view unlocks.
+## Key custody (the one irreducible local secret)
+Server-side AI/bots must read chats to generate replies, so true e2e is impossible — encryption is
+**at rest in the relay**, not e2e. Each user gets a **server-held storage keypair**; the operator key
+signs operator docs. These keys CANNOT live in the relay (they encrypt it — circular), so they live
+in a gitignored keyfile `data/keys.json` (`{operator_nsec, storage:{npub:hex}}`, 0600, keyed by
+npub). `app/services/keystore.py`; read by `nostr_store.user_storage_seckey`,
+`settings_store._operator_seckey`, and the relay's `_collect_operator_pubkeys`. This is the only
+on-disk state that lets the database be rebuilt from scratch.
 
-## UI consolidation notes
-- The old per-user **Files/Photos** feature (`shared_files` / user uploads) is **obsolete** — the
-  Blossom **Files** view (in the Nostr client) replaces it. Blossom still uses the **storage proxy**
-  (`blossom_storage_backend=proxy`, `storage_server_url`) — keep that. Migration step: drop the old
-  Files/Photos UI + routes once Blossom Files is the single file surface.
+## Mandatory, always-on
+- **The relay always runs** — it's the datastore. `cfg['enabled']=True` is hard-coded; there is **no
+  on/off toggle** in the admin UI.
+- **Blossom (media) runs by default** — `blossom_enabled` defaults `true`; no enable toggle in the
+  UI. A node can still be pinned off via the relay-stored setting (e.g. a keyless storage backend).
+- First npub to sign in **auto-claims admin** (`POSTERCHANAI_AUTO_ADMIN`, locks once any npub-admin
+  exists) and gets `can_ai`/`can_image`/`can_blossom`.
 
-## Compatibility
-Every bot/service keeps using a single **repository API** (`repo.*`) instead of `db.query(...)`.
-The repo is backed by `app.db` today and swapped to the relay store per-domain behind the flag, so
-features keep working through the migration rather than breaking at a big-bang cutover.
+## Auth + AI access
+Nostr login/signup (NIP-07 / nsec / Amber NIP-46). A non-AI user hits the **AI** view → "Request AI
+access" → writes a request event + DMs admins; an admin approves from the profile ☰ menu (sets
+`can_ai`). Blossom upload is gated to operator keys, `blossom_whitelist`, or a linked user who is
+admin / has `can_blossom`.
+
+## Deployment
+- **PostgreSQL is required.** Bare metal: `run-intel.sh`/`run-nvidia.sh` export `DATABASE_URL` +
+  `NOSTR_RELAY_PG_DSN`; `scripts/install/postgres.sh` provisions the role+db (localhost trust).
+- **Docker: use `docker compose`, NOT `docker run`.** The compose `postgres:18` service + the
+  `DATABASE_URL`/`NOSTR_RELAY_PG_DSN` env only exist in compose; a bare `docker run` has no database
+  and exits with "connection refused". `docker compose --profile <cpu|cuda|rocm|intel|nostr> up -d
+  --build` brings up Postgres + the app wired together. (AMD/ROCm: the entrypoint auto-sets
+  `HSA_OVERRIDE_GFX_VERSION`, required or HIP throws "invalid device function".)
+
+## UI
+The standalone web UI is retired — AI chat is a **view inside the Nostr client** (`static/js/client/`)
+alongside Home/Settings/Files. The Blossom **Files** view replaces the old per-user Files/Photos.
+See also `docs/RELAY.md` and `docs/BLOSSOM.md`.

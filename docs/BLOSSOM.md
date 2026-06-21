@@ -35,11 +35,11 @@ privileged user.
 
 Set in **Admin → Blossom → Storage**:
 
-* **`proxy`** (default) — blobs are stored on the shared PosterChanAI **storage server**
-  (the one under Services → Storage), under the `_blossom` system user. This is what
-  PosterChanAI uses for everything else. Falls back to **local** automatically if no storage
-  server is configured.
-* **`local`** — blobs on this node's disk, default `data/blossom` (or `$POSTERCHANAI_BLOSSOM_PATH`).
+* **`local`** (default) — blobs on this node's disk, default `data/blossom` (or
+  `$POSTERCHANAI_BLOSSOM_PATH`; `/app/data/blossom` on the Docker volume). Right for a single node.
+* **`proxy`** — blobs are stored on the shared PosterChanAI **storage server** (the one under
+  Services → Storage), under the `_blossom` system user — for a multi-node setup with a central
+  store. Falls back to **local** automatically if no storage server is configured.
   In Docker this is on the `pc-rag:/app/data` volume, so it persists.
 
 Blob **metadata** (sha256 → owner, size, mime, timestamps, TTL, backend, path) always lives
@@ -61,10 +61,13 @@ daemon thread, not a per-request cost.
 
 ## Enabling
 
-* **Admin UI:** Admin → Blossom → "Run the Blossom server on this node". Set a **Public base
-  URL** if behind a reverse proxy (e.g. `https://media.yourdomain/blossom`), then grant users
-  the 🌸 Blossom privilege.
-* **Docker turnkey:** `POSTERCHANAI_BLOSSOM=1` auto-enables it on startup.
+Blossom is **on by default** — it's core, so there's no enable toggle in the admin UI.
+
+* **Admin UI:** Admin → Blossom. Set a **Public base URL** only if behind a reverse proxy that
+  rewrites the host (e.g. `https://media.yourdomain/blossom`) — blank auto-derives from the request.
+  Then grant users the 🌸 Blossom privilege (Admin → Users) or add their npub to the whitelist.
+* A node can be pinned **off** by setting `blossom_enabled=false` (e.g. a keyless storage backend).
+* **Docker:** on by default; `POSTERCHANAI_BLOSSOM=1` also seeds the blob path on the data volume.
 * **Reverse proxy:** front `/blossom` with TLS. Example nginx:
 
   ```nginx
@@ -87,5 +90,5 @@ python scripts/migrate_blossom.py --source-dir /path/to/blossom/data \
 python scripts/migrate_blossom.py --source-dir /path/to/blobs --owner npub1...
 ```
 
-Imported blobs are re-stored through the configured backend (proxy by default), so they end
-up on the storage server alongside everything else. Add `--dry-run` to preview.
+Imported blobs are re-stored through the configured backend (local by default, or the storage
+server if set to proxy), so they land wherever this node keeps its blobs. Add `--dry-run` to preview.

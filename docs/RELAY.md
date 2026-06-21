@@ -174,9 +174,9 @@ strongly recommended for a relay).
 
 ## Quick start
 
-1. **Admin → Relay → enable** "Run the relay on this server", set your **seed npubs** (a
-   starter set ships by default), pick the **WoT depth**, **save**, and
-   **restart the service**.
+1. The relay **always runs** — it's the app's datastore, so there's no enable toggle. In
+   **Admin → Relay**, set your **seed npubs** (a starter set ships by default), pick the
+   **WoT depth**, **save**, and **restart the service**.
 2. Verify it's up: `journalctl -u posterchanai.service | grep nostr-relay` should show
    `listening on ws://…:3052/relay`, `WoT rebuilt: N members`, and periodic `sync tick` lines.
 3. Front it with TLS (see below) and connect a client to `wss://relay.yourdomain/`.
@@ -189,8 +189,10 @@ strongly recommended for a relay).
 POSTERCHANAI_NOSTR_RELAY=1 docker compose --profile cpu up
 ```
 
-Auto-enables the relay, binds `0.0.0.0:3052` (published by compose), DB on the data volume.
-Still front it with TLS for public use.
+Binds the relay `0.0.0.0:3052` (published by compose) and stores events in the compose
+`postgres` service. (The relay runs in every deployment regardless — `POSTERCHANAI_NOSTR_RELAY=1`
+just also sets the public bind. **Use `docker compose`, not `docker run`** — the relay + app need
+the `postgres` service.) Still front it with TLS for public use.
 
 ---
 
@@ -244,7 +246,7 @@ Edits in the admin UI apply immediately (no restart).
 
 | Setting | Default | Notes |
 |---|---|---|
-| Run the relay | off | Master switch (restart after toggling) |
+| _(no enable toggle)_ | — | The relay is the datastore — it **always runs**; there's no on/off switch |
 | Bypass Tor proxy | off | Relay upstream connects directly (faster) |
 | Listen port / Bind | 3052 / 127.0.0.1 | `/relay` path; `0.0.0.0` only if exposing directly |
 | Seed npubs | starter set | Trust roots |
