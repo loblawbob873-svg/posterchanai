@@ -151,18 +151,42 @@ def _relay_user_count() -> int:
         return 0
 
 
+# Active web-client viewers — a far more accurate "people using the SITE right now" than raw relay
+# connections (which also count external clients, scrapers and the federation). The /client page
+# polls /client/stats ~every 60s; we stamp each poller and count the DISTINCT ones seen in the last
+# window. Deduped by a client-supplied stable id (the user's npub when logged in, else a per-browser
+# anon id) so multiple tabs / a logged-in user on two devices collapse to one; falls back to the
+# forwarded client IP for old clients. Per-process (single worker); monotonic clock so the NTP
+# clock-step on startup can't skew the window.
+import time as _time
+_VIEWERS: "dict[str, float]" = {}
+_VIEWER_WINDOW = 150.0   # seconds — tolerates one missed 60s poll
+
+
+def _record_viewer(request: Request, vid: str) -> int:
+    now = _time.monotonic()
+    key = (vid or "").strip()[:80]
+    if not key:
+        xff = request.headers.get("x-forwarded-for", "") or request.headers.get("x-real-ip", "")
+        key = (xff.split(",")[0].strip() if xff else "") or (request.client.host if request.client else "?")
+    _VIEWERS[key] = now
+    cutoff = now - _VIEWER_WINDOW
+    for _k in [k for k, t in _VIEWERS.items() if t < cutoff]:
+        _VIEWERS.pop(_k, None)
+    return len(_VIEWERS)
+
+
 @router.get("/stats")
-async def client_stats():
-    """Live community stats for the sidebar: `users` = WoT network size (cached), `online` = current
-    relay client connections (people using the site right now). Cheap status-file read; polled."""
+async def client_stats(request: Request, v: str = ""):
+    """Sidebar stats: `users` = WoT network size (cached), `online` = distinct people with the site
+    open right now (active /client viewers in the last ~2.5 min, deduped per-user). Polled ~1/min."""
+    online = _record_viewer(request, v)
     try:
         from app.services.nostr_relay.thread import relay_status
-        st = relay_status()
-        # `online` is deduped by client IP (people now), falling back to raw conns if unavailable.
-        online = st.get("online", st.get("conns", 0))
-        return JSONResponse({"users": int(st.get("members", 0) or 0), "online": int(online or 0)})
+        members = int(relay_status().get("members", 0) or 0)
     except Exception:
-        return JSONResponse({"users": 0, "online": 0})
+        members = 0
+    return JSONResponse({"users": members, "online": online})
 
 
 @router.post("/qr")

@@ -562,10 +562,21 @@
   // Sidebar community stats under ONLINE: network size (WoT) + who's using the site right now.
   // Network size (WoT) comes from CFG once (it barely changes — daily rebuild); only "online now" is
   // polled. So updateUserCount fetches just the live online count, not the WoT size.
+  // Stable id so the server's "online" count is per-USER, not per-connection: the logged-in pubkey
+  // (truncated — enough to dedup, avoids logging full keys) when signed in, else a per-browser anon
+  // id persisted in localStorage (so multiple tabs collapse to one viewer).
+  function _viewerId(){
+    try{
+      if(window.ME && ME.pubkey) return 'k'+ME.pubkey.slice(0,16);
+      let a=localStorage.getItem('pc_vid');
+      if(!a){ a='a'+Math.random().toString(36).slice(2,10)+Date.now().toString(36); localStorage.setItem('pc_vid',a); }
+      return a;
+    }catch(_){ return ''; }
+  }
   async function updateUserCount(){
     const uc=$('#user-count'); if(!uc) return;
     let online=0;
-    try{ online=Number((await fetch('/client/stats').then(r=>r.json())).online)||0; }catch(_){}
+    try{ online=Number((await fetch('/client/stats?v='+encodeURIComponent(_viewerId())).then(r=>r.json())).online)||0; }catch(_){}
     const parts=[];
     if(CFG.users>0) parts.push(WOT_ICON+' '+Number(CFG.users).toLocaleString()+' users');
     if(online>0) parts.push(LIVE_ICON+' '+online.toLocaleString()+' online');
