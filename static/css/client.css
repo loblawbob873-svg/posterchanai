@@ -177,6 +177,13 @@ a.btn.full{display:block}
 .psearch .pfollow{flex:none;white-space:nowrap}
 .follows-you{display:inline-block;margin-left:7px;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600;vertical-align:middle;color:var(--green);border:1px solid rgba(0,255,136,.45);background:rgba(0,255,136,.1)}
 .rep-row{cursor:pointer}
+.notif-tabs{display:flex;gap:6px;flex-wrap:wrap;padding:8px 10px;position:sticky;top:0;z-index:2;background:var(--bg);border-bottom:1px solid var(--line)}
+.ntab{padding:4px 11px;border:1px solid var(--line);border-radius:13px;background:var(--panel);color:var(--muted);cursor:pointer;font-family:inherit;font-size:13px;font-weight:600;white-space:nowrap}
+.ntab:hover{border-color:var(--cyan);color:var(--cyan)}
+.ntab.on{background:linear-gradient(135deg,var(--neon),var(--neon2));color:#06121a;border-color:transparent}
+.zap-presets{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.zap-amt{flex:1 1 28%;padding:10px 6px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--amber);font-weight:700;cursor:pointer;font-family:inherit;font-size:15px}
+.zap-amt:hover{border-color:var(--amber);box-shadow:0 0 12px rgba(255,207,43,.3)}
 .report-detail{padding:4px 2px;max-height:70vh;overflow:auto}
 .report-detail .rd-row{margin:6px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .report-detail .lnk{cursor:pointer;color:var(--cyan)}

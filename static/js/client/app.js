@@ -1689,7 +1689,19 @@
   async function doZap(noteId, pk){
     const p=profOf(pk); const addr=p.lud16||p.lud06;
     if(!addr){ toast('no lightning address on this profile'); return; }
-    const amt=parseInt(prompt('Zap amount (sats):','21')||'0',10); if(!amt||amt<1) return;
+    const presets=[21,100,500,1000,5000];
+    modal(`<h3>⚡ Zap ${enc(p.name||p.display_name||'')}</h3>
+      <div class="zap-presets">${presets.map(a=>`<button class="zap-amt" data-amt="${a}">${a>=1000?(a/1000)+'k':a} sats</button>`).join('')}</div>
+      <div class="row" style="gap:8px;margin-top:10px"><input class="input" id="zap-custom" type="number" min="1" placeholder="custom amount (sats)"><button class="btn btn-neon small" id="zap-go">⚡ Zap</button></div>`,
+      root=>{
+        $$('.zap-amt',root).forEach(b=> b.onclick=()=>{ closeModal(); _runZap(noteId, pk, +b.dataset.amt); });
+        $('#zap-go',root).onclick=()=>{ const v=parseInt(($('#zap-custom',root)||{}).value||'0',10); if(v>0){ closeModal(); _runZap(noteId, pk, v); } else toast('enter an amount'); };
+        const ci=$('#zap-custom',root); if(ci) ci.addEventListener('keydown',e=>{ if(e.key==='Enter') $('#zap-go',root).click(); });
+      });
+  }
+  async function _runZap(noteId, pk, amt){
+    const p=profOf(pk); const addr=p.lud16||p.lud06;
+    if(!addr || !amt || amt<1) return;
     toast('preparing zap…');
     try{
       const lnurl=await lnurlResolve(addr);
@@ -2513,13 +2525,28 @@
   }
   function bumpNotif(){ const n=notifList().filter(e=>e.created_at>seenNotif.last).length; $$('#notif-badge,#notif-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden');}); }
   let _notifShown = 25;   // paginate: render a page at a time, "Load more" reveals the next
+  let _notifFilter = 'all';
+  const _NOTIF_TABS = [['all','All'],['mentions','@ Mentions'],['reactions','♥ Reactions'],['zaps','⚡ Zaps'],['follows','🫂 Follows'],['reports','🚩 Reports']];
+  function _notifMatch(e){
+    switch(_notifFilter){
+      case 'mentions': return e.kind===1;
+      case 'reactions': return e.kind===7||e.kind===6;
+      case 'zaps': return e.kind===9735;
+      case 'follows': return e.kind===3;
+      case 'reports': return e.kind===1984;
+      default: return true;
+    }
+  }
   function renderNotifications(){
-    const all=notifList(); const feed=$('#feed');
+    const feed=$('#feed');
+    const all=notifList().filter(_notifMatch);
     const list=all.slice(0, _notifShown);
-    feed.innerHTML = all.length
+    const tabs=`<div class="notif-tabs">${_NOTIF_TABS.map(([k,l])=>`<button class="ntab${k===_notifFilter?' on':''}" data-nf="${k}">${enc(l)}</button>`).join('')}</div>`;
+    feed.innerHTML = tabs + (all.length
       ? list.map(notifHtml).join('') + (all.length>_notifShown
           ? `<button class="btn btn-ghost full" id="notif-more">Load ${Math.min(25, all.length-_notifShown)} more (${all.length-_notifShown})</button>` : '')
-      : '<div class="empty">No notifications.</div>';
+      : '<div class="empty">No notifications here.</div>');
+    $$('.ntab',feed).forEach(b=> b.onclick=()=>{ _notifFilter=b.dataset.nf; _notifShown=25; renderNotifications(); });
     list.forEach(e=>needProfile(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey));
     seenNotif.last = Math.floor(Date.now()/1000); localStorage.setItem('pc_notif_seen', seenNotif.last);
     $$('#notif-badge,#notif-badge-m').forEach(b=>b.classList.add('hidden'));
