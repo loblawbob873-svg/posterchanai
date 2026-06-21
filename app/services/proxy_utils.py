@@ -40,50 +40,37 @@ def _resolve_proxy_config() -> Optional[str]:
         Proxy URL string for httpx (e.g., "http://127.0.0.1:8118"), or None if not configured
     """
     try:
-        from app.database import SessionLocal
-        from app.models import Setting
-        
-        # Get settings from database directly
-        db = SessionLocal()
-        try:
-            # PRIORITY 1: Check bt_proxy_host first (HTTP Proxy Host in admin UI - required for load-balanced setups)
-            # This is the shared proxy that all nodes should use
-            bt_proxy = db.query(Setting).filter(Setting.key == "bt_proxy_host").first()
-            if bt_proxy and bt_proxy.value and bt_proxy.value.strip():
-                proxy_port_setting = db.query(Setting).filter(Setting.key == "bt_proxy_port").first()
-                proxy_port = proxy_port_setting.value if proxy_port_setting and proxy_port_setting.value else "8118"
-                logger.debug(f"Using bt_proxy_host (HTTP Proxy Host from admin UI): {bt_proxy.value}:{proxy_port}")
-                # httpx 0.28.1 uses 'proxy' (string) not 'proxies' (dict)
-                return f"http://{bt_proxy.value}:{proxy_port}"
-            
-            # PRIORITY 2: Check built-in HTTP proxy (for single-node setups)
-            proxy_enabled = db.query(Setting).filter(Setting.key == "proxy_enabled").first()
-            if proxy_enabled and proxy_enabled.value and proxy_enabled.value.lower() == "true":
-                proxy_listen_host_setting = db.query(Setting).filter(Setting.key == "proxy_listen_host").first()
-                proxy_listen_port_setting = db.query(Setting).filter(Setting.key == "proxy_listen_port").first()
-                proxy_listen_host = proxy_listen_host_setting.value if proxy_listen_host_setting and proxy_listen_host_setting.value else "127.0.0.1"
-                proxy_listen_port = proxy_listen_port_setting.value if proxy_listen_port_setting and proxy_listen_port_setting.value else "8118"
-                logger.debug(f"Using built-in HTTP proxy (fallback): {proxy_listen_host}:{proxy_listen_port}")
-                # httpx 0.28.1 uses 'proxy' (string) not 'proxies' (dict)
-                return f"http://{proxy_listen_host}:{proxy_listen_port}"
-            
-            # PRIORITY 3: Check if Tor is enabled - if so, the HTTP proxy should be running
-            tor_enabled = db.query(Setting).filter(Setting.key == "tor_enabled").first()
-            if tor_enabled and tor_enabled.value and tor_enabled.value.lower() == "true":
-                # If Tor is enabled, the HTTP proxy should be on default port
-                # Use the built-in HTTP proxy settings (it should be running)
-                proxy_listen_host_setting = db.query(Setting).filter(Setting.key == "proxy_listen_host").first()
-                proxy_listen_port_setting = db.query(Setting).filter(Setting.key == "proxy_listen_port").first()
-                proxy_listen_host = proxy_listen_host_setting.value if proxy_listen_host_setting and proxy_listen_host_setting.value else "127.0.0.1"
-                proxy_listen_port = proxy_listen_port_setting.value if proxy_listen_port_setting and proxy_listen_port_setting.value else "8118"
-                logger.info(f"Tor is enabled, using built-in HTTP proxy at {proxy_listen_host}:{proxy_listen_port}")
-                # httpx 0.28.1 uses 'proxy' (string) not 'proxies' (dict)
-                return f"http://{proxy_listen_host}:{proxy_listen_port}"
-        finally:
-            db.close()
+        from app.services import settings_store
+
+        # PRIORITY 1: Check bt_proxy_host first (HTTP Proxy Host in admin UI - required for load-balanced setups)
+        # This is the shared proxy that all nodes should use
+        bt_proxy = settings_store.get("bt_proxy_host", "")
+        if bt_proxy and bt_proxy.strip():
+            proxy_port = settings_store.get("bt_proxy_port", "") or "8118"
+            logger.debug(f"Using bt_proxy_host (HTTP Proxy Host from admin UI): {bt_proxy}:{proxy_port}")
+            # httpx 0.28.1 uses 'proxy' (string) not 'proxies' (dict)
+            return f"http://{bt_proxy}:{proxy_port}"
+
+        # PRIORITY 2: Check built-in HTTP proxy (for single-node setups)
+        if settings_store.get_bool("proxy_enabled"):
+            proxy_listen_host = settings_store.get("proxy_listen_host", "") or "127.0.0.1"
+            proxy_listen_port = settings_store.get("proxy_listen_port", "") or "8118"
+            logger.debug(f"Using built-in HTTP proxy (fallback): {proxy_listen_host}:{proxy_listen_port}")
+            # httpx 0.28.1 uses 'proxy' (string) not 'proxies' (dict)
+            return f"http://{proxy_listen_host}:{proxy_listen_port}"
+
+        # PRIORITY 3: Check if Tor is enabled - if so, the HTTP proxy should be running
+        if settings_store.get_bool("tor_enabled"):
+            # If Tor is enabled, the HTTP proxy should be on default port
+            # Use the built-in HTTP proxy settings (it should be running)
+            proxy_listen_host = settings_store.get("proxy_listen_host", "") or "127.0.0.1"
+            proxy_listen_port = settings_store.get("proxy_listen_port", "") or "8118"
+            logger.info(f"Tor is enabled, using built-in HTTP proxy at {proxy_listen_host}:{proxy_listen_port}")
+            # httpx 0.28.1 uses 'proxy' (string) not 'proxies' (dict)
+            return f"http://{proxy_listen_host}:{proxy_listen_port}"
     except Exception as e:
         logger.error(f"Error getting proxy config: {e}", exc_info=True)
-    
+
     return None
 
 

@@ -24,7 +24,7 @@ from typing import Optional, Tuple
 import httpx
 from sqlalchemy.orm import Session
 
-from app.models import Setting
+from app.services import settings_store
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ class MusicError(Exception):
 
 
 def get_settings(db: Session) -> dict:
-    rows = {s.key: s.value for s in db.query(Setting).all()}
+    rows = settings_store.all_settings()
     return {
         "enabled": (rows.get("music_enabled", "false") or "").lower() == "true",
         # Local ACE-Step server: no admin UI field — auto-seeded from POSTERCHANAI_ACESTEP_URL in

@@ -6,7 +6,8 @@ from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
 from app.database import get_db
-from app.models import User, Setting
+from app.models import User
+from app.services import settings_store
 from app.auth import get_current_user
 from app.services.inference_factory import get_inference_service, prepare_vram_for_llm
 from app.services.proxy_utils import require_proxy
@@ -18,8 +19,8 @@ router = APIRouter(prefix="/api/news", tags=["news"])
 
 def get_news_sources(db: Session) -> str:
     """Get news sources from settings"""
-    setting = db.query(Setting).filter(Setting.key == "news_sources").first()
-    return setting.value if setting and setting.value else ""
+    setting = settings_store.get("news_sources")
+    return setting if setting else ""
 
 
 def _parse_rss_feed(raw: bytes, base_url: str) -> tuple:

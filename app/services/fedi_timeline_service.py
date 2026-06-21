@@ -23,9 +23,9 @@ import httpx
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.models import Setting, TimelinePost, MatrixAvatarCache
+from app.models import TimelinePost, MatrixAvatarCache
 from app.database import CacheSessionLocal     # ephemeral /tmp media-cache DB (see app.database)
-from app.services import misskey_service, pleroma_service, matrix_service
+from app.services import misskey_service, pleroma_service, matrix_service, settings_store
 from app.services.matrix_service import render_matrix_html
 
 logger = logging.getLogger(__name__)
@@ -70,16 +70,12 @@ _BREAK_RE = re.compile(r"<\s*br\s*/?\s*>|</\s*p\s*>", re.IGNORECASE)
 # --- settings helpers -------------------------------------------------------
 
 def _get_setting(db: Session, key: str, default: str = "") -> str:
-    s = db.query(Setting).filter(Setting.key == key).first()
-    return s.value if s and s.value else default
+    v = settings_store.get(key, default)
+    return v if v not in (None, "") else default
 
 
 def _set_setting(db: Session, key: str, value: str) -> None:
-    s = db.query(Setting).filter(Setting.key == key).first()
-    if s:
-        s.value = value
-    else:
-        db.add(Setting(key=key, value=value))
+    settings_store.put(key, value)
 
 
 # --- normalization (raw platform object -> common shape) --------------------

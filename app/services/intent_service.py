@@ -27,14 +27,13 @@ class IntentService:
     def __init__(self, db: Session, user: Optional["User"] = None):
         self.db = db
         self.user = user
-        from app.models import Setting
+        from app.services import settings_store
         from app.services.chat_service import ChatService
 
         self.chat_service = ChatService(db, user=user)
 
         # Load confidence threshold from settings (kept for compatibility)
-        threshold_setting = db.query(Setting).filter(Setting.key == "intent_confidence_threshold").first()
-        self.confidence_threshold = float(threshold_setting.value if threshold_setting else "0.7")
+        self.confidence_threshold = settings_store.get_float("intent_confidence_threshold", 0.7)
 
     async def detect_intent(self, user_message: str, context: str = "") -> Optional[dict]:
         """

@@ -8,7 +8,7 @@ from pathlib import Path
 from datetime import datetime
 from urllib.parse import urlparse
 from sqlalchemy.orm import Session
-from app.models import Setting
+from app.services import settings_store
 
 logger = logging.getLogger(__name__)
 
@@ -151,10 +151,10 @@ class StorageService:
         """Save a base64 image. Proxies to storage server if configured, otherwise saves to local disk."""
         # Check if storage server is configured - proxy request if so (unless bypass_proxy is True)
         if not bypass_proxy:
-            storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
-            if storage_server_url and storage_server_url.value:
+            storage_server_url = settings_store.get("storage_server_url", "")
+            if storage_server_url:
                 # Validate URL has protocol before proxying
-                url = storage_server_url.value.strip()
+                url = storage_server_url.strip()
                 if url.startswith(('http://', 'https://')):
                     # Always proxy when storage_server_url is set - no local fallback
                     try:
@@ -241,10 +241,10 @@ class StorageService:
         """Save user avatar image and return the filename. Proxies to storage server if configured, otherwise saves to local disk."""
         # Check if storage server is configured - proxy request if so (unless bypass_proxy is True)
         if not bypass_proxy:
-            storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
-            if storage_server_url and storage_server_url.value:
+            storage_server_url = settings_store.get("storage_server_url", "")
+            if storage_server_url:
                 # Validate URL has protocol before proxying
-                url = storage_server_url.value.strip()
+                url = storage_server_url.strip()
                 if url.startswith(('http://', 'https://')):
                     # Always proxy when storage_server_url is set - no local fallback
                     try:
@@ -345,9 +345,9 @@ class StorageService:
         """Save a text file. Proxies to storage server if configured, otherwise saves to local disk."""
         # Check if storage server is configured - proxy request if so (unless bypass_proxy is True)
         if not bypass_proxy:
-            storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
-            if storage_server_url and storage_server_url.value:
-                url = storage_server_url.value.strip()
+            storage_server_url = settings_store.get("storage_server_url", "")
+            if storage_server_url:
+                url = storage_server_url.strip()
                 # Validate URL has protocol before proxying
                 if url.startswith(('http://', 'https://')):
                     # Always proxy when storage_server_url is set - no local fallback
@@ -559,9 +559,9 @@ class StorageService:
             return sanitized.strip()
 
         # Check if storage server is configured - proxy request if so
-        storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
-        if storage_server_url and storage_server_url.value:
-            url = storage_server_url.value.strip()
+        storage_server_url = settings_store.get("storage_server_url", "")
+        if storage_server_url:
+            url = storage_server_url.strip()
             if url.startswith(('http://', 'https://')):
                 try:
                     # Proxy the file request to storage server
@@ -668,10 +668,10 @@ class StorageService:
         """Save a mail attachment file to Mail Attachments folder and return the filename. Proxies to storage server if configured."""
         # Check if storage server is configured - proxy request if so (unless bypass_proxy is True)
         if not bypass_proxy:
-            storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
-            if storage_server_url and storage_server_url.value:
+            storage_server_url = settings_store.get("storage_server_url", "")
+            if storage_server_url:
                 # Validate URL has protocol before proxying
-                url = storage_server_url.value.strip()
+                url = storage_server_url.strip()
                 if url.startswith(('http://', 'https://')):
                     # Check if URL points to same machine - this is likely a misconfiguration
                     if _is_same_machine_url(url):
@@ -742,10 +742,10 @@ class StorageService:
         """Save a generated image to Generated Images folder. Proxies to storage server if configured."""
         # Check if storage server is configured - proxy request if so (unless bypass_proxy is True)
         if not bypass_proxy:
-            storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
-            if storage_server_url and storage_server_url.value:
+            storage_server_url = settings_store.get("storage_server_url", "")
+            if storage_server_url:
                 # Validate URL has protocol before proxying
-                url = storage_server_url.value.strip()
+                url = storage_server_url.strip()
                 if url.startswith(('http://', 'https://')):
                     try:
                         return self._proxy_save_generated_image(url, username, image_base64, prompt)

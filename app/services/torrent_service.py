@@ -9,7 +9,7 @@ from typing import Optional
 from bs4 import BeautifulSoup
 from dataclasses import dataclass
 from sqlalchemy.orm import Session
-from app.models import Setting
+from app.services import settings_store
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +39,9 @@ class TorrentResult:
 
 def get_torrent_base_url(db: Session) -> str:
     """Get the torrent site base URL from admin settings"""
-    setting = db.query(Setting).filter(Setting.key == "torrent_site_url").first()
-    if setting and setting.value:
-        return setting.value.rstrip("/")
+    setting = settings_store.get("torrent_site_url")
+    if setting:
+        return setting.rstrip("/")
     return DEFAULT_TORRENT_URL
 
 

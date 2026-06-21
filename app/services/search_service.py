@@ -7,7 +7,7 @@ from typing import Optional
 from urllib.parse import urlparse
 from sqlalchemy.orm import Session
 from bs4 import BeautifulSoup
-from app.models import Setting
+from app.services import settings_store
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ class SearchService:
         self._load_settings()
 
     def _load_settings(self):
-        settings = {s.key: s.value for s in self.db.query(Setting).all()}
+        settings = settings_store.all_settings()
         self.searxng_url = settings.get("searxng_url", "https://search.poster.place")
 
     async def web_search(

@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.routers.image_api import get_image_auth
-from app.services import effects_service, media_service
+from app.services import effects_service, media_service, settings_store
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/media", tags=["media"])
@@ -71,10 +71,9 @@ def _brand_videos(outputs: list, db: Session,
     fediverse poster who invoked the effect), it's a per-user card with their @handle + avatar;
     otherwise the STATIC "made with PosterChanAI" card. Gated by `effect_outro_enabled`;
     best-effort (failure leaves the file untouched)."""
-    from app.models import Setting
     try:
-        s = db.query(Setting).filter(Setting.key == "effect_outro_enabled").first()
-        if s and str(s.value).strip().lower() in ("false", "0", "no", "off"):
+        s = settings_store.get("effect_outro_enabled")
+        if s is not None and str(s).strip().lower() in ("false", "0", "no", "off"):
             return outputs
     except Exception:
         pass
@@ -484,16 +483,15 @@ async def fetch_ytdl(
 
     Response: {"ok": True, "filename", "mime", "data"(b64)} or {"ok": False, "error"}.
     """
-    from app.models import Setting
     from app.services.youtube_service import download_ytdl_bytes
     import os as _os
 
-    _cookies_s = db.query(Setting).filter(Setting.key == "ytdl_cookies_path").first()
-    _cookies_path = str(_cookies_s.value).strip() if _cookies_s and _cookies_s.value else None
+    _cookies_s = settings_store.get("ytdl_cookies_path")
+    _cookies_path = str(_cookies_s).strip() if _cookies_s else None
     if _cookies_path and not _os.path.isfile(_cookies_path):
         _cookies_path = None
-    _ssl_s = db.query(Setting).filter(Setting.key == "ytdl_no_ssl_verify").first()
-    _no_ssl = str(_ssl_s.value).strip().lower() in ("true", "1", "yes") if _ssl_s and _ssl_s.value else False
+    _ssl_s = settings_store.get("ytdl_no_ssl_verify")
+    _no_ssl = str(_ssl_s).strip().lower() in ("true", "1", "yes") if _ssl_s else False
 
     # 95 MB keeps files under Cloudflare's 100 MB request-body cap (the real
     # bottleneck for fediverse uploads); reject larger rather than fail downstream.

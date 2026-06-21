@@ -16,7 +16,8 @@ from typing import Optional
 import httpx
 from sqlalchemy.orm import Session
 
-from app.models import Setting, User
+from app.models import User
+from app.services import settings_store
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +30,7 @@ class FinanceError(Exception):
 
 
 def _base_url(db: Session) -> str:
-    s = db.query(Setting).filter(Setting.key == "finance_api_base").first()
-    return (s.value.strip() if s and s.value else "") or DEFAULT_BASE_URL
+    return (settings_store.get("finance_api_base") or "").strip() or DEFAULT_BASE_URL
 
 
 def get_config(db: Session, user: User) -> tuple[str, str]:

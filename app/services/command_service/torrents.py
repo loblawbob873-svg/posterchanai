@@ -5,16 +5,13 @@ from ._common import _format_bt_list_from_dicts, _nyaa_cache, _torrent_cache, fo
 class _TorrentsMixin:
     def _get_remote_bt_url(self):
         """Get remote torrent server URL if configured."""
-        from app.models import Setting
+        from app.services import settings_store
 
-        server_url = self.db.query(Setting).filter(Setting.key == "bt_server_url").first()
-        return server_url.value if server_url and server_url.value else None
+        return settings_store.get("bt_server_url") or None
 
     async def _remote_bt_request(self, endpoint: str, method: str = "GET", json_body: dict = None):
         """Make request to remote torrent server."""
         import httpx
-
-        from app.models import Setting
 
         server_url = self._get_remote_bt_url()
         if not server_url:
@@ -56,19 +53,17 @@ class _TorrentsMixin:
 
     def _get_bt_service(self):
         """Get built-in torrent service if enabled, or None. Returns (service, error_msg)."""
-        from app.models import Setting
+        from app.services import settings_store
 
         # Check for remote server first
         if self._get_remote_bt_url():
             return "remote", None  # Special marker for remote server
 
-        bt_enabled = self.db.query(Setting).filter(Setting.key == "bt_enabled").first()
-        if not bt_enabled or bt_enabled.value.lower() != "true":
+        if not settings_store.get_bool("bt_enabled"):
             return None, "Built-in torrent client is disabled. Enable it in Admin Settings."
 
         def get_setting(key: str, default: str = "") -> str:
-            s = self.db.query(Setting).filter(Setting.key == key).first()
-            return s.value if s and s.value else default
+            return settings_store.get(key) or default
 
         proxy_host = get_setting("bt_proxy_host")
         if not proxy_host:

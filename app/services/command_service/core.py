@@ -256,11 +256,11 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
         web UI / Telegram brand WITHOUT any user info (the static 'made with PosterChanAI' card) —
         only fediverse mentions carry the poster's avatar/@username (done in the media API path).
         Best-effort: any failure leaves the original file untouched."""
-        from app.models import Setting
+        from app.services import settings_store
         from app.services import media_service
         try:
-            s = self.db.query(Setting).filter(Setting.key == "effect_outro_enabled").first()
-            if s and str(s.value).strip().lower() in ("false", "0", "no", "off"):
+            s = settings_store.get("effect_outro_enabled")
+            if s is not None and str(s).strip().lower() in ("false", "0", "no", "off"):
                 return files
         except Exception:
             pass

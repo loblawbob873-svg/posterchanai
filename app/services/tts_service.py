@@ -5,7 +5,7 @@ import re
 import logging
 from typing import Optional
 from sqlalchemy.orm import Session
-from app.models import Setting
+from app.services import settings_store
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ class TTSService:
         self._load_settings()
 
     def _load_settings(self):
-        settings = {s.key: s.value for s in self.db.query(Setting).all()}
+        settings = settings_store.all_settings()
         self.default_voice = settings.get("tts_voice", "en-GB-SoniaNeural")
         self.rate = settings.get("tts_rate", "+5%")
         self.pitch = settings.get("tts_pitch", "+10Hz")

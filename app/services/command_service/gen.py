@@ -130,12 +130,11 @@ class _GenMixin:
         import base64 as _b64
         import asyncio as _asyncio
         from app.services import media_service
-        from app.models import Setting
+        from app.services import settings_store
 
         # Wrap the song in a branded video: a generic PosterChan background for the song's
         # duration, then the end-card "watermark" outro. music_watermark_enabled gates the outro.
-        wm = self.db.query(Setting).filter(Setting.key == "music_watermark_enabled").first()
-        add_outro = (wm.value if wm else "true").lower() != "false"
+        add_outro = str(settings_store.get("music_watermark_enabled", "true")).lower() != "false"
         try:
             # Background shows only PosterChan branding — NOT the prompt (title="").
             video_bytes = await _asyncio.to_thread(

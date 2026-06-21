@@ -16,7 +16,7 @@ from typing import Optional, Dict, Any
 from PIL import Image
 from sqlalchemy.orm import Session
 
-from app.models import Setting
+from app.services import settings_store
 
 # Configure logging first (before using logger)
 logger = logging.getLogger("diffusers_service")
@@ -260,7 +260,7 @@ class DiffusersService:
 
     def _load_settings(self):
         """Load settings from database"""
-        settings = {s.key: s.value for s in self.db.query(Setting).all()}
+        settings = settings_store.all_settings()
 
         # Idle timeout for automatic unloading (default 2 minutes)
         self._idle_timeout = int(settings.get("image_idle_timeout", str(DEFAULT_IDLE_TIMEOUT)))

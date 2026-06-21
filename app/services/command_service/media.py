@@ -23,9 +23,9 @@ class _MediaMixin:
         # browser. Resolved off the event loop since it does a blocking DNS lookup.
         # `screenshot_allowed_hosts` (admin setting) lets the operator's own domains
         # that resolve to a LAN IP via split-horizon DNS (e.g. poster.place) through.
-        from app.models import Setting
-        allow_setting = self.db.query(Setting).filter(Setting.key == "screenshot_allowed_hosts").first()
-        allowed_hosts = re.split(r"[\s,]+", allow_setting.value.strip()) if (allow_setting and allow_setting.value) else []
+        from app.services import settings_store
+        allow_value = settings_store.get("screenshot_allowed_hosts")
+        allowed_hosts = re.split(r"[\s,]+", allow_value.strip()) if allow_value else []
         if not await asyncio.to_thread(_url_is_safe_to_fetch, url, allowed_hosts):
             return {"type": "text", "content": f"🚫 Refusing to capture {url} — it resolves to a private or internal address."}
 

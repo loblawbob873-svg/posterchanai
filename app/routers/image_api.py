@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.auth import get_current_user_optional
-from app.models import Setting
+from app.services import settings_store
 from app.services.image_factory import generate_image_with_load_balancing
 # Lock moved to image_factory.py for fine-grained control (local only)
 
@@ -146,7 +146,7 @@ async def generate_image(
         else:
             logger.error(f"[IMAGE-API] Image generation failed (no result)")
             # Check if it's a load balancing issue
-            settings = {s.key: s.value for s in db.query(Setting).all()}
+            settings = settings_store.all_settings()
             server_urls = settings.get("chat_server_urls", "")
             vram_mode = settings.get("vram_mode", "shared")
 

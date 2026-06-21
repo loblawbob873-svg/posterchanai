@@ -13,8 +13,9 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.models import User, Setting, SocialReplyMap
+from app.models import User, SocialReplyMap
 from app.services import misskey_service, pleroma_service, matrix_service
+from app.services import settings_store
 from app.services.nostr import nostr_service
 from app.services.telegram_service import TelegramService
 
@@ -28,8 +29,7 @@ _BREAK_RE = re.compile(r"<\s*br\s*/?\s*>|</\s*p\s*>", re.IGNORECASE)
 # --- settings helpers -------------------------------------------------------
 
 def _get_setting(db: Session, key: str, default: str = "") -> str:
-    s = db.query(Setting).filter(Setting.key == key).first()
-    return s.value if s and s.value else default
+    return settings_store.get(key) or default
 
 
 def _build_telegram(db: Session) -> Optional[TelegramService]:

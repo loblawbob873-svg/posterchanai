@@ -935,7 +935,7 @@ class _CommsMixin:
             try:
                 from app.services.nostr import nostr_service, event as nostr_event, media as nostr_media
                 from app.routers.client import _publish_to_relay
-                from app.models import Setting
+                from app.services import settings_store
                 sk = nostr_service.decode_seckey(user.nostr_nsec)
                 body = text
                 if img_bytes:   # upload to the user's media host (Blossom/NIP-96) + append the URL
@@ -948,8 +948,7 @@ class _CommsMixin:
                     except Exception as e:
                         logger.warning(f"[post] Nostr image upload failed: {e}")
                 ev = nostr_event.build_event(sk, 1, body, tags=[])
-                prow = self.db.query(Setting).filter(Setting.key == "nostr_relay_port").first()
-                port = int(prow.value) if prow and prow.value else 3052
+                port = settings_store.get_int("nostr_relay_port", 3052)
                 ok, msg = await _publish_to_relay(port, ev)
                 results.append("✅ Nostr" if ok else f"❌ Nostr: {msg}")
             except Exception as e:

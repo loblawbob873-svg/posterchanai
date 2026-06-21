@@ -17,8 +17,9 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from app.models import User, Setting, UserSetting
+from app.models import User, UserSetting
 from app.services import misskey_service, pleroma_service, matrix_service
+from app.services import settings_store
 from app.services.social_notifications_service import _norm_pleroma, _norm_misskey
 
 logger = logging.getLogger(__name__)
@@ -74,8 +75,7 @@ def _format_notification(norm: dict, avatar_mxc: str | None = None) -> tuple[str
 # --- settings / state helpers -----------------------------------------------
 
 def _get_setting(db: Session, key: str, default: str = "") -> str:
-    s = db.query(Setting).filter(Setting.key == key).first()
-    return s.value if s and s.value else default
+    return settings_store.get(key) or default
 
 
 def _get_user_setting(db: Session, user_id: int, key: str, default: str = "") -> str:

@@ -65,7 +65,8 @@ _DEFAULT_TOOL_GUIDANCE = (
 )
 
 from app.database import get_db
-from app.models import Setting, User
+from app.models import User
+from app.services import settings_store
 from app.utils.auth_utils import query_api_key_with_retry, get_user_from_api_key
 from app.schemas import (
     ChatCompletionRequest,
@@ -365,12 +366,11 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
         db: Database session
         skip_load_balancer: If True, skip load balancing (used to prevent loops when called from another instance)
     """
-    from app.models import Setting
     from app.services.load_balancer import LoadBalancer, parse_server_urls
 
     # Check for load balancer first (unless explicitly skipped to prevent loops)
     # Load balancer ONLY uses what's configured in admin UI - round-robin between all configured servers
-    settings = {s.key: s.value for s in db.query(Setting).all()}
+    settings = settings_store.all_settings()
 
     # Tool/agentic requests use the configured agentic model (`llm_tools_model`) when the client
     # didn't ask for a specific real model — so opencode/aider get the coding model while plain
@@ -739,8 +739,8 @@ async def _handle_list_models(db: Session):
     backend = get_backend_type(db)
 
     # Use actual server context size; minimum 16000 so OpenClaw and other clients accept it
-    setting = db.query(Setting).filter(Setting.key == "ollama_num_ctx").first()
-    ctx = int(setting.value) if setting and setting.value.isdigit() else 4096
+    setting = settings_store.get("ollama_num_ctx")
+    ctx = int(setting) if setting and str(setting).isdigit() else 4096
     ctx = max(ctx, 16000)
 
     model_list = []

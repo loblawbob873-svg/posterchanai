@@ -12,7 +12,7 @@ from typing import Optional, Tuple
 from datetime import datetime
 from sqlalchemy.orm import Session
 
-from app.models import Setting
+from app.services import settings_store
 
 
 class EmailService:
@@ -22,7 +22,7 @@ class EmailService:
 
     def _load_settings(self):
         """Load email settings from database"""
-        settings = {s.key: s.value for s in self.db.query(Setting).all()}
+        settings = settings_store.all_settings()
 
         # SMTP settings
         self.smtp_enabled = settings.get("smtp_enabled", "false").lower() == "true"

@@ -649,7 +649,7 @@ async def download_video_and_save_to_storage(
     """
     from app.models import User
     from pathlib import Path
-    from app.models import Setting
+    from app.services import settings_store
     import tempfile
 
     # Check yt-dlp available
@@ -664,23 +664,18 @@ async def download_video_and_save_to_storage(
         return DownloadResult(success=False, error="User not found")
 
     # Check if storage proxy is configured
-    storage_server_setting = db.query(Setting).filter(Setting.key == "storage_server_url").first()
-    storage_server_url = storage_server_setting.value if storage_server_setting and storage_server_setting.value else None
+    storage_server_url = settings_store.get("storage_server_url", "") or None
     if storage_server_url and not storage_server_url.strip().startswith(("http://", "https://")):
         storage_server_url = None
 
     # Optional cookies file for YouTube 403 workaround (Netscape format from browser export)
-    cookies_setting = db.query(Setting).filter(Setting.key == "ytdl_cookies_path").first()
-    cookies_path = str(cookies_setting.value).strip() if cookies_setting and cookies_setting.value else None
+    _cookies = settings_store.get("ytdl_cookies_path", "")
+    cookies_path = str(_cookies).strip() if _cookies else None
     if cookies_path and not os.path.isfile(cookies_path):
         cookies_path = None
 
     # Skip SSL verification when proxy/firewall causes CERTIFICATE_VERIFY_FAILED / hostname mismatch
-    ssl_setting = db.query(Setting).filter(Setting.key == "ytdl_no_ssl_verify").first()
-    no_ssl_verify = (
-        str(ssl_setting.value).strip().lower() in ("true", "1", "yes")
-        if ssl_setting and ssl_setting.value else False
-    )
+    no_ssl_verify = settings_store.get_bool("ytdl_no_ssl_verify")
 
     # Download to temp directory first (run in thread - yt-dlp can take minutes)
     temp_dir = tempfile.mkdtemp(prefix='ytdl_video_')
@@ -720,9 +715,8 @@ async def download_video_and_save_to_storage(
                 return DownloadResult(success=False, error=f"Storage proxy upload failed: {e}")
         else:
             # Save to local storage
-            upload_path_setting = db.query(Setting).filter(Setting.key == "upload_path").first()
-            upload_path = upload_path_setting.value if upload_path_setting and upload_path_setting.value else "/var/lib/posterchanai"
-            
+            upload_path = settings_store.get("upload_path", "/var/lib/posterchanai")
+
             upload_base = Path(upload_path)
             if not upload_base.exists() or not upload_base.is_dir():
                 return DownloadResult(
@@ -763,7 +757,7 @@ async def download_mp3_and_save_to_storage(
     """
     from app.models import User
     from pathlib import Path
-    from app.models import Setting
+    from app.services import settings_store
     import tempfile
 
     if not check_ytdlp_available():
@@ -776,21 +770,16 @@ async def download_mp3_and_save_to_storage(
     if not user:
         return DownloadResult(success=False, error="User not found")
 
-    storage_server_setting = db.query(Setting).filter(Setting.key == "storage_server_url").first()
-    storage_server_url = storage_server_setting.value if storage_server_setting and storage_server_setting.value else None
+    storage_server_url = settings_store.get("storage_server_url", "") or None
     if storage_server_url and not storage_server_url.strip().startswith(("http://", "https://")):
         storage_server_url = None
 
-    cookies_setting = db.query(Setting).filter(Setting.key == "ytdl_cookies_path").first()
-    cookies_path = str(cookies_setting.value).strip() if cookies_setting and cookies_setting.value else None
+    _cookies = settings_store.get("ytdl_cookies_path", "")
+    cookies_path = str(_cookies).strip() if _cookies else None
     if cookies_path and not os.path.isfile(cookies_path):
         cookies_path = None
 
-    ssl_setting = db.query(Setting).filter(Setting.key == "ytdl_no_ssl_verify").first()
-    no_ssl_verify = (
-        str(ssl_setting.value).strip().lower() in ("true", "1", "yes")
-        if ssl_setting and ssl_setting.value else False
-    )
+    no_ssl_verify = settings_store.get_bool("ytdl_no_ssl_verify")
 
     temp_dir = tempfile.mkdtemp(prefix='ytdl_mp3_')
     try:
@@ -824,8 +813,7 @@ async def download_mp3_and_save_to_storage(
                 logger.error(f"[ytdl] Storage proxy upload error: {e}", exc_info=True)
                 return DownloadResult(success=False, error=f"Storage proxy upload failed: {e}")
         else:
-            upload_path_setting = db.query(Setting).filter(Setting.key == "upload_path").first()
-            upload_path = upload_path_setting.value if upload_path_setting and upload_path_setting.value else "/var/lib/posterchanai"
+            upload_path = settings_store.get("upload_path", "/var/lib/posterchanai")
             upload_base = Path(upload_path)
             if not upload_base.exists() or not upload_base.is_dir():
                 return DownloadResult(

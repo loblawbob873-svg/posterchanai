@@ -13,7 +13,8 @@ import httpx
 
 from app.database import get_db
 from app.auth import get_current_user
-from app.models import User, Setting
+from app.models import User
+from app.services import settings_store
 from app.services.torrent_service import scrape_torrents, search_torrents
 from app.services.nyaa_service import search_nyaa
 
@@ -70,12 +71,12 @@ async def forward_to_remote(
     json_body: dict = None
 ) -> dict:
     """Forward request to remote torrent server."""
-    server_url = db.query(Setting).filter(Setting.key == "bt_server_url").first()
-    if not server_url or not server_url.value:
+    server_url = settings_store.get("bt_server_url")
+    if not server_url:
         return None
 
     # Server-to-server requests don't need authentication
-    url = f"{server_url.value.rstrip('/')}/api/torrent{endpoint}"
+    url = f"{server_url.rstrip('/')}/api/torrent{endpoint}"
     headers = {
         "X-Posterchanai-Load-Balanced": "true"
     }
@@ -114,8 +115,8 @@ async def forward_to_remote(
 
 def get_remote_server_url(db: Session) -> Optional[str]:
     """Check if remote server URL is configured."""
-    server_url = db.query(Setting).filter(Setting.key == "bt_server_url").first()
-    return server_url.value if server_url and server_url.value else None
+    server_url = settings_store.get("bt_server_url")
+    return server_url if server_url else None
 
 
 class AddTorrentRequest(BaseModel):
@@ -130,13 +131,12 @@ class TorrentActionRequest(BaseModel):
 
 def get_bt_service(db: Session):
     """Get the local libtorrent service."""
-    bt_enabled = db.query(Setting).filter(Setting.key == "bt_enabled").first()
-    if not bt_enabled or bt_enabled.value.lower() != "true":
+    if not settings_store.get_bool("bt_enabled"):
         return None
 
     def get_setting(key: str, default: str = "") -> str:
-        s = db.query(Setting).filter(Setting.key == key).first()
-        return s.value if s and s.value else default
+        s = settings_store.get(key)
+        return s if s else default
 
     proxy_host = get_setting("bt_proxy_host")
     if not proxy_host:

@@ -25,7 +25,7 @@ from typing import Awaitable, Callable, Optional, TYPE_CHECKING
 
 from sqlalchemy.orm import Session
 
-from app.models import Setting
+from app.services import settings_store
 
 if TYPE_CHECKING:
     from app.models import User
@@ -50,8 +50,7 @@ _MAX_JOBS = 200  # keep the most recent finished jobs; prune older ones
 # ---------------------------------------------------------------------------
 
 def _get(db: Session, key: str, default: str = "") -> str:
-    s = db.query(Setting).filter(Setting.key == key).first()
-    return s.value if s and s.value else default
+    return settings_store.get(key) or default
 
 
 def is_enabled(db: Session) -> bool:

@@ -96,14 +96,14 @@ class _SearchMixin:
         """Internal file search function - handles storage proxy correctly."""
         from pathlib import Path
         from app.services.storage_service import get_storage_service
-        from app.models import Setting
+        from app.services import settings_store
         import httpx
 
         # Check if using remote storage
-        storage_setting = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
-        if storage_setting and storage_setting.value and storage_setting.value.startswith(('http://', 'https://')):
+        storage_value = settings_store.get("storage_server_url")
+        if storage_value and storage_value.startswith(('http://', 'https://')):
             # Use remote storage API with async httpx (same as files router)
-            url = storage_setting.value.strip()
+            url = storage_value.strip()
             try:
                 headers = {
                     "X-Posterchanai-Load-Balanced": "true"

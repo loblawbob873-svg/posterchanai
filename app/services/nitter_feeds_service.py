@@ -21,7 +21,8 @@ import httpx
 from lxml import etree, html as lxml_html
 from sqlalchemy.orm import Session
 
-from app.models import User, Setting, UserSetting
+from app.models import User, UserSetting
+from app.services import settings_store
 from app.services.proxy_utils import get_proxy_config
 from app.services.telegram_service import TelegramService
 
@@ -41,8 +42,7 @@ _MEDIA_PLACEHOLDER_TITLES = {"image", "video", "gif"}
 # --- settings helpers -------------------------------------------------------
 
 def _get_setting(db: Session, key: str, default: str = "") -> str:
-    s = db.query(Setting).filter(Setting.key == key).first()
-    return s.value if s and s.value else default
+    return settings_store.get(key) or default
 
 
 def _get_user_setting(db: Session, user_id: int, key: str, default: str = "") -> str:

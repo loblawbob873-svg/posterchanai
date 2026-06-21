@@ -10,7 +10,7 @@ from fastapi.responses import Response, StreamingResponse
 from starlette.requests import Request
 from typing import Union
 from sqlalchemy.orm import Session
-from app.models import Setting
+from app.services import settings_store
 
 logger = logging.getLogger(__name__)
 
@@ -64,12 +64,12 @@ async def proxy_storage_request(
     Returns:
         Response from remote server or raises HTTPException
     """
-    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
-    if not storage_server_url or not storage_server_url.value:
+    storage_server_url = settings_store.get("storage_server_url")
+    if not storage_server_url:
         raise HTTPException(status_code=500, detail="Storage server not configured")
-    
+
     # Validate that storage_server_url has a protocol
-    base_url = storage_server_url.value.strip()
+    base_url = storage_server_url.strip()
     if not base_url.startswith(('http://', 'https://')):
         logger.error(f"[STORAGE] Invalid storage_server_url (missing protocol): {base_url}")
         raise HTTPException(

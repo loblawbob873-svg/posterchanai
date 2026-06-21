@@ -26,7 +26,8 @@ import subprocess
 from pathlib import Path
 
 from app.database import SessionLocal
-from app.models import Bot, Setting
+from app.models import Bot
+from app.services import settings_store
 
 logger = logging.getLogger(__name__)
 
@@ -98,11 +99,7 @@ def _load_global_env():
     (USE_POSTERCHANAI is forced on — no ComfyUI/SD)."""
     env = os.environ.copy()
     wanted = set(_GLOBAL_ENV_MAP) | set(_SERVER_URL_KEYS)
-    db = SessionLocal()
-    try:
-        rows = {s.key: s.value for s in db.query(Setting).filter(Setting.key.in_(wanted)).all()}
-    finally:
-        db.close()
+    rows = {k: settings_store.get(k) for k in wanted if settings_store.exists(k)}
     for key, env_key in _GLOBAL_ENV_MAP.items():
         val = rows.get(key)
         if val is not None and val != "":
@@ -118,15 +115,9 @@ def _load_global_env():
         env["OPENAI_ENDPOINT"] = server + "/api/chat/completions"
     env["USE_POSTERCHANAI"] = "true"   # always use the unified server; never ComfyUI/SD
     # SQL_* base creds (per-bot SQL_DATABASE is added in _build_env when sql_database is set)
-    db = SessionLocal()
-    try:
-        sql = {s.key: s.value for s in db.query(Setting).filter(
-            Setting.key.in_(["bots_sql_user", "bots_sql_pass", "bots_sql_host"])).all()}
-    finally:
-        db.close()
-    env["_SQL_USER"] = sql.get("bots_sql_user", "")
-    env["_SQL_PASS"] = sql.get("bots_sql_pass", "")
-    env["_SQL_HOST"] = sql.get("bots_sql_host", "")
+    env["_SQL_USER"] = settings_store.get("bots_sql_user", "")
+    env["_SQL_PASS"] = settings_store.get("bots_sql_pass", "")
+    env["_SQL_HOST"] = settings_store.get("bots_sql_host", "")
     return env
 
 
@@ -478,44 +469,24 @@ _DAILY_COUNT_KEY = "autopost_daily_counts"
 
 def _load_json_dict(key: str) -> dict:
     """Read a name-keyed JSON dict Setting (returns {} if absent/corrupt)."""
-    db = SessionLocal()
-    try:
-        s = db.query(Setting).filter(Setting.key == key).first()
-        if s and s.value:
-            try:
-                data = json.loads(s.value)
-                return data if isinstance(data, dict) else {}
-            except (ValueError, TypeError):
-                return {}
-        return {}
-    finally:
-        db.close()
+    val = settings_store.get(key, "")
+    if val:
+        try:
+            data = json.loads(val)
+            return data if isinstance(data, dict) else {}
+        except (ValueError, TypeError):
+            return {}
+    return {}
 
 
 def _save_json_dict_entry(key: str, name: str, value):
     """Set data[name]=value in a name-keyed JSON dict Setting (read-modify-write)."""
-    db = SessionLocal()
     try:
-        s = db.query(Setting).filter(Setting.key == key).first()
-        data = {}
-        if s and s.value:
-            try:
-                data = json.loads(s.value)
-                if not isinstance(data, dict):
-                    data = {}
-            except (ValueError, TypeError):
-                data = {}
+        data = _load_json_dict(key)
         data[name] = value
-        if s:
-            s.value = json.dumps(data)
-        else:
-            db.add(Setting(key=key, value=json.dumps(data)))
-        db.commit()
+        settings_store.put(key, json.dumps(data))
     except Exception as e:
-        db.rollback()
         logger.error("[BOTS] could not persist %s for %s: %s", key, name, e)
-    finally:
-        db.close()
 
 
 def _load_last_runs() -> dict:
@@ -657,12 +628,7 @@ def _reconcile_scheduled(jobs, base_env):
 
 def _manager_enabled() -> bool:
     """Master kill-switch (bots_manager_enabled). Off = run nothing (safe-by-default)."""
-    db = SessionLocal()
-    try:
-        s = db.query(Setting).filter(Setting.key == "bots_manager_enabled").first()
-        return bool(s and str(s.value).strip().lower() in ("true", "1", "yes"))
-    finally:
-        db.close()
+    return settings_store.get_bool("bots_manager_enabled")
 
 
 def _stop_all_children():
@@ -739,18 +705,14 @@ def seed_from_export():
             return
 
         # global settings (only fill ones not already set)
-        existing = {s.key: s for s in db.query(Setting).filter(
-            Setting.key.in_(set(_SEED_GLOBALS.values()))).all()}
         for src, dst in _SEED_GLOBALS.items():
             if src not in data:
                 continue
             val = data[src]
             val = ("true" if val else "false") if isinstance(val, bool) else str(val)
-            if dst in existing:
-                if not existing[dst].value:
-                    existing[dst].value = val
-            else:
-                db.add(Setting(key=dst, value=val))
+            # Only fill if not already set (empty/absent counts as unset).
+            if not settings_store.get(dst, ""):
+                settings_store.put(dst, val)
 
         # bots
         count = 0

@@ -16,14 +16,13 @@ import logging
 
 from . import nostr_store as store
 from .nostr_store import user_storage_seckey
+from app.services import settings_store
 
 logger = logging.getLogger(__name__)
 
 
-def _port(db) -> int:
-    from app.models import Setting
-    row = db.query(Setting).filter(Setting.key == "nostr_relay_port").first()
-    return int(row.value) if row and row.value else 3052
+def _port(db=None) -> int:
+    return settings_store.get_int("nostr_relay_port", 3052)
 
 
 def enabled(db) -> bool:

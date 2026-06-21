@@ -18,8 +18,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app.database import SessionLocal
-from app.models import User, Conversation, Message, Setting
-from app.services import node_service
+from app.models import User, Conversation, Message
+from app.services import node_service, settings_store
 from app.services.chat_service import ChatService
 
 logger = logging.getLogger(__name__)
@@ -118,20 +118,13 @@ def get_logs_settings(db=None) -> dict:
     """Read scheduler settings (schedule + node selection) from the DB, with defaults."""
     settings = {"schedule": "1,12,18", "nodes": []}
 
-    close_db = db is None
-    if close_db:
-        db = SessionLocal()
-    try:
-        schedule_setting = db.query(Setting).filter(Setting.key == "logs_schedule").first()
-        if schedule_setting and schedule_setting.value:
-            settings["schedule"] = schedule_setting.value
+    schedule_value = settings_store.get("logs_schedule", "")
+    if schedule_value:
+        settings["schedule"] = schedule_value
 
-        nodes_setting = db.query(Setting).filter(Setting.key == "logs_nodes").first()
-        if nodes_setting and nodes_setting.value:
-            settings["nodes"] = [n.strip() for n in nodes_setting.value.split(",") if n.strip()]
-    finally:
-        if close_db:
-            db.close()
+    nodes_value = settings_store.get("logs_nodes", "")
+    if nodes_value:
+        settings["nodes"] = [n.strip() for n in nodes_value.split(",") if n.strip()]
 
     return settings
 
@@ -266,9 +259,9 @@ async def run_logs_for_admin(return_text: bool = False, notify=None,
         if deliver_telegram and admin.telegram_enabled and admin.telegram_chat_id:
             from app.services.telegram_service import telegram_service, configure_from_settings
             try:
-                token = db.query(Setting).filter(Setting.key == "telegram_bot_token").first()
-                if token and token.value:
-                    telegram_service.set_token(token.value)
+                token = settings_store.get("telegram_bot_token", "")
+                if token:
+                    telegram_service.set_token(token)
                 configure_from_settings(db)
                 await telegram_service.send_message(
                     admin.telegram_chat_id,
@@ -290,14 +283,9 @@ async def run_logs_for_admin(return_text: bool = False, notify=None,
 
 async def check_and_run_logs():
     """Scheduler entry point: run the report only if the scheduler is enabled."""
-    db = SessionLocal()
-    try:
-        logs_enabled = db.query(Setting).filter(Setting.key == "logs_scheduler_enabled").first()
-        if not logs_enabled or logs_enabled.value.lower() != "true":
-            logger.debug("Logs scheduler disabled")
-            return
-    finally:
-        db.close()
+    if not settings_store.get_bool("logs_scheduler_enabled"):
+        logger.debug("Logs scheduler disabled")
+        return
 
     await run_logs_for_admin()
 
@@ -310,15 +298,10 @@ def start_logs_scheduler():
         logger.warning("Logs scheduler already running")
         return
 
-    db = SessionLocal()
-    try:
-        enabled_setting = db.query(Setting).filter(Setting.key == "logs_scheduler_enabled").first()
-        if not enabled_setting or enabled_setting.value.lower() != "true":
-            logger.info("Logs scheduler disabled")
-            return
-        schedule = get_logs_settings(db)["schedule"]
-    finally:
-        db.close()
+    if not settings_store.get_bool("logs_scheduler_enabled"):
+        logger.info("Logs scheduler disabled")
+        return
+    schedule = get_logs_settings()["schedule"]
 
     logs_scheduler = AsyncIOScheduler()
     logs_scheduler.add_job(

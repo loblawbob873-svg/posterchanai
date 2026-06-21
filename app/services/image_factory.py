@@ -9,7 +9,7 @@ import logging
 from typing import Optional, Protocol, runtime_checkable, TYPE_CHECKING
 from sqlalchemy.orm import Session
 
-from app.models import Setting
+from app.services import settings_store
 from app.services.image_load_balancer import (
     ImageLoadBalancer,
     NoHealthyImageServersError,
@@ -66,7 +66,7 @@ def get_image_load_balancer(db: Session) -> Optional[ImageLoadBalancer]:
     Get the image load balancer if configured.
     Returns None if no remote servers are configured.
     """
-    settings = {s.key: s.value for s in db.query(Setting).all()}
+    settings = settings_store.all_settings()
     # Single unified load-balancing list (Site → Load Balancing) drives chat/image/music/video.
     server_urls = settings.get("chat_server_urls", "")
     servers = parse_image_server_urls(server_urls)
@@ -142,7 +142,7 @@ async def generate_image_with_load_balancing(
     requests so a forwarded request generates HERE instead of bouncing onward → no node→node loop).
     If vram_mode is 'llm_only', local generation is skipped (remote only). Returns base64 or None.
     """
-    settings = {s.key: s.value for s in db.query(Setting).all()}
+    settings = settings_store.all_settings()
     server_urls = settings.get("chat_server_urls", "")
     vram_mode = settings.get("vram_mode", "shared")
     timeout = int(settings.get("image_timeout", "300000")) / 1000

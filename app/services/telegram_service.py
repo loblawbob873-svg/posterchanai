@@ -563,10 +563,10 @@ def configure_from_settings(db) -> None:
     enabled one, else the cloud API. Call this anywhere the service is used so
     every Bot API call (webhook setup, sends, file ops) targets the same server.
     """
-    from app.models import Setting
-    local = db.query(Setting).filter(Setting.key == "telegram_local_api").first()
-    base = db.query(Setting).filter(Setting.key == "telegram_api_base").first()
-    if local and str(local.value).lower() in ("true", "1", "yes") and base and base.value:
-        telegram_service.set_api_base(base.value)
+    from app.services import settings_store
+    local = settings_store.get("telegram_local_api", "")
+    base = settings_store.get("telegram_api_base", "")
+    if str(local).lower() in ("true", "1", "yes") and base:
+        telegram_service.set_api_base(base)
     else:
         telegram_service.set_api_base(None)

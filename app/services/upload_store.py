@@ -14,6 +14,7 @@ from . import nostr_store as store
 from .nostr_store import user_storage_seckey
 from .nostr import bip340
 from . import blossom_service, blobcrypt
+from app.services import settings_store
 
 logger = logging.getLogger(__name__)
 
@@ -50,10 +51,8 @@ async def read_decrypted(db, user, sha256: str) -> bytes | None:
     return blobcrypt.decrypt(sk, ct)
 
 
-def store_port(db) -> int:
-    from app.models import Setting
-    row = db.query(Setting).filter(Setting.key == "nostr_relay_port").first()
-    return int(row.value) if row and row.value else 3052
+def store_port(db=None) -> int:
+    return settings_store.get_int("nostr_relay_port", 3052)
 
 
 async def delete_uploads(db, user, conv_id: int) -> int:

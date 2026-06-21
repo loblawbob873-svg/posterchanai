@@ -16,7 +16,8 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 from app.database import get_db, SessionLocal
-from app.models import User, Conversation, Message, Setting
+from app.models import User, Conversation, Message
+from app.services import settings_store
 from app.schemas import ConversationCreate, ConversationResponse, ConversationWithMessages, MessageResponse
 from app.auth import get_current_user, get_user_from_websocket, get_ai_user
 from app.services import chat_store, artifact_store   # Phase 2: relay chat mirror + encrypted artifacts
@@ -538,8 +539,8 @@ async def serve_file(
         pass
 
     # Check if storage server is configured - proxy request if so
-    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
-    if storage_server_url and storage_server_url.value:
+    storage_server_url = settings_store.get("storage_server_url")
+    if storage_server_url:
         # Proxy to storage server
         from app.services.storage_proxy import proxy_storage_request
         return await proxy_storage_request(
@@ -644,7 +645,7 @@ def get_news_sources(
     current_user: User = Depends(get_current_user)
 ):
     """Get configured news sources for the News modal"""
-    setting = db.query(Setting).filter(Setting.key == "news_sources").first()
+    setting = settings_store.get("news_sources")
 
     # Default news sources if not configured
     default_sources = """drudgereport.com|Drudge Report
@@ -653,7 +654,7 @@ msn.com|MSN
 cnn.com|CNN
 foxnews.com|Fox News"""
 
-    raw = setting.value if setting and setting.value else default_sources
+    raw = setting if setting else default_sources
 
     sources = []
     for line in raw.strip().split("\n"):
@@ -1422,8 +1423,8 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                         await manager.send_json(user.id, {"type": "stream_end"}, conn_id)
                     else:
                         # Check if intent detection is enabled
-                        intent_enabled = db.query(Setting).filter(Setting.key == "intent_detection_enabled").first()
-                        intent_enabled = (intent_enabled.value if intent_enabled else "true").lower() == "true"
+                        intent_enabled = settings_store.get("intent_detection_enabled")
+                        intent_enabled = (intent_enabled if intent_enabled is not None else "true").lower() == "true"
 
                         if intent_enabled:
                             # Try AI-powered intent detection first

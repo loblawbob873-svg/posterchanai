@@ -33,7 +33,8 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
-from app.models import Setting, BlossomBlob, User
+from app.models import BlossomBlob, User
+from app.services import settings_store
 from app.services.nostr import nostr_service, event as nostr_event
 
 logger = logging.getLogger(__name__)
@@ -51,7 +52,7 @@ _CLEANUP_INTERVAL_SEC = 600   # sweep expired blobs every 10 min (idle, low CPU)
 # --- config -----------------------------------------------------------------
 
 def _cfg(db: Session) -> dict:
-    rows = {s.key: s.value for s in db.query(Setting).filter(Setting.key.like("blossom_%")).all()}
+    rows = settings_store.prefixed("blossom_")
 
     def g(key, default=""):
         v = rows.get(key)
@@ -63,8 +64,8 @@ def _cfg(db: Session) -> dict:
         except (TypeError, ValueError):
             return default
 
-    storage_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
-    storage_url = (storage_url.value.strip() if storage_url and storage_url.value else "")
+    storage_url = settings_store.get("storage_server_url", "")
+    storage_url = storage_url.strip() if storage_url else ""
 
     backend = (g("blossom_storage_backend", "proxy") or "proxy").lower()
     # Proxy needs a storage server; without one, fall back to local so uploads still work.
@@ -84,8 +85,7 @@ def _cfg(db: Session) -> dict:
 
 
 def is_enabled(db: Session) -> bool:
-    row = db.query(Setting).filter(Setting.key == "blossom_enabled").first()
-    return bool(row and (row.value or "").lower() == "true")
+    return (settings_store.get("blossom_enabled", "") or "").lower() == "true"
 
 
 # --- in-RAM blob cache ------------------------------------------------------
@@ -182,8 +182,7 @@ _whitelist_cache = {"ts": 0.0, "val": "", "set": frozenset()}
 def _whitelist_pubkeys(db: Session) -> frozenset:
     """Hex pubkeys from the `blossom_whitelist` setting (npub/hex list) — lets the admin grant
     Blossom upload to anyone WITHOUT them creating an AI account. Cached briefly per raw value."""
-    row = db.query(Setting).filter(Setting.key == "blossom_whitelist").first()
-    val = (row.value if row and row.value else "")
+    val = settings_store.get("blossom_whitelist", "") or ""
     now = time.time()
     if val == _whitelist_cache["val"] and now - _whitelist_cache["ts"] < _OPERATOR_TTL:
         return _whitelist_cache["set"]
