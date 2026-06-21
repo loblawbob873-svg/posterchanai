@@ -238,18 +238,15 @@ async def startup():
         if os.environ.get("POSTERCHANAI_NOSTR_RELAY", "0") == "1":
             try:
                 _db = SessionLocal()
-                # Force-enable on every boot (declarative env directive — wins over an existing
-                # "false" on a reused volume); bind is seeded only if absent.
-                _row = _db.query(Setting).filter(Setting.key == "nostr_relay_enabled").first()
-                if _row:
-                    _row.value = "true"
-                else:
-                    _db.add(Setting(key="nostr_relay_enabled", value="true"))
-                if not _db.query(Setting).filter(Setting.key == "nostr_relay_bind").first():
-                    _db.add(Setting(key="nostr_relay_bind", value="0.0.0.0"))
+                # First-run defaults only (seed if absent) so the Admin UI stays authoritative after.
+                # The one-time container upgrade below handles reused volumes whose key is "false".
+                _rdefaults = {"nostr_relay_enabled": "true", "nostr_relay_bind": "0.0.0.0"}
+                for _k, _v in _rdefaults.items():
+                    if not _db.query(Setting).filter(Setting.key == _k).first():
+                        _db.add(Setting(key=_k, value=_v))
                 _db.commit()
                 _db.close()
-                logging.info("Nostr relay enabled from POSTERCHANAI_NOSTR_RELAY env")
+                logging.info("Nostr relay seeded from POSTERCHANAI_NOSTR_RELAY env")
             except Exception as e:
                 logging.error(f"Error seeding Nostr relay settings: {e}")
 
@@ -262,18 +259,71 @@ async def startup():
         if os.environ.get("POSTERCHANAI_BLOSSOM", "0") == "1":
             try:
                 _db = SessionLocal()
-                _row = _db.query(Setting).filter(Setting.key == "blossom_enabled").first()
-                if _row:
-                    _row.value = "true"
-                else:
-                    _db.add(Setting(key="blossom_enabled", value="true"))
-                if not _db.query(Setting).filter(Setting.key == "blossom_storage_path").first():
-                    _db.add(Setting(key="blossom_storage_path", value="/app/data/blossom"))
+                # First-run defaults only (seed if absent); Admin UI is the source of truth after.
+                _bdefaults = {"blossom_enabled": "true", "blossom_storage_path": "/app/data/blossom"}
+                for _k, _v in _bdefaults.items():
+                    if not _db.query(Setting).filter(Setting.key == _k).first():
+                        _db.add(Setting(key=_k, value=_v))
                 _db.commit()
                 _db.close()
-                logging.info("Blossom server enabled from POSTERCHANAI_BLOSSOM env")
+                logging.info("Blossom server seeded from POSTERCHANAI_BLOSSOM env")
             except Exception as e:
                 logging.error(f"Error seeding Blossom settings: {e}")
+
+        # One-time container turnkey upgrade. PC_ACCEL is set ONLY in the Docker images (never on
+        # bare metal), so this never touches server1/nas. Guarded by a marker so it runs EXACTLY
+        # ONCE per volume: it brings a reused/older volume up to the single-node turnkey defaults,
+        # then never runs again — so the Admin UI stays the source of truth in production. Opt out
+        # of the outbound stack pieces with POSTERCHANAI_{TOR,PROXY,BT}_ENABLED=false.
+        if os.environ.get("PC_ACCEL"):
+            try:
+                _db = SessionLocal()
+                _marker = _db.query(Setting).filter(Setting.key == "_turnkey_upgrade_v1").first()
+                if not _marker:
+                    def _get(k, d=""):
+                        r = _db.query(Setting).filter(Setting.key == k).first()
+                        return (r.value if r and r.value is not None else d)
+                    def _set(k, v):
+                        r = _db.query(Setting).filter(Setting.key == k).first()
+                        if r:
+                            r.value = v
+                        else:
+                            _db.add(Setting(key=k, value=v))
+                    def _set_if_blank(k, v):
+                        if not (_get(k).strip()):
+                            _set(k, v)
+                    def _on(name):  # default ON in containers; opt out with =false/0/no/off
+                        return os.environ.get(name, "true").strip().lower() not in ("0", "false", "no", "off")
+                    # Outbound Tor -> HTTP proxy -> torrent stack, pre-wired.
+                    if _on("POSTERCHANAI_TOR_ENABLED"):
+                        _set("tor_enabled", "true")
+                    if _on("POSTERCHANAI_PROXY_ENABLED"):
+                        _set("proxy_enabled", "true")
+                        _set_if_blank("proxy_socks_host", "127.0.0.1")
+                    if _on("POSTERCHANAI_BT_ENABLED"):
+                        _set("bt_enabled", "true")
+                        _set_if_blank("bt_proxy_host", "127.0.0.1")
+                    # Single-node Blossom: the storage proxy is multi-node only. With no storage
+                    # server set, "proxy" already behaves as local — make it explicit for the UI.
+                    if _get("blossom_storage_backend") == "proxy" and not _get("storage_server_url").strip():
+                        _set("blossom_storage_backend", "local")
+                    # Populate the upstream relay list so the UI shows it (blank still works via the
+                    # code default, but a fresh node should display the relays).
+                    if not _get("nostr_relay_upstream_relays").strip():
+                        from app.services.nostr import DEFAULT_RELAYS
+                        _set("nostr_relay_upstream_relays", "\n".join(DEFAULT_RELAYS))
+                    # Honour the profile's declared intent ONCE (so a reused nostr volume whose keys
+                    # are still "false" gets relay + Blossom on); admin owns them afterward.
+                    if os.environ.get("POSTERCHANAI_NOSTR_RELAY", "0") == "1":
+                        _set("nostr_relay_enabled", "true")
+                    if os.environ.get("POSTERCHANAI_BLOSSOM", "0") == "1":
+                        _set("blossom_enabled", "true")
+                    _set("_turnkey_upgrade_v1", "done")
+                    _db.commit()
+                    logging.info("Applied one-time container turnkey upgrade (proxy/tor/torrent, single-node blossom, default relays)")
+                _db.close()
+            except Exception as e:
+                logging.error(f"Error applying container turnkey upgrade: {e}")
 
         # Start health check if enabled (in background, don't block startup)
         try:

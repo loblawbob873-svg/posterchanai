@@ -195,6 +195,9 @@ def init_db():
     # Create default settings if not exist
     db = SessionLocal()
     try:
+        # Default upstream relays the WoT relay syncs from. Seeded explicitly (instead of leaving
+        # the field blank to fall back in code) so a fresh node SHOWS the list in Admin → Relay.
+        from app.services.nostr import DEFAULT_RELAYS as _DEFAULT_RELAYS
         default_settings = {
             # Built-in Nostr web-of-trust relay (own thread; serves NIP-01 at /relay on
             # nostr_relay_port). Default OFF; ships a starter WoT seed set so a fresh node has
@@ -207,9 +210,10 @@ def init_db():
             "blossom_public_url": "",
             "blossom_blob_ttl_days": "0",
             "blossom_max_upload_mb": "100",
-            # PosterChanAI uses the shared storage server, so blobs default to the proxy
-            # backend; falls back to local automatically when storage_server_url is unset.
-            "blossom_storage_backend": "proxy",
+            # Single-node default: blobs live LOCALLY on the data volume. The "proxy" backend is
+            # only for a multi-node setup with a shared storage server (set storage_server_url +
+            # switch this to "proxy" in Admin → Blossom for that).
+            "blossom_storage_backend": "local",
             "blossom_storage_path": "",
             # In-RAM read cache: serves hot blobs from memory to save disk I/O / SSD wear and
             # skip the cross-node storage-proxy fetch. 0 disables it.
@@ -227,6 +231,10 @@ def init_db():
             # Send-only: broadcast our events to upstream (outbox) but never pull/store theirs —
             # keeps a secondary node's local DB from mirroring upstream. Default off.
             "nostr_relay_send_only": "false",
+            # Upstream relays the WoT relay pulls/broadcasts (firehose + sync + outbox). Seeded with
+            # the built-in DEFAULT_RELAYS so the list is visible/editable in Admin → Relay; blank
+            # would still work (code falls back to the same list).
+            "nostr_relay_upstream_relays": "\n".join(_DEFAULT_RELAYS),
             "nostr_relay_port": "3052",
             "nostr_relay_prune_interval_sec": "86400",   # auto-prune NIGHTLY (not hourly)
             # The relay (and thus the app's datastore) runs on PostgreSQL — no SQLite. libpq DSN.
