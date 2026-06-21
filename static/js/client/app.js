@@ -3116,6 +3116,8 @@
       const cfx=e.target.closest('.ai-copy-fx'); if(cfx){ e.preventDefault(); copyEffectUrl(cfx.dataset.mid, cfx); return; }   // upload + copy the public Blossom URL
       const cpf=e.target.closest('.ai-copyfile'); if(cpf){ e.preventDefault(); copyFileUrl(cpf.dataset.url, cpf); return; }   // inline /api/files/ media → re-upload + copy public URL
       const rpf=e.target.closest('.ai-replyfile'); if(rpf){ e.preventDefault(); replyFileUrl(rpf.dataset.url, rpf); return; }
+      const ppf=e.target.closest('.ai-postfile'); if(ppf){ e.preventDefault(); postFileUrl(ppf.dataset.url, ppf); return; }     // share generated media → new Nostr post
+      const pfx=e.target.closest('.ai-post-fx'); if(pfx){ e.preventDefault(); postEffectMedia(pfx.dataset.mid, pfx); return; }   // share effect media → new Nostr post
       const mag=e.target.closest('.ai-magnet'); if(mag){ const ta=$('#ai-input'); if(ta){ ta.value='torrents add '+mag.dataset.magnet; aiSend(); } return; }
       const fco=e.target.closest('.fc-opt'); if(fco){ e.preventDefault(); const st=_ai.decks&&_ai.decks[fco.dataset.fc]; if(st && st.answered[st.idx]==null){ const i=+fco.dataset.opt; st.answered[st.idx]=i; if(i===(st.cards[st.idx]||{}).correct) st.score++; _fcRedraw(fco.dataset.fc); } return; }   // answer a card → ✓/✗ + explanation
       const fcn=e.target.closest('.fc-next'); if(fcn){ e.preventDefault(); const st=_ai.decks&&_ai.decks[fcn.dataset.fc]; if(st && st.idx<st.cards.length-1){ st.idx++; _fcRedraw(fcn.dataset.fc); } return; }
@@ -3288,8 +3290,9 @@
   function _aiFileActions(u){
     if(!/^\//.test(u)) return '';
     const copy=`<button class="btn btn-ghost small ai-copyfile" data-url="${enc(u)}">📋 Copy link</button>`;
-    const reply=_ai.replyTo?`<button class="btn btn-neon small ai-replyfile" data-url="${enc(u)}">↩ Send the Reply</button>`:'';
-    return `<div class="fx-reply-row" style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">${reply}${copy}</div>`;
+    const post=`<button class="btn btn-neon small ai-postfile" data-url="${enc(u)}">🚀 Post</button>`;
+    const reply=_ai.replyTo?`<button class="btn btn-cyan small ai-replyfile" data-url="${enc(u)}">↩ Send the Reply</button>`:'';
+    return `<div class="fx-reply-row" style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">${reply}${post}${copy}</div>`;
   }
   async function _fileToPublicUrl(u){
     _ai.pubUrl=_ai.pubUrl||{};
@@ -3310,13 +3313,31 @@
     try{ const pub=await _fileToPublicUrl(u); await publish(1, pub, eTags(to.id, to.pk)); toast('✓ reply posted'); if(btn){ btn.textContent='✓ replied'; } }
     catch(e){ toast('reply failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; btn.textContent='↩ Send the Reply'; } }
   }
+  // Share generated media as a NEW Nostr post: re-upload the (authed/local) artifact to public Blossom,
+  // then open the composer pre-filled with the public link (add a caption, then post).
+  async function postFileUrl(u, btn){
+    if(btn){ btn.disabled=true; btn.textContent='uploading…'; }
+    try{ const pub=await _fileToPublicUrl(u); compose({text: pub}); }
+    catch(e){ toast('failed: '+((e&&e.message)||e)); }
+    finally{ if(btn){ btn.disabled=false; btn.textContent='🚀 Post'; } }
+  }
+  async function postEffectMedia(mid, btn){
+    const m=_ai.fxMedia[mid]; if(!m){ toast('nothing to post'); return; }
+    if(btn){ btn.disabled=true; btn.textContent='uploading…'; }
+    try{
+      if(!m.url){ const bin=Uint8Array.from(atob(m.b64), c=>c.charCodeAt(0)); m.url=await uploadBlob(new File([bin], 'media.'+m.ext, { type:m.mime })); }
+      compose({text: m.url});
+    }catch(e){ toast('failed: '+((e&&e.message)||e)); }
+    finally{ if(btn){ btn.disabled=false; btn.textContent='🚀 Post'; } }
+  }
   function _fxReplyBtn(b64, mime, ext){
     if(!b64) return '';
     const mid='fx'+Date.now().toString(36)+Math.floor(Math.random()*1e4).toString(36);
     _ai.fxMedia[mid]={ b64, mime, ext };
     const copy=`<button class="btn btn-ghost small ai-copy-fx" data-mid="${mid}">📋 Copy link</button>`;
-    const reply=_ai.replyTo?`<button class="btn btn-neon small ai-reply-fx" data-mid="${mid}">↩ Send the Reply</button>`:'';
-    return `<div class="fx-reply-row" style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">${reply}${copy}</div>`;
+    const post=`<button class="btn btn-neon small ai-post-fx" data-mid="${mid}">🚀 Post</button>`;
+    const reply=_ai.replyTo?`<button class="btn btn-cyan small ai-reply-fx" data-mid="${mid}">↩ Send the Reply</button>`:'';
+    return `<div class="fx-reply-row" style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">${reply}${post}${copy}</div>`;
   }
   // Upload generated media to Blossom and copy its URL — paste the link into any reply yourself.
   async function copyEffectUrl(mid, btn){
