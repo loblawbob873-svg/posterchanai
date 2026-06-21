@@ -2756,7 +2756,7 @@
     const npub=NT().nip19.npubEncode(pk);
     feed.innerHTML=`<div class="prof"><div class="banner">${p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''}</div>
       <div class="phead"><img class="pav" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
-        <div style="flex:1"></div>${mine?`<button class="btn btn-cyan small" id="edit-prof">Edit</button> <button class="btn btn-ghost small" id="open-settings">⚙ Settings</button>`:`
+        <div style="flex:1"></div>${mine?`<button class="btn btn-cyan small" id="edit-prof">Edit</button> <button class="btn btn-ghost small" id="open-settings">⚙ Settings</button> <button class="btn btn-ghost small prof-menu-btn" id="prof-menu" title="more">☰</button>`:`
           <button class="btn btn-ghost small" id="zap-prof">⚡ Zap</button>
           <button class="btn btn-ghost small prof-menu-btn" id="prof-menu" title="more">☰</button>`}</div>
       <div class="pbody"><h2>${enc(p.name||p.display_name||'anon')}<span class="vchk" id="prof-vchk"></span></h2>
@@ -2795,10 +2795,8 @@
     $('#show-following').onclick=()=>peopleModal('Following', _prof.following||[]);
     $('#show-followers').onclick=()=>peopleModal('Followers', _prof.followers||[]);
     if(mine){ $('#edit-prof').onclick=()=>editProfile(p); $('#open-settings').onclick=()=>switchView('settings'); }
-    else {
-      const z=$('#zap-prof'); if(z)z.onclick=()=>doZap(null,pk);
-      const mn=$('#prof-menu'); if(mn)mn.onclick=()=>openProfileMenu(pk, mn);
-    }
+    else { const z=$('#zap-prof'); if(z)z.onclick=()=>doZap(null,pk); }
+    { const mn=$('#prof-menu'); if(mn)mn.onclick=()=>openProfileMenu(pk, mn); }   // ☰ on own + others' profiles
     // Background: following / followers / pinned — fetched in PARALLEL after the first paint and
     // patched in, so the profile opens instantly instead of waiting on (esp.) the 1000-event
     // followers query. Re-checks _prof.pk so a fast navigation away doesn't patch the wrong profile.
@@ -2826,7 +2824,8 @@
   }
   // the profile "☰ more" menu — Follow / Message / Mute / Block, kept off the header for a clean look
   async function openProfileMenu(pk, anchorBtn){
-    const items=[
+    const mine = pk===ME.pubkey;
+    const items = mine ? [['reports','🚩 Reports received']] : [
       ['follow', FOLLOWS.has(pk)?'➖ Unfollow':'➕ Follow'],
       ['message','✉️ Message'],
       ['mute', MUTED.has(pk)?'🔊 Unmute':'🔇 Mute'],
@@ -2851,26 +2850,50 @@
       if(a==='block') return doBlock(pk);
     });
   }
-  // NIP-56 reports a user has RECEIVED: kind-1984 events that p-tag them. The report type is the
-  // 3rd element of the matching p/e tag (nudity/spam/illegal/impersonation/profanity/malware/other);
-  // content is the optional reason. Open to any user.
+  // NIP-56 reports a user has RECEIVED (kind-1984 p-tagging them). Fetched from UPSTREAM relays via
+  // /client/reports (the built-in relay only stores WoT-authored events, so reports about an arbitrary
+  // user aren't local). Open to any user. Tap a report to see it in full (reason + reported post).
   async function showReports(pk){
     const who = (()=>{ const p=profOf(pk); return p.name||p.display_name||(NT().nip19.npubEncode(pk).slice(0,12)+'…'); })();
     modal(`<h3>🚩 Reports received — ${enc(who)}</h3><div id="rep-list" class="people-list"><div class="spinner"></div></div>`, async root=>{
-      let evs=[]; try{ evs=await Relay.query([{ kinds:[1984], '#p':[pk], limit:200 }]); }catch(_){}
-      evs.sort((a,b)=>b.created_at-a.created_at);
-      const miss=[...new Set(evs.map(e=>e.pubkey))].filter(a=>!Store.haveProfile(a)).slice(0,200);
+      let reports=[];
+      try{ const r=await fetch('/client/reports?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); if(r&&r.ok) reports=r.reports||[]; }catch(_){}
+      const h3=root.querySelector('h3'); if(h3) h3.textContent='🚩 Reports received — '+who+' ('+reports.length+')';
+      const miss=[...new Set(reports.map(x=>x.reporter))].filter(a=>a&&!Store.haveProfile(a)).slice(0,200);
       if(miss.length){ try{ (await Relay.query([{authors:miss,kinds:[0],limit:miss.length}])).forEach(e=>Store.saveProfile(e)); }catch(_){} }
       const list=$('#rep-list',root); if(!list) return;
-      list.innerHTML = evs.length ? evs.map(e=>{
-        const rp=Store.profile(e.pubkey)||{};
-        const rn=rp.name||rp.display_name||(NT().nip19.npubEncode(e.pubkey).slice(0,12)+'…');
-        const tag=e.tags.find(t=>t[0]==='p'&&t[1]===pk) || e.tags.find(t=>t[0]==='e');
-        const type=(tag&&tag[2]) || (e.tags.find(t=>t[0]==='report')||[])[1] || 'other';
-        const reason=(e.content||'').trim();
-        return `<div class="psearch" data-prof="${e.pubkey}"><img src="${enc(rp.picture||LOGO)}" onerror="this.src='${LOGO}'"><div class="pinfo"><b>${enc(rn)}</b><div class="muted small">🚩 ${enc(type)}${reason?' · '+enc(reason.slice(0,140)):''} · ${timeAgo(e.created_at)}</div></div></div>`;
+      list.innerHTML = reports.length ? reports.map((x,i)=>{
+        const rp=Store.profile(x.reporter)||{};
+        const rn=rp.name||rp.display_name||(NT().nip19.npubEncode(x.reporter).slice(0,12)+'…');
+        const reason=(x.reason||'').trim();
+        return `<div class="psearch rep-row" data-i="${i}"><img src="${enc(rp.picture||LOGO)}" onerror="this.src='${LOGO}'"><div class="pinfo"><b>${enc(rn)}</b><div class="muted small">🚩 ${enc(x.type||'other')}${reason?' · '+enc(reason.slice(0,120)):''} · ${timeAgo(x.created_at)}</div></div><span class="muted" style="align-self:center">›</span></div>`;
       }).join('') : '<div class="empty">No reports for this user. 🎉</div>';
-      $$('[data-prof]',list).forEach(el=> el.onclick=()=>{ closeModal(); renderProfileView(el.dataset.prof); });
+      $$('.rep-row',list).forEach(el=> el.onclick=()=> showReportDetail(reports[+el.dataset.i]));
+    });
+  }
+  // The full report: who filed it, the type, the full reason, and the reported post (fetched if we
+  // can find it).
+  async function showReportDetail(rep){
+    if(!rep) return;
+    const rp=Store.profile(rep.reporter)||{};
+    const rn=rp.name||rp.display_name||(NT().nip19.npubEncode(rep.reporter).slice(0,16)+'…');
+    const reason=(rep.reason||'').trim();
+    modal(`<h3>🚩 Report</h3>
+      <div class="report-detail">
+        <div class="rd-row"><span class="muted small">Reported by</span> <b class="lnk" data-prof="${rep.reporter}">${enc(rn)}</b></div>
+        <div class="rd-row"><span class="muted small">Type</span> <span class="rep-type">${enc(rep.type||'other')}</span> <span class="muted small">· ${timeAgo(rep.created_at)}</span></div>
+        ${reason?`<div class="rd-reason">${linkify(reason)}</div>`:'<div class="muted small">No reason given.</div>'}
+        ${rep.event?'<div id="rd-event"><div class="spinner"></div></div>':''}
+      </div>`, async root=>{
+      $$('[data-prof]',root).forEach(el=> el.onclick=()=>{ closeModal(); renderProfileView(el.dataset.prof); });
+      if(rep.event){
+        let ev=Store.get(rep.event);
+        if(!ev){ try{ (await Relay.query([{ids:[rep.event]}])).forEach(e=>Store.saveEvent(e)); ev=Store.get(rep.event); }catch(_){} }
+        const box=$('#rd-event',root); if(!box) return;
+        box.innerHTML = ev ? ('<div class="muted small" style="margin:8px 0 4px">Reported post:</div>'+noteHtml(ev))
+                           : `<div class="muted small">Reported post isn't available here (id ${enc(rep.event.slice(0,12))}…).</div>`;
+        if(ev) decorateProfiles();
+      }
     });
   }
   // admin: backfill this account's Nostr post history into the built-in relay (the "Sync a user's

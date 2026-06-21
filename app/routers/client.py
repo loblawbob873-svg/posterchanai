@@ -547,6 +547,41 @@ _nip05_cache: dict[str, tuple[float, dict]] = {}   # "domain|name" -> (expires, 
 _NIP05_TTL = 600.0
 
 
+@router.get("/reports")
+async def client_reports(pubkey: str):
+    """NIP-56 reports a user has RECEIVED (kind-1984 events that p-tag them). The built-in relay only
+    stores WoT-authored events, so reports about an arbitrary user live UPSTREAM — fetch them on demand
+    from the configured upstream relays (the client is relay-only and can't reach them itself). Returns
+    each report's reporter, type, reason, the reported event id (if any), and time."""
+    h = nostr_service.to_pubkey_hex(pubkey)
+    if not h:
+        return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
+    from app.services.nostr import relay as _relay
+    ups = (nostr_service.relay.normalize_relays(settings_store.get("nostr_relay_upstream_relays", ""))
+           or list(nostr_service.DEFAULT_RELAYS))[:8]
+    try:
+        evs = await _relay.query(ups, [{"kinds": [1984], "#p": [h], "limit": 300}])
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=502)
+    seen, out = set(), []
+    for e in (evs or []):
+        eid = e.get("id")
+        if not eid or eid in seen:
+            continue
+        seen.add(eid)
+        tags = e.get("tags", [])
+        ptag = next((t for t in tags if t and t[0] == "p" and len(t) > 1 and t[1] == h), None)
+        etag = next((t for t in tags if t and t[0] == "e" and len(t) > 1), None)
+        rtype = ((ptag[2] if ptag and len(ptag) > 2 else None)
+                 or (etag[2] if etag and len(etag) > 2 else None)
+                 or next((t[1] for t in tags if t and t[0] == "report" and len(t) > 1), None) or "other")
+        out.append({"id": eid, "reporter": e.get("pubkey"), "type": rtype,
+                    "reason": (e.get("content") or "")[:1000], "created_at": e.get("created_at", 0),
+                    "event": (etag[1] if etag else None)})
+    out.sort(key=lambda x: x["created_at"], reverse=True)
+    return {"ok": True, "reports": out}
+
+
 @router.get("/nip05")
 async def nip05_proxy(domain: str, name: str = "_"):
     """CORS proxy for NIP-05 verification. The blue check verifies a profile's claimed name@domain
