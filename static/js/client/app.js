@@ -2479,7 +2479,7 @@
   let _notifReady=false;
   function watchNotifications(){
     seenNotif.last = +(localStorage.getItem('pc_notif_seen')||0);
-    Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7,9735], limit:150 }], {
+    Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7,9735,3,1984], limit:150 }], {
       onEvent: ev => { if(ev.pubkey===ME.pubkey) return; if(Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey);
         if(ev.created_at>seenNotif.last){ bumpNotif(); if(_notifReady) notifPing(ev); }
         if(VIEW==='notifications') renderNotifications(); } },
@@ -2491,6 +2491,8 @@
     if(MUTED.has(fromPk)) return;   // no toast / OS notification for a muted author
     const p=profOf(fromPk); const who=p.name||p.display_name||'someone';
     const what = ev.kind===9735?`⚡ zapped you ${fmtSats(zapAmount(ev))} sats`
+      : ev.kind===3?'🫂 followed you'
+      : ev.kind===1984?'🚩 reported you'
       : ev.kind===7?`reacted ${ev.content==='+'||ev.content===''?'❤️':enc(ev.content)}`
       : ev.kind===6?'reposted you' : isReply(ev)?'replied to you' : 'mentioned you';
     notifToast(`🔔 ${who} ${what}`, p.picture);
@@ -2502,7 +2504,13 @@
     t.onclick=()=>{ switchView('notifications'); t.remove(); };
     $('#toast-root').appendChild(t); setTimeout(()=>t.remove(),5000);
   }
-  function notifList(){ return Store.all().filter(e=>[1,6,7,9735].includes(e.kind) && e.pubkey!==ME.pubkey && !MUTED.has(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey) && e.tags.some(t=>t[0]==='p'&&t[1]===ME.pubkey)).sort((a,b)=>b.created_at-a.created_at).slice(0,2000); }
+  function notifList(){
+    const evs=Store.all().filter(e=>[1,6,7,9735,3,1984].includes(e.kind) && e.pubkey!==ME.pubkey && !MUTED.has(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey) && e.tags.some(t=>t[0]==='p'&&t[1]===ME.pubkey)).sort((a,b)=>b.created_at-a.created_at);
+    // dedupe follows by author — a follower re-saving their contact list shouldn't show "followed you" repeatedly
+    const seen3=new Set(); const out=[];
+    for(const e of evs){ if(e.kind===3){ if(seen3.has(e.pubkey)) continue; seen3.add(e.pubkey); } out.push(e); }
+    return out.slice(0,2000);
+  }
   function bumpNotif(){ const n=notifList().filter(e=>e.created_at>seenNotif.last).length; $$('#notif-badge,#notif-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden');}); }
   let _notifShown = 25;   // paginate: render a page at a time, "Load more" reveals the next
   function renderNotifications(){
@@ -2516,7 +2524,7 @@
     seenNotif.last = Math.floor(Date.now()/1000); localStorage.setItem('pc_notif_seen', seenNotif.last);
     $$('#notif-badge,#notif-badge-m').forEach(b=>b.classList.add('hidden'));
     // row opens the post; avatar opens the sender's profile (stop the row handler firing too)
-    feed.querySelectorAll('.notif').forEach(n=> n.onclick=()=>openThread(n.dataset.open));
+    feed.querySelectorAll('.notif').forEach(n=> n.onclick=()=> n.dataset.prof ? renderProfileView(n.dataset.prof) : openThread(n.dataset.open));
     feed.querySelectorAll('.notif-av').forEach(a=> a.onclick=(ev)=>{ ev.stopPropagation(); renderProfileView(a.dataset.pk); });
     const more=$('#notif-more'); if(more) more.onclick=async ()=>{
       _notifShown+=25;
@@ -2543,12 +2551,15 @@
     const tgt = e.kind===1 ? e.id : (ref||e.id);
     let cls,ic,txt;
     if(e.kind===9735){cls='zap';ic='⚡';txt=`zapped you <b>${fmtSats(zapAmount(e))} sats</b>`;}
+    else if(e.kind===3){cls='follow';ic='🫂';txt='followed you';}
+    else if(e.kind===1984){cls='report';ic='🚩';const tg=e.tags.find(t=>t[0]==='p'&&t[1]===ME.pubkey)||e.tags.find(t=>t[0]==='e');const ty=(tg&&tg[2])||(e.tags.find(t=>t[0]==='report')||[])[1]||'other';txt=`reported you <b>${enc(ty)}</b>${e.content?': '+enc((e.content||'').slice(0,80)):''}`;}
     else if(e.kind===7){cls='like';ic='♥';txt=`reacted ${enc(e.content==='+'?'❤️':e.content)} to your post`;}
     else if(e.kind===6){cls='rt';ic='↻';txt='reposted your note';}
     else if(isReply(e)){cls='reply';ic='💬';txt='replied: '+enc((e.content||'').slice(0,80));}
     else {cls='mention';ic='@';txt='mentioned you: '+enc((e.content||'').slice(0,80));}
-    // avatar carries data-pk → opens the sender's profile; the rest of the row opens the post.
-    return `<div class="notif ${cls}" data-open="${tgt}"><span class="ic">${ic}</span><img class="notif-av" data-pk="${fromPk}" src="${enc(av)}" onerror="this.src='${LOGO}'"><div><b>${enc(p.name||p.display_name||'anon')}</b> ${txt}<div class="muted small">${timeAgo(e.created_at)}</div></div></div>`;
+    // follows/reports have no thread → the row opens the sender's profile (data-prof); others open the post.
+    const isProf = e.kind===3||e.kind===1984;
+    return `<div class="notif ${cls}" ${isProf?`data-prof="${fromPk}"`:`data-open="${tgt}"`}><span class="ic">${ic}</span><img class="notif-av" data-pk="${fromPk}" src="${enc(av)}" onerror="this.src='${LOGO}'"><div><b>${enc(p.name||p.display_name||'anon')}</b> ${txt}<div class="muted small">${timeAgo(e.created_at)}</div></div></div>`;
   }
 
   // ---------- DMs: NIP-17 gift-wrapped (modern, local-key) + NIP-04 (legacy, read-compat) ----------
@@ -2571,7 +2582,7 @@
     // live sub for legacy DMs (since now is fine — kind-4 timestamps are real)
     const since=Math.floor(Date.now()/1000)-60;
     Relay.subscribe([{ kinds:[4], '#p':[ME.pubkey], since }, { kinds:[4], authors:[ME.pubkey], since }], {
-      onEvent: ev => { Store.saveEvent(ev); if(ingestDM(ev) && ev.pubkey!==ME.pubkey && !MUTED.has(ev.pubkey)){ _dmUnread++; bumpDm(); _dmNotify(); } if(VIEW==='messages') renderMessages(); }
+      onEvent: ev => { Store.saveEvent(ev); if(ingestDM(ev) && ev.pubkey!==ME.pubkey && !MUTED.has(ev.pubkey)){ _dmUnread++; bumpDm(); _dmNotify(ev.pubkey); } if(VIEW==='messages') renderMessages(); }
     });
     // NIP-17 gift wraps carry RANDOMIZED past timestamps, so a `since` filter would drop them —
     // subscribe with no `since` and let Store dedup skip the ones we've already unwrapped.
@@ -2592,7 +2603,7 @@
     if(!dmPeers.has(peer)) dmPeers.set(peer, []);
     const arr=dmPeers.get(peer); if(arr.find(m=>m.id===ev.id)) return false;
     arr.push({ id:ev.id, mine, text:rumor.content, t:rumor.created_at, nip17:true }); arr.sort((a,b)=>a.t-b.t);
-    if(live && !mine && !MUTED.has(peer)){ _dmUnread++; bumpDm(); _dmNotify(); }
+    if(live && !mine && !MUTED.has(peer)){ _dmUnread++; bumpDm(); _dmNotify(peer); }
     if(VIEW==='messages'){ if(dmActive===peer) renderDmThread(peer); else renderMessages(); }
     return true;
   }
@@ -2611,7 +2622,11 @@
   function bumpDm(){ $$('#dm-badge,#dm-badge-m').forEach(b=>{ if(_dmUnread){ b.textContent=_dmUnread>99?'99+':_dmUnread; b.classList.remove('hidden'); } else b.classList.add('hidden'); }); }
   function recountDmUnread(){ const seen=ClientSettings.get('dmSeen',0); let n=0;
     for(const [pk,arr] of dmPeers){ if(MUTED.has(pk)) continue; for(const m of arr){ if(!m.mine && (m.t||0)>seen) n++; } } _dmUnread=n; bumpDm(); }
-  function _dmNotify(){ try{ if(window.Notification && Notification.permission==='granted') new Notification('✉ New message', {body:'You have a new direct message', tag:'pc-dm'}); }catch(_){} }
+  function _dmNotify(fromPk){
+    const p=fromPk?profOf(fromPk):{}; const who=p.name||p.display_name||'someone';
+    notifToast(`✉ ${who} sent you a message`, p.picture);   // in-app toast (no OS permission needed)
+    try{ if(window.Notification && Notification.permission==='granted') new Notification('✉ New message', {body:`${who} sent you a DM`, tag:'pc-dm', icon:p.picture||LOGO}); }catch(_){}
+  }
   // Index DMs WITHOUT decrypting (decryption is CPU-heavy ECDH+AES in the worker; decrypting all
   // 200 on load jams the worker and stalls timeline verification). Decrypt lazily on view.
   function ingestDM(ev){
