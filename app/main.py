@@ -326,6 +326,12 @@ async def startup():
                 start_reminder_scheduler()
             except Exception as e:
                 logging.error(f"Error starting reminder scheduler: {e}", exc_info=True)
+            try:
+                # 4chan catalog warm-refresh (15 min, only boards a user viewed → kind-30078 cache)
+                from app.routers.fourchan import start_catalog_refresh
+                start_catalog_refresh()
+            except Exception as e:
+                logging.error(f"Error starting 4chan refresh scheduler: {e}", exc_info=True)
 
             try:
                 # Resolve/mint the datastore operator key into the keyfile BEFORE the relay starts,
@@ -543,6 +549,11 @@ async def shutdown():
         try:
             from app.services.reminder_service import stop_reminder_scheduler
             stop_reminder_scheduler()
+        except Exception:
+            pass
+        try:
+            from app.routers.fourchan import stop_catalog_refresh
+            stop_catalog_refresh()
         except Exception:
             pass
 

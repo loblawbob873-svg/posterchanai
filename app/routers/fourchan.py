@@ -29,6 +29,104 @@ ALLOWED_BOARDS = ("g", "pol", "h", "a")
 # Allowed image hosts for proxy (avoid hotlink/referrer blocking)
 ALLOWED_IMAGE_HOSTS = ("i.4cdn.org", "is2.4channel.org")
 
+# --- per-board catalog cache as a kind-30078 relay event (operator-signed, replaceable) ----------
+# A viewed board's catalog is cached at d=pcai:4chan:catalog:<board> — a real Nostr event in the
+# relay, so it's shared + persistent for EVERYONE (one warm copy per board, not per user/session).
+# A cache MISS fetches live; a 15-min timer keeps it fresh, but ONLY for boards someone actually
+# viewed within the last hour — boards nobody opens are never fetched.
+import time as _time
+from app.services import settings_store as _ss
+from app.services import nostr_store as _store
+
+_CATALOG_TTL = 900       # serve the cached event if younger than this (15 min)
+_VIEW_WINDOW = 3600      # the warm-refresh timer only re-fetches boards viewed within the last hour
+_last_viewed: dict = {}  # board -> monotonic ts of the last view (per-node, ephemeral)
+_scheduler = None
+
+
+def _op_sk():
+    """Operator seckey from the keyfile (no DB needed) — None until the operator key exists."""
+    try:
+        return _ss._operator_seckey(None)
+    except Exception:
+        return None
+
+
+async def _cache_read(board: str):
+    sk = _op_sk()
+    if not sk:
+        return None
+    try:
+        doc = await _store.get_doc(_ss.get_int("nostr_relay_port", 3052),
+                                   f"pcai:4chan:catalog:{board}", seckey=sk)
+        return doc if isinstance(doc, dict) and "threads" in doc else None
+    except Exception:
+        return None
+
+
+async def _cache_write(board: str, threads: list):
+    sk = _op_sk()
+    if not sk:
+        return
+    try:
+        await _store.put_doc(_ss.get_int("nostr_relay_port", 3052), sk,
+                             f"pcai:4chan:catalog:{board}", {"threads": threads, "ts": _time.time()})
+    except Exception as e:
+        logger.debug("[4chan] cache write %s failed: %s", board, e)
+
+
+async def _fetch_catalog_live(board: str) -> list:
+    """Fetch + parse the live 4chan catalog (proxy-first, direct fallback). Raises on failure."""
+    url = f"https://a.4cdn.org/{board}/catalog.json"
+    headers = {"User-Agent": CHROME_UA, "Accept": "application/json"}
+    async with httpx.AsyncClient(timeout=15.0, transport=afallback_transport()) as client:
+        resp = await client.get(url, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+    threads = []
+    for page_obj in data:
+        for t in page_obj.get("threads", []):
+            threads.append(_build_thread(t, board))
+    threads.sort(key=lambda x: x["time_created"], reverse=True)
+    return threads
+
+
+async def refresh_warm_boards():
+    """15-min timer tick: re-fetch + re-cache only the boards a user viewed within _VIEW_WINDOW."""
+    now = _time.monotonic()
+    for b in [b for b, ts in list(_last_viewed.items()) if now - ts < _VIEW_WINDOW]:
+        try:
+            await _cache_write(b, await _fetch_catalog_live(b))
+            logger.debug("[4chan] warm-refreshed /%s/ catalog", b)
+        except Exception as e:
+            logger.debug("[4chan] warm refresh /%s/ failed: %s", b, e)
+
+
+def start_catalog_refresh():
+    """Start the 15-min warm-refresh timer (idempotent). Wired into the port-3051 startup guard."""
+    global _scheduler
+    if _scheduler is not None:
+        return
+    try:
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+        _scheduler = AsyncIOScheduler()
+        _scheduler.add_job(refresh_warm_boards, "interval", minutes=15,
+                           id="fourchan_warm", max_instances=1, coalesce=True)
+        _scheduler.start()
+        logger.info("[4chan] catalog warm-refresh scheduler started (15 min, viewed boards only)")
+    except Exception as e:
+        logger.warning("[4chan] could not start refresh scheduler: %s", e)
+
+
+def stop_catalog_refresh():
+    global _scheduler
+    if _scheduler is not None:
+        try:
+            _scheduler.shutdown(wait=False)
+        except Exception:
+            pass
+        _scheduler = None
+
 
 def _strip_html(html: str) -> str:
     if not html:
@@ -85,35 +183,32 @@ def _build_thread(thread: dict, board: str) -> dict:
 async def get_catalog(
     board: str = Query(..., description="Board code (e.g. g, pol)"),
 ):
-    """Fetch 4chan catalog for a board. Returns threads with thumb, title, link."""
+    """4chan catalog for a board — served from the kind-30078 relay cache when fresh (shared across
+    ALL users), else fetched live + cached. Viewing a board marks it 'warm' so the 15-min timer keeps
+    it fresh; if a live fetch fails we fall back to the (stale) cached copy."""
     board = (board or "g").strip().lower()
     if board not in ALLOWED_BOARDS:
         return {"error": f"Board not allowed. Use one of: {', '.join(ALLOWED_BOARDS)}"}
+    _last_viewed[board] = _time.monotonic()   # mark viewed → warm-refresh timer keeps this board fresh
 
-    url = f"https://a.4cdn.org/{board}/catalog.json"
-    headers = {"User-Agent": CHROME_UA, "Accept": "application/json"}
-    client_kw = {"timeout": 15.0, "transport": afallback_transport()}   # proxy-first, direct fallback
+    cached = await _cache_read(board)
+    if cached and (_time.time() - float(cached.get("ts", 0)) < _CATALOG_TTL):
+        return {"board": board, "threads": cached["threads"], "cached": True}
 
     try:
-        async with httpx.AsyncClient(**client_kw) as client:
-            resp = await client.get(url, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
+        threads = await _fetch_catalog_live(board)
     except httpx.HTTPStatusError as e:
         logger.warning("4chan catalog HTTP error: %s", e)
+        if cached:
+            return {"board": board, "threads": cached["threads"], "cached": True, "stale": True}
         return {"error": f"4chan returned {e.response.status_code}"}
     except Exception as e:
         logger.warning("4chan catalog fetch error: %s", e)
+        if cached:
+            return {"board": board, "threads": cached["threads"], "cached": True, "stale": True}
         return {"error": str(e)}
 
-    threads = []
-    for page_obj in data:
-        for t in page_obj.get("threads", []):
-            threads.append(_build_thread(t, board))
-
-    # Newest first: sort by creation date (OP post time)
-    threads.sort(key=lambda x: x["time_created"], reverse=True)
-
+    await _cache_write(board, threads)
     return {"board": board, "threads": threads}
 
 
