@@ -511,15 +511,15 @@ async def _cb_yt(update, db, chat_id, data, callback_query, callback_query_id):
 
             if action == "mp3":
                 await telegram_service.send_message(chat_id, "⏳ Downloading MP3, please wait...")
-                from app.models import Setting as _Setting
-                _cookies_s = db.query(_Setting).filter(_Setting.key == "ytdl_cookies_path").first()
-                _cookies_path = str(_cookies_s.value).strip() if _cookies_s and _cookies_s.value else None
+                from app.services import settings_store
+                _cookies_v = settings_store.get("ytdl_cookies_path")
+                _cookies_path = str(_cookies_v).strip() if _cookies_v else None
                 if _cookies_path and not _os.path.isfile(_cookies_path):
                     _cookies_path = None
-                _ssl_s = db.query(_Setting).filter(_Setting.key == "ytdl_no_ssl_verify").first()
+                _ssl_v = settings_store.get("ytdl_no_ssl_verify")
                 _no_ssl = (
-                    str(_ssl_s.value).strip().lower() in ("true", "1", "yes")
-                    if _ssl_s and _ssl_s.value else False
+                    str(_ssl_v).strip().lower() in ("true", "1", "yes")
+                    if _ssl_v else False
                 )
                 temp_dir = tempfile.mkdtemp(prefix="tg_ytdl_")
                 try:
@@ -559,15 +559,15 @@ async def _cb_yt(update, db, chat_id, data, callback_query, callback_query_id):
 
                 temp_dir = _tempfile.mkdtemp(prefix="tg_ytdlvideo_")
                 try:
-                    from app.models import Setting as _Setting
-                    _cookies_s = db.query(_Setting).filter(_Setting.key == "ytdl_cookies_path").first()
-                    _cookies_path = str(_cookies_s.value).strip() if _cookies_s and _cookies_s.value else None
+                    from app.services import settings_store
+                    _cookies_v = settings_store.get("ytdl_cookies_path")
+                    _cookies_path = str(_cookies_v).strip() if _cookies_v else None
                     if _cookies_path and not _os.path.isfile(_cookies_path):
                         _cookies_path = None
-                    _ssl_s = db.query(_Setting).filter(_Setting.key == "ytdl_no_ssl_verify").first()
+                    _ssl_v = settings_store.get("ytdl_no_ssl_verify")
                     _no_ssl = (
-                        str(_ssl_s.value).strip().lower() in ("true", "1", "yes")
-                        if _ssl_s and _ssl_s.value else False
+                        str(_ssl_v).strip().lower() in ("true", "1", "yes")
+                        if _ssl_v else False
                     )
 
                     dl_result = await _asyncio.to_thread(

@@ -14,7 +14,8 @@ import os
 import time
 from app.database import get_db
 from app.auth import get_current_user, get_current_user_optional
-from app.models import User, Setting
+from app.models import User
+from app.services import settings_store
 from app.services.storage_service import StorageService, _sanitize_path_component, _validate_path_within_base, ascii_safe_header_filename
 from app.utils.image_validation import validate_and_clean_image_data, ensure_serializable_image
 from typing import Optional
@@ -29,13 +30,10 @@ router = APIRouter(prefix="/api/storage", tags=["storage"])
 files_router = APIRouter(prefix="/api/files", tags=["files"])
 
 
-def safe_query_setting(db: Session, key: str) -> Optional[Setting]:
-    """Safely query a Setting, handling IndexError and other database errors."""
+def safe_query_setting(db: Session, key: str) -> Optional[str]:
+    """Safely read a setting value, handling errors."""
     try:
-        return db.query(Setting).filter(Setting.key == key).first()
-    except (IndexError, AttributeError) as e:
-        logger.warning(f"Error querying setting '{key}': {e}")
-        return None
+        return settings_store.get(key)
     except Exception as e:
         logger.error(f"Unexpected error querying setting '{key}': {e}", exc_info=True)
         return None

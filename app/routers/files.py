@@ -24,7 +24,8 @@ import asyncio
 
 from app.database import get_db
 from app.auth import get_current_user, get_current_user_optional
-from app.models import User, Setting, SharedFile, ExternalStorage
+from app.models import User, SharedFile, ExternalStorage
+from app.services import settings_store
 from app.services.storage_service import get_storage_service, _sanitize_path_component, _validate_path_within_base, ascii_safe_header_filename
 from app.utils.image_validation import validate_and_clean_image_data, validate_and_filter_images, ensure_serializable_image
 
@@ -56,13 +57,20 @@ def _is_same_server(storage_url: str) -> bool:
         return False
 
 
-def safe_query_setting(db: Session, key: str) -> Optional[Setting]:
-    """Safely query a Setting, handling IndexError and other database errors."""
+class _SettingValue:
+    """Lightweight read-only stand-in exposing `.value`, so existing `row.value` callers are
+    unchanged now that settings come from settings_store instead of the ORM Setting row."""
+    __slots__ = ("value",)
+
+    def __init__(self, value):
+        self.value = value
+
+
+def safe_query_setting(db: Session, key: str) -> Optional["_SettingValue"]:
+    """Safely read a setting, returning a `.value`-bearing stand-in (or None if unset)."""
     try:
-        return db.query(Setting).filter(Setting.key == key).first()
-    except (IndexError, AttributeError) as e:
-        logger.warning(f"Error querying setting '{key}': {e}")
-        return None
+        v = settings_store.get(key)
+        return _SettingValue(v) if v is not None else None
     except Exception as e:
         logger.error(f"Unexpected error querying setting '{key}': {e}", exc_info=True)
         return None
@@ -213,7 +221,7 @@ async def search_files(
         raise HTTPException(status_code=401, detail="Not authenticated")
 
     # Check if storage server is configured - proxy search if so
-    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    storage_server_url = safe_query_setting(db, "storage_server_url")
     if storage_server_url and storage_server_url.value:
         url = storage_server_url.value.strip()
         if url.startswith(('http://', 'https://')):
@@ -2167,7 +2175,7 @@ async def create_share(
 
         # Check file exists - support both local and remote storage
         file_exists = False
-        storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+        storage_server_url = safe_query_setting(db, "storage_server_url")
         if storage_server_url and storage_server_url.value and storage_server_url.value.strip():
             # For remote storage, trust that the file exists if path validation passed
             # (remote listing is expensive, share creation will fail on access if file doesn't exist)

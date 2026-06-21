@@ -1,5 +1,6 @@
 """Auto-split from the original telegram.py monolith. No behavior change."""
-from ._common import Depends, HTTPException, Session, Setting, TelegramBotConfig, TelegramChatSetup, User, _configure_telegram, datetime, get_admin_user, get_current_user, get_db, logger, router, telegram_service, timedelta
+from ._common import Depends, HTTPException, Session, TelegramBotConfig, TelegramChatSetup, User, _configure_telegram, datetime, get_admin_user, get_current_user, get_db, logger, router, telegram_service, timedelta
+from app.services import settings_store
 
 _bot_username_cache = None
 async def _get_bot_username(db):
@@ -8,9 +9,9 @@ async def _get_bot_username(db):
     if _bot_username_cache:
         return _bot_username_cache
     if not getattr(telegram_service, "bot_token", None):
-        row = db.query(Setting).filter(Setting.key == "telegram_bot_token").first()
-        if row and row.value:
-            telegram_service.set_token(row.value)
+        tok = settings_store.get("telegram_bot_token")
+        if tok:
+            telegram_service.set_token(tok)
     try:
         r = await telegram_service.get_me()
         if r.get("ok"):
@@ -23,10 +24,10 @@ async def _get_bot_username(db):
 @router.get("/me")
 async def get_bot_info(db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
     """Get information about the configured bot."""
-    bot_token = db.query(Setting).filter(Setting.key == "telegram_bot_token").first()
-    if not bot_token or not bot_token.value:
+    bot_token = settings_store.get("telegram_bot_token")
+    if not bot_token:
         raise HTTPException(status_code=400, detail="Telegram bot not configured")
-    
+
     result = await telegram_service.get_me()
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result.get("error", "Failed to get bot info"))
@@ -69,20 +70,20 @@ async def test_local_api(
 ):
     """Ping the configured local Bot API server (getMe) to verify it's reachable
     and the bot is registered there — useful before enabling local mode."""
-    base = db.query(Setting).filter(Setting.key == "telegram_api_base").first()
-    token = db.query(Setting).filter(Setting.key == "telegram_bot_token").first()
-    if not base or not base.value:
+    base = settings_store.get("telegram_api_base")
+    token = settings_store.get("telegram_bot_token")
+    if not base:
         raise HTTPException(status_code=400, detail="Set and save the Bot API server URL first.")
-    if not token or not token.value:
+    if not token:
         raise HTTPException(status_code=400, detail="Telegram bot token not configured.")
 
     from app.services.telegram_service import TelegramService
-    svc = TelegramService(token.value)
-    svc.set_api_base(base.value)
+    svc = TelegramService(token)
+    svc.set_api_base(base)
     try:
         result = await svc.get_me()
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Could not reach {base.value}: {e}")
+        raise HTTPException(status_code=400, detail=f"Could not reach {base}: {e}")
     if not result.get("ok"):
         detail = result.get("error") or result.get("description") or \
             "Reached the server, but the bot isn't registered there yet (run the setup script; after a cloud logOut it can take ~10 min)."
@@ -107,18 +108,13 @@ async def configure_webhook(
     
     # First, save the token if provided
     if data.bot_token:
-        setting = db.query(Setting).filter(Setting.key == "telegram_bot_token").first()
-        if setting:
-            setting.value = data.bot_token
-        else:
-            db.add(Setting(key="telegram_bot_token", value=data.bot_token))
-        db.commit()
+        settings_store.put("telegram_bot_token", data.bot_token)
         telegram_service.set_token(data.bot_token)
     else:
-        bot_token = db.query(Setting).filter(Setting.key == "telegram_bot_token").first()
-        if not bot_token or not bot_token.value:
+        bot_token = settings_store.get("telegram_bot_token")
+        if not bot_token:
             raise HTTPException(status_code=400, detail="Telegram bot token not configured")
-        telegram_service.set_token(bot_token.value)
+        telegram_service.set_token(bot_token)
 
     # Register the webhook with the local Bot API server when enabled, else cloud.
     _configure_telegram(db)
@@ -241,11 +237,11 @@ async def broadcast_to_telegram_users(
     admin: User = Depends(get_admin_user)
 ):
     """Broadcast a message to all users with Telegram enabled."""
-    bot_token = db.query(Setting).filter(Setting.key == "telegram_bot_token").first()
-    if not bot_token or not bot_token.value:
+    bot_token = settings_store.get("telegram_bot_token")
+    if not bot_token:
         raise HTTPException(status_code=400, detail="Telegram bot not configured")
-    
-    telegram_service.set_token(bot_token.value)
+
+    telegram_service.set_token(bot_token)
     _configure_telegram(db)
 
     users = db.query(User).filter(

@@ -28,7 +28,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Setting, User
+from app.models import User
+from app.services import settings_store
 from app.services.nostr import nostr_service, event as nostr_event
 
 logger = logging.getLogger(__name__)
@@ -39,8 +40,8 @@ _STATIC = os.path.join(os.path.dirname(__file__), "..", "..", "static")
 
 
 def _setting(db: Session, key: str, default: str = "") -> str:
-    row = db.query(Setting).filter(Setting.key == key).first()
-    return (row.value if row and row.value else default)
+    v = settings_store.get(key)
+    return (v if v else default)
 
 
 def _relay_url(request: Request, db: Session) -> str:
@@ -752,14 +753,10 @@ async def claim_admin(data: ClaimAdmin, db: Session = Depends(get_db)):
     u.can_blossom = True
     # Seed the WoT with the new admin's own npub so a fresh install self-bootstraps its trust set
     # (operator + everyone they follow) instead of relying on any baked-in seed list. Idempotent.
-    seeds_row = db.query(Setting).filter(Setting.key == "nostr_relay_wot_seeds").first()
-    seeds_val = (seeds_row.value if seeds_row else "") or ""
+    seeds_val = settings_store.get("nostr_relay_wot_seeds", "") or ""
     if npub not in seeds_val:
         new_seeds = (seeds_val.rstrip() + "\n" + npub).strip() if seeds_val.strip() else npub
-        if seeds_row:
-            seeds_row.value = new_seeds
-        else:
-            db.add(Setting(key="nostr_relay_wot_seeds", value=new_seeds))
+        settings_store.put("nostr_relay_wot_seeds", new_seeds)
     db.commit()
     logger.info("[client] first-run admin claimed by %s (%s)", u.username, npub[:16])
     try:
@@ -820,10 +817,10 @@ async def block_pubkey(data: BlockReq, db: Session = Depends(get_db)):
         if target in _operator_pubkeys(db):
             return JSONResponse({"ok": False, "error": "refusing to block an operator key"}, status_code=400)
 
-    row = db.query(Setting).filter(Setting.key == "nostr_relay_blocked_pubkeys").first()
+    blocked_val = settings_store.get("nostr_relay_blocked_pubkeys")
     current = []
-    if row and row.value:
-        for tok in row.value.replace(",", "\n").split():
+    if blocked_val:
+        for tok in blocked_val.replace(",", "\n").split():
             h = nostr_service.to_pubkey_hex(tok.strip())
             if h:
                 current.append(h)
@@ -840,11 +837,7 @@ async def block_pubkey(data: BlockReq, db: Session = Depends(get_db)):
         except Exception:
             out.append(h)
     value = "\n".join(out)
-    if row:
-        row.value = value
-    else:
-        db.add(Setting(key="nostr_relay_blocked_pubkeys", value=value))
-    db.commit()
+    settings_store.put("nostr_relay_blocked_pubkeys", value)
 
     try:
         from app.services.nostr_relay.thread import trigger_block_reload
@@ -864,10 +857,10 @@ class BlossomAccessReq(BaseModel):
 
 def _whitelist_hex(db: Session) -> set:
     """Current `blossom_whitelist` setting as a hex pubkey set."""
-    row = db.query(Setting).filter(Setting.key == "blossom_whitelist").first()
+    wl = settings_store.get("blossom_whitelist")
     out = set()
-    if row and row.value:
-        for tok in row.value.replace(",", "\n").split():
+    if wl:
+        for tok in wl.replace(",", "\n").split():
             h = nostr_service.to_pubkey_hex(tok.strip())
             if h:
                 out.add(h)
@@ -904,20 +897,9 @@ async def blossom_access(data: BlossomAccessReq, db: Session = Depends(get_db)):
         except Exception:
             out.append(h)
     value = "\n".join(out)
-    row = db.query(Setting).filter(Setting.key == "blossom_whitelist").first()
-    if row:
-        row.value = value
-    else:
-        db.add(Setting(key="blossom_whitelist", value=value))
-    db.commit()   # blossom_service re-reads the setting on its next (short-TTL) cache miss — no reload
-    # Persist past restart: with settings_backend=relay, the startup hydrate would otherwise revert
-    # this Setting to the relay's copy. Write the change through to the relay (no-op if backend off).
-    try:
-        from app.services import settings_store
-        if settings_store.enabled(db):
-            await settings_store.write_through(db, {"blossom_whitelist": value})
-    except Exception as e:
-        logger.warning("[client] blossom_whitelist write-through failed: %s", e)
+    # blossom_service re-reads the setting on its next (short-TTL) cache miss — no reload.
+    # settings_store.put persists locally + writes through to the relay (authoritative store).
+    settings_store.put("blossom_whitelist", value)
     return JSONResponse({"ok": True, "whitelisted": data.grant, "count": len(cur)})
 
 
@@ -1325,8 +1307,7 @@ async def claim_nip05(data: ClaimNip05, request: Request, db: Session = Depends(
     if not _verify_self_auth(data.auth, pk):
         return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
     from app.services.nostr_relay.thread import _parse_nip05
-    row = db.query(Setting).filter(Setting.key == "nostr_relay_nip05_names").first()
-    raw = row.value if row and row.value else ""
+    raw = settings_store.get("nostr_relay_nip05_names", "") or ""
     names, _ = _parse_nip05(raw, "")
     domain = _nip05_domain(request, db)
     # Already named (re-signup / retry) → return the existing one, don't duplicate.
@@ -1348,11 +1329,7 @@ async def claim_nip05(data: ClaimNip05, request: Request, db: Session = Depends(
         npub = pk
     new_line = f"{name} {npub}"
     value = (raw.rstrip() + "\n" + new_line) if raw.strip() else new_line
-    if row:
-        row.value = value
-    else:
-        db.add(Setting(key="nostr_relay_nip05_names", value=value))
-    db.commit()
+    settings_store.put("nostr_relay_nip05_names", value)
     try:
         from app.services.nostr_relay.thread import trigger_nip05_reload
         trigger_nip05_reload()

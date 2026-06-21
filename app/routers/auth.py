@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from app.database import get_db
 
 logger = logging.getLogger(__name__)
-from app.models import User, Setting, APIKey, VerificationToken
+from app.models import User, APIKey, VerificationToken
 from app.schemas import (
     UserLogin, UserResponse, Token, APIKeyCreate, APIKeyResponse, APIKeyListItem,
     UserSettingsUpdate, UserSettingsResponse
@@ -162,8 +162,8 @@ async def _notify_admins_ai_request(db: Session, requester: User, npub: str) -> 
         op_sk = nostr_service.decode_seckey(op.nostr_nsec)
     except Exception:
         return
-    prow = db.query(Setting).filter(Setting.key == "nostr_relay_port").first()
-    port = int(prow.value) if prow and prow.value else 3052
+    from app.services import settings_store
+    port = settings_store.get_int("nostr_relay_port", 3052)
     text = (f"🤖 AI access requested by {requester.username} ({npub}). "
             f"Approve from their profile ☰ menu or Admin → Users.")
     admins = db.query(User).filter(User.is_admin == True, User.nostr_npub.isnot(None)).all()  # noqa: E712
@@ -751,9 +751,10 @@ async def upload_avatar(
     content = await file.read()
 
     # Check if storage server is configured - proxy request if so
-    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
-    if storage_server_url and storage_server_url.value:
-        logger.debug(f"Proxying avatar upload to storage server: {storage_server_url.value}")
+    from app.services import settings_store
+    storage_server_url = settings_store.get("storage_server_url", "")
+    if storage_server_url:
+        logger.debug(f"Proxying avatar upload to storage server: {storage_server_url}")
         # Proxy to storage server - use the storage endpoint, not auth endpoint
         from app.services.storage_proxy import proxy_storage_request
         files = {
@@ -842,10 +843,11 @@ async def get_avatar(
     from app.services.storage_service import StorageService
     
     # Check if storage server is configured - proxy request if so
-    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
-    if storage_server_url and storage_server_url.value:
+    from app.services import settings_store
+    storage_server_url = settings_store.get("storage_server_url", "")
+    if storage_server_url:
         # Validate URL has protocol before proxying
-        url = storage_server_url.value.strip()
+        url = storage_server_url.strip()
         if url.startswith(('http://', 'https://')):
             logger.debug(f"Proxying avatar request for {username} to storage server: {url}")
             # Try to get avatar from storage server via auth API (same endpoint)

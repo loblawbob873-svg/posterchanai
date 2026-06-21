@@ -708,13 +708,11 @@ async def execute_matrix_command(
         urls = extract_download_urls(url_arg)
         if not urls:
             return {"result": "❌ Could not find a valid YouTube URL."}
-        from app.models import Setting as _Setting
-        _cookies_s = db.query(_Setting).filter(_Setting.key == "ytdl_cookies_path").first()
-        _cookies_path = str(_cookies_s.value).strip() if _cookies_s and _cookies_s.value else None
+        from app.services import settings_store
+        _cookies_path = settings_store.get("ytdl_cookies_path", "").strip() or None
         if _cookies_path and not _os.path.isfile(_cookies_path):
             _cookies_path = None
-        _ssl_s = db.query(_Setting).filter(_Setting.key == "ytdl_no_ssl_verify").first()
-        _no_ssl = str(_ssl_s.value).strip().lower() in ("true","1","yes") if _ssl_s and _ssl_s.value else False
+        _no_ssl = settings_store.get("ytdl_no_ssl_verify", "").strip().lower() in ("true","1","yes")
         tmp = tempfile.mkdtemp(prefix="matrix_ytdl_")
         try:
             if as_video:
@@ -859,13 +857,11 @@ async def matrix_ytdl_fetch(
     from app.services.youtube_service import download_ytdl_bytes
     import os as _os, asyncio as _aio, base64 as _b64
 
-    from app.models import Setting as _Setting
-    _cookies_s = db.query(_Setting).filter(_Setting.key == "ytdl_cookies_path").first()
-    _cookies_path = str(_cookies_s.value).strip() if _cookies_s and _cookies_s.value else None
+    from app.services import settings_store
+    _cookies_path = settings_store.get("ytdl_cookies_path", "").strip() or None
     if _cookies_path and not _os.path.isfile(_cookies_path):
         _cookies_path = None
-    _ssl_s = db.query(_Setting).filter(_Setting.key == "ytdl_no_ssl_verify").first()
-    _no_ssl = str(_ssl_s.value).strip().lower() in ("true", "1", "yes") if _ssl_s and _ssl_s.value else False
+    _no_ssl = settings_store.get("ytdl_no_ssl_verify", "").strip().lower() in ("true", "1", "yes")
 
     # Cap video at 1080p so files stay within upload limits. 95 MB leaves headroom
     # under Cloudflare's 100 MB request-body cap (the real bottleneck — nginx/Synapse
@@ -898,9 +894,8 @@ def _linked_fedi_accounts(user: User) -> list[tuple[str, str, str]]:
 
 
 def _get_setting(db: Session, key: str, default: str = "") -> str:
-    from app.models import Setting
-    s = db.query(Setting).filter(Setting.key == key).first()
-    return s.value if s and s.value else default
+    from app.services import settings_store
+    return settings_store.get(key, default) or default
 
 
 def _unresolved_msg(post) -> str:
