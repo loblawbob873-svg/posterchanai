@@ -287,7 +287,9 @@ def ensure_admin(db) -> str | None:
         return None
 
 
-def _port() -> int:
+def _port(db=None) -> int:
+    # `db` is accepted (and ignored) so callers in users_store/bots_store/record_store can pass the
+    # request session uniformly — the port is a local-only setting read from the in-process cache.
     return get_int("nostr_relay_port", 3052)
 
 

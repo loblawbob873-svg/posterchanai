@@ -174,10 +174,11 @@ def init_db():
             # nostr_relay_port). Default OFF; ships a starter WoT seed set so a fresh node has
             # a sane trust graph the moment it's enabled. All other knobs fall back to code
             # defaults in app/services/nostr_relay/thread.py. See docs/RELAY.md.
-            # Built-in Blossom media server (BUD-01/02), served by the app at /blossom. Default
-            # OFF; whitelist is empty (only linked users/bots may upload) and blobs never expire
-            # until configured. See docs/BLOSSOM.md. Code defaults in app/services/blossom_service.py.
-            "blossom_enabled": "false",
+            # Built-in Blossom media server (BUD-01/02), served by the app at /blossom. Default ON
+            # (hard-coded turnkey — media hosting is core); whitelist is empty (only linked users/bots
+            # may upload) and blobs never expire until configured. Admin UI can disable it (the relay
+            # then pins that choice). See docs/BLOSSOM.md. Code defaults in app/services/blossom_service.py.
+            "blossom_enabled": "true",
             "blossom_public_url": "",
             "blossom_blob_ttl_days": "0",
             "blossom_max_upload_mb": "100",

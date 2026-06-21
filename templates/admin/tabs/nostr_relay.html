@@ -4,10 +4,7 @@
     <fieldset>
         <legend>Built-in Nostr Relay (Web of Trust)</legend>
         <div class="form-group">
-            <label for="nostr_relay_enabled">
-                <input type="checkbox" id="nostr_relay_enabled" name="nostr_relay_enabled"> Run the relay on this server
-            </label>
-            <small>Serves NIP-01 in its own thread at <code>/relay</code> on the port below. Only accepts/syncs notes from a <strong>web of trust</strong>. Front it with TLS (e.g. <code>wss://relay.yourdomain/</code>). <strong>Restart the service after enabling.</strong></small>
+            <small>The built-in relay is this app's <strong>datastore</strong> (settings, users, bots, chats all live in its event store), so it <strong>always runs</strong> — there is no on/off toggle. It serves NIP-01 in its own thread at <code>/relay</code> on the port below, only accepts/syncs notes from a <strong>web of trust</strong>, and should be fronted with TLS (e.g. <code>wss://relay.yourdomain/</code>).</small>
         </div>
         <div class="form-group">
             <label>Relay identity (operator key)</label>

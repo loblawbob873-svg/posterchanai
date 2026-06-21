@@ -161,7 +161,9 @@ def _read_config() -> dict:
             g("nostr_relay_upstream_relays", "")) or list(nostr_service.DEFAULT_RELAYS)
 
         cfg = {
-            "enabled": gb("nostr_relay_enabled", False),
+            # The relay is the app's datastore (settings/users/bots/chats/records all live in its
+            # event store), so it is MANDATORY and always runs — there is no enable toggle anymore.
+            "enabled": True,
             "bind": g("nostr_relay_bind", "127.0.0.1"),
             "port": gi("nostr_relay_port", 3052),
             "seeds": seeds,
