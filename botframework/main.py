@@ -35,6 +35,9 @@ def main():
         "--nostr", action="store_true", help="Listen to Nostr mentions (p-tagged kind-1 notes)"
     )
     parser.add_argument(
+        "--dvm", action="store_true", help="Nostr NIP-90 Data Vending Machine (fulfil kind-5xxx AI jobs)"
+    )
+    parser.add_argument(
         "--blockbot", action="store_true", help="Start the Pleroma Blockbot daemon"
     )
     parser.add_argument(
@@ -88,7 +91,7 @@ def main():
     args = parser.parse_args()
 
     # Validate that at least one platform is specified
-    if not args.matrix and not args.misskey and not args.nostr and not args.nitter and not args.ping and not args.image and not args.autopost and not args.autopost_print and not args.blockbot and not args.pleroma and not args.blocks and not args.blocks_print and not args.scalps and not args.scalps_print and not args.fba and not args.topposts and not args.topposts_print and not args.welcome and not args.welcome_print and not args.report and not args.report_print and not args.hashtagbot and not args.hashtagbot_print and not args.unfollowbot and not args.unfollows and not args.unfollows_print:
+    if not args.matrix and not args.misskey and not args.nostr and not args.dvm and not args.nitter and not args.ping and not args.image and not args.autopost and not args.autopost_print and not args.blockbot and not args.pleroma and not args.blocks and not args.blocks_print and not args.scalps and not args.scalps_print and not args.fba and not args.topposts and not args.topposts_print and not args.welcome and not args.welcome_print and not args.report and not args.report_print and not args.hashtagbot and not args.hashtagbot_print and not args.unfollowbot and not args.unfollows and not args.unfollows_print:
         print("ERROR: Please specify at least one mode: --matrix, --misskey, --nostr, --nitter, --ping, --pleroma, --blockbot, --blocks, --blocks-print, --scalps, --scalps-print, --fba, --topposts, --topposts-print, --welcome, --welcome-print, --report, --report-print, --hashtagbot, --hashtagbot-print, --unfollowbot, --unfollows, --unfollows-print, --image, --autopost, or --autopost-print")
         return
 
@@ -181,6 +184,26 @@ def main():
             threads.append(t)
         else:
             run_nostr()
+            return
+
+    # DVM listener (NIP-90 job fulfilment) — can run alongside --nostr or standalone.
+    if args.dvm:
+        def run_dvm():
+            from dvmListener import process_job_requests
+            print("Starting DVM (NIP-90) listener...")
+            while True:
+                try:
+                    process_job_requests()
+                except Exception as e:
+                    print(f"[ERROR] dvm process_job_requests failed: {e}", flush=True)
+                import os as _os
+                time.sleep(int(_os.getenv("DVM_POLL_SECONDS", _os.getenv("NOSTR_POLL_SECONDS", "15"))))
+        if threads or has_daemon:
+            t = threading.Thread(target=run_dvm, daemon=True)
+            t.start()
+            threads.append(t)
+        else:
+            run_dvm()
             return
 
     # Matrix listener (can run alongside --nitter, daemons, etc.)
