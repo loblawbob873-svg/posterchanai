@@ -2830,6 +2830,7 @@
       ['follow', FOLLOWS.has(pk)?'➖ Unfollow':'➕ Follow'],
       ['message','✉️ Message'],
       ['mute', MUTED.has(pk)?'🔊 Unmute':'🔇 Mute'],
+      ['reports','🚩 Reports received'],
     ];
     if(IS_ADMIN){
       // admin extras: one consolidated permissions panel (AI, Blossom, image/music/video/torrent)
@@ -2843,10 +2844,33 @@
       if(a==='follow'){ await toggleFollow(pk); renderProfileView(pk); return; }
       if(a==='message'){ if(!dmPeers.has(pk))dmPeers.set(pk,[]); dmActive=pk; switchView('messages'); return; }
       if(a==='mute'){ await toggleMute(pk); renderProfileView(pk); return; }
+      if(a==='reports') return showReports(pk);
       if(a==='caps') return openPermissions(pk);
       if(a==='relay-sync') return doRelaySync(pk);
       if(a==='purge-blossom') return doPurgeBlossom(pk);
       if(a==='block') return doBlock(pk);
+    });
+  }
+  // NIP-56 reports a user has RECEIVED: kind-1984 events that p-tag them. The report type is the
+  // 3rd element of the matching p/e tag (nudity/spam/illegal/impersonation/profanity/malware/other);
+  // content is the optional reason. Open to any user.
+  async function showReports(pk){
+    const who = (()=>{ const p=profOf(pk); return p.name||p.display_name||(NT().nip19.npubEncode(pk).slice(0,12)+'…'); })();
+    modal(`<h3>🚩 Reports received — ${enc(who)}</h3><div id="rep-list" class="people-list"><div class="spinner"></div></div>`, async root=>{
+      let evs=[]; try{ evs=await Relay.query([{ kinds:[1984], '#p':[pk], limit:200 }]); }catch(_){}
+      evs.sort((a,b)=>b.created_at-a.created_at);
+      const miss=[...new Set(evs.map(e=>e.pubkey))].filter(a=>!Store.haveProfile(a)).slice(0,200);
+      if(miss.length){ try{ (await Relay.query([{authors:miss,kinds:[0],limit:miss.length}])).forEach(e=>Store.saveProfile(e)); }catch(_){} }
+      const list=$('#rep-list',root); if(!list) return;
+      list.innerHTML = evs.length ? evs.map(e=>{
+        const rp=Store.profile(e.pubkey)||{};
+        const rn=rp.name||rp.display_name||(NT().nip19.npubEncode(e.pubkey).slice(0,12)+'…');
+        const tag=e.tags.find(t=>t[0]==='p'&&t[1]===pk) || e.tags.find(t=>t[0]==='e');
+        const type=(tag&&tag[2]) || (e.tags.find(t=>t[0]==='report')||[])[1] || 'other';
+        const reason=(e.content||'').trim();
+        return `<div class="psearch" data-prof="${e.pubkey}"><img src="${enc(rp.picture||LOGO)}" onerror="this.src='${LOGO}'"><div class="pinfo"><b>${enc(rn)}</b><div class="muted small">🚩 ${enc(type)}${reason?' · '+enc(reason.slice(0,140)):''} · ${timeAgo(e.created_at)}</div></div></div>`;
+      }).join('') : '<div class="empty">No reports for this user. 🎉</div>';
+      $$('[data-prof]',list).forEach(el=> el.onclick=()=>{ closeModal(); renderProfileView(el.dataset.prof); });
     });
   }
   // admin: backfill this account's Nostr post history into the built-in relay (the "Sync a user's
