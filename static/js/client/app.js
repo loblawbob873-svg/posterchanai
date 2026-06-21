@@ -2366,11 +2366,14 @@
         <button class="btn btn-ghost small" id="fc-back">← /${enc(board)}/</button>
         <a class="btn btn-ghost small" href="https://boards.4chan.org/${enc(board)}/thread/${enc(id)}" target="_blank" rel="noopener">Open on 4chan ↗</a>
         <button class="btn btn-cyan small" id="fc-sum">✨ Summarize</button>
+        <button class="btn btn-neon small" id="fc-share">🚀 Share</button>
       </div>
       <div class="fc-summary hidden" id="fc-summary"></div>
       <div class="fc-posts" id="fc-posts"><div class="spinner"></div></div>`;
     $('#fc-back').onclick=()=> render4chan();
     $('#fc-sum').onclick=()=> summarize4chan(board, id);
+    // Share on Nostr → open the composer pre-filled with the thread link
+    $('#fc-share').onclick=()=> compose({text: `https://boards.4chan.org/${board}/thread/${id}`});
     let data=null;
     try{ const r=await fetch(`/api/4chan/thread?board=${encodeURIComponent(board)}&thread_id=${encodeURIComponent(id)}`); if(!r.ok) throw 0; data=await r.json(); }
     catch(_){ const p=$('#fc-posts'); if(p) p.innerHTML='<div class="empty">Couldn\'t load the thread.</div>'; return; }
