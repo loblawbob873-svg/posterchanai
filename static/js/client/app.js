@@ -1882,7 +1882,7 @@
     let ev=Store.get(id); if(!ev){ ev=await fetchEvent(id); if(ev) Store.saveEvent(ev); }
     if(!ev){ toast('post not loaded'); return; }
     modal('<h3>📝 Summary</h3><div id="sum-body" style="max-height:60vh;overflow:auto;line-height:1.55;white-space:pre-wrap;font-size:15px;overflow-wrap:anywhere"><div class="spinner"></div></div>'+
-          '<div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn btn-ghost small" id="sum-close">Close</button></div>',
+          '<div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px"><button class="btn btn-neon small" id="sum-post" disabled>📣 Post summary</button><button class="btn btn-ghost small" id="sum-close">Close</button></div>',
       root=>{ const c=root.querySelector('#sum-close'); if(c) c.onclick=closeModal; });
     const named=e=>{ const p=profOf(e.pubkey); const nm=p.name||p.display_name||NT().nip19.npubEncode(e.pubkey).slice(0,12); return nm+': '+((mediaParts(e.content).text||e.content||'').trim()); };
     try{
@@ -1905,6 +1905,7 @@
       const j=await r.json().catch(()=>({}));
       const body=$('#sum-body');
       if(body) body.innerHTML=(r.ok && j.text) ? linkify(j.text) : ('<div class="muted">'+enc(j.error||'summary unavailable')+'</div>');
+      if(r.ok && j.text){ const pb=$('#sum-post'); if(pb){ pb.disabled=false; pb.onclick=()=>{ closeModal(); compose({text: j.text}); }; } }   // share the summary as a new note
     }catch(_){ const body=$('#sum-body'); if(body) body.innerHTML='<div class="muted">summary failed</div>'; }
   }
   // Pull the first image URL off a post (imeta tag first, then a URL in the content).
