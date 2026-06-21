@@ -16,6 +16,11 @@ x-common: &common
   # tag made `--profile nostr up` (no --build) reuse whatever image was built last — e.g. a
   # CUDA build — so the lean nostr image silently "pulled in cuda".
   restart: unless-stopped
+  # Let the entrypoint correct the system clock from NTP (date -s needs CAP_SYS_TIME). A wrong
+  # clock silently empties the Nostr relay (its post queries are time-windowed). NOTE: containers
+  # share the host kernel clock, so this sets the HOST's time too — fine for a dedicated node.
+  cap_add:
+    - SYS_TIME
   ports:
     - "${POSTERCHANAI_PORT:-3051}:3051"
     # Built-in Nostr relay (NIP-01). Only useful with POSTERCHANAI_NOSTR_RELAY=1 (binds 0.0.0.0).

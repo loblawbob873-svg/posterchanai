@@ -10,12 +10,25 @@ set -e
 DATA_HOME="${POSTERCHANAI_DATA:-/var/lib/posterchanai}"
 mkdir -p "$DATA_HOME"/{models,torrents,tor,hf,miopen,assets} /app/data
 
-# Clock sanity BEFORE the app/relay start. The Nostr relay's queries are time-windowed (backfill
-# `since = now - 48h`, created_at sanity), so a wrong system clock silently breaks federation: the
-# WoT still builds (kind-3 has no time filter) but the timeline stays EMPTY (the post window is in
-# the future). Best-effort: ask NTP for the real time, and if the clock is off by > 60s try to set
-# it. Setting needs CAP_SYS_TIME (run with --cap-add SYS_TIME, or the clock is the HOST's job); if
-# we can't, warn loudly. Skip with POSTERCHANAI_NTP_SYNC=0 (e.g. host already manages time).
+# --- Timezone, THEN clock sync, BEFORE the app/relay start ---------------------------------------
+# The Nostr relay's queries are time-windowed (backfill `since = now - 48h`, created_at sanity), so
+# a wrong system clock silently breaks federation: the WoT still builds (kind-3 has no time filter)
+# but the timeline stays EMPTY (the post window is in the future).
+
+# 1) Timezone first, so logs/`date` read in the configured zone (default UTC). TZ is the env knob;
+#    link /etc/localtime when tzdata is present so libc-based code agrees with it.
+export TZ="${TZ:-UTC}"
+if [ -e "/usr/share/zoneinfo/$TZ" ]; then
+    ln -snf "/usr/share/zoneinfo/$TZ" /etc/localtime 2>/dev/null || true
+    echo "$TZ" > /etc/timezone 2>/dev/null || true
+    echo "[entrypoint] timezone set to $TZ"
+else
+    echo "[entrypoint] timezone $TZ not found in tzdata — leaving as-is"
+fi
+
+# 2) Then update the clock from NTP. Best-effort: if off by > 60s, set it via `date -s`. This needs
+#    CAP_SYS_TIME — the compose file grants it (cap_add: SYS_TIME); a bare `docker run` needs
+#    --cap-add SYS_TIME, else the clock is the HOST's job and we warn. Skip with POSTERCHANAI_NTP_SYNC=0.
 if [ "${POSTERCHANAI_NTP_SYNC:-1}" = "1" ]; then
     python3 - <<'PYEOF' || true
 import socket, struct, time, subprocess

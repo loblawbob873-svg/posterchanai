@@ -47,10 +47,22 @@ def _relay_url(request: Request, db: Session) -> str:
     explicit = _setting(db, "client_relay_url")
     if explicit:
         return explicit
-    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
-    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
-    ws = "wss" if proto == "https" else "ws"
-    return f"{ws}://{host}/relay"
+    # Behind a reverse proxy (nginx/prod): it routes /relay → the relay, so use the SAME public
+    # host + the /relay path with the forwarded scheme.
+    fwd_host = request.headers.get("x-forwarded-host")
+    if fwd_host:
+        proto = request.headers.get("x-forwarded-proto") or "https"
+        ws = "wss" if proto == "https" else "ws"
+        return f"{ws}://{fwd_host}/relay"
+    # Direct access (no reverse proxy — e.g. a turnkey node hit at http://host:3051/client): the
+    # relay is its OWN server on nostr_relay_port (default 3052, published by the container), NOT
+    # reachable at /relay on the app's port — so the app would 403 a ws://host:3051/relay. Point the
+    # client straight at the relay's published port instead. (Custom port mappings: set
+    # client_relay_url explicitly.)
+    host = (request.headers.get("host") or request.url.netloc).split(":")[0]
+    ws = "wss" if request.url.scheme == "https" else "ws"
+    port = _setting(db, "nostr_relay_port", "3052")
+    return f"{ws}://{host}:{port}/relay"
 
 
 def _blossom_url(request: Request, db: Session) -> str:
