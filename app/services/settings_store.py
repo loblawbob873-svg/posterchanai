@@ -98,6 +98,67 @@ def _operator_seckey(db):
         return None
 
 
+def ensure_admin(db) -> str | None:
+    """Turnkey: on a fresh node with NO admin yet, make the auto-minted OPERATOR key the admin so AI
+    works immediately — no manual web 'claim admin' click (which otherwise blocks testing the AI
+    parts on a fresh install). Creates an admin User with the operator's npub + full grants and seeds
+    the WoT with it. Idempotent + no-op once any admin with an npub exists; gated by
+    POSTERCHANAI_AUTO_ADMIN (default on — set 0 to require a human to claim admin with their own key).
+    Returns the admin npub if it provisioned/already-operator-admin, else None."""
+    import os
+    if os.environ.get("POSTERCHANAI_AUTO_ADMIN", "1").strip().lower() not in ("1", "true", "yes", "on"):
+        return None
+    try:
+        from app.models import User, Setting
+        from app.services.nostr import nostr_service
+        import secrets, binascii
+        # An admin with an npub already exists → instance is set up; don't override it.
+        if db.query(User).filter(User.is_admin == True, User.nostr_npub.isnot(None)).first():  # noqa: E712
+            return None
+        op_sk = _operator_seckey(db)
+        if not op_sk:
+            return None
+        pk = nostr_service.derive_pubkey(op_sk)
+        pk_hex = pk if isinstance(pk, str) else binascii.hexlify(pk).decode()
+        npub = nostr_service.npub_of(pk_hex)
+        u = db.query(User).filter(User.nostr_npub == npub).first()
+        if not u:
+            from app.auth import get_password_hash
+            base = "npub_" + npub[4:16]
+            username = base
+            for i in range(2, 100):
+                if not db.query(User).filter(User.username == username).first():
+                    break
+                username = f"{base}{i}"
+            u = User(username=username, email=None,
+                     password_hash=get_password_hash(secrets.token_urlsafe(32)),
+                     email_verified=True, nostr_npub=npub)
+            db.add(u)
+        u.is_admin = True
+        u.can_ai = True
+        u.can_image = True
+        u.can_blossom = True
+        # Seed the WoT with the admin's own npub (same as the web claim flow) so the relay trusts it.
+        row = db.query(Setting).filter(Setting.key == "nostr_relay_wot_seeds").first()
+        val = (row.value if row else "") or ""
+        if npub not in val:
+            nv = (val.rstrip() + "\n" + npub).strip() if val.strip() else npub
+            if row:
+                row.value = nv
+            else:
+                db.add(Setting(key="nostr_relay_wot_seeds", value=nv))
+        db.commit()
+        logger.info("[settings-store] auto-provisioned admin from the operator key: %s", npub[:16])
+        return npub
+    except Exception as e:
+        logger.warning("[settings-store] ensure_admin failed: %s", e)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return None
+
+
 def _port(db) -> int:
     row = db.query(Setting).filter(Setting.key == "nostr_relay_port").first()
     try:
