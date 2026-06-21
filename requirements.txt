@@ -60,6 +60,10 @@ pytesseract>=0.3.10
 #           fallback when no system TTF is installed.
 Pillow>=10.1.0
 pillow-heif>=0.16.0
+# python-chess: rules/legality/checkmate for the #chesstr chess-referee bot (botframework,
+# --chess). Pure-Python, no compiled deps — portable to the Arc/ROCm bot nodes. The cyberpunk
+# board is drawn with Pillow (above), so no SVG/cairo dependency.
+chess>=1.11.0
 # Face swap support; also the runtime for the `alive` 3D-parallax depth model
 # (opencv + onnxruntime + numpy run Depth-Anything V2 — see app/services/parallax_service.py;
 # the ~94MB .onnx itself is gitignored and fetched by install.sh / docker-entrypoint.sh).

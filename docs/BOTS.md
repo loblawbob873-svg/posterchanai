@@ -97,6 +97,26 @@ Image jobs can be disabled per node with `DVM_IMAGE_ENABLED=0`. It needs the bot
 relays + the node's AI/image endpoint (all injected by the manager). It stays dormant until you
 create a Nostr bot, tick the feature, and enable it.
 
+### Chess referee — #chesstr
+
+A **Nostr bot** with the **Chess referee** feature checked runs `botframework/chessListener.py`
+(`--chess` mode): it lets two Nostr users play chess, with the bot as the board + referee. Every
+post it makes carries the **#chesstr** hashtag (text + a `t` tag).
+
+- **Start:** someone posts mentioning the bot **and** another user with the word "chess"
+  (e.g. `@chessbot chess @bob`). The initiator is **White** (cyan), the opponent **Black**
+  (magenta). The bot replies with a cyberpunk board (drawn with Pillow — no font/SVG deps) and the
+  side-to-move's pieces **numbered**.
+- **Move:** a player replies to the bot's board post with `<n> <square>` — e.g. `1 d4` moves the
+  piece labelled **1** to **d4**. `SAN` (`Nf3`), `UCI` (`g1f3`), `O-O`/`O-O-O` and `resign` also
+  work. The bot validates legality, applies the move, and posts the updated board tagging the other
+  player. Illegal/wrong-turn attempts get a short nudge (and the legal destinations for that piece).
+- **Game over:** checkmate / stalemate / draw / resign → a final board + result post.
+- **State** is a replaceable **kind-30078** app-data event keyed by the game's root note id, so
+  games **survive restarts and never expire** — a game can span days, just waiting for the next
+  reply. Needs `python-chess` (in `requirements.txt`) + the bot's Nostr key/relays + a Blossom host
+  for the board images (all injected by the manager).
+
 ## Migrating a node (cutover from the legacy `posterchan.service`)
 
 On first start, if the `bots` table is empty and a (gitignored, local-only)

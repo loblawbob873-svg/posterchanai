@@ -38,6 +38,9 @@ def main():
         "--dvm", action="store_true", help="Nostr NIP-90 Data Vending Machine (fulfil kind-5xxx AI jobs)"
     )
     parser.add_argument(
+        "--chess", action="store_true", help="#chesstr — referee chess games between Nostr users"
+    )
+    parser.add_argument(
         "--blockbot", action="store_true", help="Start the Pleroma Blockbot daemon"
     )
     parser.add_argument(
@@ -91,8 +94,8 @@ def main():
     args = parser.parse_args()
 
     # Validate that at least one platform is specified
-    if not args.matrix and not args.misskey and not args.nostr and not args.dvm and not args.nitter and not args.ping and not args.image and not args.autopost and not args.autopost_print and not args.blockbot and not args.pleroma and not args.blocks and not args.blocks_print and not args.scalps and not args.scalps_print and not args.fba and not args.topposts and not args.topposts_print and not args.welcome and not args.welcome_print and not args.report and not args.report_print and not args.hashtagbot and not args.hashtagbot_print and not args.unfollowbot and not args.unfollows and not args.unfollows_print:
-        print("ERROR: Please specify at least one mode: --matrix, --misskey, --nostr, --nitter, --ping, --pleroma, --blockbot, --blocks, --blocks-print, --scalps, --scalps-print, --fba, --topposts, --topposts-print, --welcome, --welcome-print, --report, --report-print, --hashtagbot, --hashtagbot-print, --unfollowbot, --unfollows, --unfollows-print, --image, --autopost, or --autopost-print")
+    if not args.matrix and not args.misskey and not args.nostr and not args.dvm and not args.chess and not args.nitter and not args.ping and not args.image and not args.autopost and not args.autopost_print and not args.blockbot and not args.pleroma and not args.blocks and not args.blocks_print and not args.scalps and not args.scalps_print and not args.fba and not args.topposts and not args.topposts_print and not args.welcome and not args.welcome_print and not args.report and not args.report_print and not args.hashtagbot and not args.hashtagbot_print and not args.unfollowbot and not args.unfollows and not args.unfollows_print:
+        print("ERROR: Please specify at least one mode: --matrix, --misskey, --nostr, --dvm, --chess, --nitter, --ping, --pleroma, --blockbot, --blocks, --blocks-print, --scalps, --scalps-print, --fba, --topposts, --topposts-print, --welcome, --welcome-print, --report, --report-print, --hashtagbot, --hashtagbot-print, --unfollowbot, --unfollows, --unfollows-print, --image, --autopost, or --autopost-print")
         return
 
     # Validate Matrix configuration only if Matrix mode is enabled
@@ -204,6 +207,26 @@ def main():
             threads.append(t)
         else:
             run_dvm()
+            return
+
+    # Chess referee (#chesstr) — can run alongside --nostr or standalone.
+    if args.chess:
+        def run_chess():
+            from chessListener import process_chess
+            print("Starting #chesstr chess listener...")
+            while True:
+                try:
+                    process_chess()
+                except Exception as e:
+                    print(f"[ERROR] chess process_chess failed: {e}", flush=True)
+                import os as _os
+                time.sleep(int(_os.getenv("CHESS_POLL_SECONDS", _os.getenv("NOSTR_POLL_SECONDS", "10"))))
+        if threads or has_daemon:
+            t = threading.Thread(target=run_chess, daemon=True)
+            t.start()
+            threads.append(t)
+        else:
+            run_chess()
             return
 
     # Matrix listener (can run alongside --nitter, daemons, etc.)
