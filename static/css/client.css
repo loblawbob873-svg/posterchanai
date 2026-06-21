@@ -93,7 +93,7 @@ a.btn.full{display:block}
 @keyframes gl{0%{clip-path:inset(0 0 86% 0)}25%{clip-path:inset(60% 0 20% 0)}50%{clip-path:inset(20% 0 60% 0)}75%{clip-path:inset(86% 0 0 0)}100%{clip-path:inset(40% 0 40% 0)}}
 
 /* ===== app shell ===== */
-.app{display:grid;grid-template-columns:280px 1fr;height:100vh}
+.app{display:grid;grid-template-columns:320px 1fr;height:100vh}
 .sidebar{display:flex;flex-direction:column;gap:8px;padding:18px 14px;border-right:1px solid var(--line);min-height:0;overflow-y:auto;
   background:rgba(10,10,16,.55)}   /* neutral dark so the body's cyan/magenta gradient doesn't tint the left column differently from center/right */
 .brand{font-size:26px;font-weight:800;text-align:center;color:var(--neon);margin-bottom:8px}
@@ -102,10 +102,10 @@ a.btn.full{display:block}
 .nav-grouphd .chev{margin-left:auto;font-size:12px;opacity:.65}
 .nav-sub{display:flex;flex-direction:column;gap:4px;overflow:hidden}
 .nav-sub.collapsed{display:none}
-.nav-item.sub{padding-left:30px;font-size:15.5px}
-.nav-item{display:flex;align-items:center;gap:13px;background:transparent;border:none;color:var(--muted);
-  padding:13px 15px;border-radius:11px;cursor:pointer;font-size:17px;font-weight:600;text-align:left;transition:.15s;position:relative}
-.nav-item .ic{font-size:20px;width:26px;text-align:center;line-height:1;display:inline-flex;align-items:center;justify-content:center;
+.nav-item.sub{padding-left:32px;font-size:16.5px}
+.nav-item{display:flex;align-items:center;gap:14px;background:transparent;border:none;color:var(--muted);
+  padding:13px 16px;border-radius:11px;cursor:pointer;font-size:18.5px;font-weight:600;text-align:left;transition:.15s;position:relative}
+.nav-item .ic{font-size:22px;width:28px;text-align:center;line-height:1;display:inline-flex;align-items:center;justify-content:center;
   filter:drop-shadow(0 0 5px rgba(0,255,255,.45))}
 .nav-item.sub .ic{font-size:17px}
 .nav-item:hover .ic,.nav-item.active .ic{filter:drop-shadow(0 0 7px rgba(0,255,255,.75))}
@@ -116,7 +116,7 @@ a.btn.full{display:block}
 .me{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:7px;margin:auto auto 0;padding:8px 6px;cursor:pointer}
 .me:hover img{box-shadow:0 0 16px rgba(0,255,255,.4)}
 .me img{width:72px;height:72px;border-radius:50%;object-fit:cover;border:1px solid var(--neon);transition:.15s}
-.me .mn{font-weight:700;font-size:15px;line-height:1.15;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.me .mn{font-weight:700;font-size:17px;line-height:1.15;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .me .mk{font-size:12px;color:var(--muted)}
 #btn-logout{font-size:15px;padding:11px 14px;color:#ff6b8b;border-color:rgba(255,60,90,.5);
   text-shadow:0 0 8px rgba(255,40,80,.55);box-shadow:0 0 12px rgba(255,40,80,.22);transition:.15s}
@@ -145,7 +145,7 @@ a.btn.full{display:block}
 /* desktop-only right column: Hot / Trending + GitHub link (hidden below 1100px) */
 .rightbar{display:none}
 @media(min-width:1180px){
-  .app{grid-template-columns:300px 1fr 360px}
+  .app{grid-template-columns:340px 1fr 420px}
   .rightbar{display:flex;flex-direction:column;gap:16px;padding:18px 16px;border-left:1px solid var(--line);overflow-y:auto;min-height:0}
 }
 .rb-section h3{margin:0 0 8px;font-size:18px;letter-spacing:1px;color:var(--text)}
@@ -156,9 +156,9 @@ a.btn.full{display:block}
 .rb-item:hover::before{opacity:1;box-shadow:0 0 8px var(--neon)}
 .rb-head{display:flex;align-items:center;gap:7px}
 .rb-av{width:24px;height:24px;border-radius:50%;border:1px solid var(--line);object-fit:cover;flex-shrink:0;background:#1a1230}
-.rb-item b{font-size:15px;color:#fff;text-shadow:0 0 6px rgba(0,255,255,.35)}
+.rb-item b{font-size:16px;color:#fff;text-shadow:0 0 6px rgba(0,255,255,.35)}
 .rb-fire{margin-left:auto;font-size:12.5px;font-weight:700;color:var(--amber);white-space:nowrap;text-shadow:0 0 7px rgba(255,207,43,.5)}
-.rb-item .rb-txt{color:#7dfcff;font-size:14.5px;line-height:1.5;margin-top:5px;text-shadow:0 0 6px rgba(0,255,255,.55),0 0 12px rgba(0,255,255,.28);
+.rb-item .rb-txt{color:#7dfcff;font-size:15.5px;line-height:1.5;margin-top:5px;text-shadow:0 0 6px rgba(0,255,255,.55),0 0 12px rgba(0,255,255,.28);
   display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
 .rb-item .rb-media{display:block;width:100%;max-height:160px;object-fit:cover;border-radius:9px;margin-top:7px;border:1px solid var(--line)}
 .rb-github{margin-top:auto;display:flex;align-items:center;justify-content:center;gap:9px;color:var(--text);
