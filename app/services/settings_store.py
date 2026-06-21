@@ -172,3 +172,34 @@ async def write_through(db, changes: dict) -> int:
     if wrote:
         logger.info("[settings-store] wrote %d setting(s) through to relay", wrote)
     return wrote
+
+
+async def seed_relay_defaults(db) -> int:
+    """First-boot seeding (relay ← local defaults). Push every local `Setting` whose key the relay
+    does NOT yet hold UP to the relay as a `pcai:setting:` doc, so the relay — the authoritative
+    datastore — carries the default settings from the very first start instead of them living only
+    in the local read-cache. Run AFTER hydrate(): keys the relay already has were just pulled down,
+    so they're skipped here (the relay value stays authoritative — never overwritten by a default).
+    On an established node nothing is missing, so this writes nothing. No-op when no operator key."""
+    if not enabled(db):
+        return 0
+    op_sk = _operator_seckey(db)
+    if not op_sk:
+        return 0
+    try:
+        relay = await _mig.settings_all(_port(db), op_sk)
+    except Exception as e:
+        logger.warning("[settings-store] seed: failed to read relay: %s", e)
+        return 0
+    have = set(relay.keys()) if relay else set()
+    missing = {}
+    for row in db.query(Setting).all():
+        if row.key in have or _is_local_only(row.key):
+            continue
+        missing[row.key] = row.value or ""
+    if not missing:
+        return 0
+    wrote = await write_through(db, missing)
+    if wrote:
+        logger.info("[settings-store] seeded %d default setting(s) to the relay (first boot)", wrote)
+    return wrote

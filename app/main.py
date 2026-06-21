@@ -351,8 +351,12 @@ async def startup():
                     try:
                         from app.services import settings_store
                         await settings_store.hydrate(_db)
+                        # First boot: push any default settings the relay doesn't yet hold UP to the
+                        # relay (Nostr events), so the relay is the authoritative store of the
+                        # out-of-box config — not just the local read-cache. No-op once seeded.
+                        await settings_store.seed_relay_defaults(_db)
                     except Exception as e:
-                        logging.warning(f"Settings hydrate from relay failed: {e}")
+                        logging.warning(f"Settings hydrate/seed from relay failed: {e}")
                     try:
                         from app.services import users_store
                         await users_store.hydrate(_db)
