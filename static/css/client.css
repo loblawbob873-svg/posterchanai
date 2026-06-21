@@ -863,16 +863,17 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .fc-summary h4{margin:0 0 6px;color:var(--cyan)}
 .fc-posts{padding:8px 12px 90px}
 .fc-post{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:10px 12px;margin-bottom:10px}
-.fc-post::after{content:"";display:block;clear:both}
 .fc-post-hd{font-size:13px;color:var(--muted);margin-bottom:6px}
 .fc-no{color:var(--cyan);font-weight:600}
 .fc-name{color:var(--green)}
-.fc-post-img{max-width:160px;max-height:160px;border-radius:8px;border:1px solid var(--line);background:#0d0a1a;cursor:pointer;float:left;margin:0 12px 6px 0}
+/* full-size attachment shown inline (block), capped so a huge image doesn't dominate; tap = lightbox */
+.fc-post-img,.fc-post-vid{display:block;max-width:100%;max-height:62vh;width:auto;height:auto;border-radius:8px;border:1px solid var(--line);background:#0d0a1a;margin:0 0 8px}
+.fc-post-img{cursor:zoom-in}
 .fc-post-body{white-space:pre-wrap;word-wrap:break-word;overflow-wrap:anywhere;line-height:1.5;font-size:15px;color:#eceefb}
 @media(max-width:820px){
   .fc-grid{grid-template-columns:1fr 1fr;gap:8px;padding:8px 8px 80px}
   .fc-title{font-size:12.5px}
-  .fc-post-img{max-width:108px;max-height:108px;margin:0 10px 4px 0}
+  .fc-post-img,.fc-post-vid{max-height:70vh}
   .fc-thread-top .btn-cyan{margin-left:0}
   .fc-tab{font-size:13px;padding:6px 11px}
 }

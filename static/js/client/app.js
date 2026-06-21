@@ -2367,9 +2367,17 @@
     const posts=(data&&data.posts)||[]; const box=$('#fc-posts'); if(!box) return;
     box.innerHTML = posts.length ? posts.map(p=>{
       const full='/api/4chan/proxy?url='+encodeURIComponent(p.image_url||p.thumb_url||'');
-      const img = p.thumb_url ? `<img class="fc-post-img" src="${enc('/api/4chan/proxy?url='+encodeURIComponent(p.thumb_url))}" data-full="${enc(full)}" loading="lazy" onerror="this.style.display='none'">` : '';
+      let media='';
+      if(p.thumb_url){
+        // Show the FULL-size attachment inline (not just the thumb); webm/mp4 render as <video>.
+        if(/\.(webm|mp4|m4v|mov|ogg)$/i.test(p.image_url||'')){
+          media=`<video class="fc-post-vid" src="${enc(full)}" controls playsinline preload="metadata"></video>`;
+        } else {
+          media=`<img class="fc-post-img" src="${enc(full)}" data-full="${enc(full)}" loading="lazy" onerror="this.style.display='none'">`;
+        }
+      }
       const body = p.com ? `<div class="fc-post-body">${enc(p.com)}</div>` : '';
-      return `<div class="fc-post"><div class="fc-post-hd"><span class="fc-no">#${enc(String(p.no))}</span> <span class="fc-name">${enc(p.name||'Anonymous')}</span></div>${img}${body}</div>`;
+      return `<div class="fc-post"><div class="fc-post-hd"><span class="fc-no">#${enc(String(p.no))}</span> <span class="fc-name">${enc(p.name||'Anonymous')}</span></div>${media}${body}</div>`;
     }).join('') : '<div class="empty">No posts.</div>';
     $$('.fc-post-img',box).forEach(im=> im.onclick=()=> openLightbox(im.dataset.full||im.src));
   }
