@@ -238,35 +238,40 @@ async def startup():
         if os.environ.get("POSTERCHANAI_NOSTR_RELAY", "0") == "1":
             try:
                 _db = SessionLocal()
-                _rdefaults = {
-                    "nostr_relay_enabled": "true",
-                    "nostr_relay_bind": "0.0.0.0",
-                }
-                for _k, _v in _rdefaults.items():
-                    if not _db.query(Setting).filter(Setting.key == _k).first():
-                        _db.add(Setting(key=_k, value=_v))
+                # Force-enable on every boot (declarative env directive — wins over an existing
+                # "false" on a reused volume); bind is seeded only if absent.
+                _row = _db.query(Setting).filter(Setting.key == "nostr_relay_enabled").first()
+                if _row:
+                    _row.value = "true"
+                else:
+                    _db.add(Setting(key="nostr_relay_enabled", value="true"))
+                if not _db.query(Setting).filter(Setting.key == "nostr_relay_bind").first():
+                    _db.add(Setting(key="nostr_relay_bind", value="0.0.0.0"))
                 _db.commit()
                 _db.close()
-                logging.info("Nostr relay auto-configured from POSTERCHANAI_NOSTR_RELAY env")
+                logging.info("Nostr relay enabled from POSTERCHANAI_NOSTR_RELAY env")
             except Exception as e:
                 logging.error(f"Error seeding Nostr relay settings: {e}")
 
-        # Turnkey Docker Blossom server: when POSTERCHANAI_BLOSSOM=1, auto-enable the built-in
-        # Blossom media server. Default backend stays "proxy" (falls back to local on the data
-        # volume if no storage server is set). Only seeds keys the admin hasn't already set.
+        # Turnkey Docker Blossom server: when POSTERCHANAI_BLOSSOM=1, ENABLE the built-in Blossom
+        # media server. `blossom_enabled` is FORCE-set on every boot — the env flag is a declarative
+        # deployment directive, so it must win even on an existing volume where the key is already
+        # "false" (otherwise a rebuilt nostr image silently stays "Blossom server disabled"). The
+        # other blossom_* config keys are seeded only if absent so admin tuning is preserved. Default
+        # backend stays "proxy" (falls back to local on the data volume if no storage server set).
         if os.environ.get("POSTERCHANAI_BLOSSOM", "0") == "1":
             try:
                 _db = SessionLocal()
-                _bdefaults = {
-                    "blossom_enabled": "true",
-                    "blossom_storage_path": "/app/data/blossom",
-                }
-                for _k, _v in _bdefaults.items():
-                    if not _db.query(Setting).filter(Setting.key == _k).first():
-                        _db.add(Setting(key=_k, value=_v))
+                _row = _db.query(Setting).filter(Setting.key == "blossom_enabled").first()
+                if _row:
+                    _row.value = "true"
+                else:
+                    _db.add(Setting(key="blossom_enabled", value="true"))
+                if not _db.query(Setting).filter(Setting.key == "blossom_storage_path").first():
+                    _db.add(Setting(key="blossom_storage_path", value="/app/data/blossom"))
                 _db.commit()
                 _db.close()
-                logging.info("Blossom server auto-configured from POSTERCHANAI_BLOSSOM env")
+                logging.info("Blossom server enabled from POSTERCHANAI_BLOSSOM env")
             except Exception as e:
                 logging.error(f"Error seeding Blossom settings: {e}")
 
