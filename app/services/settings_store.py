@@ -342,6 +342,19 @@ def hydrate_from_db(db) -> int:
             "ORDER BY t.value, e.created_at DESC"
         ), {"pk": op_hex}).fetchall()
     except Exception as e:
+        # Roll back so the session leaves no aborted transaction for the caller's next query
+        # (e.g. migrate_legacy_table reuses this same session right after).
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        # FRESH NODE: the relay hasn't created its `events`/`event_tags` tables yet (it owns that
+        # schema and does it on first start), so the EARLY hydrate runs before they exist. Harmless —
+        # there are no settings to read yet; defaults apply and the deferred hydrate (after the relay
+        # is up) picks them up. Quietly note it instead of a scary warning.
+        if "does not exist" in str(e) or "UndefinedTable" in type(e).__name__:
+            logger.info("[settings-store] relay event store not initialized yet — using defaults for now")
+            return 0
         logger.warning("[settings-store] hydrate_from_db failed: %s", e)
         return 0
     changed = 0
