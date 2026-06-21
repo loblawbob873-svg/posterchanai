@@ -200,7 +200,7 @@ def _operator_seckey(db):
     from app.services import keystore
     from app.services.nostr import nostr_service
     nsec = keystore.get_operator_nsec()
-    if not nsec:
+    if not nsec and db is not None:   # db may be None (e.g. the background relay-writer thread)
         from app.models import User
         op = db.query(User).filter(User.is_admin == True, User.nostr_nsec.isnot(None)).first()  # noqa: E712
         if op and op.nostr_nsec:

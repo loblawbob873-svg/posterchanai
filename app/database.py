@@ -412,8 +412,10 @@ When asked to write or modify code or files:
         # above for any key not already present. The relay-authoritative values are layered on by
         # settings_store.hydrate_from_db() once the operator key exists (see app/main.py startup).
         # Expose the defaults so startup can also SEED them into the relay (seed_relay_defaults).
-        global DEFAULT_SETTINGS
-        DEFAULT_SETTINGS = dict(default_settings)
+        # Mutate the module dict IN PLACE (don't rebind) so any `from app.database import
+        # DEFAULT_SETTINGS` reference stays valid after init_db runs.
+        DEFAULT_SETTINGS.clear()
+        DEFAULT_SETTINGS.update(default_settings)
         try:
             from app.services import settings_store
             settings_store.load_local()
