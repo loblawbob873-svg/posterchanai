@@ -30,55 +30,53 @@ host** — Docker just exposes the device.
 
 The container runs as root, so it reaches the GPU render node without group flags.
 
-## Build
+## Install — one `docker compose` command
+
+Pick the profile for your hardware. Compose **builds the image, starts PostgreSQL (required), and
+wires it all together** — there's no separate build/run step to manage:
 
 ```bash
-docker build -t posterchanai:cpu   --build-arg GPU=cpu   .
-docker build -t posterchanai:cuda  --build-arg GPU=cuda  --build-arg BASE_IMAGE=nvidia/cuda:12.5.1-devel-ubuntu24.04 .
-docker build -t posterchanai:rocm  --build-arg GPU=rocm  .
-docker build -t posterchanai:intel --build-arg GPU=intel --build-arg BASE_IMAGE=intel/oneapi-basekit:2025.2.2-0-devel-ubuntu24.04 .
+docker compose --profile cpu   up -d --build   # no GPU
+docker compose --profile cuda  up -d --build   # NVIDIA   — needs the NVIDIA Container Toolkit
+docker compose --profile rocm  up -d --build   # AMD      — needs the host amdgpu driver
+docker compose --profile intel up -d --build   # Intel Arc — needs host i915/xe + /dev/dri
+docker compose --profile nostr up -d --build   # Nostr relay + client + Blossom, NO AI (~2 GB)
 ```
 
-The Dockerfile uses **one** parametrized base (`BASE_IMAGE`, default `ubuntu:24.04`) rather than
-per-GPU stages, so a `cpu`/`nostr` build never references — and never pulls — the cuda/intel/rocm
-images, even on the legacy (non-BuildKit) builder. `cpu`/`nostr`/`rocm` only need `GPU`; `cuda` and
-`intel` must also pass the matching `BASE_IMAGE` (the compose file does this for you per profile).
+Then open **http://localhost:3051/client**. The first build pulls only the base image for your
+profile; the recommended chat model auto-downloads in the background on first run. **To update:**
+`git pull` and re-run the same command.
 
-ROCm builds the HIP `llama-cpp-python`, which **requires ROCm ≥ 6.3** (the image
-installs 6.3.4); the SYCL/Intel build is RAM-hungry (`icpx`) so build it on a box
-with enough memory. Narrow the AMD build to just your card for speed:
-`--build-arg AMDGPU_TARGETS=gfx1100`.
+Each profile builds its **own image tag** (`posterchanai:<TAG>-<backend>`, `TAG` defaults to
+`local`), so profiles never alias one another — `--profile nostr` always runs the lean Nostr-only
+image even on a box where you previously built `cuda`.
 
-## Run — use `docker compose` (recommended)
+> Override the password in a `.env` next to the compose file: `POSTGRES_PASSWORD=…` (used by both
+> the `postgres` service and the app's `DATABASE_URL`/`NOSTR_RELAY_PG_DSN`).
 
-This is the **only recommended way**: compose starts Postgres (required) + the app, wired together.
-You don't need the separate `docker build` step — compose builds the right image per profile.
+## Advanced: manual build / bring-your-own-Postgres
+
+You normally never need this — compose does it. But if you build/run by hand:
 
 ```bash
-docker compose --profile cuda up -d --build    # profile: cpu | cuda | rocm | intel | nostr
+docker build -t posterchanai:cuda --build-arg GPU=cuda --build-arg BASE_IMAGE=nvidia/cuda:12.5.1-devel-ubuntu24.04 .
+# GPU = cpu | cuda | rocm | intel | nostr.  cpu/nostr/rocm need only GPU; cuda/intel also pass BASE_IMAGE.
 ```
 
-### Advanced: bare `docker run` (bring your own Postgres)
+The Dockerfile uses **one** parametrized base (`BASE_IMAGE`, default `ubuntu:24.04`), so a
+`cpu`/`nostr` build never pulls the cuda/intel/rocm images (even on the legacy builder). ROCm builds
+the HIP `llama-cpp-python` (**requires ROCm ≥ 6.3**); the SYCL/Intel build is RAM-hungry — narrow the
+AMD build with `--build-arg AMDGPU_TARGETS=gfx1100`.
 
-Only if you run Postgres yourself — you **must** pass `DATABASE_URL` + `NOSTR_RELAY_PG_DSN` pointing
-at it, or the app exits immediately with `connection refused`. Otherwise use compose above.
+A bare `docker run` has **no database** — you must point it at your own Postgres or it exits with
+`connection refused`:
 
 ```bash
-# add  -e DATABASE_URL=postgresql+psycopg2://user:pw@host:5432/posterchan_relay
-#      -e NOSTR_RELAY_PG_DSN="host=host port=5432 dbname=posterchan_relay user=user password=pw"
-docker run -d -p 3051:3051 -v pc-data:/var/lib/posterchanai -v pc-rag:/app/data posterchanai:cpu          # CPU
-docker run -d --gpus all -p 3051:3051 -v pc-data:/var/lib/posterchanai -v pc-rag:/app/data posterchanai:cuda   # NVIDIA
-docker run -d --device /dev/kfd --device /dev/dri --security-opt seccomp=unconfined \
-  -p 3051:3051 -v pc-data:/var/lib/posterchanai -v pc-rag:/app/data posterchanai:rocm                    # AMD
-docker run -d --device /dev/dri -p 3051:3051 -v pc-data:/var/lib/posterchanai -v pc-rag:/app/data posterchanai:intel   # Intel Arc
+docker run -d --gpus all -p 3051:3051 -v pc-data:/var/lib/posterchanai -v pc-rag:/app/data \
+  -e DATABASE_URL='postgresql+psycopg2://user:pw@host:5432/posterchan_relay' \
+  -e NOSTR_RELAY_PG_DSN='host=host port=5432 dbname=posterchan_relay user=user password=pw' \
+  posterchanai:cuda
 ```
-
-Each profile builds its **own image tag** — `posterchanai:<TAG>-<backend>` (e.g.
-`posterchanai:local-nostr`, `posterchanai:local-cuda`; `TAG` defaults to `local`). The profiles
-therefore never alias one another, so `docker compose --profile nostr up` always runs the lean
-Nostr-only image even on a box where you previously built a `cuda` one. (Earlier versions shared a
-single `posterchanai:local` tag, which let a prior CUDA build leak into a `nostr` run — if you have
-an old shared-tag image lying around, it's now unused and you can `docker image prune` it.)
 
 ## Nostr-only (no AI)
 
