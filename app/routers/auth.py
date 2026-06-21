@@ -152,6 +152,12 @@ async def nostr_login(data: NostrLogin, response: Response, db: Session = Depend
                     _ss.put("nostr_relay_wot_seeds", (_seeds.rstrip() + "\n" + npub).strip() if _seeds.strip() else npub)
             except Exception as _e:
                 logger.warning("[auth] could not seed WoT with first admin: %s", _e)
+            # Refresh the relay's operator set so it trusts the new admin's keys for writes immediately.
+            try:
+                from app.services.nostr_relay.thread import trigger_block_reload
+                trigger_block_reload()
+            except Exception:
+                pass
 
     # Mirror the account-authority record to the relay (no-op unless users_backend == relay).
     try:

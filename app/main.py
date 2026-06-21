@@ -378,6 +378,17 @@ async def startup():
                     try:
                         from app.services import settings_store
                         from app.database import DEFAULT_SETTINGS
+                        # FRESH NODE: the relay may have read its operator set before the operator key
+                        # existed (it has no linked users yet), so it would reject the operator's own
+                        # settings docs as "not in web of trust". Refresh the relay's operator set
+                        # (this reload also re-reads cfg["operator"], which includes the keyfile
+                        # operator key) BEFORE seeding, then settings writes are accepted.
+                        try:
+                            from app.services.nostr_relay.thread import trigger_block_reload
+                            trigger_block_reload()
+                            await _aio.sleep(1.5)   # let the relay's control poller apply it
+                        except Exception as e:
+                            logging.warning(f"relay operator-set reload before seed failed: {e}")
                         # Re-hydrate now the relay is up (catch anything written since early startup),
                         # then push any default settings the relay doesn't yet hold UP to it (Nostr
                         # events) so the relay is the authoritative store of the out-of-box config.
