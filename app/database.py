@@ -255,6 +255,10 @@ def init_db():
             # image=diffusers torch-XPU in one venv/service). Seeded from env so the Docker
             # intel image ships it on out of the box (entrypoint sets it for GPU=intel).
             "image_subprocess_mode": os.environ.get("POSTERCHANAI_IMAGE_SUBPROCESS_MODE", "false"),  # Intel XPU
+            # Music generation (ACE-Step) — ON by default on new installs; needs a music server
+            # (local acestep / the Docker `music` profile / install.sh --music). The GPU swap
+            # (prepare_for_music) frees other models first, so it's safe to leave enabled.
+            "music_enabled": "true",
             # VRAM management
             "vram_mode": os.environ.get("POSTERCHANAI_VRAM_MODE", "shared"),  # "shared" (swap models) or "dedicated" (keep both)
             "searxng_url": "https://search.poster.place",

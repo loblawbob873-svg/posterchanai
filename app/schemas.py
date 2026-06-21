@@ -103,7 +103,7 @@ class SettingsResponse(BaseModel):
     # Music generation (ACE-Step). ACE-Step needs its own Python 3.11-3.12 env and ships a REST
     # server, so it runs as a SEPARATE service and the app talks to it over HTTP at the local
     # default (localhost:8001); cross-node LB uses chat_server_urls. Web UI + Telegram only.
-    music_enabled: str = "false"
+    music_enabled: str = "true"
     music_gpu_device: str = "auto"  # "auto"/"cuda"/"xpu"/"cpu" — picks the GPU vs CPU lock locally
     music_model: str = ""  # DiT model name/path, e.g. acestep-v15-turbo (blank = server default)
     music_default_duration: str = "180"  # seconds (ACE-Step range 10-600)
