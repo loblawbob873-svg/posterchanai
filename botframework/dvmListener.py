@@ -2,8 +2,10 @@
 
 Subscribes to job-request events (kind 5xxx) on the bot's relays and fulfils the ones this node
 supports using the local AI, publishing a result (kind 6xxx = request kind + 1000) plus job-feedback
-(kind 7000). v1 handles TEXT jobs — text generation + summarization — via the same `generate_reply`
-the chat bot uses. Signed with the bot's own key. Dormant unless an admin creates a DVM bot.
+(kind 7000). Handles TEXT jobs — text generation + summarization — via the same `generate_reply`
+the chat bot uses, AND IMAGE jobs (kind 5100 → 6100): the prompt is rendered through the node's
+image backend, the PNG is uploaded to the bot's Blossom host, and the result event carries the public
+URL (+ an `imeta` tag). Signed with the bot's own key. Dormant unless an admin creates a DVM bot.
 
 NIP-90 refs: request kinds 5000–5999, results 6000–6999, feedback 7000. We read the prompt from the
 job's `i` (input) tags, falling back to the event content.
@@ -16,14 +18,21 @@ import nostr as _nk
 from ai import generate_reply, is_ai_configured
 from app.services.nostr import event as _ev
 
+# Image jobs are heavier (GPU) — let an admin disable them per node via the bot env. Default on.
+_IMAGE_ENABLED = (os.getenv("DVM_IMAGE_ENABLED", "1") or "1").strip().lower() not in ("0", "false", "no")
+
 # Job kinds we fulfil → human label. Result kind is always request kind + 1000.
 _SUPPORTED = {
     5050: "text-generation",
     5001: "summarization",
     5000: "text",
 }
+if _IMAGE_ENABLED:
+    _SUPPORTED[5100] = "image-generation"   # NIP-90 image gen → result kind 6100
 # Kinds whose prompt should be summarized rather than answered.
 _SUMMARIZE = {5000, 5001}
+# Kinds fulfilled by the image backend (render → Blossom upload → URL result).
+_IMAGE = {5100}
 
 # Cap jobs processed per poll so a flood can't monopolise the GPU (each runs under the app's GPU lock).
 _MAX_PER_POLL = int(os.getenv("DVM_MAX_PER_POLL", "3"))
@@ -49,15 +58,36 @@ def _feedback(req: dict, status: str, extra: str = ""):
     _publish(7000, extra, [["status", status], ["e", req["id"]], ["p", req["pubkey"]]])
 
 
-def _result(req: dict, output: str):
+def _result(req: dict, output: str, extra_tags: list | None = None):
     """kind-(req+1000) result, referencing the request + customer, echoing the input tags."""
     tags = [["e", req["id"]], ["p", req["pubkey"]]]
     tags += [t for t in req.get("tags", []) if t and t[0] == "i"]
+    if extra_tags:
+        tags += extra_tags
     _publish(req["kind"] + 1000, output, tags)
 
 
+def _do_image_job(req: dict, prompt: str) -> tuple[str, list]:
+    """Render `prompt` via the node's image backend, upload the PNG to the bot's Blossom host, and
+    return (url, extra_tags) — the result content is the public image URL plus an `imeta` tag."""
+    from image_backend import generate_image_bytes_with_retries
+    img = generate_image_bytes_with_retries(prompt)
+    if not img:
+        raise RuntimeError("image generation failed")
+    info = _nk._run(_nk._svc.media.upload(_nk._MEDIA_CFG, _nk._SECKEY, img, "image/png")) or {}
+    url = info.get("url")
+    if not url:
+        raise RuntimeError("media upload failed")
+    imeta = ["imeta", f"url {url}", "m image/png"]
+    if info.get("sha256"):
+        imeta.append(f"x {info['sha256']}")
+    if info.get("dim"):
+        imeta.append(f"dim {info['dim']}")
+    return url, [imeta]
+
+
 def process_job_requests():
-    if not is_ai_configured():
+    if not is_ai_configured() and not _IMAGE_ENABLED:
         print("[dvm] AI not configured — idle", flush=True)
         return
     if not _nk._SECKEY:
@@ -91,13 +121,17 @@ def process_job_requests():
         done += 1
         try:
             _feedback(ev, "processing")
-            if ev["kind"] in _SUMMARIZE:
-                prompt = "Summarize the following clearly and concisely:\n\n" + prompt
-            output = (generate_reply(prompt, thread_history=None, ping=False) or "").strip()
+            extra_tags = None
+            if ev["kind"] in _IMAGE:
+                output, extra_tags = _do_image_job(ev, prompt)
+            else:
+                if ev["kind"] in _SUMMARIZE:
+                    prompt = "Summarize the following clearly and concisely:\n\n" + prompt
+                output = (generate_reply(prompt, thread_history=None, ping=False) or "").strip()
             if not output:
                 _feedback(ev, "error", "empty result")
                 continue
-            _result(ev, output)
+            _result(ev, output, extra_tags)
             _feedback(ev, "success")
             print(f"[dvm] fulfilled kind-{ev['kind']} job {rid[:12]} for {ev.get('pubkey','')[:12]}", flush=True)
         except Exception as e:

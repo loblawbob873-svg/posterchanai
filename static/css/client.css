@@ -918,3 +918,10 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .poll-build{margin:8px 0;padding:10px;border:1px solid var(--line);border-radius:12px;background:var(--panel);display:flex;flex-direction:column;gap:8px}
 .poll-build .poll-opt-in{margin:0}
 #cmp-poll.active,#cmp-poll-add{color:var(--cyan)}
+
+/* ---------- Files view tabs (Public / AI Chat) ---------- */
+.files-tabs{display:flex;gap:8px;padding:14px 16px 6px;border-bottom:1px solid var(--line)}
+.ftab{padding:7px 16px;border:1px solid var(--line);border-radius:16px;background:var(--panel);
+  color:var(--muted);cursor:pointer;font-family:inherit;font-size:14.5px;font-weight:600}
+.ftab:hover{border-color:var(--cyan);color:var(--text)}
+.ftab.active{background:var(--cyan);color:#06121a;border-color:var(--cyan)}

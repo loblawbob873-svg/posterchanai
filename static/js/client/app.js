@@ -1907,7 +1907,8 @@
   }
   function openPostMenu(id, pk, art, anchorBtn){
     const mine = pk===ME.pubkey;
-    const items=[['bookmark', BOOKMARKS.has(id)?'🔖 Remove bookmark':'🔖 Bookmark'], ['copyid','🆔 Copy event ID'], ['rebroadcast','📡 Rebroadcast to relays']];
+    const items=[['bookmark', BOOKMARKS.has(id)?'🔖 Remove bookmark':'🔖 Bookmark'], ['copyid','🆔 Copy event ID']];
+    if(mine) items.push(['rebroadcast','📡 Rebroadcast to relays']);   // re-propagate your own post
     if(!window.PC_NOSTR_ONLY) items.push(['translate','🌐 Translate']);   // uses the node's AI backend
     if(!window.PC_NOSTR_ONLY) items.push(['summary','📝 Summary']);       // AI summary of the post/thread
     if(!window.PC_NOSTR_ONLY) items.push(['effect','🎬 Effect']);         // apply an effect to the post's image
@@ -2545,34 +2546,47 @@
     }catch(_){ box.innerHTML='<div class="muted">Summary failed.</div>'; }
   }
 
+  // Files view = two tabs: Public (your built-in Blossom blobs, shareable URLs) and AI Chat
+  // (encrypted artifacts under your storage key, only readable here). The active tab is remembered
+  // so re-rendering after an upload/delete stays put.
+  let _filesTab = 'public';
   async function renderBlossom(){
-    const feed=$('#feed'); const server=mediaServer();
-    feed.innerHTML=`<div class="uploader"><input type="file" id="bl-file" multiple> <button class="btn btn-cyan small" id="bl-up">Upload</button> <span class="muted small">→ ${enc(server||'(no server)')}</span></div><div class="files-grid" id="bl-grid"><div class="spinner"></div></div>`;
-    $('#bl-up').onclick=async()=>{ const files=[...$('#bl-file').files]; if(!files.length)return;
+    const feed=$('#feed');
+    feed.innerHTML=`<div class="files-tabs">
+        <button class="ftab${_filesTab==='public'?' active':''}" data-ft="public">🌸 Public</button>
+        <button class="ftab${_filesTab==='ai'?' active':''}" data-ft="ai">🤖 AI Chat</button>
+      </div><div id="files-pane"></div>`;
+    $$('.ftab',feed).forEach(b=> b.onclick=()=>{ _filesTab=b.dataset.ft; renderBlossom(); });
+    const pane=$('#files-pane',feed);
+    if(_filesTab==='ai') return renderAiFiles(pane);
+    return renderPublicFiles(pane);
+  }
+  // Public tab — your own/built-in Blossom blobs (shareable). Uploader + grid.
+  async function renderPublicFiles(pane){
+    const server=mediaServer();
+    pane.innerHTML=`<div class="uploader"><input type="file" id="bl-file" multiple> <button class="btn btn-cyan small" id="bl-up">Upload</button> <span class="muted small">→ ${enc(server||'(no server)')}</span></div><div class="files-grid" id="bl-grid"><div class="spinner"></div></div>`;
+    $('#bl-up',pane).onclick=async()=>{ const files=[...$('#bl-file',pane).files]; if(!files.length)return;
       for(let i=0;i<files.length;i++){ try{ await uploadBlob(files[i]); toast(`uploaded ${i+1}/${files.length}`); }catch(e){ toast('upload failed: '+e.message);} }
       renderBlossom(); };
-    // Blossom-server files (your own/built-in Blossom). On no-server or a list error, show a note —
-    // but DON'T return: the AI chat files below are independent of this and must always render.
     if(!server){
-      $('#bl-grid').innerHTML='<div class="empty">Blossom server not configured.</div>';
-    } else {
-      let list=null;
-      try{ const r=await fetch(server+'/list/'+ME.pubkey); if(!r.ok) throw new Error('HTTP '+r.status); list=await r.json(); }
-      catch(e){ $('#bl-grid').innerHTML='<div class="empty">Couldn\'t load files from '+enc(server)+' ('+enc(e.message)+').</div>'; }
-      if(list!==null){
-        const grid=$('#bl-grid');
-        grid.innerHTML = list.length ? list.map(b=>
-          `<div class="file-card" data-sha="${b.sha256}"><a href="${enc(b.url)}" data-mime="${enc(b.type||'')}" target="_blank">${blobThumb(b)}</a><button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button><button class="del" data-sha="${b.sha256}">✕</button><div class="meta"><span>${((b.size||0)/1024|0)}KB</span><span>${(b.type||'').split('/')[1]||''}</span></div></div>`
-        ).join('') : '<div class="empty">No files yet — upload one above.</div>';
-        $$('.del',grid).forEach(b=> b.onclick=()=>delBlob(b.dataset.sha));
-        $$('.copy',grid).forEach(b=> b.onclick=()=>copyUrl(b.dataset.url));
-      }
+      $('#bl-grid',pane).innerHTML='<div class="empty">Blossom server not configured.</div>';
+      return;
     }
-    renderAiFiles(feed);   // always — AI chat files (encrypted, under the storage key) are separate
+    let list=null;
+    try{ const r=await fetch(server+'/list/'+ME.pubkey); if(!r.ok) throw new Error('HTTP '+r.status); list=await r.json(); }
+    catch(e){ $('#bl-grid',pane).innerHTML='<div class="empty">Couldn\'t load files from '+enc(server)+' ('+enc(e.message)+').</div>'; }
+    if(list!==null){
+      const grid=$('#bl-grid',pane);
+      grid.innerHTML = list.length ? list.map(b=>
+        `<div class="file-card" data-sha="${b.sha256}"><a href="${enc(b.url)}" data-mime="${enc(b.type||'')}" target="_blank">${blobThumb(b)}</a><button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button><button class="del" data-sha="${b.sha256}">✕</button><div class="meta"><span>${((b.size||0)/1024|0)}KB</span><span>${(b.type||'').split('/')[1]||''}</span></div></div>`
+      ).join('') : '<div class="empty">No files yet — upload one above.</div>';
+      $$('.del',grid).forEach(b=> b.onclick=()=>delBlob(b.dataset.sha));
+      $$('.copy',grid).forEach(b=> b.onclick=()=>copyUrl(b.dataset.url));
+    }
   }
-  // AI chat files (uploads + generated images) — stored encrypted under the storage key, so they're
-  // separate from the Blossom list above; shown via the decrypting /api/files route.
-  async function renderAiFiles(feed){
+  // AI Chat tab — uploads + generated images, stored encrypted under the storage key (separate from
+  // the public Blossom list); shown via the decrypting /client/file route. Renders into `pane`.
+  async function renderAiFiles(pane){
     let files=[], err='';
     try{ const auth=await sign(27235,'ai-files',[['p',ME.pubkey]]);
       const r=await fetch('/client/ai-files',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -2580,21 +2594,17 @@
       if(r && r.ok===false) err=r.error||'request failed';
       files=(r&&r.files)||[]; }catch(e){ err=e.message||'sign/fetch failed'; }
     // Always show the section so it's discoverable. Surface errors/empty rather than vanishing.
-    const sec=document.createElement('div'); sec.className='ai-files-sec';
     if(!files.length){
-      sec.innerHTML=`<h3 class="rb-section" style="margin:18px 16px 8px">🤖 AI chat files (encrypted)</h3>`
-        + `<div class="empty" style="margin:0 16px">${err?('Couldn\'t load: '+enc(err)):'No AI chat files yet — upload a file or generate an image in PosterChan AI.'}</div>`;
-      feed.appendChild(sec); return;
+      pane.innerHTML=`<div class="empty" style="margin:16px">${err?('Couldn\'t load: '+enc(err)):'No AI chat files yet — upload a file or generate an image in PosterChan AI.'}</div>`;
+      return;
     }
-    sec.innerHTML=`<h3 class="rb-section" style="margin:18px 16px 8px">🤖 AI chat files (encrypted)</h3>
-      <div class="files-grid">${files.map(f=>{
+    pane.innerHTML=`<div class="files-grid">${files.map(f=>{
         const isImg=/^image\//.test(f.mime)||f.kind==='generated';
         const thumb=isImg?`<img src="${enc(thumbUrl(f.url))}" loading="lazy">`:`<div class="file-icon">📎<span>${enc((f.mime.split('/')[1]||'file').slice(0,8))}</span></div>`;
         return `<div class="file-card" data-sha="${enc(f.sha)}"><a href="${enc(f.url)}" data-mime="${enc(f.mime||'')}" target="_blank">${thumb}</a><button class="copy" data-url="${enc(f.url)}" title="Copy URL">⧉</button><button class="del" data-sha="${enc(f.sha)}">✕</button><div class="meta"><span>${enc(f.name.slice(0,16))}</span></div></div>`;
       }).join('')}</div>`;
-    feed.appendChild(sec);
-    $$('.del',sec).forEach(b=> b.onclick=()=>delAiFile(b.dataset.sha));
-    $$('.copy',sec).forEach(b=> b.onclick=()=>copyUrl(b.dataset.url));
+    $$('.del',pane).forEach(b=> b.onclick=()=>delAiFile(b.dataset.sha));
+    $$('.copy',pane).forEach(b=> b.onclick=()=>copyUrl(b.dataset.url));
   }
   async function delAiFile(sha){
     if(!confirm('Delete this AI file?')) return;
