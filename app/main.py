@@ -328,10 +328,14 @@ async def startup():
                 _kdb = SessionLocal()
                 try:
                     _ss.ensure_operator_key(_kdb)
+                    # Turnkey: on a fresh node with no admin yet, make the operator key the admin so
+                    # AI is usable immediately (no manual "claim admin" click). Idempotent; gated by
+                    # POSTERCHANAI_AUTO_ADMIN (default on).
+                    _ss.ensure_admin(_kdb)
                 finally:
                     _kdb.close()
             except Exception as e:
-                logging.warning(f"Could not pre-mint operator key: {e}")
+                logging.warning(f"Could not pre-mint operator key / provision admin: {e}")
 
             try:
                 # Start the built-in Nostr WoT relay (own thread; no-op unless enabled)

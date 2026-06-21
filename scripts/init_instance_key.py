@@ -72,6 +72,17 @@ def main() -> int:
                   file=sys.stderr)
 
         print(f"[init-instance-key] instance npub: {npub}")
+
+        # Turnkey: make the operator key the admin on a fresh node so AI works immediately (no manual
+        # web "claim admin" click). Idempotent; gated by POSTERCHANAI_AUTO_ADMIN (default on).
+        try:
+            from app.services.settings_store import ensure_admin
+            admin_npub = ensure_admin(db)
+            if admin_npub:
+                print("[init-instance-key] admin auto-provisioned from the operator key.")
+                print(f"[init-instance-key] ADMIN sign-in key (import this nsec into your signer — KEEP SECRET):\n    {nsec}")
+        except Exception as e:
+            print(f"[init-instance-key] WARNING: admin auto-provision deferred ({e})", file=sys.stderr)
         return 0
     finally:
         db.close()

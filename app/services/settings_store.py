@@ -1,19 +1,18 @@
-"""Settings read-path → Nostr relay (Phase 1 of the Nostr-as-datastore migration).
+"""Global settings store — Nostr relay is the ONLY datastore (no SQL `Setting` table).
 
-The app reads global settings from the SQLite `Setting` table in ~50 places, via many small
-`db.query(Setting)` helpers. Refactoring every caller to read the relay synchronously would be
-huge and slow (each read = an async WS round-trip + decrypt). Instead we make the relay the
-**authoritative** store and keep the `Setting` table as a fast local **read-through cache**:
+Settings live as operator-signed `pcai:setting:` events in the relay's Postgres event store. The
+app keeps an **in-process cache** (`_CACHE`) hydrated from the relay at startup, so the many
+synchronous readers (`settings_store.get(...)`) are fast — no SQL `Setting` table, no per-read WS
+round-trip. Writes go to the cache and are mirrored to the relay (`put`/`put_many`, via a
+background relay-writer). Per-node LOCAL-ONLY keys (plumbing needed to reach the relay + runtime
+cursors) can't live in the relay, so they persist in a small `local_settings.json` in the data dir.
 
-  * `hydrate(db)`  — at startup (relay → Setting): pull every `pcai:setting:` doc and UPSERT it
-    into the `Setting` table, so all existing synchronous readers transparently see relay values.
-  * `write_through(db, changes)` — on admin save (Setting → relay): mirror changed keys to the
-    relay so it stays authoritative.
-
-Flag-gated by the `settings_backend` setting (`relay` enables it; default `sqlite` = off, so
-production/fresh nodes are unaffected until explicitly flipped). The relay's event store is a
-*separate* SQLite file; "no app DB" means the app DB stops being the source of truth, with the
-`Setting` table demoted to a derived cache.
+  * `load_local()`            — load local-only keys from the JSON file (call before the relay starts)
+  * `apply_defaults(d)`       — seed default values into the cache for keys not already present
+  * `hydrate(db)`             — relay → cache (authoritative for shareable keys)
+  * `seed_relay_defaults(db, d)` — first boot: push defaults the relay lacks UP to the relay
+  * `get/get_bool/get_int/get_float/all_settings/prefixed/exists` — sync reads
+  * `put/put_many/delete`    — writes (local JSON for local-only, relay for shareable)
 """
 
 import logging
@@ -227,6 +226,62 @@ def _operator_seckey(db):
     try:
         return nostr_service.decode_seckey(nsec)
     except Exception:
+        return None
+
+
+def ensure_admin(db) -> str | None:
+    """Turnkey: on a fresh node with NO admin yet, make the auto-minted OPERATOR key the admin so AI
+    works immediately — no manual web 'claim admin' click (which otherwise blocks testing the AI
+    parts on a fresh install). Creates an admin User with the operator's npub + full grants and seeds
+    the WoT with it. Idempotent + no-op once any admin with an npub exists; gated by
+    POSTERCHANAI_AUTO_ADMIN (default on — set 0 to require a human to claim admin with their own key).
+    Returns the admin npub if it provisioned/already-operator-admin, else None."""
+    import os
+    if os.environ.get("POSTERCHANAI_AUTO_ADMIN", "1").strip().lower() not in ("1", "true", "yes", "on"):
+        return None
+    try:
+        from app.models import User
+        from app.services.nostr import nostr_service
+        import secrets, binascii
+        # An admin with an npub already exists → instance is set up; don't override it.
+        if db.query(User).filter(User.is_admin == True, User.nostr_npub.isnot(None)).first():  # noqa: E712
+            return None
+        op_sk = _operator_seckey(db)
+        if not op_sk:
+            return None
+        pk = nostr_service.derive_pubkey(op_sk)
+        pk_hex = pk if isinstance(pk, str) else binascii.hexlify(pk).decode()
+        npub = nostr_service.npub_of(pk_hex)
+        u = db.query(User).filter(User.nostr_npub == npub).first()
+        if not u:
+            from app.auth import get_password_hash
+            base = "npub_" + npub[4:16]
+            username = base
+            for i in range(2, 100):
+                if not db.query(User).filter(User.username == username).first():
+                    break
+                username = f"{base}{i}"
+            u = User(username=username, email=None,
+                     password_hash=get_password_hash(secrets.token_urlsafe(32)),
+                     email_verified=True, nostr_npub=npub)
+            db.add(u)
+        u.is_admin = True
+        u.can_ai = True
+        u.can_image = True
+        u.can_blossom = True
+        db.commit()
+        # Seed the WoT with the admin's own npub via the relay-authoritative settings store.
+        val = get("nostr_relay_wot_seeds", "") or ""
+        if npub not in val:
+            put("nostr_relay_wot_seeds", (val.rstrip() + "\n" + npub).strip() if val.strip() else npub)
+        logger.info("[settings-store] auto-provisioned admin from the operator key: %s", npub[:16])
+        return npub
+    except Exception as e:
+        logger.warning("[settings-store] ensure_admin failed: %s", e)
+        try:
+            db.rollback()
+        except Exception:
+            pass
         return None
 
 

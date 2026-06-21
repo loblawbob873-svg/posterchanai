@@ -438,6 +438,29 @@ def update_settings(
                 trigger_nip05_reload()
             except Exception as e:
                 logger.warning(f"[Admin] relay NIP-05 reload after settings save failed: {e}")
+        # Relay TASK-TOPOLOGY settings only take effect when the relay rebuilds its config at startup
+        # — they decide which background tasks run (send-only vs firehose/sync, mirror-feeds sweep)
+        # or where/how it connects. Toggling them in the UI must RESTART the relay, else the already-
+        # running firehose ignores the change (symptom: "I clicked send-only but it's still pulling
+        # posts"). Restart in the background so the admin save returns promptly.
+        _relay_topology_keys = (
+            "nostr_relay_send_only", "nostr_relay_wot_enabled", "nostr_relay_firehose_enabled",
+            "nostr_relay_mirror_feeds", "nostr_relay_upstream_relays", "nostr_relay_disable_proxy",
+            "nostr_relay_firehose_max_relays", "nostr_relay_bind", "nostr_relay_port",
+        )
+        if any(k in changed_keys for k in _relay_topology_keys):
+            try:
+                import threading as _threading
+                def _restart_relay():
+                    try:
+                        from app.services.nostr_relay.thread import restart_nostr_relay
+                        restart_nostr_relay()
+                        logger.info("[Admin] relay restarted to apply a task-topology setting change")
+                    except Exception as e:
+                        logger.warning(f"[Admin] relay restart after settings save failed: {e}")
+                _threading.Thread(target=_restart_relay, daemon=True).start()
+            except Exception as e:
+                logger.warning(f"[Admin] could not schedule relay restart: {e}")
 
         # Write-through to the relay so it stays the authoritative store (settings_backend == relay).
         # No-op otherwise. Sync handler runs in a threadpool → drive the coroutine with asyncio.run.
