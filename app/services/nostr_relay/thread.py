@@ -163,13 +163,11 @@ def _read_config() -> dict:
             "port": gi("nostr_relay_port", 3052),
             "seeds": seeds,
             "upstream": upstream,
-            # Bypass the outbound Tor proxy for the relay's OWN upstream traffic (sync/outbox/WoT/
-            # firehose). Default TRUE: direct is faster, avoids the proxy-startup-race log flood, and
-            # — critically — public relays widely BLOCK Tor exit IPs, so routing the firehose through
-            # Tor silently kills live post ingestion (WoT still builds via brief queries, but no
-            # posts stream in). Doesn't change the bots' proxy behavior. Set the setting false to
-            # force the relay through the proxy.
-            "direct": gb("nostr_relay_disable_proxy", True),
+            # Bypass the outbound Tor proxy for the relay's OWN upstream traffic (sync/outbox/
+            # WoT). Direct is faster and avoids the proxy-startup-race log flood; doesn't change
+            # the bots' proxy behavior. (The relay client already tries proxy-then-direct per
+            # connection, so leaving this False still federates when Tor is down.)
+            "direct": gb("nostr_relay_disable_proxy", False),
             # Live firehose: keep a persistent subscription to each upstream relay and store
             # only WoT authors — real-time, vs the polling sweep's per-cycle lag.
             "firehose_enabled": gb("nostr_relay_firehose_enabled", True),

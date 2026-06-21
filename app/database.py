@@ -231,9 +231,6 @@ def init_db():
             # Send-only: broadcast our events to upstream (outbox) but never pull/store theirs —
             # keeps a secondary node's local DB from mirroring upstream. Default off.
             "nostr_relay_send_only": "false",
-            # Relay upstream traffic (sync/outbox/WoT/firehose) goes DIRECT, NOT through the built-in
-            # Tor/HTTP proxy — public relays block Tor exit IPs, which would kill live post ingestion.
-            "nostr_relay_disable_proxy": "true",
             # Upstream relays the WoT relay pulls/broadcasts (firehose + sync + outbox). Seeded with
             # the built-in DEFAULT_RELAYS so the list is visible/editable in Admin → Relay; blank
             # would still work (code falls back to the same list).
