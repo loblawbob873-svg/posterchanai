@@ -768,7 +768,7 @@
     VIEW = v;
     if(v==='notifications') _notifShown = 25;   // fresh entry → collapse pagination back to one page
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
-    $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', streams:'Streams', communities:'Communities', chat:'Chat', '4chan':'4chan', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', streams:'Streams', communities:'Communities', pics:'Pics', chat:'Chat', '4chan':'4chan', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', admin:'Admin' }[v]||v;
     renderView(true);
   }
   function renderView(reset){
@@ -795,6 +795,7 @@
     if (VIEW==='articles') return renderArticles();
     if (VIEW==='streams') return renderStreams();
     if (VIEW==='communities') return renderCommunities();
+    if (VIEW==='pics') return renderPics();
     if (VIEW==='chat') return renderChatrooms();
     if (VIEW==='4chan') return render4chan();
     if (VIEW==='blossom') return renderBlossom();
@@ -2052,7 +2053,7 @@
   function moreMenu(){
     const dn=Drafts.all().length;   // per-item counts so the ☰ badge is explained once opened
     const counts={drafts:dn};
-    const items=[['ai','🤖','PosterChan AI'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['articles','📰','Articles'],['streams','📺','Streams'],['communities','☷','Communities'],['chat','✺','Chat'],['4chan','🍀','4chan'],['blossom','🌸','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['logout','⎋','Logout']]
+    const items=[['ai','🤖','PosterChan AI'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['articles','📰','Articles'],['streams','📺','Streams'],['communities','☷','Communities'],['pics','📸','Pics'],['chat','✺','Chat'],['4chan','🍀','4chan'],['blossom','🌸','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['logout','⎋','Logout']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='ai'));   // hide AI in Nostr-only deployments
     modal(`<h3>More</h3><div class="more-grid">${items.map(([v,ic,lbl])=>{const c=counts[v]||0;return `<button class="more-item${v==='logout'?' more-logout':''}" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}${c?` <i class="badge">${c>99?'99+':c}</i>`:''}</span></button>`;}).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); if(b.dataset.v==='logout') logout(); else if(b.dataset.v==='profile') renderProfileView(ME.pubkey); else switchView(b.dataset.v); });
@@ -2350,6 +2351,36 @@
   // ---- 4chan browser (Discover) — live catalog/thread via the /api/4chan/* backend (proxies
   // a.4cdn.org through the built-in proxy). Content is ephemeral + re-fetchable, so it is NOT stored
   // as relay events (that would bloat the WoT relay with non-Nostr junk); the view fetches fresh.
+  // ---------- Pics: a picture-first feed (NIP-68 kind-20 + image notes) as a media grid ----------
+  function _firstImage(ev){
+    for(const t of (ev.tags||[])){
+      if((t[0]==='url'||t[0]==='image') && /^https?:\/\//i.test(t[1]||'')) return t[1];
+      if(t[0]==='imeta'){ const u=(t.find(x=>/^url\s/i.test(x))||'').replace(/^url\s+/i,''); if(/^https?:\/\//i.test(u)) return u; }
+    }
+    const m=(ev.content||'').match(/https?:\/\/[^\s)<]+\.(?:jpe?g|png|gif|webp|avif)(?:\?[^\s)<]*)?/i);
+    return m?m[0]:null;
+  }
+  async function renderPics(){
+    const feed=$('#feed');
+    feed.innerHTML='<div class="pics-grid" id="pics-grid"><div class="spinner"></div></div>';
+    let evs=[];
+    try{ evs=await Relay.query([{kinds:[20], limit:80},{kinds:[1], limit:160}]); }catch(_){}
+    evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
+    if(VIEW!=='pics') return;
+    const pics=[]; const seen=new Set();
+    for(const e of evs.sort((a,b)=>b.created_at-a.created_at)){
+      if(e.kind===1 && isReply(e)) continue;
+      if(isMutedView(e)) continue;
+      const img=_firstImage(e); if(!img || seen.has(e.id)) continue;
+      seen.add(e.id); pics.push({e,img});
+      if(pics.length>=120) break;
+    }
+    const grid=$('#pics-grid'); if(!grid) return;
+    grid.innerHTML = pics.length ? pics.map(x=>`<div class="pic-card" data-id="${x.e.id}"><img src="${enc(x.img)}" loading="lazy" onerror="this.closest('.pic-card')&&this.closest('.pic-card').remove()"></div>`).join('') : '<div class="empty">No pics found yet.</div>';
+    $$('.pic-card',grid).forEach(c=> c.onclick=()=> openThread(c.dataset.id));
+  }
+
+  // ---------- 4chan browser (Discover) ----------
   // Board picker + mobile-friendly grid; thumbnails open in the shared lightbox. ----
   const _4CHAN_BOARDS = [['g','/g/ Tech'],['a','/a/ Anime'],['pol','/pol/ Politics'],['h','/h/ NSFW']];
   let _4chanBoard = '4chan' in (window._pcState||{}) ? window._pcState['4chan'] : 'g';
