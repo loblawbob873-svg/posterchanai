@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # =============================================================================
-# PosterChanAI — one Dockerfile, four accelerators (Ubuntu based)
+# PosterChanAI — one Dockerfile, four accelerators + a Nostr-only build (Ubuntu based)
 # =============================================================================
 # A single build-arg `GPU` selects the compute backend and its base image:
 #
@@ -185,9 +185,11 @@ COPY requirements-nostr.txt /tmp/requirements-nostr.txt
 COPY botframework/requirements.txt /tmp/requirements-bot.txt
 # Nostr-only (GPU=nostr) installs the lean Nostr/web requirements and SKIPS the diffusers/
 # transformers image-gen stack entirely; all other builds get the full app + image-gen deps.
+# NOTE: the nostr branch must FAIL LOUDLY — no `2>/dev/null` and no `|| <full requirements>`
+# fallback. A swallowed error there used to silently install the full AI stack (torch/onnx/cuda),
+# which is exactly what a lean "no-AI" image is meant to avoid. If a lean dep won't install, stop.
 RUN if [ "$GPU" = "nostr" ]; then \
-        pip install -r /tmp/requirements-nostr.txt 2>/dev/null \
-          || pip install -r /tmp/requirements.txt -r /tmp/requirements-bot.txt ; \
+        pip install -r /tmp/requirements-nostr.txt ; \
     else \
         pip install -r /tmp/requirements.txt -r /tmp/requirements-bot.txt \
           && pip install "transformers<5" diffusers accelerate safetensors huggingface_hub sentencepiece ftfy ; \

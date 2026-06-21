@@ -64,6 +64,13 @@ docker run -d --device /dev/dri -p 3051:3051 \
 Or use the bundled compose file (recommended — it brings up Postgres too):
 `docker compose --profile cuda up -d --build` (`cpu` | `cuda` | `rocm` | `intel` | `nostr`).
 
+Each profile builds its **own image tag** — `posterchanai:<TAG>-<backend>` (e.g.
+`posterchanai:local-nostr`, `posterchanai:local-cuda`; `TAG` defaults to `local`). The profiles
+therefore never alias one another, so `docker compose --profile nostr up` always runs the lean
+Nostr-only image even on a box where you previously built a `cuda` one. (Earlier versions shared a
+single `posterchanai:local` tag, which let a prior CUDA build leak into a `nostr` run — if you have
+an old shared-tag image lying around, it's now unused and you can `docker image prune` it.)
+
 ## Nostr-only (no AI)
 
 A self-hosted **Nostr relay + the web client + Blossom**, with **no AI stack** (no

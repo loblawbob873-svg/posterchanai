@@ -1,14 +1,20 @@
 # PosterChanAI — pick ONE service via its profile:
 #   docker compose --profile cpu   up -d --build
+#   docker compose --profile nostr up -d --build   # Nostr-only (relay + client + Blossom, NO AI)
 #   docker compose --profile cuda  up -d --build   # NVIDIA  (needs nvidia-container-toolkit)
 #   docker compose --profile rocm  up -d --build   # AMD     (needs host amdgpu driver)
 #   docker compose --profile intel up -d --build   # Intel Arc (needs host i915 + /dev/dri)
 #
-# All four share the same data volume so you can switch backends without losing
-# your DB / models.
+# Each profile builds its OWN image tag (posterchanai:<TAG>-<backend>, e.g. ...-nostr / ...-cuda)
+# so the profiles never alias one another — `--profile nostr up` always runs the lean nostr image,
+# never a previously-built cuda one. All backends share the same data volume, so you can switch
+# between them without losing your DB / models.
 
 x-common: &common
-  image: posterchanai:${TAG:-local}
+  # NOTE: no shared `image:` here on purpose. Each backend service sets its OWN tag
+  # (posterchanai:<tag>-<backend>) so the profiles can't alias one another. A single shared
+  # tag made `--profile nostr up` (no --build) reuse whatever image was built last — e.g. a
+  # CUDA build — so the lean nostr image silently "pulled in cuda".
   restart: unless-stopped
   ports:
     - "${POSTERCHANAI_PORT:-3051}:3051"
@@ -76,6 +82,7 @@ services:
   cpu:
     <<: *common
     profiles: ["cpu"]
+    image: posterchanai:${TAG:-local}-cpu
     build:
       context: .
       args: { GPU: cpu }
@@ -87,6 +94,7 @@ services:
   nostr:
     <<: *common
     profiles: ["nostr"]
+    image: posterchanai:${TAG:-local}-nostr
     build:
       context: .
       args:
@@ -103,6 +111,7 @@ services:
   cuda:
     <<: *common
     profiles: ["cuda"]
+    image: posterchanai:${TAG:-local}-cuda
     build:
       context: .
       args: { GPU: cuda }
@@ -118,6 +127,7 @@ services:
   rocm:
     <<: *common
     profiles: ["rocm"]
+    image: posterchanai:${TAG:-local}-rocm
     build:
       context: .
       args: { GPU: rocm }
@@ -133,6 +143,7 @@ services:
   intel:
     <<: *common
     profiles: ["intel"]
+    image: posterchanai:${TAG:-local}-intel
     build:
       context: .
       args: { GPU: intel }
