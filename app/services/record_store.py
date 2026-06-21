@@ -29,6 +29,31 @@ def enabled(db) -> bool:
     return True
 
 
+def _run_blocking(coro):
+    """Drive a coroutine to completion from a *_blocking wrapper regardless of context: these are
+    called from BOTH plain sync routes (no loop) AND async command handlers (a loop is already
+    running, where `asyncio.run` raises RuntimeError). With a running loop, run on a worker thread and
+    join — so the caller's `db` session (used inside the coro) is never touched concurrently and stays
+    open for the duration; without one, run inline."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    import threading
+    box = {}
+    def _t():
+        try:
+            box["v"] = asyncio.run(coro)
+        except BaseException as e:   # noqa: BLE001 - surfaced to the caller below
+            box["e"] = e
+    th = threading.Thread(target=_t, name="record-mirror", daemon=True)
+    th.start()
+    th.join()
+    if "e" in box:
+        raise box["e"]
+    return box.get("v")
+
+
 def _iso(dt):
     return dt.isoformat() if dt else None
 
@@ -74,8 +99,7 @@ async def mirror_reminder(db, user, r: Reminder, *, force=False) -> bool:
 
 def mirror_reminder_blocking(db, user, r: Reminder) -> None:
     try:
-        if enabled(db):
-            asyncio.run(mirror_reminder(db, user, r))
+        _run_blocking(mirror_reminder(db, user, r))
     except Exception as e:
         logger.warning("[record-store] mirror_reminder_blocking failed: %s", e)
 
@@ -87,16 +111,14 @@ def _search_rec(s: SavedSearch) -> dict:
 
 def mirror_search_blocking(db, user, s: SavedSearch) -> None:
     try:
-        if enabled(db):
-            asyncio.run(_put(db, user, NS_SEARCH, s.id, _search_rec(s), force=False))
+        _run_blocking(_put(db, user, NS_SEARCH, s.id, _search_rec(s), force=False))
     except Exception as e:
         logger.warning("[record-store] mirror_search_blocking failed: %s", e)
 
 
 def delete_search_blocking(db, user, search_id) -> None:
     try:
-        if enabled(db):
-            asyncio.run(_delete(db, user, NS_SEARCH, search_id, force=False))
+        _run_blocking(_delete(db, user, NS_SEARCH, search_id, force=False))
     except Exception as e:
         logger.warning("[record-store] delete_search_blocking failed: %s", e)
 
@@ -108,16 +130,14 @@ def _apikey_rec(k: APIKey) -> dict:
 
 def mirror_apikey_blocking(db, user, k: APIKey) -> None:
     try:
-        if enabled(db):
-            asyncio.run(_put(db, user, NS_APIKEY, k.id, _apikey_rec(k), force=False))
+        _run_blocking(_put(db, user, NS_APIKEY, k.id, _apikey_rec(k), force=False))
     except Exception as e:
         logger.warning("[record-store] mirror_apikey_blocking failed: %s", e)
 
 
 def delete_apikey_blocking(db, user, key_id) -> None:
     try:
-        if enabled(db):
-            asyncio.run(_delete(db, user, NS_APIKEY, key_id, force=False))
+        _run_blocking(_delete(db, user, NS_APIKEY, key_id, force=False))
     except Exception as e:
         logger.warning("[record-store] delete_apikey_blocking failed: %s", e)
 
