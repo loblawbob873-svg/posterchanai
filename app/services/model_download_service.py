@@ -25,25 +25,38 @@ def status(kind: str) -> dict:
         return dict(_JOBS.get(kind, {"state": "idle", "message": "", "pct": None}))
 
 
-# ---------- chat: download the configured GGUF by URL ----------
+# ---------- chat + agentic/tools: download a GGUF by URL ----------
 _DEFAULT_GGUF = ("https://huggingface.co/lukey03/Qwen3.5-9B-abliterated-GGUF/resolve/main/"
                  "Qwen3.5-9B-abliterated-Q4_K_M.gguf")
+# Known GGUF basenames → download URL (for the agentic/tools model, picked by name in the UI).
+_KNOWN_GGUF = {
+    "Qwen3-Coder-30B-A3B-Instruct-IQ4_XS.gguf":
+        "https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF/resolve/main/Qwen3-Coder-30B-A3B-Instruct-IQ4_XS.gguf",
+    "Qwen3.5-9B-Claude-Code-Q4_K_M.gguf":
+        "https://huggingface.co/empero-ai/Qwen3.5-9B-Claude-Code-GGUF/resolve/main/Qwen3.5-9B-Claude-Code-Q4_K_M.gguf",
+    "Qwen3.5-9B-abliterated-Q4_K_M.gguf":
+        "https://huggingface.co/lukey03/Qwen3.5-9B-abliterated-GGUF/resolve/main/Qwen3.5-9B-abliterated-Q4_K_M.gguf",
+}
 
 
-def _download_chat(db):
-    import httpx
+def _models_dir() -> str:
     from app.services import settings_store
-    path = (settings_store.get("llm_model_path", "") or os.environ.get("POSTERCHANAI_LLM_MODEL_PATH", "")).strip()
-    url = (settings_store.get("llm_model_url", "") or os.environ.get("POSTERCHANAI_MODEL_URL", "") or _DEFAULT_GGUF).strip()
-    if not path:
-        path = "/var/lib/posterchanai/models/" + url.split("/")[-1].split("?")[0]
+    p = (settings_store.get("llm_model_path", "") or os.environ.get("POSTERCHANAI_LLM_MODEL_PATH", "")).strip()
+    return os.path.dirname(p) if p else "/var/lib/posterchanai/models"
+
+
+def _stream_gguf(kind: str, path: str, url: str):
+    import httpx
     if os.path.isfile(path):
-        _set("chat", "done", f"Already present: {os.path.basename(path)}")
+        _set(kind, "done", f"Already present: {os.path.basename(path)}")
         return
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     tmp = path + ".part"
     try:
-        with httpx.stream("GET", url, follow_redirects=True, timeout=httpx.Timeout(60.0, read=None)) as r:
+        # ALWAYS direct — never via the proxy/Tor. trust_env=False so httpx ignores any inherited
+        # HTTP(S)_PROXY env (model pulls are big + from HF/CDNs that throttle/block Tor exits).
+        with httpx.stream("GET", url, follow_redirects=True, trust_env=False,
+                          timeout=httpx.Timeout(60.0, read=None)) as r:
             r.raise_for_status()
             total = int(r.headers.get("content-length") or 0)
             got = 0
@@ -51,19 +64,41 @@ def _download_chat(db):
                 for chunk in r.iter_bytes(1024 * 512):
                     f.write(chunk)
                     got += len(chunk)
-                    if total:
-                        _set("chat", "running", f"{got // (1024*1024)} / {total // (1024*1024)} MB",
-                             int(got * 100 / total))
-                    else:
-                        _set("chat", "running", f"{got // (1024*1024)} MB", None)
+                    _set(kind, "running",
+                         (f"{got // (1024*1024)} / {total // (1024*1024)} MB" if total else f"{got // (1024*1024)} MB"),
+                         int(got * 100 / total) if total else None)
         os.replace(tmp, path)
-        _set("chat", "done", f"Downloaded {os.path.basename(path)}")
+        _set(kind, "done", f"Downloaded {os.path.basename(path)}")
     except Exception as e:
         try:
             os.remove(tmp)
         except OSError:
             pass
-        _set("chat", "error", str(e)[:300])
+        _set(kind, "error", str(e)[:300])
+
+
+def _download_chat(db):
+    from app.services import settings_store
+    path = (settings_store.get("llm_model_path", "") or os.environ.get("POSTERCHANAI_LLM_MODEL_PATH", "")).strip()
+    url = (settings_store.get("llm_model_url", "") or os.environ.get("POSTERCHANAI_MODEL_URL", "") or _DEFAULT_GGUF).strip()
+    if not path:
+        path = _models_dir().rstrip("/") + "/" + url.split("/")[-1].split("?")[0]
+    _stream_gguf("chat", path, url)
+
+
+def _download_tools(db):
+    """Agentic / tools model — a GGUF basename (e.g. Qwen3-Coder-30B…) in the models dir."""
+    from app.services import settings_store
+    name = (settings_store.get("llm_tools_model", "") or "Qwen3-Coder-30B-A3B-Instruct-IQ4_XS.gguf").strip()
+    path = name if os.path.isabs(name) else (_models_dir().rstrip("/") + "/" + name)
+    url = (settings_store.get("llm_tools_model_url", "") or _KNOWN_GGUF.get(os.path.basename(name), "")).strip()
+    if not url:
+        _set("tools", "error",
+             f"No known download URL for '{os.path.basename(name)}'. Set the Agentic/Tools Model to a known "
+             f"GGUF (Qwen3-Coder-30B-A3B-Instruct-IQ4_XS.gguf or Qwen3.5-9B-Claude-Code-Q4_K_M.gguf), set "
+             f"llm_tools_model_url, or place the file manually.")
+        return
+    _stream_gguf("tools", path, url)
 
 
 # ---------- image: load the diffusers model(s) — loading downloads them. ROCm/style switching uses
@@ -101,7 +136,7 @@ def _download_music(db):
     _set("music", "done", "Music model ready.")
 
 
-_FNS = {"chat": _download_chat, "image": _download_image, "music": _download_music}
+_FNS = {"chat": _download_chat, "tools": _download_tools, "image": _download_image, "music": _download_music}
 
 
 def start(kind: str, db_factory) -> bool:

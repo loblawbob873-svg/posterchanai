@@ -18,6 +18,11 @@
             <input type="text" id="llm_tools_model" name="llm_tools_model" placeholder="Qwen3.5-9B-Claude-Code-Q4_K_M.gguf">
             <small>GGUF <strong>basename</strong> (in the same dir as Model Path) or absolute path, used for <strong>tool-calling / agentic jobs</strong>: opencode/aider via <code>/v1</code>, the <code>node agent</code> command (web UI &amp; Telegram), and the system-health report. Plain chat keeps using Model Path. Blank or a missing file → falls back to Model Path. Recommended: <code>Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf</code> on 12&nbsp;GB+ GPUs, or the lightweight <code>Qwen3.5-9B-Claude-Code-Q4_K_M.gguf</code>.</small>
         </div>
+        <div class="form-group">
+            <button type="button" class="btn-secondary" id="dl-tools-btn" onclick="downloadModel('tools','dl-tools-btn','dl-tools-st')">⬇ Download agentic/tools model</button>
+            <span id="dl-tools-st" style="margin-left:10px;font-size:13px"></span>
+            <small>Downloads the GGUF named above (or the recommended Coder-30B if blank) to the models dir — direct download, large, one-time. Set a known name first; shows ✓/✗ here.</small>
+        </div>
         <div class="form-row">
             <div class="form-group">
                 <label for="llm_gpu_layers">GPU Layers</label>
