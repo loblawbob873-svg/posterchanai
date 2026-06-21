@@ -1,3 +1,4 @@
+import os
 import secrets
 import logging
 import time
@@ -131,6 +132,26 @@ async def nostr_login(data: NostrLogin, response: Response, db: Session = Depend
         nostr_store.user_storage_seckey(db, user)
     except Exception as e:
         logger.warning("[auth] storage key provisioning failed for %s: %s", npub[:16], e)
+
+    # TURNKEY admin: the FIRST npub to sign in claims admin automatically — no manual "become admin"
+    # click — so a fresh node is immediately usable by its owner (their OWN key gets full access:
+    # AI / image / Blossom). Locked the moment any admin with an npub exists, so it can never take
+    # over a configured instance. Disable with POSTERCHANAI_AUTO_ADMIN=0 (admin then granted manually).
+    if os.environ.get("POSTERCHANAI_AUTO_ADMIN", "1").strip().lower() in ("1", "true", "yes", "on"):
+        if not db.query(User).filter(User.is_admin == True, User.nostr_npub.isnot(None)).first():  # noqa: E712
+            user.is_admin = True
+            user.can_ai = True
+            user.can_image = True
+            user.can_blossom = True
+            db.commit()
+            logger.info("[auth] first-login admin auto-claimed by %s", npub[:16])
+            try:
+                from app.services import settings_store as _ss
+                _seeds = _ss.get("nostr_relay_wot_seeds", "") or ""
+                if npub not in _seeds:
+                    _ss.put("nostr_relay_wot_seeds", (_seeds.rstrip() + "\n" + npub).strip() if _seeds.strip() else npub)
+            except Exception as _e:
+                logger.warning("[auth] could not seed WoT with first admin: %s", _e)
 
     # Mirror the account-authority record to the relay (no-op unless users_backend == relay).
     try:

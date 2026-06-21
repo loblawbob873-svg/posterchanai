@@ -335,14 +335,13 @@ async def startup():
                 _kdb = SessionLocal()
                 try:
                     _ss.ensure_operator_key(_kdb)
-                    # Turnkey: on a fresh node with no admin yet, make the operator key the admin so
-                    # AI is usable immediately (no manual "claim admin" click). Idempotent; gated by
-                    # POSTERCHANAI_AUTO_ADMIN (default on).
-                    _ss.ensure_admin(_kdb)
+                    # NOTE: admin is NOT auto-provisioned from the operator key anymore — that made an
+                    # admin the owner doesn't hold. Instead the FIRST npub to sign in claims admin
+                    # automatically (app/routers/auth.py nostr_login). Turnkey + it's the owner's key.
                 finally:
                     _kdb.close()
             except Exception as e:
-                logging.warning(f"Could not pre-mint operator key / provision admin: {e}")
+                logging.warning(f"Could not pre-mint operator key: {e}")
 
             try:
                 # Start the built-in Nostr WoT relay (own thread; no-op unless enabled)
