@@ -160,7 +160,13 @@ def _name(pk: str) -> str:
 
 def _clean_text(note) -> str:
     t = _NOSTR_TOKEN_RE.sub("", note.get("text") or "")
-    return re.sub(r"@[\w@.]+", "", t).strip()
+    t = re.sub(r"@[\w@.]+", "", t)
+    t = re.sub(r"#\w+", "", t)            # strip hashtags (#chesstr etc.) — they're not the move
+    # the move is on the first non-empty line (clients append "\n\n#chesstr" after it)
+    for line in t.splitlines():
+        if line.strip():
+            return line.strip()
+    return t.strip()
 
 
 def _publish(gameid, parent_id, white, black, body, png):
