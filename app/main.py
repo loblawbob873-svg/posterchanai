@@ -270,81 +270,10 @@ async def startup():
             except Exception as e:
                 logging.error(f"Error seeding Blossom settings: {e}")
 
-        # One-time container turnkey upgrade. PC_ACCEL is set ONLY in the Docker images (never on
-        # bare metal), so this never touches server1/nas. Guarded by a marker so it runs EXACTLY
-        # ONCE per volume: it brings a reused/older volume up to the single-node turnkey defaults,
-        # then never runs again — so the Admin UI stays the source of truth in production. Opt out
-        # of the outbound stack pieces with POSTERCHANAI_{TOR,PROXY,BT}_ENABLED=false.
-        if os.environ.get("PC_ACCEL"):
-            try:
-                _db = SessionLocal()
-                _marker = _db.query(Setting).filter(Setting.key == "_turnkey_upgrade_v1").first()
-                if not _marker:
-                    def _get(k, d=""):
-                        r = _db.query(Setting).filter(Setting.key == k).first()
-                        return (r.value if r and r.value is not None else d)
-                    def _set(k, v):
-                        r = _db.query(Setting).filter(Setting.key == k).first()
-                        if r:
-                            r.value = v
-                        else:
-                            _db.add(Setting(key=k, value=v))
-                    def _set_if_blank(k, v):
-                        if not (_get(k).strip()):
-                            _set(k, v)
-                    def _on(name):  # default ON in containers; opt out with =false/0/no/off
-                        return os.environ.get(name, "true").strip().lower() not in ("0", "false", "no", "off")
-                    # Outbound Tor -> HTTP proxy -> torrent stack, pre-wired.
-                    if _on("POSTERCHANAI_TOR_ENABLED"):
-                        _set("tor_enabled", "true")
-                    if _on("POSTERCHANAI_PROXY_ENABLED"):
-                        _set("proxy_enabled", "true")
-                        _set_if_blank("proxy_socks_host", "127.0.0.1")
-                    if _on("POSTERCHANAI_BT_ENABLED"):
-                        _set("bt_enabled", "true")
-                        _set_if_blank("bt_proxy_host", "127.0.0.1")
-                    # Single-node Blossom: the storage proxy is multi-node only. With no storage
-                    # server set, "proxy" already behaves as local — make it explicit for the UI.
-                    if _get("blossom_storage_backend") == "proxy" and not _get("storage_server_url").strip():
-                        _set("blossom_storage_backend", "local")
-                    # Populate the upstream relay list so the UI shows it (blank still works via the
-                    # code default, but a fresh node should display the relays).
-                    if not _get("nostr_relay_upstream_relays").strip():
-                        from app.services.nostr import DEFAULT_RELAYS
-                        _set("nostr_relay_upstream_relays", "\n".join(DEFAULT_RELAYS))
-                    # Honour the profile's declared intent ONCE (so a reused nostr volume whose keys
-                    # are still "false" gets relay + Blossom on); admin owns them afterward.
-                    if os.environ.get("POSTERCHANAI_NOSTR_RELAY", "0") == "1":
-                        _set("nostr_relay_enabled", "true")
-                    if os.environ.get("POSTERCHANAI_BLOSSOM", "0") == "1":
-                        _set("blossom_enabled", "true")
-                    _set("_turnkey_upgrade_v1", "done")
-                    _db.commit()
-                    logging.info("Applied one-time container turnkey upgrade (proxy/tor/torrent, single-node blossom, default relays)")
-                _db.close()
-            except Exception as e:
-                logging.error(f"Error applying container turnkey upgrade: {e}")
-
-        # One-time: enable the timeline backfill sweep (mirror_feeds) on turnkey nodes so a fresh
-        # relay populates ~48h of history instead of only filling forward from the firehose. SEPARATE
-        # marker from the v1 upgrade so it applies its delta ONCE without re-running (re-forcing) the
-        # v1 settings — the Admin UI stays the source of truth (toggle it off in Admin → Relay to
-        # stop the sweep). Container-only (PC_ACCEL); bare-metal server1/nas never touched.
-        if os.environ.get("PC_ACCEL"):
-            try:
-                _db = SessionLocal()
-                if not _db.query(Setting).filter(Setting.key == "_turnkey_backfill_v1").first():
-                    _row = _db.query(Setting).filter(Setting.key == "nostr_relay_mirror_feeds").first()
-                    if _row:
-                        _row.value = "true"
-                    else:
-                        _db.add(Setting(key="nostr_relay_mirror_feeds", value="true"))
-                    _db.add(Setting(key="_turnkey_backfill_v1", value="done"))
-                    _db.commit()
-                    logging.info("Enabled timeline backfill (mirror_feeds) for turnkey node")
-                _db.close()
-            except Exception as e:
-                logging.error(f"Error enabling turnkey backfill: {e}")
+        # (Turnkey out-of-box config — proxy/tor/torrent on + wired, blossom backend local, upstream
+        # relays populated, timeline backfill on — lives in app/database.py default_settings, seeded
+        # on first run for EVERY install path: install.sh, Docker, manual. No install-type-specific
+        # code here; the Admin UI is the source of truth after first run.)
 
         # Start health check if enabled (in background, don't block startup)
         try:

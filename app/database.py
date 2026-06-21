@@ -231,6 +231,10 @@ def init_db():
             # Send-only: broadcast our events to upstream (outbox) but never pull/store theirs —
             # keeps a secondary node's local DB from mirroring upstream. Default off.
             "nostr_relay_send_only": "false",
+            # Timeline backfill ON by default: the mirror_feeds sweep pulls ~48h of recent history
+            # per WoT member so a fresh relay's timeline is populated immediately instead of only
+            # filling forward from the firehose. Toggle off in Admin → Relay (it's the heavier path).
+            "nostr_relay_mirror_feeds": "true",
             # Upstream relays the WoT relay pulls/broadcasts (firehose + sync + outbox). Seeded with
             # the built-in DEFAULT_RELAYS so the list is visible/editable in Admin → Relay; blank
             # would still work (code falls back to the same list).
