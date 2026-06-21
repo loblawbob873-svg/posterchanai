@@ -100,6 +100,19 @@ def main():
 
     # Validate Matrix configuration only if Matrix mode is enabled
 
+    # Publish/refresh this bot's Nostr profile (name/nip05/avatar) on startup — runs in a thread so a
+    # slow relay doesn't delay the listeners. By now the bot is an operator key → the WoT relay
+    # accepts its kind-0 (provision-time publishing races the WoT and often gets rejected).
+    import os as _os
+    if _os.getenv("NOSTR_NSEC"):
+        def _pub_profile():
+            try:
+                import nostr as _nk
+                _nk.ensure_profile()
+            except Exception as e:
+                print(f"[ERROR] ensure_profile failed: {e}", flush=True)
+        threading.Thread(target=_pub_profile, daemon=True).start()
+
     # Track threads for parallel execution of listener modes
     threads = []
 

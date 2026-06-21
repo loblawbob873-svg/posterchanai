@@ -184,6 +184,42 @@ def _shape_note(ev: dict) -> dict | None:
 
 # --- surface used by the listener ------------------------------------------
 
+def ensure_profile():
+    """Publish/refresh this bot's kind-0 profile from the manager-injected NOSTR_PROFILE_* env, on
+    startup. By the time a bot process runs it's an operator key (always in the relay's WoT), so the
+    profile is reliably accepted — unlike trying to publish it at provision time. Idempotent; retries
+    until the relay confirms it stored the event."""
+    if not _SECKEY:
+        return
+    import json as _json
+    from app.services.nostr import event as _ev
+    name = (os.getenv("NOSTR_PROFILE_NAME", "") or "").strip()
+    nip05 = (os.getenv("NOSTR_PROFILE_NIP05", "") or "").strip()
+    picture = (os.getenv("NOSTR_PROFILE_PICTURE", "") or "").strip()
+    if not (name or nip05 or picture):
+        return
+    meta = {"bot": True}
+    if name:
+        meta["name"] = name
+        meta["display_name"] = name
+    if nip05:
+        meta["nip05"] = nip05
+    if picture:
+        meta["picture"] = picture
+    for attempt in range(8):
+        try:
+            ev = _ev.build_event(_SECKEY, 0, _json.dumps(meta, separators=(",", ":")), tags=[])
+            _run(_svc.relay.publish(_RELAYS, ev))
+            got = _run(_svc.relay.query(_RELAYS, [{"authors": [_PUBKEY], "kinds": [0], "limit": 1}])) or []
+            if got:
+                print(f"[nostr] profile published ({name or nip05})", flush=True)
+                return
+        except Exception as e:
+            print(f"[nostr] ensure_profile attempt {attempt} failed: {e}", flush=True)
+        time.sleep(2)
+    print("[nostr] ensure_profile: relay never confirmed the profile", flush=True)
+
+
 def get_own_account():
     if not _PUBKEY:
         return None

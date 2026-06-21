@@ -146,27 +146,32 @@
             <!-- Nostr credentials. Identity is a secret key; posts publish to many relays;
                  media uploads to an external Blossom/NIP-96 host (not an "instance"). -->
             <div id="bot_grp_nostr" style="display:none">
-                <!-- One-click identity: generates the nsec, grants Blossom upload access, publishes a
-                     profile (name/avatar/nip05), and makes the operator follow it (WoT) so it works
-                     immediately. No manual login/profile setup needed. -->
-                <div class="form-group bots-provision">
-                    <label>New identity <span class="bots-dim">(generate everything automatically — recommended)</span></label>
-                    <div class="form-row" style="align-items:flex-end">
-                        <div class="form-group" style="flex:1">
-                            <label for="bot_f_nostr_nip05" class="bots-dim">NIP-05 name (optional)</label>
-                            <input type="text" id="bot_f_nostr_nip05" placeholder="chess">
-                        </div>
-                        <div class="form-group" style="flex:2">
-                            <label for="bot_f_nostr_avatar_file" class="bots-dim">Avatar (optional — upload an image; stored on Blossom)</label>
-                            <input type="file" id="bot_f_nostr_avatar_file" accept="image/*">
-                        </div>
-                        <button type="button" class="btn-small" onclick="provisionBot()" style="margin-bottom:.6rem">✨ Generate identity</button>
-                    </div>
-                    <div id="bot_provision_status" class="bots-dim"></div>
-                </div>
                 <div class="form-group">
                     <label for="bot_f_nostr_nsec">Secret key <span class="bots-dim">(nsec1… or 64-char hex — filled by Generate, or paste your own)</span></label>
                     <input type="password" id="bot_f_nostr_nsec" autocomplete="new-password" placeholder="nsec1…">
+                    <button type="button" class="btn-small" onclick="provisionBot()" style="margin-top:.4rem">✨ Generate identity (nsec + Blossom + WoT)</button>
+                    <div id="bot_provision_status" class="bots-dim"></div>
+                </div>
+                <!-- Profile (stored in config; published by the bot on startup so its avatar/nip05/name
+                     show on its posts). Editable here for existing bots too. -->
+                <div class="form-row">
+                    <div class="form-group" style="flex:2">
+                        <label for="bot_f_nostr_profile_name">Display name <span class="bots-dim">(blank = bot name)</span></label>
+                        <input type="text" id="bot_f_nostr_profile_name" placeholder="ChessBot">
+                    </div>
+                    <div class="form-group" style="flex:2">
+                        <label for="bot_f_nostr_profile_nip05">NIP-05 name <span class="bots-dim">("chess" → chess@thishost)</span></label>
+                        <input type="text" id="bot_f_nostr_profile_nip05" placeholder="chess">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="bot_f_nostr_profile_picture">Avatar URL <span class="bots-dim">(paste a URL, or upload an image →)</span></label>
+                    <div class="form-row" style="align-items:flex-end">
+                        <input type="text" id="bot_f_nostr_profile_picture" placeholder="https://…/avatar.png" style="flex:3">
+                        <input type="file" id="bot_f_nostr_avatar_file" accept="image/*" style="flex:2">
+                        <button type="button" class="btn-small" onclick="uploadBotAvatar()" style="margin-bottom:.6rem">⬆ Upload</button>
+                    </div>
+                    <img id="bot_avatar_preview" alt="" style="display:none;max-height:64px;border-radius:8px;margin-top:.4rem">
                 </div>
                 <div class="form-group">
                     <label for="bot_f_nostr_relays">Relays <span class="bots-dim">(one per line or comma-separated; blank = default relays)</span></label>

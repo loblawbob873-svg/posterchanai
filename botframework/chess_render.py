@@ -30,6 +30,7 @@ SUBTITLE = (200, 170, 255, 255)
 CELL = 84
 MARGIN = 46
 TOPBAR = 72
+FOOTER = 30   # space under the board for the #chesstr watermark
 
 _FONT_CANDIDATES = [
     "/usr/share/fonts/liberation-fonts/LiberationSans-Bold.ttf",
@@ -148,13 +149,14 @@ _DRAW = {
 
 
 def render_board(fen: str, last_move=None, number_color=None,
-                 title: str = "", subtitle: str = "") -> bytes:
+                 title: str = "", subtitle: str = "", footer: str = "#chesstr") -> bytes:
     """Render `fen` to neon PNG bytes. last_move=(from_sq,to_sq) highlights it; number_color (a
-    chess color, or None) overlays move-numbers on that side's pieces."""
+    chess color, or None) overlays move-numbers on that side's pieces; footer is drawn under the
+    board (the play-interactively invite + #chesstr)."""
     board = chess.Board(fen)
     x0, y0 = MARGIN, TOPBAR
     W = MARGIN + 8 * CELL + MARGIN
-    H = TOPBAR + 8 * CELL + MARGIN
+    H = TOPBAR + 8 * CELL + MARGIN + FOOTER
 
     img = Image.new("RGBA", (W, H), BG)
     base = ImageDraw.Draw(img)
@@ -225,7 +227,12 @@ def render_board(fen: str, last_move=None, number_color=None,
         td.text((MARGIN, 16), title, font=_font(30), fill=TITLE)
     if subtitle:
         td.text((MARGIN, 46), subtitle, font=_font(20), fill=SUBTITLE)
-    td.text((W - 140, 18), "#chesstr", font=_font(22), fill=BLACK_NEON)
+    # footer (under the board): play-interactively invite + #chesstr, centered
+    if footer:
+        ff = _font(19)
+        fb = td.textbbox((0, 0), footer, font=ff)
+        fy = TOPBAR + 8 * CELL + MARGIN - 2
+        td.text(((W - (fb[2] - fb[0])) / 2, fy), footer, font=ff, fill=TITLE)
 
     out = io.BytesIO()
     img.convert("RGB").save(out, format="PNG")

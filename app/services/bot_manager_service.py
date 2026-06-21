@@ -148,6 +148,25 @@ def _set_internal_blossom(env: dict):
         api = f"http://127.0.0.1:{os.getenv('POSTERCHANAI_PORT', '3051')}"
     env["NOSTR_MEDIA_SERVICE"] = "blossom"
     env["NOSTR_MEDIA_ENDPOINT"] = api + "/blossom"
+    # ALWAYS route through THIS node's built-in WoT relay (prepended): it stores the bot's app-data
+    # (kind-30078 game state the web client reads) AND outboxes the bot's public posts to upstream.
+    # Without this a bot with blank/external relays writes its game state where the client can't see
+    # it (the "Chess UI shows no games" bug). Keep any admin-set external relays after the local one.
+    rport = (settings_store.get("nostr_relay_port", "3052") or "3052").strip()
+    local_relay = f"ws://127.0.0.1:{rport}"
+    cur = (env.get("NOSTR_RELAYS", "") or "").replace(",", " ").split()
+    relays = [local_relay] + [r for r in cur if r and "127.0.0.1" not in r and "localhost" not in r]
+    env["NOSTR_RELAYS"] = "\n".join(relays)
+    # Public site URL for the chess bot's "play interactively" footer — admin `site_url`, else
+    # derive from the public Blossom host (drop a leading "media." label → the apex site).
+    site = (settings_store.get("site_url", "") or "").strip().rstrip("/")
+    if not site:
+        pub = (settings_store.get("blossom_public_url", "") or "").strip().rstrip("/")
+        if pub:
+            import re as _re
+            site = _re.sub(r"//media\.", "//", pub)
+    if site:
+        env["CHESS_SITE_URL"] = site
 
 
 def _build_env(bot_dict: dict, base_env: dict) -> dict:
@@ -209,6 +228,9 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
         elif bot_dict.get("platform") == "nostr":
             setif("nostr_nsec", "NOSTR_NSEC")
             setif("nostr_relays", "NOSTR_RELAYS")
+            setif("nostr_profile_name", "NOSTR_PROFILE_NAME")
+            setif("nostr_profile_nip05", "NOSTR_PROFILE_NIP05")
+            setif("nostr_profile_picture", "NOSTR_PROFILE_PICTURE")
             _set_internal_blossom(env)
         else:
             setif("server", "MISSKEY_SERVER")
@@ -235,6 +257,9 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
             # from the bot's config. Blank relays → app defaults.
             setif("nostr_nsec", "NOSTR_NSEC")
             setif("nostr_relays", "NOSTR_RELAYS")
+            setif("nostr_profile_name", "NOSTR_PROFILE_NAME")
+            setif("nostr_profile_nip05", "NOSTR_PROFILE_NIP05")
+            setif("nostr_profile_picture", "NOSTR_PROFILE_PICTURE")
             _set_internal_blossom(env)
             # Mention-poll cadence. With our self-hosted relay (point relays at ws://127.0.0.1:3052
             # — no CF round-trip, no public rate limit) the bot can poll fast for snappy replies.

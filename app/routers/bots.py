@@ -59,7 +59,8 @@ class BotUpdate(BaseModel):
 
 def _refresh_wot_for_nostr(bot: Bot):
     """A newly created/updated nostr bot is an operator key — fold it into the relay's WoT now so its
-    posts are accepted immediately (rather than waiting for the scheduled rebuild)."""
+    posts are accepted immediately (rather than waiting for the scheduled rebuild). Also (re)register
+    its NIP-05 name in the relay's served list so name@host resolves."""
     if (bot.platform or "") != "nostr":
         return
     try:
@@ -67,6 +68,15 @@ def _refresh_wot_for_nostr(bot: Bot):
         trigger_wot_refresh()
     except Exception:
         pass
+    try:
+        cfg = json.loads(bot.config or "{}")
+        nip = (cfg.get("nostr_profile_nip05") or "").strip()
+        nsec = cfg.get("nostr_nsec")
+        if nip and nsec:
+            pub = nostr_service.derive_pubkey(nostr_service.decode_seckey(nsec))
+            _nip05_set(nip.split("@", 1)[0], pub)
+    except Exception as e:
+        logger.warning("[bots] nip05 register on save failed: %s", e)
 
 
 def _serialize(bot: Bot) -> dict:
@@ -128,21 +138,17 @@ async def mint_oauth_token(payload: OAuthTokenPayload, admin: User = Depends(get
 class ProvisionPayload(BaseModel):
     name: str = "ChessBot"
     nip05: Optional[str] = ""          # "chess" → chess@<this-host>, or a full addr
-    picture: Optional[str] = ""        # avatar URL (used only if no upload given)
-    picture_data: Optional[str] = ""   # uploaded avatar as a data: URL / base64 → stored on Blossom
-    about: Optional[str] = ""
 
 
 @router.post("/provision")
 async def provision_nostr_identity(payload: ProvisionPayload, request: Request,
                                    db: Session = Depends(get_db),
                                    admin: User = Depends(get_admin_user)):
-    """Mint a fresh Nostr identity for a bot and wire it up so it 'just works' with no manual login:
-    generate the nsec, grant it Blossom upload access (built-in server), publish a kind-0 profile
-    (name / avatar / nip05), make the OPERATOR follow it + add it to the relay's Web of Trust (so its
-    posts are stored/served), and return the nsec+npub for the form to save. WoT note: the bot also
-    becomes an operator key once the bot row is saved, but we follow + refresh now so it works
-    immediately for testing (the scheduled WoT rebuild is too slow)."""
+    """Mint a fresh Nostr identity for a bot and wire up the parts only the SERVER can do: generate
+    the nsec, grant it Blossom upload access, make the OPERATOR follow it + add it to the relay's Web
+    of Trust. The profile (name/nip05/avatar) is saved in the bot's config and published by the bot
+    itself on startup (when it's an operator key → always accepted), which is far more reliable than
+    racing the WoT here. Returns the nsec+npub (+ resolved nip05) for the form to save."""
     from app.services.nostr import bip340, bech32, event as _nevent
     from app.services import settings_store, keystore
 
@@ -153,7 +159,7 @@ async def provision_nostr_identity(payload: ProvisionPayload, request: Request,
     port = int(settings_store.get("nostr_relay_port", "3052") or "3052")
     local = [f"ws://127.0.0.1:{port}"]
 
-    # 1) Blossom upload access for the bot's key (so its board/image uploads are accepted)
+    # 1) Blossom upload access (so its board/avatar uploads are accepted by the built-in server)
     try:
         wl = [x for x in (settings_store.get("blossom_whitelist", "") or "").split() if x]
         if npub not in wl:
@@ -162,34 +168,13 @@ async def provision_nostr_identity(payload: ProvisionPayload, request: Request,
     except Exception as e:
         logger.warning("[provision] blossom grant failed: %s", e)
 
-    # 2) avatar → upload to the built-in Blossom under the bot's (now whitelisted) key
+    # 2) resolve the nip05 (local part → name@thishost) — the actual registration happens on Save
     host = request.url.hostname or ""
     nip05 = (payload.nip05 or "").strip()
     if nip05 and "@" not in nip05:
         nip05 = f"{nip05}@{host}"
-    base = str(request.base_url).rstrip("/")
-    picture = (payload.picture or "").strip() or f"{base}/static/posterchan-relay.png"
-    if (payload.picture_data or "").strip():
-        try:
-            import base64 as _b64
-            from app.services.nostr import media as _media
-            raw = payload.picture_data.strip()
-            mime = "image/png"
-            if raw.startswith("data:"):
-                head, _, b64 = raw.partition(",")
-                if "image/" in head:
-                    mime = head[head.index("image/"):].split(";")[0]
-                raw = b64
-            data = _b64.b64decode(raw)
-            endpoint = f"http://127.0.0.1:{os.getenv('POSTERCHANAI_PORT', '3051')}/blossom"
-            info = await _media.upload_blossom(endpoint, sk, data, mime)
-            if info.get("url"):
-                picture = info["url"]
-        except Exception as e:
-            logger.warning("[provision] avatar upload failed (falling back to URL/logo): %s", e)
 
-    # 3) TRUST FIRST: operator follows the bot (operator is always WoT) + add the bot to the relay's
-    #    WoT now — the relay is WoT-gated, so its kind-0 profile would be REJECTED until it's trusted.
+    # 3) operator follows the bot + add it to the relay's WoT now (so its posts/profile are accepted)
     followed = False
     op_nsec = keystore.get_operator_nsec()
     if op_nsec:
@@ -208,35 +193,58 @@ async def provision_nostr_identity(payload: ProvisionPayload, request: Request,
             logger.warning("[provision] operator follow failed: %s", e)
     try:
         from app.services.nostr_relay.thread import trigger_wot_add, trigger_wot_refresh
-        trigger_wot_add([pub])      # immediate in-memory add (control poller, ~1s)
-        trigger_wot_refresh()       # full rebuild folds in the operator's new follow
+        trigger_wot_add([pub])
+        trigger_wot_refresh()
     except Exception as e:
         logger.warning("[provision] wot add/refresh failed: %s", e)
 
-    # 4) publish the kind-0 profile — RETRY until the (now-trusted) relay actually stores it, since
-    #    the WoT add is applied asynchronously by the relay's control poller.
-    import asyncio
-    meta = {"name": payload.name.strip(), "display_name": payload.name.strip(),
-            "about": (payload.about or "").strip() or "♟️ #chesstr referee bot", "picture": picture, "bot": True}
-    if nip05:
-        meta["nip05"] = nip05
-    profile_ok = False
-    for _ in range(6):
-        try:
-            ev0 = _nevent.build_event(sk, 0, json.dumps(meta, separators=(",", ":")), tags=[])
-            await nostr_service.relay.publish(local, ev0)
-            got = await nostr_service.relay.query(local, [{"authors": [pub], "kinds": [0], "limit": 1}]) or []
-            if got:
-                profile_ok = True
-                break
-        except Exception as e:
-            logger.warning("[provision] profile publish attempt failed: %s", e)
-        await asyncio.sleep(1.0)
-    if not profile_ok:
-        logger.warning("[provision] profile not confirmed stored after retries (npub %s)", npub)
+    return {"nsec": nsec, "npub": npub, "nip05": nip05, "followed": followed}
 
-    return {"nsec": nsec, "npub": npub, "nip05": nip05, "picture": picture,
-            "followed": followed, "profile_ok": profile_ok}
+
+class AvatarPayload(BaseModel):
+    bot_id: Optional[int] = None     # existing bot → sign with its stored nsec
+    nsec: Optional[str] = ""         # new bot being created → the just-minted nsec
+    picture_data: str = ""           # data: URL / base64
+
+
+@router.post("/upload-avatar")
+async def upload_bot_avatar(payload: AvatarPayload, db: Session = Depends(get_db),
+                            admin: User = Depends(get_admin_user)):
+    """Upload an avatar image to the built-in Blossom (signed by the bot's key) and return its public
+    URL, for the form's Avatar field. Works for a new bot (pass the minted `nsec`) or an existing one
+    (pass `bot_id` → its stored nsec)."""
+    import base64 as _b64
+    from app.services.nostr import media as _media
+    nsec = (payload.nsec or "").strip()
+    if not nsec and payload.bot_id is not None:
+        bot = db.query(Bot).filter(Bot.id == payload.bot_id).first()
+        if bot:
+            try:
+                nsec = (json.loads(bot.config or "{}")).get("nostr_nsec", "")
+            except (ValueError, TypeError):
+                nsec = ""
+    if not nsec:
+        raise HTTPException(status_code=400, detail="no bot key (generate an identity or save the bot first)")
+    if not (payload.picture_data or "").strip():
+        raise HTTPException(status_code=400, detail="no image provided")
+    try:
+        sk = nostr_service.decode_seckey(nsec)
+        raw = payload.picture_data.strip()
+        mime = "image/png"
+        if raw.startswith("data:"):
+            head, _, b64 = raw.partition(",")
+            if "image/" in head:
+                mime = head[head.index("image/"):].split(";")[0]
+            raw = b64
+        data = _b64.b64decode(raw)
+        endpoint = f"http://127.0.0.1:{os.getenv('POSTERCHANAI_PORT', '3051')}/blossom"
+        info = await _media.upload_blossom(endpoint, sk, data, mime)
+        if not info.get("url"):
+            raise RuntimeError("no url returned")
+        return {"url": info["url"]}
+    except Exception as e:
+        logger.warning("[upload-avatar] failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"upload failed: {e}")
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -340,6 +348,8 @@ def _cleanup_nostr_identity(db: Session, bot: Bot):
         settings_store.put("blossom_whitelist", "\n".join(wl))
     except Exception as e:
         logger.warning("[bot-delete] whitelist revoke failed: %s", e)
+    # 1b) remove its NIP-05 name from the relay's served list
+    _nip05_remove_pubkey(pub)
     # 2) purge its Blossom blobs (bytes + index rows)
     try:
         for blob in blossom_service.list_for_pubkey(db, pub):
@@ -385,6 +395,49 @@ def _operator_unfollow(pub: str):
         _run_async(_go())
     except Exception as e:
         logger.warning("[bot-delete] operator unfollow failed: %s", e)
+
+
+def _nip05_set(name: str, pubkey_hex: str):
+    """Add/replace this bot's NIP-05 mapping in the relay's served names list (one 'name hex' per
+    line), then reload so /.well-known/nostr.json resolves it. Drops any prior line for the same
+    name or pubkey first."""
+    try:
+        from app.services import settings_store
+        raw = settings_store.get("nostr_relay_nip05_names", "") or ""
+        kept = []
+        for ln in raw.split("\n"):
+            s = ln.strip()
+            if s and not s.startswith("#"):
+                toks = s.replace("=", " ").replace(",", " ").split()
+                if len(toks) >= 2 and (toks[0] == name or nostr_service.to_pubkey_hex(toks[1]) == pubkey_hex):
+                    continue
+            kept.append(ln)
+        kept.append(f"{name} {pubkey_hex}")
+        settings_store.put("nostr_relay_nip05_names", "\n".join(l for l in kept if l.strip()))
+        from app.services.nostr_relay.thread import trigger_nip05_reload
+        trigger_nip05_reload()
+    except Exception as e:
+        logger.warning("[provision] nip05 register failed: %s", e)
+
+
+def _nip05_remove_pubkey(pubkey_hex: str):
+    """Remove any NIP-05 name lines that map to this pubkey (bot deleted), then reload."""
+    try:
+        from app.services import settings_store
+        raw = settings_store.get("nostr_relay_nip05_names", "") or ""
+        kept = []
+        for ln in raw.split("\n"):
+            s = ln.strip()
+            if s and not s.startswith("#"):
+                toks = s.replace("=", " ").replace(",", " ").split()
+                if len(toks) >= 2 and nostr_service.to_pubkey_hex(toks[1]) == pubkey_hex:
+                    continue
+            kept.append(ln)
+        settings_store.put("nostr_relay_nip05_names", "\n".join(l for l in kept if l.strip()))
+        from app.services.nostr_relay.thread import trigger_nip05_reload
+        trigger_nip05_reload()
+    except Exception as e:
+        logger.warning("[bot-delete] nip05 remove failed: %s", e)
 
 
 def _run_async(coro):

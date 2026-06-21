@@ -2513,7 +2513,11 @@
       </div>`;
     if(botNpub){ _bindChessInvite(); const pb=$('#chess-play-bot'); if(pb) pb.onclick=startBotGame; }
     _loadMyChessGames();
+    // poll for new games / opponent moves while the Chess view is open (turn-based, so gentle)
+    clearInterval(_chessTimer);
+    _chessTimer = setInterval(()=>{ if(VIEW==='chess'){ if(!document.querySelector('.csq.sel')) _loadMyChessGames(); } else clearInterval(_chessTimer); }, 12000);
   }
+  let _chessTimer = null;
   async function startBotGame(){
     const botPk=safePk(CFG.chess_bot_npub); if(!botPk){ toast('no chess bot configured'); return; }
     try{

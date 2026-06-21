@@ -6,6 +6,7 @@
 const BOT_KNOWN_KEYS = [
     'server', 'username', 'access_token', 'pleroma_admin_token',
     'nostr_nsec', 'nostr_relays',
+    'nostr_profile_name', 'nostr_profile_nip05', 'nostr_profile_picture',
     'nostr_rate_per_user', 'nostr_rate_global', 'nostr_rate_window', 'nostr_rate_exempt',
     'matrix_server', 'matrix_user_id', 'matrix_access_token', 'matrix_room_id', 'matrix_admins',
     'prompt',
@@ -184,10 +185,11 @@ function openBotModal(id) {
     const cfg = (b && b.config) ? b.config : {};
     BOT_KNOWN_KEYS.forEach(k => _setVal('bot_f_' + k, cfg[k]));
     BOT_KNOWN_CHECKS.forEach(k => _setChk('bot_f_' + k, cfg[k]));
-    // provision-only (transient) fields — never persisted, reset each open
-    _setVal('bot_f_nostr_nip05', '');
+    // transient widgets (the profile fields themselves persist via BOT_KNOWN_KEYS above)
     { const af = _g('bot_f_nostr_avatar_file'); if (af) af.value = ''; }
     { const ps = _g('bot_provision_status'); if (ps) ps.textContent = ''; }
+    { const pv = _g('bot_avatar_preview'); const u = cfg.nostr_profile_picture;
+      if (pv) { if (u) { pv.src = u; pv.style.display = ''; } else { pv.removeAttribute('src'); pv.style.display = 'none'; } } }
 
     // nitter_feeds: [{rss, room?}] <-> one per line: "rss [room]" (room optional, preserved)
     const feeds = Array.isArray(cfg.nitter_feeds)
@@ -271,31 +273,68 @@ function _readFileDataURL(file) {
     });
 }
 
+function _showAvatarPreview(url) {
+    const pv = _g('bot_avatar_preview');
+    if (pv) { pv.src = url; pv.style.display = ''; }
+}
+
 async function provisionBot() {
     const st = _g('bot_provision_status');
     const name = _val('bot_f_name') || 'ChessBot';
     if (st) st.textContent = 'Generating identity…';
     try {
-        let picture_data = '';
-        const fEl = _g('bot_f_nostr_avatar_file');
-        if (fEl && fEl.files && fEl.files[0]) {
-            if (st) st.textContent = 'Uploading avatar…';
-            picture_data = await _readFileDataURL(fEl.files[0]);
-        }
         const r = await fetch('/api/admin/bots/provision', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, nip05: _val('bot_f_nostr_nip05'), picture_data }),
+            body: JSON.stringify({ name, nip05: _val('bot_f_nostr_profile_nip05') }),
         });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.detail || r.statusText);
         _setVal('bot_f_nostr_nsec', d.nsec);
+        if (!_val('bot_f_nostr_profile_name')) _setVal('bot_f_nostr_profile_name', name);
+        // upload the chosen avatar now, signed by the freshly minted key
+        const fEl = _g('bot_f_nostr_avatar_file');
+        if (fEl && fEl.files && fEl.files[0]) {
+            if (st) st.textContent = 'Uploading avatar…';
+            try {
+                const dataUrl = await _readFileDataURL(fEl.files[0]);
+                const ur = await fetch('/api/admin/bots/upload-avatar', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ nsec: d.nsec, picture_data: dataUrl }),
+                });
+                const ud = await ur.json().catch(() => ({}));
+                if (ur.ok && ud.url) { _setVal('bot_f_nostr_profile_picture', ud.url); _showAvatarPreview(ud.url); }
+            } catch (_) { /* avatar optional */ }
+        }
         if (st) st.innerHTML = `✅ Identity created — <code>${d.npub}</code><br>`
             + `Blossom access granted${d.followed ? ' · operator follows it (WoT)' : ''}`
-            + `${d.profile_ok ? ' · profile published' : ' · ⚠️ profile not confirmed'}`
-            + `${d.nip05 ? ' · nip05 ' + d.nip05 : ''}. Pick features below and click <b>Save bot</b>.`;
+            + `${d.nip05 ? ' · nip05 ' + d.nip05 : ''}. The bot publishes its profile on startup. `
+            + `Pick features below and click <b>Save bot</b>.`;
     } catch (err) {
         if (st) st.textContent = '❌ ' + err.message;
     }
+}
+
+// ⬆ Upload avatar for a new (just-generated) or existing bot → stored on Blossom, fills the URL.
+async function uploadBotAvatar() {
+    const st = _g('bot_provision_status');
+    const fEl = _g('bot_f_nostr_avatar_file');
+    if (!fEl || !fEl.files || !fEl.files[0]) { if (st) st.textContent = 'Pick an image file first.'; return; }
+    const id = _val('bot_f_id');
+    const nsec = _g('bot_f_nostr_nsec') ? _g('bot_f_nostr_nsec').value.trim() : '';
+    if (!id && !nsec) { if (st) st.textContent = 'Generate an identity (or Save the bot) before uploading an avatar.'; return; }
+    if (st) st.textContent = 'Uploading avatar…';
+    try {
+        const dataUrl = await _readFileDataURL(fEl.files[0]);
+        const body = { picture_data: dataUrl };
+        if (nsec) body.nsec = nsec; else body.bot_id = Number(id);
+        const r = await fetch('/api/admin/bots/upload-avatar', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || !d.url) throw new Error(d.detail || 'upload failed');
+        _setVal('bot_f_nostr_profile_picture', d.url); _showAvatarPreview(d.url);
+        if (st) st.textContent = '✅ Avatar uploaded — click Save to apply.';
+    } catch (err) { if (st) st.textContent = '❌ ' + err.message; }
 }
 
 // Test → Preview: generate one post from the bot's SAVED config and show it (no posting).

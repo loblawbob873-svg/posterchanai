@@ -41,6 +41,10 @@ _NOSTR_TOKEN_RE = re.compile(
     re.IGNORECASE,
 )
 _POLL_LOOKBACK_DAYS = int(os.getenv("CHESS_LOOKBACK_DAYS", "3"))
+# Anti-spam: cap how many NEW games a single pubkey can start per hour.
+_INVITE_MAX = int(os.getenv("CHESS_INVITE_MAX_PER_HOUR", "3"))
+_INVITE_WINDOW = 3600
+_invite_times: dict = {}   # pubkey -> [unix ts] (per-process; resets on restart)
 
 
 # ---- cross-restart dedup (one claim per processed note id) -------------------
@@ -317,6 +321,12 @@ def _apply_bot_moves(state) -> str | None:
     return last_san
 
 
+def _footer() -> str:
+    """Board-image footer: invite people to play interactively in the app, then the #chesstr tag."""
+    site = (os.getenv("CHESS_SITE_URL", "") or "").strip()
+    return f"Play interactively by logging in at {site}    ·    #chesstr" if site else "#chesstr"
+
+
 def _status_for(board: chess.Board):
     out = board.outcome(claim_draw=True)
     if out is None:
@@ -337,7 +347,7 @@ def _post_active_board(state, gameid, parent_id, san):
     title = f"{'WHITE' if mover_white else 'BLACK'} to move{chk}"
     sub = f"{state['white_name']} (cyan) vs {state['black_name']} (magenta)  ·  move {move_no}"
     png = chess_render.render_board(state["fen"], last_move=state.get("last_move"),
-                                    number_color=board.turn, title=title, subtitle=sub)
+                                    number_color=board.turn, title=title, subtitle=sub, footer=_footer())
     if san is None:
         # Opening post = the invitation. White moves first, so the challenged player "accepts" by moving.
         vs_bot = _nk._PUBKEY in (state["white"], state["black"])
@@ -368,7 +378,7 @@ def _post_active_board(state, gameid, parent_id, san):
 def _post_gameover(state, gameid, parent_id, san, result_text):
     board = chess.Board(state["fen"])
     png = chess_render.render_board(state["fen"], last_move=state.get("last_move"),
-                                    number_color=None, title="GAME OVER", subtitle=result_text)
+                                    number_color=None, title="GAME OVER", subtitle=result_text, footer=_footer())
     body = (f"🏁 {('Last move: ' + san + '. ') if san else ''}{result_text}\n"
             f"{state['white_name']} (cyan) vs {state['black_name']} (magenta) — "
             f"{len(state.get('moves', []))} half-moves. gg!")
@@ -383,6 +393,15 @@ def _start_game(note, own_pk):
     gameid = note["id"]
     if _load_game(gameid):
         return  # already started for this note
+    # Anti-spam: cap new games per starter per hour.
+    now = time.time()
+    recent = [t for t in _invite_times.get(sender, []) if now - t < _INVITE_WINDOW]
+    if _INVITE_MAX and len(recent) >= _INVITE_MAX:
+        _reply_text(note, f"⏳ You've started {_INVITE_MAX} games in the last hour — that's the limit. "
+                          "Finish or wait a bit before starting another.")
+        return
+    recent.append(now)
+    _invite_times[sender] = recent
     # No human opponent tagged → play the BOT itself (human is White, the bot is Black).
     vs_bot = not opponents
     white, black = sender, (opponents[0] if opponents else own_pk)
@@ -405,7 +424,7 @@ def _start_game(note, own_pk):
                          f"⚠️ {_name(white)} started a new game, so this one is abandoned.",
                          chess_render.render_board(old["fen"], last_move=old.get("last_move"),
                                                    number_color=None, title="ABANDONED",
-                                                   subtitle=f"{old['white_name']} vs {old['black_name']}"))
+                                                   subtitle=f"{old['white_name']} vs {old['black_name']}", footer=_footer()))
             except Exception as e:
                 print(f"[chesstr] abandon notice failed: {e}", flush=True)
     board = chess.Board()
