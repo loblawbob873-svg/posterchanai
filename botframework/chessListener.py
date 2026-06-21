@@ -203,6 +203,20 @@ def _parse_move(board: chess.Board, text: str):
         for m in board.legal_moves:
             if board.is_queenside_castling(m):
                 return m
+    # UCI FIRST ("e2e4", "g1f3", "e7e8q") — the app's tap-to-move sends this. Must come before the
+    # numbered regex, which would otherwise match "2e4" inside "e2e4" and read it as piece #2 → e4.
+    if re.fullmatch(r"[a-h][1-8][a-h][1-8][qrbnQRBN]?", low):
+        try:
+            mv = chess.Move.from_uci(low)
+            if mv in board.legal_moves:
+                return mv
+            # auto-queen if a promotion UCI came without the suffix
+            promo = chess.Move(mv.from_square, mv.to_square, promotion=chess.QUEEN)
+            if promo in board.legal_moves:
+                return promo
+            return "illegal"
+        except Exception:
+            return "illegal"
     m = _MOVE_RE.search(text)
     if m:
         num = int(m.group(1))
