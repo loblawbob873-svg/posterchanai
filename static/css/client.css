@@ -102,10 +102,10 @@ a.btn.full{display:block}
 .nav-grouphd .chev{margin-left:auto;font-size:12px;opacity:.65}
 .nav-sub{display:flex;flex-direction:column;gap:4px;overflow:hidden}
 .nav-sub.collapsed{display:none}
-.nav-item.sub{padding-left:32px;font-size:16.5px}
-.nav-item{display:flex;align-items:center;gap:14px;background:transparent;border:none;color:var(--muted);
-  padding:13px 16px;border-radius:11px;cursor:pointer;font-size:18.5px;font-weight:600;text-align:left;transition:.15s;position:relative}
-.nav-item .ic{font-size:22px;width:28px;text-align:center;line-height:1;display:inline-flex;align-items:center;justify-content:center;
+.nav-item.sub{padding-left:34px;font-size:18px}
+.nav-item{display:flex;align-items:center;gap:15px;background:transparent;border:none;color:var(--muted);
+  padding:14px 18px;border-radius:11px;cursor:pointer;font-size:20.5px;font-weight:600;text-align:left;transition:.15s;position:relative}
+.nav-item .ic{font-size:24px;width:30px;text-align:center;line-height:1;display:inline-flex;align-items:center;justify-content:center;
   filter:drop-shadow(0 0 5px rgba(0,255,255,.45))}
 .nav-item.sub .ic{font-size:17px}
 .nav-item:hover .ic,.nav-item.active .ic{filter:drop-shadow(0 0 7px rgba(0,255,255,.75))}
@@ -116,7 +116,7 @@ a.btn.full{display:block}
 .me{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:7px;margin:auto auto 0;padding:8px 6px;cursor:pointer}
 .me:hover img{box-shadow:0 0 16px rgba(0,255,255,.4)}
 .me img{width:72px;height:72px;border-radius:50%;object-fit:cover;border:1px solid var(--neon);transition:.15s}
-.me .mn{font-weight:700;font-size:17px;line-height:1.15;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.me .mn{font-weight:700;font-size:19px;line-height:1.15;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .me .mk{font-size:12px;color:var(--muted)}
 #btn-logout{font-size:15px;padding:11px 14px;color:#ff6b8b;border-color:rgba(255,60,90,.5);
   text-shadow:0 0 8px rgba(255,40,80,.55);box-shadow:0 0 12px rgba(255,40,80,.22);transition:.15s}
