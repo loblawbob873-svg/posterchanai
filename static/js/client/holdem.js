@@ -73,15 +73,14 @@
       const solo=!friends.length;
       const tags=[['p',botPk]]; friends.forEach(pk=>tags.push(['p',pk]));
       tags.push(['t','holdem'],['t','poker'],['t','nostr'],['t','gamestr']);
-      if(solo){
-        // private practice vs the bot — start via DM so it does NOT spam your public timeline
-        // (a public post only has value for a multiplayer table, to notify the friends you seated).
-        try{ await sendDm(botPk, 'deal #holdem'); toast('dealing… 🃏'); setTimeout(()=>{ if(PC.VIEW==='holdem') _load(); }, 4500); }
-        catch(e){ toast('could not start'); }
-        return;
-      }
-      const body = `🃏 Dealing a #holdem table — ${friends.map(pk=>{let n;try{n=NT().nip19.npubEncode(pk);}catch(_){n=pk;} return 'nostr:'+n;}).join(' ')} you're seated! Check your DMs for your hole cards.`;
-      try{ await PC.publish(1, body+`\n\n#holdem #poker #nostr #gamestr`, tags); toast('dealing… 🃏'); setTimeout(()=>{ if(PC.VIEW==='holdem') render(); }, 4500); }
+      // The bot is triggered by a public mention (Nostr has no private trigger that's reliable —
+      // DMs route through the bot's relays, which can time out). For SOLO we keep the note minimal
+      // and nofederate (stays on this relay), and the BOT adds no public opening/result posts.
+      if(solo) tags.push(['nofederate','1']);
+      const body = solo
+        ? `🃏 dealing me into #holdem vs the bot`
+        : `🃏 Dealing a #holdem table — ${friends.map(pk=>{let n;try{n=NT().nip19.npubEncode(pk);}catch(_){n=pk;} return 'nostr:'+n;}).join(' ')} you're seated! Check your DMs for your hole cards.`;
+      try{ await PC.publish(1, body+(solo?'':`\n\n#holdem #poker #nostr #gamestr`), tags); toast('dealing… 🃏'); setTimeout(()=>{ if(PC.VIEW==='holdem') render(); }, 4500); }
       catch(e){ toast('could not start'); }
     }
     async function _load(){

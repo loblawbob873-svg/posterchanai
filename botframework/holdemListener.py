@@ -338,50 +338,29 @@ def _start_game(note, own_pk):
     opponents = [p for p in _ptags(note) if p and p != own_pk and p != sender]
     seats = list(dict.fromkeys([sender] + opponents))
     seats = [s for s in seats if s != own_pk][:_MAX_SEATS]
-    if len(seats) < 2:
+    solo = len(seats) < 2
+    if solo:
         seats.append(own_pk)   # SOLO → the bot takes a seat and plays (heads-up vs the dealer)
     state, _ = _G.start_hand(seats, button=0)
     state["bot"] = own_pk
     state["names"] = {pk: _name(pk) for pk in seats}
     state["root"] = gameid
     state["gameid"] = gameid
-    state["private"] = False   # seated by a PUBLIC mention → public opening + result posts
-    print(f"[holdem] new table {gameid[:12]} seats={len(seats)}", flush=True)
+    # solo vs the bot = PRIVATE: no public opening/result posts (just a practice game vs the dealer).
+    # A multiplayer table is public so the seated friends get notified + the app-promo on results.
+    state["private"] = solo
+    print(f"[holdem] new table {gameid[:12]} seats={len(seats)} private={solo}", flush=True)
     _save_game(gameid, state)
-    who = ", ".join(state["names"][p] for p in seats)
-    body = (f"🃏 #holdem — {who} are at the table!\n"
-            f"Blinds {state['sb']}/{state['bb']}. 📩 Check your DMs for your hole cards. "
-            f"{state['names'][state['to_act']]} is first to act.")
-    _do_publish(gameid, gameid, seats, body, _board_png(state))
+    if not solo:
+        who = ", ".join(state["names"][p] for p in seats)
+        body = (f"🃏 #holdem — {who} are at the table!\n"
+                f"Blinds {state['sb']}/{state['bb']}. 📩 Check your DMs for your hole cards. "
+                f"{state['names'][state['to_act']]} is first to act.")
+        _do_publish(gameid, gameid, seats, body, _board_png(state))
     for pk in seats:
         if pk != own_pk:
             _set_player_game(pk, gameid)
     _run_bot_turns(state, gameid, gameid)   # if the bot is first to act it plays; else DM the human
-
-
-def _start_solo(sender, own_pk):
-    """Start a PRIVATE heads-up game vs the bot from a DM (the app's 'New game vs bot' button). No
-    public timeline post — unlike a multiplayer table seated by a public mention, a solo practice
-    game against the dealer has no one to notify, so broadcasting it is just noise."""
-    now = time.time()
-    recent = [t for t in _invite_times.get(sender, []) if now - t < _INVITE_WINDOW]
-    if _INVITE_MAX and len(recent) >= _INVITE_MAX:
-        _nk.send_dm(sender, f"⏳ You've started {_INVITE_MAX} games in the last hour — that's the limit.")
-        return
-    recent.append(now)
-    _invite_times[sender] = recent
-    gameid = os.urandom(32).hex()
-    seats = [sender, own_pk]
-    state, _ = _G.start_hand(seats, button=0)
-    state["bot"] = own_pk
-    state["names"] = {pk: _name(pk) for pk in seats}
-    state["root"] = gameid
-    state["gameid"] = gameid
-    state["private"] = True
-    print(f"[holdem] new SOLO table {gameid[:12]} for {sender[:8]}", flush=True)
-    _save_game(gameid, state)
-    _set_player_game(sender, gameid)
-    _run_bot_turns(state, gameid, gameid)   # bot plays if first to act, else DMs the human their cards
 
 
 def _run_bot_turns(state, gameid, parent_id):
@@ -546,22 +525,12 @@ def process_holdem():
             continue
         if not gameid:
             gameid = _get_player_game(sender)
-        state = _load_game(gameid) if gameid else None
-        # a fresh "deal/holdem/poker" DM with no live game → start a PRIVATE solo game vs the bot
-        # (the app's 'New game vs bot' button DMs this, so solo games never hit the public timeline).
-        if (not state or state.get("status") != "betting") and _START_RE.search(move_text):
-            if not _claim_dm(rid):
-                continue
-            try:
-                _start_solo(sender, own_pk)
-            except Exception as e:
-                print(f"[holdem] solo start failed: {e}", flush=True)
-                import traceback
-                traceback.print_exc()
-            continue
-        if not state:
+        if not gameid:
             continue
         if not _claim_dm(rid):
+            continue
+        state = _load_game(gameid)
+        if not state:
             continue
         try:
             _handle_dm(sender, gameid, state, move_text)
