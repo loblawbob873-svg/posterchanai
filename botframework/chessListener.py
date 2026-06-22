@@ -479,16 +479,29 @@ def _handle_move(note, gameid, state):
         _reply_text(note, "🤔 I don't see a piece with that number. Use the numbers shown on YOUR pieces.")
         return
     if mv == "illegal" or mv is None or mv not in board.legal_moves:
-        # Show the legal destinations for the numbered piece if we can, else generic help.
-        hint = ""
+        # Work out which piece the player meant (numbered OR UCI/tap) so we can explain WHY it's
+        # illegal — e.g. "that piece is pinned" — instead of a bare "illegal move".
+        fs = None
         m = _MOVE_RE.search(text)
+        low = text.strip().lower()
         if m:
-            nums = chess_render.piece_numbers(board, board.turn)
-            fs = nums.get(int(m.group(1)))
-            if fs is not None:
+            fs = chess_render.piece_numbers(board, board.turn).get(int(m.group(1)))
+        elif re.fullmatch(r"[a-h][1-8][a-h][1-8][qrbnQRBN]?", low):
+            fs = chess.parse_square(low[:2])
+        hint = ""
+        if fs is not None:
+            pc = board.piece_at(fs)
+            if pc is None or pc.color != board.turn:
+                hint = " There's no piece of yours there."
+            else:
                 dests = sorted(chess.square_name(x.to_square) for x in board.legal_moves if x.from_square == fs)
-                hint = (" That piece can go to: " + ", ".join(dests) + ".") if dests else " That piece has no legal moves."
-        _reply_text(note, f"🚫 Illegal move.{hint} Try '<number> <square>', e.g. '1 d4'.")
+                if dests:
+                    hint = f" That {chess.piece_name(pc.piece_type)} can go to: " + ", ".join(dests) + "."
+                elif board.is_pinned(board.turn, fs):
+                    hint = f" That {chess.piece_name(pc.piece_type)} is PINNED to your king — it can't move right now."
+                else:
+                    hint = f" That {chess.piece_name(pc.piece_type)} has no legal moves right now."
+        _reply_text(note, f"🚫 Illegal move.{hint} Move with '<number> <square>' (e.g. '1 d4'), tap on the Chess tab, or SAN like 'Nf3'.")
         return
     san = board.san(mv)
     board.push(mv)
