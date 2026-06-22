@@ -86,9 +86,11 @@ def _light_sender(pubkey_hex: str) -> dict:
 
 
 def resolve_user(pubkey_hex: str) -> dict:
-    """Resolve a pubkey to {username, host, avatarUrl} via its kind-0 profile (cached).
-    Network — call only when the richer identity is actually needed (own account, effect
-    outro brand), not for every mention in the poll."""
+    """Resolve a pubkey to {username, host, avatarUrl, nip05} via its kind-0 profile (cached).
+    The display `username` prefers the kind-0 name/display_name, then the NIP-05 handle, then a short
+    npub — so a seat with only a NIP-05 identity (and the bot's own "dealer" seat) shows e.g. @alice,
+    never a raw npub. Network — call only when the richer identity is actually needed (own account,
+    effect outro brand, game seat names), not for every mention in the poll."""
     if pubkey_hex in _meta_cache:
         return _meta_cache[pubkey_hex]
     meta = {}
@@ -96,11 +98,22 @@ def resolve_user(pubkey_hex: str) -> dict:
         meta = _run(_svc.get_metadata(pubkey_hex, _RELAYS)) or {}
     except Exception:
         meta = {}
+    # Our OWN account: fall back to the manager-injected profile env, so we never render our own npub
+    # (e.g. the dealer/house seat in a game post) even if the relay query for our kind-0 transiently
+    # misses or the profile was published without a `name`.
+    if pubkey_hex == _PUBKEY:
+        if not meta.get("name"):
+            meta["name"] = (os.getenv("NOSTR_PROFILE_NAME", "") or "").strip()
+        if not meta.get("nip05"):
+            meta["nip05"] = (os.getenv("NOSTR_PROFILE_NIP05", "") or "").strip()
+    nip05 = (meta.get("nip05") or "").strip()
+    # NIP-05 "name@domain" → the local part as a handle ("_@domain" root identity has no useful handle).
+    nip05_handle = nip05.split("@", 1)[0] if (nip05 and not nip05.startswith("_@")) else ""
     user = {
-        "username": meta.get("name") or meta.get("display_name") or _short_npub(pubkey_hex),
+        "username": meta.get("name") or meta.get("display_name") or nip05_handle or _short_npub(pubkey_hex),
         "host": None,  # Nostr has no instance host; handles are npubs/NIP-05
         "avatarUrl": meta.get("picture"),
-        "nip05": (meta.get("nip05") or "").strip(),
+        "nip05": nip05,
         "pubkey": pubkey_hex,
     }
     _meta_cache[pubkey_hex] = user
