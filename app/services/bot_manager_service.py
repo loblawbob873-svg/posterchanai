@@ -148,15 +148,12 @@ def _set_internal_blossom(env: dict):
         api = f"http://127.0.0.1:{os.getenv('POSTERCHANAI_PORT', '3051')}"
     env["NOSTR_MEDIA_SERVICE"] = "blossom"
     env["NOSTR_MEDIA_ENDPOINT"] = api + "/blossom"
-    # ALWAYS route through THIS node's built-in WoT relay (prepended): it stores the bot's app-data
-    # (kind-30078 game state the web client reads) AND outboxes the bot's public posts to upstream.
-    # Without this a bot with blank/external relays writes its game state where the client can't see
-    # it (the "Chess UI shows no games" bug). Keep any admin-set external relays after the local one.
+    # Route ONLY through THIS node's built-in WoT relay: it stores the bot's app-data (kind-30078
+    # game state the web client reads) AND its outbox re-broadcasts the bot's PUBLIC posts (boards,
+    # replies) upstream. So external relays in the bot's list are redundant and just cause it to
+    # connect/push to the default relays directly (noise + WoT rejections) — force local-only.
     rport = (settings_store.get("nostr_relay_port", "3052") or "3052").strip()
-    local_relay = f"ws://127.0.0.1:{rport}"
-    cur = (env.get("NOSTR_RELAYS", "") or "").replace(",", " ").split()
-    relays = [local_relay] + [r for r in cur if r and "127.0.0.1" not in r and "localhost" not in r]
-    env["NOSTR_RELAYS"] = "\n".join(relays)
+    env["NOSTR_RELAYS"] = f"ws://127.0.0.1:{rport}"
     # Public site URL for the chess bot's "play interactively" footer — admin `site_url`, else
     # derive from the public Blossom host (drop a leading "media." label → the apex site).
     site = (settings_store.get("site_url", "") or "").strip().rstrip("/")
