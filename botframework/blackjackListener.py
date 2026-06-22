@@ -1,10 +1,11 @@
-"""#blackjack — play Blackjack (21) against the bot dealer over Nostr.
+"""#blackjack — Blackjack (21) vs the bot dealer over Nostr, solo OR at a multi-seat table.
 
-You vs the house: START by posting "blackjack" (or "start") mentioning the bot. The bot deals two
-cards each (its hole card hidden), DMs you your hand, and you reply "hit" or "stand". On stand the
-dealer draws to 17 and the result is posted publicly. Single-player only (it's you vs the dealer —
-no human opponent), so there's no AI search here: the dealer follows a fixed rule, O(1) per action.
-State is a replaceable kind-30078 doc keyed by the game root id. Every post carries #blackjack.
+START by posting "blackjack" mentioning the bot (solo: you vs the dealer), or "blackjack @friend …"
+to seat friends at one table. Everyone is dealt a hand; each plays their OWN hand privately in DMs
+(reply "hit"/"stand") against the SAME dealer, independently and in any order. When every seat has
+finished, the dealer draws to 17 and the table result — each player win/lose/push vs the dealer — is
+posted publicly. No AI search: the dealer follows a fixed rule, O(1) per action. State is a
+replaceable kind-30078 doc keyed by the game root id. Every post carries #blackjack.
 """
 import os
 import re
@@ -34,7 +35,9 @@ _NOSTR_TOKEN_RE = re.compile(
 _LOOKBACK_DAYS = int(os.getenv("BLACKJACK_LOOKBACK_DAYS", "3"))
 _INVITE_MAX = int(os.getenv("BLACKJACK_INVITE_MAX_PER_HOUR", "6"))
 _INVITE_WINDOW = 3600
+_MAX_SEATS = int(os.getenv("BLACKJACK_MAX_SEATS", "5"))
 _invite_times: dict = {}
+_OUTCOME_WORD = {"win": "won 🎉", "blackjack": "BLACKJACK 🃏", "lose": "lost", "push": "push"}
 
 
 # ---- cross-restart dedup --------------------------------------------------
@@ -139,6 +142,10 @@ def _root_id(note):
     return es[0][1] if es else None
 
 
+def _ptags(note):
+    return [t[1] for t in _tags(note) if len(t) >= 2 and t[0] == "p" and t[1]]
+
+
 def _name(pk):
     try:
         return "@" + (_nk.resolve_user(pk).get("username") or _nk._short_npub(pk))
@@ -171,11 +178,12 @@ def _clean_dm_text(text):
 def _footer():
     site = (os.getenv("CHESS_SITE_URL", "") or "").strip()
     play = f"\nPlay interactively at {site}." if site else ""
-    return ("🃏 Wanna play? Mention me with \"blackjack\" to sit down — I'll DM you your hand; "
-            "reply \"hit\" or \"stand\"." + play + "\n#blackjack #nostr #gamestr")
+    return ("🃏 Wanna play? Mention me with \"blackjack\" (solo) or \"blackjack @friend\" to seat a "
+            "table — I'll DM each player their hand; reply \"hit\" or \"stand\"." + play
+            + "\n#blackjack #nostr #gamestr")
 
 
-def _publish(gameid, parent_id, player, body, png, federate=True):
+def _publish(gameid, parent_id, players, body, png, federate=True):
     info = _nk._run(_nk._svc.media.upload(_nk._MEDIA_CFG, _nk._SECKEY, png, "image/png")) or {}
     url = info.get("url")
     if not url:
@@ -184,8 +192,9 @@ def _publish(gameid, parent_id, player, body, png, federate=True):
     tags = [["e", gameid, "", "root"]]
     if parent_id and parent_id != gameid:
         tags.append(["e", parent_id, "", "reply"])
-    if player:
-        tags.append(["p", player])
+    for pk in (players or []):
+        if pk:
+            tags.append(["p", pk])
     for _t in ("blackjack", "nostr", "gamestr"):
         tags.append(["t", _t])
     if not federate:
@@ -236,9 +245,15 @@ def _is_bj(hand):
 
 
 def _dealer_play(state):
-    """Dealer reveals + draws until 17+ (stands on all 17s)."""
     while _hand_value(state["dhand"]) < 17 and state["deck"]:
         state["dhand"].append(state["deck"].pop())
+
+
+def _table_png(state, hide, title, subtitle):
+    seats = [(state["names"][pk], state["hands"][pk], _hand_value(state["hands"][pk]),
+              state.get("results", {}).get(pk)) for pk in state["seats"]]
+    return blackjack_render.render_table(state["dhand"], _hand_value(state["dhand"]), seats,
+                                         hide_hole=hide, title=title, subtitle=subtitle)
 
 
 # ---- start + play ---------------------------------------------------------
@@ -250,122 +265,154 @@ def _start_game(note, own_pk):
     now = time.time()
     recent = [t for t in _invite_times.get(sender, []) if now - t < _INVITE_WINDOW]
     if _INVITE_MAX and len(recent) >= _INVITE_MAX:
-        _reply_text(note, f"⏳ You've started {_INVITE_MAX} hands in the last hour — that's the limit.")
+        _reply_text(note, f"⏳ You've started {_INVITE_MAX} tables in the last hour — that's the limit.")
         return
     recent.append(now)
     _invite_times[sender] = recent
-    deck = _new_deck()
-    phand = [deck.pop(), deck.pop()]
-    dhand = [deck.pop(), deck.pop()]
-    state = {
-        "v": 1, "player": sender, "player_name": _name(sender), "bot": own_pk,
-        "deck": deck, "phand": phand, "dhand": dhand, "status": "player",
-        "result": "", "outcome": "", "root": gameid, "started": int(time.time()),
-        "last_board_event": None,
-    }
-    print(f"[blackjack] new hand {gameid[:12]} {state['player_name']}", flush=True)
-    if _is_bj(phand) or _is_bj(dhand):     # naturals settle immediately
-        _resolve(state, gameid, gameid)
+    opponents = [p for p in _ptags(note) if p and p != own_pk and p != sender]
+    seats = list(dict.fromkeys([sender] + opponents))     # sender first, dedup, preserve order
+    seats = [s for s in seats if s != own_pk][:_MAX_SEATS]  # never seat the dealer; cap table size
+    if not seats:
         return
-    _post(state, gameid, gameid, opening=True)
+    deck = _new_deck()
+    hands = {pk: [deck.pop(), deck.pop()] for pk in seats}
+    dhand = [deck.pop(), deck.pop()]
+    done = {pk: _is_bj(hands[pk]) for pk in seats}         # a natural blackjack auto-stands
+    state = {
+        "v": 2, "bot": own_pk, "seats": seats, "names": {pk: _name(pk) for pk in seats},
+        "deck": deck, "hands": hands, "done": done, "dhand": dhand,
+        "status": "playing", "results": {}, "result": "", "folded": [],
+        "root": gameid, "started": int(time.time()), "last_board_event": None,
+    }
+    print(f"[blackjack] new table {gameid[:12]} seats={len(seats)}", flush=True)
+    if _is_bj(dhand) or all(done.values()):     # dealer natural or everyone stood on blackjack
+        _save_game(gameid, state)
+        _finish(state, gameid, gameid)
+        return
+    _post_opening(state, gameid)
+
+
+def _post_opening(state, gameid):
+    seats = state["seats"]
+    who = ", ".join(state["names"][p] for p in seats)
+    solo = len(seats) == 1
+    body = (f"🃏 #blackjack — {who} {'sat down at' if solo else 'are at'} the table vs the dealer!\n"
+            f"📩 Check your DMs for your hand — reply 'hit' or 'stand'. I'll post the result here.")
+    png = _table_png(state, hide=True, title="BLACKJACK",
+                     subtitle=(who if solo else f"{len(seats)} seats vs the dealer"))
+    ev = _publish(gameid, gameid, seats, body, png, federate=True)
+    state["last_board_event"] = ev.get("id")
+    _save_game(gameid, state)
+    for pk in seats:
+        _set_player_game(pk, gameid)
+        if not state["done"][pk]:
+            _dm_seat(state, gameid, pk)
 
 
 def _apply_move(sender, gameid, state, text, reply, parent_id):
-    if sender != state.get("player"):
+    if sender not in state.get("seats", []):
         return
-    if state.get("status") != "player":
-        reply("🏁 This hand is over. Start a new one with \"blackjack\".")
+    if state.get("status") != "playing":
+        reply("🏁 This table is finished. Start a new one with \"blackjack\".")
+        return
+    if state["done"].get(sender):
+        reply("✋ You've already finished your hand — waiting on the rest of the table.")
         return
     low = text.lower().strip()
     if low in ("hit", "h", "draw", "card", "twist"):
         if state["deck"]:
-            state["phand"].append(state["deck"].pop())
-        if _hand_value(state["phand"]) > 21:
-            _resolve(state, gameid, parent_id)        # bust
+            state["hands"][sender].append(state["deck"].pop())
+        pv = _hand_value(state["hands"][sender])
+        if pv > 21:
+            state["done"][sender] = True
+            reply(f"💥 Bust at {pv}!")
+            _after_action(state, gameid, parent_id, sender)
         else:
-            _post(state, gameid, parent_id)           # DM the updated hand
+            _save_game(gameid, state)
+            _dm_seat(state, gameid, sender)     # updated hand, still your turn
     elif low in ("stand", "s", "stay", "hold", "stick"):
-        _dealer_play(state)
-        _resolve(state, gameid, parent_id)
+        state["done"][sender] = True
+        reply(f"✋ You stand on {_hand_value(state['hands'][sender])}.")
+        _after_action(state, gameid, parent_id, sender)
     elif low in ("resign", "quit", "fold", "abandon", "surrender"):
-        _dealer_play(state)
-        _resolve(state, gameid, parent_id, forced_lose=True)
+        state["done"][sender] = True
+        if sender not in state["folded"]:
+            state["folded"].append(sender)
+        reply("🏳️ You folded.")
+        _after_action(state, gameid, parent_id, sender)
     else:
         reply("🃏 Reply 'hit' to draw a card, or 'stand' to hold.")
 
 
-def _resolve(state, gameid, parent_id, forced_lose=False):
-    pv, dv = _hand_value(state["phand"]), _hand_value(state["dhand"])
-    pbj, dbj = _is_bj(state["phand"]), _is_bj(state["dhand"])
-    if forced_lose:
-        outcome, msg = "lose", "You folded — dealer wins."
-    elif pv > 21:
-        outcome, msg = "lose", f"💥 Bust at {pv}! Dealer wins."
-    elif pbj and not dbj:
-        outcome, msg = "blackjack", "🃏 Blackjack! You win!"
-    elif dbj and not pbj:
-        outcome, msg = "lose", "Dealer has Blackjack. You lose."
-    elif dv > 21:
-        outcome, msg = "win", f"Dealer busts at {dv} — you win 🎉"
-    elif pv > dv:
-        outcome, msg = "win", f"You win {pv}–{dv} 🎉"
-    elif pv < dv:
-        outcome, msg = "lose", f"Dealer wins {dv}–{pv}."
+def _after_action(state, gameid, parent_id, sender):
+    if all(state["done"].get(p) for p in state["seats"]):
+        _finish(state, gameid, parent_id)          # last seat done → dealer plays + resolve
     else:
-        outcome, msg = "push", f"Push — tie at {pv}."
+        _save_game(gameid, state)
+        try:
+            _nk.send_dm(sender, "⏳ Locked in. Waiting for the rest of the table, then the dealer plays.",
+                        extra_tags=[["g", gameid]])
+        except Exception:
+            pass
+
+
+def _finish(state, gameid, parent_id):
+    _dealer_play(state)
+    dv = _hand_value(state["dhand"])
+    dbj = _is_bj(state["dhand"])
+    folded = set(state.get("folded", []))
+    res = {}
+    for pk in state["seats"]:
+        hand = state["hands"][pk]
+        pv = _hand_value(hand)
+        if pk in folded or pv > 21:
+            res[pk] = "lose"
+        elif _is_bj(hand) and not dbj:
+            res[pk] = "blackjack"
+        elif dbj and not _is_bj(hand):
+            res[pk] = "lose"
+        elif dv > 21 or pv > dv:
+            res[pk] = "win"
+        elif pv < dv:
+            res[pk] = "lose"
+        else:
+            res[pk] = "push"
+    state["results"] = res
     state["status"] = "over"
-    state["outcome"] = outcome
-    state["result"] = msg
-    state["winner_pk"] = state["player"] if outcome in ("win", "blackjack") else None
-    state["winner_name"] = state["player_name"] if state["winner_pk"] else None
-    _post(state, gameid, parent_id, over=True, result=msg)
+    if len(state["seats"]) == 1:                  # keep the single-seat winner field for the web banner
+        only = state["seats"][0]
+        state["winner_pk"] = only if res[only] in ("win", "blackjack") else None
+        state["winner_name"] = state["names"][only] if state.get("winner_pk") else None
+    summary = (f"Dealer {dv}{' (BJ)' if dbj else (' bust' if dv > 21 else '')} — "
+               + ", ".join(f"{state['names'][pk]} {_OUTCOME_WORD[res[pk]]}" for pk in state["seats"]))
+    state["result"] = summary
+    png = _table_png(state, hide=False, title="GAME OVER", subtitle=summary)
+    _publish(gameid, parent_id, state["seats"], f"🏁 {summary}  gg!", png, federate=True)
+    _save_game(gameid, state)
 
 
-def _dm_current_player(state, gameid):
-    p = state.get("player")
-    if not p or p == _nk._PUBKEY:
+def _dm_seat(state, gameid, pk):
+    if not pk or pk == _nk._PUBKEY:
         return
-    pv = _hand_value(state["phand"])
-    upcard = state["dhand"][0] if state.get("dhand") else "?"
-    png = blackjack_render.render(state["dhand"], state["phand"], None, pv, hide_hole=True,
-                                  title="YOUR HAND", subtitle=f"You have {pv} · dealer shows {upcard}")
+    hand = state["hands"][pk]
+    pv = _hand_value(hand)
+    up = state["dhand"][0] if state.get("dhand") else "?"
+    png = blackjack_render.render(state["dhand"], hand, None, pv, hide_hole=True,
+                                  title="YOUR HAND", subtitle=f"You have {pv} · dealer shows {up}")
     try:
         info = _nk._run(_nk._svc.media.upload(_nk._MEDIA_CFG, _nk._SECKEY, png, "image/png")) or {}
         url = info.get("url") or ""
     except Exception as e:
         print(f"[blackjack] DM board upload failed: {e}", flush=True)
         url = ""
-    body = (f"🃏 Your hand: {' '.join(state['phand'])}  (= {pv})\nDealer shows {upcard}.\n"
+    body = (f"🃏 Your hand: {' '.join(hand)}  (= {pv})\nDealer shows {up}.\n"
             + (url + "\n\n" if url else "")
             + "Reply 'hit' to draw, or 'stand' to hold. Or play from the Blackjack tab in the app.")
     try:
-        _nk.send_dm(p, body, extra_tags=[["g", gameid]])
-        _set_player_game(p, gameid)
+        _nk.send_dm(pk, body, extra_tags=[["g", gameid]])
+        _set_player_game(pk, gameid)
     except Exception as e:
         print(f"[blackjack] send_dm failed: {e}", flush=True)
-
-
-def _post(state, gameid, parent_id, opening=False, over=False, result=""):
-    # MID-HAND (a hit that didn't bust): no public post — just persist + DM the player privately.
-    if not opening and not over:
-        _save_game(gameid, state)
-        _dm_current_player(state, gameid)
-        return
-    pv, dv = _hand_value(state["phand"]), _hand_value(state["dhand"])
-    title = "GAME OVER" if over else "BLACKJACK"
-    sub = result if over else f"{state['player_name']} vs the dealer"
-    png = blackjack_render.render(state["dhand"], state["phand"], dv, pv, hide_hole=(not over),
-                                  title=title, subtitle=sub)
-    if over:
-        body = (f"🏁 {result}\n{state['player_name']} vs the dealer — you {pv}, dealer {dv}. gg!")
-    else:
-        body = (f"🃏 #blackjack — {state['player_name']} sat down at the table!\n"
-                f"📩 Check your DMs — your hand's there. Reply 'hit' or 'stand'. I'll post the result here.")
-    ev = _publish(gameid, parent_id, state["player"], body, png, federate=True)
-    state["last_board_event"] = ev.get("id")
-    _save_game(gameid, state)
-    if not over:
-        _dm_current_player(state, gameid)
 
 
 def _handle_move(note, gameid, state):

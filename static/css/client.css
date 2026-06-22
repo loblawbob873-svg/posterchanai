@@ -967,6 +967,14 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .bj-card.red{color:#ff8aa8;border-color:#ff5a8a}
 .bj-card.back{background:#28124a;border-color:var(--magenta);color:var(--magenta)}
 .bj-controls{display:flex;gap:10px;margin-top:12px}
+.bj-seatchips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.bj-chip{display:inline-flex;align-items:center;gap:4px;background:rgba(60,230,255,.12);border:1px solid var(--cyan);border-radius:14px;padding:3px 6px 3px 10px;font-size:13px}
+.bj-chip button{background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:0}
+.bj-hand.mine .bj-lbl{color:var(--cyan)}
+.bj-hand.dealer .bj-lbl{color:var(--magenta)}
+.bj-out{font-weight:800;padding:1px 6px;border-radius:8px;font-size:12px}
+.bj-out.win{background:rgba(0,255,170,.2);color:#7dffce}
+.bj-out.loss{background:rgba(255,0,90,.15);color:#ff8aa8}
 .chess-board-img{display:block;width:100%;max-width:520px;height:auto;border-radius:12px;margin:0 auto;border:1px solid var(--line)}
 .chess-board-link{display:block}
 .chess-move-row{display:flex;gap:8px;margin-top:12px;max-width:520px;margin-left:auto;margin-right:auto}
