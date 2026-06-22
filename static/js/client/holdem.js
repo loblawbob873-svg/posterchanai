@@ -133,7 +133,9 @@
       // undealt board slots show an empty placeholder (not "?", which reads like a hidden card)
       const boardRow = `<div class="pk-street">${street}</div><div class="pk-board">${[0,1,2,3,4].map(i=> i<board.length?cardHtml(board[i]):'<span class="pk-card empty"></span>').join('')}</div>`;
       const seated = seats.includes(me), myAv=(profOf(me)||{}).picture||LOGO;
-      const seatRows = seats.map(pk=>{
+      // YOU are shown in the dedicated "Your hand" card below; the seat list is the dealer + opponents
+      // only (otherwise your avatar appears twice — sandwiched between the table and the dealer).
+      const seatRows = seats.filter(pk=>pk!==me).map(pk=>{
         const mine=pk===me, isTurn=!over&&g.to_act===pk, won=winners[pk]||0;
         const status = folded.has(pk)?'folded':(allin.has(pk)?'ALL-IN':(sbet[pk]?('bet '+sbet[pk]):''));
         const btn = seats.indexOf(pk)===g.button?' 🔘':'';
@@ -192,8 +194,15 @@
     async function move(game, action, amount){
       const botPk=safePk(PC.CFG.holdem_bot_npub); if(!botPk){ toast('no bot'); return; }
       const txt = action==='raise' ? `raise ${amount}` : action;
-      try{ await sendDm(botPk, `${txt}\n\ng:${game.root}`); toast(action+' sent 🃏'); }
-      catch(e){ toast('move failed'); return; }
+      // sendDm wraps via the signer (which is often busy decrypting hole cards at the start of a hand)
+      // — a transient signer/relay hiccup shouldn't lose the move, so retry a few times with backoff.
+      let ok=false;
+      for(let i=0;i<3 && !ok;i++){
+        try{ await sendDm(botPk, `${txt}\n\ng:${game.root}`); ok=true; }
+        catch(e){ await new Promise(r=>setTimeout(r, 500*(i+1))); }
+      }
+      if(!ok){ toast('move failed — tap again'); return; }
+      toast(action+' sent 🃏');
       setTimeout(()=>{ if(PC.VIEW==='holdem') render(); }, 4000);
     }
 
