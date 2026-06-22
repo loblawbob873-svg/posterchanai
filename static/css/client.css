@@ -964,6 +964,11 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .bj-table{padding:6px 0 2px}
 .bj-hand{margin:10px 0}
 .bj-lbl{display:block;font-weight:700;color:var(--muted);margin-bottom:6px;font-size:14px}
+.bj-betrow{display:flex;align-items:center;gap:8px;justify-content:center;margin:0 0 11px;flex-wrap:wrap}
+.bj-myval{text-align:center;font-weight:900;font-size:19px;color:#ffd25a;margin-top:8px;letter-spacing:.5px}
+.bj-myval.bust{color:#ff6b8b} .bj-myval.win{color:#5dffb0;text-shadow:0 0 9px rgba(93,255,176,.5)}
+.pk-seat .bj-cards{display:inline-flex;gap:4px;vertical-align:middle}
+.pk-seat .bj-cards .pk-card{min-width:24px;height:34px;font-size:13px;border-width:2px;margin:0}
 .bj-cards{display:flex;gap:8px;flex-wrap:wrap}
 .bj-card{display:inline-flex;align-items:center;justify-content:center;min-width:46px;height:64px;padding:0 9px;border-radius:9px;background:#160a28;border:2px solid var(--cyan);color:#eaf0ff;font-weight:800;font-size:21px}
 .bj-card.red{color:#ff8aa8;border-color:#ff5a8a}

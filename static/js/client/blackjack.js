@@ -1,20 +1,32 @@
-/* #blackjack — Blackjack (21) vs the bot dealer, solo or at a multi-seat table. Separate file; uses
- * window.__PC + registers in window.PCGames. Each player plays their OWN hand vs the shared dealer;
- * play in the app or by replying "hit"/"stand" to the bot's DM. */
+/* #blackjack — Blackjack (21) vs the bot dealer with chips, betting + a persistent table. Reliable,
+ * OFF-TIMELINE control via a kind-30078 command channel (#t=blackjackcmd) — solo start + every move.
+ * Reads the bot's kind-30078 table doc (dealer hole card + deck hidden; player hands open). Registers
+ * in window.PCGames. Mirrors holdem.js. */
 (function(){
   function init(){
     const PC = window.__PC;
     if(!PC){ return setTimeout(init, 50); }
-    const { $, $$, enc, publish, sendDm, safePk, nip05Resolve, profOf, niceNip05, LOGO, toast, ensureProfile, NT } = PC;
+    const { $, $$, enc, publish, safePk, nip05Resolve, profOf, niceNip05, LOGO, toast, ensureProfile, NT } = PC;
     const Relay = window.Relay, Store = window.Store;
-    let _timer = null;
-    let _seatPicks = [];   // pubkeys invited to the next table
+    let _timer = null, _seatPicks = [];
+    const SUIT = { S:'♠', H:'♥', D:'♦', C:'♣' };
 
-    const _SUIT = { S:'♠', H:'♥', D:'♦', C:'♣' };
     function handVal(h){ let t=0,a=0; for(const c of (h||[])){ const r=c.slice(0,-1); if(r==='A'){t+=11;a++;} else if('TJQK'.includes(r)) t+=10; else t+=(+r||0); } while(t>21&&a){t-=10;a--;} return t; }
-    function cardHtml(c){ if(!c) return '<span class="bj-card back">?</span>'; const r=c.slice(0,-1), s=c.slice(-1); const red=(s==='H'||s==='D'); return `<span class="bj-card${red?' red':''}">${enc(r)}${enc(_SUIT[s]||s)}</span>`; }
+    function cardHtml(c, big){ if(c===null||c===undefined) return `<span class="pk-card back${big?' big':''}">?</span>`; const r=c.slice(0,-1), s=c.slice(-1), red=(s==='H'||s==='D'); return `<span class="pk-card${red?' red':''}${big?' big':''}">${enc(r)}${enc(SUIT[s]||s)}</span>`; }
+    function nameOf(pk, fb){ const m=profOf(pk)||{}; return m.name||m.display_name||niceNip05(m.nip05)||fb||'player'; }
     function _hidden(){ try{ return new Set(JSON.parse(localStorage.getItem('pc_bj_hidden')||'[]')); }catch(_){ return new Set(); } }
     function _hide(gid){ const s=_hidden(); s.add(gid); try{ localStorage.setItem('pc_bj_hidden', JSON.stringify([...s])); }catch(_){} }
+    function getBet(){ const b=parseInt(localStorage.getItem('pc_bj_bet')||'25',10); return (b>0?b:25); }
+    function setBetLS(b){ try{ localStorage.setItem('pc_bj_bet', String(b)); }catch(_){} }
+
+    // Reliable, off-timeline command channel — solo start + all moves (no public note, no DM encryption).
+    async function _cmd(payload){
+      const botPk=safePk(PC.CFG.blackjack_bot_npub); if(!botPk) throw new Error('no bot');
+      const tags=[['d',`pcai:blackjack:cmd:${PC.ME.pubkey}`],['t','blackjackcmd'],['p',botPk],['nofederate','1']];
+      const r = await publish(30078, JSON.stringify({...payload, ts:Date.now()}), tags);
+      if(r && r.ok===false) throw new Error(r.msg||'rejected');
+      return r;
+    }
 
     async function render(){
       const feed=$('#feed');
@@ -22,7 +34,8 @@
       _seatPicks = [];
       const start = botNpub ? `
         <div class="chess-invite">
-          <button class="btn btn-cyan" id="bj-solo">🃏 New hand (solo vs dealer)</button>
+          <div class="bj-betrow"><span class="muted small">Bet</span> <input id="bj-bet" class="input" type="number" inputmode="numeric" min="5" value="${getBet()}" style="width:6em"> <span class="muted small">chips / hand</span></div>
+          <button class="btn btn-cyan" id="bj-solo" style="width:100%">🃏 New hand — vs the dealer</button>
           <div class="chess-or">— or seat a table with friends —</div>
           <input id="bj-inv" class="input" placeholder="search name / npub / name@domain…" autocomplete="off">
           <div id="bj-inv-res" class="chess-inv-res"></div>
@@ -32,22 +45,24 @@
       feed.innerHTML = `<div class="chess-hub">
           <div class="chess-splash glass">
             <h2>🃏 Blackjack</h2>
-            <p class="muted">Beat the dealer to 21 without busting. Play solo or seat friends — everyone plays their own hand vs the same dealer (DM 'hit'/'stand', or tap below). Dealer stands on 17.</p>
+            <p class="muted">Beat the dealer to 21 without busting. Wager chips each hand (blackjack pays 3:2); the table keeps dealing until you leave or bust out. Hit/stand here or by replying to the bot's DM. Dealer stands on 17.</p>
             ${start}
           </div>
           <div class="chess-games"><h3>🃏 Your tables</h3><div id="bj-games"><div class="spinner"></div></div></div>
         </div>`;
-      if(botNpub){ const sb=$('#bj-solo'); if(sb) sb.onclick=()=>startTable([]); _bindInvite(); }
+      if(botNpub){
+        const sb=$('#bj-solo'); if(sb) sb.onclick=()=>{ const b=parseInt(($('#bj-bet')||{}).value,10)||25; setBetLS(b); startTable([], b); };
+        _bindInvite();
+      }
       _load();
       clearInterval(_timer);
-      _timer = setInterval(()=>{ if(PC.VIEW==='blackjack'){ _load(); } else clearInterval(_timer); }, 12000);
+      _timer = setInterval(()=>{ if(PC.VIEW==='blackjack'){ _load(); } else clearInterval(_timer); }, 6000);
     }
     function _drawSeats(){
       const box=$('#bj-seats'), deal=$('#bj-deal'); if(!box) return;
       box.innerHTML = _seatPicks.map(pk=>{ const m=profOf(pk)||{}; return `<span class="bj-chip">${enc(m.name||m.display_name||'anon')}<button data-rm="${pk}">✕</button></span>`; }).join('');
       $$('[data-rm]',box).forEach(b=> b.onclick=()=>{ _seatPicks=_seatPicks.filter(p=>p!==b.dataset.rm); _drawSeats(); });
-      if(deal) deal.style.display = _seatPicks.length ? '' : 'none';
-      if(deal) deal.onclick=()=>startTable(_seatPicks.slice());
+      if(deal){ deal.style.display=_seatPicks.length?'':'none'; deal.onclick=()=>startTable(_seatPicks.slice(), getBet()); }
     }
     function _bindInvite(){
       const inp=$('#bj-inv'), res=$('#bj-inv-res'); if(!inp) return; let t=null;
@@ -64,13 +79,19 @@
           draw(Store.profileList().filter(p=>(((p.meta.name||'')+(p.meta.display_name||'')+(p.meta.nip05||'')).toLowerCase().includes(ql))).slice(0,8));
         }, 250); };
     }
-    async function startTable(friends){
+    async function startTable(friends, bet){
       const botPk=safePk(PC.CFG.blackjack_bot_npub); if(!botPk){ toast('no bot'); return; }
-      const tags=[['p',botPk]]; (friends||[]).forEach(pk=>{ if(pk&&pk!==PC.ME.pubkey&&pk!==botPk) tags.push(['p',pk]); });
+      friends=(friends||[]).filter(pk=>pk&&pk!==PC.ME.pubkey&&pk!==botPk);
+      if(!friends.length){
+        // SOLO: private command — no public timeline post, reliable.
+        try{ await _cmd({action:'start', bet}); toast('dealing… 🃏'); setTimeout(()=>{ if(PC.VIEW==='blackjack') _load(); }, 4500); }
+        catch(e){ toast('could not start — try again'); }
+        return;
+      }
+      // MULTIPLAYER: public note to seat + notify friends.
+      const tags=[['p',botPk]]; friends.forEach(pk=>tags.push(['p',pk]));
       tags.push(['t','blackjack'],['t','nostr'],['t','gamestr']);
-      const body = (friends&&friends.length)
-        ? `🃏 Dealing a #blackjack table — ${friends.map(pk=>{let n;try{n=NT().nip19.npubEncode(pk);}catch(_){n=pk;} return 'nostr:'+n;}).join(' ')} you're seated! Check your DMs.`
-        : `🃏 Dealing a #blackjack hand vs the bot. I'll play from my DMs.`;
+      const body = `🃏 Dealing a #blackjack table — ${friends.map(pk=>{let n;try{n=NT().nip19.npubEncode(pk);}catch(_){n=pk;} return 'nostr:'+n;}).join(' ')} you're seated! Check your DMs.`;
       try{ await publish(1, body+`\n\n#blackjack #nostr #gamestr`, tags); toast('dealing… 🃏'); setTimeout(()=>{ if(PC.VIEW==='blackjack') render(); }, 4500); }
       catch(e){ toast('could not start'); }
     }
@@ -82,68 +103,88 @@
       const hidden=_hidden(), byGame={};
       for(const e of evs){
         const d=((e.tags.find(t=>t[0]==='d')||[])[1])||'';
-        if(!d.startsWith('pcai:blackjack:') || d.indexOf('player:')>=0) continue;
+        if(!d.startsWith('pcai:blackjack:') || d.indexOf('player:')>=0 || d.indexOf('cmd:')>=0) continue;
         let s; try{ s=JSON.parse(e.content||'{}'); }catch(_){ continue; }
         if(!s || !Array.isArray(s.seats) || !s.seats.includes(PC.ME.pubkey)) continue;
+        if(Array.isArray(s.left) && s.left.includes(PC.ME.pubkey)) continue;
         const gid=s.root||d.slice('pcai:blackjack:'.length);
         if(hidden.has(gid)) continue;
         if(!byGame[gid] || (e.created_at||0) > byGame[gid]._t){ s._t=e.created_at||0; byGame[gid]=s; }
       }
-      const games=Object.values(byGame).sort((a,b)=>(a.status==='playing'?0:1)-(b.status==='playing'?0:1)||(b.started||0)-(a.started||0));
+      const games=Object.values(byGame).sort((a,b)=>(a.status==='playing'?0:1)-(b.status==='playing'?0:1)||(b._t||0)-(a._t||0));
+      const allpks=new Set(); games.forEach(g=>(g.seats||[]).forEach(pk=>allpks.add(pk)));
+      await Promise.all([...allpks].map(pk=>ensureProfile(pk).catch(()=>{})));
       if(!games.length){ list.innerHTML='<div class="empty">No tables yet. Deal one above.</div>'; return; }
       list.innerHTML = games.map((g,i)=>`<div class="chess-game-card glass" data-gi="${i}"></div>`).join('');
       games.forEach((g,i)=>_card(g, $(`.chess-game-card[data-gi="${i}"]`, list)));
     }
-    async function quitGame(g){
-      const me=PC.ME.pubkey, myTurn = g.status==='playing' && !((g.done||{})[me]);
-      if(!confirm(myTurn?'Stand and remove this table from your list?':'Remove this table?')) return;
-      if(myTurn){ try{ await move(g,'stand'); }catch(_){} }
-      _hide(g.root); _load();
-    }
     function _card(g, card){
       if(!card) return;
-      const me=PC.ME.pubkey, over=g.status!=='playing';
-      const seats=g.seats||[], names=g.names||{}, hands=g.hands||{}, done=g.done||{}, results=g.results||{};
-      const myDone = !!done[me];
-      const dv=handVal(g.dhand);
-      const dealer=(g.dhand||[]).map((c,i)=> !over && i>0 ? cardHtml(null) : cardHtml(c)).join('');
-      let banner='', badge, statusLine;
-      if(over){
-        const o=results[me]||'lose', win=(o==='win'||o==='blackjack'), push=(o==='push');
-        badge=push?'wait':(win?'you':'done'); statusLine=push?'Push':(win?'You won! 🎉':'You lost');
-        banner=`<div class="chess-result ${push?'draw':(win?'win':'loss')}">${push?'🤝 Push':(win?'🏆 You won!':'💀 You lost')}<span class="muted small"> · ${enc(g.result||'')}</span></div>`;
-      } else if(myDone){ badge='wait'; statusLine='Locked in — waiting on the table'; }
-      else { badge='you'; statusLine='Your move — hit or stand'; }
-      const seatRows = seats.map(pk=>{
-        const h=hands[pk]||[], v=handVal(h), mine=pk===me;
-        const out = over ? (results[pk]||'') : (done[pk]?'stand':'…');
-        const oc = out==='blackjack'||out==='win'?'win':(out==='lose'?'loss':'');
-        return `<div class="bj-hand${mine?' mine':''}"><span class="bj-lbl">${mine?'You':enc(names[pk]||'player')} · ${v} ${oc?`<span class="bj-out ${oc}">${enc((out||'').toUpperCase())}</span>`:(over?'':`<span class="muted small">${enc(out)}</span>`)}</span><div class="bj-cards">${h.map(cardHtml).join('')}</div></div>`;
+      const me=PC.ME.pubkey, bot=g.bot, over=g.status!=='playing';
+      const seats=g.seats||[], names=g.names||{}, hands=g.hands||{}, stacks=g.stacks||{}, bet=g.bet||{}, done=g.done||{}, results=g.results||{}, payouts=g.payouts||{};
+      const players=seats.filter(p=>p!==bot);
+      const myHand=hands[me]||[], myVal=handVal(myHand), myDone=!!done[me], myStack=stacks[me]||0, myBet=bet[me]||0;
+      // dealer: full hand at showdown, else up card + face-down placeholders
+      const dh = g.dhand || (g.dealer_up ? [g.dealer_up].concat(Array(g.dealer_down||1).fill(null)) : []);
+      const dealerCards = (dh.length?dh:[null]).map((c,i)=> (over && g.dhand) ? cardHtml(c) : (i===0?cardHtml(c):cardHtml(null))).join('');
+      const dealerVal = (over && g.dhand) ? handVal(g.dhand) : '';
+      const myOut=results[me], myNet=payouts[me]||0;
+      const lr=g.last_result;
+      const lastBanner = (lr && lr.summary && !over) ? `<div class="pk-last${(lr.payouts&&lr.payouts[me]>0)?' win':''}">${(lr.payouts&&lr.payouts[me]>0)?`🏆 You won ${lr.payouts[me]} last round!`:((lr.payouts&&lr.payouts[me]<0)?`Last round: lost ${-lr.payouts[me]}`:'Last round')}<span class="muted small"> · ${enc(lr.summary)}</span></div>` : '';
+      let banner='';
+      if(over && myOut){ const win=myNet>0, push=myOut==='push'; banner=`<div class="chess-result ${push?'draw':(win?'win':'loss')}">${push?'🤝 Push':(win?`🏆 You won ${myNet}!`:`💀 You lost ${-myNet}`)}<span class="muted small"> · next hand dealing…</span></div>`; }
+      const dealerBlock = `<div class="pk-felt"><div class="pk-street">DEALER${dealerVal!==''?' · '+dealerVal+(dealerVal>21?' BUST':''):''}</div><div class="pk-board">${dealerCards}</div></div>`;
+      const seatRows = players.filter(pk=>pk!==me).map(pk=>{
+        const h=hands[pk]||[], v=handVal(h), av=(profOf(pk)||{}).picture||LOGO, out=results[pk], net=payouts[pk]||0;
+        const status=(g.left||[]).includes(pk)?'left':(done[pk]?(out?out.toUpperCase()+(net?` ${net>0?'+':''}${net}`:''):'stand'):'…');
+        return `<div class="pk-seat${out==='win'||out==='blackjack'?' win':''}"><span class="pk-who"><img class="pk-av" src="${enc(av)}" onerror="this.onerror=null;this.src='${LOGO}'"><span class="pk-nm">${enc(nameOf(pk,names[pk]))}</span></span>
+          <span class="pk-stk"><span class="bj-cards">${h.map(c=>cardHtml(c)).join('')}</span> <b>${v}</b> <span class="muted small">${enc(status)}</span> · ${stacks[pk]||0}c</span></div>`;
       }).join('');
-      const controls = (!over && !myDone) ? `<div class="bj-controls"><button class="btn btn-cyan small bj-hit">Hit</button> <button class="btn btn-neon small bj-stand">Stand</button></div>` : '';
-      card.innerHTML = `<div class="chess-card-hd">
-          <div class="cc-meta"><b>Blackjack ${seats.length>1?`· ${seats.length} seats`:'vs dealer'}</b><span class="muted small">Dealer stands on 17</span></div>
-          <span class="cc-badge ${badge}">${enc(statusLine)}</span>
-          <button class="chess-quit" title="Remove">✕</button></div>
-        ${banner}
-        <div class="bj-table">
-          <div class="bj-hand dealer"><span class="bj-lbl">Dealer ${over?('· '+dv):''}</span><div class="bj-cards">${dealer}</div></div>
-          ${seatRows}
-        </div>
-        ${controls}`;
-      { const q=card.querySelector('.chess-quit'); if(q) q.onclick=(e)=>{ e.stopPropagation(); quitGame(g); }; }
+      const myAv=(profOf(me)||{}).picture||LOGO;
+      const myHandCard = `<div class="pk-myhand">
+          <div class="pk-myinfo"><img class="pk-myav" src="${enc(myAv)}" onerror="this.onerror=null;this.src='${LOGO}'"><div class="pk-mymeta"><span class="pk-myname">You</span><span class="pk-mychipline">💰 <b>${myStack}</b> chips · bet ${myBet}</span></div></div>
+          <div class="pk-mycards">${myHand.map(c=>cardHtml(c,true)).join('')||'<span class="muted small">…</span>'}</div>
+          ${myHand.length?`<div class="bj-myval ${myVal>21?'bust':(myVal===21?'win':'')}">${myVal}${myVal>21?' · BUST':(myVal===21?' · 21!':'')}</div>`:''}
+        </div>`;
+      let controls='';
       if(!over && !myDone){
-        let busy=false; const lock=()=>{ busy=true; card.querySelectorAll('.bj-hit,.bj-stand').forEach(b=>b.disabled=true); };
-        const hit=card.querySelector('.bj-hit'), st=card.querySelector('.bj-stand');
-        if(hit) hit.onclick=()=>{ if(busy)return; lock(); move(g,'hit'); };
-        if(st) st.onclick=()=>{ if(busy)return; lock(); move(g,'stand'); };
+        controls = `<div class="pk-controls"><button class="btn btn-cyan small bj-hit">Hit</button><button class="btn btn-neon small bj-stand">Stand</button><button class="btn small bj-leave">Leave</button></div>`;
+      } else if(!over && myDone){
+        controls = `<div class="muted small" style="padding:6px 2px">✋ Locked in — the dealer plays when the table's done.</div>`;
+      } else {
+        controls = `<div class="pk-controls"><span class="pk-raise"><span class="muted small">Next bet</span> <input class="input bj-betinp" type="number" inputmode="numeric" value="${myBet||getBet()}" style="width:5em"><button class="btn btn-neon small bj-setbet">Set</button></span><button class="btn small bj-leave">Leave</button></div>`;
       }
+      card.innerHTML = `<div class="chess-card-hd">
+          <div class="cc-meta"><b>Blackjack ${players.length>1?`· ${players.length} seats`:'vs dealer'}</b><span class="muted small">round #${g.round_no||1} · dealer stands on 17</span></div>
+          <span class="cc-badge ${(!over&&!myDone)?'you':(over?'done':'wait')}">${(!over&&!myDone)?'Your move':(over?'round over':'in play')}</span>
+          <button class="chess-quit" title="Leave table">✕</button></div>
+        ${banner}${lastBanner}
+        ${dealerBlock}
+        ${seatRows?`<div class="pk-seats">${seatRows}</div>`:''}
+        ${myHandCard}
+        ${controls}`;
+      { const q=card.querySelector('.chess-quit'); if(q) q.onclick=(e)=>{ e.stopPropagation(); leaveTable(g); }; }
+      const bind=(sel,fn)=>{ const b=card.querySelector(sel); if(b) b.onclick=fn; };
+      bind('.bj-hit', ()=>move(g,'hit'));
+      bind('.bj-stand', ()=>move(g,'stand'));
+      bind('.bj-leave', ()=>leaveTable(g));
+      bind('.bj-setbet', ()=>{ const v=parseInt((card.querySelector('.bj-betinp')||{}).value,10); if(v>0) changeBet(g, v); });
     }
     async function move(game, action){
-      const botPk=safePk(PC.CFG.blackjack_bot_npub); if(!botPk){ toast('no bot'); return; }
-      try{ await sendDm(botPk, `${action}\n\ng:${game.root}`); toast(action+' sent 🃏'); }
-      catch(e){ toast('move failed'); return; }
-      setTimeout(()=>{ if(PC.VIEW==='blackjack') render(); }, 4500);
+      let ok=false;
+      for(let i=0;i<3 && !ok;i++){ try{ await _cmd({action, gameid:game.root}); ok=true; }catch(e){ await new Promise(r=>setTimeout(r, 400*(i+1))); } }
+      if(!ok){ toast('move failed — tap again'); return; }
+      toast(action+' sent 🃏');
+      [2000, 4500, 7000].forEach(d=>setTimeout(()=>{ if(PC.VIEW==='blackjack') _load(); }, d));
+    }
+    async function changeBet(game, amt){
+      try{ await _cmd({action:'bet', gameid:game.root, amount:amt}); setBetLS(amt); toast('next bet: '+amt+' 🃏'); setTimeout(()=>{ if(PC.VIEW==='blackjack') _load(); }, 1200); }
+      catch(e){ toast('could not set bet'); }
+    }
+    async function leaveTable(g){
+      if(!confirm('Leave this table? You keep your chips.')) return;
+      try{ await _cmd({action:'leave', gameid:g.root}); }catch(_){}
+      _hide(g.root); _load();
     }
 
     (window.PCGames = window.PCGames || {}).blackjack = render;
