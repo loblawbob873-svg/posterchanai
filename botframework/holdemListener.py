@@ -505,14 +505,13 @@ def _post_result(state, gameid, parent_id, showdown):
     state["status"] = "done"
     _save_game(gameid, state)
     private = bool(state.get("private"))
-    # PUBLIC social post (multiplayer only): winner + results, the table image, app-promo footer.
-    # A private solo-vs-bot game stays off the timeline — the player sees the result in the app
-    # (last_result banner) and their next DM, so a public post each hand would just be spam.
-    if not private:
-        head = "🏁 #holdem showdown!" if showdown else "🏁 #holdem hand over —"
-        pot_won = sum(state.get("winners", {}).values())
-        body = f"{head} {summary}.  ({pot_won} chips){_footer()}"
-        _do_publish(gameid, parent_id, state["seats"], body, _board_png(state, reveal=showdown))
+    # PUBLIC result post for EVERY hand (winner + table image + app promo). Solo games post standalone
+    # (their id is synthetic → no phantom e-root); multiplayer threads under the table root.
+    head = "🏁 #holdem showdown!" if showdown else "🏁 #holdem hand over —"
+    pot_won = sum(state.get("winners", {}).values())
+    body = f"{head} {summary}.  ({pot_won} chips){_footer()}"
+    _do_publish(None if private else gameid, None if private else parent_id, state["seats"],
+                body, _board_png(state, reveal=showdown))
     # PERSISTENT table: deal the next hand (rotate button, carry stacks, drop leavers/busted).
     nxt, _ = _G.next_hand(state)
     if nxt is None:

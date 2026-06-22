@@ -418,12 +418,13 @@ def _finish(state, gameid, parent_id):
     # carry the result into the doc so the app shows a "last round" banner on the next deal
     state["last_result"] = {"summary": summary,
                             "payouts": {p: a for p, a in state.get("payouts", {}).items()}}
-    if not private:                              # multiplayer: public per-round result + image + promo
-        _do_publish(gameid, parent_id, state["seats"], f"🏁 #blackjack — {summary}.{_footer()}",
-                    _table_png(state, reveal=True))
+    # PUBLIC result post for EVERY round (result + table image + app promo). Solo posts standalone
+    # (synthetic id → no phantom e-root); multiplayer threads under the table root.
+    _do_publish(None if private else gameid, None if private else parent_id, state["seats"],
+                f"🏁 #blackjack — {summary}.{_footer()}", _table_png(state, reveal=True))
     _save_game(gameid, state)
-    if private:                                  # solo: in-app + a private result DM (no public post)
-        _dm_result(state, gameid)
+    if private:
+        _dm_result(state, gameid)                # also DM the solo player their result image
     _deal_next(state, gameid, parent_id)         # PERSISTENT: auto-deal the next round (or close)
 
 
