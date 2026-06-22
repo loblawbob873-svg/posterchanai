@@ -203,6 +203,11 @@ def init_db():
             # Send-only: broadcast our events to upstream (outbox) but never pull/store theirs —
             # keeps a secondary node's local DB from mirroring upstream. Default off.
             "nostr_relay_send_only": "false",
+            # Disaster-recovery backup: broadcast the (NIP-44-encrypted) pcai: CONFIG docs
+            # (settings/accounts/per-user config/bots) to the upstream relays. Off by default —
+            # these are normally local-only. Safe because everyone but the operator sees ciphertext;
+            # a fresh node can restore them from upstream with the operator nsec.
+            "nostr_relay_backup_datastore": "false",
             # Timeline backfill ON by default: the mirror_feeds sweep pulls ~48h of recent history
             # per WoT member so a fresh relay's timeline is populated immediately instead of only
             # filling forward from the firehose. Toggle off in Admin → Relay (it's the heavier path).

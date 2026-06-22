@@ -428,6 +428,50 @@ async def hydrate(db) -> int:
     return changed
 
 
+# pcai: CONFIG d-tags eligible for DR backup/restore (mirror server.py:_BACKUP_NS).
+_BACKUP_NS = ("pcai:setting:", "pcai:user:", "pcai:usercfg:", "pcai:bot:")
+
+
+async def restore_from_upstream(db) -> int:
+    """Disaster recovery: pull the operator's encrypted pcai: CONFIG docs (settings/accounts/per-user
+    config/bots) from the UPSTREAM relays and re-store them in the LOCAL relay, so a fresh node whose
+    Postgres was wiped gets its config back (the docs are NIP-44 ciphertext to everyone but us — the
+    operator nsec must be supplied out-of-band on the fresh node). Admin-triggered, idempotent (the
+    relay dedups by event id; kind-30078 is replaceable so only the newest per d-tag wins). Returns
+    the number of docs restored. Caller should re-hydrate afterwards."""
+    op_sk = _OP_SK or _operator_seckey(db)
+    if not op_sk:
+        logger.warning("[settings-store] restore: no operator key")
+        return 0
+    from app.services.nostr import nostr_service, relay as _relay
+    try:
+        pk = nostr_service.derive_pubkey(op_sk)
+        op_hex = pk if isinstance(pk, str) else pk.hex()
+    except Exception as e:
+        logger.warning("[settings-store] restore: cannot derive operator pubkey: %s", e)
+        return 0
+    upstream = _relay.normalize_relays(get("nostr_relay_upstream_relays", "")) or list(nostr_service.DEFAULT_RELAYS)
+    try:
+        evs = await _relay.query(upstream, [{"authors": [op_hex], "kinds": [store.APP_KIND]}], timeout=25)
+    except Exception as e:
+        logger.warning("[settings-store] restore: upstream query failed: %s", e)
+        return 0
+    local_url = f"ws://127.0.0.1:{_port()}"
+    restored = 0
+    for ev in evs or []:
+        d = next((t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "d"), "")
+        if not d.startswith(_BACKUP_NS):
+            continue   # only the small CONFIG set — never bulk chat/upload docs
+        try:
+            if await _relay.publish([local_url], ev, direct=True):
+                restored += 1
+        except Exception:
+            continue
+    logger.info("[settings-store] restored %d datastore doc(s) from %d upstream relay(s) (DR)",
+                restored, len(upstream))
+    return restored
+
+
 async def write_through(db, changes: dict) -> int:
     """Mirror settings → relay (authoritative). Used by the background writer and admin save."""
     if not changes:

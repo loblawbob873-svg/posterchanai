@@ -37,17 +37,29 @@ _INVITE_MAX = int(os.getenv("HANGMAN_INVITE_MAX_PER_HOUR", "3"))
 _INVITE_WINDOW = 3600
 _invite_times: dict = {}
 
-_WORDS = [
-    "nostr", "relay", "satoshi", "lightning", "cyberpunk", "decentralized", "protocol", "keypair",
-    "blossom", "zaps", "freedom", "privacy", "npub", "signature", "gossip", "mesh", "encryption",
-    "firewall", "neon", "matrix", "android", "terminal", "hacker", "uplink", "datastream", "android",
-    "phantom", "synthwave", "override", "mainframe", "darknet", "glitch", "avatar", "hologram",
-    "quantum", "neural", "android", "circuit", "protocol", "binary", "vaporwave", "render",
-]
+# Friend-friendly words grouped by category. The category doubles as the built-in HINT for solo /
+# random games, so it plays like real hangman with a clue — not a tech-vocab quiz. Common spelling,
+# no proper nouns, nothing Nostr/crypto-specific.
+_WORD_CATEGORIES = {
+    "an animal": ["elephant", "giraffe", "penguin", "dolphin", "kangaroo", "butterfly", "octopus",
+                  "squirrel", "hedgehog", "flamingo", "cheetah", "raccoon", "rabbit", "turtle", "otter"],
+    "a food": ["pizza", "spaghetti", "chocolate", "pancake", "avocado", "burrito", "popcorn",
+               "watermelon", "strawberry", "cinnamon", "pretzel", "noodle", "muffin", "pickle"],
+    "a place": ["mountain", "island", "volcano", "desert", "waterfall", "rainforest", "lighthouse",
+                "village", "harbor", "meadow", "canyon", "glacier", "castle"],
+    "something at home": ["umbrella", "blanket", "pillow", "lantern", "telescope", "backpack",
+                          "mirror", "candle", "kettle", "ladder", "drawer", "basket"],
+    "a sport or hobby": ["basketball", "swimming", "surfing", "skateboard", "volleyball", "painting",
+                         "camping", "fishing", "dancing", "gardening", "bowling"],
+    "weather or nature": ["rainbow", "thunder", "snowflake", "sunshine", "blossom", "breeze",
+                          "lightning", "river", "forest", "meadow"],
+}
+_WORDS_FLAT = [(w, cat) for cat, ws in _WORD_CATEGORIES.items() for w in ws]
 
 
 def _pick_word():
-    return _WORDS[secrets.randbelow(len(_WORDS))].lower()
+    """Return (word, hint) where the hint is the word's category — the built-in clue for random games."""
+    return _WORDS_FLAT[secrets.randbelow(len(_WORDS_FLAT))]
 
 
 # ---- dedup ----------------------------------------------------------------
@@ -286,8 +298,10 @@ def _dm_current_player(state, gameid):
     except Exception as e:
         print(f"[hangman] DM board upload failed: {e}", flush=True)
         url = ""
+    _hint = state.get("hint", "")
     body = (f"🎯 Your word to guess: {disp}\n"
-            f"Misses {wrong}/{_MAX_WRONG}"
+            + (f"💡 Clue: {_hint}\n" if _hint else "")
+            + f"Misses {wrong}/{_MAX_WRONG}"
             + (f" · wrong: {' '.join(state['wrong_letters'])}" if state.get("wrong_letters") else "") + "\n"
             + (url + "\n\n" if url else "")
             + "Reply to this DM with a letter A-Z (or the whole word). Or play from the Hangman tab in the app.")
@@ -322,15 +336,20 @@ def _post(state, gameid, parent_id, word=None, gameover=False, result=""):
     else:
         # OPENING invitation — public; the game then plays out privately in DMs.
         guesser_is_sender = not state.get("opponent")
+        _hint = state.get("hint", "")
+        _clue = f"💡 Clue: {_hint}\n" if _hint else ""
         if guesser_is_sender:
-            body = (f"🎯 #hangman — {state['guesser_name']} is guessing the bot's word!\n"
+            body = (f"🎯 #hangman — {state['guesser_name']} is guessing a {state.get('wordlen','?')}-letter word!\n"
+                    + _clue +
                     f"📩 Check your DMs — I've sent you the word to guess (a letter at a time). "
-                    f"The result gets posted here.")
+                    f"The result gets posted here. Cheer them on! 🙌")
         else:
             whose = (state.get("setter_name") + "'s") if state.get("setter") else "the bot's"
-            body = (f"🎯 #hangman — {state['guesser_name']} has been challenged to guess {whose} word!\n"
-                    f"📩 {state['guesser_name']}, check your DMs to start guessing. The game plays out "
-                    f"privately in DMs; I'll post the result here when it's over.")
+            body = (f"🎯 #hangman — {state['guesser_name']} has been challenged to guess {whose} word "
+                    f"({state.get('wordlen','?')} letters)!\n"
+                    + _clue +
+                    f"📩 {state['guesser_name']}, check your DMs to start guessing. Follow along here — "
+                    f"react and cheer! I'll post the result when it's over.")
     # The opening invitation and the final result are public; mid-game guesses are DM-only.
     ev = _publish(gameid, parent_id, [state["guesser"], state.get("opponent")], body, png, federate=True)
     state["last_board_event"] = ev.get("id")
@@ -369,18 +388,21 @@ def _start_game(note, own_pk):
         try:
             _nk.send_dm(sender, f"🎯 You challenged {state['guesser_name']} to #hangman!\n"
                         "Reply to THIS DM with the secret WORD you want them to guess (letters only) — "
-                        "or reply 'random' and I'll pick one.", extra_tags=[["g", gameid]])
+                        "or reply 'random' and I'll pick one.\n"
+                        "💡 Give them a clue too? Send it as `word | your hint` "
+                        "(e.g. `pancake | breakfast favorite`).", extra_tags=[["g", gameid]])
         except Exception as e:
             print(f"[hangman] setter prompt DM failed: {e}", flush=True)
         return
-    # SOLO: no opponent → you guess the bot's randomly-picked word (existing behaviour).
+    # SOLO: no opponent → you guess the bot's randomly-picked word. The category is your clue.
     guesser = sender
-    word = _pick_word()
+    word, hint = _pick_word()
     state = {
         "v": 1, "guesser": guesser, "guesser_name": _name(guesser),
         "opponent": None,
         "word_enc": _nip44.encrypt_self(_nk._SECKEY, word),
         "wordlen": len(word), "guessed": [], "wrong_letters": [], "wrong": 0,
+        "hint": hint,
         "display": " ".join("_" for _ in word), "status": "active",
         "root": gameid, "started": int(time.time()), "last_board_event": None,
     }
@@ -391,19 +413,29 @@ def _start_game(note, own_pk):
 def _set_secret_word(setter, gameid, state, text, reply):
     """The challenger replied with the word their friend must guess. Store it, activate the game,
     post the public opening + DM the guesser the puzzle."""
-    raw = (text or "").strip().lower()
+    raw = (text or "").strip()
+    hint = ""
+    if "|" in raw:                       # "word | a clue for your friend" — optional hint
+        raw, hint = raw.split("|", 1)
+    raw = raw.strip().lower()
+    hint = hint.strip()[:80]
     if raw in ("random", "rand", "you pick", "bot", "surprise"):
-        word = _pick_word()
+        word, cat = _pick_word()
+        if not hint:
+            hint = cat                   # fall back to the random word's category as the clue
     else:
         word = re.sub(r"[^a-z]", "", raw)
         if len(word) < 3 or len(word) > 24:
-            reply("🎯 Send ONE word (letters only, 3–24 chars) for your friend to guess — or reply 'random' and I'll pick.")
+            reply("🎯 Send ONE word (letters only, 3–24 chars) for your friend to guess — or reply "
+                  "'random'. Want to give them a clue? Send it as `word | your hint`.")
             return
     state["word_enc"] = _nip44.encrypt_self(_nk._SECKEY, word)
     state["wordlen"] = len(word)
     state["display"] = " ".join("_" for _ in word)
+    state["hint"] = hint
     state["status"] = "active"
-    reply(f"✅ Secret word set ({len(word)} letters). I've DM'd {state['guesser_name']} the puzzle — they're guessing now!")
+    reply(f"✅ Secret word set ({len(word)} letters" + (f", clue “{hint}”" if hint else "")
+          + f"). I've DM'd {state['guesser_name']} the puzzle — they're guessing now!")
     _post(state, gameid, gameid, word=word)   # public opening + DM the guesser
 
 

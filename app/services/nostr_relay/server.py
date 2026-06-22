@@ -20,18 +20,28 @@ from .langfilter import blocked_language, blocked_word
 from .bridges import reveals_blocked_bridge, author_on_blocked_bridge, is_bridged_post
 
 
-def _broadcastable(ev) -> bool:
+# pcai: CONFIG d-tags eligible for the opt-in DR backup to upstream (small + critical). Bulky /
+# per-item docs (chat conversations/messages, upload refs, drafts, ai-requests) are NEVER broadcast.
+_BACKUP_NS = ("pcai:setting:", "pcai:user:", "pcai:usercfg:", "pcai:bot:")
+
+
+def _broadcastable(ev, cfg=None) -> bool:
     """Whether a direct write should be re-broadcast to the upstream relays. Notes, profiles,
     PUBLISHED articles (kind 30023), reactions, DMs — yes, blast them everywhere. NOT private/
     internal events: NIP-23 **drafts** (kind 30024) stay on this relay until published, and the
     app's own encrypted **datastore** docs (kind 30078 with a `pcai:` d-tag — settings/users/chats)
-    are this node's internal state, never the public network's business."""
+    are this node's internal state, never the public network's business — EXCEPT when the operator
+    opts into DR backup (`backup_datastore`), which broadcasts the small CONFIG docs (settings/
+    accounts/per-user config/bots). They're NIP-44 ciphertext to everyone but the operator, and a
+    fresh node restores them from upstream with the operator nsec."""
     k = ev.get("kind")
     if k == 30024:
         return False
     if k == 30078:
         d = next((t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "d"), "")
         if d.startswith("pcai:"):
+            if cfg and cfg.get("backup_datastore") and d.startswith(_BACKUP_NS):
+                return True
             return False
     # Opt-out marker: e.g. game bots tag the mid-game move boards so only the opening + final post
     # federate to the wider network (the middle plays stay local-only — anti-spam).
@@ -437,7 +447,7 @@ class RelayServer:
         self._send(conn, ["OK", eid, True, ""])
         if stored:
             self.subs.fanout(ev, self._send)
-            if self.outbox_cb and _broadcastable(ev):
+            if self.outbox_cb and _broadcastable(ev, self.cfg):
                 # Blaster: re-broadcast inbound writes to the upstream relays — notes, profile
                 # updates, published articles, AND DMs (encrypted, so no content leaks; this is how
                 # they reach recipients when a user treats this as their only relay). EXCEPT private/

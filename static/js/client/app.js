@@ -2285,10 +2285,19 @@
     key(){ return 'pc_drafts_' + ((typeof ME!=='undefined' && ME && ME.pubkey) || 'anon'); },
     all(){ try{ return JSON.parse(localStorage.getItem(this.key())||'[]'); }catch(_){ return []; } },
     _save(a){ try{ localStorage.setItem(this.key(), JSON.stringify(a.slice(0,300))); }catch(_){} bumpDraft(); this._sync(a); },
-    get(id){ return this.all().find(x=>x.id===id); },
+    get(id){ return this.all().find(x=>x.id===id && !x.del); },
+    // live = real drafts (tombstones + empties hidden); all() keeps tombstones for the sync merge.
+    live(){ return this.all().filter(d=> d && !d.del && (d.text||'').trim()); },
     save(d){ const a=this.all(); d.id=d.id||('d'+Date.now().toString(36)+Math.random().toString(36).slice(2,6)); d.ts=Math.floor(Date.now()/1000);
       const i=a.findIndex(x=>x.id===d.id); if(i>=0)a[i]=d; else a.unshift(d); this._save(a); return d.id; },
-    remove(id){ this._save(this.all().filter(x=>x.id!==id)); },
+    // TOMBSTONE, don't drop: pull() merges by union (newest-ts wins), so a plain delete gets
+    // resurrected from the server/other-device copy. A `del:true` entry with a fresh ts makes the
+    // deletion win the merge and propagate. Old tombstones (>30d) are pruned so the doc stays bounded.
+    remove(id){ const now=Math.floor(Date.now()/1000);
+      let a=this.all().map(x=> x.id===id ? {id, ts:now, del:true} : x);
+      if(!a.some(x=>x.id===id)) a.push({id, ts:now, del:true});
+      a=a.filter(x=> !(x.del && now-(x.ts||0) > 2592000));
+      this._save(a); },
     // Sync to/from a single encrypted Nostr event (kind-30078 pcai:drafts under the storage key),
     // so drafts written on one device appear on another. Push is debounced.
     _sync(a){ if(typeof ME==='undefined'||!ME) return; clearTimeout(this._t); this._t=setTimeout(async()=>{
@@ -2307,10 +2316,10 @@
           bumpDraft(); if(VIEW==='drafts') renderDrafts();
         } }catch(_){} },
   };
-  function bumpDraft(){ const n=Drafts.all().length; $$('#draft-badge,#more-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden'); }); }
+  function bumpDraft(){ const n=Drafts.live().length; $$('#draft-badge,#more-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden'); }); }
   // mobile overflow sheet — holds the secondary views so the bottom bar stays uncluttered
   function moreMenu(){
-    const dn=Drafts.all().length;   // per-item counts so the ☰ badge is explained once opened
+    const dn=Drafts.live().length;   // per-item counts so the ☰ badge is explained once opened
     const counts={drafts:dn};
     const items=[['ai','🤖','PosterChan AI'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['articles','📰','Articles'],['streams','📺','Streams'],['communities','☷','Communities'],['pics','📸','Pics'],['chat','✺','Chat'],['4chan','🍀','4chan'],['chess','♟️','Chess'],['ttt','⭕','Tic-Tac-Toe'],['hangman','🎯','Hangman'],['connect4','🔴','Connect Four'],['blackjack','🃏','Blackjack'],['blossom','🌸','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['logout','⎋','Logout']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='ai'));   // hide AI in Nostr-only deployments
@@ -2319,7 +2328,7 @@
     });
   }
   function renderDrafts(){
-    const feed=$('#feed'); const list=Drafts.all();
+    const feed=$('#feed'); const list=Drafts.live();
     feed.innerHTML = list.length ? list.map(d=>{
       const ctx = d.reply?'<span class="muted small">↩ reply</span>' : d.quote?'<span class="muted small">❝ quote</span>' : '';
       return `<div class="note draft-card" data-draft="${d.id}"><div class="draft-body">${linkify(d.text||'')}</div>

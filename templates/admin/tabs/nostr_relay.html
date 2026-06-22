@@ -27,6 +27,16 @@
             <small>The relay's own sync/outbox/WoT traffic skips the built-in Tor proxy — faster and avoids the proxy-startup error spam. Doesn't affect the bots. <strong>Restart after changing.</strong></small>
         </div>
         <div class="form-group">
+            <label for="nostr_relay_backup_datastore">
+                <input type="checkbox" id="nostr_relay_backup_datastore" name="nostr_relay_backup_datastore"> Back up settings to upstream relays (disaster recovery)
+            </label>
+            <small>Broadcasts the app's <strong>encrypted</strong> config docs (settings, accounts, per-user settings, bots) to the upstream relays — they're NIP-44 ciphertext, readable only with the operator <code>nsec</code>. Lets a wiped node be rebuilt with the button below. Chat history &amp; uploads stay local. <strong>Restart after changing.</strong></small>
+            <div style="margin-top:8px">
+                <button type="button" id="relay-restore-btn" class="btn btn-secondary">Restore datastore from upstream</button>
+                <span id="relay-restore-status" class="muted small"></span>
+            </div>
+        </div>
+        <div class="form-group">
             <label for="nostr_relay_bind">Bind address</label>
             <input type="text" id="nostr_relay_bind" name="nostr_relay_bind" placeholder="127.0.0.1">
             <small>Default <code>127.0.0.1</code> (front with nginx). Use <code>0.0.0.0</code> only if exposing directly.</small>
@@ -90,6 +100,18 @@
                 }).catch(function(e){ stat.textContent='✗ '+e; })
                 .finally(function(){ btn.disabled=false; });
             });
+            var rbtn=document.getElementById('relay-restore-btn'), rstat=document.getElementById('relay-restore-status');
+            if(rbtn){ rbtn.addEventListener('click', function(){
+                if(!confirm('Pull the operator’s encrypted config docs from the upstream relays into this node? Use this on a fresh/rebuilt node.')) return;
+                rbtn.disabled=true; rstat.textContent='restoring from upstream…';
+                var f=(window.csrfFetch||fetch);
+                f('/api/admin/nostr-relay/restore-datastore',{method:'POST'}).then(function(r){return r.json();})
+                .then(function(j){
+                    if(j && j.ok) rstat.textContent='✓ restored '+j.restored+' doc(s) — reload to see them';
+                    else rstat.textContent='✗ '+((j&&j.error)||'failed');
+                }).catch(function(e){ rstat.textContent='✗ '+e; })
+                .finally(function(){ rbtn.disabled=false; });
+            }); }
             var bnpub=document.getElementById('relayBackfillNpub'), bbtn=document.getElementById('relayBackfillBtn'), bstat=document.getElementById('relayBackfillStatus');
             if(bbtn){ bbtn.addEventListener('click', function(){
                 var v=(bnpub.value||'').trim(); if(!v){ bstat.textContent='enter an npub'; return; }

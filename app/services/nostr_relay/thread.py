@@ -182,6 +182,8 @@ def _read_config() -> dict:
             # the bots' proxy behavior. (The relay client already tries proxy-then-direct per
             # connection, so leaving this False still federates when Tor is down.)
             "direct": gb("nostr_relay_disable_proxy", False),
+            # DR: broadcast the encrypted pcai: CONFIG docs to upstream (see _broadcastable).
+            "backup_datastore": gb("nostr_relay_backup_datastore", False),
             # Live firehose: keep a persistent subscription to each upstream relay and store
             # only WoT authors — real-time, vs the polling sweep's per-cycle lag.
             "firehose_enabled": gb("nostr_relay_firehose_enabled", True),

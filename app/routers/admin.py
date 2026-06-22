@@ -353,6 +353,29 @@ def refresh_nostr_relay_wot(admin: User = Depends(get_admin_user)):
     return trigger_wot_refresh()
 
 
+@router.post("/nostr-relay/restore-datastore")
+def nostr_relay_restore_datastore(db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
+    """DR: pull the operator's encrypted pcai: CONFIG docs (settings/accounts/per-user config/bots)
+    from the UPSTREAM relays into this (possibly fresh) node, then re-hydrate so they go live without
+    a restart. Needs the operator nsec + 'Back up datastore' to have been ON when the data was saved."""
+    import asyncio as _asyncio
+    from app.services import settings_store, users_store
+
+    async def _go():
+        n = await settings_store.restore_from_upstream(db)
+        if n:
+            settings_store.hydrate_from_db(db)
+            await settings_store.hydrate(db)
+            await users_store.hydrate(db)
+            await users_store.hydrate_user_kv(db)
+        return n
+    try:
+        return {"ok": True, "restored": _asyncio.run(_go())}
+    except Exception as e:
+        logger.warning(f"[Admin] restore-datastore failed: {e}")
+        return {"ok": False, "error": str(e)}
+
+
 @router.post("/nostr-relay/backfill")
 def nostr_relay_backfill(npub: str = Query(...), admin: User = Depends(get_admin_user)):
     """Backfill one or MORE users' Nostr history into the relay by npub/hex (Admin → Relay).
