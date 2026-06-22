@@ -55,6 +55,19 @@ def _clamp_bet(bet, stack):
     return min(bet, stack)
 
 
+def new_table(seats, stacks=None):
+    """A table waiting for the FIRST bet — no cards dealt yet (status 'betting'). The player places a
+    bet IN the game and deals each hand from here; next_round deals from this just like from 'over'."""
+    seats = list(seats)
+    stacks = dict(stacks or {p: START_STACK for p in seats})
+    return {
+        "seats": seats, "button": 0, "stacks": stacks, "bet": {}, "bet_pref": {},
+        "deck": [], "hands": {}, "dhand": [], "done": {}, "busted": [], "folded": [], "left": [],
+        "status": "betting", "results": {}, "payouts": {}, "result": "",
+        "dealer_stands": DEALER_STANDS, "round_no": 0,
+    }
+
+
 def start_round(seats, stacks=None, bets=None, button=0):
     """Deal a new round. `seats` = player ids; `stacks` = {pk->chips} (defaults to START_STACK each);
     `bets` = {pk->desired bet} (defaults to DEFAULT_BET, clamped to the stack). Returns the state.

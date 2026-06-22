@@ -299,17 +299,31 @@ def _start_solo(sender, own_pk, bet=None):
     cur = _get_player_game(sender)
     if cur:
         ex = _load_game(cur)
-        if ex and ex.get("status") in ("playing",) and sender in ex.get("seats", []) \
+        if ex and ex.get("status") in ("playing", "betting", "over") and sender in ex.get("seats", []) \
                 and sender not in ex.get("left", []):
-            return
+            return                                   # already at a live table → resume it, don't dupe
     recent.append(now)
     _invite_times[sender] = recent
     gameid = os.urandom(32).hex()
-    state = _new_state([sender], own_pk, gameid, True, bets={sender: bet} if bet else None)
-    print(f"[blackjack] new SOLO table {gameid[:12]} for {sender[:8]}", flush=True)
+    state = _G.new_table([sender])                   # status 'betting' — no cards yet; bet IN the game
+    state["bot"] = own_pk
+    state["names"] = {sender: _name(sender)}
+    state["root"] = gameid
+    state["gameid"] = gameid
+    state["private"] = True
+    if bet:
+        try:
+            state["bet_pref"][sender] = max(_G.MIN_BET, int(bet))
+        except Exception:
+            pass
+    print(f"[blackjack] new SOLO table {gameid[:12]} for {sender[:8]} (betting)", flush=True)
     _save_game(gameid, state)
     _set_player_game(sender, gameid)
-    _deal_followup(state, gameid)
+    try:
+        _nk.send_dm(sender, "🃏 New blackjack table! Place your bet to deal — reply 'bet 50' then "
+                            "'deal', or tap the chips in the Blackjack tab.", extra_tags=[["g", gameid]])
+    except Exception:
+        pass
 
 
 def _start_game(note, own_pk):
@@ -378,11 +392,16 @@ def _apply_action(sender, gameid, state, text, reply, parent_id):
             if nxt is None:
                 _close_table(state, gameid, parent_id)
         return
-    if low in ("deal", "next", "rebet", "redeal") and state.get("status") == "over":
+    bm = re.match(r"\bbet\s+(\d+)", low)               # DM betting: "bet 50"
+    if bm:
+        _set_bet(sender, gameid, state, bm.group(1))
+        reply(f"🪙 Bet set to {state.get('bet_pref', {}).get(sender)}. Reply 'deal' to play the hand.")
+        return
+    if low in ("deal", "next", "rebet", "redeal", "play") and state.get("status") in ("over", "betting"):
         _deal_next(state, gameid, parent_id)
         return
     if state.get("status") != "playing":
-        reply("🏁 This round is over — deal the next hand from the Blackjack tab.")
+        reply("🃏 Place a bet then deal — reply 'bet 50' then 'deal', or use the Blackjack tab.")
         return
     if state["done"].get(sender):
         reply("✋ You've finished your hand — waiting on the rest of the table.")
@@ -540,13 +559,13 @@ def _handle_cmd(author, payload, own_pk):
         _set_bet(author, gameid, state, payload.get("amount"))
         return
     if action == "deal":
-        # place this player's wager, then deal the next round (only when the table's between rounds)
+        # place this player's wager, then deal a hand (from the 'betting' pre-hand state or 'over')
         if payload.get("bet"):
             try:
                 state.setdefault("bet_pref", {})[author] = max(_G.MIN_BET, int(payload.get("bet")))
             except Exception:
                 pass
-        if state.get("status") == "over":
+        if state.get("status") in ("betting", "over"):
             _deal_next(state, gameid, state.get("root") or gameid)
         return
     _apply_action(author, gameid, state, action, lambda m: None, state.get("root") or gameid)

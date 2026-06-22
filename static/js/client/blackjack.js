@@ -49,8 +49,7 @@
       _seatPicks = [];
       const start = botNpub ? `
         <div class="chess-invite">
-          <div id="bj-hubbet" class="bj-betbar">${chipRowHtml(getBet(), 500)}</div>
-          <button class="btn btn-cyan" id="bj-solo" style="width:100%">🃏 Deal — vs the dealer</button>
+          <button class="btn btn-cyan" id="bj-solo" style="width:100%">🃏 New game — vs the dealer</button>
           <div class="chess-or">— or seat a table with friends —</div>
           <input id="bj-inv" class="input" placeholder="search name / npub / name@domain…" autocomplete="off">
           <div id="bj-inv-res" class="chess-inv-res"></div>
@@ -66,8 +65,7 @@
           <div class="chess-games"><h3>🃏 Your tables</h3><div id="bj-games"><div class="spinner"></div></div></div>
         </div>`;
       if(botNpub){
-        _wireChips($('#bj-hubbet'));
-        const sb=$('#bj-solo'); if(sb) sb.onclick=()=>{ const b=parseInt(($('#bj-hubbet .bj-betinp')||{}).value,10)||25; setBetLS(b); startTable([], b); };
+        const sb=$('#bj-solo'); if(sb) sb.onclick=()=>startTable([]);
         _bindInvite();
       }
       _load();
@@ -99,8 +97,8 @@
       const botPk=safePk(PC.CFG.blackjack_bot_npub); if(!botPk){ toast('no bot'); return; }
       friends=(friends||[]).filter(pk=>pk&&pk!==PC.ME.pubkey&&pk!==botPk);
       if(!friends.length){
-        // SOLO: private command — no public timeline post, reliable.
-        try{ await _cmd({action:'start', bet}); toast('dealing… 🃏'); setTimeout(()=>{ if(PC.VIEW==='blackjack') _load(); }, 4500); }
+        // SOLO: private command — starts a table in the "place your bet" state (bet is IN the game).
+        try{ await _cmd({action:'start'}); toast('new game… 🃏'); setTimeout(()=>{ if(PC.VIEW==='blackjack') _load(); }, 4000); }
         catch(e){ toast('could not start — try again'); }
         return;
       }
@@ -136,7 +134,7 @@
     }
     function _card(g, card){
       if(!card) return;
-      const me=PC.ME.pubkey, bot=g.bot, over=g.status!=='playing';
+      const me=PC.ME.pubkey, bot=g.bot, over=g.status!=='playing', betting=g.status==='betting';
       const seats=g.seats||[], names=g.names||{}, hands=g.hands||{}, stacks=g.stacks||{}, bet=g.bet||{}, done=g.done||{}, results=g.results||{}, payouts=g.payouts||{};
       const players=seats.filter(p=>p!==bot);
       const myHand=hands[me]||[], myVal=handVal(myHand), myDone=!!done[me], myStack=stacks[me]||0, myBet=bet[me]||0;
@@ -170,7 +168,7 @@
       } else {
         const nb = myStack>0 ? Math.min(myBet||getBet(), myStack) : 0;
         controls = myStack>0
-          ? `<div class="bj-betbar">${chipRowHtml(nb, myStack)}<div class="pk-controls"><button class="btn btn-cyan bj-deal" style="flex:3 1 60%">Deal next hand ▶</button><button class="btn small bj-leave" style="flex:1 1 28%">Leave</button></div></div>`
+          ? `<div class="bj-betbar">${chipRowHtml(nb, myStack)}<div class="pk-controls"><button class="btn btn-cyan bj-deal" style="flex:3 1 60%">${betting?'Deal hand ▶':'Deal next hand ▶'}</button><button class="btn small bj-leave" style="flex:1 1 28%">Leave</button></div></div>`
           : `<div class="muted small" style="padding:8px 2px">💀 You're out of chips. <button class="btn small bj-leave" style="margin-left:6px">Leave</button></div>`;
       }
       card.innerHTML = `<div class="chess-card-hd">
@@ -178,9 +176,9 @@
           <span class="cc-badge ${(!over&&!myDone)?'you':(over?(myStack>0?'you':'done'):'wait')}">${(!over&&!myDone)?'Your move':(over?(myStack>0?'place your bet':'busted out'):'in play')}</span>
           <button class="chess-quit" title="Leave table">✕</button></div>
         ${banner}${lastBanner}
-        ${dealerBlock}
+        ${betting?'':dealerBlock}
         ${seatRows?`<div class="pk-seats">${seatRows}</div>`:''}
-        ${myHandCard}
+        ${betting?'':myHandCard}
         ${controls}`;
       { const q=card.querySelector('.chess-quit'); if(q) q.onclick=(e)=>{ e.stopPropagation(); leaveTable(g); }; }
       const bind=(sel,fn)=>{ const b=card.querySelector(sel); if(b) b.onclick=fn; };
