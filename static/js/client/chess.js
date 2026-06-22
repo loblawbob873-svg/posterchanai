@@ -10,6 +10,17 @@
     const Relay = window.Relay, Store = window.Store;
     let _chessTimer = null;
 
+    // Locally-hidden games (resigned/quit or just cleared from "Your games"). Persisted per browser.
+    function _hiddenGames(){ try{ return new Set(JSON.parse(localStorage.getItem('pc_chess_hidden')||'[]')); }catch(_){ return new Set(); } }
+    function _hideGame(gid){ const s=_hiddenGames(); s.add(gid); try{ localStorage.setItem('pc_chess_hidden', JSON.stringify([...s])); }catch(_){} }
+    async function quitGame(g){
+      const active = g.status==='active';
+      if(!confirm(active ? 'Resign and remove this game?' : 'Remove this game from your list?')) return;
+      if(active){ try{ await chessMove(g, 'resign'); }catch(_){} }   // tell the bot you resigned
+      _hideGame(g.root);
+      _loadMyChessGames();
+    }
+
     async function renderChess(){
       const feed=$('#feed');
       const botNpub = PC.CFG.chess_bot_npub;
@@ -90,6 +101,7 @@
       const botPk=safePk(PC.CFG.chess_bot_npub);
       if(!botPk){ list.innerHTML='<div class="empty">No chess bot configured.</div>'; return; }
       let evs=[]; try{ evs=await Relay.query([{ authors:[botPk], kinds:[30078], limit:500 }]); }catch(_){}
+      const hidden=_hiddenGames();
       const byGame={};
       for(const e of evs){
         const d=((e.tags.find(t=>t[0]==='d')||[])[1])||'';
@@ -97,6 +109,7 @@
         let s; try{ s=JSON.parse(e.content||'{}'); }catch(_){ continue; }
         if(!s || (s.white!==PC.ME.pubkey && s.black!==PC.ME.pubkey)) continue;
         const gid=s.root||d.slice('pcai:chesstr:'.length);
+        if(hidden.has(gid)) continue;   // resigned/quit or cleared from this device
         if(!byGame[gid] || (e.created_at||0) > byGame[gid]._t){ s._t=e.created_at||0; byGame[gid]=s; }
       }
       const games=Object.values(byGame).sort((a,b)=>(a.status==='active'?0:1)-(b.status==='active'?0:1) || (b.started||0)-(a.started||0));
@@ -143,9 +156,11 @@
       card.innerHTML = `<div class="chess-card-hd">
           <img class="cc-av" src="${enc(op.picture||LOGO)}" onerror="this.src='${LOGO}'">
           <div class="cc-meta"><b>vs ${enc(oppName)}</b><span class="muted small">${enc(iAmWhite?'You: cyan (White)':'You: magenta (Black)')} · ${(g.moves||[]).length} half-moves</span></div>
-          <span class="cc-badge ${badge}">${enc(statusLine)}</span></div>
+          <span class="cc-badge ${badge}">${enc(statusLine)}</span>
+          <button class="chess-quit" title="${g.status==='active'?'Resign &amp; remove':'Remove from your games'}">✕</button></div>
         <div class="chess-board-wrap${iAmWhite?'':' flip'}">${_chessBoardHtml(g.fen)}</div>
         ${moveBox}`;
+      { const q=card.querySelector('.chess-quit'); if(q) q.onclick=(e)=>{ e.stopPropagation(); quitGame(g); }; }
       // tap-to-move: tap your piece (1st click), then its destination (2nd click) → sent as UCI
       // (the bot validates legality). The card LOCKS after one move so you can't fire several.
       if(myTurn){

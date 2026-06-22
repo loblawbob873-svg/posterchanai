@@ -430,23 +430,9 @@ def _start_game(note, own_pk):
     if opponents and first in (sender, opponents[0]):
         white = first
         black = opponents[0] if first == sender else sender
-    # If the initiator already has an unfinished game, disregard it (one active game per user —
-    # the newest supersedes). Mark it abandoned so its thread stops accepting moves, and tell that
-    # thread once so the old opponent isn't left waiting forever.
-    prev = _get_player_game(white)
-    if prev and prev != gameid:
-        old = _load_game(prev)
-        if isinstance(old, dict) and old.get("status") == "active":
-            old["status"] = "abandoned"
-            _save_game(prev, old)
-            try:
-                _publish(prev, old.get("last_board_event") or prev, old["white"], old["black"],
-                         f"⚠️ {_name(white)} started a new game, so this one is abandoned.",
-                         chess_render.render_board(old["fen"], last_move=old.get("last_move"),
-                                                   number_color=None, title="ABANDONED",
-                                                   subtitle=f"{old['white_name']} vs {old['black_name']}", footer=_footer()))
-            except Exception as e:
-                print(f"[chesstr] abandon notice failed: {e}", flush=True)
+    # No limit on concurrent active games — a player can have several going at once (e.g. vs the bot
+    # AND vs humans). Abuse is bounded by the per-hour INVITE rate limit above, not by abandoning
+    # games. (Each game is independent, keyed by its own root id.)
     board = chess.Board()
     state = {
         "v": 1, "white": white, "black": black,
@@ -455,9 +441,6 @@ def _start_game(note, own_pk):
         "status": "active", "root": gameid, "started": int(time.time()),
         "last_board_event": None,
     }
-    _set_player_game(white, gameid)
-    if black != own_pk:          # don't give the bot itself a "current game" pointer
-        _set_player_game(black, gameid)
     print(f"[chesstr] new game {gameid[:12]} {state['white_name']} vs {state['black_name']}"
           f"{' (vs bot)' if vs_bot else ''}", flush=True)
     # If the bot is to move first (it's White), play its move into the opening.
@@ -479,17 +462,19 @@ def _handle_move(note, gameid, state):
             _reply_text(note, "🏁 This game is already over. Start a new one with \"chess @opponent\".")
         return
     board = chess.Board(state["fen"])
-    side_pk = state["white"] if board.turn == chess.WHITE else state["black"]
-    if sender != side_pk:
-        _reply_text(note, "⏳ It's not your turn.")
-        return
     text = _clean_text(note)
-    if text.lower() in ("resign", "i resign", "gg", "/resign"):
+    # Resign/quit is allowed at ANY time (even on the opponent's turn) — checked before the turn gate.
+    if text.lower() in ("resign", "i resign", "gg", "/resign", "quit", "abandon"):
         winner = state["black_name"] if sender == state["white"] else state["white_name"]
         state["status"] = "resigned"
         _post_gameover(state, gameid, note["id"], None, f"{_name(sender)} resigned. {winner} wins!")
         return
+    side_pk = state["white"] if board.turn == chess.WHITE else state["black"]
+    if sender != side_pk:
+        _reply_text(note, "⏳ It's not your turn.")
+        return
     mv = _parse_move(board, text)
+    print(f"[chesstr] move from {sender[:8]} in {gameid[:8]}: text={text!r} fen={state['fen']!r} -> {mv}", flush=True)
     if mv == "no_piece":
         _reply_text(note, "🤔 I don't see a piece with that number. Use the numbers shown on YOUR pieces.")
         return
