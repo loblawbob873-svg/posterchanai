@@ -486,8 +486,20 @@ def _post_active_board(state, gameid, parent_id, san):
     _dm_current_player(state, gameid)
 
 
-def _post_gameover(state, gameid, parent_id, san, result_text):
+def _post_gameover(state, gameid, parent_id, san, result_text, winner_pk="__auto__"):
     board = chess.Board(state["fen"])
+    # Persist the outcome on the game STATE so every client (web cards + external) can show clearly
+    # WHO WON, not just "game over". winner_pk: a player pubkey, or None for a draw. "__auto__" =
+    # derive from a checkmate position (the side NOT to move delivered mate).
+    if winner_pk == "__auto__":
+        if board.is_checkmate():
+            winner_pk = state["white"] if board.turn == chess.BLACK else state["black"]
+        else:
+            winner_pk = None
+    state["result"] = result_text
+    state["winner_pk"] = winner_pk
+    state["winner_name"] = (state["white_name"] if winner_pk == state["white"]
+                            else state["black_name"] if winner_pk == state["black"] else None)
     png = chess_render.render_board(state["fen"], last_move=state.get("last_move"),
                                     number_color=None, title="GAME OVER", subtitle=result_text, footer=_footer())
     body = (f"🏁 {('Last move: ' + san + '. ') if san else ''}{result_text}\n"
@@ -552,9 +564,10 @@ def _apply_move(sender, gameid, state, text, reply, parent_id):
         return
     board = chess.Board(state["fen"])
     if text.lower() in ("resign", "i resign", "gg", "/resign", "quit", "abandon"):
+        winner_pk = state["black"] if sender == state["white"] else state["white"]
         winner = state["black_name"] if sender == state["white"] else state["white_name"]
         state["status"] = "resigned"
-        _post_gameover(state, gameid, parent_id, None, f"{_name(sender)} resigned. {winner} wins!")
+        _post_gameover(state, gameid, parent_id, None, f"{_name(sender)} resigned. {winner} wins!", winner_pk=winner_pk)
         return
     side_pk = state["white"] if board.turn == chess.WHITE else state["black"]
     if sender != side_pk:

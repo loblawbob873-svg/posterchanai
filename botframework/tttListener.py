@@ -336,8 +336,19 @@ def _post_active(state, gameid, parent_id, last):
     _dm_current_player(state, gameid)
 
 
-def _post_over(state, gameid, parent_id, last, result_text):
+def _post_over(state, gameid, parent_id, last, result_text, winner_pk="__auto__"):
     png = ttt_render.render_board(state["cells"], last_move=last, title="GAME OVER", subtitle=result_text)
+    state["result"] = result_text
+    if winner_pk == "__auto__":
+        w = _winner(state["cells"])
+        winner_pk = (state["x"] if w == "X" else state["o"]) if w else None
+    state["winner_pk"] = winner_pk
+    if winner_pk == state.get("x"):
+        state["winner_name"] = state.get("x_name")
+    elif winner_pk == state.get("o"):
+        state["winner_name"] = state.get("o_name")
+    else:
+        state["winner_name"] = None
     _publish(gameid, parent_id, state["x"], state["o"], f"🏁 {result_text}  gg!", png)
     _save_game(gameid, state)
 
@@ -401,8 +412,9 @@ def _apply_move(sender, gameid, state, text, reply, parent_id):
         return
     if text.lower() in ("resign", "quit", "gg", "abandon", "/resign"):
         winner = state["o_name"] if sender == state["x"] else state["x_name"]
+        winner_pk = state["o"] if sender == state["x"] else state["x"]
         state["status"] = "resigned"
-        _post_over(state, gameid, parent_id, None, f"{_name(sender)} resigned. {winner} wins!")
+        _post_over(state, gameid, parent_id, None, f"{_name(sender)} resigned. {winner} wins!", winner_pk=winner_pk)
         return
     if state.get("status") != "active":
         reply("🏁 This game is over. Start a new one with \"start @opponent\".")
@@ -426,7 +438,8 @@ def _apply_move(sender, gameid, state, text, reply, parent_id):
     if st != "active":
         state["status"] = st
         result = (f"{state['x_name'] if w == 'X' else state['o_name']} ({w}) wins!" if w else "Draw — cat's game.")
-        _post_over(state, gameid, parent_id, last, result)
+        winner_pk = (state["x"] if w == "X" else state["o"]) if w else None
+        _post_over(state, gameid, parent_id, last, result, winner_pk=winner_pk)
         return
     # vs bot?
     nstm = _side_to_move(state["cells"])
@@ -436,7 +449,8 @@ def _apply_move(sender, gameid, state, text, reply, parent_id):
         if state.get("status") != "active":
             _, w2 = _status_after(state["cells"])
             result = (f"{state['x_name'] if w2 == 'X' else state['o_name']} ({w2}) wins!" if w2 else "Draw — cat's game.")
-            _post_over(state, gameid, parent_id, blast, result)
+            winner_pk = (state["x"] if w2 == "X" else state["o"]) if w2 else None
+            _post_over(state, gameid, parent_id, blast, result, winner_pk=winner_pk)
         else:
             _post_active(state, gameid, parent_id, blast)
     else:

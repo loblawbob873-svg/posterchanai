@@ -107,8 +107,14 @@
       const filled=(g.cells||[]).filter(Boolean).length;
       const stm = filled%2===0 ? 'X' : 'O';
       const myTurn = g.status==='active' && ((stm==='X')===iAmX);
-      let statusLine, badge;
-      if(g.status!=='active'){ statusLine=g.status==='resigned'?'Resigned':'Game over'; badge='done'; }
+      let statusLine, badge, banner='';
+      if(g.status!=='active'){
+        const iWon = g.winner_pk && g.winner_pk===PC.ME.pubkey;
+        const draw = !g.winner_pk;
+        statusLine = draw ? 'Draw' : (iWon ? 'You won! 🎉' : 'You lost');
+        badge = iWon ? 'you' : (draw ? 'wait' : 'done');
+        banner = `<div class="chess-result ${draw?'draw':(iWon?'win':'loss')}">${draw?'🤝 Draw':(iWon?'🏆 You won!':'💀 You lost')}<span class="muted small"> · ${enc(g.result||'Game over')}</span></div>`;
+      }
       else if(myTurn){ statusLine=filled===0?'Your move — tap a cell':'Your move'; badge='you'; }
       else { statusLine=`Waiting on ${enc(oppName)}`; badge='wait'; }
       card.innerHTML = `<div class="chess-card-hd">
@@ -116,6 +122,7 @@
           <div class="cc-meta"><b>vs ${enc(oppName)}</b><span class="muted small">${enc(iAmX?'You: X (cyan)':'You: O (magenta)')}</span></div>
           <span class="cc-badge ${badge}">${enc(statusLine)}</span>
           <button class="chess-quit" title="${g.status==='active'?'Resign &amp; remove':'Remove'}">✕</button></div>
+        ${banner}
         <div class="ttt-wrap">${_boardHtml(g.cells||[])}</div>`;
       { const q=card.querySelector('.chess-quit'); if(q) q.onclick=(e)=>{ e.stopPropagation(); quitGame(g); }; }
       if(myTurn){

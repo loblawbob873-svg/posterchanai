@@ -187,17 +187,32 @@ def _shape_note(ev: dict) -> dict | None:
 def send_dm(peer_hex: str, text: str, extra_tags=None):
     """Send a NIP-17 gift-wrapped private DM (kind 1059) to `peer_hex` — the bot's private channel for
     game moves/boards. The recipient's client (the app's Messages, or any NIP-17 client) decrypts it;
-    embed a Blossom image URL in `text` to deliver a board picture privately."""
+    embed a Blossom image URL in `text` to deliver a board picture privately.
+
+    publish() returns the COUNT of relays that accepted — 0 means the write was DROPPED (relay
+    momentarily down, or the per-relay circuit breaker still paused after the startup-race connect
+    failures). A DM is fire-and-forget, so a silent 0 would lose the board permanently and the
+    player never gets prompted. So we VERIFY the count and RETRY a few times with backoff; the
+    breaker clears on the first good connect, so a retry almost always lands it."""
     if not _SECKEY:
         return None
     from app.services.nostr import nip17
-    try:
-        w = nip17.wrap(_SECKEY, peer_hex, text, extra_tags=extra_tags)
-        _run(_svc.relay.publish(_RELAYS, w))
-        return w
-    except Exception as e:
-        print(f"[nostr] send_dm failed: {e}", flush=True)
-        return None
+    for attempt in range(5):
+        try:
+            # fresh wrap each attempt — randomized ts/ephemeral key, and a new id so a half-sent
+            # earlier attempt can't dedup-suppress the retry.
+            w = nip17.wrap(_SECKEY, peer_hex, text, extra_tags=extra_tags)
+            accepted = _run(_svc.relay.publish(_RELAYS, w))
+            if accepted:
+                if attempt:
+                    print(f"[nostr] send_dm to {peer_hex[:8]} ok on retry {attempt}", flush=True)
+                return w
+            print(f"[nostr] send_dm to {peer_hex[:8]} not accepted (attempt {attempt + 1}/5) — retrying", flush=True)
+        except Exception as e:
+            print(f"[nostr] send_dm attempt {attempt + 1}/5 failed: {e}", flush=True)
+        time.sleep(1.5 * (attempt + 1))
+    print(f"[nostr] send_dm to {peer_hex[:8]} GAVE UP after 5 attempts", flush=True)
+    return None
 
 
 def read_dms(limit: int = 100) -> list:

@@ -312,6 +312,12 @@ def _post(state, gameid, parent_id, word=None, gameover=False, result=""):
     png = hangman_render.render(disp, state.get("wrong_letters", []), state.get("wrong", 0),
                                 title=title, subtitle=sub)
     if gameover:
+        # Record outcome on the state so the web client can render a clear WIN/LOSS banner.
+        # WON → the guesser beat the word; LOST/resigned → the word/bot won (no winner pk).
+        won = state.get("status") == "won"
+        state["result"] = result
+        state["winner_pk"] = state.get("guesser") if won else None
+        state["winner_name"] = state.get("guesser_name") if won else None
         body = f"🏁 {result}"
     else:
         # OPENING invitation — public; the game then plays out privately in DMs.

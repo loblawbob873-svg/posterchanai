@@ -115,8 +115,13 @@
       const iGuess = g.guesser===PC.ME.pubkey;
       const tried = new Set([...(g.guessed||[]), ...(g.wrong_letters||[])].map(x=>x.toLowerCase()));
       const active = g.status==='active';
-      let statusLine, badge;
-      if(!active){ statusLine = g.status==='won' ? 'Solved 🎉' : (g.status==='lost'?'Lost 💀':'Over'); badge = g.status==='won'?'you':'done'; }
+      let statusLine, badge, banner='';
+      if(!active){
+        const iWon = g.status==='won' || g.winner_pk===PC.ME.pubkey;
+        statusLine = iWon ? 'You won! 🎉' : 'You lost';
+        badge = iWon ? 'you' : 'done';
+        banner = `<div class="chess-result ${iWon?'win':'loss'}">${iWon?'🏆 You won!':'💀 You lost'}<span class="muted small"> · ${enc(g.result||'')}</span></div>`;
+      }
       else if(iGuess){ statusLine='Your turn — pick a letter'; badge='you'; }
       else { statusLine='Watching'; badge='wait'; }
       const display = enc(g.display||'');
@@ -127,6 +132,7 @@
             <span class="muted small">Misses ${g.wrong||0}/6${(g.wrong_letters||[]).length?' · wrong: '+enc((g.wrong_letters||[]).join(' ').toUpperCase()):''}</span></div>
           <span class="cc-badge ${badge}">${enc(statusLine)}</span>
           <button class="chess-quit" title="${active?'Give up &amp; remove':'Remove'}">✕</button></div>
+        ${banner}
         <div class="hm-game">${_gallows(g.wrong||0)}<div class="hm-word">${display||'…'}</div></div>
         ${kb}`;
       { const q=card.querySelector('.chess-quit'); if(q) q.onclick=(e)=>{ e.stopPropagation(); quitGame(g); }; }

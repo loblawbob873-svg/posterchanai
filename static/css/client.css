@@ -949,6 +949,12 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .cc-badge.you{background:var(--cyan);color:#06121a}
 .cc-badge.wait{background:rgba(255,255,255,.08);color:var(--muted);border:1px solid var(--line)}
 .cc-badge.done{background:rgba(255,0,170,.18);color:var(--magenta);border:1px solid var(--magenta)}
+/* Game-over result banner — make WHO WON unmistakable (shared by all game cards). */
+.chess-result{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px;padding:10px 14px;border-radius:12px;font-weight:800;font-size:16px}
+.chess-result.win{background:linear-gradient(90deg,rgba(0,255,170,.22),rgba(0,255,170,.06));color:#7dffce;border:1px solid rgba(0,255,170,.5);box-shadow:0 0 16px rgba(0,255,170,.18)}
+.chess-result.loss{background:rgba(255,0,90,.12);color:#ff8aa8;border:1px solid rgba(255,0,90,.4)}
+.chess-result.draw{background:rgba(255,255,255,.06);color:var(--muted);border:1px solid var(--line)}
+.chess-result .small{font-weight:600}
 .chess-board-img{display:block;width:100%;max-width:520px;height:auto;border-radius:12px;margin:0 auto;border:1px solid var(--line)}
 .chess-board-link{display:block}
 .chess-move-row{display:flex;gap:8px;margin-top:12px;max-width:520px;margin-left:auto;margin-right:auto}

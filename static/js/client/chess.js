@@ -148,8 +148,18 @@
       const turn = (g.fen||'').split(' ')[1]==='w' ? 'white' : 'black';
       const myTurn = g.status==='active' && ((turn==='white')===iAmWhite);
       const isInvite = g.status==='active' && (g.moves||[]).length===0;   // nobody has moved yet
-      let statusLine, badge;
-      if(g.status!=='active'){ statusLine = g.status==='abandoned' ? 'Abandoned' : 'Game over'; badge='done'; }
+      let statusLine, badge, banner='';
+      if(g.status!=='active'){
+        if(g.status==='abandoned'){ statusLine='Abandoned'; badge='done'; }
+        else {
+          const iWon = g.winner_pk && g.winner_pk===PC.ME.pubkey;
+          const draw = !g.winner_pk;
+          const wname = g.winner_name || (g.winner_pk ? enc(oppName) : '');
+          statusLine = draw ? 'Draw' : (iWon ? 'You won! 🎉' : 'You lost');
+          badge = draw ? 'wait' : (iWon ? 'you' : 'done');
+          banner = `<div class="chess-result ${draw?'draw':(iWon?'win':'loss')}">${draw?'🤝 Draw':(iWon?'🏆 You won!':'💀 You lost')}<span class="muted small"> · ${enc(g.result||'Game over')}</span></div>`;
+        }
+      }
       else if(myTurn && isInvite){ statusLine='♟️ Invited — move to accept'; badge='you'; }
       else if(myTurn){ statusLine='Your move — tap a piece'; badge='you'; }
       else if(isInvite){ statusLine=`Invite sent to ${enc(oppName)}`; badge='wait'; }
@@ -163,6 +173,7 @@
           <div class="cc-meta"><b>vs ${enc(oppName)}</b><span class="muted small">${enc(iAmWhite?'You: cyan (White)':'You: magenta (Black)')} · ${(g.moves||[]).length} half-moves</span></div>
           <span class="cc-badge ${badge}">${enc(statusLine)}</span>
           <button class="chess-quit" title="${g.status==='active'?'Resign &amp; remove':'Remove from your games'}">✕</button></div>
+        ${banner}
         <div class="chess-board-wrap${iAmWhite?'':' flip'}">${_chessBoardHtml(g.fen)}</div>
         ${moveBox}`;
       { const q=card.querySelector('.chess-quit'); if(q) q.onclick=(e)=>{ e.stopPropagation(); quitGame(g); }; }

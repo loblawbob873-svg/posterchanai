@@ -430,7 +430,15 @@ def _post_active(state, gameid, parent_id, last):
     _dm_current_player(state, gameid)
 
 
-def _post_over(state, gameid, parent_id, last, result_text):
+def _post_over(state, gameid, parent_id, last, result_text, winner_pk="__auto__"):
+    # winner_pk: a player's pubkey on a win, None on a draw. "__auto__" → resolve from the board.
+    if winner_pk == "__auto__":
+        w = _winner(state["cells"])
+        winner_pk = (state["p1"] if w == "1" else state["p2"]) if w else None
+    state["result"] = result_text
+    state["winner_pk"] = winner_pk
+    state["winner_name"] = (state["p1_name"] if winner_pk == state["p1"]
+                            else state["p2_name"] if winner_pk == state["p2"] else None)
     png = connect4_render.render(state["cells"], last_move=last, title="GAME OVER", subtitle=result_text)
     _publish(gameid, parent_id, state["p1"], state["p2"], f"🏁 {result_text}  gg!", png)
     _save_game(gameid, state)
@@ -473,9 +481,11 @@ def _apply_move(sender, gameid, state, text, reply, parent_id):
     if sender not in (state["p1"], state["p2"]):
         return
     if text.lower() in ("resign", "quit", "gg", "abandon", "/resign"):
+        winner_pk = state["p2"] if sender == state["p1"] else state["p1"]
         winner = state["p2_name"] if sender == state["p1"] else state["p1_name"]
         state["status"] = "resigned"
-        _post_over(state, gameid, parent_id, None, f"{_name(sender)} resigned. {winner} wins!")
+        _post_over(state, gameid, parent_id, None, f"{_name(sender)} resigned. {winner} wins!",
+                   winner_pk=winner_pk)
         return
     if state.get("status") != "active":
         reply("🏁 This game is over. Start a new one with \"start @opponent\".")
@@ -501,7 +511,8 @@ def _apply_move(sender, gameid, state, text, reply, parent_id):
         state["status"] = st
         result = (f"{state['p1_name'] if w == '1' else state['p2_name']} "
                   f"({'cyan' if w == '1' else 'magenta'}) wins!" if w else "Draw — board full.")
-        _post_over(state, gameid, parent_id, last, result)
+        win_pk = (state["p1"] if w == "1" else state["p2"]) if w else None
+        _post_over(state, gameid, parent_id, last, result, winner_pk=win_pk)
         return
     nstm = _side_to_move(state["cells"])
     next_pk = state["p1"] if nstm == "1" else state["p2"]
@@ -511,7 +522,8 @@ def _apply_move(sender, gameid, state, text, reply, parent_id):
             _, w2 = _status_after(state["cells"])
             result = (f"{state['p1_name'] if w2 == '1' else state['p2_name']} "
                       f"({'cyan' if w2 == '1' else 'magenta'}) wins!" if w2 else "Draw — board full.")
-            _post_over(state, gameid, parent_id, blast, result)
+            win_pk2 = (state["p1"] if w2 == "1" else state["p2"]) if w2 else None
+            _post_over(state, gameid, parent_id, blast, result, winner_pk=win_pk2)
         else:
             _post_active(state, gameid, parent_id, blast)
     else:
