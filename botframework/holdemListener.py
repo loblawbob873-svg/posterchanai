@@ -56,8 +56,20 @@ def _suffix():
     return hashlib.sha1((NOSTR_NSEC or "").encode()).hexdigest()[:10] if NOSTR_NSEC else "default"
 
 
-_IDS_FILE = os.path.join(script_dir, f".processed_holdem_ids_{_suffix()}")
-_DM_IDS_FILE = os.path.join(script_dir, f".processed_holdem_dms_{_suffix()}")
+def _state_dir():
+    """Where the processed-id dedup files live. Prefer a PERSISTENT dir so a redeploy that replaces
+    the code (e.g. a Docker image rebuild, which wipes botframework/) doesn't lose the dedup and
+    re-process days of old mentions/DMs — which would re-deal games and flood players. Falls back to
+    the script dir on bare-metal installs (persistent there anyway)."""
+    for d in (os.getenv("PCAI_BOT_STATE_DIR"), "/app/data", script_dir):
+        if d and os.path.isdir(d) and os.access(d, os.W_OK):
+            return d
+    return script_dir
+
+
+_STATE_DIR = _state_dir()
+_IDS_FILE = os.path.join(_STATE_DIR, f".processed_holdem_ids_{_suffix()}")
+_DM_IDS_FILE = os.path.join(_STATE_DIR, f".processed_holdem_dms_{_suffix()}")
 _MAX_IDS = 5000
 
 
