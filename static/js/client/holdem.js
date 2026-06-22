@@ -89,6 +89,7 @@
         if(!d.startsWith('pcai:holdem:') || d.indexOf('player:')>=0) continue;
         let s; try{ s=JSON.parse(e.content||'{}'); }catch(_){ continue; }
         if(!s || !Array.isArray(s.seats) || !s.seats.includes(PC.ME.pubkey)) continue;
+        if(Array.isArray(s.left) && s.left.includes(PC.ME.pubkey)) continue;  // you left this table — don't resurrect it
         const gid=s.root||d.slice('pcai:holdem:'.length);
         if(hidden.has(gid)) continue;
         if(!byGame[gid] || (e.created_at||0) > byGame[gid]._t){ s._t=e.created_at||0; byGame[gid]=s; }
