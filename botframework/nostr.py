@@ -224,6 +224,14 @@ def send_dm(peer_hex: str, text: str, extra_tags=None):
     return None
 
 
+# Decrypt-once cache for gift wraps. Unwrapping a kind-1059 does TWO NIP-44 ECDH point-mults, which
+# are SLOW in pure Python — and read_dms re-queries the newest `limit` wraps every poll. Without this
+# cache the bot re-decrypted the same ~100 wraps every 10s, pegging a core. Keyed by the (stable)
+# outer 1059 id; value is the decrypted DM, or None for "tried, can't decrypt" (so we never retry it).
+_wrap_cache: dict = {}
+_WRAP_CACHE_MAX = 4000
+
+
 def read_dms(limit: int = 100) -> list:
     """Return decrypted NIP-17 DMs sent TO the bot: [{sender, text, rumor_id, created_at, tags}].
     rumor_id (the inner kind-14 id) is stable → use it for dedup (the outer 1059 id is random)."""
@@ -237,12 +245,23 @@ def read_dms(limit: int = 100) -> list:
         return []
     out = []
     for w in evs:
+        wid = w.get("id")
+        if wid in _wrap_cache:                  # already decrypted this wrap → no repeat ECDH
+            cached = _wrap_cache[wid]
+            if cached is not None:
+                out.append(cached)
+            continue
         try:
             sender, text, rumor = nip17.unwrap(_SECKEY, w)
-            out.append({"sender": sender, "text": text, "rumor_id": rumor.get("id"),
-                        "created_at": rumor.get("created_at", 0), "tags": rumor.get("tags", [])})
+            dm = {"sender": sender, "text": text, "rumor_id": rumor.get("id"),
+                  "created_at": rumor.get("created_at", 0), "tags": rumor.get("tags", [])}
+            _wrap_cache[wid] = dm
+            out.append(dm)
         except Exception:
-            continue
+            _wrap_cache[wid] = None             # remember it's undecryptable; don't retry the ECDH
+    if len(_wrap_cache) > _WRAP_CACHE_MAX:       # bound memory (drop oldest insertions)
+        for k in list(_wrap_cache)[:len(_wrap_cache) - _WRAP_CACHE_MAX]:
+            _wrap_cache.pop(k, None)
     return out
 
 
