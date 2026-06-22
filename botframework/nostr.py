@@ -189,29 +189,38 @@ def send_dm(peer_hex: str, text: str, extra_tags=None):
     game moves/boards. The recipient's client (the app's Messages, or any NIP-17 client) decrypts it;
     embed a Blossom image URL in `text` to deliver a board picture privately.
 
-    publish() returns the COUNT of relays that accepted — 0 means the write was DROPPED (relay
-    momentarily down, or the per-relay circuit breaker still paused after the startup-race connect
-    failures). A DM is fire-and-forget, so a silent 0 would lose the board permanently and the
-    player never gets prompted. So we VERIFY the count and RETRY a few times with backoff; the
-    breaker clears on the first good connect, so a retry almost always lands it."""
+    A DM is fire-and-forget, so a lost write means the player never gets prompted. We can't trust
+    publish()'s count: the relay client reports success when it merely SENT the EVENT, even if the
+    relay (busy blasting its outbox) never replied OK and the socket is torn down before the event
+    commits (relay.py: "some relays don't send OK promptly → return True"). That false-positive is
+    exactly how the board DM vanished while the kind-30078 state still saved. So we don't trust the
+    send — we VERIFY by reading the wrap back from the relay, and RETRY until it's actually there."""
     if not _SECKEY:
         return None
     from app.services.nostr import nip17
+
+    def _stored(eid: str) -> bool:
+        try:
+            got = _run(_svc.relay.query(_RELAYS, [{"ids": [eid], "limit": 1}])) or []
+            return any(e.get("id") == eid for e in got)
+        except Exception:
+            return False
+
     for attempt in range(5):
         try:
-            # fresh wrap each attempt — randomized ts/ephemeral key, and a new id so a half-sent
-            # earlier attempt can't dedup-suppress the retry.
+            # fresh wrap each attempt — new ephemeral key + id, so a half-sent earlier attempt
+            # can't dedup-suppress the retry.
             w = nip17.wrap(_SECKEY, peer_hex, text, extra_tags=extra_tags)
-            accepted = _run(_svc.relay.publish(_RELAYS, w))
-            if accepted:
+            _run(_svc.relay.publish(_RELAYS, w))
+            if _stored(w["id"]):
                 if attempt:
-                    print(f"[nostr] send_dm to {peer_hex[:8]} ok on retry {attempt}", flush=True)
+                    print(f"[nostr] send_dm to {peer_hex[:8]} confirmed on retry {attempt}", flush=True)
                 return w
-            print(f"[nostr] send_dm to {peer_hex[:8]} not accepted (attempt {attempt + 1}/5) — retrying", flush=True)
+            print(f"[nostr] send_dm to {peer_hex[:8]} not confirmed (attempt {attempt + 1}/5) — retrying", flush=True)
         except Exception as e:
             print(f"[nostr] send_dm attempt {attempt + 1}/5 failed: {e}", flush=True)
-        time.sleep(1.5 * (attempt + 1))
-    print(f"[nostr] send_dm to {peer_hex[:8]} GAVE UP after 5 attempts", flush=True)
+        time.sleep(1.0 + attempt)
+    print(f"[nostr] send_dm to {peer_hex[:8]} GAVE UP after 5 attempts (relay not confirming)", flush=True)
     return None
 
 
