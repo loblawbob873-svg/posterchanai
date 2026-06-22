@@ -19,6 +19,7 @@ import sys
 import json
 import time
 import random
+import hashlib
 import socket
 import logging
 import threading
@@ -73,6 +74,7 @@ _SERVER_URL_KEYS = ("bots_server_url", "bots_posterchanai_api_endpoint")
 # ---- module state (guarded by _lock) -----------------------------------------
 _lock = threading.RLock()
 _procs = {}            # bot name -> subprocess.Popen (text bots; running children)
+_proc_sig = {}         # bot name -> spawn-spec signature (env+cmd); change ⇒ restart to apply edits
 _restart_counts = {}   # bot name -> {"count": int, "first_restart": float}
 # Scheduled one-shot posters (image bots + text bots with auto_post_enabled). Keyed by bot
 # name -> {"next_run": float, "process": Popen|None, "offset": int, "day": int, "count": int}.
@@ -348,14 +350,28 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
     return env
 
 
+def _cmd_for(bot_dict: dict) -> list:
+    if bot_dict.get("bot_type") == "image":
+        return [sys.executable, str(MAIN_PY), "--image"]
+    modes = bot_dict.get("modes") or ["--misskey"]
+    return [sys.executable, str(MAIN_PY)] + list(modes)
+
+
+def _spec_sig(bot_dict: dict, base_env: dict) -> str:
+    """A signature of everything that determines the spawned process — its env (nsec, relays,
+    profile name/nip05/picture, …) and command (modes). When it changes, the running bot must be
+    restarted so UI edits (e.g. a new display name → NOSTR_PROFILE_NAME → republished kind-0) take
+    effect; otherwise the live process keeps the stale env and the change never lands."""
+    blob = json.dumps({"env": _build_env(bot_dict, base_env), "cmd": _cmd_for(bot_dict)},
+                      sort_keys=True, default=str)
+    return hashlib.sha1(blob.encode()).hexdigest()
+
+
 def _spawn(bot_dict: dict, base_env: dict) -> subprocess.Popen:
     """Spawn botframework/main.py for a bot. cwd=botframework so its root imports resolve."""
     env = _build_env(bot_dict, base_env)
-    if bot_dict.get("bot_type") == "image":
-        cmd = [sys.executable, str(MAIN_PY), "--image"]
-    else:
-        modes = bot_dict.get("modes") or ["--misskey"]
-        cmd = [sys.executable, str(MAIN_PY)] + list(modes)
+    cmd = _cmd_for(bot_dict)
+    _proc_sig[bot_dict["name"]] = _spec_sig(bot_dict, base_env)
     return subprocess.Popen(cmd, env=env, cwd=str(BOTFRAMEWORK_DIR))
 
 
@@ -407,6 +423,7 @@ def _reconcile_text(text_bots, base_env):
             if proc and proc.poll() is None:
                 _terminate(name, proc)
             _restart_counts.pop(name, None)
+            _proc_sig.pop(name, None)
 
     # start/restart wanted bots
     for name, d in wanted.items():
@@ -414,6 +431,13 @@ def _reconcile_text(text_bots, base_env):
         if proc is None:
             _procs[name] = _spawn(d, base_env)
             logger.info("[BOTS] started %s (pid %s)", name, _procs[name].pid)
+            continue
+        if proc.poll() is None and _proc_sig.get(name) != _spec_sig(d, base_env):
+            # config edited in the UI (e.g. display name / nip05 / avatar / modes) — restart so the
+            # new env is applied and the bot republishes its kind-0 profile on startup.
+            logger.info("[BOTS] %s config changed; restarting to apply", name)
+            _terminate(name, proc)
+            _procs[name] = _spawn(d, base_env)
             continue
         if proc.poll() is not None:  # crashed
             info = _restart_counts.setdefault(name, {"count": 0, "first_restart": now, "gaveup": False})
@@ -668,6 +692,7 @@ def _stop_all_children():
         if proc and proc.poll() is None:
             _terminate(name, proc)
     _restart_counts.clear()
+    _proc_sig.clear()
     for name in list(_post_sched.keys()):
         if name == "_last_start":
             continue
