@@ -35,7 +35,12 @@ _NOSTR_TOKEN_RE = re.compile(
 _LOOKBACK_DAYS = int(os.getenv("CONNECT4_LOOKBACK_DAYS", "3"))
 _INVITE_MAX = int(os.getenv("CONNECT4_INVITE_MAX_PER_HOUR", "3"))
 _INVITE_WINDOW = 3600
-_DEPTH = max(1, int(os.getenv("CONNECT4_BOT_DEPTH", "5")))
+# Iterative-deepening alpha-beta bounded by a WALL-CLOCK budget: deepen 1,2,3… until the budget is
+# spent, then play the best move from the last fully-searched depth. This caps the per-move compute
+# (a fixed depth-5 pure-Python search rescanned the whole board every node and could peg a core for
+# seconds — many concurrent games then starved the box). _MAX_DEPTH is just a ceiling now.
+_MAX_DEPTH = max(1, int(os.getenv("CONNECT4_BOT_DEPTH", "7")))
+_MOVE_BUDGET_S = max(0.05, float(os.getenv("CONNECT4_MOVE_BUDGET_S", "0.35")))
 _invite_times: dict = {}
 _DIRS = ((0, 1), (1, 0), (1, 1), (1, -1))
 
@@ -277,9 +282,18 @@ def _status_after(cells):
     return "active", None
 
 
+class _SearchTimeout(Exception):
+    """Raised deep in the search to abort the current (unfinished) depth when the budget is spent."""
+
+
 def _bot_move(cells, mark):
-    """Alpha-beta minimax (depth _DEPTH), window-scoring eval. Returns best column 0..6."""
+    """Iterative-deepening alpha-beta with a wall-clock budget + window-scoring eval. Deepens
+    1,2,3…_MAX_DEPTH, keeping the best move from the last FULLY-searched depth, and aborts the
+    moment _MOVE_BUDGET_S is spent — so a single move can never peg a core, no matter the position
+    or how many games are in flight. Returns the best column 0..6 (or None if the board is full)."""
     opp = "2" if mark == "1" else "1"
+    deadline = time.monotonic() + _MOVE_BUDGET_S
+    nodes = [0]
 
     def win_score(win):
         m, o, e = win.count(mark), win.count(opp), win.count("")
@@ -305,12 +319,15 @@ def _bot_move(cells, mark):
                         s += win_score([cs[(r + dr * k) * COLS + (c + dc * k)] for k in range(4)])
         return s
 
-    def nm(cs, depth, alpha, beta, turn):
+    def nm(cs, depth, alpha, beta, turn, root_depth):
+        nodes[0] += 1
+        if (nodes[0] & 2047) == 0 and time.monotonic() > deadline:   # cheap periodic time check
+            raise _SearchTimeout
         w = _winner(cs)
         if w == mark:
-            return 1_000_000 - (_DEPTH - depth)
+            return 1_000_000 - (root_depth - depth)   # prefer FASTER wins
         if w == opp:
-            return -1_000_000 + (_DEPTH - depth)
+            return -1_000_000 + (root_depth - depth)  # delay losses
         valid = [c for c in range(COLS) if _drop_row(cs, c) is not None]
         if not valid or depth == 0:
             return evaluate(cs)
@@ -319,7 +336,7 @@ def _bot_move(cells, mark):
             best = -10_000_000
             for c in order:
                 r = _drop_row(cs, c); cs[r * COLS + c] = mark
-                best = max(best, nm(cs, depth - 1, alpha, beta, opp)); cs[r * COLS + c] = ""
+                best = max(best, nm(cs, depth - 1, alpha, beta, opp, root_depth)); cs[r * COLS + c] = ""
                 alpha = max(alpha, best)
                 if alpha >= beta:
                     break
@@ -328,20 +345,33 @@ def _bot_move(cells, mark):
             best = 10_000_000
             for c in order:
                 r = _drop_row(cs, c); cs[r * COLS + c] = opp
-                best = min(best, nm(cs, depth - 1, alpha, beta, mark)); cs[r * COLS + c] = ""
+                best = min(best, nm(cs, depth - 1, alpha, beta, mark, root_depth)); cs[r * COLS + c] = ""
                 beta = min(beta, best)
                 if beta <= alpha:
                     break
             return best
 
     valid = [c for c in (3, 2, 4, 1, 5, 0, 6) if _drop_row(cells, c) is not None]
-    best_c, best_v = (valid[0] if valid else None), -10_000_000
+    if not valid:
+        return None
+    best_c = valid[0]
     work = list(cells)
-    for c in valid:
-        r = _drop_row(work, c); work[r * COLS + c] = mark
-        v = nm(work, _DEPTH - 1, -10_000_000, 10_000_000, opp); work[r * COLS + c] = ""
-        if v > best_v:
-            best_v, best_c = v, c
+    for d in range(1, _MAX_DEPTH + 1):           # iterative deepening
+        cur_c, cur_v = None, -10_000_001
+        try:
+            for c in valid:
+                r = _drop_row(work, c); work[r * COLS + c] = mark
+                v = nm(work, d - 1, -10_000_000, 10_000_000, opp, d); work[r * COLS + c] = ""
+                if v > cur_v:
+                    cur_v, cur_c = v, c
+        except _SearchTimeout:
+            for i, ch in enumerate(work):        # undo any in-flight trial move, then keep prior best
+                work[i] = cells[i]
+            break
+        if cur_c is not None:
+            best_c = cur_c
+        if cur_v >= 1_000_000 or time.monotonic() > deadline:   # forced win found, or out of time
+            break
     return best_c
 
 

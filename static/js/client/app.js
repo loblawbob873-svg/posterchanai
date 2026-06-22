@@ -380,6 +380,8 @@
     if(_routing) return;                       // don't re-push while we're decoding the current URL
     try{ if(location.pathname !== path) history.pushState({}, '', path); }catch(_){}
   }
+  // Shareable web link for a NIP-19 entity (npub/note/nevent/naddr) → poster.place/<entity>.
+  function _webLink(entity){ return (location.origin||'') + '/' + entity; }
   function _entityFromPath(){
     let p; try{ p = decodeURIComponent(location.pathname||'/'); }catch(_){ p = location.pathname||'/'; }
     p = p.replace(/^\/client(?=\/|$)/,'').replace(/^\/+/,'').replace(/\/+$/,'');
@@ -912,18 +914,30 @@
   // AND notifications (a deleted bot post/reply must stop showing as a notification too).
   function _applyDeletion(ev){
     let removed = false;
-    for(const t of (ev.tags||[])){
-      if(t[0]!=='e' || !t[1]) continue;
-      const tgt = Store.get(t[1]);
-      if(tgt && tgt.pubkey!==ev.pubkey) continue;   // only the author can delete their own event
-      Store.removeEvent(t[1]); removed = true;
-      document.querySelectorAll(`[data-id="${t[1]}"],[data-open="${t[1]}"]`).forEach(n=>{
+    const _rm = id => {
+      Store.removeEvent(id); removed = true;
+      document.querySelectorAll(`[data-id="${id}"],[data-open="${id}"]`).forEach(n=>{
         const card = n.closest('.note,.notif,.stream-card,.pic-card,.article-card,.community-card,.channel-card') || n;
         card.remove();
       });
+    };
+    for(const t of (ev.tags||[])){
+      if(t[0]==='e' && t[1]){
+        const tgt = Store.get(t[1]);
+        if(tgt && tgt.pubkey!==ev.pubkey) continue;   // only the author can delete their own event
+        _rm(t[1]);
+      } else if(t[0]==='a' && t[1]){                  // addressable (kind:pubkey:dtag) — drafts/articles/etc.
+        const parts = String(t[1]).split(':'); if(parts.length<3) continue;
+        const [k, pk, dt] = [parts[0], parts[1], parts.slice(2).join(':')];
+        if(pk!==ev.pubkey) continue;
+        for(const e of Store.all()){
+          if(String(e.kind)===k && e.pubkey===pk && (e.tags.find(x=>x[0]==='d')||[])[1]===dt) _rm(e.id);
+        }
+      }
     }
     if(removed){ try{ invalidateCounts(); }catch(_){}
-      if(VIEW==='notifications') renderNotifications(); }
+      if(VIEW==='notifications') renderNotifications();
+      else if(VIEW==='articles') renderArticles(); }
   }
   // Always-on deletion feed: catches kind-5s regardless of the current view (the notifications/feed
   // subs are view-scoped and don't carry deletions), so deleted posts/replies/notifications clear.
@@ -1212,7 +1226,7 @@
     $('#av-zap').onclick=()=>doZap(e.id, e.pubkey);
     { const ed=$('#av-edit'); if(ed) ed.onclick=()=>renderArticleEditor(e); }
     { const dl=$('#av-del'); if(dl) dl.onclick=()=>deleteArticle(e); }
-    $('#av-copy').onclick=()=>{ try{ const naddr=NT().nip19.naddrEncode({ identifier:(e.tags.find(t=>t[0]==='d')||[])[1]||'', pubkey:e.pubkey, kind:30023 }); navigator.clipboard.writeText('nostr:'+naddr); toast('article link copied'); }catch(_){ navigator.clipboard.writeText(e.id); toast('id copied'); } };
+    $('#av-copy').onclick=()=>{ try{ const naddr=NT().nip19.naddrEncode({ identifier:(e.tags.find(t=>t[0]==='d')||[])[1]||'', pubkey:e.pubkey, kind:30023 }); navigator.clipboard.writeText(_webLink(naddr)); toast('article link copied'); }catch(_){ navigator.clipboard.writeText(e.id); toast('id copied'); } };
     feed.querySelectorAll('[data-prof]').forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
     feed.querySelectorAll('.markdown img').forEach(im=> im.onclick=()=>openLightbox(im.currentSrc||im.src));
     decorateProfiles();
@@ -1230,6 +1244,21 @@
     return await publish(30024, a.body||'', tags);   // NIP-23 draft long-form
   }
   async function _deleteArticleDraft(slug){ if(!slug) return; try{ await publish(5, 'draft published', [['a', `30024:${ME.pubkey}:${slug}`]]); }catch(_){} }
+  // On publish, the draft's slug may differ from the published slug (drafted across sessions / title
+  // changed after the first autosave). Delete the exact slug AND any draft with the same title, so a
+  // published article never leaves an orphaned draft behind.
+  async function _deletePublishedDrafts(slug, title){
+    const coords=new Set(); if(slug) coords.add(`30024:${ME.pubkey}:${slug}`);
+    try{
+      const drafts=await Relay.query([{ kinds:[30024], authors:[ME.pubkey], limit:50 }]);
+      for(const d of (drafts||[])){
+        const dt=(d.tags.find(t=>t[0]==='d')||[])[1]; if(!dt) continue;
+        const ti=((d.tags.find(t=>t[0]==='title')||[])[1]||'').trim();
+        if(dt===slug || (title && ti===title.trim())) coords.add(`30024:${ME.pubkey}:${dt}`);
+      }
+    }catch(_){}
+    if(coords.size){ try{ await publish(5, 'draft published', [...coords].map(c=>['a',c])); }catch(_){} }
+  }
   function renderArticleEditor(existing){
     VIEW='article'; $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent=existing?'Edit article':'Write article';
     const feed=$('#feed'); const g=(k)=>existing?((existing.tags.find(t=>t[0]===k)||[])[1]||''):'';
@@ -1288,7 +1317,7 @@
     if(image) tags.push(['image',image]);
     mentionTags(body).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
     $('#ae-status') && ($('#ae-status').textContent='publishing…');
-    try{ const r=await publish(30023, body, tags); if(r && r.ok===false){ toast('relay: '+(r.msg||'rejected')); if($('#ae-status'))$('#ae-status').textContent=''; } else { _deleteArticleDraft(slug); toast('article published'); switchView('articles'); } }
+    try{ const r=await publish(30023, body, tags); if(r && r.ok===false){ toast('relay: '+(r.msg||'rejected')); if($('#ae-status'))$('#ae-status').textContent=''; } else { _deletePublishedDrafts(slug, title); toast('article published'); switchView('articles'); } }
     catch(e){ toast('publish failed: '+e.message); }
   }
 
@@ -1812,7 +1841,7 @@
       if(a==='delete') return doDelete(id,art);
       if(a==='zap') return doZap(id,pk);
       if(a==='bookmark') return toggleBookmark(id,btn);
-      if(a==='copyid'){ try{ navigator.clipboard.writeText(NT().nip19.noteEncode(id)); toast('note id copied'); }catch(_){ navigator.clipboard.writeText(id); toast('event id copied'); } return; }
+      if(a==='copyid'){ try{ navigator.clipboard.writeText(_webLink(NT().nip19.neventEncode({id}))); toast('link copied'); }catch(_){ try{ navigator.clipboard.writeText(_webLink(NT().nip19.noteEncode(id))); toast('link copied'); }catch(__){ navigator.clipboard.writeText(id); toast('id copied'); } } return; }
       if(a==='translate') return translatePost(id);
       if(a==='pin') return togglePin(id);
       if(a==='block') return doBlock(pk);
@@ -2062,7 +2091,7 @@
   }
   function openPostMenu(id, pk, art, anchorBtn){
     const mine = pk===ME.pubkey;
-    const items=[['bookmark', BOOKMARKS.has(id)?'🔖 Remove bookmark':'🔖 Bookmark'], ['copyid','🆔 Copy event ID']];
+    const items=[['bookmark', BOOKMARKS.has(id)?'🔖 Remove bookmark':'🔖 Bookmark'], ['copyid','🔗 Copy link']];
     if(mine) items.push(['rebroadcast','📡 Rebroadcast to relays']);   // re-propagate your own post
     if(!window.PC_NOSTR_ONLY) items.push(['translate','🌐 Translate']);   // uses the node's AI backend
     if(!window.PC_NOSTR_ONLY) items.push(['summary','📝 Summary']);       // AI summary of the post/thread
@@ -2072,7 +2101,7 @@
     if(IS_ADMIN && !mine) items.push(['block','🚫 Block author','danger']);
     openMenuPopover(anchorBtn, items, a=>{
       if(a==='bookmark'){ toggleBookmark(id, null).then(()=>{ if(anchorBtn) anchorBtn.classList.toggle('on', BOOKMARKS.has(id)); }); return; }
-      if(a==='copyid'){ try{ navigator.clipboard.writeText(NT().nip19.noteEncode(id)); toast('note id copied'); }catch(_){ navigator.clipboard.writeText(id); toast('event id copied'); } return; }
+      if(a==='copyid'){ try{ navigator.clipboard.writeText(_webLink(NT().nip19.neventEncode({id}))); toast('link copied'); }catch(_){ try{ navigator.clipboard.writeText(_webLink(NT().nip19.noteEncode(id))); toast('link copied'); }catch(__){ navigator.clipboard.writeText(id); toast('id copied'); } } return; }
       if(a==='rebroadcast') return rebroadcastPost(id);
       if(a==='translate') return translatePost(id);
       if(a==='summary') return summarizePost(id);
@@ -2778,10 +2807,24 @@
 
   // ---------- notifications ----------
   let _notifReady=false;
+  // A follow is a kind-3 (the follower's WHOLE contact list), republished every time they
+  // follow/unfollow ANYONE — so each republish looked like a brand-new "followed you". Record the
+  // FIRST time we see each follower and key the notification off that stable time, so a known
+  // follower re-saving their list never re-pings or re-lights the badge.
+  let _followSeen={}; try{ _followSeen=JSON.parse(localStorage.getItem('pc_follow_seen')||'{}')||{}; }catch(_){ _followSeen={}; }
+  function _followTs(pk, fallback){ if(!(pk in _followSeen)){ _followSeen[pk]=fallback||Math.floor(Date.now()/1000); try{ localStorage.setItem('pc_follow_seen', JSON.stringify(_followSeen)); }catch(_){} } return _followSeen[pk]; }
+  function _notifTs(e){ return e.kind===3 ? (_followSeen[e.pubkey]!=null?_followSeen[e.pubkey]:e.created_at) : e.created_at; }
   function watchNotifications(){
     seenNotif.last = +(localStorage.getItem('pc_notif_seen')||0);
     Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7,9735,3,1984], limit:150 }], {
       onEvent: ev => { if(ev.pubkey===ME.pubkey) return; if(Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey);
+        if(ev.kind===3){
+          const firstTime = !(ev.pubkey in _followSeen);
+          const ts = _followTs(ev.pubkey, ev.created_at);
+          if(firstTime && ts>seenNotif.last){ bumpNotif(); if(_notifReady) notifPing(ev); }   // genuinely new follower only
+          if(VIEW==='notifications') renderNotifications();
+          return;                                  // a re-saved contact list never re-notifies
+        }
         if(ev.created_at>seenNotif.last){ bumpNotif(); if(_notifReady) notifPing(ev); }
         if(VIEW==='notifications') renderNotifications(); } },
       onEose: ()=>{ _notifReady=true; if(VIEW==='notifications') renderNotifications(); else bumpNotif(); }   // show unseen count on load; ping LIVE ones
@@ -2806,13 +2849,13 @@
     $('#toast-root').appendChild(t); setTimeout(()=>t.remove(),5000);
   }
   function notifList(){
-    const evs=Store.all().filter(e=>[1,6,7,9735,3,1984].includes(e.kind) && e.pubkey!==ME.pubkey && !MUTED.has(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey) && e.tags.some(t=>t[0]==='p'&&t[1]===ME.pubkey)).sort((a,b)=>b.created_at-a.created_at);
+    const evs=Store.all().filter(e=>[1,6,7,9735,3,1984].includes(e.kind) && e.pubkey!==ME.pubkey && !MUTED.has(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey) && e.tags.some(t=>t[0]==='p'&&t[1]===ME.pubkey)).sort((a,b)=>_notifTs(b)-_notifTs(a));
     // dedupe follows by author — a follower re-saving their contact list shouldn't show "followed you" repeatedly
     const seen3=new Set(); const out=[];
     for(const e of evs){ if(e.kind===3){ if(seen3.has(e.pubkey)) continue; seen3.add(e.pubkey); } out.push(e); }
     return out.slice(0,2000);
   }
-  function bumpNotif(){ const n=notifList().filter(e=>e.created_at>seenNotif.last).length; $$('#notif-badge,#notif-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden');}); }
+  function bumpNotif(){ const n=notifList().filter(e=>_notifTs(e)>seenNotif.last).length; $$('#notif-badge,#notif-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden');}); }
   let _notifShown = 25;   // paginate: render a page at a time, "Load more" reveals the next
   let _notifFilter = 'all';
   const _NOTIF_TABS = [['all','All'],['mentions','@ Mentions'],['reactions','♥ Reactions'],['zaps','⚡ Zaps'],['follows','🫂 Follows'],['reports','🚩 Reports']];
@@ -3104,7 +3147,7 @@
     // Only the author's recent notes block the first paint. following/followers/pinned are loaded
     // in the BACKGROUND below — the followers query alone can pull up to 1000 kind-3 events, which
     // was the multi-second stall on every profile open.
-    const notes=await Relay.query([{authors:[pk],kinds:[1],limit:80}]); notes.forEach(n=>Store.saveEvent(n));
+    const notes=await Relay.query([{authors:[pk],kinds:[1,1068,6],limit:80}]); notes.forEach(n=>Store.saveEvent(n));   // include polls + reposts
     if(VIEW!=='profile') return;   // navigated away during the notes fetch
     const npub=NT().nip19.npubEncode(pk);
     feed.innerHTML=`<div class="prof"><div class="banner">${p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''}</div>

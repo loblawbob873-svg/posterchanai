@@ -327,7 +327,8 @@ def _post(state, gameid, parent_id, word=None, gameover=False, result=""):
                     f"📩 Check your DMs — I've sent you the word to guess (a letter at a time). "
                     f"The result gets posted here.")
         else:
-            body = (f"🎯 #hangman — {state['guesser_name']} has been challenged to guess the bot's word!\n"
+            whose = (state.get("setter_name") + "'s") if state.get("setter") else "the bot's"
+            body = (f"🎯 #hangman — {state['guesser_name']} has been challenged to guess {whose} word!\n"
                     f"📩 {state['guesser_name']}, check your DMs to start guessing. The game plays out "
                     f"privately in DMs; I'll post the result here when it's over.")
     # The opening invitation and the final result are public; mid-game guesses are DM-only.
@@ -352,11 +353,32 @@ def _start_game(note, own_pk):
         return
     recent.append(now)
     _invite_times[sender] = recent
-    guesser = opponents[0] if opponents else sender   # invited player guesses; else the sender
+    if opponents:
+        # CHALLENGE: the SETTER (sender) picks the secret word their friend (the guesser) must guess.
+        # We DM the setter privately for the word; the game stays "awaiting_word" until they reply.
+        guesser = opponents[0]
+        state = {
+            "v": 1, "guesser": guesser, "guesser_name": _name(guesser),
+            "opponent": sender, "setter": sender, "setter_name": _name(sender),
+            "guessed": [], "wrong_letters": [], "wrong": 0,
+            "status": "awaiting_word", "root": gameid, "started": int(time.time()), "last_board_event": None,
+        }
+        print(f"[hangman] new game {gameid[:12]} {state['setter_name']} sets word for {state['guesser_name']}", flush=True)
+        _save_game(gameid, state)
+        _set_player_game(sender, gameid)   # so the setter's bare DM reply routes back to this game
+        try:
+            _nk.send_dm(sender, f"🎯 You challenged {state['guesser_name']} to #hangman!\n"
+                        "Reply to THIS DM with the secret WORD you want them to guess (letters only) — "
+                        "or reply 'random' and I'll pick one.", extra_tags=[["g", gameid]])
+        except Exception as e:
+            print(f"[hangman] setter prompt DM failed: {e}", flush=True)
+        return
+    # SOLO: no opponent → you guess the bot's randomly-picked word (existing behaviour).
+    guesser = sender
     word = _pick_word()
     state = {
         "v": 1, "guesser": guesser, "guesser_name": _name(guesser),
-        "opponent": (sender if opponents else None),
+        "opponent": None,
         "word_enc": _nip44.encrypt_self(_nk._SECKEY, word),
         "wordlen": len(word), "guessed": [], "wrong_letters": [], "wrong": 0,
         "display": " ".join("_" for _ in word), "status": "active",
@@ -366,10 +388,34 @@ def _start_game(note, own_pk):
     _post(state, gameid, gameid, word=word)
 
 
+def _set_secret_word(setter, gameid, state, text, reply):
+    """The challenger replied with the word their friend must guess. Store it, activate the game,
+    post the public opening + DM the guesser the puzzle."""
+    raw = (text or "").strip().lower()
+    if raw in ("random", "rand", "you pick", "bot", "surprise"):
+        word = _pick_word()
+    else:
+        word = re.sub(r"[^a-z]", "", raw)
+        if len(word) < 3 or len(word) > 24:
+            reply("🎯 Send ONE word (letters only, 3–24 chars) for your friend to guess — or reply 'random' and I'll pick.")
+            return
+    state["word_enc"] = _nip44.encrypt_self(_nk._SECKEY, word)
+    state["wordlen"] = len(word)
+    state["display"] = " ".join("_" for _ in word)
+    state["status"] = "active"
+    reply(f"✅ Secret word set ({len(word)} letters). I've DM'd {state['guesser_name']} the puzzle — they're guessing now!")
+    _post(state, gameid, gameid, word=word)   # public opening + DM the guesser
+
+
 def _apply_move(sender, gameid, state, text, reply, parent_id):
     """Apply one guess from `sender`. `reply(msg)` sends a nudge/error on the same channel (public
     reply or DM). Game-over posts go to `parent_id` (public). Mid-game = no public post; the guesser
     is DM'd by _post → _dm_current_player."""
+    if state.get("status") == "awaiting_word":
+        if sender != state.get("setter"):
+            return   # only the challenger sets the word
+        _set_secret_word(sender, gameid, state, text, reply)
+        return
     if sender != state["guesser"]:
         return  # only the guesser plays
     if state.get("status") != "active":

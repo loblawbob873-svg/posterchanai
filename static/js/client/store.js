@@ -89,7 +89,7 @@
     feed(filterFn){
       const out = [];
       for (const ev of mem.events.values()){
-        if ((ev.kind===1 || ev.kind===6) && (!filterFn || filterFn(ev))) out.push(ev);
+        if ((ev.kind===1 || ev.kind===6 || ev.kind===1068) && (!filterFn || filterFn(ev))) out.push(ev);
       }
       return out.sort((a,b)=>b.created_at-a.created_at);
     },

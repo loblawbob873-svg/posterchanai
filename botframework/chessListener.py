@@ -324,7 +324,15 @@ _DRAW_LABELS = {
 # ---- built-in opponent (play the bot directly) ------------------------------
 _PIECE_VAL = {chess.PAWN: 100, chess.KNIGHT: 320, chess.BISHOP: 330,
               chess.ROOK: 500, chess.QUEEN: 900, chess.KING: 0}
-_BOT_DEPTH = max(1, int(os.getenv("CHESS_BOT_DEPTH", "2")))
+# Iterative-deepening negamax bounded by a WALL-CLOCK budget (like connect4): deepen 1,2,…_MAX_DEPTH
+# until the budget is spent, then play the best move from the last fully-searched depth — so a move
+# can never peg a core regardless of position / concurrent games. _MAX_DEPTH is just a ceiling now.
+_MAX_DEPTH = max(1, int(os.getenv("CHESS_BOT_DEPTH", "3")))
+_MOVE_BUDGET_S = max(0.05, float(os.getenv("CHESS_MOVE_BUDGET_S", "0.5")))
+
+
+class _SearchTimeout(Exception):
+    """Raised deep in the search to abort the current (unfinished) depth when the budget is spent."""
 
 
 def _evaluate(board: chess.Board) -> int:
@@ -340,13 +348,16 @@ def _evaluate(board: chess.Board) -> int:
     return score if board.turn == chess.WHITE else -score
 
 
-def _negamax(board: chess.Board, depth: int, alpha: int, beta: int) -> int:
+def _negamax(board: chess.Board, depth: int, alpha: int, beta: int, deadline: float, nodes: list) -> int:
+    nodes[0] += 1
+    if (nodes[0] & 1023) == 0 and time.monotonic() > deadline:   # cheap periodic time check
+        raise _SearchTimeout
     if depth == 0 or board.is_game_over():
         return _evaluate(board)
     best = -10_000_000
     for mv in board.legal_moves:
         board.push(mv)
-        val = -_negamax(board, depth - 1, -beta, -alpha)
+        val = -_negamax(board, depth - 1, -beta, -alpha, deadline, nodes)
         board.pop()
         if val > best:
             best = val
@@ -358,19 +369,33 @@ def _negamax(board: chess.Board, depth: int, alpha: int, beta: int) -> int:
 
 
 def _bot_choose_move(board: chess.Board):
-    """Pick the bot's move (negamax, material eval). Small random tie-break among near-best moves so
-    games aren't identical. Returns a chess.Move or None."""
-    best_val, scored = -10_000_000, []
-    for mv in board.legal_moves:
-        board.push(mv)
-        val = -_negamax(board, _BOT_DEPTH - 1, -10_000_000, 10_000_000)
-        board.pop()
-        scored.append((val, mv))
-        if val > best_val:
-            best_val = val
-    near = [mv for val, mv in scored if val >= best_val - 15]
-    if not near:
+    """Pick the bot's move via iterative-deepening negamax bounded by _MOVE_BUDGET_S. Keeps the best
+    set from the last FULLY-searched depth (small random tie-break among near-best so games aren't
+    identical), aborting mid-search when out of time. Returns a chess.Move or None."""
+    legal = list(board.legal_moves)
+    if not legal:
         return None
+    deadline = time.monotonic() + _MOVE_BUDGET_S
+    nodes = [0]
+    base = len(board.move_stack)
+    near = legal[:]   # fallback before any depth completes: any legal move
+    for d in range(1, _MAX_DEPTH + 1):           # iterative deepening
+        scored, best_val = [], -10_000_000
+        try:
+            for mv in legal:
+                board.push(mv)
+                val = -_negamax(board, d - 1, -10_000_000, 10_000_000, deadline, nodes)
+                board.pop()
+                scored.append((val, mv))
+                if val > best_val:
+                    best_val = val
+        except _SearchTimeout:
+            while len(board.move_stack) > base:   # unwind any moves left pushed by the aborted search
+                board.pop()
+            break
+        near = [mv for val, mv in scored if val >= best_val - 15]   # completed depth d → adopt its result
+        if best_val >= 1_000_000 or time.monotonic() > deadline:    # forced mate found, or out of time
+            break
     return near[int.from_bytes(os.urandom(2), "big") % len(near)]
 
 
