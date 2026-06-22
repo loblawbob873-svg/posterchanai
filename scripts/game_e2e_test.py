@@ -182,12 +182,96 @@ def play(game, bot_hex):
     return ok
 
 
+def _bj_value(hand):
+    t = a = 0
+    for c in hand or []:
+        r = c[:-1]
+        if r == "A":
+            t += 11; a += 1
+        elif r in ("T", "J", "Q", "K"):
+            t += 10
+        else:
+            t += int(r)
+    while t > 21 and a:
+        t -= 10; a -= 1
+    return t
+
+
+def play_blackjack_table(bot_hex):
+    """Two local-key players seat ONE blackjack table; each plays its own hand vs the shared dealer
+    (basic strategy: hit < 17, else stand). Verifies the multi-seat resolve + per-seat DMs."""
+    import secrets
+    print(f"\n===== BLACKJACK TABLE =====  bot={bot_hex[:10]}")
+    A = {"sk": secrets.token_bytes(32)}; A["pk"] = bip340.pubkey_from_seckey(A["sk"]).hex()
+    B = {"sk": secrets.token_bytes(32)}; B["pk"] = bip340.pubkey_from_seckey(B["sk"]).hex()
+    os.makedirs(CONTROL_DIR, exist_ok=True)
+    with open(os.path.join(CONTROL_DIR, "cmd_test_bjtable.json"), "w") as f:
+        json.dump({"cmd": "wot-add", "pubkeys": [A["pk"], B["pk"]]}, f)   # seat both into the WoT
+    time.sleep(10)
+    # A starts the table, seating B (p-tag)
+    start = _ev.build_event(A["sk"], 1, "blackjack #blackjack",
+                            tags=[["p", bot_hex], ["p", B["pk"]], ["t", "blackjack"], ["nofederate", "1"]])
+    gameid = start["id"]
+    n = 0
+    for _ in range(5):
+        n = run(R.publish(RELAYS, start))
+        if n:
+            break
+        time.sleep(3)
+    if not n:
+        print("  FAIL: relay rejected the start post"); cleanup(A["pk"]); cleanup(B["pk"]); return False
+    dtag = "pcai:blackjack:" + gameid
+    st, deadline = None, time.time() + 90
+    while time.time() < deadline:
+        st = load_state(bot_hex, dtag)
+        if st:
+            break
+        time.sleep(3)
+    if not st:
+        print("  FAIL: bot never created the table"); cleanup(A["pk"]); cleanup(B["pk"]); return False
+    seats = st.get("seats", [])
+    print(f"  table created: {len(seats)} seats, status={st.get('status')}")
+    for label, P in (("A", A), ("B", B)):
+        for _ in range(8):
+            st = load_state(bot_hex, dtag)
+            if not st or st.get("status") != "playing" or st.get("done", {}).get(P["pk"]):
+                break
+            hand = st.get("hands", {}).get(P["pk"], [])
+            v = _bj_value(hand)
+            action = "stand" if v >= 17 else "hit"
+            run(R.publish(RELAYS, nip17.wrap(P["sk"], bot_hex, f"{action}\n\ng:{gameid}")))
+            print(f"  {label} {action} (had {v})")
+            snap = json.dumps([st.get("done"), len(hand), st.get("status")])
+            t2 = time.time() + 45
+            while time.time() < t2:
+                time.sleep(3); st = load_state(bot_hex, dtag)
+                if not st or json.dumps([st.get("done"), len(st.get("hands", {}).get(P["pk"], [])), st.get("status")]) != snap:
+                    break
+            if action == "stand":
+                break
+    t3 = time.time() + 45
+    while time.time() < t3:
+        st = load_state(bot_hex, dtag)
+        if st and st.get("status") == "over":
+            break
+        time.sleep(3)
+    dmsA = count_bot_dms(bot_hex, A["sk"], A["pk"], gameid)
+    dmsB = count_bot_dms(bot_hex, B["sk"], B["pk"], gameid)
+    results = (st or {}).get("results", {})
+    ok = bool(st) and st.get("status") == "over" and len(results) == 2 and dmsA >= 1 and dmsB >= 1
+    print(f"  RESULT status={st.get('status') if st else '?'} results={ {('A' if k==A['pk'] else 'B' if k==B['pk'] else k[:6]): v for k, v in results.items()} } DMs A={dmsA} B={dmsB}")
+    print(f"  result text: {st.get('result') if st else None}")
+    print("  " + ("OK ✅ multi-seat works end-to-end" if ok else "CHECK ⚠️"))
+    cleanup(A["pk"]); cleanup(B["pk"])
+    return ok
+
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     npubs = cfg_npubs()
-    games = list(GAMES) if which == "all" else [which]
     results = {}
-    for game in games:
+    board_games = [g for g in GAMES if which == "all" or which == g]
+    for game in board_games:
         npub = npubs.get(GAMES[game]["flag"])
         if not npub:
             print(f"{game}: no bot configured"); results[game] = None; continue
@@ -195,6 +279,15 @@ def main():
             results[game] = play(game, npub_to_hex(npub))
         except Exception as e:
             import traceback; traceback.print_exc(); results[game] = False
+    if which in ("all", "blackjack", "blackjack-table"):
+        npub = npubs.get("blackjack_bot_npub")
+        if not npub:
+            print("blackjack: no bot configured"); results["blackjack-table"] = None
+        else:
+            try:
+                results["blackjack-table"] = play_blackjack_table(npub_to_hex(npub))
+            except Exception as e:
+                import traceback; traceback.print_exc(); results["blackjack-table"] = False
     print("\n===== SUMMARY =====")
     for g, r in results.items():
         print(f"  {g:<10} {'OK' if r else ('SKIP' if r is None else 'FAIL/CHECK')}")
