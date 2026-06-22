@@ -184,6 +184,44 @@ def _shape_note(ev: dict) -> dict | None:
 
 # --- surface used by the listener ------------------------------------------
 
+def send_dm(peer_hex: str, text: str, extra_tags=None):
+    """Send a NIP-17 gift-wrapped private DM (kind 1059) to `peer_hex` — the bot's private channel for
+    game moves/boards. The recipient's client (the app's Messages, or any NIP-17 client) decrypts it;
+    embed a Blossom image URL in `text` to deliver a board picture privately."""
+    if not _SECKEY:
+        return None
+    from app.services.nostr import nip17
+    try:
+        w = nip17.wrap(_SECKEY, peer_hex, text, extra_tags=extra_tags)
+        _run(_svc.relay.publish(_RELAYS, w))
+        return w
+    except Exception as e:
+        print(f"[nostr] send_dm failed: {e}", flush=True)
+        return None
+
+
+def read_dms(limit: int = 100) -> list:
+    """Return decrypted NIP-17 DMs sent TO the bot: [{sender, text, rumor_id, created_at, tags}].
+    rumor_id (the inner kind-14 id) is stable → use it for dedup (the outer 1059 id is random)."""
+    if not _PUBKEY:
+        return []
+    from app.services.nostr import nip17
+    try:
+        evs = _run(_svc.relay.query(_RELAYS, [{"kinds": [1059], "#p": [_PUBKEY], "limit": limit}])) or []
+    except Exception as e:
+        print(f"[nostr] read_dms query failed: {e}", flush=True)
+        return []
+    out = []
+    for w in evs:
+        try:
+            sender, text, rumor = nip17.unwrap(_SECKEY, w)
+            out.append({"sender": sender, "text": text, "rumor_id": rumor.get("id"),
+                        "created_at": rumor.get("created_at", 0), "tags": rumor.get("tags", [])})
+        except Exception:
+            continue
+    return out
+
+
 def ensure_profile():
     """Publish/refresh this bot's kind-0 profile from the manager-injected NOSTR_PROFILE_* env, on
     startup. By the time a bot process runs it's an operator key (always in the relay's WoT), so the
