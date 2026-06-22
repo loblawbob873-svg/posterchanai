@@ -44,7 +44,7 @@
       if(botNpub){ const sb=$('#hm-solo'); if(sb) sb.onclick=()=>startTable([]); _bindInvite(); }
       _load();
       clearInterval(_timer);
-      _timer = setInterval(()=>{ if(PC.VIEW==='holdem'){ _load(); } else clearInterval(_timer); }, 8000);
+      _timer = setInterval(()=>{ if(PC.VIEW==='holdem'){ _load(); } else clearInterval(_timer); }, 6000);
     }
     function _drawSeats(){
       const box=$('#hm-seats'), deal=$('#hm-deal'); if(!box) return;
@@ -211,7 +211,8 @@
       }
       if(!ok){ toast('move failed — tap again'); return; }
       toast(action+' sent 🃏');
-      setTimeout(()=>{ if(PC.VIEW==='holdem') render(); }, 3500);
+      // refresh the table a couple times to catch the bot's update (it polls every ~4s)
+      [2500, 5000, 8000].forEach(d=>setTimeout(()=>{ if(PC.VIEW==='holdem') _load(); }, d));
     }
 
     (window.PCGames = window.PCGames || {}).holdem = render;

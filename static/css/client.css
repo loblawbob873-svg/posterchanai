@@ -994,14 +994,14 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .pk-nm{font-weight:700;color:#eaf0ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pk-stk{color:#b9a9d6;font-size:13px;display:flex;align-items:center;gap:6px}
 .pk-hole{display:inline-flex;gap:3px}
-.pk-myhand{display:flex;align-items:center;justify-content:space-between;gap:18px;margin:12px 0;padding:12px 14px;border-radius:15px;background:linear-gradient(180deg,#16092b,#100420);border:2px solid var(--cyan);box-shadow:0 0 16px rgba(0,240,255,.18)}
-.pk-myinfo{display:flex;align-items:center;gap:11px;min-width:0}
+.pk-myhand{display:flex;flex-direction:column;gap:12px;margin:12px 0;padding:12px 14px;border-radius:15px;background:linear-gradient(180deg,#16092b,#100420);border:2px solid var(--cyan);box-shadow:0 0 16px rgba(0,240,255,.18)}
+.pk-myinfo{display:flex;align-items:center;gap:11px;min-width:0;align-self:flex-start}
 .pk-myav{width:52px;height:52px;border-radius:11px;object-fit:cover;flex:none;border:2px solid var(--cyan);background:#0d0a1a;box-shadow:0 0 10px rgba(0,240,255,.3)}
 .pk-mymeta{display:flex;flex-direction:column;gap:3px;min-width:0}
 .pk-myname{font-weight:800;color:#eaf0ff;font-size:16px}
 .pk-mychipline{color:#ffe9a8;font-size:14px;white-space:nowrap}
 .pk-mychipline b{color:#ffd25a;font-size:18px;font-weight:900;text-shadow:0 0 7px rgba(255,210,90,.5)}
-.pk-mycards{display:flex;gap:8px;flex:none}
+.pk-mycards{display:flex;gap:10px;justify-content:center}
 .pk-controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:11px}
 .pk-controls .btn{flex:1 1 auto;min-width:72px}
 .pk-raise{display:inline-flex;gap:6px;align-items:center;flex:2 1 9em}

@@ -338,7 +338,7 @@ def main():
                 except Exception as e:
                     print(f"[ERROR] holdem process_holdem failed: {e}", flush=True)
                 import os as _os
-                time.sleep(int(_os.getenv("HOLDEM_POLL_SECONDS", _os.getenv("NOSTR_POLL_SECONDS", "10"))))
+                time.sleep(int(_os.getenv("HOLDEM_POLL_SECONDS", "4")))   # snappy interactive moves (command channel)
         if threads or has_daemon:
             t = threading.Thread(target=run_holdem, daemon=True); t.start(); threads.append(t)
         else:
