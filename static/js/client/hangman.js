@@ -1,0 +1,137 @@
+/* #hangman — Hangman game UI for the Nostr client. Separate file; uses window.__PC + registers in
+ * window.PCGames. The bot holds the secret word (encrypted); the client shows the masked display and
+ * a tappable A-Z keyboard. */
+(function(){
+  function init(){
+    const PC = window.__PC;
+    if(!PC){ return setTimeout(init, 50); }
+    const { $, $$, enc, publish, safePk, nip05Resolve, profOf, needProfile, niceNip05, LOGO, toast, ensureProfile, NT } = PC;
+    const Relay = window.Relay, Store = window.Store;
+    let _timer = null;
+
+    function _hidden(){ try{ return new Set(JSON.parse(localStorage.getItem('pc_hm_hidden')||'[]')); }catch(_){ return new Set(); } }
+    function _hide(gid){ const s=_hidden(); s.add(gid); try{ localStorage.setItem('pc_hm_hidden', JSON.stringify([...s])); }catch(_){} }
+
+    async function render(){
+      const feed=$('#feed');
+      const botNpub = PC.CFG.hangman_bot_npub;
+      const start = botNpub ? `
+        <div class="chess-invite">
+          <button class="btn btn-cyan" id="hm-play">🎯 New game (you guess)</button>
+          <div class="chess-or">— or challenge someone to guess —</div>
+          <input id="hm-inv" class="input" placeholder="search name / npub / name@domain…" autocomplete="off">
+          <div id="hm-inv-res" class="chess-inv-res"></div>
+        </div>` : `<div class="empty">No #hangman bot is configured on this server yet — ask the admin to enable one in Admin → Bots.</div>`;
+      feed.innerHTML = `<div class="chess-hub">
+          <div class="chess-splash glass">
+            <h2>🎯 Hangman</h2>
+            <p class="muted">The bot picks a secret word; guess letters before the figure is complete (6 misses). Reply with a letter, or tap.</p>
+            ${start}
+          </div>
+          <div class="chess-games"><h3>🎯 Your games</h3><div id="hm-games"><div class="spinner"></div></div></div>
+        </div>`;
+      if(botNpub){ const pb=$('#hm-play'); if(pb) pb.onclick=()=>startGame(null); _bindInvite(); }
+      _load();
+      clearInterval(_timer);
+      _timer = setInterval(()=>{ if(PC.VIEW==='hangman'){ _load(); } else clearInterval(_timer); }, 12000);
+    }
+    function _bindInvite(){
+      const inp=$('#hm-inv'), res=$('#hm-inv-res'); if(!inp) return; let t=null;
+      const draw=rows=>{ res.innerHTML = rows.length ? rows.map(p=>{ const m=p.meta||{};
+        return `<div class="chess-inv-row"><img src="${enc(m.picture||LOGO)}" onerror="this.src='${LOGO}'">
+          <div class="ci-meta"><b>${enc(m.name||m.display_name||'anon')}</b><span class="muted small">${enc(niceNip05(m.nip05)||'')}</span></div>
+          <button class="btn btn-neon small" data-ch="${p.pubkey}">Challenge</button></div>`; }).join('')
+        : '<div class="muted small" style="padding:6px 2px">No match. Paste an npub or name@domain.</div>';
+        $$('[data-ch]',res).forEach(b=> b.onclick=()=>startGame(b.dataset.ch)); };
+      inp.oninput=()=>{ clearTimeout(t); const q=inp.value.trim(); if(!q){ res.innerHTML=''; return; }
+        t=setTimeout(async()=>{
+          const pk=safePk(q); if(pk){ await ensureProfile(pk); draw([{pubkey:pk, meta:(profOf(pk)||{})}]); return; }
+          if(/^[\w.\-+]+@[\w.\-]+\.[a-z]{2,}$/i.test(q)){ const rp=await nip05Resolve(q.toLowerCase()); if(rp){ await ensureProfile(rp); draw([{pubkey:rp, meta:(profOf(rp)||{})}]); return; } }
+          const ql=q.toLowerCase();
+          draw(Store.profileList().filter(p=>(((p.meta.name||'')+(p.meta.display_name||'')+(p.meta.nip05||'')).toLowerCase().includes(ql))).slice(0,8));
+        }, 250); };
+    }
+    async function startGame(pk){
+      const botPk=safePk(PC.CFG.hangman_bot_npub); if(!botPk){ toast('no bot'); return; }
+      let body, tags;
+      if(pk){
+        if(pk===PC.ME.pubkey){ toast("challenge someone else (or use New game)"); return; }
+        let npub; try{ npub=NT().nip19.npubEncode(pk); }catch(_){ npub=pk; }
+        const meName=(profOf(PC.ME.pubkey)||{}).name||'A player';
+        body=`🎯 ${meName} challenged you to #hangman! nostr:${npub} — guess the bot's word, a letter at a time.`;
+        tags=[['p',botPk],['p',pk],['t','hangman']];
+      } else {
+        body=`🎯 New #hangman game — I'll guess the bot's word.`;
+        tags=[['p',botPk],['t','hangman']];
+      }
+      try{ await publish(1, body+`\n\nhangman\n\n#hangman`, tags); toast('starting hangman 🎯'); setTimeout(()=>{ if(PC.VIEW==='hangman') render(); }, 4500); }
+      catch(e){ toast('could not start'); }
+    }
+    async function _load(){
+      const list=$('#hm-games'); if(!list) return;
+      const botPk=safePk(PC.CFG.hangman_bot_npub);
+      if(!botPk){ list.innerHTML='<div class="empty">No bot configured.</div>'; return; }
+      let evs=[]; try{ evs=await Relay.query([{ authors:[botPk], kinds:[30078], limit:500 }]); }catch(_){}
+      const hidden=_hidden(), byGame={};
+      for(const e of evs){
+        const d=((e.tags.find(t=>t[0]==='d')||[])[1])||'';
+        if(!d.startsWith('pcai:hangman:')) continue;
+        let s; try{ s=JSON.parse(e.content||'{}'); }catch(_){ continue; }
+        if(!s || (s.guesser!==PC.ME.pubkey && s.opponent!==PC.ME.pubkey)) continue;
+        const gid=s.root||d.slice('pcai:hangman:'.length);
+        if(hidden.has(gid)) continue;
+        if(!byGame[gid] || (e.created_at||0) > byGame[gid]._t){ s._t=e.created_at||0; byGame[gid]=s; }
+      }
+      const games=Object.values(byGame).sort((a,b)=>(a.status==='active'?0:1)-(b.status==='active'?0:1)||(b.started||0)-(a.started||0));
+      if(!games.length){ list.innerHTML='<div class="empty">No games yet. Start one above.</div>'; return; }
+      list.innerHTML = games.map((g,i)=>`<div class="chess-game-card glass" data-gi="${i}"></div>`).join('');
+      games.forEach((g,i)=>_card(g, $(`.chess-game-card[data-gi="${i}"]`, list)));
+    }
+    async function quitGame(g){
+      const active=g.status==='active';
+      if(!confirm(active?'Give up and remove this game?':'Remove this game?')) return;
+      if(active && g.guesser===PC.ME.pubkey){ try{ await guess(g,'resign'); }catch(_){} }
+      _hide(g.root); _load();
+    }
+    function _card(g, card){
+      if(!card) return;
+      const iGuess = g.guesser===PC.ME.pubkey;
+      const tried = new Set([...(g.guessed||[]), ...(g.wrong_letters||[])].map(x=>x.toLowerCase()));
+      const active = g.status==='active';
+      let statusLine, badge;
+      if(!active){ statusLine = g.status==='won' ? 'Solved 🎉' : (g.status==='lost'?'Lost 💀':'Over'); badge = g.status==='won'?'you':'done'; }
+      else if(iGuess){ statusLine='Your turn — pick a letter'; badge='you'; }
+      else { statusLine='Watching'; badge='wait'; }
+      const display = enc(g.display||'');
+      const kb = (iGuess && active) ? '<div class="hm-keys">'+'abcdefghijklmnopqrstuvwxyz'.split('').map(L=>
+        `<button class="hm-key${tried.has(L)?' used':''}" data-l="${L}"${tried.has(L)?' disabled':''}>${L.toUpperCase()}</button>`).join('')+'</div>' : '';
+      card.innerHTML = `<div class="chess-card-hd">
+          <div class="cc-meta"><b>${iGuess?'You are guessing':enc(g.guesser_name||'someone')+' is guessing'}</b>
+            <span class="muted small">Misses ${g.wrong||0}/6${(g.wrong_letters||[]).length?' · wrong: '+enc((g.wrong_letters||[]).join(' ').toUpperCase()):''}</span></div>
+          <span class="cc-badge ${badge}">${enc(statusLine)}</span>
+          <button class="chess-quit" title="${active?'Give up &amp; remove':'Remove'}">✕</button></div>
+        <div class="hm-word">${display||'…'}</div>
+        ${kb}`;
+      { const q=card.querySelector('.chess-quit'); if(q) q.onclick=(e)=>{ e.stopPropagation(); quitGame(g); }; }
+      if(iGuess && active){
+        let busy=false;
+        card.querySelectorAll('.hm-key:not(.used)').forEach(b=> b.onclick=()=>{
+          if(busy) return; busy=true; card.querySelectorAll('.hm-key').forEach(k=>k.disabled=true);
+          guess(g, b.dataset.l);
+        });
+      }
+    }
+    async function guess(game, letter){
+      const botPk=safePk(PC.CFG.hangman_bot_npub); if(!botPk){ toast('no bot'); return; }
+      const tags=[['e', game.root, '', 'root']];
+      if(game.last_board_event && game.last_board_event!==game.root) tags.push(['e', game.last_board_event, '', 'reply']);
+      tags.push(['p', botPk], ['t','hangman']);
+      try{ await publish(1, letter.trim()+"\n\n#hangman", tags); toast('guess sent 🎯'); }
+      catch(e){ toast('guess failed'); return; }
+      setTimeout(()=>{ if(PC.VIEW==='hangman') render(); }, 4500);
+    }
+
+    (window.PCGames = window.PCGames || {}).hangman = render;
+  }
+  init();
+})();

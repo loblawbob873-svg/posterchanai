@@ -139,19 +139,21 @@ async def client_config(request: Request, db: Session = Depends(get_db)):
         "name": _setting(db, "site_name", "PosterChan"),
         # Community size — the relay's web-of-trust member count (cached in its status file; cheap).
         "users": _relay_user_count(),
-        # npub of an enabled #chesstr referee bot, if this node runs one — lets the client's Games →
-        # Chess splash tag the right bot when inviting an opponent.
-        "chess_bot_npub": _chess_bot_npub(db),
+        # npubs of the enabled game-referee bots (chess/ttt/hangman), so each Games tab can tag the
+        # right bot when inviting an opponent.
+        "chess_bot_npub": _game_bot_npub(db, "--chess"),
+        "ttt_bot_npub": _game_bot_npub(db, "--ttt"),
+        "hangman_bot_npub": _game_bot_npub(db, "--hangman"),
     })
 
 
-def _chess_bot_npub(db) -> str | None:
-    """The npub of an enabled chess-referee bot (modes include --chess), for the Games → Chess splash.
-    Derived from the bot's nsec in its JSON config (Bot has no npub column)."""
+def _game_bot_npub(db, flag: str) -> str | None:
+    """npub of an enabled game-referee bot whose modes include `flag` (e.g. --chess/--ttt/--hangman),
+    derived from the bot's nsec in its JSON config (Bot has no npub column)."""
     try:
         import json as _json
         from app.models import Bot
-        for bot in db.query(Bot).filter(Bot.enabled == True, Bot.modes.like("%--chess%")).all():  # noqa: E712
+        for bot in db.query(Bot).filter(Bot.enabled == True, Bot.modes.like(f"%{flag}%")).all():  # noqa: E712
             try:
                 nsec = (_json.loads(bot.config or "{}")).get("nostr_nsec")
                 if nsec:

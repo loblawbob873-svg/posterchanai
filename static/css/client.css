@@ -984,3 +984,26 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .chess-quit{flex:none;background:none;border:1px solid var(--line);color:var(--muted);border-radius:8px;
   cursor:pointer;font-size:13px;padding:2px 7px;margin-left:6px}
 .chess-quit:hover{border-color:var(--magenta);color:var(--magenta)}
+
+/* ---------- Tic-Tac-Toe ---------- */
+.ttt-wrap{max-width:360px;margin:0 auto}
+.ttt-board{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);aspect-ratio:1/1;width:100%;
+  gap:6px;background:var(--cyan);border:2px solid var(--cyan);border-radius:12px;overflow:hidden;box-shadow:0 0 16px rgba(0,255,255,.25)}
+.ttt-cell{display:flex;align-items:center;justify-content:center;background:#120826;position:relative;cursor:default;min-width:0;min-height:0}
+.ttt-cell.empty{cursor:pointer}
+.ttt-cell.empty:hover{background:#1c0f3a}
+.ttt-cell.pending{opacity:.5}
+.ttt-num{position:absolute;top:4px;left:7px;font-size:13px;color:#5a3b80}
+.ttt-mark{font-size:min(16vw,64px);font-weight:800;line-height:1}
+.ttt-mark.tx{color:#3ce6ff;text-shadow:0 0 8px rgba(60,230,255,.9)}
+.ttt-mark.to{color:#ff3cd2;text-shadow:0 0 8px rgba(255,60,210,.9)}
+
+/* ---------- Hangman ---------- */
+.hm-word{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:26px;letter-spacing:5px;text-align:center;
+  color:#3ce6ff;text-shadow:0 0 8px rgba(60,230,255,.7);margin:10px 0 14px;word-break:break-word}
+.hm-keys{display:grid;grid-template-columns:repeat(9,1fr);gap:5px;max-width:420px;margin:0 auto}
+.hm-key{aspect-ratio:1/1;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);
+  font-weight:700;font-size:15px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center}
+.hm-key:hover:not(:disabled){border-color:var(--cyan);color:var(--cyan)}
+.hm-key.used,.hm-key:disabled{opacity:.3;cursor:default}
+@media(max-width:820px){ .ttt-wrap{max-width:300px} .hm-keys{grid-template-columns:repeat(7,1fr)} .hm-word{font-size:22px;letter-spacing:3px} }

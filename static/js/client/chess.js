@@ -207,6 +207,7 @@
     }
 
     window.PCChess = { render: renderChess };
+    (window.PCGames = window.PCGames || {}).chess = renderChess;
   }
   init();
 })();

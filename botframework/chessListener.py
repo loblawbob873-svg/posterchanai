@@ -345,7 +345,9 @@ def _apply_bot_moves(state) -> str | None:
 def _footer() -> str:
     """Board-image footer: invite people to play interactively in the app, then the #chesstr tag."""
     site = (os.getenv("CHESS_SITE_URL", "") or "").strip()
-    return f"Play Chess on Nostr Interactively on {site}    #chesstr" if site else "#chesstr"
+    play = f" Play interactively at {site}." if site else ""
+    return ("♟️ Wanna start your own game with a friend? Reply \"chess @friend\" to challenge them "
+            "(or just \"chess\" to play me); then reply with moves like \"1 d4\"." + play + "\n#chesstr")
 
 
 def _status_for(board: chess.Board):
