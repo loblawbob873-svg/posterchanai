@@ -412,7 +412,7 @@
         if(d.type==='nprofile'){ await renderProfileView(d.data.pubkey); return; }
         if(d.type==='note'){ openThread(d.data); return; }
         if(d.type==='nevent'){ openThread(d.data.id); return; }
-        if(d.type==='naddr'){ await renderProfileView(d.data.pubkey); return; }   // best-effort: the author
+        if(d.type==='naddr'){ await openNaddr(d.data.pubkey, d.data.identifier, d.data.kind); return; }   // open the article/addressable event, not the author's profile
       }
     }catch(err){ console.warn('[route] could not open', e, err); }
     finally{ _routing = false; }
