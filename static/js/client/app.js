@@ -903,8 +903,23 @@
 
   // ---------- timeline ----------
   function timelineFilter(){
-    if (VIEW==='home') return [{ kinds:[1,6,1068], authors:[...FOLLOWS], limit:80 }];
-    return [{ kinds:[1,6,1068], limit:120 }];
+    // include kind 5 (NIP-09 deletions) so the feed drops posts the author deleted instead of
+    // showing stale cached copies.
+    if (VIEW==='home') return [{ kinds:[1,6,1068,5], authors:[...FOLLOWS], limit:80 }];
+    return [{ kinds:[1,6,1068,5], limit:120 }];
+  }
+  // NIP-09: a kind-5 removes the AUTHOR'S OWN events it e-tags. Drop them from the cache + the DOM.
+  function _applyDeletion(ev){
+    for(const t of (ev.tags||[])){
+      if(t[0]!=='e' || !t[1]) continue;
+      const tgt = Store.get(t[1]);
+      if(tgt && tgt.pubkey!==ev.pubkey) continue;   // only the author can delete their own event
+      Store.removeEvent(t[1]);
+      document.querySelectorAll(`[data-id="${t[1]}"]`).forEach(n=>{
+        const card = n.closest('.note,.stream-card,.pic-card,.article-card,.community-card,.channel-card') || n;
+        card.remove();
+      });
+    }
   }
   // pagination state for the home/global timelines (infinite scroll-back via `until`)
   let _tl = { oldest:0, loading:false, done:false, pages:0 };
