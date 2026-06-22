@@ -71,9 +71,9 @@ def autopost(print_only=False):
     print_only=True is the dry run (--autopost-print): generate one and print between the
     PREVIEW markers, but do NOT publish.
 
-    Platform precedence is Misskey → Pleroma → Matrix. Fedi wins over a *secondary* Matrix
-    connection, so a fedi bot that also sits in a Matrix room auto-posts to fedi only (never
-    both). Matrix-only bots fall through to the room-by-room path."""
+    Platform precedence is Misskey → Pleroma → Nostr → Matrix. Fedi/Nostr win over a
+    *secondary* Matrix connection, so a bot that also sits in a Matrix room auto-posts to its
+    primary network only (never both). Matrix-only bots fall through to the room-by-room path."""
     if not PROMPT or len(PROMPT.strip()) < 10:
         print("[autopost] No personality PROMPT set; skipping.")
         return
@@ -86,7 +86,7 @@ def autopost(print_only=False):
             print(PREVIEW_END)
         return
 
-    from config import MISSKEY_SERVER, PLEROMA_ENDPOINT, MATRIX_SERVER
+    from config import MISSKEY_SERVER, PLEROMA_ENDPOINT, MATRIX_SERVER, NOSTR_NSEC
 
     if MISSKEY_SERVER or PLEROMA_ENDPOINT:
         # Fediverse: one post. Both modules expose post_to_fediverse(status_text) with
@@ -100,6 +100,16 @@ def autopost(print_only=False):
             from pleroma import post_to_fediverse
         print(f"[autopost] Posting ({len(text)} chars): {text[:120]}...")
         post_to_fediverse(text)
+    elif NOSTR_NSEC:
+        # Nostr: one kind-1 text note via the bot's signer. post_image_to_fediverse with no
+        # media is the plain-text publish path (same BLOCK_PHRASE/length guards live in the
+        # underlying service).
+        text = _generate_post()
+        if not text:
+            return
+        from nostr import post_image_to_fediverse as post_to_nostr
+        print(f"[autopost] Posting to Nostr ({len(text)} chars): {text[:120]}...")
+        post_to_nostr(text)
     elif MATRIX_SERVER:
         # Matrix: room-by-room — a freshly generated post per room so multiple rooms don't
         # get identical text. send_message applies the same BLOCK_PHRASE guard.

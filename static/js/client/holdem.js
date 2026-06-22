@@ -25,7 +25,8 @@
       _seatPicks = [];
       const start = botNpub ? `
         <div class="chess-invite">
-          <div class="chess-or">Seat a table with friends (2–6 players) —</div>
+          <button class="btn btn-cyan" id="hm-solo" style="width:100%">🤖 New game — heads-up vs the bot</button>
+          <div class="chess-or">— or seat a table with friends (up to 5) —</div>
           <input id="hm-inv" class="input" placeholder="search name / npub / name@domain…" autocomplete="off">
           <div id="hm-inv-res" class="chess-inv-res"></div>
           <div id="hm-seats" class="bj-seatchips"></div>
@@ -39,7 +40,7 @@
           </div>
           <div class="chess-games"><h3>🃏 Your tables</h3><div id="hm-games"><div class="spinner"></div></div></div>
         </div>`;
-      if(botNpub) _bindInvite();
+      if(botNpub){ const sb=$('#hm-solo'); if(sb) sb.onclick=()=>startTable([]); _bindInvite(); }
       _load();
       clearInterval(_timer);
       _timer = setInterval(()=>{ if(PC.VIEW==='holdem'){ _load(); } else clearInterval(_timer); }, 8000);
@@ -67,10 +68,13 @@
     }
     async function startTable(friends){
       const botPk=safePk(PC.CFG.holdem_bot_npub); if(!botPk){ toast('no bot'); return; }
-      if(!friends||!friends.length){ toast('seat at least one friend'); return; }
-      const tags=[['p',botPk]]; friends.forEach(pk=>{ if(pk&&pk!==PC.ME.pubkey&&pk!==botPk) tags.push(['p',pk]); });
+      friends=(friends||[]).filter(pk=>pk&&pk!==PC.ME.pubkey&&pk!==botPk);
+      const solo=!friends.length;
+      const tags=[['p',botPk]]; friends.forEach(pk=>tags.push(['p',pk]));
       tags.push(['t','holdem'],['t','poker'],['t','nostr'],['t','gamestr']);
-      const body = `🃏 Dealing a #holdem table — ${friends.map(pk=>{let n;try{n=NT().nip19.npubEncode(pk);}catch(_){n=pk;} return 'nostr:'+n;}).join(' ')} you're seated! Check your DMs for your hole cards.`;
+      const body = solo
+        ? `🃏 Dealing a #holdem game — heads-up vs the bot. Check my DMs for my hole cards.`
+        : `🃏 Dealing a #holdem table — ${friends.map(pk=>{let n;try{n=NT().nip19.npubEncode(pk);}catch(_){n=pk;} return 'nostr:'+n;}).join(' ')} you're seated! Check your DMs for your hole cards.`;
       try{ await PC.publish(1, body+`\n\n#holdem #poker #nostr #gamestr`, tags); toast('dealing… 🃏'); setTimeout(()=>{ if(PC.VIEW==='holdem') render(); }, 4500); }
       catch(e){ toast('could not start'); }
     }

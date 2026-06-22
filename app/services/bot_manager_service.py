@@ -112,6 +112,13 @@ def _load_global_env():
         if rows.get(k):
             server = rows[k].strip().rstrip("/")
             break
+    if not server:
+        # Unified architecture: the bot's only LLM/image endpoint is THIS PosterChanAI server.
+        # When the operator never set bots_server_url, fall back to the local listener so bots
+        # work out-of-the-box. Without this OPENAI_ENDPOINT is unset → every fresh bot one-shot
+        # (autopost, image-post) fails "OpenAI not configured" → generates empty → silently never
+        # posts (the long-running listeners only kept working off a stale env from an earlier spawn).
+        server = f"http://127.0.0.1:{os.getenv('POSTERCHANAI_PORT', '3051')}"
     if server:
         # `localhost` can resolve to ::1 (IPv6) where the app binds IPv4-only (0.0.0.0:3051), so the
         # bot's Python `requests` STALLS ~20s per call on the dead IPv6 address before falling back to

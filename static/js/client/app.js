@@ -9,6 +9,12 @@
   // Repost/boost glyph as an SVG (inherits currentColor → themes green/cyan with a glow), instead of
   // the 🔁 emoji which renders a fixed orange that clashes with the cyberpunk palette.
   const RT_ICON = '<svg class="rt-ico" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M23.77 15.67a.75.75 0 00-1.06 0l-2.22 2.22V7.65a3.75 3.75 0 00-3.75-3.75h-5.85a.75.75 0 000 1.5h5.85c1.24 0 2.25 1.01 2.25 2.25v10.24l-2.22-2.22a.75.75 0 10-1.06 1.06l3.5 3.5c.147.147.34.22.53.22s.384-.073.53-.22l3.5-3.5a.75.75 0 000-1.06zm-10.66 3.28H7.26c-1.24 0-2.25-1.01-2.25-2.25V6.46l2.22 2.22a.75.75 0 101.06-1.06l-3.5-3.5a.75.75 0 00-1.06 0l-3.5 3.5a.75.75 0 101.06 1.06l2.22-2.22V16.7a3.75 3.75 0 003.75 3.75h5.85a.75.75 0 000-1.5z"/></svg>';
+  // Reply glyph as an SVG (themed cyan + glow like the other action icons) — the 💬 emoji clashed
+  // with the cyberpunk palette and read the same as the quote bubble; this reply-arrow is distinct.
+  const REPLY_ICON = '<svg class="rp-ico" viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M10 9V6.5a1 1 0 00-1.7-.71l-6 6a1 1 0 000 1.42l6 6A1 1 0 0010 18.5V16c4.7 0 7.9 1.4 10.2 4.4.3.4 1 .15.96-.35C20.6 13.2 16.4 9.4 10 9z"/></svg>';
+  // Quote-post glyph as an SVG (themes cyan + glow, and sizes like the repost icon) — the old ❝
+  // text glyph floated high in its line box and couldn't be size-matched to the emoji actions.
+  const QUOTE_ICON = '<svg class="q-ico" viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M1.751 10c0-4.42 3.584-8 8.005-8h4.366c4.49 0 8.129 3.64 8.129 8.13 0 2.96-1.607 5.68-4.196 7.11l-8.054 4.46v-3.69h-.067c-4.49.1-8.183-3.51-8.183-8.01z"/></svg>';
   // Web-of-trust shield — SVG so it takes the neon cyan colour + glow (emoji can't be recoloured).
   const WOT_ICON = '<svg class="wot-ico" viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M12 2l7 3v6c0 4.7-3.1 8.3-7 11-3.9-2.7-7-6.3-7-11V5l7-3z"/></svg>';
   // "online now" pulse — magenta neon (distinct from the green ONLINE dot above), not another 🟢.
@@ -1608,7 +1614,7 @@
         <div class="poll-q">📊 ${linkify(ev.content||'')}</div>
         <div class="poll-opts">${optHtml}</div>
         <div class="poll-foot muted small">${multi?'Multiple choice':'Single choice'}${ended?' · ended':''} · <span class="poll-total">…</span></div>
-        <div class="acts"><button class="act" data-a="reply" title="reply">💬 <span class="n"></span></button>
+        <div class="acts"><button class="act" data-a="reply" title="reply">${REPLY_ICON} <span class="n"></span></button>
           <button class="act actm" data-a="menu" title="more">☰</button></div>
       </div></article>`;
   }
@@ -1680,9 +1686,9 @@
         ${linkCardHtml(mp.text)}
         ${quoteHtml(ev)}
         <div class="acts">
-          <button class="act" data-a="reply" title="reply">💬 <span class="n">${counts.replies||''}</span></button>
+          <button class="act" data-a="reply" title="reply">${REPLY_ICON} <span class="n">${counts.replies||''}</span></button>
           <button class="act rt ${counts.iRt?'on':''}" data-a="repost" title="repost">${RT_ICON} <span class="n">${counts.reposts||''}</span></button>
-          <button class="act actq" data-a="quote" title="quote post">❝</button>
+          <button class="act actq" data-a="quote" title="quote post">${QUOTE_ICON}</button>
           <button class="act ${liked?'on':''}" data-a="react" title="react">${liked||'😀'} <span class="n">${counts.reactions||''}</span></button>
           <button class="act actz ${counts.zaps?'on':''}" data-a="zap" title="zap (lightning)">⚡ <span class="n">${counts.zaps?fmtSats(counts.zaps):''}</span></button>
           <button class="act actm ${BOOKMARKS.has(ev.id)?'on':''}" data-a="menu" title="more">☰</button>
