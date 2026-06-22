@@ -50,6 +50,9 @@ def main():
         "--connect4", action="store_true", help="#connect4 — referee Connect Four games"
     )
     parser.add_argument(
+        "--blackjack", action="store_true", help="#blackjack — deal Blackjack (21) vs the bot dealer"
+    )
+    parser.add_argument(
         "--blockbot", action="store_true", help="Start the Pleroma Blockbot daemon"
     )
     parser.add_argument(
@@ -103,7 +106,7 @@ def main():
     args = parser.parse_args()
 
     # Validate that at least one platform is specified
-    if not args.matrix and not args.misskey and not args.nostr and not args.dvm and not args.chess and not args.ttt and not args.hangman and not args.connect4 and not args.nitter and not args.ping and not args.image and not args.autopost and not args.autopost_print and not args.blockbot and not args.pleroma and not args.blocks and not args.blocks_print and not args.scalps and not args.scalps_print and not args.fba and not args.topposts and not args.topposts_print and not args.welcome and not args.welcome_print and not args.report and not args.report_print and not args.hashtagbot and not args.hashtagbot_print and not args.unfollowbot and not args.unfollows and not args.unfollows_print:
+    if not args.matrix and not args.misskey and not args.nostr and not args.dvm and not args.chess and not args.ttt and not args.hangman and not args.connect4 and not args.blackjack and not args.nitter and not args.ping and not args.image and not args.autopost and not args.autopost_print and not args.blockbot and not args.pleroma and not args.blocks and not args.blocks_print and not args.scalps and not args.scalps_print and not args.fba and not args.topposts and not args.topposts_print and not args.welcome and not args.welcome_print and not args.report and not args.report_print and not args.hashtagbot and not args.hashtagbot_print and not args.unfollowbot and not args.unfollows and not args.unfollows_print:
         print("ERROR: Please specify at least one mode: --matrix, --misskey, --nostr, --dvm, --chess, --nitter, --ping, --pleroma, --blockbot, --blocks, --blocks-print, --scalps, --scalps-print, --fba, --topposts, --topposts-print, --welcome, --welcome-print, --report, --report-print, --hashtagbot, --hashtagbot-print, --unfollowbot, --unfollows, --unfollows-print, --image, --autopost, or --autopost-print")
         return
 
@@ -301,6 +304,22 @@ def main():
             t = threading.Thread(target=run_connect4, daemon=True); t.start(); threads.append(t)
         else:
             run_connect4(); return
+
+    if args.blackjack:
+        def run_blackjack():
+            from blackjackListener import process_blackjack
+            print("Starting #blackjack listener...")
+            while True:
+                try:
+                    process_blackjack()
+                except Exception as e:
+                    print(f"[ERROR] blackjack process_blackjack failed: {e}", flush=True)
+                import os as _os
+                time.sleep(int(_os.getenv("BLACKJACK_POLL_SECONDS", _os.getenv("NOSTR_POLL_SECONDS", "10"))))
+        if threads or has_daemon:
+            t = threading.Thread(target=run_blackjack, daemon=True); t.start(); threads.append(t)
+        else:
+            run_blackjack(); return
 
     # Matrix listener (can run alongside --nitter, daemons, etc.)
     if args.matrix:

@@ -958,6 +958,15 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .chess-result.loss{background:rgba(255,0,90,.12);color:#ff8aa8;border:1px solid rgba(255,0,90,.4)}
 .chess-result.draw{background:rgba(255,255,255,.06);color:var(--muted);border:1px solid var(--line)}
 .chess-result .small{font-weight:600}
+/* Blackjack table */
+.bj-table{padding:6px 0 2px}
+.bj-hand{margin:10px 0}
+.bj-lbl{display:block;font-weight:700;color:var(--muted);margin-bottom:6px;font-size:14px}
+.bj-cards{display:flex;gap:8px;flex-wrap:wrap}
+.bj-card{display:inline-flex;align-items:center;justify-content:center;min-width:46px;height:64px;padding:0 9px;border-radius:9px;background:#160a28;border:2px solid var(--cyan);color:#eaf0ff;font-weight:800;font-size:21px}
+.bj-card.red{color:#ff8aa8;border-color:#ff5a8a}
+.bj-card.back{background:#28124a;border-color:var(--magenta);color:var(--magenta)}
+.bj-controls{display:flex;gap:10px;margin-top:12px}
 .chess-board-img{display:block;width:100%;max-width:520px;height:auto;border-radius:12px;margin:0 auto;border:1px solid var(--line)}
 .chess-board-link{display:block}
 .chess-move-row{display:flex;gap:8px;margin-top:12px;max-width:520px;margin-left:auto;margin-right:auto}

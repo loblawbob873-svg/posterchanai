@@ -865,7 +865,7 @@
     VIEW = v;
     if(v==='notifications') _notifShown = 25;   // fresh entry → collapse pagination back to one page
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
-    $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', streams:'Streams', communities:'Communities', pics:'Pics', chat:'Chat', '4chan':'4chan', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', streams:'Streams', communities:'Communities', pics:'Pics', chat:'Chat', '4chan':'4chan', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', admin:'Admin' }[v]||v;
     renderView(true);
   }
   function renderView(reset){
@@ -2307,7 +2307,7 @@
   function moreMenu(){
     const dn=Drafts.all().length;   // per-item counts so the ☰ badge is explained once opened
     const counts={drafts:dn};
-    const items=[['ai','🤖','PosterChan AI'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['articles','📰','Articles'],['streams','📺','Streams'],['communities','☷','Communities'],['pics','📸','Pics'],['chat','✺','Chat'],['4chan','🍀','4chan'],['chess','♟️','Chess'],['ttt','⭕','Tic-Tac-Toe'],['hangman','🎯','Hangman'],['connect4','🔴','Connect Four'],['blossom','🌸','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['logout','⎋','Logout']]
+    const items=[['ai','🤖','PosterChan AI'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['articles','📰','Articles'],['streams','📺','Streams'],['communities','☷','Communities'],['pics','📸','Pics'],['chat','✺','Chat'],['4chan','🍀','4chan'],['chess','♟️','Chess'],['ttt','⭕','Tic-Tac-Toe'],['hangman','🎯','Hangman'],['connect4','🔴','Connect Four'],['blackjack','🃏','Blackjack'],['blossom','🌸','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['logout','⎋','Logout']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='ai'));   // hide AI in Nostr-only deployments
     modal(`<h3>More</h3><div class="more-grid">${items.map(([v,ic,lbl])=>{const c=counts[v]||0;return `<button class="more-item${v==='logout'?' more-logout':''}" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}${c?` <i class="badge">${c>99?'99+':c}</i>`:''}</span></button>`;}).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); if(b.dataset.v==='logout') logout(); else if(b.dataset.v==='profile') renderProfileView(ME.pubkey); else switchView(b.dataset.v); });
