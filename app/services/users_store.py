@@ -232,3 +232,69 @@ async def hydrate_user_kv(db) -> int:
         db.commit()
     logger.info("[users-store] hydrated %d user-setting kv row(s) from relay", made)
     return made
+
+
+# ---- reconcile sweep: SQL → relay catch-all -------------------------------------------------
+# The per-mutation write-throughs (sync_user/sync_user_kv on the main settings save, caps, signup,
+# avatar) cover the primary paths, but auxiliary feature endpoints write UserSetting/User columns
+# WITHOUT calling them (the timezone save, and the caldav/carddav/webdav/music config saves whose
+# keys aren't even traceable in app/). Rather than chase every endpoint (fragile, and new ones will
+# forget), a periodic sweep mirrors EVERY npub account's authority record + non-exempt kv to the
+# relay — so a setting changed via any path lands in Nostr within one interval. Change-detected by a
+# content hash so an unchanged account isn't rewritten (no replaceable-event churn).
+_last_synced_hash: dict = {}
+_reconcile_task = None
+_RECONCILE_INTERVAL = 600   # seconds (10 min)
+
+
+async def reconcile_all(db, *, force: bool = False) -> int:
+    """SQL → relay sweep over all npub accounts; (re)sync only those whose record+kv changed since
+    the last pass (or all when `force`). Returns the number (re)synced."""
+    if not _ss._operator_seckey(db):
+        return 0
+    import hashlib
+    import json as _json
+    from app.models import UserSetting
+    synced = 0
+    for user in db.query(User).filter(User.nostr_npub.isnot(None)).all():
+        kv = {r.key: r.value
+              for r in db.query(UserSetting).filter(UserSetting.user_id == user.id).all()
+              if not _kv_exempt(r.key)}
+        h = hashlib.sha256(
+            _json.dumps([_record(user), kv], sort_keys=True, default=str).encode()).hexdigest()
+        if not force and _last_synced_hash.get(user.nostr_npub) == h:
+            continue
+        ok_rec = await sync_user(db, user, force=True)
+        ok_kv = await sync_user_kv(db, user, force=True)
+        if ok_rec or ok_kv:
+            _last_synced_hash[user.nostr_npub] = h
+            synced += 1
+    if synced:
+        logger.info("[users-store] reconciled %d account(s)+kv → relay (SQL→relay sweep)", synced)
+    return synced
+
+
+def start_users_reconcile() -> None:
+    """Spawn the periodic SQL→relay reconcile task on the running loop (idempotent). Each pass opens
+    its own DB session. No-op if already started or there's no running loop."""
+    global _reconcile_task
+    if _reconcile_task is not None:
+        return
+
+    async def _loop():
+        from app.database import SessionLocal
+        while True:
+            await asyncio.sleep(_RECONCILE_INTERVAL)
+            db = SessionLocal()
+            try:
+                await reconcile_all(db)
+            except Exception as e:
+                logger.warning("[users-store] periodic reconcile failed: %s", e)
+            finally:
+                db.close()
+
+    try:
+        _reconcile_task = asyncio.get_event_loop().create_task(_loop())
+        logger.info("[users-store] periodic SQL→relay reconcile started (every %ds)", _RECONCILE_INTERVAL)
+    except RuntimeError:
+        pass   # no running loop (non-async caller) — startup wires it from the async hydrate task

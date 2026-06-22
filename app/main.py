@@ -412,6 +412,11 @@ async def startup():
                         from app.services import users_store
                         await users_store.hydrate(_db)
                         await users_store.hydrate_user_kv(_db)   # mail/nitter/caldav kv from relay
+                        # SQL→relay catch-all: mirror every account's record + non-exempt kv up to the
+                        # relay (closes gaps from auxiliary save paths — tz/caldav/webdav/music — that
+                        # don't write-through), then keep doing it periodically.
+                        await users_store.reconcile_all(_db)
+                        users_store.start_users_reconcile()
                     except Exception as e:
                         logging.warning(f"Users hydrate from relay failed: {e}")
                     try:
