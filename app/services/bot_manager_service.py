@@ -268,6 +268,11 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
             setif("nostr_rate_global", "NOSTR_RATE_GLOBAL")
             setif("nostr_rate_window", "NOSTR_RATE_WINDOW")
             setif("nostr_rate_exempt", "NOSTR_RATE_EXEMPT")
+            # Random-reply: occasionally start a thread with a NIP-05-verified stranger on the
+            # firehose (off by default; obeys quiet hours; ≤N new threads/hour; ≤2 replies/thread).
+            setif("nostr_random_reply", "NOSTR_RANDOM_REPLY")
+            setif("nostr_random_reply_quiet", "NOSTR_RANDOM_REPLY_QUIET")
+            setif("nostr_random_reply_per_hour", "NOSTR_RANDOM_REPLY_PER_HOUR")
         elif platform == "matrix":
             setif("matrix_server", "MATRIX_SERVER")
             setif("matrix_user_id", "MATRIX_USER_ID")

@@ -198,6 +198,17 @@
                     <label for="bot_f_nostr_rate_exempt">Rate-limit exempt <span class="bots-dim">(npub/hex, comma or newline separated — never throttled, e.g. you)</span></label>
                     <textarea id="bot_f_nostr_rate_exempt" rows="2" placeholder="npub1youroperatorkey…"></textarea>
                 </div>
+                <div class="form-group">
+                    <label><input type="checkbox" id="bot_f_nostr_random_reply"> Random-reply <span class="bots-dim">(occasionally start a short, friendly reply to a NIP-05-verified stranger on the timeline; ≤2 replies/thread, obeys the quiet hours below)</span></label>
+                </div>
+                <div class="form-group">
+                    <label for="bot_f_nostr_random_reply_per_hour">Random-reply: new threads / hour <span class="bots-dim">(how many strangers it starts replying to per hour; default 3)</span></label>
+                    <input type="number" id="bot_f_nostr_random_reply_per_hour" placeholder="3">
+                </div>
+                <div class="form-group">
+                    <label for="bot_f_nostr_random_reply_quiet">Random-reply quiet hours <span class="bots-dim">(HH-HH, 24h local; e.g. 23-07; blank = any time)</span></label>
+                    <input type="text" id="bot_f_nostr_random_reply_quiet" placeholder="23-07">
+                </div>
             </div>
 
             <!-- Matrix credentials -->

@@ -100,10 +100,54 @@ def resolve_user(pubkey_hex: str) -> dict:
         "username": meta.get("name") or meta.get("display_name") or _short_npub(pubkey_hex),
         "host": None,  # Nostr has no instance host; handles are npubs/NIP-05
         "avatarUrl": meta.get("picture"),
+        "nip05": (meta.get("nip05") or "").strip(),
         "pubkey": pubkey_hex,
     }
     _meta_cache[pubkey_hex] = user
     return user
+
+
+def get_timeline(limit: int = 60, since: int | None = None) -> list:
+    """Recent kind-1 notes from the relay's firehose (WoT) timeline — for the random-reply feature.
+    One short REQ per relay; the listener gates hard before doing any per-note work."""
+    flt = {"kinds": [1], "limit": limit}
+    if since:
+        flt["since"] = int(since)
+    try:
+        evs = _run(_svc.relay.query(_RELAYS, [flt])) or []
+    except Exception as e:
+        logger.warning(f"[nostr] get_timeline failed: {e}")
+        return []
+    notes = [_shape_note(ev) for ev in evs if ev.get("kind") == 1]
+    return [n for n in notes if n]
+
+
+_nip05_cache: dict = {}
+
+
+def verify_nip05(pubkey_hex: str, nip05: str) -> bool:
+    """True if `nip05` (name@domain) actually resolves to `pubkey_hex` at the domain's
+    /.well-known/nostr.json (NIP-05). Cached; only called for a rare gated candidate, so the HTTP
+    fetch isn't a hot path. Any error → False (treat unverifiable as not-NIP-05)."""
+    nip05 = (nip05 or "").strip().lower()
+    if not nip05 or "@" not in nip05:
+        return False
+    key = (pubkey_hex, nip05)
+    if key in _nip05_cache:
+        return _nip05_cache[key]
+    ok = False
+    try:
+        local, domain = nip05.split("@", 1)
+        import httpx
+        with httpx.Client(timeout=8.0, follow_redirects=True) as c:
+            data = c.get(f"https://{domain}/.well-known/nostr.json", params={"name": local}).json()
+        ok = ((data.get("names") or {}).get(local) or "").lower() == pubkey_hex.lower()
+    except Exception:
+        ok = False
+    if len(_nip05_cache) > 5000:
+        _nip05_cache.clear()
+    _nip05_cache[key] = ok
+    return ok
 
 
 def get_brand(note: dict) -> tuple:

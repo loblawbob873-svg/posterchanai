@@ -72,9 +72,20 @@ def render(display, wrong_letters, wrong_count, title="", subtitle="") -> bytes:
     if subtitle:
         d.text((30, 52), subtitle, font=_font(19), fill=SUBTITLE)
 
-    # masked word — big, centered-ish below
+    # masked word — big, but AUTO-FIT to the available width so long words (e.g. "watermelon")
+    # aren't clipped off the right edge of the image.
+    word_x = 250
+    max_w = W - word_x - 16
     wf = _font(46)
-    d.text((300, 180), display, font=wf, fill=WORD)
+    for _sz in range(46, 15, -2):
+        wf = _font(_sz)
+        try:
+            _w = d.textlength(display, font=wf)
+        except Exception:
+            _bb = d.textbbox((0, 0), display, font=wf); _w = _bb[2] - _bb[0]
+        if _w <= max_w:
+            break
+    d.text((word_x, 180), display, font=wf, fill=WORD)
     # remaining guesses
     d.text((300, 250), f"Misses: {wrong_count}/{MAX_WRONG}", font=_font(24), fill=MISS)
     # wrong letters

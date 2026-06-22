@@ -8,6 +8,7 @@ const BOT_KNOWN_KEYS = [
     'nostr_nsec', 'nostr_relays',
     'nostr_profile_name', 'nostr_profile_nip05', 'nostr_profile_picture',
     'nostr_rate_per_user', 'nostr_rate_global', 'nostr_rate_window', 'nostr_rate_exempt',
+    'nostr_random_reply_quiet', 'nostr_random_reply_per_hour',
     'matrix_server', 'matrix_user_id', 'matrix_access_token', 'matrix_room_id', 'matrix_admins',
     'prompt',
     'sql_database', 'db_user', 'db_pass', 'db_host',
@@ -21,7 +22,7 @@ const BOT_KNOWN_KEYS = [
     'image_negative',  // image bot: negative prompt (IMAGE_POSTER_NEGATIVE)
 ];
 // Config keys backed by a checkbox.
-const BOT_KNOWN_CHECKS = ['auto_narrate', 'unfollow_silent_mode', 'stickers_enabled', 'auto_post_enabled', 'random_scenes'];
+const BOT_KNOWN_CHECKS = ['auto_narrate', 'unfollow_silent_mode', 'stickers_enabled', 'auto_post_enabled', 'random_scenes', 'nostr_random_reply'];
 // nitter_feeds is special (list of {rss} ↔ one URL per line) and handled separately.
 // feature checkbox id -> main.py mode flag
 const BOT_FEATURES = {

@@ -71,6 +71,44 @@ def _rate_exempt() -> set:
 
 _rl = SlidingWindowLimiter(_RATE_PER_USER, _RATE_GLOBAL, _RATE_WINDOW, _rate_exempt())
 
+# ---- random-reply: occasionally strike up a thread with a NIP-05-verified stranger on the firehose
+# timeline. OFF unless NOSTR_RANDOM_REPLY is enabled (per-bot, Admin → Bots). Built to be CHEAP: a
+# random gate drops almost every note BEFORE any profile fetch / NIP-05 verify / LLM call, and a
+# global "starts per hour" cap bounds LLM work to a few replies an hour no matter how busy the feed.
+_RR_ENABLED = (os.getenv("NOSTR_RANDOM_REPLY", "") or "").strip().lower() in ("1", "true", "yes", "on")
+_RR_PER_HOUR = int(os.getenv("NOSTR_RANDOM_REPLY_PER_HOUR", "3"))      # max NEW threads started / hour
+_RR_PROB = float(os.getenv("NOSTR_RANDOM_REPLY_PROB", "0.03"))         # chance per eligible note (low)
+_RR_MAX_THREAD = int(os.getenv("NOSTR_RANDOM_REPLY_MAX_THREAD", "2"))  # max bot replies per started thread
+_RR_QUIET = (os.getenv("NOSTR_RANDOM_REPLY_QUIET", "") or "").strip()  # "HH-HH" 24h local; blank = never
+_RR_WINDOW = 3600
+_rr_starts = SlidingWindowLimiter(0, _RR_PER_HOUR, _RR_WINDOW)   # global-only: N new threads/hour
+_rr_threads: dict = {}    # thread-root id -> bot reply count (random-reply-initiated threads only)
+_rr_seen: set = set()     # note ids already considered (bounded)
+_rr_cursor = [0]          # newest created_at seen, so each poll only scans new notes
+
+
+def _rr_in_quiet() -> bool:
+    """True if now is inside the NOSTR_RANDOM_REPLY_QUIET 'HH-HH' window (handles past-midnight)."""
+    if not _RR_QUIET:
+        return False
+    try:
+        a, b = (int(x) % 24 for x in _RR_QUIET.split("-", 1))
+    except (ValueError, TypeError):
+        return False
+    if a == b:
+        return False
+    h = time.localtime().tm_hour
+    return a <= h < b if a < b else (h >= a or h < b)
+
+
+def _thread_root(ev: dict) -> str:
+    """Conversation root id: the NIP-10 'root'-marked e-tag, else the parent, else the note's own id
+    (a top-level note IS its own root). Used to enforce the per-thread random-reply cap."""
+    for t in ev.get("tags", []):
+        if len(t) >= 4 and t[0] == "e" and t[3] == "root":
+            return t[1]
+    return _nk._reply_parent_id(ev) or ev.get("id", "")
+
 
 def _state_suffix() -> str:
     key = (NOSTR_NSEC or "").strip()
@@ -317,6 +355,63 @@ def _dispatch(note, prompt_text, own, thread_history):
         send_reply(note, reply_text)
 
 
+def process_random_replies():
+    """Occasionally start a friendly reply to a NIP-05-verified stranger on the firehose timeline.
+    Order is deliberately cheap→expensive: random gate → (only then) profile + NIP-05 verify → start
+    budget → LLM. Bounded by _RR_PER_HOUR new threads/hour; obeys quiet hours; each started thread is
+    capped at _RR_MAX_THREAD bot replies (enforced in process_mentions). No-op unless enabled."""
+    if not _RR_ENABLED or _rr_in_quiet():
+        return
+    own = _nk._PUBKEY
+    if not own:
+        return
+    import random as _random
+    since = (_rr_cursor[0] - 5) if _rr_cursor[0] else int(time.time()) - 600
+    notes = _nk.get_timeline(limit=80, since=since)
+    if not notes:
+        return
+    newest = _rr_cursor[0]
+    for note in notes:
+        ev = note.get("_event") or {}
+        nid = note.get("id")
+        pk = (note.get("user") or {}).get("pubkey")
+        ts = ev.get("created_at", 0)
+        if ts > newest:
+            newest = ts
+        if not nid or not pk or pk == own or nid in _rr_seen:
+            continue
+        if note.get("replyId"):
+            continue   # only START on top-level posts, never barge into an existing thread
+        _rr_seen.add(nid)
+        if _random.random() > _RR_PROB:
+            continue                       # RANDOM GATE — almost everything stops here (no work done)
+        meta = _nk.resolve_user(pk) or {}  # network (cached); only for the rare gated note
+        nip05 = meta.get("nip05") or ""
+        if not nip05 or not _nk.verify_nip05(pk, nip05):
+            continue                       # NIP-05 only
+        text = (note.get("text") or "").strip()
+        if not text or _NOSTR_TOKEN_RE.sub("", text).strip() == "":
+            continue
+        if not _rr_starts.allow("global"):
+            break                          # per-hour start budget spent → stop scanning this poll
+        try:
+            reply = generate_reply(
+                "Reply briefly, warmly and on-topic (1-2 sentences, no hashtags) to this stranger's "
+                f"post: {text[:1500]}", thread_history=None, ping=False)
+            if reply:
+                send_reply(note, reply)
+                _rr_threads[nid] = 1       # this top-level note is now a tracked thread root
+                print(f"[nostr] random-reply → {nid[:12]} (@{meta.get('username','?')} {nip05})", flush=True)
+        except Exception as e:
+            print(f"[nostr] random-reply failed for {nid[:12]}: {e}", flush=True)
+    _rr_cursor[0] = newest
+    if len(_rr_seen) > 8000:
+        _rr_seen.clear()
+    if len(_rr_threads) > 2000:
+        for k in list(_rr_threads)[:1000]:
+            _rr_threads.pop(k, None)
+
+
 def process_mentions():
     own = get_own_account()
     if not own:
@@ -377,10 +472,19 @@ def process_mentions():
         if has_own_reply(nid):
             print(f"[nostr] already replied to {nid[:12]} (per relay) — skipping", flush=True)
             continue
+        # Random-reply thread cap: if THIS conversation was started by a random reply, the bot answers
+        # at most _RR_MAX_THREAD times total (the opening + the follow-up), then bows out so it never
+        # gets stuck in an endless back-and-forth with one stranger.
+        _root = _thread_root(note.get("_event") or {})
+        if _root in _rr_threads and _rr_threads[_root] >= _RR_MAX_THREAD:
+            print(f"[nostr] random-reply thread {_root[:12]} hit {_RR_MAX_THREAD}-reply cap — bowing out", flush=True)
+            continue
         print(f"[nostr] processing {nid[:12]} from {user.get('username')}: {prompt_text[:80]}", flush=True)
         try:
             thread_history = get_thread_history(nid)
             _dispatch(note, prompt_text, own, thread_history)
+            if _root in _rr_threads:
+                _rr_threads[_root] += 1   # count the bot's follow-up toward the per-thread cap
         except Exception as e:
             print(f"[nostr] dispatch failed for {nid[:12]}: {e}", flush=True)
             import traceback

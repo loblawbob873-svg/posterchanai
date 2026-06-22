@@ -195,13 +195,17 @@ def main():
     # Nostr listener (can run alongside --blockbot, etc.)
     if args.nostr:
         def run_nostr():
-            from nostrListener import process_mentions
+            from nostrListener import process_mentions, process_random_replies
             print("Starting Nostr listener...")
             while True:
                 try:
                     process_mentions()
                 except Exception as e:
                     print(f"[ERROR] nostr process_mentions failed: {e}", flush=True)
+                try:
+                    process_random_replies()   # opt-in firehose random-reply (no-op unless enabled)
+                except Exception as e:
+                    print(f"[ERROR] nostr process_random_replies failed: {e}", flush=True)
                 # Poll cadence: relays push fast, so a short gap keeps replies snappy
                 # (each poll is one short-lived REQ per relay). Overridable via NOSTR_POLL_SECONDS.
                 import os as _os

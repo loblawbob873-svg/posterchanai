@@ -133,6 +133,7 @@
           <span class="cc-badge ${badge}">${enc(statusLine)}</span>
           <button class="chess-quit" title="${active?'Give up &amp; remove':'Remove'}">✕</button></div>
         ${banner}
+        ${g.hint?`<div class="hm-hint muted small" style="text-align:center;margin:2px 0 6px">💡 Clue: ${enc(g.hint)}</div>`:''}
         <div class="hm-game">${_gallows(g.wrong||0)}<div class="hm-word">${display||'…'}</div></div>
         ${kb}`;
       { const q=card.querySelector('.chess-quit'); if(q) q.onclick=(e)=>{ e.stopPropagation(); quitGame(g); }; }
