@@ -623,7 +623,7 @@
     // Run initial queries only once the relay socket is open (otherwise the REQs are dropped
     // and profiles/follows never resolve — names would show as raw npubs).
     const _deepLink = _entityFromPath();   // /<npub>, /<nevent>, /users/<name> → open it once the relay's up
-    Relay.onReady = ()=>{ fetchFollows(); fetchMutes(); fetchPins(); fetchBookmarks(); fetchMyProfile(); watchNotifications();
+    Relay.onReady = ()=>{ fetchFollows(); fetchMutes(); fetchPins(); fetchBookmarks(); fetchMyProfile(); watchNotifications(); watchDeletions();
       setTimeout(()=>ensureDMs(), 3000); setTimeout(loadRightbar, 1500);
       if(_entityFromPath()) routeFromPath(); };   // deep-link needs relay data (profile/thread fetch)
     connectRelays();
@@ -908,18 +908,27 @@
     if (VIEW==='home') return [{ kinds:[1,6,1068,5], authors:[...FOLLOWS], limit:80 }];
     return [{ kinds:[1,6,1068,5], limit:120 }];
   }
-  // NIP-09: a kind-5 removes the AUTHOR'S OWN events it e-tags. Drop them from the cache + the DOM.
+  // NIP-09: a kind-5 removes the AUTHOR'S OWN events it e-tags. Drop them from the cache, the feed,
+  // AND notifications (a deleted bot post/reply must stop showing as a notification too).
   function _applyDeletion(ev){
+    let removed = false;
     for(const t of (ev.tags||[])){
       if(t[0]!=='e' || !t[1]) continue;
       const tgt = Store.get(t[1]);
       if(tgt && tgt.pubkey!==ev.pubkey) continue;   // only the author can delete their own event
-      Store.removeEvent(t[1]);
-      document.querySelectorAll(`[data-id="${t[1]}"]`).forEach(n=>{
-        const card = n.closest('.note,.stream-card,.pic-card,.article-card,.community-card,.channel-card') || n;
+      Store.removeEvent(t[1]); removed = true;
+      document.querySelectorAll(`[data-id="${t[1]}"],[data-open="${t[1]}"]`).forEach(n=>{
+        const card = n.closest('.note,.notif,.stream-card,.pic-card,.article-card,.community-card,.channel-card') || n;
         card.remove();
       });
     }
+    if(removed){ try{ invalidateCounts(); }catch(_){}
+      if(VIEW==='notifications') renderNotifications(); }
+  }
+  // Always-on deletion feed: catches kind-5s regardless of the current view (the notifications/feed
+  // subs are view-scoped and don't carry deletions), so deleted posts/replies/notifications clear.
+  function watchDeletions(){
+    Relay.subscribe([{ kinds:[5], limit:500 }], { onEvent: ev => { if(Store.saveEvent(ev)) _applyDeletion(ev); } });
   }
   // pagination state for the home/global timelines (infinite scroll-back via `until`)
   let _tl = { oldest:0, loading:false, done:false, pages:0 };
