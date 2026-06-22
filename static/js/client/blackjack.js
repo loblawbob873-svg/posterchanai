@@ -20,8 +20,8 @@
     function setBetLS(b){ try{ localStorage.setItem('pc_bj_bet', String(b)); }catch(_){} }
     // graphical poker-chip bet picker: clickable chips + a live bet amount + a typed-amount input.
     function chipRowHtml(bet, max){
-      const chips = [5,25,100,500].filter(c=>c<=max).map(c=>`<button class="bj-chip v${c}" data-bet="${c}">${c}</button>`).join('')
-        + (max>5?`<button class="bj-chip vmax" data-bet="${max}">MAX</button>`:'');
+      const chips = [5,25,100,500].filter(c=>c<=max).map(c=>`<button class="bj-pchip v${c}" data-bet="${c}">${c}</button>`).join('')
+        + (max>5?`<button class="bj-pchip vmax" data-bet="${max}">MAX</button>`:'');
       return `<div class="bj-bethdr">🪙 <span class="muted small">YOUR BET</span> <b class="bj-betnum">${bet}</b></div>
         <div class="bj-chiprow">${chips}</div>
         <input class="input bj-betinp" type="number" inputmode="numeric" min="5" max="${max}" value="${bet}" style="width:6em">`;
@@ -30,7 +30,7 @@
       if(!root) return;
       const inp=root.querySelector('.bj-betinp'), disp=root.querySelector('.bj-betnum');
       const set=v=>{ v=Math.max(5, parseInt(v,10)||5); if(inp) inp.value=v; if(disp) disp.textContent=v; setBetLS(v); };
-      root.querySelectorAll('.bj-chip').forEach(b=> b.onclick=()=>set(b.dataset.bet));
+      root.querySelectorAll('.bj-pchip').forEach(b=> b.onclick=()=>set(b.dataset.bet));
       if(inp) inp.oninput=()=>{ if(disp) disp.textContent=inp.value||0; };
     }
 
