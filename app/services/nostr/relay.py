@@ -86,14 +86,18 @@ def normalize_relays(relays) -> list[str]:
 
 
 def _is_local(relay: str) -> bool:
-    """True if the relay URL points at this host — a loopback connection must NEVER be sent
-    through the outbound (Tor/SOCKS) proxy, which can't reach localhost (it rejects with 502).
-    Lets bots point their relay list at ws://127.0.0.1:3052 (the relay binds IPv4-only, so 127.0.0.1 not localhost)."""
+    """True if the relay URL points at this host or the LAN — these must NEVER be sent through the
+    outbound (Tor/SOCKS) proxy, which can't reach loopback OR a private LAN address and rejects with
+    502. Covers loopback, RFC-1918 private ranges, and *.lan, so pointing a node's upstream at another
+    box on the LAN (e.g. ws://192.168.0.102:3052) connects DIRECTLY instead of failing through Tor."""
     try:
-        host = urlparse(relay).hostname or ""
+        host = (urlparse(relay).hostname or "").lower()
     except Exception:
         return False
-    return host in ("localhost", "127.0.0.1", "::1", "0.0.0.0")
+    if host in ("localhost", "127.0.0.1", "::1", "0.0.0.0") or host.endswith(".lan"):
+        return True
+    import re as _re
+    return bool(_re.match(r"^(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)", host))
 
 
 def _conn_kw(relay: str, direct: bool) -> dict:
