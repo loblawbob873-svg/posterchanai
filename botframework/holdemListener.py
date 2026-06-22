@@ -325,9 +325,7 @@ def _start_game(note, own_pk):
     seats = list(dict.fromkeys([sender] + opponents))
     seats = [s for s in seats if s != own_pk][:_MAX_SEATS]
     if len(seats) < 2:
-        _reply_text(note, "🃏 Hold'em needs at least 2 players — mention me with `holdem @friend` (and "
-                          "more) to seat a table.")
-        return
+        seats.append(own_pk)   # SOLO → the bot takes a seat and plays (heads-up vs the dealer)
     state, _ = _G.start_hand(seats, button=0)
     state["bot"] = own_pk
     state["names"] = {pk: _name(pk) for pk in seats}
@@ -341,8 +339,30 @@ def _start_game(note, own_pk):
             f"{state['names'][state['to_act']]} is first to act.")
     _do_publish(gameid, gameid, seats, body, _board_png(state))
     for pk in seats:
-        _set_player_game(pk, gameid)
-    _dm_to_act(state, gameid, state["to_act"])
+        if pk != own_pk:
+            _set_player_game(pk, gameid)
+    _run_bot_turns(state, gameid, gameid)   # if the bot is first to act it plays; else DM the human
+
+
+def _run_bot_turns(state, gameid, parent_id):
+    """Drive any bot-occupied seat: while it's the bot's turn, decide + act (looping across players),
+    then DM whichever human is up next. Resolves the hand (and persistent re-deal) if the bot's action
+    ends it. A safety cap prevents any pathological loop."""
+    bot = state.get("bot")
+    guard = 0
+    while (state.get("status") == "betting" and state.get("to_act") == bot
+           and bot in state.get("seats", []) and guard < 200):
+        guard += 1
+        action, amount = _G.bot_decide(state, bot)
+        _, events = _G.act(state, bot, action, amount)
+        _save_game(gameid, state)
+        print(f"[holdem] bot {action}{(' ' + str(amount)) if amount else ''}", flush=True)
+        if "showdown" in events:
+            _post_result(state, gameid, parent_id, showdown=True); return
+        if "folded_win" in events:
+            _post_result(state, gameid, parent_id, showdown=False); return
+    if state.get("status") == "betting" and state.get("to_act") and state.get("to_act") != bot:
+        _dm_to_act(state, gameid, state["to_act"])
 
 
 def _apply_action(sender, gameid, state, text, reply, parent_id):
@@ -355,8 +375,8 @@ def _apply_action(sender, gameid, state, text, reply, parent_id):
         reply("👋 You've left the table. The hand continues with the rest.")
         if "folded_win" in events or state.get("status") == "done":
             _post_result(state, gameid, parent_id, showdown=False)
-        elif state.get("to_act"):
-            _dm_to_act(state, gameid, state["to_act"])
+        else:
+            _run_bot_turns(state, gameid, parent_id)
         return
     if state.get("status") != "betting":
         reply("🏁 This hand is over — the next one is being dealt.")
@@ -380,8 +400,7 @@ def _apply_action(sender, gameid, state, text, reply, parent_id):
     if "folded_win" in events:
         _post_result(state, gameid, parent_id, showdown=False)
         return
-    if state.get("to_act"):
-        _dm_to_act(state, gameid, state["to_act"])
+    _run_bot_turns(state, gameid, parent_id)   # bot plays if it's now its turn, else DMs the human
 
 
 def _post_result(state, gameid, parent_id, showdown):
@@ -408,8 +427,9 @@ def _post_result(state, gameid, parent_id, showdown):
         return
     _save_game(gameid, nxt)
     for pk in nxt["seats"]:
-        _set_player_game(pk, gameid)
-    _dm_to_act(nxt, gameid, nxt["to_act"])
+        if pk != nxt.get("bot"):
+            _set_player_game(pk, gameid)
+    _run_bot_turns(nxt, gameid, parent_id)   # bot plays the new hand if it's first to act, else DM
 
 
 def _handle_move(note, gameid, state):

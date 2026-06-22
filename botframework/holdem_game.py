@@ -48,6 +48,45 @@ def start_hand(seats, button=0, stacks=None, sb=SMALL_BLIND, bb=BIG_BLIND):
     return st, events
 
 
+def bot_decide(state, bot_pk):
+    """Heuristic decision for a bot-occupied seat → (action, amount). Pure (uses the engine + RNG for
+    unpredictability). Tight-ish: raises strong hands, calls reasonable prices with medium, folds junk
+    to a bet, occasionally bluffs. Good enough for a fun heads-up/short-handed opponent — not a solver."""
+    import secrets
+    from holdem_engine import evaluate7, HIGH, PAIR, TRIPS
+    hole = state["hole"][bot_pk]
+    board = state.get("board", [])
+    to_call = max(0, state["to_call"] - state["street_bet"][bot_pk])
+    stack = state["stacks"][bot_pk]
+    pot = max(1, sum(state["contrib"].values()))
+    bb = state.get("bb", BIG_BLIND)
+    if board:
+        cat = evaluate7(hole + board)[0]
+    else:                                         # preflop: score the two hole cards
+        a, b = sorted((hole[0] % 13, hole[1] % 13), reverse=True)
+        suited = (hole[0] // 13) == (hole[1] // 13)
+        if a == b and a >= 8:        cat = TRIPS          # big pair → strong
+        elif a == b or a >= 10:      cat = PAIR           # any pair / two big cards → medium
+        elif suited and a - b <= 2 and a >= 7: cat = PAIR # suited connectors → medium
+        else:                        cat = HIGH           # junk
+    r = secrets.randbelow(100)
+    raise_to = state["to_call"] + max(state.get("min_raise", bb), pot // 2)
+    if to_call > 0:                               # facing a bet
+        if cat >= TRIPS:
+            return ("raise", raise_to) if (stack > to_call + 2 * bb and r < 65) else ("call", None)
+        if cat >= PAIR:
+            return ("call", None) if to_call <= max(bb * 3, pot // 2) else ("fold", None)
+        return ("call", None) if (to_call <= bb and r < 22) else ("fold", None)   # junk → mostly fold
+    # nothing to call → check or bet
+    if cat >= TRIPS and r < 75:
+        return ("raise", state["to_call"] + max(bb, pot // 2))
+    if cat >= PAIR and r < 28:
+        return ("raise", state["to_call"] + bb)
+    if r < 10 and stack > bb * 2:                 # occasional bluff
+        return ("raise", state["to_call"] + bb)
+    return ("check", None)
+
+
 def next_hand(state):
     """Persistent table: deal the NEXT hand. Rotate the button to the next seated player, carry over
     chip stacks, and drop anyone who left or busted (0 chips). Returns (state, events), or (None, [])
