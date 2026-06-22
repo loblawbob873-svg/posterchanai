@@ -307,17 +307,21 @@ def play_holdem_table(bot_hex):
     fold = _ev.build_event(sks[actor], 1, "fold", tags=[["e", gameid, "", "root"], ["p", bot_hex]])
     run(R.publish(RELAYS, fold))
     print(f"  {'A' if actor == A['pk'] else 'B'} folds")
-    st2, t2 = None, time.time() + 60
+    # wait specifically for the RE-DEALT hand (hand_no>1, betting). Don't break on the transient
+    # done-doc: there the pot is already in stacks but contrib still records it, so stacks+contrib
+    # double-counts the blinds (the old "2015" false alarm). A fresh hand has stacks+contrib==2000.
+    st2, t2 = None, time.time() + 75
     while time.time() < t2:
         time.sleep(3); st2 = load_state(bot_hex, dtag)
-        if st2 and (st2.get("hand_no", 1) > 1 or st2.get("status") == "done"):
+        if st2 and st2.get("hand_no", 1) > 1 and st2.get("status") == "betting":
             break
     redealt = bool(st2) and st2.get("hand_no", 1) > 1 and st2.get("status") == "betting"
+    fresh_board = redealt and not (st2.get("board") or [])    # a re-dealt hand must start pre-flop
     chips = (sum((st2 or {}).get("stacks", {}).values()) + sum((st2 or {}).get("contrib", {}).values())) if st2 else 0
-    ok = secure and redealt and chips == 2000
+    ok = secure and redealt and fresh_board and chips == 2000
     print(f"  after fold: hand_no={st2.get('hand_no') if st2 else '?'} status={st2.get('status') if st2 else '?'} "
-          f"chips={chips} (expect 2000)")
-    print("  " + ("OK ✅ deal+bet+persistent re-deal works, hole cards/deck stay encrypted" if ok else "CHECK ⚠️"))
+          f"board={len((st2 or {}).get('board') or [])} chips={chips} (expect 2000)")
+    print("  " + ("OK ✅ deal+bet+persistent re-deal works (fresh pre-flop board), cards stay encrypted" if ok else "CHECK ⚠️"))
     cleanup(A["pk"]); cleanup(B["pk"])
     return ok
 

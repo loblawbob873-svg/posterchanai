@@ -46,8 +46,13 @@ def _rrect(d, box, r, **kw):
         d.rectangle(box, **kw)
 
 
-def _card(d, x, y, card, w, h, face_down=False):
+def _card(d, x, y, card, w, h, face_down=False, empty=False):
     box = [x, y, x + w, y + h]
+    if empty:
+        # an undealt community slot — a quiet outlined placeholder, NOT a "?" (which reads as a
+        # hidden card). Keeps the board legible at pre-flop/flop/turn.
+        _rrect(d, box, 9, outline=(70, 64, 92, 255), width=2)
+        return
     if card is None or face_down:
         _rrect(d, box, 9, fill=BACK, outline=MAGENTA, width=3)
         d.text((x + w / 2, y + h / 2), "?", font=_font(int(h * 0.42)), fill=MAGENTA, anchor="mm")
@@ -90,7 +95,7 @@ def render_table(state, reveal=False):
     bx = (W - total) // 2
     for i in range(5):
         card = board[i] if i < len(board) else None
-        _card(d, bx + i * (cw + gap), 92, card, cw, ch, face_down=(card is None))
+        _card(d, bx + i * (cw + gap), 92, card, cw, ch, empty=(card is None))
     d.text((W / 2, 200), f"POT  {pot}", font=_font(26), fill=GOLD, anchor="mm")
     if state.get("status") == "done" and state.get("result"):
         d.text((W / 2, 232), state["result"][:70], font=_font(17), fill=MAGENTA, anchor="mm")
@@ -149,7 +154,7 @@ def render_seat(state, pk):
     bbx = (W - btot) // 2
     for i in range(5):
         card = board[i] if i < len(board) else None
-        _card(d, bbx + i * (bcw + bgap), 262, card, bcw, bch, face_down=(card is None))
+        _card(d, bbx + i * (bcw + bgap), 262, card, bcw, bch, empty=(card is None))
     pot = sum(state.get("contrib", {}).values())
     call = max(0, state.get("to_call", 0) - state.get("street_bet", {}).get(pk, 0))
     d.text((W / 2, H - 12), f"POT {pot}   ·   TO CALL {call}   ·   STACK {state.get('stacks', {}).get(pk, 0)}",
