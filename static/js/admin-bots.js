@@ -116,6 +116,26 @@ async function deleteBot(id) {
     }
 }
 
+// Delete ALL of this bot's posts (NIP-09 kind-5 deletions, signed by the bot — propagates to relays/clients).
+async function deleteBotPosts() {
+    const id = _val('bot_f_id');
+    if (!id) { alert('Save the bot first.'); return; }
+    const b = _bots[id];
+    if (!confirm(`Delete ALL posts for "${b ? b.name : id}"? This publishes NIP-09 deletions for every one of its notes. Its profile and game state are kept. This cannot be undone.`)) return;
+    const btn = _g('bot_f_delposts');
+    if (btn) { btn.disabled = true; btn.textContent = '🗑 Deleting…'; }
+    try {
+        const resp = await fetch(`/api/admin/bots/${id}/delete-posts`, { method: 'POST' });
+        const d = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(d.detail || resp.statusText);
+        if (btn) btn.textContent = `🗑 Deleted ${d.deleted}`;
+        setTimeout(() => { if (btn) { btn.disabled = false; btn.textContent = '🗑 Delete all posts'; } }, 2500);
+    } catch (err) {
+        alert('Delete posts failed: ' + err.message);
+        if (btn) { btn.disabled = false; btn.textContent = '🗑 Delete all posts'; }
+    }
+}
+
 // Show/hide field groups based on type + platform.
 function onBotFormChange() {
     const type = _val('bot_f_type');

@@ -482,6 +482,46 @@ def stop_bot(bot_id: int, db: Session = Depends(get_db),
     return {"status": "stopped", "name": bot.name}
 
 
+@router.post("/{bot_id}/delete-posts")
+async def delete_bot_posts(bot_id: int, db: Session = Depends(get_db),
+                           admin: User = Depends(get_admin_user)):
+    """Delete ALL of a nostr bot's kind-1 posts via NIP-09 (signed kind-5 deletions). Unlike a raw
+    DB wipe, this propagates: the relay drops them AND broadcasts the deletion upstream, and clients
+    honour it. Profile (kind-0) and game state (kind-30078) are left alone."""
+    from app.services import settings_store
+    from app.services.nostr import event as _nevent
+    bot = db.query(Bot).filter(Bot.id == bot_id).first()
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+    if (bot.platform or "") != "nostr":
+        raise HTTPException(status_code=400, detail="Only nostr bots have posts to delete")
+    try:
+        cfg = json.loads(bot.config or "{}")
+    except (ValueError, TypeError):
+        cfg = {}
+    nsec = cfg.get("nostr_nsec")
+    if not nsec:
+        raise HTTPException(status_code=400, detail="Bot has no nostr key")
+    sk = nostr_service.decode_seckey(nsec)
+    pub = nostr_service.derive_pubkey(sk)
+    port = int(settings_store.get("nostr_relay_port", "3052") or "3052")
+    local = [f"ws://127.0.0.1:{port}"]
+    try:
+        evs = await nostr_service.relay.query(local, [{"authors": [pub], "kinds": [1], "limit": 5000}]) or []
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"relay query failed: {e}")
+    ids = [e.get("id") for e in evs if e.get("id")]
+    # NIP-09: e-tag the ids to delete, batched so a single kind-5 isn't enormous.
+    for i in range(0, len(ids), 400):
+        chunk = ids[i:i + 400]
+        ev = _nevent.build_event(sk, 5, "bulk delete (admin)", tags=[["e", _id] for _id in chunk])
+        try:
+            await nostr_service.relay.publish(local, ev)
+        except Exception as e:
+            logger.warning("[bots] delete-posts publish failed: %s", e)
+    return {"status": "ok", "deleted": len(ids), "bot": bot.name}
+
+
 @router.post("/{bot_id}/restart")
 def restart_bot(bot_id: int, db: Session = Depends(get_db),
                 admin: User = Depends(get_admin_user)):
