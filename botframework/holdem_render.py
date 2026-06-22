@@ -118,9 +118,17 @@ def render_table(state, reveal=False):
         border = GOLD if won else (CYAN if is_turn else (DIM if pk in folded else MAGENTA))
         _rrect(d, [x, y, x + bw, y + 74], 12, fill=(20, 8, 38, 255), outline=border, width=3)
         nm = names.get(pk, "@?")[:16]
-        tag = " 🔘" if seats.index(pk) == state.get("button", -1) else ""
-        d.text((x + 12, y + 8), nm + tag, font=_font(18),
+        d.text((x + 12, y + 8), nm, font=_font(18),
                fill=(DIM if pk in folded else WHITE), anchor="la")
+        # dealer button: a small gold "D" disc (the 🔘 emoji isn't in the bundled fonts → tofu box)
+        if seats.index(pk) == state.get("button", -1):
+            try:
+                nmw = d.textlength(nm, font=_font(18))
+            except Exception:
+                nmw = len(nm) * 10
+            cx, cy = x + 12 + nmw + 16, y + 16
+            d.ellipse([cx - 11, cy - 11, cx + 11, cy + 11], fill=GOLD, outline=WHITE, width=2)
+            d.text((cx, cy), "D", font=_font(15), fill=(20, 8, 38, 255), anchor="mm")
         status = ("FOLDED" if pk in folded else ("ALL-IN" if pk in allin else
                   (f"bet {state.get('street_bet', {}).get(pk, 0)}" if state.get('street_bet', {}).get(pk) else "")))
         d.text((x + 12, y + 38), f"stack {state.get('stacks', {}).get(pk, 0)}   {status}",

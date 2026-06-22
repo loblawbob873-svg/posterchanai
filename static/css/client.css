@@ -988,7 +988,10 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .pk-seat.me{border-color:var(--cyan)}
 .pk-seat.turn{border-color:#ffd25a;box-shadow:0 0 12px rgba(255,210,90,.45)}
 .pk-seat.out{opacity:.45}
-.pk-nm{font-weight:700;color:#eaf0ff}
+.pk-who{display:flex;align-items:center;gap:9px;min-width:0}
+.pk-av{width:34px;height:34px;border-radius:50%;object-fit:cover;flex:none;border:2px solid rgba(0,240,255,.4);background:#0d0a1a}
+.pk-seat.me .pk-av{border-color:var(--cyan)}
+.pk-nm{font-weight:700;color:#eaf0ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pk-stk{color:#b9a9d6;font-size:13px;display:flex;align-items:center;gap:6px}
 .pk-hole{display:inline-flex;gap:3px}
 .pk-myhand{display:flex;align-items:center;gap:10px;justify-content:center;margin:11px 0;padding:9px;border-radius:13px;background:#120622;border:1px solid rgba(0,240,255,.3)}

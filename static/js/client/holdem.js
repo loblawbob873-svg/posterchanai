@@ -134,8 +134,9 @@
         const mine=pk===me, isTurn=!over&&g.to_act===pk, won=winners[pk]||0;
         const status = folded.has(pk)?'folded':(allin.has(pk)?'ALL-IN':(sbet[pk]?('bet '+sbet[pk]):''));
         const btn = seats.indexOf(pk)===g.button?' 🔘':'';
+        const av=(profOf(pk)||{}).picture||LOGO;
         return `<div class="pk-seat${mine?' me':''}${isTurn?' turn':''}${folded.has(pk)?' out':''}">
-          <span class="pk-nm">${mine?'You':enc(nameOf(pk, names[pk]))}${btn}</span>
+          <span class="pk-who"><img class="pk-av" src="${enc(av)}" onerror="this.onerror=null;this.src='${LOGO}'"><span class="pk-nm">${mine?'You':enc(nameOf(pk, names[pk]))}${btn}</span></span>
           <span class="pk-stk">${stacks[pk]||0}${won?` <b style="color:#ffd25a">+${won}</b>`:''} <span class="muted small">${enc(status)}</span></span>
           ${over&&!folded.has(pk)&&Array.isArray((g.hole||{})[pk])?`<span class="pk-hole">${g.hole[pk].map(c=>cardHtml(c)).join('')}</span>`:''}
         </div>`;
