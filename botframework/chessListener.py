@@ -175,7 +175,8 @@ def _publish(gameid, parent_id, white, black, body, png):
     url = info.get("url")
     if not url:
         raise RuntimeError("board image upload failed")
-    content = f"{body}\n{url}\n\n#chesstr"
+    # The invite + #chesstr go in the post TEXT (below the image), not on the board image itself.
+    content = f"{body}\n{url}\n\n{_footer()}"
     tags = [["e", gameid, "", "root"]]
     if parent_id and parent_id != gameid:
         tags.append(["e", parent_id, "", "reply"])

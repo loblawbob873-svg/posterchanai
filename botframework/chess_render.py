@@ -156,7 +156,7 @@ def render_board(fen: str, last_move=None, number_color=None,
     board = chess.Board(fen)
     x0, y0 = MARGIN, TOPBAR
     W = MARGIN + 8 * CELL + MARGIN
-    H = TOPBAR + 8 * CELL + MARGIN + FOOTER
+    H = TOPBAR + 8 * CELL + MARGIN
 
     img = Image.new("RGBA", (W, H), BG)
     base = ImageDraw.Draw(img)
@@ -227,12 +227,8 @@ def render_board(fen: str, last_move=None, number_color=None,
         td.text((MARGIN, 16), title, font=_font(30), fill=TITLE)
     if subtitle:
         td.text((MARGIN, 46), subtitle, font=_font(20), fill=SUBTITLE)
-    # footer (under the board): play-interactively invite + #chesstr, centered
-    if footer:
-        ff = _font(19)
-        fb = td.textbbox((0, 0), footer, font=ff)
-        fy = TOPBAR + 8 * CELL + MARGIN - 2
-        td.text(((W - (fb[2] - fb[0])) / 2, fy), footer, font=ff, fill=TITLE)
+    # NOTE: no footer drawn on the image — the "play interactively …" invite + #chesstr go in the
+    # POST TEXT (below the image), not burned into the board. `footer` is accepted but ignored.
 
     out = io.BytesIO()
     img.convert("RGB").save(out, format="PNG")
