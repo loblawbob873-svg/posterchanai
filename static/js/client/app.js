@@ -57,7 +57,12 @@
     const now = Math.floor(Date.now()/1000);
     const randPast = () => now - Math.floor(Math.random()*2*86400);   // NIP-59 timing privacy
     async function wrapFor(recipient){
-      const rumor = { pubkey: myPk, created_at: now, kind: 14, tags: [['p', recipient]], content: text };
+      // The rumor (the real message) ALWAYS addresses the conversation `peer`, even for the
+      // self-copy (recipient = myPk) — `recipient` only picks who can DECRYPT this wrap. p-tagging
+      // `recipient` here mis-filed our own outgoing DM under our self-thread (so it never showed in
+      // the peer's thread), while the peer still got `toPeer` and could reply. Mirrors the worker
+      // (signer-worker.js nip17wrap), which wraps ONE peer-addressed rumor for both copies.
+      const rumor = { pubkey: myPk, created_at: now, kind: 14, tags: [['p', peer]], content: text };
       rumor.id = await _eventId(rumor);                          // unsigned rumor — id only, no sig
       const sealContent = await nip44enc(recipient, JSON.stringify(rumor));
       const seal = await signEvent({ kind: 13, created_at: randPast(), tags: [], content: sealContent });

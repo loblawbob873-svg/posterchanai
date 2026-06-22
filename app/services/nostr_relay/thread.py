@@ -372,6 +372,7 @@ async def _main(cfg: dict) -> None:
         cfg["pg_dsn"],
         max_events=cfg["max_events"], retention_days=cfg["retention_days"])
     loop = asyncio.get_running_loop()
+    loop.set_exception_handler(_relay_loop_exception_handler)
     store.open(loop)
     gate = WotGate()
     gate.set_operator(cfg["operator"])
@@ -829,9 +830,36 @@ async def _periodic(stop: asyncio.Event, interval: int, action, name: str) -> No
             logger.warning("[nostr-relay] %s loop error: %s", name, e)
 
 
+_SUPPRESSED_PROXY_NOISE = 0
+
+
+def _relay_loop_exception_handler(loop, context):
+    """Swallow a known-cosmetic websockets-16 proxy-tunnel race, defer everything else.
+
+    When federation is routed through the outbound HTTP proxy (→ Tor) and a CONNECT-tunnelled
+    upstream resets right after the proxy's "200 Connection Established", websockets' asyncio client
+    calls set_result()/set_exception() on an already-resolved future → asyncio.InvalidStateError,
+    surfaced by the loop as a noisy "Fatal error: protocol.data_received() call failed" traceback
+    per flaky proxied relay. The connect was failing anyway (it falls back to direct / retries), so
+    the relay is unaffected — only the log is. Suppress exactly that signature; anything else goes
+    to the default handler so real bugs still surface."""
+    global _SUPPRESSED_PROXY_NOISE
+    exc = context.get("exception")
+    if isinstance(exc, asyncio.InvalidStateError):
+        blob = " ".join(str(context.get(k, "")) for k in ("protocol", "transport", "handle", "message"))
+        if "HTTPProxyConnection" in blob or "websockets" in blob or "_call_connection_lost" in blob:
+            _SUPPRESSED_PROXY_NOISE += 1
+            if _SUPPRESSED_PROXY_NOISE % 500 == 1:
+                logger.info("[nostr-relay] suppressed %d websockets proxy-tunnel race error(s) "
+                            "(cosmetic; federation unaffected)", _SUPPRESSED_PROXY_NOISE)
+            return
+    loop.default_exception_handler(context)
+
+
 def _run(cfg: dict) -> None:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    loop.set_exception_handler(_relay_loop_exception_handler)
     _relay.loop = loop
     try:
         loop.run_until_complete(_main(cfg))
