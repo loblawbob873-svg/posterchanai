@@ -253,6 +253,7 @@
                     <label title="#hangman — the bot picks a secret word (stored encrypted); the guesser replies with letters; cyberpunk gallows board. Start with 'hangman' (you guess) or 'hangman @opponent'."><input type="checkbox" id="bot_ft_hangman" onchange="onBotFormChange()"> Hangman referee (#hangman)</label>
                     <label title="#connect4 — referee Connect Four: 'connect4 @opponent' (or play the bot); drop a disc by replying with a column 1-7; cyberpunk board; calls 4-in-a-row."><input type="checkbox" id="bot_ft_connect4" onchange="onBotFormChange()"> Connect Four referee (#connect4)</label>
                     <label title="#blackjack — deal Blackjack (21) vs the bot dealer. Player posts 'blackjack' (or 'start') tagging the bot; the bot DMs the hand; reply 'hit' or 'stand'. Dealer stands on 17. Single-player (you vs the house) — no AI search, perf-trivial."><input type="checkbox" id="bot_ft_blackjack" onchange="onBotFormChange()"> Blackjack dealer (#blackjack)</label>
+                    <label title="#holdem — deal multiplayer Texas Hold'em. Players post 'holdem @friend …' tagging the bot; the bot DMs hole cards (NIP-44 encrypted), runs the betting (blinds, flop/turn/river, side pots) and posts each result. Act via DM or the Hold'em tab: check/call/raise/fold/allin/leave. Persistent table; no AI search — perf-trivial."><input type="checkbox" id="bot_ft_holdem" onchange="onBotFormChange()"> Texas Hold'em dealer (#holdem)</label>
                 </div>
             </div>
 

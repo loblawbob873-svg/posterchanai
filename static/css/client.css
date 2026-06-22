@@ -966,6 +966,30 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .bj-card{display:inline-flex;align-items:center;justify-content:center;min-width:46px;height:64px;padding:0 9px;border-radius:9px;background:#160a28;border:2px solid var(--cyan);color:#eaf0ff;font-weight:800;font-size:21px}
 .bj-card.red{color:#ff8aa8;border-color:#ff5a8a}
 .bj-card.back{background:#28124a;border-color:var(--magenta);color:var(--magenta)}
+
+/* ── Texas Hold'em (mobile-first cyberpunk felt) ─────────────────────── */
+.pk-card{display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:46px;padding:0 6px;border-radius:7px;background:#160a28;border:2px solid var(--cyan);color:#eaf0ff;font-weight:800;font-size:16px;margin:1px;box-shadow:0 0 6px rgba(0,240,255,.25)}
+.pk-card.red{color:#ff8aa8;border-color:#ff5a8a;box-shadow:0 0 6px rgba(255,90,138,.3)}
+.pk-card.back{background:#28124a;border-color:var(--magenta);color:var(--magenta);box-shadow:none}
+.pk-card.big{min-width:54px;height:76px;font-size:27px;border-radius:10px}
+.pk-felt{margin:8px 0;padding:14px 10px;border-radius:20px;background:radial-gradient(ellipse at center,#0e2a24,#081513);border:2px solid rgba(0,240,255,.35);text-align:center;box-shadow:inset 0 0 30px rgba(0,240,255,.08)}
+.pk-pot{color:#ffd25a;font-weight:800;letter-spacing:.5px;margin-bottom:9px;font-size:14px;text-shadow:0 0 8px rgba(255,210,90,.4)}
+.pk-board{display:flex;justify-content:center;gap:5px;flex-wrap:wrap}
+.pk-seats{display:flex;flex-direction:column;gap:6px;margin:8px 0}
+.pk-seat{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 11px;border-radius:11px;background:#150826;border:2px solid rgba(255,60,210,.38)}
+.pk-seat.me{border-color:var(--cyan)}
+.pk-seat.turn{border-color:#ffd25a;box-shadow:0 0 12px rgba(255,210,90,.45)}
+.pk-seat.out{opacity:.45}
+.pk-nm{font-weight:700;color:#eaf0ff}
+.pk-stk{color:#b9a9d6;font-size:13px;display:flex;align-items:center;gap:6px}
+.pk-hole{display:inline-flex;gap:3px}
+.pk-myhand{display:flex;align-items:center;gap:10px;justify-content:center;margin:11px 0;padding:9px;border-radius:13px;background:#120622;border:1px solid rgba(0,240,255,.3)}
+.pk-controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:11px}
+.pk-controls .btn{flex:1 1 auto;min-width:72px}
+.pk-raise{display:inline-flex;gap:6px;align-items:center;flex:2 1 9em}
+.pk-amt{padding:7px 9px;flex:1 1 auto}
+.btn-magenta{background:linear-gradient(135deg,#ff3cd2,#a01e8c);color:#fff;border:none}
+@media(max-width:520px){.pk-card.big{min-width:48px;height:68px;font-size:24px}.pk-controls .btn{min-width:62px;font-size:13px;padding:8px 6px}}
 .bj-controls{display:flex;gap:10px;margin-top:12px}
 .bj-seatchips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
 .bj-chip{display:inline-flex;align-items:center;gap:4px;background:rgba(60,230,255,.12);border:1px solid var(--cyan);border-radius:14px;padding:3px 6px 3px 10px;font-size:13px}

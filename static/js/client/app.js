@@ -85,6 +85,7 @@
         s.nip17wrap = (peer, text) => _nip17wrapVia(pubkey, (r,pt)=>window.nostr.nip44.encrypt(r,pt),
                                                     (tpl)=>window.nostr.signEvent(tpl), peer, text);
         s.nip17unwrap = (wrap) => _nip17unwrapVia((p,ct)=>window.nostr.nip44.decrypt(p,ct), wrap);
+        s.nip44dec = (peer, ct) => window.nostr.nip44.decrypt(peer, ct);
       }
       return s;
     }
@@ -97,6 +98,7 @@
         nip17wrap: (peer, text) => _nip17wrapVia(pubkey, (r,pt)=>Nip46.nip44enc(r,pt),
                                                  (tpl)=>Nip46.signEvent(tpl), peer, text),
         nip17unwrap: (wrap) => _nip17unwrapVia((p,ct)=>Nip46.nip44dec(p,ct), wrap),
+        nip44dec: (peer, ct) => Nip46.nip44dec(peer, ct),
       };
     }
     return {  // local key — crypto in the worker
@@ -104,6 +106,7 @@
       signEvent: (tpl) => Relay.worker.call('sign', { event: tpl }),
       nip04enc: (peer, txt) => Relay.worker.call('nip04enc', { peer, text: txt }).then(r=>r.ct),
       nip04dec: (peer, ct) => Relay.worker.call('nip04dec', { peer, ct }).then(r=>r.pt),
+      nip44dec: (peer, ct) => Relay.worker.call('nip44dec', { peer, ct }).then(r=>r.pt),
       // NIP-17 gift-wrapped DMs (local-key only — needs the secret key the extension never exposes)
       nip17wrap: (peer, text) => Relay.worker.call('nip17wrap', { peer, text }),
       nip17unwrap: (wrap) => Relay.worker.call('nip17unwrap', { wrap }).then(r=>r.rumor),
@@ -870,7 +873,7 @@
     VIEW = v;
     if(v==='notifications') _notifShown = 25;   // fresh entry → collapse pagination back to one page
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
-    $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', streams:'Streams', communities:'Communities', pics:'Pics', chat:'Chat', '4chan':'4chan', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', streams:'Streams', communities:'Communities', pics:'Pics', chat:'Chat', '4chan':'4chan', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', admin:'Admin' }[v]||v;
     renderView(true);
   }
   function renderView(reset){
@@ -2321,7 +2324,7 @@
   function moreMenu(){
     const dn=Drafts.live().length;   // per-item counts so the ☰ badge is explained once opened
     const counts={drafts:dn};
-    const items=[['ai','🤖','PosterChan AI'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['articles','📰','Articles'],['streams','📺','Streams'],['communities','☷','Communities'],['pics','📸','Pics'],['chat','✺','Chat'],['4chan','🍀','4chan'],['chess','♟️','Chess'],['ttt','⭕','Tic-Tac-Toe'],['hangman','🎯','Hangman'],['connect4','🔴','Connect Four'],['blackjack','🃏','Blackjack'],['blossom','🌸','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['logout','⎋','Logout']]
+    const items=[['ai','🤖','PosterChan AI'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['articles','📰','Articles'],['streams','📺','Streams'],['communities','☷','Communities'],['pics','📸','Pics'],['chat','✺','Chat'],['4chan','🍀','4chan'],['chess','♟️','Chess'],['ttt','⭕','Tic-Tac-Toe'],['hangman','🎯','Hangman'],['connect4','🔴','Connect Four'],['blackjack','🃏','Blackjack'],['holdem','🃏',"Texas Hold'em"],['blossom','🌸','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['logout','⎋','Logout']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='ai'));   // hide AI in Nostr-only deployments
     modal(`<h3>More</h3><div class="more-grid">${items.map(([v,ic,lbl])=>{const c=counts[v]||0;return `<button class="more-item${v==='logout'?' more-logout':''}" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}${c?` <i class="badge">${c>99?'99+':c}</i>`:''}</span></button>`;}).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); if(b.dataset.v==='logout') logout(); else if(b.dataset.v==='profile') renderProfileView(ME.pubkey); else switchView(b.dataset.v); });
@@ -4904,6 +4907,9 @@
   window.__PC = {
     $, $$, enc, publish, sendDm, safePk, nip05Resolve, profOf, needProfile, niceNip05, LOGO, toast,
     ensureProfile: _ensureProfile, NT,
+    // NIP-44 decrypt with the current signer (any login type) — games use it to read their own
+    // encrypted hole cards from a public game-state doc.
+    nip44dec: (peer, ct) => (signer && signer.nip44dec) ? signer.nip44dec(peer, ct) : Promise.reject(new Error('no nip44')),
     get ME(){ return ME; }, get CFG(){ return CFG; }, get VIEW(){ return VIEW; },
   };
 
