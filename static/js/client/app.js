@@ -3040,7 +3040,7 @@
     try{ _navUrl('/'+NT().nip19.npubEncode(pk)); }catch(_){}   // shareable URL: poster.place/<npub>
     if(VIEW!=='profile'){ VIEW='profile'; $$('.nav-item[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view==='profile')); $('#view-title').textContent='Profile'; }
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
-    if(!Store.haveProfile(pk)){ const e=await Relay.query([{authors:[pk],kinds:[0],limit:1}]); for(const x of e)Store.saveProfile(x); }
+    { const e=await Relay.query([{authors:[pk],kinds:[0],limit:1}]); for(const x of e)Store.saveProfile(x); }   // always refetch newest kind-0 so a renamed / re-avatar'd profile updates live (not just first view)
     const p=Store.profile(pk)||{}; const mine=pk===ME.pubkey;
     // Only the author's recent notes block the first paint. following/followers/pinned are loaded
     // in the BACKGROUND below — the followers query alone can pull up to 1000 kind-3 events, which
