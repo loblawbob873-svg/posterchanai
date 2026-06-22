@@ -377,6 +377,9 @@ def _bot_move(cells, mark):
 
 def _apply_bot(state):
     last = None
+    # Self-game guard (p1 == p2): never auto-play both sides — that pegs a core (see chess).
+    if state.get("p1") == state.get("p2"):
+        return None
     while state.get("status") == "active":
         stm = _side_to_move(state["cells"])
         side_pk = state["p1"] if stm == "1" else state["p2"]
@@ -493,6 +496,9 @@ def _start_game(note, own_pk):
         p1, p2 = opponents[0], sender
     else:
         p1, p2 = sender, own_pk
+    if not p1 or p1 == p2:   # never create a self-game (would peg a core auto-playing both sides)
+        print(f"[connect4] skip self/invalid game (p1==p2) for {gameid[:12]}", flush=True)
+        return
     state = {
         "v": 1, "p1": p1, "p2": p2, "p1_name": _name(p1), "p2_name": _name(p2),
         "cells": [""] * (ROWS * COLS), "status": "active", "root": gameid,

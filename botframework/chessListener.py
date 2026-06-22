@@ -403,6 +403,11 @@ def _apply_bot_moves(state) -> str | None:
     """While it's the bot's turn (its pubkey to move) and the game's active, make the bot's move(s).
     Mutates `state` (fen/moves/last_move/status). Returns the bot's last SAN for display."""
     last_san = None
+    # A self-game (white == black) has no human to hand back to, so this loop would play BOTH sides
+    # of a whole game in one call — many time-budgeted searches back-to-back → a pegged core. Never
+    # auto-play a self-game (creation is also blocked in _start_game; this guards legacy/edge ones).
+    if state.get("white") == state.get("black"):
+        return None
     board = chess.Board(state["fen"])
     while state.get("status") == "active":
         side_pk = state["white"] if board.turn == chess.WHITE else state["black"]
@@ -558,6 +563,11 @@ def _start_game(note, own_pk):
     if opponents and first in (sender, opponents[0]):
         white = first
         black = opponents[0] if first == sender else sender
+    # Never create a self-game (white == black) — it has no human to alternate with, so the bot
+    # would auto-play BOTH sides and peg a core. (Belt-and-braces with the _apply_bot_moves guard.)
+    if not white or white == black:
+        print(f"[chesstr] skip self/invalid game (white==black) for {gameid[:12]}", flush=True)
+        return
     # No limit on concurrent active games — a player can have several going at once (e.g. vs the bot
     # AND vs humans). Abuse is bounded by the per-hour INVITE rate limit above, not by abandoning
     # games. (Each game is independent, keyed by its own root id.)

@@ -356,6 +356,8 @@ def _post_over(state, gameid, parent_id, last, result_text, winner_pk="__auto__"
 def _apply_bot(state):
     """If it's the bot's turn, play perfect move(s). Mutates state. Returns last cell played."""
     last = None
+    if state.get("x") == state.get("o"):   # self-game guard — never auto-play both sides
+        return None
     while state.get("status") == "active":
         stm = _side_to_move(state["cells"])
         side_pk = state["x"] if stm == "X" else state["o"]
@@ -392,6 +394,9 @@ def _start_game(note, own_pk):
         x, o = opponents[0], sender
     else:
         x, o = sender, own_pk
+    if not x or x == o:   # never create a self-game
+        print(f"[ttt] skip self/invalid game (x==o) for {gameid[:12]}", flush=True)
+        return
     state = {
         "v": 1, "x": x, "o": o, "x_name": _name(x), "o_name": _name(o),
         "cells": [""] * 9, "status": "active", "root": gameid,
