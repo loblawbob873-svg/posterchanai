@@ -5,7 +5,7 @@
   function init(){
     const PC = window.__PC;
     if(!PC){ return setTimeout(init, 50); }
-    const { $, $$, enc, publish, safePk, nip05Resolve, profOf, needProfile, niceNip05, LOGO, toast, ensureProfile, NT } = PC;
+    const { $, $$, enc, publish, sendDm, safePk, nip05Resolve, profOf, needProfile, niceNip05, LOGO, toast, ensureProfile, NT } = PC;
     const Relay = window.Relay, Store = window.Store;
     let _timer = null;
 
@@ -25,7 +25,7 @@
       feed.innerHTML = `<div class="chess-hub">
           <div class="chess-splash glass">
             <h2>🎯 Hangman</h2>
-            <p class="muted">The bot picks a secret word; guess letters before the figure is complete (6 misses). Reply with a letter, or tap.</p>
+            <p class="muted">The bot picks a secret word and <b>DMs it to you masked</b>; guess letters before the figure is complete (6 misses). Tap a letter here, or reply to the bot's DM. Only the start &amp; final result are public.</p>
             ${start}
           </div>
           <div class="chess-games"><h3>🎯 Your games</h3><div id="hm-games"><div class="spinner"></div></div></div>
@@ -58,13 +58,13 @@
         if(pk===PC.ME.pubkey){ toast("challenge someone else (or use New game)"); return; }
         let npub; try{ npub=NT().nip19.npubEncode(pk); }catch(_){ npub=pk; }
         const meName=(profOf(PC.ME.pubkey)||{}).name||'A player';
-        body=`🎯 ${meName} challenged you to #hangman! nostr:${npub} — guess the bot's word, a letter at a time.`;
+        body=`🎯 ${meName} challenged you to #hangman! nostr:${npub} — the bot will DM you a word to guess, a letter at a time. Guess here on the Hangman tab or by replying to the DM.`;
         tags=[['p',botPk],['p',pk],['t','hangman'],['t','nostr'],['t','gamestr']];
       } else {
-        body=`🎯 New #hangman game — I'll guess the bot's word.`;
+        body=`🎯 start a #hangman game — the bot will DM me a word to guess privately, a letter at a time.`;
         tags=[['p',botPk],['t','hangman'],['t','nostr'],['t','gamestr']];
       }
-      try{ await publish(1, body+`\n\nhangman\n\n#hangman #nostr #gamestr`, tags); toast('starting hangman 🎯'); setTimeout(()=>{ if(PC.VIEW==='hangman') render(); }, 4500); }
+      try{ await publish(1, body+`\n\nstart\n\n#hangman #nostr #gamestr`, tags); toast('starting hangman 🎯'); setTimeout(()=>{ if(PC.VIEW==='hangman') render(); }, 4500); }
       catch(e){ toast('could not start'); }
     }
     async function _load(){
@@ -140,10 +140,9 @@
     }
     async function guess(game, letter){
       const botPk=safePk(PC.CFG.hangman_bot_npub); if(!botPk){ toast('no bot'); return; }
-      const tags=[['e', game.root, '', 'root']];
-      if(game.last_board_event && game.last_board_event!==game.root) tags.push(['e', game.last_board_event, '', 'reply']);
-      tags.push(['p', botPk], ['t','hangman'],['t','nostr'],['t','gamestr']);
-      try{ await publish(1, letter.trim()+"\n\n#hangman", tags); toast('guess sent 🎯'); }
+      // Gameplay is PRIVATE: guesses go to the bot as a NIP-17 DM. The 'g:<root>' marker (on its own
+      // line so it's hidden from the visible message) tells the bot which game this guess belongs to.
+      try{ await sendDm(botPk, `${letter.trim()}\n\ng:${game.root}`); toast('guess sent 🎯'); }
       catch(e){ toast('guess failed'); return; }
       setTimeout(()=>{ if(PC.VIEW==='hangman') render(); }, 4500);
     }

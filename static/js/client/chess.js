@@ -6,7 +6,7 @@
   function init(){
     const PC = window.__PC;
     if(!PC){ return setTimeout(init, 50); }   // app.js not ready yet — retry
-    const { $, $$, enc, publish, safePk, nip05Resolve, profOf, needProfile, niceNip05, LOGO, toast, ensureProfile, NT } = PC;
+    const { $, $$, enc, publish, sendDm, safePk, nip05Resolve, profOf, needProfile, niceNip05, LOGO, toast, ensureProfile, NT } = PC;
     const Relay = window.Relay, Store = window.Store;
     let _chessTimer = null;
 
@@ -26,10 +26,10 @@
       const botNpub = PC.CFG.chess_bot_npub;
       const how = `
         <ol class="chess-how">
-          <li>Invite someone below (or post <code>chess nostr:npub… </code> tagging them and the bot).</li>
-          <li>The bot replies with a board; <b>your</b> pieces are <b>numbered</b>.</li>
-          <li>Reply with <code>&lt;number&gt; &lt;square&gt;</code> — e.g. <code>1 d4</code>. <code>Nf3</code>, <code>e4</code>, <code>O-O</code> and <code>resign</code> work too.</li>
-          <li>The bot validates every move, posts the updated board, and calls checkmate. Games never expire — play over days.</li>
+          <li>Challenge someone below (or post <code>start nostr:npub… </code> tagging them and the bot).</li>
+          <li>The bot posts the matchup publicly, then <b>DMs each of you the board privately</b> — your pieces are <b>numbered</b>.</li>
+          <li>Move right here on this tab, or reply to the bot's DM with <code>&lt;number&gt; &lt;square&gt;</code> — e.g. <code>1 d4</code> (<code>Nf3</code>, <code>e4</code>, <code>O-O</code>, <code>resign</code> work too).</li>
+          <li>Gameplay stays private in DMs; the bot posts the <b>result</b> publicly. Games never expire — play over days.</li>
         </ol>`;
       const invite = botNpub ? `
         <div class="chess-invite">
@@ -60,7 +60,7 @@
     async function startBotGame(){
       const botPk=safePk(PC.CFG.chess_bot_npub); if(!botPk){ toast('no chess bot configured'); return; }
       try{
-        await publish(1, `🤖 Playing #chess against the bot — I'll be White. Reply to the board with moves like "1 d4".\n\n#chess #nostr #gamestr`, [['p',botPk],['t','chess'],['t','nostr'],['t','gamestr']]);
+        await publish(1, `🤖 start #chess against the bot — I'll be White. The bot will DM me the board; I'll play my moves privately.\n\n#chess #nostr #gamestr`, [['p',botPk],['t','chess'],['t','nostr'],['t','gamestr']]);
         toast('starting game vs the bot ♟️');
         setTimeout(()=>{ if(PC.VIEW==='chess') renderChess(); }, 4500);
       }catch(e){ toast('could not start game'); }
@@ -89,10 +89,10 @@
       // chess_first = opponent → they're White and "accept" by making the first move.
       const tags=[['p',botPk],['p',pk],['t','chess'],['t','nostr'],['t','gamestr'],['chess_first',pk]];
       try{
-        await publish(1, `♟️ ${meName} has invited you to play chess! nostr:${npub}\n`
-          + `To accept, make the first move (you're White): reply to the board the bot posts with your move — e.g. "1 d4" (move piece #1 to d4). "Nf3", "e4" and "O-O" work too, or just tap a piece on the Chess tab.\n`
-          + `The bot referees, validates every move, and calls checkmate. Games never expire — take your time.\n\n#chess #nostr #gamestr`, tags);
-        toast('invite sent ♟️ — the bot will post the board');
+        await publish(1, `♟️ ${meName} challenged you to #chess! nostr:${npub}\n`
+          + `You're White — the bot will DM you the board to make the first move. Play your moves privately in DMs (or on the Chess tab): e.g. "1 d4", "Nf3", "e4", "O-O".\n`
+          + `The bot referees and calls checkmate; it posts the result publicly. Games never expire — take your time.\n\n#chess #nostr #gamestr`, tags);
+        toast('challenge sent ♟️ — the bot will DM the board');
         setTimeout(()=>{ if(PC.VIEW==='chess') renderChess(); }, 4500);
       }catch(e){ toast('challenge failed'); }
     }
@@ -197,13 +197,11 @@
     }
     async function chessMove(game, moveText){
       const botPk=safePk(PC.CFG.chess_bot_npub); if(!botPk){ toast('no chess bot'); return; }
-      const oppPk = game.white===PC.ME.pubkey ? game.black : game.white;
-      const tags=[['e', game.root, '', 'root']];
-      if(game.last_board_event && game.last_board_event!==game.root) tags.push(['e', game.last_board_event, '', 'reply']);
-      tags.push(['p', botPk], ['p', oppPk], ['t','chess'],['t','nostr'],['t','gamestr']);
-      try{ await publish(1, moveText.trim()+"\n\n#chess", tags); toast('move sent ♟️'); }
+      // Gameplay is PRIVATE: moves go to the bot as a NIP-17 DM. The 'g:<root>' marker (on its own
+      // line so it's hidden from the visible message) tells the bot which game this move belongs to.
+      try{ await sendDm(botPk, `${moveText.trim()}\n\ng:${game.root}`); toast('move sent ♟️'); }
       catch(e){ toast('move failed'); return; }
-      setTimeout(()=>{ if(PC.VIEW==='chess') renderChess(); }, 4500);   // give the bot time to validate + post
+      setTimeout(()=>{ if(PC.VIEW==='chess') renderChess(); }, 4500);   // give the bot time to validate + DM back
     }
 
     window.PCChess = { render: renderChess };

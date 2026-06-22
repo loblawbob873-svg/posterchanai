@@ -24,7 +24,10 @@ from app.services.nostr import event as _ev
 
 _KIND_APP = 30078
 COLS, ROWS = 7, 6
-_START_RE = re.compile(r"\b(connect\s*4|connect\s*four|connectfour|c4)\b", re.IGNORECASE)
+_START_RE = re.compile(r"\b(connect\s*4|connect\s*four|connectfour|c4|start)\b", re.IGNORECASE)
+# An app-embedded game pointer inside a DM ("g:<64-hex-root> <move>"); bare human DM replies omit it
+# and fall back to the per-player pending-game pointer.
+_DM_GAME_RE = re.compile(r"\bg:([0-9a-f]{64})\b", re.IGNORECASE)
 _COL_RE = re.compile(r"\b([1-7])\b")
 _NOSTR_TOKEN_RE = re.compile(
     r"nostr:[a-z0-9]+|\b(?:npub1|nprofile1|nevent1|note1|naddr1)[023456789acdefghjklmnpqrstuvwxyz]+",
@@ -43,6 +46,41 @@ def _suffix():
 
 _IDS_FILE = os.path.join(script_dir, f".processed_c4_ids_{_suffix()}")
 _LOCK_FILE = _IDS_FILE + ".lock"
+_DM_IDS_FILE = os.path.join(script_dir, f".processed_connect4_dms_{_suffix()}")
+_MAX_IDS = 5000
+
+
+def _claim_in(ids_file, item_id):
+    lock_file = ids_file + ".lock"
+    try:
+        with open(lock_file, "w") as lk:
+            fcntl.flock(lk.fileno(), fcntl.LOCK_EX)
+            try:
+                ids = set()
+                try:
+                    with open(ids_file) as f:
+                        ids = {ln.strip() for ln in f if ln.strip()}
+                except FileNotFoundError:
+                    pass
+                if item_id in ids:
+                    return False
+                ids.add(item_id)
+                if len(ids) > _MAX_IDS:
+                    ids = set(sorted(ids)[-_MAX_IDS:])
+                fd, tmp = tempfile.mkstemp(dir=script_dir, prefix=".c4ids_")
+                with os.fdopen(fd, "w") as f:
+                    f.write("\n".join(ids))
+                os.replace(tmp, ids_file)
+                return True
+            finally:
+                fcntl.flock(lk.fileno(), fcntl.LOCK_UN)
+    except Exception as e:
+        print(f"[connect4] claim failed: {e}", flush=True)
+        return False
+
+
+def _claim_dm(rumor_id):
+    return _claim_in(_DM_IDS_FILE, rumor_id)
 
 
 def _claim(note_id):
@@ -85,9 +123,13 @@ def _save_game(gameid, state):
 
 
 def _load_game(gameid):
+    return _load_doc(_dtag(gameid))
+
+
+def _load_doc(dtag):
     try:
         evs = _nk._run(_nk._svc.relay.query(
-            _nk._RELAYS, [{"authors": [_nk._PUBKEY], "kinds": [_KIND_APP], "#d": [_dtag(gameid)], "limit": 1}])) or []
+            _nk._RELAYS, [{"authors": [_nk._PUBKEY], "kinds": [_KIND_APP], "#d": [dtag], "limit": 1}])) or []
     except Exception:
         return None
     if not evs:
@@ -97,6 +139,23 @@ def _load_game(gameid):
         return json.loads(evs[0].get("content") or "{}")
     except Exception:
         return None
+
+
+# Per-player pointer to their current game — lets a new game supersede a player's unfinished one
+# (one active game per user; newest wins). Keyed by pubkey.
+def _player_dtag(pk):
+    return f"pcai:connect4:player:{pk}"
+
+
+def _get_player_game(pk):
+    doc = _load_doc(_player_dtag(pk))
+    return doc.get("gameid") if isinstance(doc, dict) else None
+
+
+def _set_player_game(pk, gameid):
+    ev = _ev.build_event(_nk._SECKEY, _KIND_APP, json.dumps({"gameid": gameid}, separators=(",", ":")),
+                         tags=[["d", _player_dtag(pk)]])
+    _nk._run(_nk._svc.relay.publish(_nk._RELAYS, ev))
 
 
 # ---- nostr helpers --------------------------------------------------------
@@ -133,11 +192,26 @@ def _clean_text(note):
     return t.strip()
 
 
+def _clean_dm_text(text):
+    """Parse a move DM → (gameid_or_None, move_text). Strips the app's 'g:<root>' marker, nostr
+    tokens and hashtags; the move is the first non-empty line."""
+    m = _DM_GAME_RE.search(text or "")
+    gameid = m.group(1).lower() if m else None
+    t = _DM_GAME_RE.sub("", text or "")
+    t = _NOSTR_TOKEN_RE.sub("", t)
+    t = re.sub(r"#\w+", "", t)
+    for line in t.splitlines():
+        if line.strip():
+            return gameid, line.strip()
+    return gameid, t.strip()
+
+
 def _footer():
     site = (os.getenv("CHESS_SITE_URL", "") or "").strip()
     play = f"\nPlay interactively at {site}." if site else ""
-    return ("🔴 Wanna start your own game? Reply \"connect4 @friend\" to challenge them "
-            "(or just \"connect4\" to play me); then reply with a column number 1-7." + play + "\n#connect4 #nostr #gamestr")
+    return ("🔴 Wanna start your own game? Mention me with \"start @friend\" to challenge them "
+            "(or just \"start\" to play me); I'll DM each of you the board to make your moves." + play
+            + "\n#connect4 #nostr #gamestr")
 
 
 def _publish(gameid, parent_id, p1, p2, body, png, federate=True):
@@ -294,32 +368,66 @@ def _apply_bot(state):
 
 
 # ---- posts ----------------------------------------------------------------
+def _dm_current_player(state, gameid):
+    """DM the board to the side now to move (private gameplay). No-op if it's the bot's turn.
+    Sets the per-player pending-game pointer so a bare DM reply (no app marker) routes back here."""
+    cells = state["cells"]
+    stm = _side_to_move(cells)
+    mover_pk = state["p1"] if stm == "1" else state["p2"]
+    if not mover_pk or mover_pk == _nk._PUBKEY:
+        return
+    mover_white = stm == "1"
+    opp_nm = state["p2_name"] if mover_white else state["p1_name"]
+    colour = "cyan" if mover_white else "magenta"
+    title = f"YOUR MOVE ({colour})"
+    sub = f"{state['p1_name']} = cyan   ·   {state['p2_name']} = magenta"
+    png = connect4_render.render(cells, last_move=state.get("last_move"), title=title, subtitle=sub)
+    try:
+        info = _nk._run(_nk._svc.media.upload(_nk._MEDIA_CFG, _nk._SECKEY, png, "image/png")) or {}
+        url = info.get("url") or ""
+    except Exception as e:
+        print(f"[connect4] DM board upload failed: {e}", flush=True)
+        url = ""
+    body = (f"🔴 Your move vs {opp_nm}\nYou're {colour}.\n"
+            + (url + "\n\n" if url else "")
+            + "Reply with a column number 1-7 to drop your disc (or 'resign'). "
+              "Or play from the Connect Four tab in the app.")
+    try:
+        _nk.send_dm(mover_pk, body, extra_tags=[["g", gameid]])
+        _set_player_game(mover_pk, gameid)
+    except Exception as e:
+        print(f"[connect4] send_dm failed: {e}", flush=True)
+
+
 def _post_active(state, gameid, parent_id, last):
     cells = state["cells"]
-    # MID-GAME: state-only, NO public post (the app renders from state). Only the opening + final post.
+    state["last_move"] = last
+    # MID-GAME: no public post — just persist + DM the next player their board.
     if any(cells):
         _save_game(gameid, state)
+        _dm_current_player(state, gameid)
         return
+    # OPENING: one public invitation post, then DM the first player their board.
     stm = _side_to_move(cells)
     mover_nm = state["p1_name"] if stm == "1" else state["p2_name"]
     colour = "cyan" if stm == "1" else "magenta"
     title = f"{mover_nm} to move ({colour})"
     sub = f"{state['p1_name']} = cyan   ·   {state['p2_name']} = magenta"
     png = connect4_render.render(cells, last_move=last, title=title, subtitle=sub)
-    if not any(cells):
-        vs_bot = _nk._PUBKEY in (state["p1"], state["p2"])
-        if vs_bot:
-            body = (f"🔴 #connect4 vs the bot — you're {'cyan' if state['p1'] != _nk._PUBKEY else 'magenta'}.\n"
-                    f"Reply with a column number 1-7, or tap on the Games tab.")
-        else:
-            body = (f"🔴 #connect4 — {state['p1_name']} (cyan) vs {state['p2_name']} (magenta)!\n"
-                    f"{mover_nm}, you're up — drop a disc: reply with a column 1-7, or tap on the Games tab.")
+    vs_bot = _nk._PUBKEY in (state["p1"], state["p2"])
+    if vs_bot:
+        human_p1 = state["p1"] != _nk._PUBKEY
+        body = (f"🔴 #connect4 vs the bot — you're {'cyan' if human_p1 else 'magenta'}.\n"
+                f"📩 Check your DMs — I've sent you the board there, and the whole game plays out "
+                f"privately in DMs. The result gets posted here.")
     else:
-        col_no = (last % COLS) + 1 if last is not None else 0
-        body = f"🔴 {('Column ' + str(col_no) + '. ') if last is not None else ''}{mover_nm} ({colour}) to move — reply 1-7."
-    ev = _publish(gameid, parent_id, state["p1"], state["p2"], body, png, federate=(not any(cells)))
+        body = (f"🔴 #connect4 — {state['p1_name']} (cyan) vs {state['p2_name']} (magenta)!\n"
+                f"📩 {mover_nm}, you're up — check your DMs to drop the first disc. The game plays out "
+                f"privately in DMs; I'll post the result here when it's over.")
+    ev = _publish(gameid, parent_id, state["p1"], state["p2"], body, png, federate=True)
     state["last_board_event"] = ev.get("id")
     _save_game(gameid, state)
+    _dm_current_player(state, gameid)
 
 
 def _post_over(state, gameid, parent_id, last, result_text):
@@ -358,32 +466,33 @@ def _start_game(note, own_pk):
     _post_active(state, gameid, gameid, None)
 
 
-def _handle_move(note, gameid, state):
-    sender = (note.get("user") or {}).get("pubkey")
+def _apply_move(sender, gameid, state, text, reply, parent_id):
+    """Apply one move from `sender`. `reply(msg)` sends a nudge/error on the same channel (public
+    reply or DM). Game-over posts go to `parent_id` (public). Mid-game = no public post; the next
+    player is DM'd by _post_active."""
     if sender not in (state["p1"], state["p2"]):
         return
-    text = _clean_text(note)
     if text.lower() in ("resign", "quit", "gg", "abandon", "/resign"):
         winner = state["p2_name"] if sender == state["p1"] else state["p1_name"]
         state["status"] = "resigned"
-        _post_over(state, gameid, note["id"], None, f"{_name(sender)} resigned. {winner} wins!")
+        _post_over(state, gameid, parent_id, None, f"{_name(sender)} resigned. {winner} wins!")
         return
     if state.get("status") != "active":
-        _reply_text(note, "🏁 This game is over. Start a new one with \"connect4 @opponent\".")
+        reply("🏁 This game is over. Start a new one with \"start @opponent\".")
         return
     stm = _side_to_move(state["cells"])
     side_pk = state["p1"] if stm == "1" else state["p2"]
     if sender != side_pk:
-        _reply_text(note, "⏳ It's not your turn.")
+        reply("⏳ It's not your turn.")
         return
     m = _COL_RE.search(text)
     if not m:
-        _reply_text(note, "🤔 Reply with a column number 1-7.")
+        reply("🤔 Reply with a column number 1-7.")
         return
     col = int(m.group(1)) - 1
     r = _drop_row(state["cells"], col)
     if r is None:
-        _reply_text(note, f"🚫 Column {col + 1} is full. Pick another.")
+        reply(f"🚫 Column {col + 1} is full. Pick another.")
         return
     state["cells"][r * COLS + col] = stm
     last = r * COLS + col
@@ -392,7 +501,7 @@ def _handle_move(note, gameid, state):
         state["status"] = st
         result = (f"{state['p1_name'] if w == '1' else state['p2_name']} "
                   f"({'cyan' if w == '1' else 'magenta'}) wins!" if w else "Draw — board full.")
-        _post_over(state, gameid, note["id"], last, result)
+        _post_over(state, gameid, parent_id, last, result)
         return
     nstm = _side_to_move(state["cells"])
     next_pk = state["p1"] if nstm == "1" else state["p2"]
@@ -402,11 +511,23 @@ def _handle_move(note, gameid, state):
             _, w2 = _status_after(state["cells"])
             result = (f"{state['p1_name'] if w2 == '1' else state['p2_name']} "
                       f"({'cyan' if w2 == '1' else 'magenta'}) wins!" if w2 else "Draw — board full.")
-            _post_over(state, gameid, note["id"], blast, result)
+            _post_over(state, gameid, parent_id, blast, result)
         else:
-            _post_active(state, gameid, note["id"], blast)
+            _post_active(state, gameid, parent_id, blast)
     else:
-        _post_active(state, gameid, note["id"], last)
+        _post_active(state, gameid, parent_id, last)
+
+
+def _handle_move(note, gameid, state):
+    """Public-reply move path (cross-client public play still works)."""
+    sender = (note.get("user") or {}).get("pubkey")
+    _apply_move(sender, gameid, state, _clean_text(note), lambda m: _reply_text(note, m), note["id"])
+
+
+def _handle_dm(sender, gameid, state, move_text):
+    """Private-DM move path — nudges/errors go back as DMs."""
+    _apply_move(sender, gameid, state, move_text,
+                lambda m: _nk.send_dm(sender, m), state.get("last_board_event") or gameid)
 
 
 def process_connect4():
@@ -436,5 +557,36 @@ def process_connect4():
                 _start_game(note, own_pk)
         except Exception as e:
             print(f"[connect4] processing {nid[:12]} failed: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+    # ---- private gameplay: read move DMs (NIP-17) ----------------------------
+    try:
+        dms = _nk.read_dms(limit=100)
+    except Exception as e:
+        print(f"[connect4] read_dms failed: {e}", flush=True)
+        dms = []
+    for dm in dms:
+        rid = dm.get("rumor_id")
+        sender = dm.get("sender")
+        if not rid or not sender or sender == own_pk:
+            continue
+        if dm.get("created_at", 0) < cutoff:
+            continue
+        gameid, move_text = _clean_dm_text(dm.get("text") or "")
+        if not move_text:
+            continue
+        if not gameid:
+            gameid = _get_player_game(sender)   # bare DM reply → the player's pending game
+        if not gameid:
+            continue
+        if not _claim_dm(rid):
+            continue
+        state = _load_game(gameid)
+        if not state:
+            continue
+        try:
+            _handle_dm(sender, gameid, state, move_text)
+        except Exception as e:
+            print(f"[connect4] DM move {rid[:12]} failed: {e}", flush=True)
             import traceback
             traceback.print_exc()

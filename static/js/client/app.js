@@ -4640,7 +4640,7 @@
   // Shared surface for separate game modules (chess.js, future tic-tac-toe, …) so per-game UI lives
   // in its own file without bloating this core. Live getters for the mutable ME/CFG/VIEW.
   window.__PC = {
-    $, $$, enc, publish, safePk, nip05Resolve, profOf, needProfile, niceNip05, LOGO, toast,
+    $, $$, enc, publish, sendDm, safePk, nip05Resolve, profOf, needProfile, niceNip05, LOGO, toast,
     ensureProfile: _ensureProfile, NT,
     get ME(){ return ME; }, get CFG(){ return CFG; }, get VIEW(){ return VIEW; },
   };

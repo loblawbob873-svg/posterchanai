@@ -24,7 +24,10 @@ from app.services.nostr import event as _ev, nip44 as _nip44
 
 _KIND_APP = 30078
 _MAX_WRONG = 6
-_START_RE = re.compile(r"\bhang\s*man\b", re.IGNORECASE)
+_START_RE = re.compile(r"\b(?:hang\s*man|start)\b", re.IGNORECASE)
+# An app-embedded game pointer inside a DM ("g:<64-hex-root>"); bare human DM replies omit it and
+# fall back to the per-player pending-game pointer.
+_DM_GAME_RE = re.compile(r"\bg:([0-9a-f]{64})\b", re.IGNORECASE)
 _LETTER_RE = re.compile(r"[a-zA-Z]")
 _NOSTR_TOKEN_RE = re.compile(
     r"nostr:[a-z0-9]+|\b(?:npub1|nprofile1|nevent1|note1|naddr1)[023456789acdefghjklmnpqrstuvwxyz]+",
@@ -54,6 +57,41 @@ def _suffix():
 
 _IDS_FILE = os.path.join(script_dir, f".processed_hangman_ids_{_suffix()}")
 _LOCK_FILE = _IDS_FILE + ".lock"
+_DM_IDS_FILE = os.path.join(script_dir, f".processed_hangman_dms_{_suffix()}")
+_MAX_IDS = 5000
+
+
+def _claim_in(ids_file, item_id):
+    lock_file = ids_file + ".lock"
+    try:
+        with open(lock_file, "w") as lk:
+            fcntl.flock(lk.fileno(), fcntl.LOCK_EX)
+            try:
+                ids = set()
+                try:
+                    with open(ids_file) as f:
+                        ids = {ln.strip() for ln in f if ln.strip()}
+                except FileNotFoundError:
+                    pass
+                if item_id in ids:
+                    return False
+                ids.add(item_id)
+                if len(ids) > _MAX_IDS:
+                    ids = set(sorted(ids)[-_MAX_IDS:])
+                fd, tmp = tempfile.mkstemp(dir=script_dir, prefix=".hmids_")
+                with os.fdopen(fd, "w") as f:
+                    f.write("\n".join(ids))
+                os.replace(tmp, ids_file)
+                return True
+            finally:
+                fcntl.flock(lk.fileno(), fcntl.LOCK_UN)
+    except Exception as e:
+        print(f"[hangman] claim failed: {e}", flush=True)
+        return False
+
+
+def _claim_dm(rumor_id):
+    return _claim_in(_DM_IDS_FILE, rumor_id)
 
 
 def _claim(note_id):
@@ -96,9 +134,13 @@ def _save_game(gameid, state):
 
 
 def _load_game(gameid):
+    return _load_doc(_dtag(gameid))
+
+
+def _load_doc(dtag):
     try:
         evs = _nk._run(_nk._svc.relay.query(
-            _nk._RELAYS, [{"authors": [_nk._PUBKEY], "kinds": [_KIND_APP], "#d": [_dtag(gameid)], "limit": 1}])) or []
+            _nk._RELAYS, [{"authors": [_nk._PUBKEY], "kinds": [_KIND_APP], "#d": [dtag], "limit": 1}])) or []
     except Exception:
         return None
     if not evs:
@@ -108,6 +150,23 @@ def _load_game(gameid):
         return json.loads(evs[0].get("content") or "{}")
     except Exception:
         return None
+
+
+# Per-player pointer to their current game — lets a bare DM reply (no app marker) route back to the
+# player's pending game. Keyed by pubkey.
+def _player_dtag(pk):
+    return f"pcai:hangman:player:{pk}"
+
+
+def _get_player_game(pk):
+    doc = _load_doc(_player_dtag(pk))
+    return doc.get("gameid") if isinstance(doc, dict) else None
+
+
+def _set_player_game(pk, gameid):
+    ev = _ev.build_event(_nk._SECKEY, _KIND_APP, json.dumps({"gameid": gameid}, separators=(",", ":")),
+                         tags=[["d", _player_dtag(pk)]])
+    _nk._run(_nk._svc.relay.publish(_nk._RELAYS, ev))
 
 
 def _word_of(state):
@@ -156,11 +215,26 @@ def _clean_text(note):
     return t.strip()
 
 
+def _clean_dm_text(text):
+    """Parse a guess DM → (gameid_or_None, move_text). Strips the app's 'g:<root>' marker, nostr
+    tokens and hashtags; the guess is the first non-empty line."""
+    m = _DM_GAME_RE.search(text or "")
+    gameid = m.group(1).lower() if m else None
+    t = _DM_GAME_RE.sub("", text or "")
+    t = _NOSTR_TOKEN_RE.sub("", t)
+    t = re.sub(r"#\w+", "", t)
+    for line in t.splitlines():
+        if line.strip():
+            return gameid, line.strip()
+    return gameid, t.strip()
+
+
 def _footer():
     site = (os.getenv("CHESS_SITE_URL", "") or "").strip()
     play = f"\nPlay interactively at {site}." if site else ""
-    return ("🎯 Wanna play your own? Reply \"hangman\" to start a game (I'll pick a word); "
-            "then reply with a letter A-Z." + play + "\n#hangman #nostr #gamestr")
+    return ("🎯 Wanna play your own? Mention me with \"start\" to play (or \"start @friend\" to make "
+            "them guess); I'll pick a word and DM you the word to guess, one letter at a time." + play
+            + "\n#hangman #nostr #gamestr")
 
 
 def _publish(gameid, parent_id, players, body, png, federate=True):
@@ -192,31 +266,70 @@ def _reply_text(note, text):
         print(f"[hangman] reply failed: {e}", flush=True)
 
 
+def _dm_current_player(state, gameid):
+    """DM the masked word + gallows to the GUESSER (private gameplay). In hangman the guesser is
+    essentially always the player to act until the game ends. No-op if the guesser is the bot.
+    Sets the per-player pending-game pointer so a bare DM reply (no app marker) routes back here."""
+    guesser = state.get("guesser")
+    if not guesser or guesser == _nk._PUBKEY:
+        return
+    word = _word_of(state)
+    disp = _display(word, set(state["guessed"])) if word else state.get("display", "")
+    wrong = state.get("wrong", 0)
+    title = "YOUR GUESS"
+    sub = f"Misses {wrong}/{_MAX_WRONG}" + (f" · wrong: {' '.join(state['wrong_letters'])}"
+                                            if state.get("wrong_letters") else "")
+    try:
+        png = hangman_render.render(disp, state.get("wrong_letters", []), wrong, title=title, subtitle=sub)
+        info = _nk._run(_nk._svc.media.upload(_nk._MEDIA_CFG, _nk._SECKEY, png, "image/png")) or {}
+        url = info.get("url") or ""
+    except Exception as e:
+        print(f"[hangman] DM board upload failed: {e}", flush=True)
+        url = ""
+    body = (f"🎯 Your word to guess: {disp}\n"
+            f"Misses {wrong}/{_MAX_WRONG}"
+            + (f" · wrong: {' '.join(state['wrong_letters'])}" if state.get("wrong_letters") else "") + "\n"
+            + (url + "\n\n" if url else "")
+            + "Reply to this DM with a letter A-Z (or the whole word). Or play from the Hangman tab in the app.")
+    try:
+        _nk.send_dm(guesser, body, extra_tags=[["g", gameid]])
+        _set_player_game(guesser, gameid)
+    except Exception as e:
+        print(f"[hangman] send_dm failed: {e}", flush=True)
+
+
 def _post(state, gameid, parent_id, word=None, gameover=False, result=""):
-    # MID-GAME guess: state-only, NO public post (the app shows the gallows + word + keyboard from
-    # this state and polls it). Only the opening (parent==gameid) and the final post publicly.
+    # MID-GAME guess: NO public post — persist + DM the guesser the updated word/gallows privately.
     if not gameover and parent_id != gameid:
         _save_game(gameid, state)
+        _dm_current_player(state, gameid)
         return
     guessed = set(state["guessed"])
     # On game over, reveal the whole word on the board; otherwise show the current masked display.
     disp = _display(word, set(word)) if (word and gameover) else (_display(word, guessed) if word else state.get("display", ""))
     title = "GAME OVER" if gameover else f"{state['guesser_name']} — guess a letter"
-    sub = result if gameover else f"Reply with a letter A-Z (or the whole word)."
+    sub = result if gameover else f"Check your DMs — I've sent you the word to guess."
     png = hangman_render.render(disp, state.get("wrong_letters", []), state.get("wrong", 0),
                                 title=title, subtitle=sub)
     if gameover:
         body = f"🏁 {result}"
     else:
-        body = (f"🎯 #hangman — {state['guesser_name']} to guess: {disp}\n"
-                f"Misses {state.get('wrong', 0)}/{_MAX_WRONG}"
-                + (f" · wrong: {' '.join(state['wrong_letters'])}" if state.get("wrong_letters") else "")
-                + ". Reply with a letter A-Z.")
-    # Opening (parent==gameid) and the final post are public; mid-game guesses stay local-only.
-    federate = gameover or (parent_id == gameid)
-    ev = _publish(gameid, parent_id, [state["guesser"], state.get("opponent")], body, png, federate=federate)
+        # OPENING invitation — public; the game then plays out privately in DMs.
+        guesser_is_sender = not state.get("opponent")
+        if guesser_is_sender:
+            body = (f"🎯 #hangman — {state['guesser_name']} is guessing the bot's word!\n"
+                    f"📩 Check your DMs — I've sent you the word to guess (a letter at a time). "
+                    f"The result gets posted here.")
+        else:
+            body = (f"🎯 #hangman — {state['guesser_name']} has been challenged to guess the bot's word!\n"
+                    f"📩 {state['guesser_name']}, check your DMs to start guessing. The game plays out "
+                    f"privately in DMs; I'll post the result here when it's over.")
+    # The opening invitation and the final result are public; mid-game guesses are DM-only.
+    ev = _publish(gameid, parent_id, [state["guesser"], state.get("opponent")], body, png, federate=True)
     state["last_board_event"] = ev.get("id")
     _save_game(gameid, state)
+    if not gameover:
+        _dm_current_player(state, gameid)
 
 
 # ---- start + guess --------------------------------------------------------
@@ -247,23 +360,24 @@ def _start_game(note, own_pk):
     _post(state, gameid, gameid, word=word)
 
 
-def _handle_guess(note, gameid, state):
-    sender = (note.get("user") or {}).get("pubkey")
+def _apply_move(sender, gameid, state, text, reply, parent_id):
+    """Apply one guess from `sender`. `reply(msg)` sends a nudge/error on the same channel (public
+    reply or DM). Game-over posts go to `parent_id` (public). Mid-game = no public post; the guesser
+    is DM'd by _post → _dm_current_player."""
     if sender != state["guesser"]:
         return  # only the guesser plays
     if state.get("status") != "active":
-        _reply_text(note, "🏁 This game is over. Start a new one with \"hangman\".")
+        reply("🏁 This game is over. Start a new one with \"start\".")
         return
-    text = _clean_text(note)
     low = text.lower().strip()
     if low in ("resign", "quit", "give up", "abandon"):
         word = _word_of(state)
         state["status"] = "lost"
-        _post(state, gameid, note["id"], word=word, gameover=True, result=f"Gave up. The word was: {word.upper()}")
+        _post(state, gameid, parent_id, word=word, gameover=True, result=f"Gave up. The word was: {word.upper()}")
         return
     word = _word_of(state)
     if not word:
-        _reply_text(note, "⚠️ Couldn't read this game's word — it may be corrupt. Start a new one.")
+        reply("⚠️ Couldn't read this game's word — it may be corrupt. Start a new one.")
         return
     # whole-word guess
     if len(low) > 1 and low.isalpha():
@@ -272,40 +386,52 @@ def _handle_guess(note, gameid, state):
                 if c not in state["guessed"]:
                     state["guessed"].append(c)
             state["status"] = "won"
-            _post(state, gameid, note["id"], word=word, gameover=True,
+            _post(state, gameid, parent_id, word=word, gameover=True,
                   result=f"🎉 {state['guesser_name']} guessed it: {word.upper()}!")
         else:
             state["wrong"] += 1   # a wrong whole-word guess costs a miss (don't pollute the letters list)
-            _finish_or_continue(note, gameid, state, word)
+            _finish_or_continue(gameid, state, word, parent_id)
         return
     m = _LETTER_RE.search(low)
     if not m:
-        _reply_text(note, "🤔 Reply with a single letter A-Z (or the whole word).")
+        reply("🤔 Reply with a single letter A-Z (or the whole word).")
         return
     letter = m.group(0).lower()
     if letter in state["guessed"] or letter in state["wrong_letters"]:
-        _reply_text(note, f"↩️ You already tried '{letter.upper()}'. Try another.")
+        reply(f"↩️ You already tried '{letter.upper()}'. Try another.")
         return
     if letter in word:
         state["guessed"].append(letter)
     else:
         state["wrong"] += 1
         state["wrong_letters"].append(letter)
-    _finish_or_continue(note, gameid, state, word)
+    _finish_or_continue(gameid, state, word, parent_id)
 
 
-def _finish_or_continue(note, gameid, state, word):
+def _finish_or_continue(gameid, state, word, parent_id):
     state["display"] = _display(word, set(state["guessed"]))
     if all(c in state["guessed"] for c in word):
         state["status"] = "won"
-        _post(state, gameid, note["id"], word=word, gameover=True,
+        _post(state, gameid, parent_id, word=word, gameover=True,
               result=f"🎉 {state['guesser_name']} solved it: {word.upper()}!")
     elif state["wrong"] >= _MAX_WRONG:
         state["status"] = "lost"
-        _post(state, gameid, note["id"], word=word, gameover=True,
+        _post(state, gameid, parent_id, word=word, gameover=True,
               result=f"💀 Out of guesses! The word was: {word.upper()}")
     else:
-        _post(state, gameid, note["id"], word=word)
+        _post(state, gameid, parent_id, word=word)
+
+
+def _handle_move(note, gameid, state):
+    """Public-reply guess path (cross-client public play still works)."""
+    sender = (note.get("user") or {}).get("pubkey")
+    _apply_move(sender, gameid, state, _clean_text(note), lambda m: _reply_text(note, m), note["id"])
+
+
+def _handle_dm(sender, gameid, state, move_text):
+    """Private-DM guess path — nudges/errors go back as DMs."""
+    _apply_move(sender, gameid, state, move_text,
+                lambda m: _nk.send_dm(sender, m), state.get("last_board_event") or gameid)
 
 
 def process_hangman():
@@ -330,10 +456,41 @@ def process_hangman():
             continue
         try:
             if state:
-                _handle_guess(note, root, state)
+                _handle_move(note, root, state)
             else:
                 _start_game(note, own_pk)
         except Exception as e:
             print(f"[hangman] processing {nid[:12]} failed: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+    # ---- private gameplay: read guess DMs (NIP-17) ---------------------------
+    try:
+        dms = _nk.read_dms(limit=100)
+    except Exception as e:
+        print(f"[hangman] read_dms failed: {e}", flush=True)
+        dms = []
+    for dm in dms:
+        rid = dm.get("rumor_id")
+        sender = dm.get("sender")
+        if not rid or not sender or sender == own_pk:
+            continue
+        if dm.get("created_at", 0) < cutoff:
+            continue
+        gameid, move_text = _clean_dm_text(dm.get("text") or "")
+        if not move_text:
+            continue
+        if not gameid:
+            gameid = _get_player_game(sender)   # bare DM reply → the player's pending game
+        if not gameid:
+            continue
+        if not _claim_dm(rid):
+            continue
+        state = _load_game(gameid)
+        if not state:
+            continue
+        try:
+            _handle_dm(sender, gameid, state, move_text)
+        except Exception as e:
+            print(f"[hangman] DM guess {rid[:12]} failed: {e}", flush=True)
             import traceback
             traceback.print_exc()

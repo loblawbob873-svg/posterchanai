@@ -4,7 +4,7 @@
   function init(){
     const PC = window.__PC;
     if(!PC){ return setTimeout(init, 50); }
-    const { $, $$, enc, publish, safePk, nip05Resolve, profOf, needProfile, niceNip05, LOGO, toast, ensureProfile, NT } = PC;
+    const { $, $$, enc, publish, sendDm, safePk, nip05Resolve, profOf, needProfile, niceNip05, LOGO, toast, ensureProfile, NT } = PC;
     const Relay = window.Relay, Store = window.Store;
     let _timer = null;
 
@@ -25,7 +25,7 @@
       feed.innerHTML = `<div class="chess-hub">
           <div class="chess-splash glass">
             <h2>⭕ Tic-Tac-Toe</h2>
-            <p class="muted">Play over Nostr — the bot is the board &amp; referee. Reply with a cell number 1-9, or tap.</p>
+            <p class="muted">Play over Nostr — the bot is the board &amp; referee. The bot <b>DMs each of you the board privately</b>; moves are private, the result is public. Move here on this tab, or reply to the bot's DM with a cell number 1-9. Or post <code>start @friend</code> (or just <code>start</code>) tagging the bot.</p>
             ${invite}
           </div>
           <div class="chess-games"><h3>⭕ Your games</h3><div id="ttt-games"><div class="spinner"></div></div></div>
@@ -53,7 +53,7 @@
     }
     async function startBot(){
       const botPk=safePk(PC.CFG.ttt_bot_npub); if(!botPk){ toast('no bot'); return; }
-      try{ await publish(1, `🤖 tictactoe vs the bot — I'll be X. Reply with a cell number 1-9.\n\n#tictactoe #nostr #gamestr`, [['p',botPk],['t','tictactoe'],['t','nostr'],['t','gamestr']]);
+      try{ await publish(1, `🤖 start tictactoe vs the bot — I'll be X. The bot will DM me the board; I'll play my moves privately.\n\n#tictactoe #nostr #gamestr`, [['p',botPk],['t','tictactoe'],['t','nostr'],['t','gamestr']]);
         toast('starting vs the bot ⭕'); setTimeout(()=>{ if(PC.VIEW==='ttt') render(); }, 4500);
       }catch(e){ toast('could not start'); }
     }
@@ -62,8 +62,8 @@
       if(pk===PC.ME.pubkey){ toast("you can't challenge yourself"); return; }
       let npub; try{ npub=NT().nip19.npubEncode(pk); }catch(_){ npub=pk; }
       const meName=(profOf(PC.ME.pubkey)||{}).name||'A player';
-      try{ await publish(1, `⭕ ${meName} challenged you to Tic-Tac-Toe! nostr:${npub}\nYou're X — accept by playing a cell 1-9 (reply to the board, or tap on the Games tab).\n\n#tictactoe #nostr #gamestr`, [['p',botPk],['p',pk],['t','tictactoe'],['t','nostr'],['t','gamestr']]);
-        toast('invite sent ⭕'); setTimeout(()=>{ if(PC.VIEW==='ttt') render(); }, 4500);
+      try{ await publish(1, `⭕ ${meName} challenged you to Tic-Tac-Toe! nostr:${npub}\nYou're X — the bot will DM you the board to make the first move. Play your moves privately in DMs (or on the Tic-Tac-Toe tab) with a cell number 1-9. The bot referees and posts the result publicly.\n\n#tictactoe #nostr #gamestr`, [['p',botPk],['p',pk],['t','tictactoe'],['t','nostr'],['t','gamestr']]);
+        toast('challenge sent ⭕ — the bot will DM the board'); setTimeout(()=>{ if(PC.VIEW==='ttt') render(); }, 4500);
       }catch(e){ toast('challenge failed'); }
     }
     async function _load(){
@@ -128,13 +128,11 @@
     }
     async function move(game, text){
       const botPk=safePk(PC.CFG.ttt_bot_npub); if(!botPk){ toast('no bot'); return; }
-      const oppPk = game.x===PC.ME.pubkey ? game.o : game.x;
-      const tags=[['e', game.root, '', 'root']];
-      if(game.last_board_event && game.last_board_event!==game.root) tags.push(['e', game.last_board_event, '', 'reply']);
-      tags.push(['p', botPk], ['p', oppPk], ['t','tictactoe'],['t','nostr'],['t','gamestr']);
-      try{ await publish(1, text.trim()+"\n\n#tictactoe", tags); toast('move sent ⭕'); }
+      // Gameplay is PRIVATE: moves go to the bot as a NIP-17 DM. The 'g:<root>' marker (on its own
+      // line so it's hidden from the visible message) tells the bot which game this move belongs to.
+      try{ await sendDm(botPk, `${text.trim()}\n\ng:${game.root}`); toast('move sent ⭕'); }
       catch(e){ toast('move failed'); return; }
-      setTimeout(()=>{ if(PC.VIEW==='ttt') render(); }, 4500);
+      setTimeout(()=>{ if(PC.VIEW==='ttt') render(); }, 4500);   // give the bot time to validate + DM back
     }
 
     (window.PCGames = window.PCGames || {}).ttt = render;

@@ -4,7 +4,7 @@
   function init(){
     const PC = window.__PC;
     if(!PC){ return setTimeout(init, 50); }
-    const { $, $$, enc, publish, safePk, nip05Resolve, profOf, needProfile, niceNip05, LOGO, toast, ensureProfile, NT } = PC;
+    const { $, $$, enc, publish, sendDm, safePk, nip05Resolve, profOf, needProfile, niceNip05, LOGO, toast, ensureProfile, NT } = PC;
     const Relay = window.Relay, Store = window.Store;
     const COLS = 7, ROWS = 6;
     let _timer = null;
@@ -26,7 +26,7 @@
       feed.innerHTML = `<div class="chess-hub">
           <div class="chess-splash glass">
             <h2>🔴 Connect Four</h2>
-            <p class="muted">Play over Nostr — the bot is the board &amp; referee. Drop a disc: reply with a column 1-7, or tap.</p>
+            <p class="muted">Play over Nostr — the bot is the board &amp; referee. The bot <b>DMs you the board privately</b>; drop a disc by tapping here or replying to the DM with a column 1-7. Only the matchup &amp; result are public.</p>
             ${invite}
           </div>
           <div class="chess-games"><h3>🔴 Your games</h3><div id="c4-games"><div class="spinner"></div></div></div>
@@ -54,7 +54,7 @@
     }
     async function startBot(){
       const botPk=safePk(PC.CFG.connect4_bot_npub); if(!botPk){ toast('no bot'); return; }
-      try{ await publish(1, `🤖 connect4 vs the bot — I'll be cyan. Reply with a column number 1-7.\n\n#connect4 #nostr #gamestr`, [['p',botPk],['t','connect4'],['t','nostr'],['t','gamestr']]);
+      try{ await publish(1, `🤖 start connect4 vs the bot — I'll be cyan. The bot will DM me the board; I'll drop my discs privately.\n\n#connect4 #nostr #gamestr`, [['p',botPk],['t','connect4'],['t','nostr'],['t','gamestr']]);
         toast('starting vs the bot 🔴'); setTimeout(()=>{ if(PC.VIEW==='connect4') render(); }, 4500);
       }catch(e){ toast('could not start'); }
     }
@@ -63,7 +63,7 @@
       if(pk===PC.ME.pubkey){ toast("you can't challenge yourself"); return; }
       let npub; try{ npub=NT().nip19.npubEncode(pk); }catch(_){ npub=pk; }
       const meName=(profOf(PC.ME.pubkey)||{}).name||'A player';
-      try{ await publish(1, `🔴 ${meName} challenged you to Connect Four! nostr:${npub}\nYou're cyan — accept by dropping a disc in a column 1-7 (reply to the board, or tap on the Games tab).\n\n#connect4 #nostr #gamestr`, [['p',botPk],['p',pk],['t','connect4'],['t','nostr'],['t','gamestr']]);
+      try{ await publish(1, `🔴 ${meName} challenged you to Connect Four! nostr:${npub}\nYou're cyan — the bot will DM you the board to drop the first disc. Play privately in DMs (reply with a column 1-7) or on the Games tab. I'll post the result when it's over.\n\n#connect4 #nostr #gamestr`, [['p',botPk],['p',pk],['t','connect4'],['t','nostr'],['t','gamestr']]);
         toast('invite sent 🔴'); setTimeout(()=>{ if(PC.VIEW==='connect4') render(); }, 4500);
       }catch(e){ toast('challenge failed'); }
     }
@@ -142,11 +142,9 @@
     }
     async function move(game, text){
       const botPk=safePk(PC.CFG.connect4_bot_npub); if(!botPk){ toast('no bot'); return; }
-      const oppPk = game.p1===PC.ME.pubkey ? game.p2 : game.p1;
-      const tags=[['e', game.root, '', 'root']];
-      if(game.last_board_event && game.last_board_event!==game.root) tags.push(['e', game.last_board_event, '', 'reply']);
-      tags.push(['p', botPk], ['p', oppPk], ['t','connect4'],['t','nostr'],['t','gamestr']);
-      try{ await publish(1, text.trim()+"\n\n#connect4 #nostr #gamestr", tags); toast('move sent 🔴'); }
+      // Gameplay is PRIVATE: moves go to the bot as a NIP-17 DM. The 'g:<root>' marker (on its own
+      // line so it's hidden from the visible message) tells the bot which game this move belongs to.
+      try{ await sendDm(botPk, `${text.trim()}\n\ng:${game.root}`); toast('move sent 🔴'); }
       catch(e){ toast('move failed'); return; }
       setTimeout(()=>{ if(PC.VIEW==='connect4') render(); }, 4500);
     }

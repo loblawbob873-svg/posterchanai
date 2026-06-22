@@ -33,7 +33,10 @@ from config import NOSTR_NSEC
 from app.services.nostr import event as _ev
 
 _KIND_APP = 30078
-_START_RE = re.compile(r"\bchess(tr)?\b", re.IGNORECASE)
+_START_RE = re.compile(r"\b(?:chess(tr)?|start)\b", re.IGNORECASE)
+# An app-embedded game pointer inside a DM ("g:<64-hex-root> <move>"); bare human DM replies omit it
+# and fall back to the per-player pending-game pointer.
+_DM_GAME_RE = re.compile(r"\bg:([0-9a-f]{64})\b", re.IGNORECASE)
 # "<n> <square>" with an optional separator: "1 d4", "1->d4", "12e5"
 _MOVE_RE = re.compile(r"\b(\d{1,2})\s*(?:->|-|to|\.)?\s*([a-h][1-8])\b", re.IGNORECASE)
 _NOSTR_TOKEN_RE = re.compile(
@@ -54,7 +57,41 @@ def _suffix() -> str:
 
 _IDS_FILE = os.path.join(script_dir, f".processed_chess_ids_{_suffix()}")
 _LOCK_FILE = _IDS_FILE + ".lock"
+_DM_IDS_FILE = os.path.join(script_dir, f".processed_chess_dms_{_suffix()}")
 _MAX_IDS = 5000
+
+
+def _claim_in(ids_file: str, item_id: str) -> bool:
+    lock_file = ids_file + ".lock"
+    try:
+        with open(lock_file, "w") as lk:
+            fcntl.flock(lk.fileno(), fcntl.LOCK_EX)
+            try:
+                ids = set()
+                try:
+                    with open(ids_file) as f:
+                        ids = {ln.strip() for ln in f if ln.strip()}
+                except FileNotFoundError:
+                    pass
+                if item_id in ids:
+                    return False
+                ids.add(item_id)
+                if len(ids) > _MAX_IDS:
+                    ids = set(sorted(ids)[-_MAX_IDS:])
+                fd, tmp = tempfile.mkstemp(dir=script_dir, prefix=".chids_")
+                with os.fdopen(fd, "w") as f:
+                    f.write("\n".join(ids))
+                os.replace(tmp, ids_file)
+                return True
+            finally:
+                fcntl.flock(lk.fileno(), fcntl.LOCK_UN)
+    except Exception as e:
+        print(f"[chesstr] claim failed: {e}", flush=True)
+        return False
+
+
+def _claim_dm(rumor_id: str) -> bool:
+    return _claim_in(_DM_IDS_FILE, rumor_id)
 
 
 def _claim(note_id: str) -> bool:
@@ -167,6 +204,20 @@ def _clean_text(note) -> str:
         if line.strip():
             return line.strip()
     return t.strip()
+
+
+def _clean_dm_text(text: str) -> tuple:
+    """Parse a move DM → (gameid_or_None, move_text). Strips the app's 'g:<root>' marker, nostr
+    tokens and hashtags; the move is the first non-empty line."""
+    m = _DM_GAME_RE.search(text or "")
+    gameid = m.group(1).lower() if m else None
+    t = _DM_GAME_RE.sub("", text or "")
+    t = _NOSTR_TOKEN_RE.sub("", t)
+    t = re.sub(r"#\w+", "", t)
+    for line in t.splitlines():
+        if line.strip():
+            return gameid, line.strip()
+    return gameid, t.strip()
 
 
 def _publish(gameid, parent_id, white, black, body, png, federate=True):
@@ -351,8 +402,9 @@ def _footer() -> str:
     """Board-image footer: invite people to play interactively in the app, then the #chesstr tag."""
     site = (os.getenv("CHESS_SITE_URL", "") or "").strip()
     play = f"\nPlay interactively at {site}." if site else ""
-    return ("♟️ Wanna start your own game with a friend? Reply \"chess @friend\" to challenge them "
-            "(or just \"chess\" to play me); then reply with moves like \"1 d4\"." + play + "\n#chess #nostr #gamestr")
+    return ("♟️ Wanna start your own game? Mention me with \"start @friend\" to challenge them "
+            "(or just \"start\" to play me); I'll DM each of you the board to make your moves." + play
+            + "\n#chess #nostr #gamestr")
 
 
 def _status_for(board: chess.Board):
@@ -364,16 +416,51 @@ def _status_for(board: chess.Board):
     return "draw", f"½–½ {_DRAW_LABELS.get(out.termination, 'Draw')}."
 
 
-def _post_active_board(state, gameid, parent_id, san):
-    """Render + post the board for the side now to move (after a move or at game start)."""
-    # MID-GAME: state-only, NO public post — the web client renders the board from this state and
-    # polls it. Only the opening (san is None) and the final (_post_gameover) are posted publicly.
-    if san is not None:
-        _save_game(gameid, state)
-        return
+def _dm_current_player(state, gameid):
+    """DM the board to the side now to move (private gameplay). No-op if it's the bot's turn.
+    Sets the per-player pending-game pointer so a bare DM reply (no app marker) routes back here."""
     board = chess.Board(state["fen"])
     mover_white = board.turn == chess.WHITE
     mover_pk = state["white"] if mover_white else state["black"]
+    if not mover_pk or mover_pk == _nk._PUBKEY:
+        return
+    opp_nm = state["black_name"] if mover_white else state["white_name"]
+    chk = " — you're in CHECK!" if board.is_check() else ""
+    title = f"YOUR MOVE{(' — CHECK!' if board.is_check() else '')}"
+    sub = f"{state['white_name']} (cyan) vs {state['black_name']} (magenta)  ·  move {board.fullmove_number}"
+    png = chess_render.render_board(state["fen"], last_move=state.get("last_move"),
+                                    number_color=board.turn, title=title, subtitle=sub, footer="")
+    try:
+        info = _nk._run(_nk._svc.media.upload(_nk._MEDIA_CFG, _nk._SECKEY, png, "image/png")) or {}
+        url = info.get("url") or ""
+    except Exception as e:
+        print(f"[chesstr] DM board upload failed: {e}", flush=True)
+        url = ""
+    last = f"Last move: {state['moves'][-1]}. " if state.get("moves") else ""
+    body = (f"♟️ Your move vs {opp_nm}{chk}\n{last}"
+            f"You're {'White (cyan)' if mover_white else 'Black (magenta)'}.\n"
+            + (url + "\n\n" if url else "")
+            + "Reply to this DM with your move — your piece's number + square, e.g. '1 d4' "
+              "(or 'Nf3' / 'e4' / 'O-O' / 'resign'). Or play from the Chess tab in the app.")
+    try:
+        _nk.send_dm(mover_pk, body, extra_tags=[["g", gameid]])
+        _set_player_game(mover_pk, gameid)
+    except Exception as e:
+        print(f"[chesstr] send_dm failed: {e}", flush=True)
+
+
+def _post_active_board(state, gameid, parent_id, san):
+    """After a move (or at game start) advance the game. Gameplay is PRIVATE: the board goes to the
+    side-to-move as a DM. Only the OPENING invitation (san is None) is posted publicly (to gather
+    interest); the FINAL result is posted by _post_gameover. Mid-game = DM only, no public post."""
+    if san is not None:
+        # MID-GAME: no public post — just persist + DM the next player their board.
+        _save_game(gameid, state)
+        _dm_current_player(state, gameid)
+        return
+    # OPENING: one public invitation post, then DM the first player their board.
+    board = chess.Board(state["fen"])
+    mover_white = board.turn == chess.WHITE
     mover_nm = state["white_name"] if mover_white else state["black_name"]
     move_no = board.fullmove_number
     chk = " — CHECK!" if board.is_check() else ""
@@ -381,32 +468,22 @@ def _post_active_board(state, gameid, parent_id, san):
     sub = f"{state['white_name']} (cyan) vs {state['black_name']} (magenta)  ·  move {move_no}"
     png = chess_render.render_board(state["fen"], last_move=state.get("last_move"),
                                     number_color=board.turn, title=title, subtitle=sub, footer=_footer())
-    if san is None:
-        # Opening post = the invitation. White moves first, so the challenged player "accepts" by moving.
-        vs_bot = _nk._PUBKEY in (state["white"], state["black"])
-        if vs_bot:
-            human_white = state["white"] != _nk._PUBKEY
-            human_nm = state["white_name"] if human_white else state["black_name"]
-            body = (f"🤖 #chesstr — {human_nm} vs the bot!\n"
-                    f"You're {'White' if human_white else 'Black'}. Make your move: reply to THIS post "
-                    f"with your piece's number + square, e.g. '1 d4' (or 'Nf3' / 'e4' / 'O-O'). "
-                    f"Your pieces are numbered on the board above, or play from the Chess tab in the app.")
-        else:
-            body = (f"♟️ #chesstr — {state['white_name']} (cyan) has been challenged by "
-                    f"{state['black_name']} (magenta)!\n"
-                    f"{mover_nm}, you're up first (White) — ACCEPT by making your move. "
-                    f"Reply to THIS post with your piece's number + square, e.g. '1 d4' "
-                    f"(or 'Nf3' / 'e4' / 'O-O'). Your pieces are numbered on the board above. "
-                    f"You can also play from the Chess tab in the app.")
+    vs_bot = _nk._PUBKEY in (state["white"], state["black"])
+    if vs_bot:
+        human_white = state["white"] != _nk._PUBKEY
+        human_nm = state["white_name"] if human_white else state["black_name"]
+        body = (f"🤖 #chess — {human_nm} vs the bot!\n"
+                f"You're {'White' if human_white else 'Black'}. 📩 Check your DMs — I've sent you the "
+                f"board there, and the whole game plays out privately in DMs. The result gets posted here.")
     else:
-        last = f"Last move: {san}. "
-        body = (f"♟️ {last}{mover_nm} ({'cyan' if mover_white else 'magenta'}) to move{chk}\n"
-                f"Reply to THIS post with your move, e.g. '1 d4' (move piece #1 to d4). "
-                f"SAN/UCI/O-O also work.")
-    # Opening (san is None) is public; mid-game move boards stay local-only (anti-spam).
-    ev = _publish(gameid, parent_id, state["white"], state["black"], body, png, federate=(san is None))
+        body = (f"♟️ #chess — {state['white_name']} (cyan) has been challenged by "
+                f"{state['black_name']} (magenta)!\n"
+                f"📩 {mover_nm}, you're White — check your DMs to make the first move. The game plays out "
+                f"privately in DMs; I'll post the result here when it's over.")
+    ev = _publish(gameid, parent_id, state["white"], state["black"], body, png, federate=True)
     state["last_board_event"] = ev.get("id")
     _save_game(gameid, state)
+    _dm_current_player(state, gameid)
 
 
 def _post_gameover(state, gameid, parent_id, san, result_text):
@@ -463,38 +540,31 @@ def _start_game(note, own_pk):
     _post_active_board(state, gameid, gameid, san=None)
 
 
-# ---- a move in an existing game ----------------------------------------------
-def _handle_move(note, gameid, state):
-    sender = (note.get("user") or {}).get("pubkey")
+# ---- a move in an existing game (shared by the public-reply + private-DM paths) --------------
+def _apply_move(sender, gameid, state, text, reply, parent_id):
+    """Apply one move from `sender`. `reply(msg)` sends a nudge/error on the same channel (public
+    reply or DM). Game-over posts go to `parent_id` (public). Mid-game = no public post; the next
+    player is DM'd by _post_active_board."""
     if sender not in (state["white"], state["black"]):
-        return  # a spectator chiming in — ignore
+        return
     if state.get("status") != "active":
-        if state.get("status") == "abandoned":
-            _reply_text(note, "⚠️ This game was abandoned (a newer #chesstr game superseded it). "
-                              "Start a fresh one with \"chess @opponent\".")
-        else:
-            _reply_text(note, "🏁 This game is already over. Start a new one with \"chess @opponent\".")
+        reply("🏁 This game is already over. Start a new one with \"start @opponent\".")
         return
     board = chess.Board(state["fen"])
-    text = _clean_text(note)
-    # Resign/quit is allowed at ANY time (even on the opponent's turn) — checked before the turn gate.
     if text.lower() in ("resign", "i resign", "gg", "/resign", "quit", "abandon"):
         winner = state["black_name"] if sender == state["white"] else state["white_name"]
         state["status"] = "resigned"
-        _post_gameover(state, gameid, note["id"], None, f"{_name(sender)} resigned. {winner} wins!")
+        _post_gameover(state, gameid, parent_id, None, f"{_name(sender)} resigned. {winner} wins!")
         return
     side_pk = state["white"] if board.turn == chess.WHITE else state["black"]
     if sender != side_pk:
-        _reply_text(note, "⏳ It's not your turn.")
+        reply("⏳ It's not your turn.")
         return
     mv = _parse_move(board, text)
-    print(f"[chesstr] move from {sender[:8]} in {gameid[:8]}: text={text!r} fen={state['fen']!r} -> {mv}", flush=True)
     if mv == "no_piece":
-        _reply_text(note, "🤔 I don't see a piece with that number. Use the numbers shown on YOUR pieces.")
+        reply("🤔 I don't see a piece with that number. Use the numbers shown on YOUR pieces.")
         return
     if mv == "illegal" or mv is None or mv not in board.legal_moves:
-        # Work out which piece the player meant (numbered OR UCI/tap) so we can explain WHY it's
-        # illegal — e.g. "that piece is pinned" — instead of a bare "illegal move".
         fs = None
         m = _MOVE_RE.search(text)
         low = text.strip().lower()
@@ -515,7 +585,7 @@ def _handle_move(note, gameid, state):
                     hint = f" That {chess.piece_name(pc.piece_type)} is PINNED to your king — it can't move right now."
                 else:
                     hint = f" That {chess.piece_name(pc.piece_type)} has no legal moves right now."
-        _reply_text(note, f"🚫 Illegal move.{hint} Move with '<number> <square>' (e.g. '1 d4'), tap on the Chess tab, or SAN like 'Nf3'.")
+        reply(f"🚫 Illegal move.{hint} Reply with '<number> <square>' (e.g. '1 d4'), or SAN like 'Nf3'.")
         return
     san = board.san(mv)
     board.push(mv)
@@ -525,21 +595,30 @@ def _handle_move(note, gameid, state):
     status, result = _status_for(board)
     if status != "active":
         state["status"] = status
-        print(f"[chesstr] game {gameid[:12]} over: {result}", flush=True)
-        _post_gameover(state, gameid, note["id"], san, result)
+        _post_gameover(state, gameid, parent_id, san, result)
         return
-    # Playing the bot? It replies right away.
     next_pk = state["white"] if board.turn == chess.WHITE else state["black"]
     if next_pk == _nk._PUBKEY:
         bot_san = _apply_bot_moves(state) or san
         if state.get("status") != "active":
             _, result = _status_for(chess.Board(state["fen"]))
-            print(f"[chesstr] game {gameid[:12]} over (bot): {result}", flush=True)
-            _post_gameover(state, gameid, note["id"], bot_san, result)
+            _post_gameover(state, gameid, parent_id, bot_san, result)
         else:
-            _post_active_board(state, gameid, note["id"], bot_san)
+            _post_active_board(state, gameid, parent_id, bot_san)
     else:
-        _post_active_board(state, gameid, note["id"], san)
+        _post_active_board(state, gameid, parent_id, san)
+
+
+def _handle_move(note, gameid, state):
+    """Public-reply move path (cross-client public play still works)."""
+    sender = (note.get("user") or {}).get("pubkey")
+    _apply_move(sender, gameid, state, _clean_text(note), lambda m: _reply_text(note, m), note["id"])
+
+
+def _handle_dm(sender, gameid, state, move_text):
+    """Private-DM move path — nudges/errors go back as DMs."""
+    _apply_move(sender, gameid, state, move_text,
+                lambda m: _nk.send_dm(sender, m), state.get("last_board_event") or gameid)
 
 
 # ---- main poll ---------------------------------------------------------------
@@ -573,5 +652,36 @@ def process_chess():
                 _start_game(note, own_pk)
         except Exception as e:
             print(f"[chesstr] processing {nid[:12]} failed: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+    # ---- private gameplay: read move DMs (NIP-17) ----------------------------
+    try:
+        dms = _nk.read_dms(limit=100)
+    except Exception as e:
+        print(f"[chesstr] read_dms failed: {e}", flush=True)
+        dms = []
+    for dm in dms:
+        rid = dm.get("rumor_id")
+        sender = dm.get("sender")
+        if not rid or not sender or sender == own_pk:
+            continue
+        if dm.get("created_at", 0) < cutoff:
+            continue
+        gameid, move_text = _clean_dm_text(dm.get("text") or "")
+        if not move_text:
+            continue
+        if not gameid:
+            gameid = _get_player_game(sender)   # bare DM reply → the player's pending game
+        if not gameid:
+            continue
+        if not _claim_dm(rid):
+            continue
+        state = _load_game(gameid)
+        if not state:
+            continue
+        try:
+            _handle_dm(sender, gameid, state, move_text)
+        except Exception as e:
+            print(f"[chesstr] DM move {rid[:12]} failed: {e}", flush=True)
             import traceback
             traceback.print_exc()
