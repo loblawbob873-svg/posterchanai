@@ -1,5 +1,6 @@
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 from typing import Optional, List, Union, Any
+import typing
 from datetime import datetime
 
 
@@ -321,6 +322,87 @@ class SettingsResponse(BaseModel):
     bots_sql_user: str = ""                    # Pleroma Postgres creds (blockbot/welcome/report)
     bots_sql_pass: str = ""
     bots_sql_host: str = ""
+    # Built-in Nostr WoT relay (own thread; serves NIP-01 at /relay on nostr_relay_port). These are
+    # GLOBAL admin settings (the admin Settings page reads/writes them via this model) — keep them
+    # here, NOT in the per-user UserSettingsUpdate, or GET /settings drops them and the relay/blossom
+    # fields show blank + "never save" in the admin UI.
+    nostr_relay_enabled: Optional[bool] = None
+    nostr_relay_disable_proxy: Optional[bool] = None  # bypass Tor for relay upstream traffic
+    nostr_relay_firehose_enabled: Optional[bool] = None  # live firehose sync (real-time)
+    nostr_relay_bind: Optional[str] = None
+    nostr_relay_port: Optional[int] = None
+    nostr_relay_wot_seeds: Optional[str] = None          # npub/hex seeds, newline/comma
+    nostr_relay_upstream_relays: Optional[str] = None     # blank = bots' DEFAULT_RELAYS
+    nostr_relay_retention_days: Optional[int] = None  # auto-clean feed notes older than N days (0=off)
+    nostr_relay_max_events: Optional[int] = None      # hard count cap on feed events (0=unlimited)
+    nostr_relay_wot_enabled: Optional[bool] = True
+    nostr_relay_send_only: Optional[bool] = False
+    nostr_relay_wot_refresh_sec: Optional[int] = None
+    nostr_relay_wot_depth: Optional[int] = None
+    nostr_relay_wot_min_followers: Optional[int] = None
+    nostr_relay_wot_max: Optional[int] = None
+    nostr_relay_max_connections: Optional[int] = None
+    nostr_relay_fetch_ancestors: Optional[bool] = None
+    nostr_relay_max_ancestors: Optional[int] = None
+    nostr_relay_sync_window_sec: Optional[int] = None
+    nostr_relay_sync_interval_sec: Optional[int] = None
+    nostr_relay_sync_idle_interval_sec: Optional[int] = None
+    nostr_relay_backfill_hours: Optional[int] = None
+    nostr_relay_overlap_sec: Optional[int] = None
+    nostr_relay_ingest_kinds: Optional[str] = None
+    nostr_relay_author_batch: Optional[int] = None
+    nostr_relay_request_pace_sec: Optional[float] = None
+    nostr_relay_outbox_min_interval_sec: Optional[float] = None
+    nostr_relay_outbox_max_queue: Optional[int] = None
+    nostr_relay_name: Optional[str] = None
+    nostr_relay_description: Optional[str] = None
+    nostr_relay_pubkey: Optional[str] = None
+    nostr_relay_contact: Optional[str] = None
+    nostr_relay_icon: Optional[str] = None
+    nostr_relay_advertise_restricted_writes: Optional[bool] = False
+    nostr_relay_mirror_feeds: Optional[bool] = False
+    nostr_relay_firehose_max_relays: Optional[int] = 0
+    nostr_relay_blocked_langs: Optional[str] = None
+    nostr_relay_blocked_words: Optional[str] = None
+    nostr_relay_blocked_pubkeys: Optional[str] = None
+    nostr_relay_blocked_relays: Optional[str] = None
+    nostr_relay_block_bridged: Optional[bool] = False
+    nostr_relay_nip05_enabled: Optional[bool] = True
+    nostr_relay_nip05_names: Optional[str] = (
+        "verita84 4b56bbf41c92e586e88927acb78836eb49f2b184081ef852625cf78be7d56bd6\n"
+        "posterchan c7de13bab5818ab7918b5b47a05de11735c4e519e49c8577fd7ce7267fe84d4b"
+    )
+    nostr_relay_nip05_relays: Optional[str] = "wss://relay.poster.place"
+    nostr_relay_nip05_domain: Optional[str] = None
+    nostr_relay_pg_dsn: Optional[str] = None
+    nostr_relay_prune_interval_sec: Optional[str] = None
+    # Built-in Blossom media server (BUD-01/02). Served by the app at /blossom (front with TLS).
+    blossom_enabled: Optional[bool] = None
+    blossom_public_url: Optional[str] = None
+    blossom_blob_ttl_days: Optional[int] = None
+    blossom_max_upload_mb: Optional[int] = None
+    blossom_storage_backend: Optional[str] = None
+    blossom_storage_path: Optional[str] = None
+    blossom_cache_mb: Optional[int] = None
+    blossom_whitelist: Optional[str] = None
+    tenor_api_key: Optional[str] = None
+    giphy_api_key: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _empty_strings_to_none(cls, data):
+        """Settings are stored as strings; a numeric/bool field stored as "" would 500 the whole
+        settings GET on validation. Coerce "" → None for non-string declared fields so it falls back
+        to the field default instead."""
+        if isinstance(data, dict):
+            for name, field in cls.model_fields.items():
+                if data.get(name) == "":
+                    ann = field.annotation
+                    args = typing.get_args(ann)
+                    base = next((a for a in args if a is not type(None)), ann) if args else ann
+                    if base is not str:
+                        data[name] = None
+        return data
 
     class Config:
         extra = "allow"  # Allow arbitrary extra settings
@@ -501,75 +583,8 @@ class UserSettingsUpdate(BaseModel):
     matrix_notif_enabled: Optional[bool] = None
     # Nitter RSS feeds (newline-separated URLs) posted as image cards to Telegram
     nitter_feeds: Optional[str] = None
-    # Built-in Nostr WoT relay (own thread; serves NIP-01 at /relay on nostr_relay_port)
-    nostr_relay_enabled: Optional[bool] = None
-    nostr_relay_disable_proxy: Optional[bool] = None  # bypass Tor for relay upstream traffic
-    nostr_relay_firehose_enabled: Optional[bool] = None  # live firehose sync (real-time)
-    nostr_relay_bind: Optional[str] = None
-    nostr_relay_port: Optional[int] = None
-    nostr_relay_wot_seeds: Optional[str] = None          # npub/hex seeds, newline/comma
-    nostr_relay_upstream_relays: Optional[str] = None     # blank = bots' DEFAULT_RELAYS
-    # Auto-clean (feed retention): prune only high-volume feed content (notes/reposts/reactions/
-    # comments); profiles, contacts, DMs, articles + local users' own events are always kept.
-    nostr_relay_retention_days: Optional[int] = None  # auto-clean feed notes older than N days (0=off)
-    nostr_relay_max_events: Optional[int] = None      # hard count cap on feed events (0=unlimited)
-    nostr_relay_wot_enabled: Optional[bool] = True           # off → open publishing + NO trust-graph/firehose/sync/NIP-05 background work (processing node)
-    nostr_relay_send_only: Optional[bool] = False            # broadcast to upstream (outbox) but don't pull/store their events — keeps the local DB from mirroring upstream
-    nostr_relay_wot_refresh_sec: Optional[int] = None
-    nostr_relay_wot_depth: Optional[int] = None              # 1=follows, 2=+friends-of-friends
-    nostr_relay_wot_min_followers: Optional[int] = None      # FoF inclusion threshold
-    nostr_relay_wot_max: Optional[int] = None                # cap on total WoT members
-    nostr_relay_max_connections: Optional[int] = None
-    nostr_relay_fetch_ancestors: Optional[bool] = None
-    nostr_relay_max_ancestors: Optional[int] = None
-    nostr_relay_sync_window_sec: Optional[int] = None
-    nostr_relay_sync_interval_sec: Optional[int] = None
-    nostr_relay_sync_idle_interval_sec: Optional[int] = None  # sweep backoff when caught up
-    nostr_relay_backfill_hours: Optional[int] = None  # initial history depth pulled on first sync
-    nostr_relay_overlap_sec: Optional[int] = None
-    nostr_relay_ingest_kinds: Optional[str] = None
-    nostr_relay_author_batch: Optional[int] = None
-    nostr_relay_request_pace_sec: Optional[float] = None       # delay between upstream queries
-    nostr_relay_outbox_min_interval_sec: Optional[float] = None  # min delay between broadcasts
-    nostr_relay_outbox_max_queue: Optional[int] = None
-    nostr_relay_name: Optional[str] = None
-    nostr_relay_description: Optional[str] = None
-    nostr_relay_pubkey: Optional[str] = None
-    nostr_relay_contact: Optional[str] = None
-    nostr_relay_icon: Optional[str] = None             # relay avatar URL (blank = mascot)
-    nostr_relay_advertise_restricted_writes: Optional[bool] = False  # off = single-relay NIP-65 lists stick in Yakihonne
-    nostr_relay_mirror_feeds: Optional[bool] = False   # off = write-gated store, not a crawler of the WoT's whole feed
-    nostr_relay_firehose_max_relays: Optional[int] = 0  # how many upstreams the firehose streams from (0 = ALL)
-    nostr_relay_blocked_langs: Optional[str] = None    # CSV of blocked language codes
-    nostr_relay_blocked_words: Optional[str] = None    # newline list; reject notes containing these
-    nostr_relay_blocked_pubkeys: Optional[str] = None  # npub/hex denylist (purged + rejected)
-    nostr_relay_blocked_relays: Optional[str] = None   # bridge/relay domains to block (e.g. mostr.pub)
-    nostr_relay_block_bridged: Optional[bool] = False  # drop ALL NIP-48 proxy (fediverse/Bluesky-bridged) posts
-    # Built-in NIP-05 identity server — served by the relay subprocess at /.well-known/nostr.json
-    # (front it with TLS; nginx proxies the well-known path to the relay port).
-    # Defaults mirror nostr_relay.thread._DEFAULT_NIP05_* so the UI pre-fills the entries the
-    # relay serves out of the box (the ones previously on router.lan).
-    nostr_relay_nip05_enabled: Optional[bool] = True   # serve /.well-known/nostr.json
-    nostr_relay_nip05_names: Optional[str] = (         # "name npub/hex" per line
-        "verita84 4b56bbf41c92e586e88927acb78836eb49f2b184081ef852625cf78be7d56bd6\n"
-        "posterchan c7de13bab5818ab7918b5b47a05de11735c4e519e49c8577fd7ce7267fe84d4b"
-    )
-    nostr_relay_nip05_relays: Optional[str] = "wss://relay.poster.place"  # advertised for every name
-    nostr_relay_nip05_domain: Optional[str] = None   # domain for auto-assigned signup names (blank = request host)
-    # (removed) chat_/settings_/users_/bots_/records_backend — the relay is the one datastore now.
-    nostr_relay_pg_dsn: Optional[str] = None         # PostgreSQL DSN for the relay's event store
-    nostr_relay_prune_interval_sec: Optional[str] = None  # auto-prune cadence (default nightly)
-    # Built-in Blossom media server (BUD-01/02). Served by the app at /blossom (front with TLS).
-    blossom_enabled: Optional[bool] = None
-    blossom_public_url: Optional[str] = None       # advertised base URL (blank = derive from request)
-    blossom_blob_ttl_days: Optional[int] = None    # per-blob expiry in days (0 = never)
-    blossom_max_upload_mb: Optional[int] = None     # reject uploads over this size
-    blossom_storage_backend: Optional[str] = None  # "local" | "proxy" (storage_server_url)
-    blossom_storage_path: Optional[str] = None      # local blob dir (blank = ./data/blossom)
-    blossom_cache_mb: Optional[int] = None          # in-RAM read cache budget (0 = off)
-    blossom_whitelist: Optional[str] = None         # npub/hex allowed to upload (no AI account needed)
-    tenor_api_key: Optional[str] = None             # GIF picker (Tenor v2); blank = GIF button hidden
-    giphy_api_key: Optional[str] = None             # GIF picker (Giphy; easier key); used if set, else Tenor
+    # NOTE: the global relay/Blossom/GIF settings that used to live here were MOVED to
+    # SettingsResponse (they're admin-global, not per-user) — see that class.
 
 
 class UserSettingsResponse(BaseModel):

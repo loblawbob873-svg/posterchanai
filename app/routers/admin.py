@@ -297,6 +297,28 @@ def delete_external_storage(
     return {"message": "External storage mount deleted"}
 
 
+_TEXT_KEYS_CACHE = None
+
+
+def _settings_text_keys() -> set:
+    """Names of SettingsResponse fields whose type is string (so an empty value is a legitimate
+    CLEAR). Numeric/bool fields are excluded — saving '' for them would break the typed GET parse.
+    Computed once from the schema so new string settings are clearable automatically."""
+    global _TEXT_KEYS_CACHE
+    if _TEXT_KEYS_CACHE is not None:
+        return _TEXT_KEYS_CACHE
+    import typing
+    out = set()
+    for name, field in SettingsResponse.model_fields.items():
+        ann = field.annotation
+        args = typing.get_args(ann)
+        base = next((a for a in args if a is not type(None)), ann) if args else ann
+        if base is str:
+            out.add(name)
+    _TEXT_KEYS_CACHE = out
+    return out
+
+
 @router.get("/settings", response_model=SettingsResponse)
 def get_settings(
     db: Session = Depends(get_db),
@@ -415,10 +437,13 @@ def update_settings(
 
     try:
         from app.services import settings_store
+        text_keys = _settings_text_keys()
         for key, value in data.settings.items():
-            # The admin UI sends ALL fields on every save; only persist a key whose value actually
-            # CHANGED and is non-empty ("" = leave as-is — protects against partial UI updates).
-            if value != "" and settings_store.get(key, "") != value:
+            # Persist only keys whose value actually CHANGED. Empty is allowed ONLY for text settings
+            # (so a TEXT field like the relay upstream list / blocklists can be CLEARED) — for typed
+            # (number/bool) settings an empty string would break SettingsResponse parsing on the next
+            # GET, and "" there just means "leave as-is" from a partial UI update, so skip it.
+            if settings_store.get(key, "") != value and (value != "" or key in text_keys):
                 settings_store.put(key, value)   # updates the cache + writes through to the relay
                 changed_keys.add(key)
             if key in cache_keys:
