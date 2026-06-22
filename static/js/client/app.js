@@ -37,15 +37,51 @@
   const subs = {};                 // view -> subId
   const seenNotif = { last: 0 };
 
+  // NIP-17 for signers whose SECRET KEY we never hold (nip07 extension / nip46 remote signer):
+  // they do the two key-dependent steps via NIP-44 — sign the kind-13 seal + nip44-encrypt the
+  // rumor to the recipient — and the worker does the throwaway ephemeral outer kind-1059 layer.
+  // Needs the wallet to support NIP-44 (modern extensions / Amber do). Mirrors the worker's
+  // local-key path so bot↔player game DMs decrypt for ALL login types, not just local nsec.
+  async function _nip17unwrapVia(nip44dec, wrap){
+    const seal = JSON.parse(await nip44dec(wrap.pubkey, wrap.content));
+    const rumor = JSON.parse(await nip44dec(seal.pubkey, seal.content));
+    if (rumor.pubkey !== seal.pubkey) throw new Error('nip17: seal/rumor author mismatch');
+    return rumor;
+  }
+  async function _eventId(ev){   // NIP-01 event id: sha256 of the canonical [0,pk,ts,kind,tags,content]
+    const ser = JSON.stringify([0, ev.pubkey, ev.created_at, ev.kind, ev.tags, ev.content]);
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(ser));
+    return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+  }
+  async function _nip17wrapVia(myPk, nip44enc, signEvent, peer, text){
+    const now = Math.floor(Date.now()/1000);
+    const randPast = () => now - Math.floor(Math.random()*2*86400);   // NIP-59 timing privacy
+    async function wrapFor(recipient){
+      const rumor = { pubkey: myPk, created_at: now, kind: 14, tags: [['p', recipient]], content: text };
+      rumor.id = await _eventId(rumor);                          // unsigned rumor — id only, no sig
+      const sealContent = await nip44enc(recipient, JSON.stringify(rumor));
+      const seal = await signEvent({ kind: 13, created_at: randPast(), tags: [], content: sealContent });
+      const { wrap } = await Relay.worker.call('giftwrapSeal', { seal, recipient });
+      return wrap;
+    }
+    return { toPeer: await wrapFor(peer), toSelf: await wrapFor(myPk) };
+  }
+
   // ---------- signer abstraction ----------
   function makeSigner(mode, pubkey){
     if (mode === 'nip07'){
-      return {
+      const s = {
         mode, pubkey,
         signEvent: (tpl) => window.nostr.signEvent(tpl),
         nip04enc: (peer, txt) => window.nostr.nip04.encrypt(peer, txt),
         nip04dec: (peer, ct) => window.nostr.nip04.decrypt(peer, ct),
       };
+      if (window.nostr && window.nostr.nip44){   // gift-wrapped DMs via the extension's NIP-44
+        s.nip17wrap = (peer, text) => _nip17wrapVia(pubkey, (r,pt)=>window.nostr.nip44.encrypt(r,pt),
+                                                    (tpl)=>window.nostr.signEvent(tpl), peer, text);
+        s.nip17unwrap = (wrap) => _nip17unwrapVia((p,ct)=>window.nostr.nip44.decrypt(p,ct), wrap);
+      }
+      return s;
     }
     if (mode === 'nip46'){   // Amber / remote signer (NIP-46): the user's key stays in the signer
       return {
@@ -53,6 +89,9 @@
         signEvent: (tpl) => Nip46.signEvent(tpl),
         nip04enc: (peer, txt) => Nip46.nip04enc(peer, txt),
         nip04dec: (peer, ct) => Nip46.nip04dec(peer, ct),
+        nip17wrap: (peer, text) => _nip17wrapVia(pubkey, (r,pt)=>Nip46.nip44enc(r,pt),
+                                                 (tpl)=>Nip46.signEvent(tpl), peer, text),
+        nip17unwrap: (wrap) => _nip17unwrapVia((p,ct)=>Nip46.nip44dec(p,ct), wrap),
       };
     }
     return {  // local key — crypto in the worker
@@ -191,6 +230,8 @@
     async signEvent(tpl){ return JSON.parse(await this._send('sign_event',[JSON.stringify(tpl)])); },
     nip04enc(peer, text){ return this._send('nip04_encrypt',[peer, text]); },
     nip04dec(peer, ct){ return this._send('nip04_decrypt',[peer, ct]); },
+    nip44enc(peer, text){ return this._send('nip44_encrypt',[peer, text]); },
+    nip44dec(peer, ct){ return this._send('nip44_decrypt',[peer, ct]); },
   };
 
   // ---------- NIP-46 SIGNER side: "scan a QR to log in another device" (Primal-style) ----------
@@ -329,6 +370,48 @@
   }
 
   // ---------- boot ----------
+  // ---------- shareable URL routing ----------
+  // The path IS the entity (njump-style): poster.place/<npub|nprofile> → profile, /<note|nevent>
+  // → thread, /users/<name> → that local user. The server serves the SPA for these paths; here we
+  // read location.pathname and open the right view, and push the canonical URL as you navigate so
+  // every profile/post is linkable + back/forward works.
+  let _routing = false;
+  function _navUrl(path){
+    if(_routing) return;                       // don't re-push while we're decoding the current URL
+    try{ if(location.pathname !== path) history.pushState({}, '', path); }catch(_){}
+  }
+  function _entityFromPath(){
+    let p; try{ p = decodeURIComponent(location.pathname||'/'); }catch(_){ p = location.pathname||'/'; }
+    p = p.replace(/^\/client(?=\/|$)/,'').replace(/^\/+/,'').replace(/\/+$/,'');
+    if(!p) return null;
+    const seg = p.split('/');
+    if(/^users$/i.test(seg[0]) && seg[1]) return { kind:'user', q: seg[1] };
+    const m = seg[0].match(/^(?:nostr:)?((?:npub1|nprofile1|note1|nevent1|naddr1)[023456789acdefghjklmnpqrstuvwxyz]+)$/i);
+    if(m) return { kind:'bech32', q: m[1] };
+    return null;
+  }
+  async function routeFromPath(){
+    const e = _entityFromPath();
+    if(!e){ switchView('global'); return; }
+    _routing = true;
+    try{
+      if(e.kind==='user'){
+        let pk = safePk(e.q);
+        if(!pk){ const name = e.q.includes('@') ? e.q : (e.q + '@' + location.host); pk = await nip05Resolve(name.toLowerCase()); }
+        if(pk){ await renderProfileView(pk); return; }
+      } else {
+        const d = NT().nip19.decode(e.q);
+        if(d.type==='npub'){ await renderProfileView(d.data); return; }
+        if(d.type==='nprofile'){ await renderProfileView(d.data.pubkey); return; }
+        if(d.type==='note'){ openThread(d.data); return; }
+        if(d.type==='nevent'){ openThread(d.data.id); return; }
+        if(d.type==='naddr'){ await renderProfileView(d.data.pubkey); return; }   // best-effort: the author
+      }
+    }catch(err){ console.warn('[route] could not open', e, err); }
+    finally{ _routing = false; }
+    switchView('global');   // unrecognised/failed → default feed
+  }
+
   async function boot(){
     CFG = await fetch('/client/config').then(r=>r.json()).catch(()=>({}));
     updateUserCount(); setInterval(updateUserCount, 60000);   // poll ONLY the online count, once a minute (WoT size comes from CFG)
@@ -539,11 +622,17 @@
     });
     // Run initial queries only once the relay socket is open (otherwise the REQs are dropped
     // and profiles/follows never resolve — names would show as raw npubs).
+    const _deepLink = _entityFromPath();   // /<npub>, /<nevent>, /users/<name> → open it once the relay's up
     Relay.onReady = ()=>{ fetchFollows(); fetchMutes(); fetchPins(); fetchBookmarks(); fetchMyProfile(); watchNotifications();
-      setTimeout(()=>ensureDMs(), 3000); setTimeout(loadRightbar, 1500); };   // DMs + rightbar load after the timeline
+      setTimeout(()=>ensureDMs(), 3000); setTimeout(loadRightbar, 1500);
+      if(_entityFromPath()) routeFromPath(); };   // deep-link needs relay data (profile/thread fetch)
     connectRelays();
     renderMe();
-    switchView('global');   // land on Nostrverse (global feed) by default
+    // Deep-linked entity: spinner until onReady routes it (the relay must be connected to fetch the
+    // profile/note); otherwise land on the global feed immediately.
+    if(_deepLink){ VIEW='thread'; $('#feed').innerHTML='<div class="spinner"></div>'; }
+    else switchView('global');   // land on Nostrverse (global feed) by default
+    window.addEventListener('popstate', ()=>{ if(ME) routeFromPath(); });   // back/forward
     setInterval(refreshRightbar, 90000);   // routinely refresh trending + prepend new hot posts
     // Re-fetch profiles for on-screen authors still showing as npub — as the relay backfills
     // profiles, already-displayed posts resolve to names/avatars without needing a re-render.
@@ -770,6 +859,7 @@
   // ---------- view routing ----------
   function switchView(v){
     if(window.PC_NOSTR_ONLY && v==='ai') v='home';   // AI disabled in Nostr-only deployments
+    _navUrl('/');   // top-level views aren't entity URLs — reset the address bar to the root
     VIEW = v;
     if(v==='notifications') _notifShown = 25;   // fresh entry → collapse pagination back to one page
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
@@ -2947,6 +3037,7 @@
   async function renderProfileView(pk){
     cleanupInlineStream();   // e.g. tapping the host's name from a stream
     _hidePill();
+    try{ _navUrl('/'+NT().nip19.npubEncode(pk)); }catch(_){}   // shareable URL: poster.place/<npub>
     if(VIEW!=='profile'){ VIEW='profile'; $$('.nav-item[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view==='profile')); $('#view-title').textContent='Profile'; }
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
     if(!Store.haveProfile(pk)){ const e=await Relay.query([{authors:[pk],kinds:[0],limit:1}]); for(const x of e)Store.saveProfile(x); }
@@ -4170,7 +4261,10 @@
     for(const ev of pub){ try{ const v=await Relay.worker.call('verify',{event:ev}); if(v&&v.valid) return ev; }catch(_){} }
     return null;
   }
-  function openThread(id){ renderThread(id); }
+  function openThread(id){
+    try{ _navUrl('/'+NT().nip19.neventEncode({ id })); }catch(_){ try{ _navUrl('/'+NT().nip19.noteEncode(id)); }catch(__){} }
+    renderThread(id);
+  }
   async function renderThread(id){
     VIEW='thread'; _hidePill(); $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='Thread';
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';

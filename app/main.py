@@ -728,3 +728,28 @@ async def verify_email_page(
         path="/"
     )
     return redirect
+
+
+# ---- shareable Nostr-entity URLs (njump-style: poster.place/<npub|nevent|…>) -----------------
+# Registered LAST so this single-segment catch-all only claims paths no explicit route / mounted
+# router took first; anything that isn't a Nostr entity returns 404. The client JS reads
+# location.pathname and opens the matching profile/thread (see routeFromPath in app.js).
+import re as _re_entity  # noqa: E402
+_NOSTR_ENTITY_RE = _re_entity.compile(
+    r"^(?:npub1|nprofile1|note1|nevent1|naddr1)[023456789acdefghjklmnpqrstuvwxyz]+$", _re_entity.IGNORECASE)
+
+
+@app.get("/{entity}", response_class=HTMLResponse)
+async def nostr_entity_page(entity: str, request: Request):
+    """Serve the Nostr client for /<npub|nprofile|note|nevent|naddr>."""
+    if not _NOSTR_ENTITY_RE.match(entity):
+        raise StarletteHTTPException(status_code=404)
+    from app.routers.client import client_app
+    return await client_app(request)
+
+
+@app.get("/users/{name}", response_class=HTMLResponse)
+async def nostr_user_page(name: str, request: Request):
+    """Friendly profile URL: poster.place/users/<name> (a NIP-05 local name or npub)."""
+    from app.routers.client import client_app
+    return await client_app(request)

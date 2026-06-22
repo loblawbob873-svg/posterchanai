@@ -80,6 +80,18 @@ self.onmessage = async (e) => {
         if (!SK) return reply(id, false, null, 'no local key');
         return reply(id, true, { rumor: NT.nip59.unwrapEvent(args.wrap, SK) });
       }
+      // ---- gift-wrap an ALREADY-BUILT seal with a fresh EPHEMERAL key (for nip07/nip46 signers,
+      // whose secret key never reaches us: they build+sign the kind-13 seal themselves, we only do
+      // the throwaway outer 1059 layer). args.seal (signed kind-13), args.recipient (hex). ----
+      case 'giftwrapSeal': {
+        const ephSk = NT.generateSecretKey();
+        const ck = NT.nip44.getConversationKey(ephSk, args.recipient);
+        const content = NT.nip44.encrypt(JSON.stringify(args.seal), ck);
+        const created = Math.floor(Date.now()/1000) - Math.floor(Math.random() * 2 * 86400);
+        const wrap = NT.finalizeEvent({ kind: 1059, created_at: created,
+                                        tags: [['p', args.recipient]], content }, ephSk);
+        return reply(id, true, { wrap });
+      }
       default: return reply(id, false, null, 'unknown op ' + op);
     }
   } catch (err) { reply(id, false, null, String(err && err.message || err)); }
