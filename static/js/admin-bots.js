@@ -5,7 +5,7 @@
 // field — no JSON needed for normal config). Shown contextually per feature/platform.
 const BOT_KNOWN_KEYS = [
     'server', 'username', 'access_token', 'pleroma_admin_token',
-    'nostr_nsec', 'nostr_relays',
+    'nostr_nsec',
     'nostr_profile_name', 'nostr_profile_nip05', 'nostr_profile_picture',
     'nostr_rate_per_user', 'nostr_rate_global', 'nostr_rate_window', 'nostr_rate_exempt',
     'nostr_random_reply_quiet', 'nostr_random_reply_per_hour',

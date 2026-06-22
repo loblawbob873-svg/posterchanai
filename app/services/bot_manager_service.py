@@ -226,7 +226,6 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
             setif("access_token", "PLEROMA_ACCESS_TOKEN")
         elif bot_dict.get("platform") == "nostr":
             setif("nostr_nsec", "NOSTR_NSEC")
-            setif("nostr_relays", "NOSTR_RELAYS")
             setif("nostr_profile_name", "NOSTR_PROFILE_NAME")
             setif("nostr_profile_nip05", "NOSTR_PROFILE_NIP05")
             setif("nostr_profile_picture", "NOSTR_PROFILE_PICTURE")
@@ -255,7 +254,6 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
             # Nostr identity is a secret key (nsec/hex); relays + the external media host come
             # from the bot's config. Blank relays → app defaults.
             setif("nostr_nsec", "NOSTR_NSEC")
-            setif("nostr_relays", "NOSTR_RELAYS")
             setif("nostr_profile_name", "NOSTR_PROFILE_NAME")
             setif("nostr_profile_nip05", "NOSTR_PROFILE_NIP05")
             setif("nostr_profile_picture", "NOSTR_PROFILE_PICTURE")
