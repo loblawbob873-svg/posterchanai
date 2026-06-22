@@ -330,8 +330,11 @@ def _dm_to_act(state, gameid, pk):
     board = " ".join(_G.card_str(c) for c in state["board"]) or "(pre-flop)"
     pot = sum(state["contrib"].values())
     call = max(0, state["to_call"] - state["street_bet"][pk])
+    # Replay the current street so the player knows what folded/raised around to them, like a live table.
+    recap = _street_recap(state)
+    recap_line = ("\n🔄 This street: " + " · ".join(recap[-8:])) if recap else ""
     body = (f"🃏 Your hole cards: {hole}\nBoard: {board}\nPot: {pot} · to call: {call} · "
-            f"your stack: {state['stacks'][pk]}\n"
+            f"your stack: {state['stacks'][pk]}{recap_line}\n"
             + (url + "\n\n" if url else "")
             + _action_line(state, pk) + "\nOr play from the Hold'em tab in the app.")
     try:
@@ -434,6 +437,47 @@ def _handle_cmd(author, payload, own_pk):
     _apply_action(author, gameid, state, text, lambda m: None, state.get("root") or gameid)
 
 
+_LOG_MAX = 24   # rolling cap on the per-hand action log carried in the state doc (keeps the relay doc small)
+
+
+def _act_and_log(state, pk, action, amount):
+    """Apply one action via the engine AND append a human-readable, street-tagged line
+    ('@bob raised to 50') to state['log'], so the next player's turn DM — and the web UI — can replay
+    the betting round like a live table (you see what folded/raised around to you). Betting actions are
+    public info in poker, so the log rides in the (otherwise hole-card-encrypted) state doc safely."""
+    pre_call = state.get("to_call", 0)
+    pre_bet = (state.get("street_bet") or {}).get(pk, 0)
+    pre_street = state.get("street", "")
+    pre_min = state.get("min_raise") or state.get("bb", 0)
+    call_amt = max(0, pre_call - pre_bet)
+    state, events = _G.act(state, pk, action, amount)
+    nm = (state.get("names") or {}).get(pk) or _name(pk)
+    # Derive the line from PRE-action state + intent. (Reading post-action street_bet/to_call is unsafe:
+    # when this action CLOSES the street the engine resets them to 0, which would mislabel a
+    # street-closing call as a check or a raise-to-0.)
+    if pk in (state.get("folded") or []):
+        line = f"{nm} folded"
+    elif pk in (state.get("allin") or []):
+        line = f"{nm} is all-in"
+    elif (action or "").lower() == "raise":
+        line = f"{nm} raised to {max(int(amount or 0), pre_call + pre_min)}"
+    elif call_amt > 0:
+        line = f"{nm} called {call_amt}"
+    else:
+        line = f"{nm} checked"
+    log = state.setdefault("log", [])
+    log.append({"s": pre_street, "t": line, "pk": pk})
+    del log[:-_LOG_MAX]
+    return state, events
+
+
+def _street_recap(state):
+    """The actions taken so far on the CURRENT betting street, oldest→newest (for the turn DM)."""
+    cur = state.get("street")
+    return [e.get("t") for e in (state.get("log") or [])
+            if e.get("s") == cur and e.get("t")]
+
+
 def _run_bot_turns(state, gameid, parent_id):
     """Drive any bot-occupied seat: while it's the bot's turn, decide + act (looping across players),
     then DM whichever human is up next. Resolves the hand (and persistent re-deal) if the bot's action
@@ -444,7 +488,7 @@ def _run_bot_turns(state, gameid, parent_id):
            and bot in state.get("seats", []) and guard < 200):
         guard += 1
         action, amount = _G.bot_decide(state, bot)
-        _, events = _G.act(state, bot, action, amount)
+        _, events = _act_and_log(state, bot, action, amount)
         _save_game(gameid, state)
         print(f"[holdem] bot {action}{(' ' + str(amount)) if amount else ''}", flush=True)
         if "showdown" in events:
@@ -463,8 +507,10 @@ def _apply_action(sender, gameid, state, text, reply, parent_id):
         state, events = _G.leave(state, sender)
         _save_game(gameid, state)
         reply("👋 You've left the table. The hand continues with the rest.")
+        # Leaving must NEVER post publicly (solo OR group) — settle/re-deal silently if the hand
+        # collapsed; otherwise let the remaining seats play on (their natural result posts later).
         if "folded_win" in events or state.get("status") == "done":
-            _post_result(state, gameid, parent_id, showdown=False)
+            _post_result(state, gameid, parent_id, showdown=False, announce=False)
         else:
             _run_bot_turns(state, gameid, parent_id)
         return
@@ -478,7 +524,7 @@ def _apply_action(sender, gameid, state, text, reply, parent_id):
     if not action:
         reply("🃏 Reply `check`, `call`, `raise <amt>`, `fold`, `allin`, or `leave`.")
         return
-    state, events = _G.act(state, sender, action, amount)
+    state, events = _act_and_log(state, sender, action, amount)
     _save_game(gameid, state)
     reply(f"✅ {action}" + (f" {amount}" if action == 'raise' and amount else ""))
     # NOTE: street changes (flop/turn/river) are NOT posted publicly — that would flood the timeline.
@@ -493,7 +539,10 @@ def _apply_action(sender, gameid, state, text, reply, parent_id):
     _run_bot_turns(state, gameid, parent_id)   # bot plays if it's now its turn, else DMs the human
 
 
-def _post_result(state, gameid, parent_id, showdown):
+def _post_result(state, gameid, parent_id, showdown, announce=True):
+    # announce=False → settle + re-deal SILENTLY with NO public posts. Used when a player LEAVES: the
+    # act of leaving must never spam the timeline (solo OR group). Remaining players play on, and their
+    # next hand's NATURAL conclusion posts as usual (that's their result, not the leave).
     winners = state.get("winners", {})
     parts = []
     for pk, amt in winners.items():
@@ -510,8 +559,9 @@ def _post_result(state, gameid, parent_id, showdown):
     head = "🏁 #holdem showdown!" if showdown else "🏁 #holdem hand over —"
     pot_won = sum(state.get("winners", {}).values())
     body = f"{head} {summary}.  ({pot_won} chips){_footer()}"
-    _do_publish(None if private else gameid, None if private else parent_id, state["seats"],
-                body, _board_png(state, reveal=showdown))
+    if announce:
+        _do_publish(None if private else gameid, None if private else parent_id, state["seats"],
+                    body, _board_png(state, reveal=showdown))
     # PERSISTENT table: deal the next hand (rotate button, carry stacks, drop leavers/busted).
     nxt, _ = _G.next_hand(state)
     if nxt is None:
@@ -532,16 +582,17 @@ def _post_result(state, gameid, parent_id, showdown):
                     lines.append(f"{nm} cashed out with {fs} chips")
             outcome = "; ".join(lines) if lines else "table closed"
             body = f"🏁 #holdem — {outcome}.{_footer()}"
-            try:
-                _do_publish(None, None, state["seats"], body, _board_png(state, reveal=True))
-            except Exception as e:
-                print(f"[holdem] solo wrap-up post failed: {e}", flush=True)
-            for h in humans:
+            if announce:
                 try:
-                    _nk.send_dm(h, f"🏁 {outcome}. gg! Start a new game from the Hold'em tab.")
-                except Exception:
-                    pass
-        else:
+                    _do_publish(None, None, state["seats"], body, _board_png(state, reveal=True))
+                except Exception as e:
+                    print(f"[holdem] solo wrap-up post failed: {e}", flush=True)
+                for h in humans:
+                    try:
+                        _nk.send_dm(h, f"🏁 {outcome}. gg! Start a new game from the Hold'em tab.")
+                    except Exception:
+                        pass
+        elif announce:
             _do_publish(gameid, parent_id, state["seats"],
                         "🃏 Table closed — not enough players to continue. gg!" + _footer(), None)
         return

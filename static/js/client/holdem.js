@@ -175,6 +175,11 @@
       } else if(!over){ controls = `<div class="muted small" style="padding:6px 2px">Waiting on ${enc(g.to_act===me?'you':nameOf(g.to_act, names[g.to_act]))}…</div>`; }
       const lr = g.last_result;
       const lastBanner = (lr && lr.summary) ? `<div class="pk-last${(lr.winners&&lr.winners[me])?' win':''}">${(lr.winners&&lr.winners[me])?`🏆 You won ${lr.winners[me]} last hand!`:'Last hand'}<span class="muted small"> · ${enc(lr.summary)}</span></div>` : '';
+      // Live action recap for the CURRENT street so everyone watching sees what folded/raised around —
+      // same play-by-play the to-act player gets in their DM. Server tags each log line with its street.
+      const _sk = board.length>=5?'river':board.length===4?'turn':board.length===3?'flop':'preflop';
+      const _recap = (g.log||[]).filter(e=>e&&e.s===_sk&&e.t).slice(-6);
+      const logRows = _recap.length ? `<div class="pk-log">${_recap.map(e=>`<span class="pk-logln">${enc(e.t)}</span>`).join('')}</div>` : '';
       card.innerHTML = `<div class="chess-card-hd">
           <div class="cc-meta"><b>Hold'em · ${seats.length} seats</b><span class="muted small">blinds ${g.sb}/${g.bb} · hand #${g.hand_no||1}</span></div>
           <span class="cc-badge ${myTurn?'you':(over?'done':'wait')}">${myTurn?'Your move':(over?'hand over':'in play')}</span>
@@ -184,6 +189,7 @@
         <div class="pk-felt">
           <div class="pk-pot">POT <b>${pot}</b>${call>0&&myTurn?` · to call ${call}`:''}</div>
           ${boardRow}
+          ${logRows}
         </div>
         <div class="pk-seats">${seatRows}</div>
         ${myHand}

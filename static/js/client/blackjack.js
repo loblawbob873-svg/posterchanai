@@ -148,6 +148,10 @@
       let banner='';
       if(over && myOut){ const win=myNet>0, push=myOut==='push'; banner=`<div class="chess-result ${push?'draw':(win?'win':'loss')}">${push?'🤝 Push':(win?`🏆 You won ${myNet}!`:`💀 You lost ${-myNet}`)}<span class="muted small"> · ${myStack>0?'place your bet to deal again':'out of chips'}</span></div>`; }
       const dealerBlock = `<div class="pk-felt"><div class="pk-street">DEALER${dealerVal!==''?' · '+dealerVal+(dealerVal>21?' BUST':''):''}</div><div class="pk-board">${dealerCards}</div></div>`;
+      // Live play-by-play for THIS round (who hit/stood/busted + how the dealer played) — same recap the
+      // to-act player gets in their DM, so everyone watching knows what's happening. Server tags by round.
+      const _recap = (g.log||[]).filter(e=>e&&e.r===(g.round_no||0)&&e.t).slice(-6);
+      const logRows = (_recap.length && !betting) ? `<div class="pk-log">${_recap.map(e=>`<span class="pk-logln">${enc(e.t)}</span>`).join('')}</div>` : '';
       const seatRows = players.filter(pk=>pk!==me).map(pk=>{
         const h=hands[pk]||[], v=handVal(h), av=(profOf(pk)||{}).picture||LOGO, out=results[pk], net=payouts[pk]||0;
         const status=(g.left||[]).includes(pk)?'left':(done[pk]?(out?out.toUpperCase()+(net?` ${net>0?'+':''}${net}`:''):'stand'):'…');
@@ -177,6 +181,7 @@
           <button class="chess-quit" title="Leave table">✕</button></div>
         ${banner}${lastBanner}
         ${betting?'':dealerBlock}
+        ${logRows}
         ${seatRows?`<div class="pk-seats">${seatRows}</div>`:''}
         ${betting?'':myHandCard}
         ${controls}`;

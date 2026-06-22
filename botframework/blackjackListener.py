@@ -208,6 +208,24 @@ def _name(pk):
         return "@" + (pk or "")[:8]
 
 
+_LOG_MAX = 24   # rolling cap on the per-round action log carried in the state doc (keeps the relay doc small)
+
+
+def _bj_log(state, line, pk=None):
+    """Append a human-readable, round-tagged action line ('@bob hit → 18', 'Dealer: ... (= 18)') so the
+    turn DM and the web UI can show the table's play-by-play (what everyone hit/stood on, how the dealer
+    played). Blackjack is face-up, so this is all public info — it rides safely in the state doc."""
+    log = state.setdefault("log", [])
+    log.append({"r": state.get("round_no", 0), "t": line, "pk": pk})
+    del log[:-_LOG_MAX]
+
+
+def _bj_recap(state):
+    """Action lines for the CURRENT round, oldest→newest (for the turn DM / UI)."""
+    r = state.get("round_no", 0)
+    return [e.get("t") for e in (state.get("log") or []) if e.get("r") == r and e.get("t")]
+
+
 def _clean_text(note):
     t = _NOSTR_TOKEN_RE.sub("", note.get("text") or "")
     t = re.sub(r"@[\w@.]+", "", t)
@@ -385,12 +403,13 @@ def _apply_action(sender, gameid, state, text, reply, parent_id):
         _G.leave(state, sender)
         _save_game(gameid, state)
         reply("👋 You've left the table.")
+        # Leaving must NEVER post publicly (solo OR group) — settle/close silently.
         if _G.all_done(state) and state.get("status") == "playing":
-            _finish(state, gameid, parent_id)
+            _finish(state, gameid, parent_id, announce=False)
         elif state.get("status") == "over":      # left between rounds → close if nobody remains
             nxt, _ = _G.next_round(state, bets=state.get("bet_pref"))
             if nxt is None:
-                _close_table(state, gameid, parent_id)
+                _close_table(state, gameid, parent_id, announce=False)
         return
     bm = re.match(r"\bbet\s+(\d+)", low)               # DM betting: "bet 50"
     if bm:
@@ -406,18 +425,23 @@ def _apply_action(sender, gameid, state, text, reply, parent_id):
     if state["done"].get(sender):
         reply("✋ You've finished your hand — waiting on the rest of the table.")
         return
+    nm = (state.get("names") or {}).get(sender) or _name(sender)
     if low in ("hit", "h", "draw", "card", "twist"):
         _G.hit(state, sender)
         pv = _G.hand_value(state["hands"][sender])
         if state["done"].get(sender):
+            _bj_log(state, f"{nm} hit → bust at {pv}", sender)
             reply(f"💥 Bust at {pv}!")
             _after_action(state, gameid, parent_id, sender)
         else:
+            _bj_log(state, f"{nm} hit → {pv}", sender)
             _save_game(gameid, state)
             _dm_seat(state, gameid, sender)
     elif low in ("stand", "s", "stay", "hold", "stick"):
         _G.stand(state, sender)
-        reply(f"✋ You stand on {_G.hand_value(state['hands'][sender])}.")
+        sv = _G.hand_value(state['hands'][sender])
+        _bj_log(state, f"{nm} stands on {sv}", sender)
+        reply(f"✋ You stand on {sv}.")
         _after_action(state, gameid, parent_id, sender)
     else:
         reply("🃏 Reply 'hit' to draw, or 'stand' to hold.")
@@ -430,19 +454,26 @@ def _after_action(state, gameid, parent_id, sender):
         _save_game(gameid, state)
 
 
-def _finish(state, gameid, parent_id):
+def _finish(state, gameid, parent_id, announce=True):
+    # announce=False → settle SILENTLY, no public post / no result DM. Used when a player LEAVES (the
+    # act of leaving must never spam the timeline — solo OR group).
     _G.settle(state)
     private = bool(state.get("private"))
     summary = state.get("result", "")
+    # record the dealer's final hand in the action log so the result view shows how the dealer played.
+    dh = state.get("dhand", [])
+    if dh:
+        _bj_log(state, f"Dealer: {' '.join(dh)} (= {_G.hand_value(dh)})")
     # carry the result into the doc so the app shows a "last round" banner on the next deal
     state["last_result"] = {"summary": summary,
                             "payouts": {p: a for p, a in state.get("payouts", {}).items()}}
     # PUBLIC result post for EVERY round (result + table image + app promo). Solo posts standalone
     # (synthetic id → no phantom e-root); multiplayer threads under the table root.
-    _do_publish(None if private else gameid, None if private else parent_id, state["seats"],
-                f"🏁 #blackjack — {summary}.{_footer()}", _table_png(state, reveal=True))
+    if announce:
+        _do_publish(None if private else gameid, None if private else parent_id, state["seats"],
+                    f"🏁 #blackjack — {summary}.{_footer()}", _table_png(state, reveal=True))
     _save_game(gameid, state)
-    if private:
+    if private and announce:
         _dm_result(state, gameid)                # also DM the solo player their result image
     # NOTE: do NOT auto-deal. The table stays in "over" so the player PLACES A BET and deals the
     # next hand (authentic blackjack). The persistent table just means it never ends on its own —
@@ -469,7 +500,10 @@ def _deal_next(state, gameid, parent_id):
     _deal_followup(nxt, gameid)
 
 
-def _close_table(state, gameid, parent_id):
+def _close_table(state, gameid, parent_id, announce=True):
+    # announce=False → close SILENTLY (no public wrap-up / DM). Used when the table empties via a LEAVE.
+    if not announce:
+        return
     bot = state.get("bot")
     humans = [p for p in state["seats"] if p != bot]
     lines = []
@@ -507,8 +541,11 @@ def _dm_seat(state, gameid, pk):
     except Exception as e:
         print(f"[blackjack] seat render failed: {e}", flush=True)
         url = ""
+    recap = _bj_recap(state)
+    recap_line = ("🔄 This round: " + " · ".join(recap[-8:]) + "\n") if recap else ""
     body = (f"🃏 Your hand: {' '.join(hand)} (= {pv}) · bet {state['bet'].get(pk, 0)}\n"
             f"Dealer shows {up}. Your stack: {state['stacks'].get(pk, 0)}.\n"
+            + recap_line
             + (url + "\n\n" if url else "")
             + "Reply 'hit' to draw, or 'stand' to hold. Or play from the Blackjack tab in the app.")
     try:
