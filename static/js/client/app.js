@@ -1664,6 +1664,7 @@
     return { text, gallery: media.length?`<div class="media-row">${media.join('')}</div>`:'' };
   }
   function noteCard(ev, prefix=''){
+   try{
     const p = profOf(ev.pubkey); needProfile(ev.pubkey);
     const mp = mediaParts(ev.content);
     // Wall-of-text guard: clamp very long posts with a "Show more" toggle so the feed stays scannable.
@@ -1694,6 +1695,7 @@
           <button class="act actm ${BOOKMARKS.has(ev.id)?'on':''}" data-a="menu" title="more">☰</button>
         </div>
       </div></article>`;
+   }catch(e){ return `<article class="note" data-id="${(ev&&ev.id)||''}" data-pk="${(ev&&ev.pubkey)||''}"><div class="body"><div class="txt muted small">⚠ couldn't render this post</div></div></article>`; }
   }
   // A NIP-18 quote post carries both a `q` tag (rendered by quoteHtml) AND usually the same
   // nostr:nevent inline — strip the inline one so the quoted note doesn't embed twice.
@@ -1715,7 +1717,13 @@
   }
   function quoteHtml(ev){
     const q=(ev.tags.find(t=>t[0]==='q')||[])[1]; if(!q) return '';
-    const o=Store.get(q); if(!o){ needEvent(q); return `<div class="quoted muted small" data-qload="${q}">quoted post loading…</div>`; }
+    const mc=q.match(/^(\d+):([0-9a-f]{64}):(.*)$/i);   // addressable quote: kind:pubkey:dtag (NIP-18/22)
+    if(mc){ const key=`${+mc[1]}:${mc[2]}:${mc[3]}`; const c=_adCache.get(key);
+      if(c) return addrDiv(c);
+      needAddr(+mc[1], mc[2], mc[3]);
+      return `<div class="quoted muted small" data-naload="${enc(key)}">📄 quoted post loading…</div>`; }
+    if(!/^[0-9a-f]{64}$/i.test(q)) return '';            // not a valid event ref → don't render junk
+    const o=Store.get(q); if(!o){ needEvent(q); return `<div class="quoted muted small" data-qload="${enc(q)}">quoted post loading…</div>`; }
     return quotedDiv(o);
   }
   function quotedDiv(o){ const p=profOf(o.pubkey); needProfile(o.pubkey);
@@ -1742,7 +1750,7 @@
     return `<div class="reply-ctx"><span class="reply-ctx-lbl">↩ replying to</span>${inner}</div>`;
   }
   const _evQ=new Set(); let _evT=null;
-  function needEvent(id){ if(id&&!Store.get(id)){ _evQ.add(id); if(!_evT)_evT=setTimeout(flushEvents,150);} }
+  function needEvent(id){ if(id&&/^[0-9a-f]{64}$/i.test(id)&&!Store.get(id)){ _evQ.add(id); if(!_evT)_evT=setTimeout(flushEvents,150);} }
   async function flushEvents(){
     _evT=null; const ids=[..._evQ]; _evQ.clear(); if(!ids.length) return;
     const evs=await Relay.query([{ids}]);
@@ -4651,31 +4659,33 @@
     });
     // nostr entities: npub/nprofile → profile mention; note/nevent → EMBEDDED note preview
     // (fetched + patched in place, like a quote); naddr → openable article/addressable link.
-    h=h.replace(/(?:nostr:)?((?:npub1|nprofile1|nevent1|note1|naddr1)[0-9a-z]{20,})/gi, (m,ent)=>{
+    // The leading group skips entities that are part of a URL/word (e.g. "zapstore.dev/apps/naddr1…")
+    // — those were already turned into <a> links above, and re-embedding them broke the href HTML.
+    h=h.replace(/(^|[^\w/.])((?:nostr:)?(?:npub1|nprofile1|nevent1|note1|naddr1)[0-9a-z]{20,})/gi, (m,pre,ent)=>{
       try{
-        const d=NT().nip19.decode(ent);
+        const d=NT().nip19.decode(ent.replace(/^nostr:/i,''));
         if(d.type==='npub' || d.type==='nprofile'){
           const pk = d.type==='npub' ? d.data : d.data.pubkey;
           needProfile(pk); const nm=(Store.profile(pk)||{}).name||(Store.profile(pk)||{}).display_name;
-          return `<a href="#" class="mention" data-np="${NT().nip19.npubEncode(pk)}">@${nm?enc(nm):'profile'}</a>`;
+          return pre+`<a href="#" class="mention" data-np="${NT().nip19.npubEncode(pk)}">@${nm?enc(nm):'profile'}</a>`;
         }
         if(d.type==='note' || d.type==='nevent'){
           const id = d.type==='note' ? d.data : d.data.id;
           const o = Store.get(id);
-          if(o) return quotedDiv(o);                       // already cached → embed now
+          if(o) return pre+quotedDiv(o);                   // already cached → embed now
           needEvent(id);                                   // else fetch; patchLoaded swaps it in
-          return `<div class="quoted muted small" data-qload="${id}">referenced note loading…</div>`;
+          return pre+`<div class="quoted muted small" data-qload="${enc(id)}">referenced note loading…</div>`;
         }
         if(d.type==='naddr'){                              // addressable event (e.g. NIP-23 article)
           const a=d.data||{};
           if(a.kind!=null && a.pubkey && a.identifier!=null){
             const key=`${a.kind}:${a.pubkey}:${a.identifier}`;
             const cached=_adCache.get(key);
-            if(cached) return addrDiv(cached);             // already fetched → embed now
+            if(cached) return pre+addrDiv(cached);         // already fetched → embed now
             needAddr(a.kind, a.pubkey, a.identifier);       // else fetch; flushAddrs patches it in
-            return `<div class="quoted muted small" data-naload="${enc(key)}">📄 referenced post loading…</div>`;
+            return pre+`<div class="quoted muted small" data-naload="${enc(key)}">📄 referenced post loading…</div>`;
           }
-          return `<a href="#" class="naddrlink" data-pk="${enc(a.pubkey||'')}" data-d="${enc(a.identifier||'')}" data-k="${enc(String(a.kind||''))}">📄 view</a>`;
+          return pre+`<a href="#" class="naddrlink" data-pk="${enc(a.pubkey||'')}" data-d="${enc(a.identifier||'')}" data-k="${enc(String(a.kind||''))}">📄 view</a>`;
         }
       }catch(_){}
       return m;
