@@ -157,8 +157,17 @@ def _read_config() -> dict:
             if pk:
                 seeds.append(pk)
 
-        upstream = nostr_service.relay.normalize_relays(
-            g("nostr_relay_upstream_relays", "")) or list(nostr_service.DEFAULT_RELAYS)
+        # Upstream relays: BLANK = the bots' DEFAULT_RELAYS (turnkey convenience). But if the admin
+        # SET a value that yields no valid URLs, don't silently fall back to ALL defaults — that's
+        # the "I changed upstream but it still syncs the defaults" trap. URLs must be ws:// or wss://.
+        _up_raw = g("nostr_relay_upstream_relays", "")
+        upstream = nostr_service.relay.normalize_relays(_up_raw)
+        if not upstream:
+            if _up_raw.strip():
+                logger.warning("[nostr-relay] upstream_relays is set but has no valid ws://|wss:// "
+                               "URLs (%r) — using NO upstream, not the defaults. Fix the format.", _up_raw)
+            else:
+                upstream = list(nostr_service.DEFAULT_RELAYS)
 
         cfg = {
             # The relay is the app's datastore (settings/users/bots/chats/records all live in its
