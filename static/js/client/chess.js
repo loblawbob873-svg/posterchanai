@@ -118,7 +118,12 @@
       games.forEach((g,i)=>_fillChessCard(g, $(`.chess-game-card[data-gi="${i}"]`, list)));
     }
     // FEN → 8×8 grid (row 0 = rank 8 … row 7 = rank 1), each cell a piece char or ''.
-    const _UNI={K:'♚',Q:'♛',R:'♜',B:'♝',N:'♞',P:'♟',k:'♚',q:'♛',r:'♜',b:'♝',n:'♞',p:'♟'};
+    // All glyphs use the filled set + a text variation selector (︎) so the browser renders them
+    // as monochrome TEXT (tinted cyan/magenta by CSS) — without it, ♟ renders as a color emoji and
+    // looks a different colour from the other pieces.
+    const _VS='︎';   // text-presentation selector — forces monochrome (no emoji ♟)
+    const _UNI={K:'♚'+_VS,Q:'♛'+_VS,R:'♜'+_VS,B:'♝'+_VS,N:'♞'+_VS,P:'♟'+_VS,
+                k:'♚'+_VS,q:'♛'+_VS,r:'♜'+_VS,b:'♝'+_VS,n:'♞'+_VS,p:'♟'+_VS};
     function _fenGrid(fen){
       const rows=(fen||'').split(' ')[0].split('/'); const g=[];
       for(const r of rows){ const row=[]; for(const ch of r){ if(/\d/.test(ch)){ for(let i=0;i<+ch;i++) row.push(''); } else row.push(ch); } while(row.length<8) row.push(''); g.push(row); }
