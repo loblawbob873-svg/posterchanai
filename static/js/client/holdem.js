@@ -16,6 +16,7 @@
       const r=RANKS[c%13], si=Math.floor(c/13), s=SUITS[si], red=(si===1||si===2);
       return `<span class="pk-card${red?' red':''}${big?' big':''}">${r}${s}</span>`;
     }
+    function nameOf(pk, fb){ const m=profOf(pk)||{}; return m.name||m.display_name||niceNip05(m.nip05)||fb||'player'; }
     function _hidden(){ try{ return new Set(JSON.parse(localStorage.getItem('pc_hm_holdem')||'[]')); }catch(_){ return new Set(); } }
     function _hide(gid){ const s=_hidden(); s.add(gid); try{ localStorage.setItem('pc_hm_holdem', JSON.stringify([...s])); }catch(_){} }
 
@@ -103,6 +104,9 @@
           else { try{ const pt=await PC.nip44dec(g.bot_pub, ct); g._myhole=JSON.parse(pt); _holeCache[ct]=g._myhole; }catch(_){ g._myhole=null; } }
         }
       }
+      // load profiles for every seat so names render as nip05/display name, not raw npubs
+      const allpks=new Set(); games.forEach(g=>(g.seats||[]).forEach(pk=>allpks.add(pk)));
+      await Promise.all([...allpks].map(pk=>ensureProfile(pk).catch(()=>{})));
       if(!games.length){ list.innerHTML='<div class="empty">No tables yet. Seat some friends above.</div>'; return; }
       list.innerHTML = games.map((g,i)=>`<div class="chess-game-card glass" data-gi="${i}"></div>`).join('');
       games.forEach((g,i)=>_card(g, $(`.chess-game-card[data-gi="${i}"]`, list)));
@@ -131,7 +135,7 @@
         const status = folded.has(pk)?'folded':(allin.has(pk)?'ALL-IN':(sbet[pk]?('bet '+sbet[pk]):''));
         const btn = seats.indexOf(pk)===g.button?' 🔘':'';
         return `<div class="pk-seat${mine?' me':''}${isTurn?' turn':''}${folded.has(pk)?' out':''}">
-          <span class="pk-nm">${mine?'You':enc(names[pk]||'player')}${btn}</span>
+          <span class="pk-nm">${mine?'You':enc(nameOf(pk, names[pk]))}${btn}</span>
           <span class="pk-stk">${stacks[pk]||0}${won?` <b style="color:#ffd25a">+${won}</b>`:''} <span class="muted small">${enc(status)}</span></span>
           ${over&&!folded.has(pk)&&Array.isArray((g.hole||{})[pk])?`<span class="pk-hole">${g.hole[pk].map(c=>cardHtml(c)).join('')}</span>`:''}
         </div>`;
@@ -145,12 +149,15 @@
           <span class="pk-raise"><input class="input pk-amt" type="number" inputmode="numeric" placeholder="${(g.to_call||0)+(g.min_raise||g.bb||10)}" style="width:5em"><button class="btn btn-neon small pk-raisebtn">Raise</button></span>
           <button class="btn btn-magenta small pk-allin">All-in</button>
         </div>`;
-      } else if(!over){ controls = `<div class="muted small" style="padding:6px 2px">Waiting on ${enc(names[g.to_act]||'a player')}…</div>`; }
+      } else if(!over){ controls = `<div class="muted small" style="padding:6px 2px">Waiting on ${enc(g.to_act===me?'you':nameOf(g.to_act, names[g.to_act]))}…</div>`; }
+      const lr = g.last_result;
+      const lastBanner = (lr && lr.summary) ? `<div class="pk-last${(lr.winners&&lr.winners[me])?' win':''}">${(lr.winners&&lr.winners[me])?`🏆 You won ${lr.winners[me]} last hand!`:'Last hand'}<span class="muted small"> · ${enc(lr.summary)}</span></div>` : '';
       card.innerHTML = `<div class="chess-card-hd">
           <div class="cc-meta"><b>Hold'em · ${seats.length} seats</b><span class="muted small">blinds ${g.sb}/${g.bb} · hand #${g.hand_no||1}</span></div>
           <span class="cc-badge ${myTurn?'you':(over?'done':'wait')}">${myTurn?'Your move':(over?'hand over':'in play')}</span>
           <button class="chess-quit" title="Leave table">✕</button></div>
         ${banner}
+        ${lastBanner}
         <div class="pk-felt">
           <div class="pk-pot">POT <b>${pot}</b>${call>0&&myTurn?` · to call ${call}`:''}</div>
           ${boardRow}

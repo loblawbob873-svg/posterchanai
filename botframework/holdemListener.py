@@ -439,6 +439,10 @@ def _post_result(state, gameid, parent_id, showdown):
         _do_publish(gameid, parent_id, state["seats"],
                     "🃏 Table closed — not enough players to continue. gg!" + _footer(), None)
         return
+    # carry the just-finished result into the next hand's doc so the web UI can show "you won X"
+    # (the previous hand's done-doc is overwritten immediately by this re-deal — same d-tag).
+    nxt["last_result"] = {"summary": summary, "winners": {p: a for p, a in winners.items()},
+                          "showdown": bool(showdown)}
     _save_game(gameid, nxt)
     for pk in nxt["seats"]:
         if pk != nxt.get("bot"):
