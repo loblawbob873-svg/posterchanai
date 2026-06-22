@@ -47,6 +47,20 @@
     </fieldset>
 
     <fieldset>
+        <legend>Mirroring (disaster recovery)</legend>
+        <div class="form-group">
+            <label for="blossom_mirror_servers">Mirror to other Blossom servers</label>
+            <textarea id="blossom_mirror_servers" name="blossom_mirror_servers" rows="3" placeholder="https://backup.example.com/blossom&#10;https://blossom.othernode.lan&#10;(one per line)"></textarea>
+            <small>Each newly-uploaded blob is copied to these Blossom servers in the background (BUD-02),
+            signed by this node's <strong>operator key</strong> — so each mirror must accept that key
+            (whitelist it there; public servers will reject and just log a skip). Retries a few times then
+            gives up; failures are logged and never block the user's upload. Blank = mirroring off.
+            <em>For clients to actually fall back to a mirror when this node is down, also advertise these
+            servers in a kind-10063 list (so they retry the blob by hash).</em></small>
+        </div>
+    </fieldset>
+
+    <fieldset>
         <legend>Expiration</legend>
         <div class="form-group">
             <label for="blossom_blob_ttl_days">Blob TTL (days)</label>

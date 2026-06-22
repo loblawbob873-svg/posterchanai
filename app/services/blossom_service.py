@@ -34,7 +34,7 @@ from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.models import BlossomBlob, User
-from app.services import settings_store
+from app.services import settings_store, keystore
 from app.services.nostr import nostr_service, event as nostr_event
 
 logger = logging.getLogger(__name__)
@@ -46,6 +46,7 @@ _DEFAULT_BLOB_DIR = os.environ.get("POSTERCHANAI_BLOSSOM_PATH") or os.path.join(
 # Username the blobs live under on the storage server (proxy backend).
 _PROXY_USER = "_blossom"
 _AUTH_KIND = 24242
+_MIRROR_RETRIES = 3        # DR mirror: attempts per server before giving up (4xx = give up at once)
 _CLEANUP_INTERVAL_SEC = 600   # sweep expired blobs every 10 min (idle, low CPU)
 
 
@@ -81,6 +82,9 @@ def _cfg(db: Session) -> dict:
         "blob_dir": g("blossom_storage_path", "") or _DEFAULT_BLOB_DIR,
         "storage_url": storage_url,
         "cache_mb": gi("blossom_cache_mb", 512),
+        # DR: external Blossom servers to mirror each uploaded blob to (space/newline-separated).
+        "mirror_servers": [s for s in (g("blossom_mirror_servers", "")).split()
+                           if s.startswith(("http://", "https://"))],
     }
 
 
@@ -285,6 +289,48 @@ async def _proxy_put(storage_url: str, sha256: str, data: bytes, mime: str) -> s
         return (r.json().get("path") or f"{subdir}/{sha256}")
 
 
+async def _mirror_blob(sha256: str, data: bytes, mime: str, servers: list):
+    """DR: push a stored blob to external Blossom server(s) via BUD-02, signed by the operator key.
+    Best-effort and fully isolated — failures (access denied, server down) are logged, never raised,
+    so mirroring can't affect the user's upload. The mirror must accept our operator pubkey (e.g. a
+    backup node we control); public servers that don't will just log a skip."""
+    nsec = keystore.get_operator_nsec()
+    if not nsec:
+        return
+    try:
+        sk = nostr_service.decode_seckey(nsec)
+    except Exception:
+        return
+    exp = str(int(time.time()) + 300)
+    auth = nostr_event.build_event(sk, _AUTH_KIND, "Mirror blob",
+                                   tags=[["t", "upload"], ["x", sha256], ["expiration", exp]])
+    header = "Nostr " + base64.b64encode(json.dumps(auth).encode()).decode()
+    headers = {"Authorization": header, "Content-Type": mime or "application/octet-stream"}
+    for srv in servers:
+        url = srv.rstrip("/") + "/upload"
+        for attempt in range(1, _MIRROR_RETRIES + 1):
+            try:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as client:
+                    r = await client.put(url, content=data, headers=headers)
+                if r.status_code // 100 == 2:
+                    logger.info("[blossom] mirrored %s → %s", sha256[:12], srv)
+                    break
+                if r.status_code // 100 == 4:        # access denied / bad request — won't fix on retry
+                    logger.warning("[blossom] mirror %s → %s rejected: HTTP %s %s (giving up)",
+                                   sha256[:12], srv, r.status_code, (r.text or "")[:120])
+                    break
+                logger.warning("[blossom] mirror %s → %s HTTP %s (attempt %d/%d)",
+                               sha256[:12], srv, r.status_code, attempt, _MIRROR_RETRIES)
+            except Exception as e:
+                logger.warning("[blossom] mirror %s → %s failed: %s (attempt %d/%d)",
+                               sha256[:12], srv, e, attempt, _MIRROR_RETRIES)
+            if attempt < _MIRROR_RETRIES:
+                await asyncio.sleep(2 * attempt)     # backoff between retries
+        else:
+            logger.warning("[blossom] mirror %s → %s gave up after %d attempts",
+                           sha256[:12], srv, _MIRROR_RETRIES)
+
+
 async def save_blob(db: Session, pubkey: str, data: bytes, mime: str) -> dict:
     """Persist a blob (dedup by sha256) and record its row. Returns a descriptor dict
     (without `url`, which the router fills from the request base)."""
@@ -327,6 +373,10 @@ async def save_blob(db: Session, pubkey: str, data: bytes, mime: str) -> dict:
     # Seed the read cache — the bytes are already in RAM, so a fetch right after upload
     # (the common case) won't touch disk or the storage proxy.
     _cache_put(sha256, data, cfg["cache_mb"] * 1024 * 1024)
+    # DR: mirror the new blob out to configured external Blossom server(s), in the background so it
+    # never delays or fails the user's upload (only newly-stored blobs — re-uploads are already there).
+    if cfg["mirror_servers"]:
+        asyncio.create_task(_mirror_blob(sha256, data, mime, cfg["mirror_servers"]))
     return _descriptor_fields(blob)
 
 

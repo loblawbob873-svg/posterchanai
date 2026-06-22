@@ -386,6 +386,7 @@ class SettingsResponse(BaseModel):
     blossom_storage_path: Optional[str] = None
     blossom_cache_mb: Optional[int] = None
     blossom_whitelist: Optional[str] = None
+    blossom_mirror_servers: Optional[str] = None   # DR: external Blossom servers to mirror blobs to
     tenor_api_key: Optional[str] = None
     giphy_api_key: Optional[str] = None
 
