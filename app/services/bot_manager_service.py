@@ -93,6 +93,31 @@ def get_hostname():
     return socket.gethostname().split(".")[0]
 
 
+def _instance_domain() -> str:
+    """Host clients should NIP-05-verify a bare bot nip05 against — derived from the `site_url`
+    setting (else the public Blossom host's apex). e.g. lets 'TheQuartering' resolve to poster.place."""
+    for key in ("site_url", "blossom_public_url"):
+        s = (settings_store.get(key, "") or "").strip()
+        if not s:
+            continue
+        host = s.split("://", 1)[-1].split("/", 1)[0].strip().rstrip(".")
+        if host.startswith("media."):
+            host = host[len("media."):]
+        if host:
+            return host
+    return ""
+
+
+def _nip05_full(v) -> str:
+    """A bare nip05 local-part becomes '<name>@<instance domain>' so bot settings only need the name,
+    not the domain ('TheQuartering' → 'TheQuartering@poster.place'). Full nip05s pass through."""
+    v = str(v).strip()
+    if not v or "@" in v:
+        return v
+    dom = _instance_domain()
+    return f"{v}@{dom}" if dom else v
+
+
 def _load_global_env():
     """Base env shared by every bot, derived from the global bots_* settings.
 
@@ -241,7 +266,7 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
         elif bot_dict.get("platform") == "nostr":
             setif("nostr_nsec", "NOSTR_NSEC")
             setif("nostr_profile_name", "NOSTR_PROFILE_NAME")
-            setif("nostr_profile_nip05", "NOSTR_PROFILE_NIP05")
+            setif("nostr_profile_nip05", "NOSTR_PROFILE_NIP05", _nip05_full)
             setif("nostr_profile_picture", "NOSTR_PROFILE_PICTURE")
             _set_internal_blossom(env)
         else:
@@ -269,7 +294,7 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
             # from the bot's config. Blank relays → app defaults.
             setif("nostr_nsec", "NOSTR_NSEC")
             setif("nostr_profile_name", "NOSTR_PROFILE_NAME")
-            setif("nostr_profile_nip05", "NOSTR_PROFILE_NIP05")
+            setif("nostr_profile_nip05", "NOSTR_PROFILE_NIP05", _nip05_full)
             setif("nostr_profile_picture", "NOSTR_PROFILE_PICTURE")
             _set_internal_blossom(env)
             # Mention-poll cadence. With our self-hosted relay (point relays at ws://127.0.0.1:3052
