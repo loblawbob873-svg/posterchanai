@@ -28,6 +28,15 @@ import holdem_game as _G
 import nostr as _nk
 from config import NOSTR_NSEC
 from app.services.nostr import event as _ev
+from app.services.nostr import nip44 as _nip44
+
+
+def _footer():
+    """Promo footer on every public hand-result post: invite people to the app + where it runs."""
+    site = (os.getenv("CHESS_SITE_URL", "") or "").strip().rstrip("/")
+    play = f"\n🃏 Play Texas Hold'em (and chess, blackjack & more) at {site}" if site else \
+           "\n🃏 Play Texas Hold'em on PosterChan"
+    return play + "\n#holdem #poker #nostr #gamestr"
 
 _KIND_APP = 30078
 _MAX_SEATS = int(os.getenv("HOLDEM_MAX_SEATS", "6"))
@@ -92,8 +101,46 @@ def _player_dtag(pk):
     return f"pcai:holdem:player:{pk}"
 
 
+def _enc_state(state):
+    """Public doc copy with SECRETS hidden: hole cards NIP-44'd per-player (only that player + the bot
+    can read), and the UNDEALT DECK self-encrypted (bot-only) so nobody can peek at future board
+    cards. The web client decrypts ONLY its own hole cards; the board reveals as it's dealt."""
+    out = {k: v for k, v in state.items() if k not in ("hole", "deck")}
+    he = {}
+    for pk, cards in state.get("hole", {}).items():
+        try:
+            he[pk] = _nip44.encrypt_to(_nk._SECKEY, bytes.fromhex(pk), json.dumps(cards))
+        except Exception:
+            pass
+    out["hole_enc"] = he
+    try:
+        out["deck_enc"] = _nip44.encrypt_self(_nk._SECKEY, json.dumps(state.get("deck", [])))
+    except Exception:
+        out["deck_enc"] = ""
+    out["bot_pub"] = _nk._PUBKEY     # so the web client knows whose key to decrypt its hole cards with
+    return out
+
+
+def _dec_state(doc):
+    """Restore plain `hole`/`deck` from the encrypted doc, for the bot's game logic."""
+    if not isinstance(doc, dict):
+        return doc
+    hole = {}
+    for pk, ct in (doc.get("hole_enc") or {}).items():
+        try:
+            hole[pk] = json.loads(_nip44.decrypt_from(_nk._SECKEY, bytes.fromhex(pk), ct))
+        except Exception:
+            pass
+    doc["hole"] = hole
+    try:
+        doc["deck"] = json.loads(_nip44.decrypt_self(_nk._SECKEY, doc.get("deck_enc") or "[]"))
+    except Exception:
+        doc["deck"] = doc.get("deck", [])
+    return doc
+
+
 def _save_game(gameid, state):
-    ev = _ev.build_event(_nk._SECKEY, _KIND_APP, json.dumps(state, separators=(",", ":")),
+    ev = _ev.build_event(_nk._SECKEY, _KIND_APP, json.dumps(_enc_state(state), separators=(",", ":")),
                          tags=[["d", _dtag(gameid)]])
     _nk._run(_nk._svc.relay.publish(_nk._RELAYS, ev))
 
@@ -108,7 +155,7 @@ def _load_doc(dtag):
 
 
 def _load_game(gameid):
-    return _load_doc(_dtag(gameid))
+    return _dec_state(_load_doc(_dtag(gameid)))
 
 
 def _get_player_game(pk):
@@ -301,35 +348,38 @@ def _start_game(note, own_pk):
 def _apply_action(sender, gameid, state, text, reply, parent_id):
     if sender not in state.get("seats", []):
         return
+    low = (text or "").lower().strip()
+    if re.search(r"\b(leave|sit\s*out|stand\s*up|quit\s*table|cash\s*out)\b", low):
+        state, events = _G.leave(state, sender)
+        _save_game(gameid, state)
+        reply("👋 You've left the table. The hand continues with the rest.")
+        if "folded_win" in events or state.get("status") == "done":
+            _post_result(state, gameid, parent_id, showdown=False)
+        elif state.get("to_act"):
+            _dm_to_act(state, gameid, state["to_act"])
+        return
     if state.get("status") != "betting":
-        reply("🏁 This hand is over. Start a new one with `holdem @friend`.")
+        reply("🏁 This hand is over — the next one is being dealt.")
         return
     if state.get("to_act") != sender:
         reply("⏳ Not your turn yet — waiting on " + state["names"].get(state.get("to_act"), "another player") + ".")
         return
     action, amount = _parse_action(text)
     if not action:
-        reply("🃏 Reply `check`, `call`, `raise <amt>`, `fold`, or `allin`.")
+        reply("🃏 Reply `check`, `call`, `raise <amt>`, `fold`, `allin`, or `leave`.")
         return
-    prev_street = state["street"]
     state, events = _G.act(state, sender, action, amount)
     _save_game(gameid, state)
     reply(f"✅ {action}" + (f" {amount}" if action == 'raise' and amount else ""))
-
-    # street changes / showdown → post publicly
-    for ev in events:
-        if ev in ("flop", "turn", "river"):
-            board = " ".join(_G.card_str(c) for c in state["board"])
-            _do_publish(gameid, parent_id, state["seats"],
-                        f"🃏 {ev.upper()}: {board}  · pot {sum(state['contrib'].values())}",
-                        _board_png(state))
-        elif ev == "showdown":
-            _post_result(state, gameid, parent_id, showdown=True)
-            return
-        elif ev == "folded_win":
-            _post_result(state, gameid, parent_id, showdown=False)
-            return
-    # still betting → prompt the next player
+    # NOTE: street changes (flop/turn/river) are NOT posted publicly — that would flood the timeline.
+    # The web client + the to-act player's DM both show the board from the (updated) state doc. Only
+    # the HAND RESULT goes to the public timeline (with the table image + app promo).
+    if "showdown" in events:
+        _post_result(state, gameid, parent_id, showdown=True)
+        return
+    if "folded_win" in events:
+        _post_result(state, gameid, parent_id, showdown=False)
+        return
     if state.get("to_act"):
         _dm_to_act(state, gameid, state["to_act"])
 
@@ -345,8 +395,21 @@ def _post_result(state, gameid, parent_id, showdown):
     state["result"] = summary
     state["status"] = "done"
     _save_game(gameid, state)
-    head = "🏁 Showdown!" if showdown else "🏁 Hand over —"
-    _do_publish(gameid, parent_id, state["seats"], f"{head} {summary}  gg!", _board_png(state, reveal=showdown))
+    # PUBLIC social post: the winner + results, the table image, and the app-promo footer.
+    head = "🏁 #holdem showdown!" if showdown else "🏁 #holdem hand over —"
+    pot_won = sum(state.get("winners", {}).values())
+    body = f"{head} {summary}.  ({pot_won} chips){_footer()}"
+    _do_publish(gameid, parent_id, state["seats"], body, _board_png(state, reveal=showdown))
+    # PERSISTENT table: deal the next hand (rotate button, carry stacks, drop leavers/busted).
+    nxt, _ = _G.next_hand(state)
+    if nxt is None:
+        _do_publish(gameid, parent_id, state["seats"],
+                    "🃏 Table closed — not enough players to continue. gg!" + _footer(), None)
+        return
+    _save_game(gameid, nxt)
+    for pk in nxt["seats"]:
+        _set_player_game(pk, gameid)
+    _dm_to_act(nxt, gameid, nxt["to_act"])
 
 
 def _handle_move(note, gameid, state):
