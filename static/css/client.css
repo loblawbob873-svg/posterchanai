@@ -400,6 +400,9 @@ a.btn.full{display:block}
 .file-card .copy{position:absolute;top:6px;right:38px;background:rgba(8,5,18,.7);border:1px solid var(--line);border-radius:8px;color:var(--cyan,#5ff);cursor:pointer;padding:2px 7px;font-size:13px}
 .file-card .copy:hover{border-color:var(--cyan,#5ff)}
 .uploader{padding:18px;border-bottom:1px solid var(--line)}
+.blossom-locked{margin:16px;padding:18px 20px;border-radius:14px;text-align:center}
+.blossom-locked b{font-size:16px}
+.blossom-locked p{margin:6px 0 12px}
 
 /* profile */
 .prof{padding:0 0 20px}

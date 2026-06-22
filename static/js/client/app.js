@@ -2380,7 +2380,7 @@
         if(!files.length) return; e.preventDefault();
         for(let i=0;i<files.length;i++){ $('#cmp-status',root).textContent=`uploading pasted ${i+1}/${files.length}…`;
           try{ const url=await uploadBlob(files[i]); ta.value+=(ta.value?'\n':'')+url; }
-          catch(err){ $('#cmp-status',root).textContent='upload failed: '+err.message; return; } }
+          catch(err){ if(_blossomDenied(err)){ requestBlossomAccess(); $('#cmp-status',root).textContent='🔒 No upload access — requested it from the admin.'; } else $('#cmp-status',root).textContent='upload failed: '+err.message; return; } }
         $('#cmp-status',root).textContent='';
       });
       // 📎 Attach → pick Local (this device) or Blossom (your uploaded files)
@@ -2422,7 +2422,7 @@
       $('#cmp-file',root).onchange=async e=>{ const files=[...e.target.files]; if(!files.length)return;
         for(let i=0;i<files.length;i++){ $('#cmp-status',root).textContent=`uploading ${i+1}/${files.length}…`;
           try{ const url=await uploadBlob(files[i]); ta.value+=(ta.value?'\n':'')+url; }
-          catch(err){ $('#cmp-status',root).textContent='upload failed: '+err.message; return; } }
+          catch(err){ if(_blossomDenied(err)){ requestBlossomAccess(); $('#cmp-status',root).textContent='🔒 No upload access — requested it from the admin.'; } else $('#cmp-status',root).textContent='upload failed: '+err.message; return; } }
         $('#cmp-status',root).textContent=''; e.target.value=''; };
       $('#cmp-draft',root).onclick=()=>{
         const body=ta.value.trim(); if(!body){ toast('nothing to save'); return; }
@@ -2579,6 +2579,30 @@
     // Our Blossom URLs are extensionless (/<sha256>); append the file extension so clients (incl.
     // linkify below) can detect the media type and embed/play it. The server ignores the suffix.
     const ext=extFor(file); return (d.url||server+'/'+hash) + (ext?('.'+ext):'');
+  }
+  // ---- Blossom access (request-to-upload) ----
+  // Pre-flight whether THIS user may upload (BUD-06 HEAD /upload → 200 allowed / 403 denied), so the
+  // Files view + post composer can offer a "request access" flow instead of a dead upload button.
+  async function blossomCanUpload(){
+    const server=mediaServer(); if(!server) return false;
+    try{
+      const auth=await sign(24242,'Upload blob',[['t','upload'],['expiration',String(Math.floor(Date.now()/1000)+3600)]]);
+      const res=await fetch(server+'/upload',{ method:'HEAD', headers:{ 'Authorization':'Nostr '+btoa(JSON.stringify(auth)) }});
+      return res.ok;            // 200 = allowed; 401/403/413 = not
+    }catch(_){ return true; }    // CORS/network hiccup → don't gate; let the real upload speak
+  }
+  function _blossomDenied(err){ const m=String(err&&err.message||err||'').toLowerCase(); return m.includes('not authorized')||m.includes('403')||m.includes('privilege'); }
+  let _blossomReqSent=false;
+  // DM the instance operator asking for upload access; the admin grants it in Admin → Users.
+  async function requestBlossomAccess(btn){
+    if(!btn && _blossomReqSent) return;   // auto-trigger (failed upload): only DM the admin once/session
+    const op=safePk(CFG.operator_npub||'');
+    if(!op){ if(btn) toast('no admin contact is configured on this server'); return; }
+    if(btn){ btn.disabled=true; btn.textContent='Sending…'; }
+    const me=profOf(ME.pubkey)||{}; const nm=me.name||me.display_name||'A user';
+    const body=`🌸 Blossom upload-access request\n${nm} (${ME.npub}) would like permission to upload files on ${location.host}. You can grant it in Admin → Users.`;
+    try{ await sendDm(op, body); _blossomReqSent=true; toast('✅ Request sent to the admin'); if(btn) btn.textContent='✅ Request sent'; }
+    catch(e){ toast('could not send the request'); if(btn){ btn.disabled=false; btn.textContent='🌸 Request upload access'; } }
   }
   // Grid thumbnail. Images load a small server-side JPEG (?thumb=1) instead of the full file, and
   // videos show an icon rather than downloading the whole clip — both to save bandwidth in the grid.
@@ -2748,13 +2772,21 @@
   // Public tab — your own/built-in Blossom blobs (shareable). Uploader + grid.
   async function renderPublicFiles(pane){
     const server=mediaServer();
-    pane.innerHTML=`<div class="uploader"><input type="file" id="bl-file" multiple> <button class="btn btn-cyan small" id="bl-up">Upload</button> <span class="muted small">→ ${enc(server||'(no server)')}</span></div><div class="files-grid" id="bl-grid"><div class="spinner"></div></div>`;
-    $('#bl-up',pane).onclick=async()=>{ const files=[...$('#bl-file',pane).files]; if(!files.length)return;
-      for(let i=0;i<files.length;i++){ try{ await uploadBlob(files[i]); toast(`uploaded ${i+1}/${files.length}`); }catch(e){ toast('upload failed: '+e.message);} }
-      renderBlossom(); };
-    if(!server){
-      $('#bl-grid',pane).innerHTML='<div class="empty">Blossom server not configured.</div>';
-      return;
+    if(!server){ pane.innerHTML='<div class="empty">Blossom server not configured.</div>'; return; }
+    pane.innerHTML='<div class="spinner"></div>';
+    const canUp=await blossomCanUpload();
+    const head = canUp
+      ? `<div class="uploader"><input type="file" id="bl-file" multiple> <button class="btn btn-cyan small" id="bl-up">Upload</button> <span class="muted small">→ ${enc(server)}</span></div>`
+      : `<div class="blossom-locked glass"><b>🔒 Upload access needed</b>
+           <p class="muted small">You don't have permission to upload files to this server yet. Request access and the admin can grant it from Admin → Users.</p>
+           <button class="btn btn-cyan" id="bl-request">🌸 Request upload access</button></div>`;
+    pane.innerHTML = head + '<div class="files-grid" id="bl-grid"><div class="spinner"></div></div>';
+    if(canUp){
+      $('#bl-up',pane).onclick=async()=>{ const files=[...$('#bl-file',pane).files]; if(!files.length)return;
+        for(let i=0;i<files.length;i++){ try{ await uploadBlob(files[i]); toast(`uploaded ${i+1}/${files.length}`); }catch(e){ if(_blossomDenied(e)){ requestBlossomAccess(); } toast('upload failed: '+e.message);} }
+        renderBlossom(); };
+    } else {
+      const rb=$('#bl-request',pane); if(rb) rb.onclick=()=>requestBlossomAccess(rb);
     }
     let list=null;
     try{ const r=await fetch(server+'/list/'+ME.pubkey); if(!r.ok) throw new Error('HTTP '+r.status); list=await r.json(); }
