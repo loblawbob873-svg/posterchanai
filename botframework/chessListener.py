@@ -366,6 +366,11 @@ def _status_for(board: chess.Board):
 
 def _post_active_board(state, gameid, parent_id, san):
     """Render + post the board for the side now to move (after a move or at game start)."""
+    # MID-GAME: state-only, NO public post — the web client renders the board from this state and
+    # polls it. Only the opening (san is None) and the final (_post_gameover) are posted publicly.
+    if san is not None:
+        _save_game(gameid, state)
+        return
     board = chess.Board(state["fen"])
     mover_white = board.turn == chess.WHITE
     mover_pk = state["white"] if mover_white else state["black"]

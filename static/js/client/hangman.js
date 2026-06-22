@@ -93,6 +93,23 @@
       if(active && g.guesser===PC.ME.pubkey){ try{ await guess(g,'resign'); }catch(_){} }
       _hide(g.root); _load();
     }
+    // Cyberpunk gallows drawn client-side from the wrong-guess count (the bot doesn't post mid-game).
+    function _gallows(w){
+      const C='#3ce6ff', F='#ff3cd2';   // cyan frame, magenta figure
+      const part=(n,svg)=> w>=n ? svg : '';
+      return `<svg class="hm-svg" viewBox="0 0 170 200" aria-hidden="true">
+        <g stroke="${C}" stroke-width="5" fill="none" stroke-linecap="round">
+          <line x1="12" y1="192" x2="95" y2="192"/><line x1="28" y1="192" x2="28" y2="12"/>
+          <line x1="28" y1="12" x2="120" y2="12"/><line x1="120" y1="12" x2="120" y2="32"/></g>
+        <g stroke="${F}" stroke-width="5" fill="none" stroke-linecap="round">
+          ${part(1,'<circle cx="120" cy="48" r="16"/>')}
+          ${part(2,'<line x1="120" y1="64" x2="120" y2="128"/>')}
+          ${part(3,'<line x1="120" y1="80" x2="92" y2="106"/>')}
+          ${part(4,'<line x1="120" y1="80" x2="148" y2="106"/>')}
+          ${part(5,'<line x1="120" y1="128" x2="96" y2="168"/>')}
+          ${part(6,'<line x1="120" y1="128" x2="144" y2="168"/>')}
+        </g></svg>`;
+    }
     function _card(g, card){
       if(!card) return;
       const iGuess = g.guesser===PC.ME.pubkey;
@@ -110,7 +127,7 @@
             <span class="muted small">Misses ${g.wrong||0}/6${(g.wrong_letters||[]).length?' · wrong: '+enc((g.wrong_letters||[]).join(' ').toUpperCase()):''}</span></div>
           <span class="cc-badge ${badge}">${enc(statusLine)}</span>
           <button class="chess-quit" title="${active?'Give up &amp; remove':'Remove'}">✕</button></div>
-        <div class="hm-word">${display||'…'}</div>
+        <div class="hm-game">${_gallows(g.wrong||0)}<div class="hm-word">${display||'…'}</div></div>
         ${kb}`;
       { const q=card.querySelector('.chess-quit'); if(q) q.onclick=(e)=>{ e.stopPropagation(); quitGame(g); }; }
       if(iGuess && active){

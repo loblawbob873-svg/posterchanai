@@ -125,11 +125,17 @@
       { const q=card.querySelector('.chess-quit'); if(q) q.onclick=(e)=>{ e.stopPropagation(); quitGame(g); }; }
       if(myTurn){
         let busy=false;
-        card.querySelectorAll('.c4-cell').forEach(cell=> cell.onclick=()=>{
+        const myMark = iAmP1 ? '1' : '2';
+        const allCells = card.querySelectorAll('.c4-cell');   // DOM order = row-major (r*COLS+c)
+        allCells.forEach(cell=> cell.onclick=()=>{
           if(busy) return;
           const c=parseInt(cell.dataset.c,10);
-          if(_colFull(cells,c)){ toast('column full'); return; }
-          busy=true; card.querySelectorAll(`.c4-cell[data-c="${c}"]`).forEach(x=>x.classList.add('pending'));
+          // lowest empty row in this column (matches the bot's drop), for instant feedback
+          let rr=-1; for(let r=ROWS-1;r>=0;r--){ if(!cells[r*COLS+c]){ rr=r; break; } }
+          if(rr<0){ toast('column full'); return; }
+          busy=true;
+          const disc = allCells[rr*COLS+c].querySelector('.c4-disc');
+          if(disc) disc.classList.add(myMark==='1'?'d1':'d2');   // optimistic: show my disc now
           move(g, String(c+1));
         });
       }

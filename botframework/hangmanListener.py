@@ -193,6 +193,11 @@ def _reply_text(note, text):
 
 
 def _post(state, gameid, parent_id, word=None, gameover=False, result=""):
+    # MID-GAME guess: state-only, NO public post (the app shows the gallows + word + keyboard from
+    # this state and polls it). Only the opening (parent==gameid) and the final post publicly.
+    if not gameover and parent_id != gameid:
+        _save_game(gameid, state)
+        return
     guessed = set(state["guessed"])
     # On game over, reveal the whole word on the board; otherwise show the current masked display.
     disp = _display(word, set(word)) if (word and gameover) else (_display(word, guessed) if word else state.get("display", ""))

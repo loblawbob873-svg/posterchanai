@@ -296,6 +296,10 @@ def _apply_bot(state):
 # ---- posts ----------------------------------------------------------------
 def _post_active(state, gameid, parent_id, last):
     cells = state["cells"]
+    # MID-GAME: state-only, NO public post (the app renders from state). Only the opening + final post.
+    if any(cells):
+        _save_game(gameid, state)
+        return
     stm = _side_to_move(cells)
     mover_nm = state["p1_name"] if stm == "1" else state["p2_name"]
     colour = "cyan" if stm == "1" else "magenta"

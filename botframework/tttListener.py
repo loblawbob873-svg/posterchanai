@@ -228,6 +228,10 @@ def _status_after(cells):
 
 def _post_active(state, gameid, parent_id, last):
     cells = state["cells"]
+    # MID-GAME: state-only, NO public post (the app renders from state). Only the opening + final post.
+    if any(cells):
+        _save_game(gameid, state)
+        return
     stm = _side_to_move(cells)
     mover_pk = state["x"] if stm == "X" else state["o"]
     mover_nm = state["x_name"] if stm == "X" else state["o_name"]
