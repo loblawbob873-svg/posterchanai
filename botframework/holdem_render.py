@@ -160,14 +160,14 @@ def render_seat(state, pk):
         _card(d, bx + i * (cw + gap), 56, c, cw, ch)
     # community board on a neon felt panel
     board = state.get("board", [])
-    fy = 256
-    _rrect(d, [22, fy, W - 22, fy + 104], 22, fill=FELT, outline=FELT_EDGE, width=3)
-    d.text((W / 2, fy + 15), _STREET.get(len(board), "BOARD"), font=_font(14), fill=CYAN, anchor="mm")
-    bcw, bch, bgap = 58, 80, 9
+    fy = 248
+    _rrect(d, [22, fy, W - 22, fy + 122], 22, fill=FELT, outline=FELT_EDGE, width=3)
+    d.text((W / 2, fy + 16), _STREET.get(len(board), "BOARD"), font=_font(14), fill=CYAN, anchor="mm")
+    bcw, bch, bgap = 56, 78, 9
     bbx = (W - (5 * bcw + 4 * bgap)) // 2
     for i in range(5):
         card = board[i] if i < len(board) else None
-        _card(d, bbx + i * (bcw + bgap), fy + 26, card, bcw, bch, empty=(card is None))
+        _card(d, bbx + i * (bcw + bgap), fy + 32, card, bcw, bch, empty=(card is None))
     # gold chips bar (the exciting bit): your stack + pot + to-call
     pot = sum(state.get("contrib", {}).values())
     call = max(0, state.get("to_call", 0) - state.get("street_bet", {}).get(pk, 0))
