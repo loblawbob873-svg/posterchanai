@@ -266,6 +266,62 @@ def play_blackjack_table(bot_hex):
     return ok
 
 
+def play_holdem_table(bot_hex):
+    """Two local-key players seat a Texas Hold'em table; the to-act player folds. Verifies the SECURE
+    deal (hole cards + deck encrypted in the public doc, no plaintext leak), that a betting action is
+    processed, and that the PERSISTENT table auto-deals the next hand with chips conserved."""
+    import secrets
+    print(f"\n===== HOLD'EM TABLE =====  bot={bot_hex[:10]}")
+    A = {"sk": secrets.token_bytes(32)}; A["pk"] = bip340.pubkey_from_seckey(A["sk"]).hex()
+    B = {"sk": secrets.token_bytes(32)}; B["pk"] = bip340.pubkey_from_seckey(B["sk"]).hex()
+    sks = {A["pk"]: A["sk"], B["pk"]: B["sk"]}
+    os.makedirs(CONTROL_DIR, exist_ok=True)
+    with open(os.path.join(CONTROL_DIR, "cmd_test_holdem.json"), "w") as f:
+        json.dump({"cmd": "wot-add", "pubkeys": [A["pk"], B["pk"]]}, f)   # seat both into the WoT
+    time.sleep(10)
+    start = _ev.build_event(A["sk"], 1, "holdem #holdem",
+                            tags=[["p", bot_hex], ["p", B["pk"]], ["t", "holdem"], ["nofederate", "1"]])
+    gameid = start["id"]
+    n = 0
+    for _ in range(5):
+        n = run(R.publish(RELAYS, start))
+        if n:
+            break
+        time.sleep(3)
+    if not n:
+        print("  FAIL: relay rejected the start post"); cleanup(A["pk"]); cleanup(B["pk"]); return False
+    dtag = "pcai:holdem:" + gameid
+    st, deadline = None, time.time() + 90
+    while time.time() < deadline:
+        st = load_state(bot_hex, dtag)
+        if st:
+            break
+        time.sleep(3)
+    if not st:
+        print("  FAIL: bot never dealt the table"); cleanup(A["pk"]); cleanup(B["pk"]); return False
+    leaked = ("hole" in st) or ("deck" in st)
+    secure = bool(st.get("hole_enc")) and bool(st.get("deck_enc")) and not leaked
+    print(f"  dealt: {len(st.get('seats', []))} seats, street={st.get('street')}, "
+          f"pot={sum((st.get('contrib') or {}).values())}, secure(no-leak)={secure}")
+    actor = st.get("to_act")
+    fold = _ev.build_event(sks[actor], 1, "fold", tags=[["e", gameid, "", "root"], ["p", bot_hex]])
+    run(R.publish(RELAYS, fold))
+    print(f"  {'A' if actor == A['pk'] else 'B'} folds")
+    st2, t2 = None, time.time() + 60
+    while time.time() < t2:
+        time.sleep(3); st2 = load_state(bot_hex, dtag)
+        if st2 and (st2.get("hand_no", 1) > 1 or st2.get("status") == "done"):
+            break
+    redealt = bool(st2) and st2.get("hand_no", 1) > 1 and st2.get("status") == "betting"
+    chips = (sum((st2 or {}).get("stacks", {}).values()) + sum((st2 or {}).get("contrib", {}).values())) if st2 else 0
+    ok = secure and redealt and chips == 2000
+    print(f"  after fold: hand_no={st2.get('hand_no') if st2 else '?'} status={st2.get('status') if st2 else '?'} "
+          f"chips={chips} (expect 2000)")
+    print("  " + ("OK ✅ deal+bet+persistent re-deal works, hole cards/deck stay encrypted" if ok else "CHECK ⚠️"))
+    cleanup(A["pk"]); cleanup(B["pk"])
+    return ok
+
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     npubs = cfg_npubs()
@@ -288,6 +344,15 @@ def main():
                 results["blackjack-table"] = play_blackjack_table(npub_to_hex(npub))
             except Exception as e:
                 import traceback; traceback.print_exc(); results["blackjack-table"] = False
+    if which in ("all", "holdem", "holdem-table"):
+        npub = npubs.get("holdem_bot_npub")
+        if not npub:
+            print("holdem: no bot configured"); results["holdem-table"] = None
+        else:
+            try:
+                results["holdem-table"] = play_holdem_table(npub_to_hex(npub))
+            except Exception as e:
+                import traceback; traceback.print_exc(); results["holdem-table"] = False
     print("\n===== SUMMARY =====")
     for g, r in results.items():
         print(f"  {g:<10} {'OK' if r else ('SKIP' if r is None else 'FAIL/CHECK')}")
