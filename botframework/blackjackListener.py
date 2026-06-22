@@ -425,7 +425,9 @@ def _finish(state, gameid, parent_id):
     _save_game(gameid, state)
     if private:
         _dm_result(state, gameid)                # also DM the solo player their result image
-    _deal_next(state, gameid, parent_id)         # PERSISTENT: auto-deal the next round (or close)
+    # NOTE: do NOT auto-deal. The table stays in "over" so the player PLACES A BET and deals the
+    # next hand (authentic blackjack). The persistent table just means it never ends on its own —
+    # it waits for a 'deal' command (or a 'leave'). If everyone's broke, the next deal closes it.
 
 
 def _deal_next(state, gameid, parent_id):
@@ -513,7 +515,7 @@ def _dm_result(state, gameid):
         tag = "🏆 You won" if net > 0 else ("🤝 Push" if out == "push" else "💀 You lost")
         body = (f"{tag} {abs(net)} chips — {state.get('result','')}\nStack: {state['stacks'].get(pk,0)}.\n"
                 + (url + "\n\n" if url else "")
-                + "Next hand auto-deals — or change your bet / leave from the Blackjack tab.")
+                + "Place your bet and deal the next hand, or leave — from the Blackjack tab.")
         try:
             _nk.send_dm(pk, body, extra_tags=[["g", gameid]])
         except Exception:
@@ -536,6 +538,16 @@ def _handle_cmd(author, payload, own_pk):
         return
     if action == "bet":
         _set_bet(author, gameid, state, payload.get("amount"))
+        return
+    if action == "deal":
+        # place this player's wager, then deal the next round (only when the table's between rounds)
+        if payload.get("bet"):
+            try:
+                state.setdefault("bet_pref", {})[author] = max(_G.MIN_BET, int(payload.get("bet")))
+            except Exception:
+                pass
+        if state.get("status") == "over":
+            _deal_next(state, gameid, state.get("root") or gameid)
         return
     _apply_action(author, gameid, state, action, lambda m: None, state.get("root") or gameid)
 

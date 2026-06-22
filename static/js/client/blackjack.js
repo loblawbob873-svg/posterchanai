@@ -132,7 +132,7 @@
       const lr=g.last_result;
       const lastBanner = (lr && lr.summary && !over) ? `<div class="pk-last${(lr.payouts&&lr.payouts[me]>0)?' win':''}">${(lr.payouts&&lr.payouts[me]>0)?`🏆 You won ${lr.payouts[me]} last round!`:((lr.payouts&&lr.payouts[me]<0)?`Last round: lost ${-lr.payouts[me]}`:'Last round')}<span class="muted small"> · ${enc(lr.summary)}</span></div>` : '';
       let banner='';
-      if(over && myOut){ const win=myNet>0, push=myOut==='push'; banner=`<div class="chess-result ${push?'draw':(win?'win':'loss')}">${push?'🤝 Push':(win?`🏆 You won ${myNet}!`:`💀 You lost ${-myNet}`)}<span class="muted small"> · next hand dealing…</span></div>`; }
+      if(over && myOut){ const win=myNet>0, push=myOut==='push'; banner=`<div class="chess-result ${push?'draw':(win?'win':'loss')}">${push?'🤝 Push':(win?`🏆 You won ${myNet}!`:`💀 You lost ${-myNet}`)}<span class="muted small"> · ${myStack>0?'place your bet to deal again':'out of chips'}</span></div>`; }
       const dealerBlock = `<div class="pk-felt"><div class="pk-street">DEALER${dealerVal!==''?' · '+dealerVal+(dealerVal>21?' BUST':''):''}</div><div class="pk-board">${dealerCards}</div></div>`;
       const seatRows = players.filter(pk=>pk!==me).map(pk=>{
         const h=hands[pk]||[], v=handVal(h), av=(profOf(pk)||{}).picture||LOGO, out=results[pk], net=payouts[pk]||0;
@@ -152,7 +152,10 @@
       } else if(!over && myDone){
         controls = `<div class="muted small" style="padding:6px 2px">✋ Locked in — the dealer plays when the table's done.</div>`;
       } else {
-        controls = `<div class="pk-controls"><span class="pk-raise"><span class="muted small">Next bet</span> <input class="input bj-betinp" type="number" inputmode="numeric" value="${myBet||getBet()}" style="width:5em"><button class="btn btn-neon small bj-setbet">Set</button></span><button class="btn small bj-leave">Leave</button></div>`;
+        const nb = myStack>0 ? Math.min(myBet||getBet(), myStack) : 0;
+        controls = myStack>0
+          ? `<div class="pk-controls"><span class="pk-raise"><span class="muted small">Bet</span> <input class="input bj-betinp" type="number" inputmode="numeric" min="5" max="${myStack}" value="${nb}" style="width:5em"></span><button class="btn btn-cyan small bj-deal">Deal ▶</button><button class="btn small bj-leave">Leave</button></div>`
+          : `<div class="muted small" style="padding:6px 2px">💀 You're out of chips. <button class="btn small bj-leave" style="margin-left:6px">Leave</button></div>`;
       }
       card.innerHTML = `<div class="chess-card-hd">
           <div class="cc-meta"><b>Blackjack ${players.length>1?`· ${players.length} seats`:'vs dealer'}</b><span class="muted small">round #${g.round_no||1} · dealer stands on 17</span></div>
@@ -168,7 +171,7 @@
       bind('.bj-hit', ()=>move(g,'hit'));
       bind('.bj-stand', ()=>move(g,'stand'));
       bind('.bj-leave', ()=>leaveTable(g));
-      bind('.bj-setbet', ()=>{ const v=parseInt((card.querySelector('.bj-betinp')||{}).value,10); if(v>0) changeBet(g, v); });
+      bind('.bj-deal', ()=>{ const v=parseInt((card.querySelector('.bj-betinp')||{}).value,10)||getBet(); dealNext(g, v); });
     }
     async function move(game, action){
       let ok=false;
@@ -177,9 +180,13 @@
       toast(action+' sent 🃏');
       [2000, 4500, 7000].forEach(d=>setTimeout(()=>{ if(PC.VIEW==='blackjack') _load(); }, d));
     }
-    async function changeBet(game, amt){
-      try{ await _cmd({action:'bet', gameid:game.root, amount:amt}); setBetLS(amt); toast('next bet: '+amt+' 🃏'); setTimeout(()=>{ if(PC.VIEW==='blackjack') _load(); }, 1200); }
-      catch(e){ toast('could not set bet'); }
+    async function dealNext(game, bet){
+      // place this hand's bet + deal the next round (the persistent table waits between rounds).
+      let ok=false;
+      for(let i=0;i<3 && !ok;i++){ try{ await _cmd({action:'deal', gameid:game.root, bet}); ok=true; }catch(e){ await new Promise(r=>setTimeout(r, 400*(i+1))); } }
+      if(!ok){ toast('could not deal — tap again'); return; }
+      setBetLS(bet); toast('dealing… 🃏');
+      [2000, 4500, 7000].forEach(d=>setTimeout(()=>{ if(PC.VIEW==='blackjack') _load(); }, d));
     }
     async function leaveTable(g){
       if(!confirm('Leave this table? You keep your chips.')) return;
