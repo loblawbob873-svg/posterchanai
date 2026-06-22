@@ -498,11 +498,19 @@ def process_holdem():
         return
     own_pk = own.get("pubkey")
     cutoff = int(time.time()) - _LOOKBACK_DAYS * 86400
+    # First run with a fresh dedup (new node, or a deploy that lost the files): SEED the processed-id
+    # store from current history WITHOUT acting on it, then only handle genuinely-new items. Otherwise
+    # the bot would re-deal every game and replay every move in the lookback window — a notif flood.
+    seed_mentions = not os.path.exists(_IDS_FILE)
+    seed_dms = not os.path.exists(_DM_IDS_FILE)
     for note in _nk.get_mentions(limit=40):
         nid = note.get("id")
         if not nid or (note.get("user") or {}).get("pubkey") == own_pk:
             continue
         if (note.get("_event") or {}).get("created_at", 0) < cutoff:
+            continue
+        if seed_mentions:
+            _claim(nid)        # seed only — do not act on history
             continue
         root = _root_id(note)
         state = _load_game(root) if root else None
@@ -531,6 +539,9 @@ def process_holdem():
         if not rid or not sender or sender == own_pk:
             continue
         if dm.get("created_at", 0) < cutoff:
+            continue
+        if seed_dms:
+            _claim_dm(rid)     # seed only — do not replay old moves
             continue
         gameid, move_text = _clean_dm_text(dm.get("text") or "")
         if not move_text:
