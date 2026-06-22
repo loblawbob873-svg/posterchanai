@@ -12,7 +12,7 @@
     const SUIT = { S:'♠', H:'♥', D:'♦', C:'♣' };
 
     function handVal(h){ let t=0,a=0; for(const c of (h||[])){ const r=c.slice(0,-1); if(r==='A'){t+=11;a++;} else if('TJQK'.includes(r)) t+=10; else t+=(+r||0); } while(t>21&&a){t-=10;a--;} return t; }
-    function cardHtml(c, big){ if(c===null||c===undefined) return `<span class="pk-card back${big?' big':''}">?</span>`; const r=c.slice(0,-1), s=c.slice(-1), red=(s==='H'||s==='D'); return `<span class="pk-card${red?' red':''}${big?' big':''}">${enc(r)}${enc(SUIT[s]||s)}</span>`; }
+    function cardHtml(c, big){ if(c===null||c===undefined) return `<span class="pk-card back${big?' big':''}">?</span>`; let r=c.slice(0,-1); if(r==='T') r='10'; const s=c.slice(-1), red=(s==='H'||s==='D'); return `<span class="pk-card${red?' red':''}${big?' big':''}">${enc(r)}${enc(SUIT[s]||s)}</span>`; }
     function nameOf(pk, fb){ const m=profOf(pk)||{}; return m.name||m.display_name||niceNip05(m.nip05)||fb||'player'; }
     function _hidden(){ try{ return new Set(JSON.parse(localStorage.getItem('pc_bj_hidden')||'[]')); }catch(_){ return new Set(); } }
     function _hide(gid){ const s=_hidden(); s.add(gid); try{ localStorage.setItem('pc_bj_hidden', JSON.stringify([...s])); }catch(_){} }

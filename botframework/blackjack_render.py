@@ -67,7 +67,7 @@ def _card(d, x, y, card, w, h, face_down=False):
         _rrect(d, box, 9, fill=BACK, outline=MAGENTA, width=3)
         d.text((x + w / 2, y + h / 2), "?", font=_font(int(h * 0.42)), fill=MAGENTA, anchor="mm")
         return
-    rank = card[:-1]
+    rank = "10" if card[:-1] == "T" else card[:-1]
     suit = SUITS.get(card[-1], "?")
     col = RED if card[-1] in ("H", "D") else WHITE
     pad = max(4, int(w * 0.11))

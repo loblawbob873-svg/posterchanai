@@ -57,7 +57,7 @@ def _card(d, x, y, card, w, h, face_down=False, empty=False):
         _rrect(d, box, 9, fill=BACK, outline=MAGENTA, width=3)
         d.text((x + w / 2, y + h / 2), "?", font=_font(int(h * 0.42)), fill=MAGENTA, anchor="mm")
         return
-    rank = RANKS[rank_of(card)]
+    rank = "10" if rank_of(card) == 8 else RANKS[rank_of(card)]
     suit = SUITS[suit_of(card)]
     col = RED if suit_of(card) in (1, 2) else WHITE
     pad = max(4, int(w * 0.11))

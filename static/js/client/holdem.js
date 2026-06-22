@@ -13,7 +13,7 @@
     const RANKS='23456789TJQKA', SUITS=['♠','♥','♦','♣'];
     function cardHtml(c, big){
       if(c===null||c===undefined) return `<span class="pk-card back${big?' big':''}">?</span>`;
-      const r=RANKS[c%13], si=Math.floor(c/13), s=SUITS[si], red=(si===1||si===2);
+      let r=RANKS[c%13]; if(r==='T') r='10'; const si=Math.floor(c/13), s=SUITS[si], red=(si===1||si===2);
       return `<span class="pk-card${red?' red':''}${big?' big':''}">${r}${s}</span>`;
     }
     function nameOf(pk, fb){ const m=profOf(pk)||{}; return m.name||m.display_name||niceNip05(m.nip05)||fb||'player'; }
