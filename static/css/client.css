@@ -965,6 +965,16 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .bj-hand{margin:10px 0}
 .bj-lbl{display:block;font-weight:700;color:var(--muted);margin-bottom:6px;font-size:14px}
 .bj-betrow{display:flex;align-items:center;gap:8px;justify-content:center;margin:0 0 11px;flex-wrap:wrap}
+.bj-betbar{margin-top:11px;padding:12px;border-radius:15px;background:linear-gradient(180deg,#16092b,#100420);border:2px solid rgba(255,210,90,.45)}
+.bj-bethdr{display:flex;align-items:center;justify-content:center;gap:7px;font-size:18px;margin-bottom:9px}
+.bj-bethdr .bj-betnum{color:#ffd25a;font-size:24px;font-weight:900;text-shadow:0 0 9px rgba(255,210,90,.5)}
+.bj-chiprow{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.bj-chip{width:48px;height:48px;border-radius:50%;border:3px dashed #999;background:radial-gradient(circle at 50% 38%,#2a1450,#160a28);color:#fff;font-weight:900;font-size:13px;cursor:pointer;transition:.12s;flex:none;box-shadow:0 2px 6px rgba(0,0,0,.4)}
+.bj-chip:hover{transform:translateY(-3px)} .bj-chip:active{transform:scale(.92)}
+.bj-chip.v5{border-color:#5dffb0;color:#5dffb0} .bj-chip.v25{border-color:#21e6ff;color:#7df0ff}
+.bj-chip.v100{border-color:#ff5a8a;color:#ff8aa8} .bj-chip.v500{border-color:#ffd25a;color:#ffd25a}
+.bj-chip.vmax{border-color:#ff3cd2;color:#ff8ae6;font-size:11px}
+.bj-betbar .bj-betinp{display:block;width:7em;margin:0 auto 10px;text-align:center;font-weight:800;color:#ffd25a}
 .bj-myval{text-align:center;font-weight:900;font-size:19px;color:#ffd25a;margin-top:8px;letter-spacing:.5px}
 .bj-myval.bust{color:#ff6b8b} .bj-myval.win{color:#5dffb0;text-shadow:0 0 9px rgba(93,255,176,.5)}
 .pk-seat .bj-cards{display:inline-flex;gap:4px;vertical-align:middle}

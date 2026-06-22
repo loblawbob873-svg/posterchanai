@@ -18,6 +18,21 @@
     function _hide(gid){ const s=_hidden(); s.add(gid); try{ localStorage.setItem('pc_bj_hidden', JSON.stringify([...s])); }catch(_){} }
     function getBet(){ const b=parseInt(localStorage.getItem('pc_bj_bet')||'25',10); return (b>0?b:25); }
     function setBetLS(b){ try{ localStorage.setItem('pc_bj_bet', String(b)); }catch(_){} }
+    // graphical poker-chip bet picker: clickable chips + a live bet amount + a typed-amount input.
+    function chipRowHtml(bet, max){
+      const chips = [5,25,100,500].filter(c=>c<=max).map(c=>`<button class="bj-chip v${c}" data-bet="${c}">${c}</button>`).join('')
+        + (max>5?`<button class="bj-chip vmax" data-bet="${max}">MAX</button>`:'');
+      return `<div class="bj-bethdr">🪙 <span class="muted small">YOUR BET</span> <b class="bj-betnum">${bet}</b></div>
+        <div class="bj-chiprow">${chips}</div>
+        <input class="input bj-betinp" type="number" inputmode="numeric" min="5" max="${max}" value="${bet}" style="width:6em">`;
+    }
+    function _wireChips(root){
+      if(!root) return;
+      const inp=root.querySelector('.bj-betinp'), disp=root.querySelector('.bj-betnum');
+      const set=v=>{ v=Math.max(5, parseInt(v,10)||5); if(inp) inp.value=v; if(disp) disp.textContent=v; setBetLS(v); };
+      root.querySelectorAll('.bj-chip').forEach(b=> b.onclick=()=>set(b.dataset.bet));
+      if(inp) inp.oninput=()=>{ if(disp) disp.textContent=inp.value||0; };
+    }
 
     // Reliable, off-timeline command channel — solo start + all moves (no public note, no DM encryption).
     async function _cmd(payload){
@@ -34,8 +49,8 @@
       _seatPicks = [];
       const start = botNpub ? `
         <div class="chess-invite">
-          <div class="bj-betrow"><span class="muted small">Bet</span> <input id="bj-bet" class="input" type="number" inputmode="numeric" min="5" value="${getBet()}" style="width:6em"> <span class="muted small">chips / hand</span></div>
-          <button class="btn btn-cyan" id="bj-solo" style="width:100%">🃏 New hand — vs the dealer</button>
+          <div id="bj-hubbet" class="bj-betbar">${chipRowHtml(getBet(), 500)}</div>
+          <button class="btn btn-cyan" id="bj-solo" style="width:100%">🃏 Deal — vs the dealer</button>
           <div class="chess-or">— or seat a table with friends —</div>
           <input id="bj-inv" class="input" placeholder="search name / npub / name@domain…" autocomplete="off">
           <div id="bj-inv-res" class="chess-inv-res"></div>
@@ -51,7 +66,8 @@
           <div class="chess-games"><h3>🃏 Your tables</h3><div id="bj-games"><div class="spinner"></div></div></div>
         </div>`;
       if(botNpub){
-        const sb=$('#bj-solo'); if(sb) sb.onclick=()=>{ const b=parseInt(($('#bj-bet')||{}).value,10)||25; setBetLS(b); startTable([], b); };
+        _wireChips($('#bj-hubbet'));
+        const sb=$('#bj-solo'); if(sb) sb.onclick=()=>{ const b=parseInt(($('#bj-hubbet .bj-betinp')||{}).value,10)||25; setBetLS(b); startTable([], b); };
         _bindInvite();
       }
       _load();
@@ -154,12 +170,12 @@
       } else {
         const nb = myStack>0 ? Math.min(myBet||getBet(), myStack) : 0;
         controls = myStack>0
-          ? `<div class="pk-controls"><span class="pk-raise"><span class="muted small">Bet</span> <input class="input bj-betinp" type="number" inputmode="numeric" min="5" max="${myStack}" value="${nb}" style="width:5em"></span><button class="btn btn-cyan small bj-deal">Deal ▶</button><button class="btn small bj-leave">Leave</button></div>`
-          : `<div class="muted small" style="padding:6px 2px">💀 You're out of chips. <button class="btn small bj-leave" style="margin-left:6px">Leave</button></div>`;
+          ? `<div class="bj-betbar">${chipRowHtml(nb, myStack)}<div class="pk-controls"><button class="btn btn-cyan bj-deal" style="flex:3 1 60%">Deal next hand ▶</button><button class="btn small bj-leave" style="flex:1 1 28%">Leave</button></div></div>`
+          : `<div class="muted small" style="padding:8px 2px">💀 You're out of chips. <button class="btn small bj-leave" style="margin-left:6px">Leave</button></div>`;
       }
       card.innerHTML = `<div class="chess-card-hd">
           <div class="cc-meta"><b>Blackjack ${players.length>1?`· ${players.length} seats`:'vs dealer'}</b><span class="muted small">round #${g.round_no||1} · dealer stands on 17</span></div>
-          <span class="cc-badge ${(!over&&!myDone)?'you':(over?'done':'wait')}">${(!over&&!myDone)?'Your move':(over?'round over':'in play')}</span>
+          <span class="cc-badge ${(!over&&!myDone)?'you':(over?(myStack>0?'you':'done'):'wait')}">${(!over&&!myDone)?'Your move':(over?(myStack>0?'place your bet':'busted out'):'in play')}</span>
           <button class="chess-quit" title="Leave table">✕</button></div>
         ${banner}${lastBanner}
         ${dealerBlock}
@@ -172,6 +188,7 @@
       bind('.bj-stand', ()=>move(g,'stand'));
       bind('.bj-leave', ()=>leaveTable(g));
       bind('.bj-deal', ()=>{ const v=parseInt((card.querySelector('.bj-betinp')||{}).value,10)||getBet(); dealNext(g, v); });
+      _wireChips(card);
     }
     async function move(game, action){
       let ok=false;
