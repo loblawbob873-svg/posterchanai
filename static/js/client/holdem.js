@@ -120,7 +120,11 @@
         const iWon=(winners[me]||0)>0;
         banner=`<div class="chess-result ${iWon?'win':'loss'}">${iWon?'🏆 You won '+winners[me]:'Hand over'}<span class="muted small"> · ${enc(g.result||'')}</span></div>`;
       }
-      const boardRow = `<div class="pk-board">${[0,1,2,3,4].map(i=>cardHtml(i<board.length?board[i]:null)).join('')}</div>`;
+      const street = board.length>=5?'RIVER':board.length===4?'TURN':board.length===3?'FLOP':'PRE-FLOP';
+      // undealt board slots show an empty placeholder (not "?", which reads like a hidden card)
+      const boardRow = `<div class="pk-street">${street}</div><div class="pk-board">${[0,1,2,3,4].map(i=> i<board.length?cardHtml(board[i]):'<span class="pk-card empty"></span>').join('')}</div>`;
+      const seated = seats.includes(me);
+      const myChips = seated ? `<div class="pk-mychips">💰 Your chips <b>${stacks[me]||0}</b>${!over&&call>0?` · to call <b>${call}</b>`:''}${over&&winners[me]?` · won <b style="color:#5dffb0">+${winners[me]}</b>`:''}</div>` : '';
       const seatRows = seats.map(pk=>{
         const mine=pk===me, isTurn=!over&&g.to_act===pk, won=winners[pk]||0;
         const status = folded.has(pk)?'folded':(allin.has(pk)?'ALL-IN':(sbet[pk]?('bet '+sbet[pk]):''));
@@ -150,6 +154,7 @@
           <div class="pk-pot">POT <b>${pot}</b>${call>0&&myTurn?` · to call ${call}`:''}</div>
           ${boardRow}
         </div>
+        ${myChips}
         <div class="pk-seats">${seatRows}</div>
         ${myHole}
         ${controls}`;

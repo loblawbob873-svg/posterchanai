@@ -245,20 +245,34 @@ def _board_png(state, reveal=False):
 
 
 def _do_publish(gameid, parent_id, players, body, png):
-    media = None
+    # Build the kind-1 event by hand (e-root/reply + p-tags + game hashtags + imeta) and publish it
+    # straight to the relay — same path the working blackjack bot uses. (post_note() takes no tag
+    # list, so the old post_note(..., extra_tags=) call raised and nothing ever posted.)
+    content = body
+    imeta = None
     if png:
         try:
             info = _nk._run(_nk._svc.media.upload(_nk._MEDIA_CFG, _nk._SECKEY, png, "image/png")) or {}
             url = info.get("url")
             if url:
-                body = body + "\n" + url
+                content = f"{body}\n{url}"
+                imeta = _ev.imeta_tag(url, "image/png", info.get("sha256", ""), info.get("dim", ""))
         except Exception as e:
             print(f"[holdem] board upload failed: {e}", flush=True)
-    parent = _nk.get_note(parent_id) if parent_id else None
-    tags = [["p", p] for p in players]
+    tags = [["e", gameid, "", "root"]]
+    if parent_id and parent_id != gameid:
+        tags.append(["e", parent_id, "", "reply"])
+    for pk in (players or []):
+        if pk:
+            tags.append(["p", pk])
+    for _t in ("holdem", "poker", "nostr", "gamestr"):
+        tags.append(["t", _t])
+    if imeta:
+        tags.append(imeta)
     try:
-        _nk._run(_nk._svc.post_note(_nk._SECKEY, _nk._RELAYS, body, reply_to=(parent or {}).get("_event"),
-                                    extra_tags=tags))
+        ev = _ev.build_event(_nk._SECKEY, 1, content, tags=tags)
+        _nk._run(_nk._svc.relay.publish(_nk._RELAYS, ev))
+        return ev
     except Exception as e:
         print(f"[holdem] publish failed: {e}", flush=True)
     return {}
