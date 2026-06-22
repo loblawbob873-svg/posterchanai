@@ -67,20 +67,30 @@
           draw(Store.profileList().filter(p=>(((p.meta.name||'')+(p.meta.display_name||'')+(p.meta.nip05||'')).toLowerCase().includes(ql))).slice(0,8));
         }, 250); };
     }
+    // Reliable, OFF-TIMELINE command channel: a signed kind-30078 (no nip44 encryption to fail, not a
+    // kind-1 note) published to the local relay. The bot polls #t=holdemcmd. Used for solo start + all
+    // moves so nothing hits your public timeline and moves don't depend on flaky DM encryption.
+    async function _cmd(payload){
+      const botPk=safePk(PC.CFG.holdem_bot_npub); if(!botPk) throw new Error('no bot');
+      const tags=[['d',`pcai:holdem:cmd:${PC.ME.pubkey}`],['t','holdemcmd'],['p',botPk],['nofederate','1']];
+      const r = await PC.publish(30078, JSON.stringify({...payload, ts:Date.now()}), tags);
+      if(r && r.ok===false) throw new Error(r.msg||'rejected');
+      return r;
+    }
     async function startTable(friends){
       const botPk=safePk(PC.CFG.holdem_bot_npub); if(!botPk){ toast('no bot'); return; }
       friends=(friends||[]).filter(pk=>pk&&pk!==PC.ME.pubkey&&pk!==botPk);
-      const solo=!friends.length;
+      if(!friends.length){
+        // SOLO: private command — no public timeline post at all, and reliable (no encryption).
+        try{ await _cmd({action:'start'}); toast('dealing… 🃏'); setTimeout(()=>{ if(PC.VIEW==='holdem') _load(); }, 4500); }
+        catch(e){ toast('could not start — try again'); }
+        return;
+      }
+      // MULTIPLAYER: a public note to seat + notify the friends you tagged (they need to see it).
       const tags=[['p',botPk]]; friends.forEach(pk=>tags.push(['p',pk]));
       tags.push(['t','holdem'],['t','poker'],['t','nostr'],['t','gamestr']);
-      // The bot is triggered by a public mention (Nostr has no private trigger that's reliable —
-      // DMs route through the bot's relays, which can time out). For SOLO we keep the note minimal
-      // and nofederate (stays on this relay), and the BOT adds no public opening/result posts.
-      if(solo) tags.push(['nofederate','1']);
-      const body = solo
-        ? `🃏 dealing me into #holdem vs the bot`
-        : `🃏 Dealing a #holdem table — ${friends.map(pk=>{let n;try{n=NT().nip19.npubEncode(pk);}catch(_){n=pk;} return 'nostr:'+n;}).join(' ')} you're seated! Check your DMs for your hole cards.`;
-      try{ await PC.publish(1, body+(solo?'':`\n\n#holdem #poker #nostr #gamestr`), tags); toast('dealing… 🃏'); setTimeout(()=>{ if(PC.VIEW==='holdem') render(); }, 4500); }
+      const body = `🃏 Dealing a #holdem table — ${friends.map(pk=>{let n;try{n=NT().nip19.npubEncode(pk);}catch(_){n=pk;} return 'nostr:'+n;}).join(' ')} you're seated! Check your DMs for your hole cards.`;
+      try{ await PC.publish(1, body+`\n\n#holdem #poker #nostr #gamestr`, tags); toast('dealing… 🃏'); setTimeout(()=>{ if(PC.VIEW==='holdem') render(); }, 4500); }
       catch(e){ toast('could not start'); }
     }
     async function _load(){
@@ -192,18 +202,16 @@
       _hide(g.root); _load();
     }
     async function move(game, action, amount){
-      const botPk=safePk(PC.CFG.holdem_bot_npub); if(!botPk){ toast('no bot'); return; }
-      const txt = action==='raise' ? `raise ${amount}` : action;
-      // sendDm wraps via the signer (which is often busy decrypting hole cards at the start of a hand)
-      // — a transient signer/relay hiccup shouldn't lose the move, so retry a few times with backoff.
+      // Moves go through the reliable kind-30078 command channel (not a flaky NIP-17 DM). Retry a few
+      // times in case the local relay momentarily rejects.
       let ok=false;
       for(let i=0;i<3 && !ok;i++){
-        try{ await sendDm(botPk, `${txt}\n\ng:${game.root}`); ok=true; }
-        catch(e){ await new Promise(r=>setTimeout(r, 500*(i+1))); }
+        try{ await _cmd({action, gameid:game.root, amount: action==='raise'?amount:undefined}); ok=true; }
+        catch(e){ await new Promise(r=>setTimeout(r, 400*(i+1))); }
       }
       if(!ok){ toast('move failed — tap again'); return; }
       toast(action+' sent 🃏');
-      setTimeout(()=>{ if(PC.VIEW==='holdem') render(); }, 4000);
+      setTimeout(()=>{ if(PC.VIEW==='holdem') render(); }, 3500);
     }
 
     (window.PCGames = window.PCGames || {}).holdem = render;

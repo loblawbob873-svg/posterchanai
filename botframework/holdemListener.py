@@ -70,6 +70,7 @@ def _state_dir():
 _STATE_DIR = _state_dir()
 _IDS_FILE = os.path.join(_STATE_DIR, f".processed_holdem_ids_{_suffix()}")
 _DM_IDS_FILE = os.path.join(_STATE_DIR, f".processed_holdem_dms_{_suffix()}")
+_CMD_IDS_FILE = os.path.join(_STATE_DIR, f".processed_holdem_cmds_{_suffix()}")
 _MAX_IDS = 5000
 
 
@@ -102,6 +103,10 @@ def _claim(note_id):
 
 def _claim_dm(rumor_id):
     return _claim_in(_DM_IDS_FILE, rumor_id)
+
+
+def _claim_cmd(eid):
+    return _claim_in(_CMD_IDS_FILE, eid)
 
 
 # ---- state store (kind-30078) ---------------------------------------------
@@ -375,6 +380,58 @@ def _start_game(note, own_pk):
     _run_bot_turns(state, gameid, gameid)   # if the bot is first to act it plays; else DM the human
 
 
+def _start_solo(sender, own_pk):
+    """Start a PRIVATE heads-up game vs the bot, triggered by a kind-30078 command (the app's 'New
+    game vs bot' button). No public timeline post. Guards against a player spinning up many tables."""
+    if not sender or sender == own_pk:
+        return
+    now = time.time()
+    recent = [t for t in _invite_times.get(sender, []) if now - t < _INVITE_WINDOW]
+    if _INVITE_MAX and len(recent) >= _INVITE_MAX:
+        return
+    cur = _get_player_game(sender)                     # already in a live game? don't start another
+    if cur:
+        ex = _load_game(cur)
+        if ex and ex.get("status") == "betting" and sender in ex.get("seats", []) \
+                and sender not in ex.get("left", []):
+            return
+    recent.append(now)
+    _invite_times[sender] = recent
+    gameid = os.urandom(32).hex()
+    seats = [sender, own_pk]
+    state, _ = _G.start_hand(seats, button=0)
+    state["bot"] = own_pk
+    state["names"] = {pk: _name(pk) for pk in seats}
+    state["root"] = gameid
+    state["gameid"] = gameid
+    state["private"] = True
+    print(f"[holdem] new SOLO table {gameid[:12]} for {sender[:8]}", flush=True)
+    _save_game(gameid, state)
+    _set_player_game(sender, gameid)
+    _run_bot_turns(state, gameid, gameid)
+
+
+def _handle_cmd(author, payload, own_pk):
+    """A reliable, off-timeline command (kind-30078 #t=holdemcmd): {action, gameid?, amount?}. The app
+    uses this for solo start + ALL moves instead of public kind-1 notes / flaky NIP-17 DMs. The reply
+    is a no-op — the player sees the result in the app (it reads the game doc)."""
+    action = (payload.get("action") or "").lower().strip()
+    if not action:
+        return
+    if action == "start":
+        _start_solo(author, own_pk)
+        return
+    gameid = payload.get("gameid") or _get_player_game(author)
+    if not gameid:
+        return
+    state = _load_game(gameid)
+    if not state:
+        return
+    amt = payload.get("amount")
+    text = action + (f" {int(amt)}" if action == "raise" and amt else "")
+    _apply_action(author, gameid, state, text, lambda m: None, state.get("root") or gameid)
+
+
 def _run_bot_turns(state, gameid, parent_id):
     """Drive any bot-occupied seat: while it's the bot's turn, decide + act (looping across players),
     then DM whichever human is up next. Resolves the hand (and persistent re-deal) if the bot's action
@@ -503,6 +560,33 @@ def process_holdem():
     # the bot would re-deal every game and replay every move in the lookback window — a notif flood.
     seed_mentions = not os.path.exists(_IDS_FILE)
     seed_dms = not os.path.exists(_DM_IDS_FILE)
+    seed_cmds = not os.path.exists(_CMD_IDS_FILE)
+    # PRIMARY channel: reliable, off-timeline kind-30078 commands (#t=holdemcmd) from the app — solo
+    # start + every move. content = {"action","gameid"?,"amount"?}; one replaceable doc per player.
+    try:
+        cmds = _nk._run(_nk._svc.relay.query(
+            _nk._RELAYS, [{"kinds": [_KIND_APP], "#t": ["holdemcmd"], "limit": 100}])) or []
+    except Exception as e:
+        print(f"[holdem] cmd query failed: {e}", flush=True)
+        cmds = []
+    for ev in cmds:
+        eid = ev.get("id")
+        author = ev.get("pubkey")
+        if not eid or not author or author == own_pk:
+            continue
+        if ev.get("created_at", 0) < cutoff:
+            continue
+        if seed_cmds:
+            _claim_cmd(eid)        # seed only — don't replay commands on a fresh deploy
+            continue
+        if not _claim_cmd(eid):
+            continue
+        try:
+            _handle_cmd(author, json.loads(ev.get("content") or "{}"), own_pk)
+        except Exception as e:
+            print(f"[holdem] cmd {eid[:12]} failed: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
     for note in _nk.get_mentions(limit=40):
         nid = note.get("id")
         if not nid or (note.get("user") or {}).get("pubkey") == own_pk:
