@@ -276,7 +276,9 @@ def _do_publish(gameid, parent_id, players, body, png):
                 imeta = _ev.imeta_tag(url, "image/png", info.get("sha256", ""), info.get("dim", ""))
         except Exception as e:
             print(f"[holdem] board upload failed: {e}", flush=True)
-    tags = [["e", gameid, "", "root"]]
+    # A solo game's id is synthetic (no real start note), so e-rooting it would make a phantom reply —
+    # pass gameid=None for a clean standalone post.
+    tags = [["e", gameid, "", "root"]] if gameid else []
     if parent_id and parent_id != gameid:
         tags.append(["e", parent_id, "", "reply"])
     for pk in (players or []):
@@ -515,12 +517,31 @@ def _post_result(state, gameid, parent_id, showdown):
     nxt, _ = _G.next_hand(state)
     if nxt is None:
         if private:
-            for pk in state["seats"]:
-                if pk != state.get("bot"):
-                    try:
-                        _nk.send_dm(pk, f"🏁 Table closed — {summary}. gg! Start a new game from the Hold'em tab.")
-                    except Exception:
-                        pass
+            # SOLO wrap-up: per-hand results stayed in-app; on table close post ONE public result
+            # (final chip outcome + table image + app promo), and DM the player too.
+            bot = state.get("bot")
+            humans = [p for p in state["seats"] if p != bot]
+            lines = []
+            for h in humans:
+                nm = state["names"].get(h, _name(h))
+                fs = state["stacks"].get(h, 0)
+                if fs <= 0:
+                    lines.append(f"{nm} busted out vs the dealer")
+                elif state["stacks"].get(bot, 0) <= 0:
+                    lines.append(f"{nm} broke the dealer and took it all 🏆")
+                else:
+                    lines.append(f"{nm} cashed out with {fs} chips")
+            outcome = "; ".join(lines) if lines else "table closed"
+            body = f"🏁 #holdem — {outcome}.{_footer()}"
+            try:
+                _do_publish(None, None, state["seats"], body, _board_png(state, reveal=True))
+            except Exception as e:
+                print(f"[holdem] solo wrap-up post failed: {e}", flush=True)
+            for h in humans:
+                try:
+                    _nk.send_dm(h, f"🏁 {outcome}. gg! Start a new game from the Hold'em tab.")
+                except Exception:
+                    pass
         else:
             _do_publish(gameid, parent_id, state["seats"],
                         "🃏 Table closed — not enough players to continue. gg!" + _footer(), None)
