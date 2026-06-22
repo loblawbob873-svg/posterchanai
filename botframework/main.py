@@ -124,6 +124,7 @@ def main():
             try:
                 import nostr as _nk
                 _nk.ensure_profile()
+                _nk.ensure_server_list()   # kind-10063 BUD-03 Blossom failover list
             except Exception as e:
                 print(f"[ERROR] ensure_profile failed: {e}", flush=True)
         threading.Thread(target=_pub_profile, daemon=True).start()

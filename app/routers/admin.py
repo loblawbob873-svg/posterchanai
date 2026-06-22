@@ -488,6 +488,24 @@ def update_settings(
                 trigger_nip05_reload()
             except Exception as e:
                 logger.warning(f"[Admin] relay NIP-05 reload after settings save failed: {e}")
+        # Blossom mirror list / public URL / enable changed → re-advertise the operator's kind-10063
+        # server list so clients pick up the new failover targets (off-thread; needs the relay + loop).
+        if any(k in changed_keys for k in ("blossom_mirror_servers", "blossom_public_url", "blossom_enabled")):
+            try:
+                import threading as _threading, asyncio as _asyncio
+                from app.services import blossom_service
+                from app.database import SessionLocal as _SessionLocal
+                def _advertise():
+                    _db = _SessionLocal()
+                    try:
+                        _asyncio.run(blossom_service.publish_operator_server_list(_db))
+                    except Exception as e:
+                        logger.warning(f"[Admin] blossom kind-10063 publish failed: {e}")
+                    finally:
+                        _db.close()
+                _threading.Thread(target=_advertise, daemon=True).start()
+            except Exception as e:
+                logger.warning(f"[Admin] could not schedule blossom server-list publish: {e}")
         # Relay TASK-TOPOLOGY settings only take effect when the relay rebuilds its config at startup
         # — they decide which background tasks run (send-only vs firehose/sync, mirror-feeds sweep)
         # or where/how it connects. Toggling them in the UI must RESTART the relay, else the already-

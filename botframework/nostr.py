@@ -345,6 +345,31 @@ def ensure_profile():
     print("[nostr] ensure_profile: relay never confirmed the profile", flush=True)
 
 
+def ensure_server_list():
+    """Publish this bot's kind-10063 (BUD-03) Blossom server list from the manager-injected
+    BLOSSOM_SERVERS env, so clients can fail over by hash for THIS bot's media. Replaceable per-pubkey;
+    best-effort (the bot is an operator key by now, so the WoT relay accepts it). No-op if unset."""
+    if not _SECKEY:
+        return
+    servers = [u for u in (os.getenv("BLOSSOM_SERVERS", "") or "").split() if u.startswith(("http://", "https://"))]
+    if not servers:
+        return
+    from app.services.nostr import event as _ev
+    tags = [["server", u] for u in servers]
+    for attempt in range(5):
+        try:
+            ev = _ev.build_event(_SECKEY, 10063, "", tags=tags)
+            _run(_svc.relay.publish(_RELAYS, ev))
+            got = _run(_svc.relay.query(_RELAYS, [{"authors": [_PUBKEY], "kinds": [10063], "limit": 1}])) or []
+            if got:
+                print(f"[nostr] kind-10063 server list published ({len(servers)} servers)", flush=True)
+                return
+        except Exception as e:
+            print(f"[nostr] ensure_server_list attempt {attempt} failed: {e}", flush=True)
+        time.sleep(2)
+    print("[nostr] ensure_server_list: relay never confirmed the list", flush=True)
+
+
 def get_own_account():
     if not _PUBKEY:
         return None

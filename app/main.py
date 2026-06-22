@@ -434,6 +434,14 @@ async def startup():
                         await record_store.hydrate(_db)
                     except Exception as e:
                         logging.warning(f"Records hydrate from relay failed: {e}")
+                    try:
+                        # Advertise the operator's Blossom server list (kind-10063 / BUD-03) now the
+                        # relay is up + settings hydrated, so clients can fail over to the mirrors by
+                        # hash when this node's Blossom is down.
+                        from app.services import blossom_service
+                        await blossom_service.publish_operator_server_list(_db)
+                    except Exception as e:
+                        logging.warning(f"Blossom kind-10063 advertise failed: {e}")
                     finally:
                         _db.close()
                 _aio.create_task(_hydrate_settings())

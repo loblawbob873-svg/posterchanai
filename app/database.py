@@ -180,6 +180,12 @@ def init_db():
             # then pins that choice). See docs/BLOSSOM.md. Code defaults in app/services/blossom_service.py.
             "blossom_enabled": "true",
             "blossom_public_url": "",
+            # DR mirroring ON by default to blossom.primal.net — every upload is copied there in the
+            # background (BUD-02, operator-signed) by a dedicated worker thread. primal.net accepts
+            # anonymous operator-signed uploads (verified); other public servers (e.g. nostr.build)
+            # gate uploads behind an account and reject ours, so they're not defaulted in (a server
+            # that rejects just logs a skip). Admin can edit/clear in Admin → Blossom.
+            "blossom_mirror_servers": "https://blossom.primal.net",
             "blossom_blob_ttl_days": "0",
             "blossom_max_upload_mb": "100",
             # Single-node default: blobs live LOCALLY on the data volume. The "proxy" backend is

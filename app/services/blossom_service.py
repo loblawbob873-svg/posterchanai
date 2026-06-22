@@ -36,6 +36,7 @@ from app.database import SessionLocal
 from app.models import BlossomBlob, User
 from app.services import settings_store, keystore
 from app.services.nostr import nostr_service, event as nostr_event
+from app.services.proxy_utils import afallback_transport
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,57 @@ def _cfg(db: Session) -> dict:
 
 def is_enabled(db: Session) -> bool:
     return (settings_store.get("blossom_enabled", "") or "").lower() == "true"
+
+
+# --- kind-10063 BUD-03 user server list (so clients fail over by hash) -------
+_SERVER_LIST_KIND = 10063
+
+
+def server_list_urls(db: Session) -> list:
+    """Blossom servers to advertise (kind-10063): our public Blossom URL + the configured mirrors,
+    deduped and order-preserved (the client tries them in order)."""
+    cfg = _cfg(db)
+    out, seen = [], set()
+    for u in (([cfg["public_url"]] if cfg["public_url"] else []) + cfg["mirror_servers"]):
+        u = (u or "").rstrip("/")
+        if u and u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
+
+
+async def publish_server_list(seckey: bytes, urls: list) -> bool:
+    """Publish a kind-10063 user server list (one `server` tag per URL) so clients can retry a blob
+    by hash across all of them. Replaceable per-pubkey. Returns True on a relay accept."""
+    if not urls:
+        return False
+    tags = [["server", u] for u in urls]
+    ev = nostr_event.build_event(seckey, _SERVER_LIST_KIND, "", tags=tags)
+    port = int(settings_store.get("nostr_relay_port", "3052") or "3052")
+    try:
+        return bool(await nostr_service.relay.publish([f"ws://127.0.0.1:{port}"], ev))
+    except Exception as e:
+        logger.warning("[blossom] kind-10063 publish failed: %s", e)
+        return False
+
+
+async def publish_operator_server_list(db: Session):
+    """Advertise the OPERATOR's Blossom server list (kind-10063). Called on startup + when the Blossom
+    mirror/public-url settings change. No-op if Blossom is off, no servers, or no operator key."""
+    if not is_enabled(db):
+        return
+    urls = server_list_urls(db)
+    if not urls:
+        return
+    nsec = keystore.get_operator_nsec()
+    if not nsec:
+        return
+    try:
+        sk = nostr_service.decode_seckey(nsec)
+    except Exception:
+        return
+    if await publish_server_list(sk, urls):
+        logger.info("[blossom] advertised operator kind-10063 (%d servers)", len(urls))
 
 
 # --- in-RAM blob cache ------------------------------------------------------
@@ -310,7 +362,10 @@ async def _mirror_blob(sha256: str, data: bytes, mime: str, servers: list):
         url = srv.rstrip("/") + "/upload"
         for attempt in range(1, _MIRROR_RETRIES + 1):
             try:
-                async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as client:
+                # Prefer the built-in HTTP proxy; the fallback transport drops to a DIRECT connection
+                # if the proxy can't be reached (safe here — the PUT is content-addressed/idempotent).
+                async with httpx.AsyncClient(transport=afallback_transport(),
+                                             timeout=httpx.Timeout(120.0, connect=10.0)) as client:
                     r = await client.put(url, content=data, headers=headers)
                 if r.status_code // 100 == 2:
                     logger.info("[blossom] mirrored %s → %s", sha256[:12], srv)
@@ -329,6 +384,71 @@ async def _mirror_blob(sha256: str, data: bytes, mime: str, servers: list):
         else:
             logger.warning("[blossom] mirror %s → %s gave up after %d attempts",
                            sha256[:12], srv, _MIRROR_RETRIES)
+
+
+# --- background mirror worker (own thread + queue) --------------------------
+# Mirroring runs on a DEDICATED thread with its own event loop, fed by a bounded queue, so it never
+# competes with the app's request loop ("keep the app good") and drains ONE blob at a time, paced
+# ("queue requests to save bandwidth and not DDoS the mirror servers"). The queue is bounded by total
+# queued bytes: if mirrors are down and the backlog grows past the cap we drop + log (the blob is safe
+# locally and re-mirrors on a future upload), so a stall can never OOM the app.
+import queue as _queue  # noqa: E402
+
+_MIRROR_QUEUE_MAX_BYTES = 256 * 1024 * 1024   # cap the in-flight mirror backlog
+_MIRROR_PACE_SEC = 1.0                         # gap between blobs (rate-limit the mirror servers)
+_mirror_q: "_queue.Queue" = _queue.Queue()
+_mirror_q_bytes = 0
+_mirror_q_lock = threading.Lock()
+_mirror_thread: "threading.Thread | None" = None
+_mirror_stop = threading.Event()
+
+
+def _enqueue_mirror(sha256: str, data: bytes, mime: str, servers: list) -> None:
+    """Queue a freshly-stored blob for the background mirror worker. Non-blocking; bounded by total
+    queued bytes (drops + logs over the cap). Lazily starts the worker thread on first use."""
+    global _mirror_q_bytes
+    n = len(data)
+    with _mirror_q_lock:
+        if _mirror_q_bytes + n > _MIRROR_QUEUE_MAX_BYTES:
+            logger.warning("[blossom] mirror backlog full (%.0f MB) — dropping %s",
+                           _mirror_q_bytes / 1048576, sha256[:12])
+            return
+        _mirror_q_bytes += n
+    _mirror_q.put((sha256, data, mime, list(servers)))
+    _ensure_mirror_worker()
+
+
+def _ensure_mirror_worker() -> None:
+    global _mirror_thread
+    if _mirror_thread and _mirror_thread.is_alive():
+        return
+    _mirror_stop.clear()
+    _mirror_thread = threading.Thread(target=_mirror_worker, name="blossom-mirror", daemon=True)
+    _mirror_thread.start()
+
+
+def _mirror_worker() -> None:
+    """Drain the mirror queue one blob at a time on a private event loop, paced between blobs."""
+    global _mirror_q_bytes
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        while not _mirror_stop.is_set():
+            try:
+                sha256, data, mime, servers = _mirror_q.get(timeout=1.0)
+            except _queue.Empty:
+                continue
+            try:
+                loop.run_until_complete(_mirror_blob(sha256, data, mime, servers))
+            except Exception as e:
+                logger.warning("[blossom] mirror worker error on %s: %s", sha256[:12], e)
+            finally:
+                with _mirror_q_lock:
+                    _mirror_q_bytes = max(0, _mirror_q_bytes - len(data))
+                _mirror_q.task_done()
+            _mirror_stop.wait(_MIRROR_PACE_SEC)   # pace between blobs
+    finally:
+        loop.close()
 
 
 async def save_blob(db: Session, pubkey: str, data: bytes, mime: str) -> dict:
@@ -373,10 +493,11 @@ async def save_blob(db: Session, pubkey: str, data: bytes, mime: str) -> dict:
     # Seed the read cache — the bytes are already in RAM, so a fetch right after upload
     # (the common case) won't touch disk or the storage proxy.
     _cache_put(sha256, data, cfg["cache_mb"] * 1024 * 1024)
-    # DR: mirror the new blob out to configured external Blossom server(s), in the background so it
-    # never delays or fails the user's upload (only newly-stored blobs — re-uploads are already there).
+    # DR: hand the new blob to the background mirror worker (own thread + queue) so mirroring never
+    # touches the request's event loop and is paced/serialised (saves bandwidth, polite to mirrors).
+    # Only newly-stored blobs are queued — a re-upload of the same hash is already mirrored.
     if cfg["mirror_servers"]:
-        asyncio.create_task(_mirror_blob(sha256, data, mime, cfg["mirror_servers"]))
+        _enqueue_mirror(sha256, data, mime, cfg["mirror_servers"])
     return _descriptor_fields(blob)
 
 
@@ -591,3 +712,4 @@ def start_blossom_cleanup() -> None:
 
 def stop_blossom_cleanup() -> None:
     _cleanup_stop.set()
+    _mirror_stop.set()   # also halt the DR mirror worker (daemon thread; exits within ~1s)

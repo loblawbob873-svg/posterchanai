@@ -205,6 +205,17 @@ def _set_internal_blossom(env: dict):
             site = _re.sub(r"//media\.", "//", pub)
     if site:
         env["CHESS_SITE_URL"] = site
+    # Blossom server list for this bot to advertise as its own kind-10063 (BUD-03) on startup, so
+    # clients fail over by hash for the bot's media too: our public Blossom URL + the DR mirrors.
+    servers, seen = [], set()
+    pub = (settings_store.get("blossom_public_url", "") or "").strip().rstrip("/")
+    for u in ([pub] if pub else []) + (settings_store.get("blossom_mirror_servers", "") or "").split():
+        u = (u or "").strip().rstrip("/")
+        if u.startswith(("http://", "https://")) and u not in seen:
+            seen.add(u)
+            servers.append(u)
+    if servers:
+        env["BLOSSOM_SERVERS"] = " ".join(servers)
 
 
 def _build_env(bot_dict: dict, base_env: dict) -> dict:
