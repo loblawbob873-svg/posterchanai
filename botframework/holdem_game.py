@@ -48,6 +48,55 @@ def start_hand(seats, button=0, stacks=None, sb=SMALL_BLIND, bb=BIG_BLIND):
     return st, events
 
 
+def next_hand(state):
+    """Persistent table: deal the NEXT hand. Rotate the button to the next seated player, carry over
+    chip stacks, and drop anyone who left or busted (0 chips). Returns (state, events), or (None, [])
+    if fewer than 2 players remain (table closes). Preserves table metadata (names/bot/root)."""
+    left = set(state.get("left", []))
+    old = state["seats"]
+    # keep table seat order; drop leavers + busted
+    seats = [p for p in old if p not in left and state["stacks"].get(p, 0) > 0]
+    if len(seats) < 2:
+        return None, []
+    # new button = first remaining player strictly after the old button position (table order).
+    btn = state.get("button", 0)
+    new_button = 0
+    for k in range(1, len(old) + 1):
+        cand = old[(btn + k) % len(old)]
+        if cand in seats:
+            new_button = seats.index(cand)
+            break
+    st, ev = start_hand(seats, button=new_button,
+                        stacks={p: state["stacks"][p] for p in seats},
+                        sb=state.get("sb", SMALL_BLIND), bb=state.get("bb", BIG_BLIND))
+    st["names"] = {p: state.get("names", {}).get(p, p) for p in seats}
+    st["bot"] = state.get("bot")
+    st["root"] = state.get("root")
+    st["gameid"] = state.get("gameid")
+    st["left"] = []                       # leavers already removed; reset for the new hand
+    st["hand_no"] = state.get("hand_no", 1) + 1
+    return st, ev
+
+
+def leave(state, pk):
+    """A player leaves the table: fold them out of the current hand (if any) and mark them gone so
+    next_hand won't re-seat them. Returns (state, events)."""
+    events = []
+    if pk not in state.get("seats", []):
+        return state, events
+    state.setdefault("left", [])
+    if pk not in state["left"]:
+        state["left"].append(pk)
+    if state.get("status") == "betting" and pk not in state["folded"]:
+        if state.get("to_act") == pk:
+            return act(state, pk, "fold")
+        # not their turn: still fold them so the hand can resolve without them
+        state["folded"].append(pk)
+        if len(_active(state)) == 1:
+            _award_folded(state); events.append("folded_win")
+    return state, events
+
+
 def _post(st, p, amount):
     amount = min(amount, st["stacks"][p])
     st["stacks"][p] -= amount
