@@ -113,6 +113,13 @@ def _load_global_env():
             server = rows[k].strip().rstrip("/")
             break
     if server:
+        # `localhost` can resolve to ::1 (IPv6) where the app binds IPv4-only (0.0.0.0:3051), so the
+        # bot's Python `requests` STALLS ~20s per call on the dead IPv6 address before falling back to
+        # IPv4 — which made every bot LLM call crawl and the 120s autopost cap time out. Pin loopback
+        # to 127.0.0.1 so it connects straight to the IPv4 listener.
+        server = server.replace("://localhost:", "://127.0.0.1:").replace("://localhost/", "://127.0.0.1/")
+        if server.endswith("://localhost"):
+            server = server[:-len("://localhost")] + "://127.0.0.1"
         env["POSTERCHANAI_API_ENDPOINT"] = server
         env["OPENAI_ENDPOINT"] = server + "/api/chat/completions"
     env["USE_POSTERCHANAI"] = "true"   # always use the unified server; never ComfyUI/SD
