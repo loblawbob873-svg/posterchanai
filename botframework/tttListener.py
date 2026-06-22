@@ -136,12 +136,12 @@ def _clean_text(note):
 
 def _footer():
     site = (os.getenv("CHESS_SITE_URL", "") or "").strip()
-    play = f" Play interactively at {site}." if site else ""
+    play = f"\nPlay interactively at {site}." if site else ""
     return ("⭕ Wanna start your own game? Reply \"tictactoe @friend\" to challenge them "
-            "(or just \"tictactoe\" to play me); then reply with a cell number 1-9." + play + "\n#tictactoe")
+            "(or just \"tictactoe\" to play me); then reply with a cell number 1-9." + play + "\n#tictactoe #nostr #gamestr")
 
 
-def _publish(gameid, parent_id, px, po, body, png):
+def _publish(gameid, parent_id, px, po, body, png, federate=True):
     info = _nk._run(_nk._svc.media.upload(_nk._MEDIA_CFG, _nk._SECKEY, png, "image/png")) or {}
     url = info.get("url")
     if not url:
@@ -153,7 +153,10 @@ def _publish(gameid, parent_id, px, po, body, png):
     for pk in (px, po):
         if pk:
             tags.append(["p", pk])
-    tags.append(["t", "tictactoe"])
+    for _t in ("tictactoe", "nostr", "gamestr"):
+        tags.append(["t", _t])
+    if not federate:   # mid-game boards stay local-only (only opening + final go public)
+        tags.append(["nofederate", "1"])
     tags.append(_ev.imeta_tag(url, "image/png", info.get("sha256", ""), info.get("dim", "")))
     ev = _ev.build_event(_nk._SECKEY, 1, content, tags=tags)
     _nk._run(_nk._svc.relay.publish(_nk._RELAYS, ev))
@@ -162,7 +165,7 @@ def _publish(gameid, parent_id, px, po, body, png):
 
 def _reply_text(note, text):
     try:
-        _nk.send_reply(note, text + "\n\n#tictactoe")
+        _nk.send_reply(note, text + "\n\n#tictactoe #nostr #gamestr")
     except Exception as e:
         print(f"[ttt] reply failed: {e}", flush=True)
 
@@ -241,7 +244,8 @@ def _post_active(state, gameid, parent_id, last):
                     f"Reply with a cell number 1-9, or tap on the Games tab.")
     else:
         body = f"⭕ {('Cell ' + str(last + 1) + '. ') if last is not None else ''}{mover_nm} ({stm}) to move — reply 1-9."
-    ev = _publish(gameid, parent_id, state["x"], state["o"], body, png)
+    # Opening (empty board) is public; mid-game move boards stay local-only (anti-spam).
+    ev = _publish(gameid, parent_id, state["x"], state["o"], body, png, federate=(not any(cells)))
     state["last_board_event"] = ev.get("id")
     _save_game(gameid, state)
 

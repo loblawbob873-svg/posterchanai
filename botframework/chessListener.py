@@ -169,8 +169,10 @@ def _clean_text(note) -> str:
     return t.strip()
 
 
-def _publish(gameid, parent_id, white, black, body, png):
-    """Post a board image as a reply (root=gameid), tagging both players + #chesstr."""
+def _publish(gameid, parent_id, white, black, body, png, federate=True):
+    """Post a board image as a reply (root=gameid), tagging both players + #chesstr. `federate=False`
+    keeps it local-only (the relay won't re-broadcast it upstream) — used for mid-game move boards so
+    only the opening + final posts are public to the wider network (anti-spam)."""
     info = _nk._run(_nk._svc.media.upload(_nk._MEDIA_CFG, _nk._SECKEY, png, "image/png")) or {}
     url = info.get("url")
     if not url:
@@ -183,7 +185,10 @@ def _publish(gameid, parent_id, white, black, body, png):
     for pk in (white, black):
         if pk:
             tags.append(["p", pk])
-    tags.append(["t", "chesstr"])
+    for _t in ("chess", "nostr", "gamestr"):
+        tags.append(["t", _t])
+    if not federate:
+        tags.append(["nofederate", "1"])
     tags.append(_ev.imeta_tag(url, "image/png", info.get("sha256", ""), info.get("dim", "")))
     ev = _ev.build_event(_nk._SECKEY, 1, content, tags=tags)
     _nk._run(_nk._svc.relay.publish(_nk._RELAYS, ev))
@@ -193,7 +198,7 @@ def _publish(gameid, parent_id, white, black, body, png):
 def _reply_text(parent_note, text):
     """A plain text reply (errors / nudges) — also #chesstr-tagged, in the game thread."""
     try:
-        _nk.send_reply(parent_note, text + "\n\n#chesstr")
+        _nk.send_reply(parent_note, text + "\n\n#chess #nostr #gamestr")
     except Exception as e:
         print(f"[chesstr] reply failed: {e}", flush=True)
 
@@ -345,9 +350,9 @@ def _apply_bot_moves(state) -> str | None:
 def _footer() -> str:
     """Board-image footer: invite people to play interactively in the app, then the #chesstr tag."""
     site = (os.getenv("CHESS_SITE_URL", "") or "").strip()
-    play = f" Play interactively at {site}." if site else ""
+    play = f"\nPlay interactively at {site}." if site else ""
     return ("♟️ Wanna start your own game with a friend? Reply \"chess @friend\" to challenge them "
-            "(or just \"chess\" to play me); then reply with moves like \"1 d4\"." + play + "\n#chesstr")
+            "(or just \"chess\" to play me); then reply with moves like \"1 d4\"." + play + "\n#chess #nostr #gamestr")
 
 
 def _status_for(board: chess.Board):
@@ -393,7 +398,8 @@ def _post_active_board(state, gameid, parent_id, san):
         body = (f"♟️ {last}{mover_nm} ({'cyan' if mover_white else 'magenta'}) to move{chk}\n"
                 f"Reply to THIS post with your move, e.g. '1 d4' (move piece #1 to d4). "
                 f"SAN/UCI/O-O also work.")
-    ev = _publish(gameid, parent_id, state["white"], state["black"], body, png)
+    # Opening (san is None) is public; mid-game move boards stay local-only (anti-spam).
+    ev = _publish(gameid, parent_id, state["white"], state["black"], body, png, federate=(san is None))
     state["last_board_event"] = ev.get("id")
     _save_game(gameid, state)
 

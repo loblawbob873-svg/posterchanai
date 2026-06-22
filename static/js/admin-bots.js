@@ -27,7 +27,7 @@ const BOT_KNOWN_CHECKS = ['auto_narrate', 'unfollow_silent_mode', 'stickers_enab
 const BOT_FEATURES = {
     bot_ft_nitter: '--nitter', bot_ft_welcome: '--welcome', bot_ft_block: '--blockbot',
     bot_ft_report: '--report', bot_ft_hashtag: '--hashtagbot', bot_ft_unfollow: '--unfollowbot',
-    bot_ft_dvm: '--dvm', bot_ft_chess: '--chess', bot_ft_ttt: '--ttt', bot_ft_hangman: '--hangman',
+    bot_ft_dvm: '--dvm', bot_ft_chess: '--chess', bot_ft_ttt: '--ttt', bot_ft_hangman: '--hangman', bot_ft_connect4: '--connect4',
 };
 
 let _bots = {};            // id -> full bot row (incl config)

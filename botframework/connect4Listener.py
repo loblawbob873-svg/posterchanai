@@ -1,0 +1,436 @@
+"""#connect4 — Connect Four over Nostr, refereed by the bot. Same pattern as chess/ttt/hangman:
+START with "connect4 @opponent" (or "c4 @opponent"); with no opponent you play the bot. MOVE by
+replying with a column number 1-7 (the disc drops to the lowest empty slot). The bot validates,
+renders a cyberpunk board, posts it tagging the other player, and calls 4-in-a-row / draw. State is
+a replaceable kind-30078 doc keyed by the game root id (never expires). Every post carries
+#connect4 #nostr #gamestr; only the opening + final posts federate (mid-game is local-only)."""
+import os
+import re
+import sys
+import json
+import time
+import fcntl
+import hashlib
+import tempfile
+
+script_dir = os.path.dirname(os.path.abspath(__file__))
+if script_dir not in sys.path:
+    sys.path.insert(0, script_dir)
+
+import connect4_render
+import nostr as _nk
+from config import NOSTR_NSEC
+from app.services.nostr import event as _ev
+
+_KIND_APP = 30078
+COLS, ROWS = 7, 6
+_START_RE = re.compile(r"\b(connect\s*4|connect\s*four|connectfour|c4)\b", re.IGNORECASE)
+_COL_RE = re.compile(r"\b([1-7])\b")
+_NOSTR_TOKEN_RE = re.compile(
+    r"nostr:[a-z0-9]+|\b(?:npub1|nprofile1|nevent1|note1|naddr1)[023456789acdefghjklmnpqrstuvwxyz]+",
+    re.IGNORECASE)
+_LOOKBACK_DAYS = int(os.getenv("CONNECT4_LOOKBACK_DAYS", "3"))
+_INVITE_MAX = int(os.getenv("CONNECT4_INVITE_MAX_PER_HOUR", "3"))
+_INVITE_WINDOW = 3600
+_DEPTH = max(1, int(os.getenv("CONNECT4_BOT_DEPTH", "5")))
+_invite_times: dict = {}
+_DIRS = ((0, 1), (1, 0), (1, 1), (1, -1))
+
+
+def _suffix():
+    return hashlib.sha1((NOSTR_NSEC or "").encode()).hexdigest()[:10] if NOSTR_NSEC else "default"
+
+
+_IDS_FILE = os.path.join(script_dir, f".processed_c4_ids_{_suffix()}")
+_LOCK_FILE = _IDS_FILE + ".lock"
+
+
+def _claim(note_id):
+    try:
+        with open(_LOCK_FILE, "w") as lk:
+            fcntl.flock(lk.fileno(), fcntl.LOCK_EX)
+            try:
+                ids = set()
+                try:
+                    with open(_IDS_FILE) as f:
+                        ids = {ln.strip() for ln in f if ln.strip()}
+                except FileNotFoundError:
+                    pass
+                if note_id in ids:
+                    return False
+                ids.add(note_id)
+                if len(ids) > 5000:
+                    ids = set(sorted(ids)[-5000:])
+                fd, tmp = tempfile.mkstemp(dir=script_dir, prefix=".c4ids_")
+                with os.fdopen(fd, "w") as f:
+                    f.write("\n".join(ids))
+                os.replace(tmp, _IDS_FILE)
+                return True
+            finally:
+                fcntl.flock(lk.fileno(), fcntl.LOCK_UN)
+    except Exception as e:
+        print(f"[connect4] claim failed: {e}", flush=True)
+        return False
+
+
+# ---- state ----------------------------------------------------------------
+def _dtag(gameid):
+    return f"pcai:connect4:{gameid}"
+
+
+def _save_game(gameid, state):
+    ev = _ev.build_event(_nk._SECKEY, _KIND_APP, json.dumps(state, separators=(",", ":")),
+                         tags=[["d", _dtag(gameid)]])
+    _nk._run(_nk._svc.relay.publish(_nk._RELAYS, ev))
+
+
+def _load_game(gameid):
+    try:
+        evs = _nk._run(_nk._svc.relay.query(
+            _nk._RELAYS, [{"authors": [_nk._PUBKEY], "kinds": [_KIND_APP], "#d": [_dtag(gameid)], "limit": 1}])) or []
+    except Exception:
+        return None
+    if not evs:
+        return None
+    evs.sort(key=lambda e: e.get("created_at", 0), reverse=True)
+    try:
+        return json.loads(evs[0].get("content") or "{}")
+    except Exception:
+        return None
+
+
+# ---- nostr helpers --------------------------------------------------------
+def _tags(note):
+    return (note.get("_event") or {}).get("tags", [])
+
+
+def _root_id(note):
+    es = [t for t in _tags(note) if len(t) >= 2 and t[0] == "e"]
+    for t in es:
+        if len(t) >= 4 and t[3] == "root":
+            return t[1]
+    return es[0][1] if es else None
+
+
+def _ptags(note):
+    return [t[1] for t in _tags(note) if len(t) >= 2 and t[0] == "p" and t[1]]
+
+
+def _name(pk):
+    try:
+        return "@" + (_nk.resolve_user(pk).get("username") or _nk._short_npub(pk))
+    except Exception:
+        return "@" + (pk or "")[:8]
+
+
+def _clean_text(note):
+    t = _NOSTR_TOKEN_RE.sub("", note.get("text") or "")
+    t = re.sub(r"@[\w@.]+", "", t)
+    t = re.sub(r"#\w+", "", t)
+    for line in t.splitlines():
+        if line.strip():
+            return line.strip()
+    return t.strip()
+
+
+def _footer():
+    site = (os.getenv("CHESS_SITE_URL", "") or "").strip()
+    play = f"\nPlay interactively at {site}." if site else ""
+    return ("🔴 Wanna start your own game? Reply \"connect4 @friend\" to challenge them "
+            "(or just \"connect4\" to play me); then reply with a column number 1-7." + play + "\n#connect4 #nostr #gamestr")
+
+
+def _publish(gameid, parent_id, p1, p2, body, png, federate=True):
+    info = _nk._run(_nk._svc.media.upload(_nk._MEDIA_CFG, _nk._SECKEY, png, "image/png")) or {}
+    url = info.get("url")
+    if not url:
+        raise RuntimeError("board image upload failed")
+    content = f"{body}\n{url}\n\n{_footer()}"
+    tags = [["e", gameid, "", "root"]]
+    if parent_id and parent_id != gameid:
+        tags.append(["e", parent_id, "", "reply"])
+    for pk in (p1, p2):
+        if pk:
+            tags.append(["p", pk])
+    for _t in ("connect4", "nostr", "gamestr"):
+        tags.append(["t", _t])
+    if not federate:
+        tags.append(["nofederate", "1"])
+    tags.append(_ev.imeta_tag(url, "image/png", info.get("sha256", ""), info.get("dim", "")))
+    ev = _ev.build_event(_nk._SECKEY, 1, content, tags=tags)
+    _nk._run(_nk._svc.relay.publish(_nk._RELAYS, ev))
+    return ev
+
+
+def _reply_text(note, text):
+    try:
+        _nk.send_reply(note, text + "\n\n#connect4 #nostr #gamestr")
+    except Exception as e:
+        print(f"[connect4] reply failed: {e}", flush=True)
+
+
+# ---- game logic -----------------------------------------------------------
+def _drop_row(cells, col):
+    for r in range(ROWS - 1, -1, -1):
+        if not cells[r * COLS + col]:
+            return r
+    return None
+
+
+def _winner(cells):
+    for r in range(ROWS):
+        for c in range(COLS):
+            p = cells[r * COLS + c]
+            if not p:
+                continue
+            for dr, dc in _DIRS:
+                if all(0 <= r + dr * k < ROWS and 0 <= c + dc * k < COLS
+                       and cells[(r + dr * k) * COLS + (c + dc * k)] == p for k in range(4)):
+                    return p
+    return None
+
+
+def _side_to_move(cells):
+    return "1" if sum(1 for c in cells if c) % 2 == 0 else "2"
+
+
+def _status_after(cells):
+    w = _winner(cells)
+    if w:
+        return "win", w
+    if all(cells):
+        return "draw", None
+    return "active", None
+
+
+def _bot_move(cells, mark):
+    """Alpha-beta minimax (depth _DEPTH), window-scoring eval. Returns best column 0..6."""
+    opp = "2" if mark == "1" else "1"
+
+    def win_score(win):
+        m, o, e = win.count(mark), win.count(opp), win.count("")
+        if m and o:
+            return 0
+        if m == 3 and e == 1:
+            return 50
+        if m == 2 and e == 2:
+            return 10
+        if o == 3 and e == 1:
+            return -80
+        if o == 2 and e == 2:
+            return -8
+        return 0
+
+    def evaluate(cs):
+        s = 6 * (sum(1 for r in range(ROWS) if cs[r * COLS + 3] == mark)
+                 - sum(1 for r in range(ROWS) if cs[r * COLS + 3] == opp))
+        for r in range(ROWS):
+            for c in range(COLS):
+                for dr, dc in _DIRS:
+                    if 0 <= r + dr * 3 < ROWS and 0 <= c + dc * 3 < COLS:
+                        s += win_score([cs[(r + dr * k) * COLS + (c + dc * k)] for k in range(4)])
+        return s
+
+    def nm(cs, depth, alpha, beta, turn):
+        w = _winner(cs)
+        if w == mark:
+            return 1_000_000 - (_DEPTH - depth)
+        if w == opp:
+            return -1_000_000 + (_DEPTH - depth)
+        valid = [c for c in range(COLS) if _drop_row(cs, c) is not None]
+        if not valid or depth == 0:
+            return evaluate(cs)
+        order = [c for c in (3, 2, 4, 1, 5, 0, 6) if c in valid]
+        if turn == mark:
+            best = -10_000_000
+            for c in order:
+                r = _drop_row(cs, c); cs[r * COLS + c] = mark
+                best = max(best, nm(cs, depth - 1, alpha, beta, opp)); cs[r * COLS + c] = ""
+                alpha = max(alpha, best)
+                if alpha >= beta:
+                    break
+            return best
+        else:
+            best = 10_000_000
+            for c in order:
+                r = _drop_row(cs, c); cs[r * COLS + c] = opp
+                best = min(best, nm(cs, depth - 1, alpha, beta, mark)); cs[r * COLS + c] = ""
+                beta = min(beta, best)
+                if beta <= alpha:
+                    break
+            return best
+
+    valid = [c for c in (3, 2, 4, 1, 5, 0, 6) if _drop_row(cells, c) is not None]
+    best_c, best_v = (valid[0] if valid else None), -10_000_000
+    work = list(cells)
+    for c in valid:
+        r = _drop_row(work, c); work[r * COLS + c] = mark
+        v = nm(work, _DEPTH - 1, -10_000_000, 10_000_000, opp); work[r * COLS + c] = ""
+        if v > best_v:
+            best_v, best_c = v, c
+    return best_c
+
+
+def _apply_bot(state):
+    last = None
+    while state.get("status") == "active":
+        stm = _side_to_move(state["cells"])
+        side_pk = state["p1"] if stm == "1" else state["p2"]
+        if side_pk != _nk._PUBKEY:
+            break
+        col = _bot_move(state["cells"], stm)
+        if col is None:
+            break
+        r = _drop_row(state["cells"], col)
+        if r is None:
+            break
+        state["cells"][r * COLS + col] = stm
+        last = r * COLS + col
+        st, w = _status_after(state["cells"])
+        if st != "active":
+            state["status"] = st
+            break
+    return last
+
+
+# ---- posts ----------------------------------------------------------------
+def _post_active(state, gameid, parent_id, last):
+    cells = state["cells"]
+    stm = _side_to_move(cells)
+    mover_nm = state["p1_name"] if stm == "1" else state["p2_name"]
+    colour = "cyan" if stm == "1" else "magenta"
+    title = f"{mover_nm} to move ({colour})"
+    sub = f"{state['p1_name']} = cyan   ·   {state['p2_name']} = magenta"
+    png = connect4_render.render(cells, last_move=last, title=title, subtitle=sub)
+    if not any(cells):
+        vs_bot = _nk._PUBKEY in (state["p1"], state["p2"])
+        if vs_bot:
+            body = (f"🔴 #connect4 vs the bot — you're {'cyan' if state['p1'] != _nk._PUBKEY else 'magenta'}.\n"
+                    f"Reply with a column number 1-7, or tap on the Games tab.")
+        else:
+            body = (f"🔴 #connect4 — {state['p1_name']} (cyan) vs {state['p2_name']} (magenta)!\n"
+                    f"{mover_nm}, you're up — drop a disc: reply with a column 1-7, or tap on the Games tab.")
+    else:
+        col_no = (last % COLS) + 1 if last is not None else 0
+        body = f"🔴 {('Column ' + str(col_no) + '. ') if last is not None else ''}{mover_nm} ({colour}) to move — reply 1-7."
+    ev = _publish(gameid, parent_id, state["p1"], state["p2"], body, png, federate=(not any(cells)))
+    state["last_board_event"] = ev.get("id")
+    _save_game(gameid, state)
+
+
+def _post_over(state, gameid, parent_id, last, result_text):
+    png = connect4_render.render(state["cells"], last_move=last, title="GAME OVER", subtitle=result_text)
+    _publish(gameid, parent_id, state["p1"], state["p2"], f"🏁 {result_text}  gg!", png)
+    _save_game(gameid, state)
+
+
+# ---- start + move ---------------------------------------------------------
+def _start_game(note, own_pk):
+    sender = (note.get("user") or {}).get("pubkey")
+    opponents = [p for p in _ptags(note) if p and p != own_pk and p != sender]
+    gameid = note["id"]
+    if _load_game(gameid):
+        return
+    now = time.time()
+    recent = [t for t in _invite_times.get(sender, []) if now - t < _INVITE_WINDOW]
+    if _INVITE_MAX and len(recent) >= _INVITE_MAX:
+        _reply_text(note, f"⏳ You've started {_INVITE_MAX} games in the last hour — that's the limit.")
+        return
+    recent.append(now)
+    _invite_times[sender] = recent
+    # player 1 (cyan) moves first. Invited opponent is p1 (accepts by moving); vs-bot → human is p1.
+    if opponents:
+        p1, p2 = opponents[0], sender
+    else:
+        p1, p2 = sender, own_pk
+    state = {
+        "v": 1, "p1": p1, "p2": p2, "p1_name": _name(p1), "p2_name": _name(p2),
+        "cells": [""] * (ROWS * COLS), "status": "active", "root": gameid,
+        "started": int(time.time()), "last_board_event": None,
+    }
+    print(f"[connect4] new game {gameid[:12]} {state['p1_name']} vs {state['p2_name']}", flush=True)
+    if state["p1"] == own_pk:
+        _apply_bot(state)
+    _post_active(state, gameid, gameid, None)
+
+
+def _handle_move(note, gameid, state):
+    sender = (note.get("user") or {}).get("pubkey")
+    if sender not in (state["p1"], state["p2"]):
+        return
+    text = _clean_text(note)
+    if text.lower() in ("resign", "quit", "gg", "abandon", "/resign"):
+        winner = state["p2_name"] if sender == state["p1"] else state["p1_name"]
+        state["status"] = "resigned"
+        _post_over(state, gameid, note["id"], None, f"{_name(sender)} resigned. {winner} wins!")
+        return
+    if state.get("status") != "active":
+        _reply_text(note, "🏁 This game is over. Start a new one with \"connect4 @opponent\".")
+        return
+    stm = _side_to_move(state["cells"])
+    side_pk = state["p1"] if stm == "1" else state["p2"]
+    if sender != side_pk:
+        _reply_text(note, "⏳ It's not your turn.")
+        return
+    m = _COL_RE.search(text)
+    if not m:
+        _reply_text(note, "🤔 Reply with a column number 1-7.")
+        return
+    col = int(m.group(1)) - 1
+    r = _drop_row(state["cells"], col)
+    if r is None:
+        _reply_text(note, f"🚫 Column {col + 1} is full. Pick another.")
+        return
+    state["cells"][r * COLS + col] = stm
+    last = r * COLS + col
+    st, w = _status_after(state["cells"])
+    if st != "active":
+        state["status"] = st
+        result = (f"{state['p1_name'] if w == '1' else state['p2_name']} "
+                  f"({'cyan' if w == '1' else 'magenta'}) wins!" if w else "Draw — board full.")
+        _post_over(state, gameid, note["id"], last, result)
+        return
+    nstm = _side_to_move(state["cells"])
+    next_pk = state["p1"] if nstm == "1" else state["p2"]
+    if next_pk == _nk._PUBKEY:
+        blast = _apply_bot(state)
+        if state.get("status") != "active":
+            _, w2 = _status_after(state["cells"])
+            result = (f"{state['p1_name'] if w2 == '1' else state['p2_name']} "
+                      f"({'cyan' if w2 == '1' else 'magenta'}) wins!" if w2 else "Draw — board full.")
+            _post_over(state, gameid, note["id"], blast, result)
+        else:
+            _post_active(state, gameid, note["id"], blast)
+    else:
+        _post_active(state, gameid, note["id"], last)
+
+
+def process_connect4():
+    own = _nk.get_own_account()
+    if not own:
+        print("[connect4] no account (NOSTR_NSEC missing) — idle", flush=True)
+        return
+    own_pk = own.get("pubkey")
+    cutoff = int(time.time()) - _LOOKBACK_DAYS * 86400
+    for note in _nk.get_mentions(limit=40):
+        nid = note.get("id")
+        if not nid or (note.get("user") or {}).get("pubkey") == own_pk:
+            continue
+        if (note.get("_event") or {}).get("created_at", 0) < cutoff:
+            continue
+        root = _root_id(note)
+        state = _load_game(root) if root else None
+        is_start = bool(_START_RE.search(note.get("text") or "")) and not state
+        if not state and not is_start:
+            continue
+        if not _claim(nid):
+            continue
+        try:
+            if state:
+                _handle_move(note, root, state)
+            else:
+                _start_game(note, own_pk)
+        except Exception as e:
+            print(f"[connect4] processing {nid[:12]} failed: {e}", flush=True)
+            import traceback
+            traceback.print_exc()

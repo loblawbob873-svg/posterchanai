@@ -33,6 +33,10 @@ def _broadcastable(ev) -> bool:
         d = next((t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "d"), "")
         if d.startswith("pcai:"):
             return False
+    # Opt-out marker: e.g. game bots tag the mid-game move boards so only the opening + final post
+    # federate to the wider network (the middle plays stay local-only — anti-spam).
+    if any(t and len(t) >= 1 and t[0] == "nofederate" for t in ev.get("tags", [])):
+        return False
     return True
 from . import negentropy
 

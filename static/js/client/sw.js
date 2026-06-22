@@ -2,7 +2,7 @@
  * App code (our JS/CSS + the /client shell) is served NETWORK-FIRST so deploys reach users
  * immediately (cache is only an offline fallback) — caching it cache-first served stale code.
  * The large vendor bundle + icons are cache-first (they rarely change; bump CACHE to refresh). */
-const CACHE = 'pc-nostr-v113';
+const CACHE = 'pc-nostr-v114';
 const SHELL = [
   '/client',
   '/static/css/client.css',
@@ -13,6 +13,7 @@ const SHELL = [
   '/static/js/client/chess.js',
   '/static/js/client/ttt.js',
   '/static/js/client/hangman.js',
+  '/static/js/client/connect4.js',
   '/static/js/client/signer-worker.js',
   '/static/posterchan-relay.png',
   '/static/icon-192.png',

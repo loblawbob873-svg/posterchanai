@@ -158,12 +158,12 @@ def _clean_text(note):
 
 def _footer():
     site = (os.getenv("CHESS_SITE_URL", "") or "").strip()
-    play = f" Play interactively at {site}." if site else ""
+    play = f"\nPlay interactively at {site}." if site else ""
     return ("🎯 Wanna play your own? Reply \"hangman\" to start a game (I'll pick a word); "
-            "then reply with a letter A-Z." + play + "\n#hangman")
+            "then reply with a letter A-Z." + play + "\n#hangman #nostr #gamestr")
 
 
-def _publish(gameid, parent_id, players, body, png):
+def _publish(gameid, parent_id, players, body, png, federate=True):
     info = _nk._run(_nk._svc.media.upload(_nk._MEDIA_CFG, _nk._SECKEY, png, "image/png")) or {}
     url = info.get("url")
     if not url:
@@ -175,7 +175,10 @@ def _publish(gameid, parent_id, players, body, png):
     for pk in players:
         if pk:
             tags.append(["p", pk])
-    tags.append(["t", "hangman"])
+    for _t in ("hangman", "nostr", "gamestr"):
+        tags.append(["t", _t])
+    if not federate:   # mid-game boards stay local-only (only opening + final go public)
+        tags.append(["nofederate", "1"])
     tags.append(_ev.imeta_tag(url, "image/png", info.get("sha256", ""), info.get("dim", "")))
     ev = _ev.build_event(_nk._SECKEY, 1, content, tags=tags)
     _nk._run(_nk._svc.relay.publish(_nk._RELAYS, ev))
@@ -184,7 +187,7 @@ def _publish(gameid, parent_id, players, body, png):
 
 def _reply_text(note, text):
     try:
-        _nk.send_reply(note, text + "\n\n#hangman")
+        _nk.send_reply(note, text + "\n\n#hangman #nostr #gamestr")
     except Exception as e:
         print(f"[hangman] reply failed: {e}", flush=True)
 
@@ -204,7 +207,9 @@ def _post(state, gameid, parent_id, word=None, gameover=False, result=""):
                 f"Misses {state.get('wrong', 0)}/{_MAX_WRONG}"
                 + (f" · wrong: {' '.join(state['wrong_letters'])}" if state.get("wrong_letters") else "")
                 + ". Reply with a letter A-Z.")
-    ev = _publish(gameid, parent_id, [state["guesser"], state.get("opponent")], body, png)
+    # Opening (parent==gameid) and the final post are public; mid-game guesses stay local-only.
+    federate = gameover or (parent_id == gameid)
+    ev = _publish(gameid, parent_id, [state["guesser"], state.get("opponent")], body, png, federate=federate)
     state["last_board_event"] = ev.get("id")
     _save_game(gameid, state)
 

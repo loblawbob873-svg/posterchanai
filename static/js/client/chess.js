@@ -1,4 +1,4 @@
-/* #chesstr — the Chess game UI for the Nostr client. Kept OUT of app.js so per-game code doesn't
+/* #chess — the Chess game UI for the Nostr client. Kept OUT of app.js so per-game code doesn't
  * bloat the core (future games — Tic-Tac-Toe, etc. — get their own file the same way). It uses the
  * small shared surface app.js publishes on window.__PC (helpers + live ME/CFG/VIEW getters); app.js
  * dispatches the Chess view via window.PCChess.render(). */
@@ -38,10 +38,10 @@
           <div id="chess-inv-res" class="chess-inv-res"></div>
           <div class="chess-or">— or —</div>
           <button class="btn btn-cyan" id="chess-play-bot">🤖 Play the bot</button>
-        </div>` : `<div class="empty">No #chesstr bot is configured on this server yet — ask the admin to enable one in Admin → Bots.</div>`;
+        </div>` : `<div class="empty">No #chess bot is configured on this server yet — ask the admin to enable one in Admin → Bots.</div>`;
       feed.innerHTML = `<div class="chess-hub">
           <div class="chess-splash glass">
-            <h2>♟️ #chesstr</h2>
+            <h2>♟️ #chess</h2>
             <p class="muted">Play chess with anyone on Nostr — the bot is the board &amp; referee.</p>
             ${how}
             ${invite}
@@ -60,7 +60,7 @@
     async function startBotGame(){
       const botPk=safePk(PC.CFG.chess_bot_npub); if(!botPk){ toast('no chess bot configured'); return; }
       try{
-        await publish(1, `🤖 Playing #chesstr against the bot — I'll be White. Reply to the board with moves like "1 d4".\n\n#chesstr`, [['p',botPk],['t','chesstr']]);
+        await publish(1, `🤖 Playing #chess against the bot — I'll be White. Reply to the board with moves like "1 d4".\n\n#chess #nostr #gamestr`, [['p',botPk],['t','chess'],['t','nostr'],['t','gamestr']]);
         toast('starting game vs the bot ♟️');
         setTimeout(()=>{ if(PC.VIEW==='chess') renderChess(); }, 4500);
       }catch(e){ toast('could not start game'); }
@@ -87,11 +87,11 @@
       let npub; try{ npub=NT().nip19.npubEncode(pk); }catch(_){ npub=pk; }
       const meName = (profOf(PC.ME.pubkey)||{}).name || (profOf(PC.ME.pubkey)||{}).display_name || 'A player';
       // chess_first = opponent → they're White and "accept" by making the first move.
-      const tags=[['p',botPk],['p',pk],['t','chesstr'],['chess_first',pk]];
+      const tags=[['p',botPk],['p',pk],['t','chess'],['t','nostr'],['t','gamestr'],['chess_first',pk]];
       try{
         await publish(1, `♟️ ${meName} has invited you to play chess! nostr:${npub}\n`
           + `To accept, make the first move (you're White): reply to the board the bot posts with your move — e.g. "1 d4" (move piece #1 to d4). "Nf3", "e4" and "O-O" work too, or just tap a piece on the Chess tab.\n`
-          + `The bot referees, validates every move, and calls checkmate. Games never expire — take your time.\n\n#chesstr`, tags);
+          + `The bot referees, validates every move, and calls checkmate. Games never expire — take your time.\n\n#chess #nostr #gamestr`, tags);
         toast('invite sent ♟️ — the bot will post the board');
         setTimeout(()=>{ if(PC.VIEW==='chess') renderChess(); }, 4500);
       }catch(e){ toast('challenge failed'); }
@@ -200,8 +200,8 @@
       const oppPk = game.white===PC.ME.pubkey ? game.black : game.white;
       const tags=[['e', game.root, '', 'root']];
       if(game.last_board_event && game.last_board_event!==game.root) tags.push(['e', game.last_board_event, '', 'reply']);
-      tags.push(['p', botPk], ['p', oppPk], ['t','chesstr']);
-      try{ await publish(1, moveText.trim()+"\n\n#chesstr", tags); toast('move sent ♟️'); }
+      tags.push(['p', botPk], ['p', oppPk], ['t','chess'],['t','nostr'],['t','gamestr']);
+      try{ await publish(1, moveText.trim()+"\n\n#chess", tags); toast('move sent ♟️'); }
       catch(e){ toast('move failed'); return; }
       setTimeout(()=>{ if(PC.VIEW==='chess') renderChess(); }, 4500);   // give the bot time to validate + post
     }

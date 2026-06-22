@@ -59,12 +59,12 @@
         let npub; try{ npub=NT().nip19.npubEncode(pk); }catch(_){ npub=pk; }
         const meName=(profOf(PC.ME.pubkey)||{}).name||'A player';
         body=`🎯 ${meName} challenged you to #hangman! nostr:${npub} — guess the bot's word, a letter at a time.`;
-        tags=[['p',botPk],['p',pk],['t','hangman']];
+        tags=[['p',botPk],['p',pk],['t','hangman'],['t','nostr'],['t','gamestr']];
       } else {
         body=`🎯 New #hangman game — I'll guess the bot's word.`;
-        tags=[['p',botPk],['t','hangman']];
+        tags=[['p',botPk],['t','hangman'],['t','nostr'],['t','gamestr']];
       }
-      try{ await publish(1, body+`\n\nhangman\n\n#hangman`, tags); toast('starting hangman 🎯'); setTimeout(()=>{ if(PC.VIEW==='hangman') render(); }, 4500); }
+      try{ await publish(1, body+`\n\nhangman\n\n#hangman #nostr #gamestr`, tags); toast('starting hangman 🎯'); setTimeout(()=>{ if(PC.VIEW==='hangman') render(); }, 4500); }
       catch(e){ toast('could not start'); }
     }
     async function _load(){
@@ -125,7 +125,7 @@
       const botPk=safePk(PC.CFG.hangman_bot_npub); if(!botPk){ toast('no bot'); return; }
       const tags=[['e', game.root, '', 'root']];
       if(game.last_board_event && game.last_board_event!==game.root) tags.push(['e', game.last_board_event, '', 'reply']);
-      tags.push(['p', botPk], ['t','hangman']);
+      tags.push(['p', botPk], ['t','hangman'],['t','nostr'],['t','gamestr']);
       try{ await publish(1, letter.trim()+"\n\n#hangman", tags); toast('guess sent 🎯'); }
       catch(e){ toast('guess failed'); return; }
       setTimeout(()=>{ if(PC.VIEW==='hangman') render(); }, 4500);

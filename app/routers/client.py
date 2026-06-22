@@ -144,6 +144,7 @@ async def client_config(request: Request, db: Session = Depends(get_db)):
         "chess_bot_npub": _game_bot_npub(db, "--chess"),
         "ttt_bot_npub": _game_bot_npub(db, "--ttt"),
         "hangman_bot_npub": _game_bot_npub(db, "--hangman"),
+        "connect4_bot_npub": _game_bot_npub(db, "--connect4"),
     })
 
 
