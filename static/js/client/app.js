@@ -1719,6 +1719,41 @@
     });
   }
 
+  // ---- addressable (naddr) embeds: fetch the article/event by its coordinate + render a preview ----
+  const _adCache=new Map(); const _adQ=new Map(); let _adT=null;   // "kind:pubkey:dtag" -> event
+  function needAddr(kind, pubkey, d){
+    const key=`${kind}:${pubkey}:${d}`;
+    if(_adCache.has(key)) return; _adQ.set(key, {kind, pubkey, d, key});
+    if(!_adT) _adT=setTimeout(flushAddrs, 150);
+  }
+  async function flushAddrs(){
+    _adT=null; const items=[..._adQ.values()]; _adQ.clear();
+    for(const it of items){
+      try{
+        const evs=await Relay.query([{ kinds:[it.kind], authors:[it.pubkey], '#d':[it.d], limit:1 }]);
+        const e=(evs||[]).sort((a,b)=>(b.created_at||0)-(a.created_at||0))[0];
+        if(e){ Store.saveEvent(e); _adCache.set(it.key, e); needProfile(e.pubkey);
+          $$('[data-naload]').forEach(el=>{ if(el.dataset.naload!==it.key) return;
+            const div=document.createElement('div'); div.innerHTML=addrDiv(e);
+            if(div.firstElementChild) el.replaceWith(div.firstElementChild); }); }
+      }catch(_){}
+    }
+    decorateProfiles();
+  }
+  // Preview card for an addressable event (NIP-23 article etc.) — clickable via the .naddrlink handler.
+  function addrDiv(e){
+    const p=profOf(e.pubkey); needProfile(e.pubkey);
+    const d=(e.tags.find(t=>t[0]==='d')||[])[1]||'';
+    const title=(e.tags.find(t=>t[0]==='title')||[])[1]||'(untitled)';
+    const summary=(e.tags.find(t=>t[0]==='summary')||[])[1]||'';
+    const img=(e.tags.find(t=>t[0]==='image')||[])[1]||'';
+    const name=p.name||p.display_name||(NT().nip19.npubEncode(e.pubkey).slice(0,12)+'…');
+    return `<div class="quoted naddrlink" data-pk="${enc(e.pubkey)}" data-d="${enc(d)}" data-k="${enc(String(e.kind))}">
+      ${img?`<img class="m" src="${enc(img)}" loading="lazy">`:''}
+      <div class="hd"><span class="name">📄 ${e.kind===30023?'Article':'Post'} · ${enc(name)}</span></div>
+      <div class="txt"><b>${enc(title)}</b>${summary?`<br><span class="muted small">${enc(summary)}</span>`:''}</div></div>`;
+  }
+
   // reaction/repost counts — built ONCE per render pass (single scan of the store) instead of
   // re-scanning the whole store for every rendered note (was O(notes × store)).
   let CIDX = null;
@@ -4522,7 +4557,14 @@
         }
         if(d.type==='naddr'){                              // addressable event (e.g. NIP-23 article)
           const a=d.data||{};
-          return `<a href="#" class="naddrlink" data-pk="${enc(a.pubkey||'')}" data-d="${enc(a.identifier||'')}" data-k="${enc(String(a.kind||''))}">📄 ${a.kind===30023?'article':'view'}</a>`;
+          if(a.kind!=null && a.pubkey && a.identifier!=null){
+            const key=`${a.kind}:${a.pubkey}:${a.identifier}`;
+            const cached=_adCache.get(key);
+            if(cached) return addrDiv(cached);             // already fetched → embed now
+            needAddr(a.kind, a.pubkey, a.identifier);       // else fetch; flushAddrs patches it in
+            return `<div class="quoted muted small" data-naload="${enc(key)}">📄 referenced post loading…</div>`;
+          }
+          return `<a href="#" class="naddrlink" data-pk="${enc(a.pubkey||'')}" data-d="${enc(a.identifier||'')}" data-k="${enc(String(a.kind||''))}">📄 view</a>`;
         }
       }catch(_){}
       return m;
