@@ -73,9 +73,14 @@
       const solo=!friends.length;
       const tags=[['p',botPk]]; friends.forEach(pk=>tags.push(['p',pk]));
       tags.push(['t','holdem'],['t','poker'],['t','nostr'],['t','gamestr']);
-      const body = solo
-        ? `🃏 Dealing a #holdem game — heads-up vs the bot. Check my DMs for my hole cards.`
-        : `🃏 Dealing a #holdem table — ${friends.map(pk=>{let n;try{n=NT().nip19.npubEncode(pk);}catch(_){n=pk;} return 'nostr:'+n;}).join(' ')} you're seated! Check your DMs for your hole cards.`;
+      if(solo){
+        // private practice vs the bot — start via DM so it does NOT spam your public timeline
+        // (a public post only has value for a multiplayer table, to notify the friends you seated).
+        try{ await sendDm(botPk, 'deal #holdem'); toast('dealing… 🃏'); setTimeout(()=>{ if(PC.VIEW==='holdem') _load(); }, 4500); }
+        catch(e){ toast('could not start'); }
+        return;
+      }
+      const body = `🃏 Dealing a #holdem table — ${friends.map(pk=>{let n;try{n=NT().nip19.npubEncode(pk);}catch(_){n=pk;} return 'nostr:'+n;}).join(' ')} you're seated! Check your DMs for your hole cards.`;
       try{ await PC.publish(1, body+`\n\n#holdem #poker #nostr #gamestr`, tags); toast('dealing… 🃏'); setTimeout(()=>{ if(PC.VIEW==='holdem') render(); }, 4500); }
       catch(e){ toast('could not start'); }
     }
@@ -128,8 +133,7 @@
       const street = board.length>=5?'RIVER':board.length===4?'TURN':board.length===3?'FLOP':'PRE-FLOP';
       // undealt board slots show an empty placeholder (not "?", which reads like a hidden card)
       const boardRow = `<div class="pk-street">${street}</div><div class="pk-board">${[0,1,2,3,4].map(i=> i<board.length?cardHtml(board[i]):'<span class="pk-card empty"></span>').join('')}</div>`;
-      const seated = seats.includes(me);
-      const myChips = seated ? `<div class="pk-mychips">💰 Your chips <b>${stacks[me]||0}</b>${!over&&call>0?` · to call <b>${call}</b>`:''}${over&&winners[me]?` · won <b style="color:#5dffb0">+${winners[me]}</b>`:''}</div>` : '';
+      const seated = seats.includes(me), myAv=(profOf(me)||{}).picture||LOGO;
       const seatRows = seats.map(pk=>{
         const mine=pk===me, isTurn=!over&&g.to_act===pk, won=winners[pk]||0;
         const status = folded.has(pk)?'folded':(allin.has(pk)?'ALL-IN':(sbet[pk]?('bet '+sbet[pk]):''));
@@ -141,7 +145,14 @@
           ${over&&!folded.has(pk)&&Array.isArray((g.hole||{})[pk])?`<span class="pk-hole">${g.hole[pk].map(c=>cardHtml(c)).join('')}</span>`:''}
         </div>`;
       }).join('');
-      const myHole = g._myhole ? `<div class="pk-myhand"><span class="muted small">Your hand</span> ${g._myhole.map(c=>cardHtml(c,true)).join('')}</div>` : '';
+      const myHand = seated ? `<div class="pk-myhand">
+          <div class="pk-myinfo">
+            <img class="pk-myav" src="${enc(myAv)}" onerror="this.onerror=null;this.src='${LOGO}'">
+            <div class="pk-mymeta"><span class="pk-myname">You</span>
+              <span class="pk-mychipline">💰 <b>${stacks[me]||0}</b> chips${!over&&call>0?` · to call <b>${call}</b>`:''}${over&&winners[me]?` · <b style="color:#5dffb0">won +${winners[me]}</b>`:''}</span></div>
+          </div>
+          <div class="pk-mycards">${(g._myhole||[]).map(c=>cardHtml(c,true)).join('')||'<span class="muted small">cards in your DMs…</span>'}</div>
+        </div>` : '';
       let controls='';
       if(myTurn){
         controls = `<div class="pk-controls">
@@ -163,9 +174,8 @@
           <div class="pk-pot">POT <b>${pot}</b>${call>0&&myTurn?` · to call ${call}`:''}</div>
           ${boardRow}
         </div>
-        ${myChips}
         <div class="pk-seats">${seatRows}</div>
-        ${myHole}
+        ${myHand}
         ${controls}`;
       { const q=card.querySelector('.chess-quit'); if(q) q.onclick=(e)=>{ e.stopPropagation(); leaveTable(g); }; }
       if(myTurn){

@@ -345,6 +345,7 @@ def _start_game(note, own_pk):
     state["names"] = {pk: _name(pk) for pk in seats}
     state["root"] = gameid
     state["gameid"] = gameid
+    state["private"] = False   # seated by a PUBLIC mention → public opening + result posts
     print(f"[holdem] new table {gameid[:12]} seats={len(seats)}", flush=True)
     _save_game(gameid, state)
     who = ", ".join(state["names"][p] for p in seats)
@@ -356,6 +357,31 @@ def _start_game(note, own_pk):
         if pk != own_pk:
             _set_player_game(pk, gameid)
     _run_bot_turns(state, gameid, gameid)   # if the bot is first to act it plays; else DM the human
+
+
+def _start_solo(sender, own_pk):
+    """Start a PRIVATE heads-up game vs the bot from a DM (the app's 'New game vs bot' button). No
+    public timeline post — unlike a multiplayer table seated by a public mention, a solo practice
+    game against the dealer has no one to notify, so broadcasting it is just noise."""
+    now = time.time()
+    recent = [t for t in _invite_times.get(sender, []) if now - t < _INVITE_WINDOW]
+    if _INVITE_MAX and len(recent) >= _INVITE_MAX:
+        _nk.send_dm(sender, f"⏳ You've started {_INVITE_MAX} games in the last hour — that's the limit.")
+        return
+    recent.append(now)
+    _invite_times[sender] = recent
+    gameid = os.urandom(32).hex()
+    seats = [sender, own_pk]
+    state, _ = _G.start_hand(seats, button=0)
+    state["bot"] = own_pk
+    state["names"] = {pk: _name(pk) for pk in seats}
+    state["root"] = gameid
+    state["gameid"] = gameid
+    state["private"] = True
+    print(f"[holdem] new SOLO table {gameid[:12]} for {sender[:8]}", flush=True)
+    _save_game(gameid, state)
+    _set_player_game(sender, gameid)
+    _run_bot_turns(state, gameid, gameid)   # bot plays if first to act, else DMs the human their cards
 
 
 def _run_bot_turns(state, gameid, parent_id):
@@ -428,17 +454,30 @@ def _post_result(state, gameid, parent_id, showdown):
     state["result"] = summary
     state["status"] = "done"
     _save_game(gameid, state)
-    # PUBLIC social post: the winner + results, the table image, and the app-promo footer.
-    head = "🏁 #holdem showdown!" if showdown else "🏁 #holdem hand over —"
-    pot_won = sum(state.get("winners", {}).values())
-    body = f"{head} {summary}.  ({pot_won} chips){_footer()}"
-    _do_publish(gameid, parent_id, state["seats"], body, _board_png(state, reveal=showdown))
+    private = bool(state.get("private"))
+    # PUBLIC social post (multiplayer only): winner + results, the table image, app-promo footer.
+    # A private solo-vs-bot game stays off the timeline — the player sees the result in the app
+    # (last_result banner) and their next DM, so a public post each hand would just be spam.
+    if not private:
+        head = "🏁 #holdem showdown!" if showdown else "🏁 #holdem hand over —"
+        pot_won = sum(state.get("winners", {}).values())
+        body = f"{head} {summary}.  ({pot_won} chips){_footer()}"
+        _do_publish(gameid, parent_id, state["seats"], body, _board_png(state, reveal=showdown))
     # PERSISTENT table: deal the next hand (rotate button, carry stacks, drop leavers/busted).
     nxt, _ = _G.next_hand(state)
     if nxt is None:
-        _do_publish(gameid, parent_id, state["seats"],
-                    "🃏 Table closed — not enough players to continue. gg!" + _footer(), None)
+        if private:
+            for pk in state["seats"]:
+                if pk != state.get("bot"):
+                    try:
+                        _nk.send_dm(pk, f"🏁 Table closed — {summary}. gg! Start a new game from the Hold'em tab.")
+                    except Exception:
+                        pass
+        else:
+            _do_publish(gameid, parent_id, state["seats"],
+                        "🃏 Table closed — not enough players to continue. gg!" + _footer(), None)
         return
+    nxt["private"] = private
     # carry the just-finished result into the next hand's doc so the web UI can show "you won X"
     # (the previous hand's done-doc is overwritten immediately by this re-deal — same d-tag).
     nxt["last_result"] = {"summary": summary, "winners": {p: a for p, a in winners.items()},
@@ -507,12 +546,22 @@ def process_holdem():
             continue
         if not gameid:
             gameid = _get_player_game(sender)
-        if not gameid:
+        state = _load_game(gameid) if gameid else None
+        # a fresh "deal/holdem/poker" DM with no live game → start a PRIVATE solo game vs the bot
+        # (the app's 'New game vs bot' button DMs this, so solo games never hit the public timeline).
+        if (not state or state.get("status") != "betting") and _START_RE.search(move_text):
+            if not _claim_dm(rid):
+                continue
+            try:
+                _start_solo(sender, own_pk)
+            except Exception as e:
+                print(f"[holdem] solo start failed: {e}", flush=True)
+                import traceback
+                traceback.print_exc()
+            continue
+        if not state:
             continue
         if not _claim_dm(rid):
-            continue
-        state = _load_game(gameid)
-        if not state:
             continue
         try:
             _handle_dm(sender, gameid, state, move_text)

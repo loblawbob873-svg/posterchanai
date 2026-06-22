@@ -143,30 +143,41 @@ def render_table(state, reveal=False):
     return _png(img)
 
 
+_STREET = {0: "PRE-FLOP", 3: "FLOP", 4: "TURN", 5: "RIVER"}
+
+
 def render_seat(state, pk):
-    """Private DM view for one player: big hole cards + the board + pot/to-call."""
-    W, H = 560, 360
+    """Private DM view for one player — styled like the in-app table (neon felt board panel, big
+    hole cards, a gold chips bar) so the DM looks like the game and makes you want to play."""
+    W, H = 600, 430
     img, d = _bg(W, H)
-    d.text((W / 2, 24), "YOUR HAND", font=_font(28), fill=TITLE, anchor="mm")
+    d.text((W / 2, 28), "♠ YOUR HAND ♥", font=_font(30), fill=TITLE, anchor="mm")
+    # big hole cards
     hole = state.get("hole", {}).get(pk, [])
-    cw, ch, gap = 120, 168, 24
-    tot = 2 * cw + gap
-    bx = (W - tot) // 2
+    cw, ch, gap = 126, 176, 28
+    bx = (W - (2 * cw + gap)) // 2
     for i, c in enumerate(hole[:2]):
         _card(d, bx + i * (cw + gap), 56, c, cw, ch)
-    # board strip
+    # community board on a neon felt panel
     board = state.get("board", [])
-    d.text((W / 2, 246), "BOARD", font=_font(16), fill=SUB, anchor="mm")
-    bcw, bch, bgap = 56, 78, 8
-    btot = 5 * bcw + 4 * bgap
-    bbx = (W - btot) // 2
+    fy = 256
+    _rrect(d, [22, fy, W - 22, fy + 104], 22, fill=FELT, outline=FELT_EDGE, width=3)
+    d.text((W / 2, fy + 15), _STREET.get(len(board), "BOARD"), font=_font(14), fill=CYAN, anchor="mm")
+    bcw, bch, bgap = 58, 80, 9
+    bbx = (W - (5 * bcw + 4 * bgap)) // 2
     for i in range(5):
         card = board[i] if i < len(board) else None
-        _card(d, bbx + i * (bcw + bgap), 262, card, bcw, bch, empty=(card is None))
+        _card(d, bbx + i * (bcw + bgap), fy + 26, card, bcw, bch, empty=(card is None))
+    # gold chips bar (the exciting bit): your stack + pot + to-call
     pot = sum(state.get("contrib", {}).values())
     call = max(0, state.get("to_call", 0) - state.get("street_bet", {}).get(pk, 0))
-    d.text((W / 2, H - 12), f"POT {pot}   ·   TO CALL {call}   ·   STACK {state.get('stacks', {}).get(pk, 0)}",
-           font=_font(18), fill=GOLD, anchor="mm")
+    stack = state.get("stacks", {}).get(pk, 0)
+    by = H - 42
+    _rrect(d, [22, by, W - 22, by + 34], 12, fill=(26, 16, 48, 255), outline=GOLD, width=2)
+    d.ellipse([36, by + 8, 54, by + 26], fill=GOLD, outline=WHITE, width=2)   # gold chip (emoji tofus)
+    d.text((62, by + 17), f"{stack}", font=_font(20), fill=GOLD, anchor="lm")
+    d.text((W / 2, by + 17), f"POT {pot}", font=_font(18), fill=WHITE, anchor="mm")
+    d.text((W - 40, by + 17), f"TO CALL {call}", font=_font(18), fill=CYAN, anchor="rm")
     return _png(img)
 
 
