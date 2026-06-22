@@ -476,6 +476,17 @@ def update_settings(
             "nostr_relay_firehose_max_relays", "nostr_relay_bind", "nostr_relay_port",
         )
         if any(k in changed_keys for k in _relay_topology_keys):
+            # Flush the changed settings to the relay datastore SYNCHRONOUSLY first. The restarted
+            # relay re-reads its config from the datastore (postgres), and the normal write is async
+            # — without this, the relay could read STALE config on restart and ignore the change
+            # (e.g. "I set the upstream but it still uses the defaults") until the next restart.
+            try:
+                import asyncio as _asyncio
+                flush = {k: settings_store.get(k, "") for k in changed_keys}
+                if flush:
+                    _asyncio.run(settings_store.write_through(None, flush))
+            except Exception as e:
+                logger.warning(f"[Admin] pre-restart settings flush failed: {e}")
             try:
                 import threading as _threading
                 def _restart_relay():

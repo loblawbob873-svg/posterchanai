@@ -492,20 +492,37 @@ def _ensure_writer() -> None:
     _writer_q = _queue.Queue()
 
     def _run():
+        import time as _time
         loop = _asyncio.new_event_loop()
         _asyncio.set_event_loop(loop)
         while True:
             op = _writer_q.get()
             if not op:
                 continue
-            kind, payload = op
+            kind, payload = op[0], op[1]
+            attempt = op[2] if len(op) > 2 else 0
             try:
                 if kind == "put":
-                    loop.run_until_complete(write_through(None, payload))
+                    # The relay (datastore) may be momentarily unreachable — during its startup before
+                    # it binds 3052, or the few seconds it's restarting to apply a topology change.
+                    # A write dropped then is LOST (settings live only in the relay), which is the
+                    # "my settings never save" bug. So if not every key persisted, RE-QUEUE with backoff
+                    # until the relay is back (write_through is idempotent). Bounded so we can't spin.
+                    expected = sum(1 for k in payload if not _is_local_only(k))
+                    wrote = loop.run_until_complete(write_through(None, payload))
+                    if wrote < expected and attempt < 40:
+                        _time.sleep(min(3.0, 0.4 * (attempt + 1)))
+                        _writer_q.put(("put", payload, attempt + 1))
+                    elif wrote < expected:
+                        logger.error("[settings-store] gave up persisting %s after %d retries (relay unreachable)",
+                                     list(payload.keys()), attempt)
                 elif kind == "delete" and (_OP_SK):
                     loop.run_until_complete(store.delete_doc(_port(), _OP_SK, store.NS_SETTING + payload))
             except Exception as e:
                 logger.warning("[settings-store] relay writer error: %s", e)
+                if kind == "put" and attempt < 40:
+                    _time.sleep(min(3.0, 0.4 * (attempt + 1)))
+                    _writer_q.put(("put", payload, attempt + 1))
 
     threading.Thread(target=_run, daemon=True, name="settings-relay-writer").start()
     _writer_started = True
