@@ -2555,7 +2555,12 @@
     // accept a bare host ("blossom.example.com") — without a scheme fetch() would treat it as a
     // RELATIVE path and POST to poster.place instead of the user's server.
     if (s && !/^https?:\/\//i.test(s)) s = 'https://' + s;
-    return (s || CFG.blossom_url || '').replace(/\/+$/,'');
+    if (s) return s.replace(/\/+$/, '');         // user's own server (their CORS rules apply)
+    // Built-in server: hit it SAME-ORIGIN via /blossom (the app that serves this client also mounts
+    // the Blossom router), so uploads/list/delete need NO CORS preflight. blossom_public_url (e.g.
+    // media.poster.place) is only the PUBLIC url the server returns for each blob — used for sharing,
+    // not for the API call — so cross-origin CORS can never block an upload again.
+    return (self.location && self.location.origin ? self.location.origin : '') + '/blossom';
   }
   async function sha256hex(buf){ const h=await crypto.subtle.digest('SHA-256', buf); return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join(''); }
   const _MIME_EXT={'image/jpeg':'jpg','image/png':'png','image/gif':'gif','image/webp':'webp','image/avif':'avif',
