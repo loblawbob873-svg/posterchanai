@@ -3017,9 +3017,17 @@
     });
     // NIP-17 gift wraps carry RANDOMIZED past timestamps, so a `since` filter would drop them —
     // subscribe with no `since` and let Store dedup skip the ones we've already unwrapped.
-    if(modern) Relay.subscribe([{ kinds:[1059], '#p':[ME.pubkey] }], {
-      onEvent: async ev => { if(!Store.saveEvent(ev)) return; await ingestWrap(ev, true); }
-    });
+    if(modern){
+      // Gift wraps carry RANDOMIZED past timestamps, so we can't `since`-filter the live sub — the
+      // relay replays the WHOLE history on connect. Treat everything up to the initial EOSE as
+      // backlog (ingest silently, NO notification); only wraps arriving AFTER EOSE are genuinely new.
+      // Without this every historical DM fired a notification on login — the "flooded on login" bug.
+      let _dmLive = false;
+      Relay.subscribe([{ kinds:[1059], '#p':[ME.pubkey] }], {
+        onEvent: async ev => { if(!Store.saveEvent(ev)) return; await ingestWrap(ev, _dmLive); },
+        onEose: () => { _dmLive = true; }
+      });
+    }
     if(VIEW==='messages') renderMessages();
   }
   // Unwrap a NIP-17 gift wrap (kind 1059) → its inner kind-14 chat rumor (already plaintext). `live`
