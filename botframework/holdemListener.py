@@ -1,0 +1,421 @@
+"""#holdem — multiplayer Texas Hold'em over Nostr, dealt + refereed by the bot.
+
+START by posting "holdem @friend @friend …" mentioning the bot to seat a table (you + up to 5
+friends). The bot deals hole cards privately in DMs and posts the community board + action publicly.
+Each player acts on THEIR turn via DM or a public reply: `check`, `call`, `raise <amount>`, `fold`,
+or `allin`. The bot drives the betting rounds (pre-flop → flop → turn → river), builds side pots for
+all-ins, and posts the showdown. Play-money chips; everyone starts with the same stack each hand.
+
+NO AI / LLM and NO firehose: like the other game bots it only touches its own mentions + move DMs
+(claim-deduped, bounded queries), and the poker math is O(21) per showdown — negligible CPU. State
+is a kind-30078 doc (`pcai:holdem:<gameid>`) the web client also reads. Mirrors blackjackListener.
+"""
+
+import os
+import re
+import sys
+import time
+import json
+import hashlib
+import fcntl
+
+script_dir = os.path.dirname(os.path.abspath(__file__))
+if script_dir not in sys.path:
+    sys.path.insert(0, script_dir)
+
+import holdem_render
+import holdem_game as _G
+import nostr as _nk
+from config import NOSTR_NSEC
+from app.services.nostr import event as _ev
+
+_KIND_APP = 30078
+_MAX_SEATS = int(os.getenv("HOLDEM_MAX_SEATS", "6"))
+_START_RE = re.compile(r"\b(?:hold\s*'?em|holdem|poker)\b", re.IGNORECASE)
+_DM_GAME_RE = re.compile(r"\bg:([0-9a-f]{64})\b", re.IGNORECASE)
+_NOSTR_TOKEN_RE = re.compile(
+    r"nostr:[a-z0-9]+|\b(?:npub1|nprofile1|nevent1|note1|naddr1)[023456789acdefghjklmnpqrstuvwxyz]+",
+    re.IGNORECASE)
+_LOOKBACK_DAYS = int(os.getenv("HOLDEM_LOOKBACK_DAYS", "3"))
+_INVITE_MAX = int(os.getenv("HOLDEM_INVITE_MAX_PER_HOUR", "3"))
+_INVITE_WINDOW = 3600
+_invite_times: dict = {}
+
+
+# ---- dedup (same pattern as the other game bots) --------------------------
+def _suffix():
+    return hashlib.sha1((NOSTR_NSEC or "").encode()).hexdigest()[:10] if NOSTR_NSEC else "default"
+
+
+_IDS_FILE = os.path.join(script_dir, f".processed_holdem_ids_{_suffix()}")
+_DM_IDS_FILE = os.path.join(script_dir, f".processed_holdem_dms_{_suffix()}")
+_MAX_IDS = 5000
+
+
+def _claim_in(ids_file, item_id):
+    lock = ids_file + ".lock"
+    try:
+        with open(lock, "w") as lk:
+            fcntl.flock(lk.fileno(), fcntl.LOCK_EX)
+            ids = set()
+            try:
+                with open(ids_file) as f:
+                    ids = set(f.read().split())
+            except FileNotFoundError:
+                pass
+            if item_id in ids:
+                return False
+            ids.add(item_id)
+            if len(ids) > _MAX_IDS:
+                ids = set(list(ids)[-_MAX_IDS:])
+            with open(ids_file, "w") as f:
+                f.write("\n".join(ids))
+            return True
+    except Exception:
+        return False
+
+
+def _claim(note_id):
+    return _claim_in(_IDS_FILE, note_id)
+
+
+def _claim_dm(rumor_id):
+    return _claim_in(_DM_IDS_FILE, rumor_id)
+
+
+# ---- state store (kind-30078) ---------------------------------------------
+def _dtag(gameid):
+    return f"pcai:holdem:{gameid}"
+
+
+def _player_dtag(pk):
+    return f"pcai:holdem:player:{pk}"
+
+
+def _save_game(gameid, state):
+    ev = _ev.build_event(_nk._SECKEY, _KIND_APP, json.dumps(state, separators=(",", ":")),
+                         tags=[["d", _dtag(gameid)]])
+    _nk._run(_nk._svc.relay.publish(_nk._RELAYS, ev))
+
+
+def _load_doc(dtag):
+    try:
+        evs = _nk._run(_nk._svc.relay.query(_nk._RELAYS, [{"authors": [_nk._PUBKEY], "kinds": [_KIND_APP],
+                                                           "#d": [dtag], "limit": 1}]))
+        return json.loads(evs[0].get("content") or "{}") if evs else None
+    except Exception:
+        return None
+
+
+def _load_game(gameid):
+    return _load_doc(_dtag(gameid))
+
+
+def _get_player_game(pk):
+    doc = _load_doc(_player_dtag(pk))
+    return doc.get("gameid") if isinstance(doc, dict) else None
+
+
+def _set_player_game(pk, gameid):
+    ev = _ev.build_event(_nk._SECKEY, _KIND_APP, json.dumps({"gameid": gameid}),
+                         tags=[["d", _player_dtag(pk)]])
+    _nk._run(_nk._svc.relay.publish(_nk._RELAYS, ev))
+
+
+# ---- note helpers ----------------------------------------------------------
+def _tags(note):
+    return (note.get("_event") or {}).get("tags", [])
+
+
+def _root_id(note):
+    es = [t for t in _tags(note) if len(t) >= 2 and t[0] == "e"]
+    for t in es:
+        if len(t) >= 4 and t[3] == "root":
+            return t[1]
+    return es[0][1] if es else None
+
+
+def _ptags(note):
+    return [t[1] for t in _tags(note) if len(t) >= 2 and t[0] == "p" and t[1]]
+
+
+def _name(pk):
+    try:
+        return "@" + (_nk.resolve_user(pk).get("username") or _nk._short_npub(pk))
+    except Exception:
+        return "@" + (pk or "")[:8]
+
+
+def _clean_text(note):
+    t = _NOSTR_TOKEN_RE.sub("", note.get("text") or "")
+    return re.sub(r"@[\w@.]+", "", t).strip()
+
+
+def _clean_dm_text(text):
+    gameid = None
+    m = _DM_GAME_RE.search(text or "")
+    if m:
+        gameid = m.group(1)
+        text = text.replace(m.group(0), "")
+    return gameid, (text or "").strip()
+
+
+def _reply_text(note, msg):
+    try:
+        _nk.send_reply(note, msg)
+    except Exception as e:
+        print(f"[holdem] reply failed: {e}", flush=True)
+
+
+# ---- action parsing --------------------------------------------------------
+_AMT_RE = re.compile(r"(\d+)")
+
+
+def _parse_action(text):
+    """('fold'|'check'|'call'|'raise'|'allin'|None, amount|None) from free text."""
+    t = (text or "").lower().strip()
+    if re.search(r"\b(all\s*-?\s*in|allin|shove|jam)\b", t):
+        return "allin", None
+    if re.search(r"\b(fold|muck|quit|out)\b", t):
+        return "fold", None
+    if re.search(r"\b(check|x)\b", t):
+        return "check", None
+    if re.search(r"\b(call|c)\b", t):
+        return "call", None
+    if re.search(r"\b(raise|bet|r|to)\b", t):
+        m = _AMT_RE.search(t)
+        return "raise", (int(m.group(1)) if m else None)
+    # a bare number = raise-to that amount
+    m = _AMT_RE.fullmatch(t)
+    if m:
+        return "raise", int(m.group(1))
+    return None, None
+
+
+# ---- rendering -------------------------------------------------------------
+def _board_png(state, reveal=False):
+    return holdem_render.render_table(state, reveal=reveal)
+
+
+def _do_publish(gameid, parent_id, players, body, png):
+    media = None
+    if png:
+        try:
+            info = _nk._run(_nk._svc.media.upload(_nk._MEDIA_CFG, _nk._SECKEY, png, "image/png")) or {}
+            url = info.get("url")
+            if url:
+                body = body + "\n" + url
+        except Exception as e:
+            print(f"[holdem] board upload failed: {e}", flush=True)
+    parent = _nk.get_note(parent_id) if parent_id else None
+    tags = [["p", p] for p in players]
+    try:
+        _nk._run(_nk._svc.post_note(_nk._SECKEY, _nk._RELAYS, body, reply_to=(parent or {}).get("_event"),
+                                    extra_tags=tags))
+    except Exception as e:
+        print(f"[holdem] publish failed: {e}", flush=True)
+    return {}
+
+
+def _action_line(state, pk):
+    la = _G.legal_actions(state, pk)
+    if not la:
+        return ""
+    opts = []
+    if la.get("check"):
+        opts.append("`check`")
+    if la.get("call") is not None:
+        opts.append(f"`call` ({la['call']})")
+    if "raise_to_min" in la:
+        opts.append(f"`raise <amt>` (min {la['raise_to_min']})")
+    if la.get("allin"):
+        opts.append("`allin`")
+    opts.append("`fold`")
+    return "Your move — reply: " + ", ".join(opts)
+
+
+def _dm_to_act(state, gameid, pk):
+    """DM the player whose turn it is: their hole cards + the board + pot + legal actions."""
+    if not pk or pk == _nk._PUBKEY:
+        return
+    png = None
+    try:
+        png = holdem_render.render_seat(state, pk)
+        info = _nk._run(_nk._svc.media.upload(_nk._MEDIA_CFG, _nk._SECKEY, png, "image/png")) or {}
+        url = info.get("url") or ""
+    except Exception as e:
+        print(f"[holdem] seat DM render failed: {e}", flush=True)
+        url = ""
+    hole = " ".join(_G.card_str(c) for c in state["hole"][pk])
+    board = " ".join(_G.card_str(c) for c in state["board"]) or "(pre-flop)"
+    pot = sum(state["contrib"].values())
+    call = max(0, state["to_call"] - state["street_bet"][pk])
+    body = (f"🃏 Your hole cards: {hole}\nBoard: {board}\nPot: {pot} · to call: {call} · "
+            f"your stack: {state['stacks'][pk]}\n"
+            + (url + "\n\n" if url else "")
+            + _action_line(state, pk) + "\nOr play from the Hold'em tab in the app.")
+    try:
+        _nk.send_dm(pk, body, extra_tags=[["g", gameid]])
+        _set_player_game(pk, gameid)
+    except Exception as e:
+        print(f"[holdem] send_dm failed: {e}", flush=True)
+
+
+# ---- game flow -------------------------------------------------------------
+def _start_game(note, own_pk):
+    sender = (note.get("user") or {}).get("pubkey")
+    gameid = note["id"]
+    if not sender or _load_game(gameid):
+        return
+    now = time.time()
+    recent = [t for t in _invite_times.get(sender, []) if now - t < _INVITE_WINDOW]
+    if _INVITE_MAX and len(recent) >= _INVITE_MAX:
+        _reply_text(note, f"⏳ You've started {_INVITE_MAX} tables in the last hour — that's the limit.")
+        return
+    recent.append(now)
+    _invite_times[sender] = recent
+    opponents = [p for p in _ptags(note) if p and p != own_pk and p != sender]
+    seats = list(dict.fromkeys([sender] + opponents))
+    seats = [s for s in seats if s != own_pk][:_MAX_SEATS]
+    if len(seats) < 2:
+        _reply_text(note, "🃏 Hold'em needs at least 2 players — mention me with `holdem @friend` (and "
+                          "more) to seat a table.")
+        return
+    state, _ = _G.start_hand(seats, button=0)
+    state["bot"] = own_pk
+    state["names"] = {pk: _name(pk) for pk in seats}
+    state["root"] = gameid
+    state["gameid"] = gameid
+    print(f"[holdem] new table {gameid[:12]} seats={len(seats)}", flush=True)
+    _save_game(gameid, state)
+    who = ", ".join(state["names"][p] for p in seats)
+    body = (f"🃏 #holdem — {who} are at the table!\n"
+            f"Blinds {state['sb']}/{state['bb']}. 📩 Check your DMs for your hole cards. "
+            f"{state['names'][state['to_act']]} is first to act.")
+    _do_publish(gameid, gameid, seats, body, _board_png(state))
+    for pk in seats:
+        _set_player_game(pk, gameid)
+    _dm_to_act(state, gameid, state["to_act"])
+
+
+def _apply_action(sender, gameid, state, text, reply, parent_id):
+    if sender not in state.get("seats", []):
+        return
+    if state.get("status") != "betting":
+        reply("🏁 This hand is over. Start a new one with `holdem @friend`.")
+        return
+    if state.get("to_act") != sender:
+        reply("⏳ Not your turn yet — waiting on " + state["names"].get(state.get("to_act"), "another player") + ".")
+        return
+    action, amount = _parse_action(text)
+    if not action:
+        reply("🃏 Reply `check`, `call`, `raise <amt>`, `fold`, or `allin`.")
+        return
+    prev_street = state["street"]
+    state, events = _G.act(state, sender, action, amount)
+    _save_game(gameid, state)
+    reply(f"✅ {action}" + (f" {amount}" if action == 'raise' and amount else ""))
+
+    # street changes / showdown → post publicly
+    for ev in events:
+        if ev in ("flop", "turn", "river"):
+            board = " ".join(_G.card_str(c) for c in state["board"])
+            _do_publish(gameid, parent_id, state["seats"],
+                        f"🃏 {ev.upper()}: {board}  · pot {sum(state['contrib'].values())}",
+                        _board_png(state))
+        elif ev == "showdown":
+            _post_result(state, gameid, parent_id, showdown=True)
+            return
+        elif ev == "folded_win":
+            _post_result(state, gameid, parent_id, showdown=False)
+            return
+    # still betting → prompt the next player
+    if state.get("to_act"):
+        _dm_to_act(state, gameid, state["to_act"])
+
+
+def _post_result(state, gameid, parent_id, showdown):
+    winners = state.get("winners", {})
+    parts = []
+    for pk, amt in winners.items():
+        nm = state["names"].get(pk, _name(pk))
+        rank = (state.get("ranks") or {}).get(pk)
+        parts.append(f"{nm} wins {amt}" + (f" with {rank}" if showdown and rank else ""))
+    summary = " · ".join(parts) if parts else "no winner"
+    state["result"] = summary
+    state["status"] = "done"
+    _save_game(gameid, state)
+    head = "🏁 Showdown!" if showdown else "🏁 Hand over —"
+    _do_publish(gameid, parent_id, state["seats"], f"{head} {summary}  gg!", _board_png(state, reveal=showdown))
+
+
+def _handle_move(note, gameid, state):
+    sender = (note.get("user") or {}).get("pubkey")
+    _apply_action(sender, gameid, state, _clean_text(note), lambda m: _reply_text(note, m), note["id"])
+
+
+def _handle_dm(sender, gameid, state, move_text):
+    _apply_action(sender, gameid, state, move_text, lambda m: _nk.send_dm(sender, m),
+                  state.get("root") or gameid)
+
+
+# ---- poll loop (mirror process_blackjack — efficient, claim-deduped) -------
+def process_holdem():
+    own = _nk.get_own_account()
+    if not own:
+        print("[holdem] no account (NOSTR_NSEC missing) — idle", flush=True)
+        return
+    own_pk = own.get("pubkey")
+    cutoff = int(time.time()) - _LOOKBACK_DAYS * 86400
+    for note in _nk.get_mentions(limit=40):
+        nid = note.get("id")
+        if not nid or (note.get("user") or {}).get("pubkey") == own_pk:
+            continue
+        if (note.get("_event") or {}).get("created_at", 0) < cutoff:
+            continue
+        root = _root_id(note)
+        state = _load_game(root) if root else None
+        is_start = bool(_START_RE.search(note.get("text") or "")) and not state
+        if not state and not is_start:
+            continue
+        if not _claim(nid):
+            continue
+        try:
+            if state:
+                _handle_move(note, root, state)
+            else:
+                _start_game(note, own_pk)
+        except Exception as e:
+            print(f"[holdem] processing {nid[:12]} failed: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+    try:
+        dms = _nk.read_dms(limit=100)
+    except Exception as e:
+        print(f"[holdem] read_dms failed: {e}", flush=True)
+        dms = []
+    for dm in dms:
+        rid = dm.get("rumor_id")
+        sender = dm.get("sender")
+        if not rid or not sender or sender == own_pk:
+            continue
+        if dm.get("created_at", 0) < cutoff:
+            continue
+        gameid, move_text = _clean_dm_text(dm.get("text") or "")
+        if not move_text:
+            continue
+        if not gameid:
+            gameid = _get_player_game(sender)
+        if not gameid:
+            continue
+        if not _claim_dm(rid):
+            continue
+        state = _load_game(gameid)
+        if not state:
+            continue
+        try:
+            _handle_dm(sender, gameid, state, move_text)
+        except Exception as e:
+            print(f"[holdem] DM move {rid[:12]} failed: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
