@@ -1012,7 +1012,23 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .pk-raise{display:inline-flex;gap:6px;align-items:center;flex:2 1 9em}
 .pk-amt{padding:7px 9px;flex:1 1 auto}
 .btn-magenta{background:linear-gradient(135deg,#ff3cd2,#a01e8c);color:#fff;border:none}
-@media(max-width:520px){.pk-card.big{min-width:48px;height:68px;font-size:24px}.pk-controls .btn{min-width:62px;font-size:13px;padding:8px 6px}}
+@media(max-width:520px){
+  .pk-card{min-width:32px;height:48px;font-size:16px;padding:0 4px;margin:1px}
+  .pk-card.big{min-width:46px;height:66px;font-size:22px}
+  .pk-board{gap:5px}
+  .pk-felt{padding:13px 7px}
+  .pk-pot{font-size:14px} .pk-street{font-size:11px;letter-spacing:1.5px}
+  .pk-myhand{padding:11px;gap:9px}
+  .pk-myav{width:46px;height:46px} .pk-av{width:30px;height:30px}
+  .pk-myname{font-size:15px} .pk-mychipline{font-size:13px}
+  .pk-mychipline b{font-size:16px}
+  .pk-seat{padding:6px 9px} .pk-nm{font-size:14px}
+  .pk-seat .bj-cards .pk-card{min-width:20px;height:30px;font-size:11px}
+  .pk-controls{gap:7px} .pk-controls .btn{min-width:60px;font-size:13px;padding:9px 6px;flex:1 1 30%}
+  .bj-betrow{font-size:13px;gap:6px}
+  .bj-myval{font-size:17px}
+  .chess-game-card{padding:11px}
+}
 .bj-controls{display:flex;gap:10px;margin-top:12px}
 .bj-seatchips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
 .bj-chip{display:inline-flex;align-items:center;gap:4px;background:rgba(60,230,255,.12);border:1px solid var(--cyan);border-radius:14px;padding:3px 6px 3px 10px;font-size:13px}
