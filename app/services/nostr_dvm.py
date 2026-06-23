@@ -456,8 +456,7 @@ async def _run_local(task: str, params: dict) -> dict:
             ref = await put_media(mp4)
             return ref or {"error": "blossom upload failed"}
         if task == "chat":
-            from app.services.inference_factory import get_inference_service
-            from app.services.vram_manager import prepare_vram_for_llm
+            from app.services.inference_factory import get_inference_service, prepare_vram_for_llm
             prepare_vram_for_llm(db)
             service = get_inference_service(db)
             kwargs = {k: params[k] for k in
