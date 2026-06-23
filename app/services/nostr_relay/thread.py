@@ -187,6 +187,10 @@ def _read_config() -> dict:
             # Live firehose: keep a persistent subscription to each upstream relay and store
             # only WoT authors — real-time, vs the polling sweep's per-cycle lag.
             "firehose_enabled": gb("nostr_relay_firehose_enabled", True),
+            # Distributed-LB (DVM): when on, also stream cluster job/result events (kinds not in
+            # ingest_kinds) addressed to this node from the upstream cluster relay — so a node can use
+            # ONLY its local relay and still receive jobs/results via the WoT upstream sync.
+            "dvm_enabled": gb("nostr_dvm_enabled", False),
             # How many upstream relays the firehose streams from (0 = ALL). It's the sole
             # real-time ingestion path now, so default to all for completeness.
             "firehose_max_relays": gi("nostr_relay_firehose_max_relays", 0),
@@ -585,6 +589,16 @@ async def _main(cfg: dict) -> None:
                                      _relay.stop_event, cfg["direct"],
                                      max_relays=cfg.get("firehose_max_relays", 0),
                                      extra={"#p": _ops})))
+                    # Distributed-LB (DVM): stream cluster job (5xxx) + result (6xxx) events addressed
+                    # to THIS node (#p=operator) from the upstream cluster relay. Lets a worker use only
+                    # its LOCAL relay — the WoT upstream sync delivers the cluster's jobs/results here.
+                    if cfg.get("dvm_enabled"):
+                        tasks.append(asyncio.create_task(
+                            run_firehose(cfg["upstream"],
+                                         [5050, 5100, 5201, 5202, 6050, 6100, 6201, 6202],
+                                         _firehose_event, _relay.stop_event, cfg["direct"],
+                                         max_relays=cfg.get("firehose_max_relays", 0),
+                                         extra={"#p": _ops})))
 
     # Cross-process admin IPC: this relay runs in its own subprocess, so the app can't read its
     # gate/store directly. Publish status to a file the app polls, and execute admin commands the
