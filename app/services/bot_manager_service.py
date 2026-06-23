@@ -218,11 +218,24 @@ def _set_internal_blossom(env: dict):
         env["BLOSSOM_SERVERS"] = " ".join(servers)
 
 
+_BOT_PK_DERIV: dict = {}                       # nsec -> pubkey hex; the EC derivation is expensive
+_ALL_PK_CACHE: dict = {"val": "", "ts": 0.0}   # comma-joined result, cached briefly
+_ALL_PK_TTL = 60.0
+
+
 def _all_nostr_bot_pubkeys() -> str:
     """Hex pubkeys of EVERY nostr-capable bot (derived from each bot's nsec), comma-separated. Injected
     into each nostr bot's env (BOT_NOSTR_PUBKEYS) so its listener can skip notes from ANOTHER of our
     bots — a robust, pubkey-based anti-loop the handle-based BOT_BLACKLIST can't do. Best-effort: any
-    failure yields an empty string (the listener then just falls back to the handle blacklist)."""
+    failure yields an empty string (the listener then just falls back to the handle blacklist).
+
+    MEMOIZED: the reconcile loop (every 5s) calls this once PER BOT, and the pubkey derivation is
+    pure-Python elliptic-curve math (secp256k1 point-mul) — re-deriving every bot's key on every call
+    pegged a core. Now each nsec is derived once (cached forever) and the whole result is cached for
+    `_ALL_PK_TTL`s, so a reconcile pass costs a dict lookup, not O(bots^2) EC multiplications."""
+    now = time.time()
+    if _ALL_PK_CACHE["val"] and (now - _ALL_PK_CACHE["ts"]) < _ALL_PK_TTL:
+        return _ALL_PK_CACHE["val"]
     out = set()
     try:
         from app.services.nostr import nostr_service
@@ -235,16 +248,23 @@ def _all_nostr_bot_pubkeys() -> str:
                     nsec = None
                 if not nsec:
                     continue
-                try:
-                    pk = nostr_service.derive_pubkey(nostr_service.decode_seckey(nsec))
-                    out.add(pk if isinstance(pk, str) else pk.hex())
-                except Exception:
-                    pass
+                pk = _BOT_PK_DERIV.get(nsec)
+                if pk is None:
+                    try:
+                        d = nostr_service.derive_pubkey(nostr_service.decode_seckey(nsec))
+                        pk = d if isinstance(d, str) else d.hex()
+                        _BOT_PK_DERIV[nsec] = pk   # derive each key's pubkey ONCE, ever
+                    except Exception:
+                        continue
+                out.add(pk)
         finally:
             db.close()
     except Exception:
         pass
-    return ",".join(sorted(out))
+    res = ",".join(sorted(out))
+    if res:
+        _ALL_PK_CACHE["val"], _ALL_PK_CACHE["ts"] = res, now
+    return res
 
 
 def _build_env(bot_dict: dict, base_env: dict) -> dict:
