@@ -175,11 +175,14 @@
       } else if(!over){ controls = `<div class="muted small" style="padding:6px 2px">Waiting on ${enc(g.to_act===me?'you':nameOf(g.to_act, names[g.to_act]))}…</div>`; }
       const lr = g.last_result;
       const lastBanner = (lr && lr.summary) ? `<div class="pk-last${(lr.winners&&lr.winners[me])?' win':''}">${(lr.winners&&lr.winners[me])?`🏆 You won ${lr.winners[me]} last hand!`:'Last hand'}<span class="muted small"> · ${enc(lr.summary)}</span></div>` : '';
-      // Live action recap for the CURRENT street so everyone watching sees what folded/raised around —
-      // same play-by-play the to-act player gets in their DM. Server tags each log line with its street.
-      const _sk = board.length>=5?'river':board.length===4?'turn':board.length===3?'flop':'preflop';
-      const _recap = (g.log||[]).filter(e=>e&&e.s===_sk&&e.t).slice(-6);
-      const logRows = _recap.length ? `<div class="pk-log">${_recap.map(e=>`<span class="pk-logln">${enc(e.t)}</span>`).join('')}</div>` : '';
+      // Action since MY last turn (across streets) — same recap the DM gives, so I always see what the
+      // bot/others did when it comes around to me (not just the current street, which is often empty).
+      const _SL={preflop:'PRE-FLOP',flop:'FLOP',turn:'TURN',river:'RIVER'};
+      const _log=g.log||[]; let _li=-1; for(let i=0;i<_log.length;i++){ if(_log[i]&&_log[i].pk===me) _li=i; }
+      const _rl=[]; let _cs=null;
+      for(const e of _log.slice(_li+1)){ if(!e) continue; const s=e.s||''; if(_cs!==null&&s!==_cs) _rl.push('— '+(_SL[s]||s.toUpperCase())+' —'); _cs=s; if(e.t) _rl.push(e.t); }
+      const _recap=_rl.slice(-8);
+      const logRows = _recap.length ? `<div class="pk-log">${_recap.map(t=>`<span class="pk-logln">${enc(t)}</span>`).join('')}</div>` : '';
       card.innerHTML = `<div class="chess-card-hd">
           <div class="cc-meta"><b>Hold'em · ${seats.length} seats</b><span class="muted small">blinds ${g.sb}/${g.bb} · hand #${g.hand_no||1}</span></div>
           <span class="cc-badge ${myTurn?'you':(over?'done':'wait')}">${myTurn?'Your move':(over?'hand over':'in play')}</span>

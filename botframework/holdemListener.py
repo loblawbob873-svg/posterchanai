@@ -330,9 +330,10 @@ def _dm_to_act(state, gameid, pk):
     board = " ".join(_G.card_str(c) for c in state["board"]) or "(pre-flop)"
     pot = sum(state["contrib"].values())
     call = max(0, state["to_call"] - state["street_bet"][pk])
-    # Replay the current street so the player knows what folded/raised around to them, like a live table.
-    recap = _street_recap(state)
-    recap_line = ("\n🔄 This street: " + " · ".join(recap[-8:])) if recap else ""
+    # Show what happened since this player's last turn (across streets) so they always know what the
+    # bot/others just did when it comes around to them — like seeing the action at a live table.
+    recap = _recap_since(state, pk)
+    recap_line = ("\n🔄 Since your turn: " + " · ".join(recap[-12:])) if recap else ""
     body = (f"🃏 Your hole cards: {hole}\nBoard: {board}\nPot: {pot} · to call: {call} · "
             f"your stack: {state['stacks'][pk]}{recap_line}\n"
             + (url + "\n\n" if url else "")
@@ -471,11 +472,28 @@ def _act_and_log(state, pk, action, amount):
     return state, events
 
 
-def _street_recap(state):
-    """The actions taken so far on the CURRENT betting street, oldest→newest (for the turn DM)."""
-    cur = state.get("street")
-    return [e.get("t") for e in (state.get("log") or [])
-            if e.get("s") == cur and e.get("t")]
+_STREET_LBL = {"preflop": "PRE-FLOP", "flop": "FLOP", "turn": "TURN", "river": "RIVER"}
+
+
+def _recap_since(state, pk):
+    """Actions since `pk` last acted — what the bot/other players did while it came back around to them,
+    ACROSS street boundaries (so the to-act player always sees the action that led to their turn, e.g. the
+    bot's street-closing call + the new street, not an empty current-street recap). Street changes marked
+    inline. If pk hasn't acted yet this hand, returns everything that's happened (usually the bot's open)."""
+    log = state.get("log") or []
+    last_idx = -1
+    for i, e in enumerate(log):
+        if e.get("pk") == pk:
+            last_idx = i
+    out, cur = [], None
+    for e in log[last_idx + 1:]:
+        s = e.get("s") or ""
+        if cur is not None and s != cur:
+            out.append("— " + _STREET_LBL.get(s, s.upper()) + " —")
+        cur = s
+        if e.get("t"):
+            out.append(e["t"])
+    return out
 
 
 def _run_bot_turns(state, gameid, parent_id):
