@@ -4989,8 +4989,8 @@
         <div class="set-body">
           <div class="set-actions"><button class="btn btn-cyan small" id="set-webln">⚡ Connect Alby / WebLN extension</button></div>
           <input class="input" id="set-nwc" type="password" placeholder="nostr+walletconnect://… (for wallets without an extension)" value="${enc(ClientSettings.get('nwc',''))}">
-          <div class="set-actions"><button class="btn btn-ghost small" id="set-nwc-save">Save wallet</button>
-            <button class="btn btn-ghost small" id="set-nwc-clear">Disconnect</button></div>
+          <div class="set-actions"><button class="btn btn-neon small" id="set-nwc-save">Save wallet</button>
+            <button class="btn btn-cyan small" id="set-nwc-clear">Disconnect</button></div>
           <div class="muted small" id="set-nwc-status">${Nwc.configured()?'✓ NWC wallet connected — zaps pay instantly':''}</div>
         </div>
       </section>
@@ -5001,7 +5001,7 @@
         </div></div>
         <div class="set-body">
           <textarea class="input" id="set-muted-words" rows="3" placeholder="one word or phrase per line">${enc([...MUTED_WORDS].join('\n'))}</textarea>
-          <div class="set-actions"><button class="btn btn-ghost small" id="set-words-save">Save muted words</button></div>
+          <div class="set-actions"><button class="btn btn-neon small" id="set-words-save">Save muted words</button></div>
           <div class="muted small" id="set-words-status"></div>
         </div>
       </section>

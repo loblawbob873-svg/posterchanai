@@ -378,8 +378,9 @@ def process_random_replies():
         ts = ev.get("created_at", 0)
         if ts > newest:
             newest = ts
-        if not nid or not pk or pk == own or nid in _rr_seen:
-            continue
+        if not nid or not pk or pk == own or pk.lower() in BOT_NOSTR_PUBKEYS or nid in _rr_seen:
+            continue   # never random-reply to ANOTHER of our bots (anti-loop — this path reads the
+                       # timeline, not get_mentions, so it needs its own bot-pubkey guard)
         if note.get("replyId"):
             continue   # only START on top-level posts, never barge into an existing thread
         _rr_seen.add(nid)
