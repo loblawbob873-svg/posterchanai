@@ -109,7 +109,7 @@
         if(hidden.has(gid)) continue;
         if(!byGame[gid] || (e.created_at||0) > byGame[gid]._t){ s._t=e.created_at||0; byGame[gid]=s; }
       }
-      const games=Object.values(byGame).sort((a,b)=>(a.status==='betting'?0:1)-(b.status==='betting'?0:1)||(b._t||0)-(a._t||0));
+      const games=Object.values(byGame).filter(g=>['betting'].includes(g.status))/* show only in-progress games; finished/left/resigned drop out (left holdem/bj tables also caught by s.left above) */.sort((a,b)=>(a.status==='betting'?0:1)-(b.status==='betting'?0:1)||(b._t||0)-(a._t||0));
       // decrypt MY hole cards for each game (cached by ciphertext)
       for(const g of games){
         const ct=(g.hole_enc||{})[PC.ME.pubkey];

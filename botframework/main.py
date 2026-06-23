@@ -247,6 +247,7 @@ def main():
         def run_chess():
             from chessListener import process_chess
             print("Starting #chesstr chess listener...")
+            from nostr import wait_for_relay; wait_for_relay()   # establish a working relay connection BEFORE polling — game bots spawn with the relay subprocess (deploy race), and acting against a down relay silently drops the game
             while True:
                 try:
                     process_chess()
@@ -267,6 +268,7 @@ def main():
         def run_ttt():
             from tttListener import process_ttt
             print("Starting #tictactoe listener...")
+            from nostr import wait_for_relay; wait_for_relay()   # establish a working relay connection BEFORE polling — game bots spawn with the relay subprocess (deploy race), and acting against a down relay silently drops the game
             while True:
                 try:
                     process_ttt()
@@ -284,6 +286,7 @@ def main():
         def run_hangman():
             from hangmanListener import process_hangman
             print("Starting #hangman listener...")
+            from nostr import wait_for_relay; wait_for_relay()   # establish a working relay connection BEFORE polling — game bots spawn with the relay subprocess (deploy race), and acting against a down relay silently drops the game
             while True:
                 try:
                     process_hangman()
@@ -301,6 +304,7 @@ def main():
         def run_connect4():
             from connect4Listener import process_connect4
             print("Starting #connect4 listener...")
+            from nostr import wait_for_relay; wait_for_relay()   # establish a working relay connection BEFORE polling — game bots spawn with the relay subprocess (deploy race), and acting against a down relay silently drops the game
             while True:
                 try:
                     process_connect4()
@@ -317,6 +321,7 @@ def main():
         def run_blackjack():
             from blackjackListener import process_blackjack
             print("Starting #blackjack listener...")
+            from nostr import wait_for_relay; wait_for_relay()   # establish a working relay connection BEFORE polling — game bots spawn with the relay subprocess (deploy race), and acting against a down relay silently drops the game
             while True:
                 try:
                     process_blackjack()
@@ -333,6 +338,7 @@ def main():
         def run_holdem():
             from holdemListener import process_holdem
             print("Starting #holdem listener...")
+            from nostr import wait_for_relay; wait_for_relay()   # establish a working relay connection BEFORE polling — game bots spawn with the relay subprocess (deploy race), and acting against a down relay silently drops the game
             while True:
                 try:
                     process_holdem()

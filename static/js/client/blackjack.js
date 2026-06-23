@@ -125,7 +125,7 @@
         if(hidden.has(gid)) continue;
         if(!byGame[gid] || (e.created_at||0) > byGame[gid]._t){ s._t=e.created_at||0; byGame[gid]=s; }
       }
-      const games=Object.values(byGame).sort((a,b)=>(a.status==='playing'?0:1)-(b.status==='playing'?0:1)||(b._t||0)-(a._t||0));
+      const games=Object.values(byGame).filter(g=>['betting','playing','over'].includes(g.status))/* show only in-progress games; finished/left/resigned drop out (left holdem/bj tables also caught by s.left above) */.sort((a,b)=>(a.status==='playing'?0:1)-(b.status==='playing'?0:1)||(b._t||0)-(a._t||0));
       const allpks=new Set(); games.forEach(g=>(g.seats||[]).forEach(pk=>allpks.add(pk)));
       await Promise.all([...allpks].map(pk=>ensureProfile(pk).catch(()=>{})));
       if(!games.length){ list.innerHTML='<div class="empty">No tables yet. Deal one above.</div>'; return; }
