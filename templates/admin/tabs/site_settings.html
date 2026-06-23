@@ -12,15 +12,20 @@
         </div>
     </fieldset>
     <fieldset>
-        <legend>Load Balancing</legend>
+        <legend>Load Balancing — IP-based (legacy)</legend>
         <div class="form-group">
             <label for="chat_server_urls">Server IPs</label>
             <input type="text" id="chat_server_urls" name="chat_server_urls" placeholder="192.168.0.2, 192.168.0.85">
             <small>Comma-separated node <strong>IPs</strong> (the posterchanai port is assumed). This
                 <strong>one</strong> list load-balances <strong>all</strong> GPU work — chat, image, music
                 and video — round-robin between this server and the listed nodes (each node frees its own
-                GPU first). Full URLs (e.g. <code>http://localhost:3052</code>) are still accepted for
-                non-default ports / dual-instance setups.</small>
+                GPU first). Full URLs (e.g. <code>http://localhost:3052</code>) accepted for non-default ports.</small>
+        </div>
+        <div class="form-group">
+            <small>🛰️ <strong>Distributed AI over Nostr</strong> is the newer way to do this — it dispatches
+                GPU jobs to a <strong>Web-of-Trust cluster over Nostr</strong> (encrypted, no IPs to manage)
+                and <strong>replaces this IP list when enabled</strong>. Configure it in
+                <strong>Admin → Relay → “Distributed compute (DVM load balancing)”</strong>.</small>
         </div>
     </fieldset>
 

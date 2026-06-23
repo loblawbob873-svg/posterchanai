@@ -312,19 +312,6 @@ def _event_expired(ev: dict) -> bool:
     return False
 
 
-def _job_meta(ev: dict):
-    """(task, author, jid) for a signature-verified job addressed to THIS worker, else None."""
-    if not nostr_event.verify_event(ev):
-        return None
-    task = _TASK_BY_REQ.get(int(ev.get("kind", 0)))
-    if not task:
-        return None
-    me = node_pubkey()
-    if not any(len(t) >= 2 and t[0] == "p" and t[1] == me for t in ev.get("tags", [])):
-        return None
-    return task, ev.get("pubkey", ""), ev.get("id", "")
-
-
 async def _publish_result(task: str, jid: str, author: str, result: dict) -> None:
     sk = node_seckey()
     enc = nip44.encrypt_to(sk, bytes.fromhex(author), json.dumps(result))
@@ -346,17 +333,28 @@ async def _spawn_job(ev: dict) -> None:
     jobs, enforces the in-flight cap (fast busy-reject so the coordinator tries another node), then
     runs the job as a BACKGROUND task so the recv loop keeps reading + ping-keepalive during long jobs.
     The check+increment of `_inflight` is synchronous (the recv loop awaits this one event at a time),
-    so the cap is race-free."""
+    so the cap is race-free.
+
+    CPU: the listener is event-driven (idle on recv between messages) and the relay filters server-side
+    (kinds + #p), so jobs are the only thing delivered. The expensive BIP340 signature verify runs LAST
+    — only after the cheap kind/addressed/trusted/dedup filters — so bogus traffic can't peg the CPU."""
     global _inflight
-    meta = _job_meta(ev)
-    if not meta:
+    # --- cheap filters first (no crypto) ---
+    task = _TASK_BY_REQ.get(int(ev.get("kind", 0)))
+    if not task:
         return
-    task, author, jid = meta
+    me = node_pubkey()
+    if not me or not any(len(t) >= 2 and t[0] == "p" and t[1] == me for t in ev.get("tags", [])):
+        return   # not addressed to this node
+    author = ev.get("pubkey", "")
     if not is_trusted(author):
-        logger.info("[dvm] ignoring %s job from untrusted %s", task, author[:12])
-        return
+        return   # not a cluster node — reject before any signature work
+    jid = ev.get("id", "")
     if jid in _seen_jobs:
         return   # idempotency: never reprocess a job we've already handled
+    # --- expensive verify only for an addressed, trusted, unseen job ---
+    if not nostr_event.verify_event(ev):
+        return
     _seen_jobs[jid] = 1
     while len(_seen_jobs) > 1000:
         _seen_jobs.popitem(last=False)
